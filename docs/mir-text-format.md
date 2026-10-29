@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.133
+mojito-mir 1.134
 ```
 
-The writer emits 1.133. The reader accepts 1.0 through 1.133; *Schema 1.0*
+The writer emits 1.134. The reader accepts 1.0 through 1.134; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -883,6 +883,13 @@ Schema 1.133 adds the type `i1`, upstream's MLIR builtin `i1`, which
 `builtin.cast` convert between `i1` and a `Bool`'s `!kgen.scalar<bool>`
 storage. A condition may be an `i1`. The package format moves to
 `mojito-package 143`.
+
+Schema 1.134 types a string literal by its text: a literal register is
+spelled as the application `struct_type { name: StringLiteral, arguments:
+[value_arg(ct_kgen_string("ab"))] }`, which the reader bridges back to the
+literal type, and a symbolic text as its `ct_expr`. The value-less
+`StringLiteral` keeps its atom. The package format moves to
+`mojito-package 147`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:

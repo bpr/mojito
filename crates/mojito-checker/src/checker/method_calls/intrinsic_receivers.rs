@@ -27,6 +27,12 @@ impl Checker {
             kwargs,
             ..
         } = call;
+        // A string literal's declared member is its struct's body.
+        if matches!(obj_ty.kind(), TyKind::StringLiteral(Some(_)))
+            && self.declared_receiver_member(obj_ty, method).is_some()
+        {
+            return Ok(None);
+        }
         if let TyKind::Struct(name, _) = obj_ty.kind()
             && !self.structs.contains_key(name)
             && let Some(ty) = self.infer_unregistered_collection_method(site)?
@@ -81,14 +87,14 @@ impl Checker {
             return self.infer_inverted_write(site).map(Some);
         }
         if method == STRING_FORMAT
-            && *obj_ty == TyKind::StringLiteral
+            && obj_ty.is_string_literal()
             && self
                 .structs
                 .contains_key(mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT)
         {
             return self.infer_literal_format(site).map(Some);
         }
-        if *obj_ty == TyKind::StringLiteral
+        if obj_ty.is_string_literal()
             && args.is_empty()
             && let Some(ty) = string_literal_primitive(method)
         {

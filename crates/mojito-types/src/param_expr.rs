@@ -1933,6 +1933,19 @@ impl ParamContext {
             };
         }
         let value = match (&declared, value.as_constant()) {
+            // A compile-time string bound to a `StringLiteral[v]` parameter
+            // is its literal, whose value-less type the binding of `v`
+            // keys (R1657).
+            (MetaTy::Value(ty), Some(CtValue::Str(_)))
+                if ty.is_string_literal()
+                    && value.meta().as_value().is_some_and(Ty::is_string_literal) =>
+            {
+                return if depth == 0 {
+                    Ok(value.clone())
+                } else {
+                    self.shift(value, 0, depth)
+                };
+            }
             (MetaTy::Value(ty), Some(constant)) if *value.meta() != declared => {
                 self.constant_as(constant.clone(), ty)?
             }
@@ -3998,7 +4011,7 @@ fn is_scalar_domain(ty: &Ty) -> bool {
             | TyKind::FloatLiteral
             | TyKind::Bool
             | TyKind::I1
-            | TyKind::StringLiteral
+            | TyKind::StringLiteral(_)
             | TyKind::Dtype
             | TyKind::Simd { .. }
     )

@@ -507,7 +507,7 @@ impl MirDeclarations {
             return true;
         }
         match ty.kind() {
-            TyKind::StringLiteral | TyKind::None => true,
+            TyKind::StringLiteral(_) | TyKind::None => true,
             TyKind::Func(_) | TyKind::GenericFunc(_) => ty.callable().is_some_and(|function| {
                 !matches!(
                     function.environment,
@@ -2067,12 +2067,18 @@ fn lower_function(
 
 /// The type of `self` in a member of struct `name` declaring `parameters`:
 /// the struct at its own binders, which parametric MIR spells by the bare
-/// name and each instance replaces. `SIMD` is the exception while the
-/// `Ty::new` bridge holds its application as the compiler's `TyKind::Simd`
-/// (R1557): its receiver is that type at the binders, which an instance
-/// substitutes as any other type.
+/// name and each instance replaces. `SIMD` and `StringLiteral` are the
+/// exceptions while the `Ty::new` bridge holds their applications as the
+/// compiler's `TyKind::Simd` (R1557) and `TyKind::StringLiteral` (R1660):
+/// the receiver is that type at the binders, which an instance substitutes
+/// as any other type.
 fn self_receiver_ty(name: &str, parameters: &[ParamDecl]) -> Ty {
-    let arguments = if name == mojito_types::types::SIMD_TYPE_NAME {
+    let arguments = if [
+        mojito_types::types::SIMD_TYPE_NAME,
+        mojito_types::types::STRING_LITERAL_TYPE_NAME,
+    ]
+    .contains(&name)
+    {
         parameters.iter().map(ParamDecl::own_argument).collect()
     } else {
         Vec::new()
@@ -5042,7 +5048,7 @@ fn close_register_types(
                             Const::IntLiteral(_) => Some(Ty::int_literal()),
                             Const::FloatLiteral(_) => Some(Ty::float_literal()),
                             Const::Bool(_) => Some(Ty::bool()),
-                            Const::Str(_) => Some(Ty::string_literal()),
+                            Const::Str(text) => Some(Ty::string_literal_of(text)),
                             Const::None => Some(Ty::none()),
                             Const::Dtype(_) => Some(Ty::dtype()),
                             // A callable constant's type needs the checked

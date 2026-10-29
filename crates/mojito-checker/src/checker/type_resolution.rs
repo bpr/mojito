@@ -2095,7 +2095,7 @@ impl Checker {
             // A symbolic lane dtype or width closes under the use's bindings
             // and re-canonicalizes: `Scalar[dt]` at `dt = DType.float64` is
             // `Float64`.
-            TyKind::Simd { .. } | TyKind::KgenSimd { .. }
+            TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral(Some(_))
                 if !parameters.is_empty() && mojito_types::types::is_symbolic(ty) =>
             {
                 let context = &self.param_context;
@@ -3814,7 +3814,7 @@ impl Checker {
                 if computed_args.is_empty()
                     && mojito_symbol::symbol::is_stdlib_string_struct(name))
         });
-        if *ty != TyKind::StringLiteral || !computes_string {
+        if !ty.is_string_literal() || !computes_string {
             return value;
         }
         CtValue::Expr(self.param_context.apply(
@@ -4081,9 +4081,18 @@ impl Checker {
 
     /// The upstream-worded rejection of a struct value flowing into a
     /// destination of the same struct whose origin arguments differ (`p =
-    /// P(Pointer(to=ys))` over `P[origin_of(xs)]`); `None` when the two
-    /// differ in anything but their origin tails.
+    /// P(Pointer(to=ys))` over `P[origin_of(xs)]`), or of a string literal
+    /// into a `StringLiteral` of another text; `None` when the two differ
+    /// in anything but their origin tails or their texts.
     pub(super) fn struct_origin_mismatch(&self, found: &Ty, expected: &Ty) -> Option<TypeError> {
+        if let (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(Some(_))) =
+            (found.kind(), expected.kind())
+        {
+            return (found != expected).then(|| TypeError::OriginIdentityMismatch {
+                found: found.to_string(),
+                expected: expected.to_string(),
+            });
+        }
         let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
             (found.kind(), expected.kind())
         else {
@@ -4498,7 +4507,7 @@ const GENERATOR_TYPE_OWNER: &str = "$generator";
 fn computed_string_literal(value: &CtValue) -> bool {
     matches!(value, CtValue::Expr(expression)
         if matches!(expression.kind(), mojito_types::param_expr::ParamKind::Apply { .. })
-            && expression.meta().as_value().is_some_and(|ty| *ty == TyKind::StringLiteral))
+            && expression.meta().as_value().is_some_and(Ty::is_string_literal))
 }
 
 fn type_is_symbolic(ty: &Ty) -> bool {
@@ -4513,7 +4522,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
             dtype.is_symbolic() || width.is_symbolic()
         }
         TyKind::Bool
-        | TyKind::StringLiteral
+        | TyKind::StringLiteral(_)
         | TyKind::None
         | TyKind::Never
         | TyKind::IntLiteral

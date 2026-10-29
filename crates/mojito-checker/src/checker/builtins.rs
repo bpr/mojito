@@ -46,7 +46,7 @@ pub(super) fn float_literal_conversion_error(target: &impl std::fmt::Display) ->
 pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)> {
     match name {
         "sep" | "end" => Some((
-            *ty == TyKind::StringLiteral
+            ty.is_string_literal()
                 || matches!(ty.kind(), TyKind::Struct(name, targs)
                     if (targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
                         || mojito_types::types::is_stdlib_string_span_struct(name)),
@@ -158,7 +158,7 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         TyKind::INT
         | TyKind::UINT
         | TyKind::Bool
-        | TyKind::StringLiteral
+        | TyKind::StringLiteral(_)
         | TyKind::FLOAT64
         | TyKind::None
         | TyKind::IntLiteral
@@ -226,8 +226,15 @@ pub(super) fn common_elem(a: &Ty, b: &Ty) -> Option<Ty> {
     } else if a == b {
         Some(a.clone())
     } else {
-        None
+        common_string_literal(a, b)
     }
+}
+
+/// The common type of two string literals of different texts: the
+/// value-less `StringLiteral`, which materializes where it is bound, as
+/// the pin's join of two `StringLiteral` instances is a `String`.
+fn common_string_literal(a: &Ty, b: &Ty) -> Option<Ty> {
+    (a.is_string_literal() && b.is_string_literal()).then(Ty::string_literal)
 }
 
 /// The common element of a display's two elements ([`common_elem`]), where a
@@ -236,8 +243,8 @@ pub(super) fn common_elem(a: &Ty, b: &Ty) -> Option<Ty> {
 /// materialized form (`[(1, 2), (3, n)]` is a list of `Tuple[Int, Int]`).
 pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
     match (a.kind(), b.kind()) {
-        (TyKind::StringLiteral, _) if is_nominal_string(b) => Some(b.clone()),
-        (_, TyKind::StringLiteral) if is_nominal_string(a) => Some(a.clone()),
+        (TyKind::StringLiteral(_), _) if is_nominal_string(b) => Some(b.clone()),
+        (_, TyKind::StringLiteral(_)) if is_nominal_string(a) => Some(a.clone()),
         (TyKind::Struct(..), TyKind::Struct(..)) if a != b => {
             let materialized = mojito_types::types::default_literal(a);
             (materialized == mojito_types::types::default_literal(b)).then_some(materialized)
@@ -262,7 +269,7 @@ pub(super) fn common_branch_ty(a: &Ty, b: &Ty) -> Option<Ty> {
     } else if coerces(b, a) {
         Some(a.clone())
     } else {
-        None
+        common_string_literal(a, b)
     }
 }
 
@@ -307,7 +314,7 @@ impl Checker {
         is_numeric(ty)
             || matches!(
                 ty.kind(),
-                TyKind::Bool | TyKind::StringLiteral | TyKind::None | TyKind::Dtype
+                TyKind::Bool | TyKind::StringLiteral(_) | TyKind::None | TyKind::Dtype
             )
             || self.equatable_bound(ty)
     }
@@ -413,7 +420,7 @@ impl Checker {
         let tys = self.builtin_args("input", 1, args)?;
         let nominal_prompt = matches!((tys[0]).kind(), TyKind::Struct(name, args)
             if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
-        if tys[0] == TyKind::StringLiteral || nominal_prompt {
+        if tys[0].is_string_literal() || nominal_prompt {
             self.record_call_effect(span, Ty::error());
             self.require_error("call to raising function 'input'", Ty::error())?;
             Ok(self.builtin_string_result())
@@ -535,7 +542,7 @@ impl Checker {
     /// Type `String(x)`: stringify a numeric, `Bool`, or `String` value.
     pub(super) fn infer_stringify(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("String", 1, args)?;
-        if is_numeric(&tys[0]) || tys[0] == TyKind::Bool || tys[0] == TyKind::StringLiteral {
+        if is_numeric(&tys[0]) || tys[0] == TyKind::Bool || tys[0].is_string_literal() {
             let runtime_ty = default_literal(&tys[0]);
             if runtime_ty != tys[0] {
                 self.record_literal_materializations(&args[0], &tys[0], &runtime_ty)?;

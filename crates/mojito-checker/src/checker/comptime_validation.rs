@@ -2365,7 +2365,7 @@ impl Checker {
                     | TyKind::Bool
                     | TyKind::IntLiteral
                     | TyKind::FloatLiteral
-                    | TyKind::StringLiteral
+                    | TyKind::StringLiteral(_)
             ) || matches!(ty.kind(), TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name))
                 || self.parameter_aggregate_element(ty)
@@ -4710,7 +4710,7 @@ fn parameter_value_type(ty: &Ty) -> bool {
             | TyKind::Index
             | TyKind::I1
             | TyKind::IntLiteral
-            | TyKind::StringLiteral
+            | TyKind::StringLiteral(_)
             | TyKind::Dtype
             | TyKind::Struct(..)
             | TyKind::Simd { .. }
@@ -4880,7 +4880,7 @@ fn materialized_collection_spelling(ty: &Ty) -> String {
         match element.kind() {
             TyKind::INT | TyKind::IntLiteral => "Int".to_string(),
             TyKind::FLOAT64 | TyKind::FloatLiteral => "Float64".to_string(),
-            TyKind::StringLiteral => "String".to_string(),
+            TyKind::StringLiteral(_) => "String".to_string(),
             _ => match mojito_types::types::tuple_elements(element) {
                 Some(elements) => format!(
                     "Tuple[{}]",

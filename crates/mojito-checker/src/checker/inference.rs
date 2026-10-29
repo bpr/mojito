@@ -913,7 +913,7 @@ impl Checker {
             ExprKind::Int(_) => Ok(Ty::int_literal()),
             ExprKind::Float(_) => Ok(Ty::float_literal()),
             ExprKind::Bool(_) | ExprKind::IsRunInComptimeInterpreter => Ok(Ty::bool()),
-            ExprKind::Str(_) => Ok(Ty::string_literal()),
+            ExprKind::Str(text) => Ok(Ty::string_literal_of(text)),
             ExprKind::None => Ok(Ty::none()),
             ExprKind::Uninitialized => Err(TypeError::InvariantViolation(
                 "uninitialized marker reached expression inference".to_string(),
@@ -2584,7 +2584,7 @@ impl Checker {
     pub(super) fn materialized_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
         let ty = self.infer(element)?;
         match ty.kind() {
-            TyKind::StringLiteral => self.nominal_string_wrap(element.source_span()),
+            TyKind::StringLiteral(_) => self.nominal_string_wrap(element.source_span()),
             _ => Ok(default_literal(&ty)),
         }
     }
@@ -2595,7 +2595,7 @@ impl Checker {
     pub(super) fn tuple_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
         let ty = self.infer(element)?;
         match ty.kind() {
-            TyKind::StringLiteral => self.nominal_string_wrap(element.source_span()),
+            TyKind::StringLiteral(_) => self.nominal_string_wrap(element.source_span()),
             _ => Ok(ty),
         }
     }
@@ -2673,7 +2673,7 @@ impl Checker {
         // infers `[name(n), "z"]`.
         if is_nominal_string(&element) {
             for value in elems {
-                if self.infer(value)? == TyKind::StringLiteral {
+                if self.infer(value)?.is_string_literal() {
                     self.nominal_string_wrap(value.source_span())?;
                 }
             }
@@ -2681,7 +2681,7 @@ impl Checker {
         }
         // A string element materializes the nominal `String`, as upstream's
         // non-materializable `StringLiteral` does in every runtime display.
-        if element == TyKind::StringLiteral {
+        if element.is_string_literal() {
             let mut materialized = element;
             for value in elems {
                 materialized = self.nominal_string_wrap(value.source_span())?;

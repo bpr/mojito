@@ -1029,6 +1029,7 @@ assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_overload.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_struct.mojo	main	exe-differential	sanitized
+assets/ok/string_literal_value_type.mojo	main	exe-differential	sanitized
 assets/ok/string_overload_conversion.mojo	main	exe-differential	sanitized
 assets/ok/string_span_equatable.mojo	main	exe-differential	sanitized
 assets/ok/string_span_implicit_temporary.mojo	main	exe-differential	sanitized

@@ -487,7 +487,7 @@ fn source_type_from_ty_with_origins(
         TyKind::INT | TyKind::IntLiteral => Type::Int,
         TyKind::UINT => Type::UInt,
         TyKind::Bool => Type::Bool,
-        TyKind::StringLiteral => Type::ClosedStringLiteral,
+        TyKind::StringLiteral(_) => Type::ClosedStringLiteral,
         TyKind::FLOAT64 | TyKind::FloatLiteral => Type::Float64,
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),

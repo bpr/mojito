@@ -115,7 +115,7 @@ impl FnLowering<'_> {
             && matches!(method, "byte_length" | "ptr" | "unsafe_ptr")
             && matches!(
                 self.func.reg_types.get(&recv.0).map(Ty::kind),
-                Some(TyKind::StringLiteral)
+                Some(TyKind::StringLiteral(_))
             )
         {
             let (data, len) = self.writer_argument_text(ctx, recv, dest)?;
@@ -133,7 +133,7 @@ impl FnLowering<'_> {
             )
             && matches!(
                 self.func.reg_types.get(&recv.0).map(Ty::kind),
-                Some(TyKind::StringLiteral)
+                Some(TyKind::StringLiteral(_))
             )
         {
             return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
@@ -371,6 +371,50 @@ impl FnLowering<'_> {
         dest: Reg,
         arg: Reg,
     ) -> Result<(), PlironError> {
+        // A string literal's repr is its `as_string_slice()`'s: the owned
+        // `String` of its bytes through the nominal member (R1660).
+        if self
+            .func
+            .reg_types
+            .get(&arg.0)
+            .is_some_and(Ty::is_string_literal)
+        {
+            let string = mojito_symbol::symbol::STDLIB_STRING_STRUCT;
+            let Some(symbol) = self.display_member(string, "write_repr_to", dest)? else {
+                return Err(self.unsupported_reg(
+                    "repr of a literal without a compiled `String.write_repr_to`".into(),
+                    dest,
+                ));
+            };
+            let storage = self.owned_string_of_literal(ctx, arg, dest)?;
+            let writer = self.entry_alloca(ctx, 16, 8);
+            self.mem_zero(ctx, writer, 16);
+            let signature = &self.signatures[symbol];
+            let callee: Identifier = signature
+                .mangled
+                .as_str()
+                .try_into()
+                .expect("mangled names are identifier-safe");
+            let call = CallOp::new(
+                ctx,
+                CallOpCallable::Direct(callee),
+                signature.func_ty,
+                vec![storage, writer],
+            );
+            self.append(ctx, call.get_operation(), Some(dest));
+            let (copy, _) = self.string_parts(ctx, storage, dest);
+            self.emit_free(ctx, copy);
+            let (data, len) = self.string_parts(ctx, writer, dest);
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+            return Ok(());
+        }
         if matches!(
             self.func.reg_types.get(&arg.0).map(Ty::kind),
             Some(TyKind::None)
@@ -771,7 +815,7 @@ impl FnLowering<'_> {
             return Ok((descriptor.data, descriptor.len));
         }
         match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(TyKind::Error | TyKind::StringLiteral) => {
+            Some(TyKind::Error | TyKind::StringLiteral(_)) => {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }

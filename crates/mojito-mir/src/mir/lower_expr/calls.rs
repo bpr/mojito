@@ -904,7 +904,7 @@ impl<'a> Flatten<'a> {
             Const::IntLiteral(_) => Some(Ty::int_literal()),
             Const::FloatLiteral(_) => Some(Ty::float_literal()),
             Const::Bool(_) => Some(Ty::bool()),
-            Const::Str(_) => Some(Ty::string_literal()),
+            Const::Str(text) => Some(Ty::string_literal_of(text)),
             Const::None => Some(Ty::none()),
             Const::Dtype(_) => Some(Ty::dtype()),
             Const::Function(_) | Const::FunctionInstance { .. } => function_ty,

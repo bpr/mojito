@@ -2599,7 +2599,8 @@ impl<'a> Specializer<'a> {
                         .and_then(|arg| function.reg_types.get(&arg.0))
                         .map(peel_refs);
                     // A vector is no scalar cast's source: its conversion is
-                    // `SIMD`'s declared dunder, whose instance asserts.
+                    // `SIMD`'s declared dunder, whose instance asserts. A
+                    // string literal's is `StringLiteral`'s.
                     let vector = |operand: &Ty| {
                         matches!(operand.kind(), TyKind::Simd { .. })
                             && mojito_types::ct::ScalarConversion::named(func.0.as_str())
@@ -2610,7 +2611,10 @@ impl<'a> Specializer<'a> {
                         && kwargs.is_empty()
                         && args.len() == 1 + usize::from(method == "__divmod__")
                         && operand.is_some_and(|operand| {
-                            matches!(operand.kind(), TyKind::Struct(..)) || vector(operand)
+                            matches!(
+                                operand.kind(),
+                                TyKind::Struct(..) | TyKind::StringLiteral(Some(_))
+                            ) || vector(operand)
                         })
                     {
                         *instruction = dunder_method_call(
@@ -2954,7 +2958,7 @@ impl<'a> Specializer<'a> {
                             param_decls.clear();
                             instantiated_args.clear();
                             param_arg_regs.clear();
-                            if !matches!(peel_refs(receiver).kind(), TyKind::StringLiteral) {
+                            if !matches!(peel_refs(receiver).kind(), TyKind::StringLiteral(_)) {
                                 continue;
                             }
                         }
@@ -2966,7 +2970,7 @@ impl<'a> Specializer<'a> {
                         if matches!(
                             method.as_str(),
                             "write" | mojito_symbol::symbol::WRITE_FORMATTED
-                        ) && matches!(peel_refs(receiver).kind(), TyKind::StringLiteral)
+                        ) && matches!(peel_refs(receiver).kind(), TyKind::StringLiteral(_))
                         {
                             for arg in args.clone() {
                                 self.enqueue_display_instance(owner, function, arg)?;

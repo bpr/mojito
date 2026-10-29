@@ -98,7 +98,7 @@ impl FnLowering<'_> {
             // `format_value` over `Value::Error`); a `StringLiteral` held in
             // storage is its descriptor, whose data and length lead it as a
             // String's do.
-            Some(TyKind::Error | TyKind::StringLiteral) => {
+            Some(TyKind::Error | TyKind::StringLiteral(_)) => {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }

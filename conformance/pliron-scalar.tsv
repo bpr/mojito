@@ -1029,6 +1029,7 @@ assets/ok/string_iadd_view_operand.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_bytes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_struct.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/string_literal_value_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_overload_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_span_equatable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_span_implicit_temporary.mojo	-	ineligible	no-scalar-entry-shape

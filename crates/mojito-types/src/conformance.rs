@@ -306,7 +306,7 @@ pub fn modelled_conformance(
     {
         "Boolable" => matches!(
             ty.kind(),
-            TyKind::Bool | TyKind::StringLiteral | TyKind::IntLiteral | TyKind::FloatLiteral
+            TyKind::Bool | TyKind::StringLiteral(_) | TyKind::IntLiteral | TyKind::FloatLiteral
         ),
         "Intable" => matches!(
             ty.kind(),
@@ -346,7 +346,7 @@ pub fn modelled_conformance(
                 is_numeric_like(ty)
                     || matches!(
                         ty.kind(),
-                        TyKind::Bool | TyKind::StringLiteral | TyKind::None
+                        TyKind::Bool | TyKind::StringLiteral(_) | TyKind::None
                     )
             }
         },
@@ -390,7 +390,7 @@ pub fn modelled_declares(
 pub fn is_scalar(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::Bool | TyKind::StringLiteral | TyKind::None | TyKind::Dtype
+        TyKind::Bool | TyKind::StringLiteral(_) | TyKind::None | TyKind::Dtype
     )
 }
 
@@ -421,7 +421,7 @@ pub fn is_signed_numeric_like(ty: &Ty) -> bool {
 pub fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::Bool | TyKind::StringLiteral | TyKind::Dtype
+        TyKind::Bool | TyKind::StringLiteral(_) | TyKind::Dtype
     )
 }
 

@@ -110,6 +110,11 @@ impl Checker {
             {
                 constructed
             }
+            _ if let Some(constructed) =
+                self.string_literal_construction(&span, name, param_args, args, kwargs) =>
+            {
+                constructed
+            }
             _ if self.structs.contains_key(name) && name != mojito_types::types::SIMD_TYPE_NAME => {
                 // `String(x)` on a non-literal argument stringifies through
                 // the builtin conversion, which builds the nominal struct
@@ -124,7 +129,7 @@ impl Checker {
                     && kwargs.is_empty()
                     && param_args.is_empty()
                     && !(args.len() == 1
-                        && matches!((self.infer(&args[0])?).kind(), TyKind::StringLiteral))
+                        && matches!((self.infer(&args[0])?).kind(), TyKind::StringLiteral(_)))
                 {
                     self.infer_stringify(args)?;
                     self.record_at(span).overload_target = Some("String".to_string());
@@ -351,7 +356,7 @@ impl Checker {
                     // A literal message avoids an os-module import cycle
                     // for stdlib-internal trap sites; the VM reads either
                     // spelling.
-                    TyKind::StringLiteral => Ok(Ty::none()),
+                    TyKind::StringLiteral(_) => Ok(Ty::none()),
                     TyKind::Struct(name, targs)
                         if targs.is_empty()
                             && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
@@ -499,6 +504,56 @@ impl Checker {
             self.type_runtime_param_args(param_args)?;
             Ok(ty)
         }))
+    }
+
+    /// A construction of a `StringLiteral[value]` instance (`Self` in its
+    /// own members), or `None` for any other call. Upstream's struct has no
+    /// fields, so its default initializer and its copy each build the one
+    /// value the type names: the elaborator writes the closed type's
+    /// default construction, the literal of its text, while the
+    /// [`Ty::new`] bridge holds the instance as the compiler's literal
+    /// type (R1660).
+    fn string_literal_construction(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let copy = matches!(kwargs, [keyword] if keyword.name == "copy");
+        if !args.is_empty() || !(kwargs.is_empty() || copy) {
+            return None;
+        }
+        let spelled = name == mojito_types::types::STRING_LITERAL_TYPE_NAME
+            && !param_args.is_empty()
+            && self.structs.contains_key(name);
+        let instance = match name {
+            "Self" if param_args.is_empty() && self.lookup(name).is_none() => self.self_ty.clone(),
+            _ if spelled => self
+                .probe(|| self.infer_construction(span, name, param_args, &[], &[]))
+                .ok(),
+            _ => None,
+        }
+        .filter(|ty| matches!(ty.kind(), TyKind::StringLiteral(Some(_))))?;
+        let construct = || {
+            // The application's arguments are typed as the instance's.
+            if spelled {
+                self.infer_construction(span, name, param_args, &[], &[])?;
+            }
+            if copy {
+                self.infer_builtin_copy_construction(span.clone(), name, &instance, &kwargs[0])?;
+            } else {
+                self.record_at(span.clone()).adjustment = Some(Box::new(
+                    mojito_checked::checked::SemanticAdjustment::ConstructType {
+                        ty: instance.clone(),
+                    },
+                ));
+            }
+            self.type_runtime_param_args(param_args)?;
+            Ok(instance.clone())
+        };
+        Some(construct())
     }
 
     /// A construction the checker spelled for a type with no source

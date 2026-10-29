@@ -145,7 +145,7 @@ impl FnLowering<'_> {
         // A runtime StringLiteral value reads back as a borrowed string.
         if matches!(
             self.func.reg_types.get(&arg.0).map(Ty::kind),
-            Some(TyKind::StringLiteral)
+            Some(TyKind::StringLiteral(_))
         ) && !self.pending_literals.contains_key(&arg.0)
         {
             let ptr = self.reg_ptr(ctx, arg)?;

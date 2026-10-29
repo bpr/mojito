@@ -568,6 +568,18 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             },
         }
         .into(),
+        // A string literal's symbolic text closes as the literal it
+        // names; one the bindings do not close stays as spelled, for the
+        // concreteness check to name.
+        TyKind::StringLiteral(Some(value)) => match value.as_ref() {
+            CtValue::Expr(expr) => match eval_ct(expr, bindings) {
+                Ok(text @ CtValue::KgenString(_)) => {
+                    TyKind::StringLiteral(Some(Box::new(text))).into()
+                }
+                _ => ty.clone(),
+            },
+            _ => ty.clone(),
+        },
         // A vector's storage closes as the vector it stores.
         TyKind::KgenSimd { dtype, width } => {
             let vector = substitute_ty(

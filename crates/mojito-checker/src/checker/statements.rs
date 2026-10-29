@@ -1322,7 +1322,7 @@ impl Checker {
                     // `String`, like the other literal defaults; the wrap
                     // falls back to the compile-time string on seams without
                     // the linked stdlib struct.
-                    None if found == TyKind::StringLiteral => {
+                    None if found.is_string_literal() => {
                         self.nominal_string_wrap(value.source_span())?
                     }
                     None => self.inferred_binding_ty(&found, name)?,
@@ -2072,7 +2072,7 @@ impl Checker {
             StmtKind::Raise(expr) => {
                 self.register_named_bindings(expr)?;
                 let ty = self.infer(expr)?;
-                let stringish = ty == TyKind::StringLiteral
+                let stringish = ty.is_string_literal()
                     || matches!(ty.kind(), TyKind::Struct(name, args)
                         if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
                 let error = if stringish { Ty::error() } else { ty };

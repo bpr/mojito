@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A string literal's type is now upstream's `StringLiteral[value]` its
+  text keys (R1652): `var x: StringLiteral["a".value] = "a"` binds, `"b"`
+  there is rejected with the pin's "cannot implicitly convert
+  'StringLiteral["b"]' value to 'StringLiteral["a"]'", `g("hello")` over
+  `s: StringLiteral[v]` solves `v`, and `type_of("hi")` is the literal's
+  type. A literal runs the struct's library members, so `Bool("")`,
+  `not "a"`, and `if "":` read its `__bool__`, and the struct gains
+  `unsafe_ptr` and `_is_identical` (over `#kgen.param.identical`). A
+  bracket argument bound to a bare `StringLiteral` parameter
+  (`bind["So"]()` over `def bind[s: StringLiteral]`) runs again, where
+  R1606 left it "cannot infer type parameter '$value_s'". The MIR schema
+  moves to 1.134 and the package format to `mojito-package 147`. The
+  value-less compiler string, the bare argument, the byte rules, and the
+  bridge are filed as R1657–R1660.
+
 - Upstream's automatic parameterization now covers every struct, not only
   `SIMD` (R1606): each parameter an argument's struct type leaves unbound —
   bare (`x: List`, `x: Tuple`), `_` (`List[_]`), `...` (`Pair[Int, ...]`),

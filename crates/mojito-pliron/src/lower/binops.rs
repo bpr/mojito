@@ -37,7 +37,7 @@ impl FnLowering<'_> {
                 || lowering.str_runtime.contains_key(&reg.0)
                 || matches!(
                     lowering.func.reg_types.get(&reg.0).map(Ty::kind),
-                    Some(TyKind::StringLiteral)
+                    Some(TyKind::StringLiteral(_))
                 )
         };
         if matches!(op, InfixOp::Eq | InfixOp::Ne)

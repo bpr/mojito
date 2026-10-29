@@ -863,7 +863,7 @@ impl Checker {
                     TyKind::INT
                         | TyKind::UINT
                         | TyKind::Bool
-                        | TyKind::StringLiteral
+                        | TyKind::StringLiteral(_)
                         | TyKind::FLOAT64
                         | TyKind::Dtype
                 ) {
@@ -4812,7 +4812,7 @@ impl Checker {
     /// String struct keeps the literal: materializing to an absent struct
     /// would fail every conformance the literal itself satisfies.
     fn materialize_pack_element(&self, ty: Ty) -> Ty {
-        if ty == TyKind::StringLiteral
+        if ty.is_string_literal()
             && !self
                 .structs
                 .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)

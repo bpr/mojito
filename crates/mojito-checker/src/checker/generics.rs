@@ -14,7 +14,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             // A string literal binds the type it materializes to, as the
             // pin's nonmaterializable `StringLiteral` does.
             let solved = match actual.kind() {
-                TyKind::StringLiteral => TyKind::Struct(
+                TyKind::StringLiteral(_) => TyKind::Struct(
                     mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
                     Vec::new(),
                 )
@@ -371,6 +371,18 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 solve_value_args(&pattern, &actual, out);
             }
         }
+        // A literal's text binds a `StringLiteral[v]` pattern's binder (`g("ab")`
+        // over `s: StringLiteral[v]` solves `v = "ab"`).
+        (TyKind::StringLiteral(Some(pattern)), TyKind::StringLiteral(Some(actual))) => {
+            if let CtValue::Expr(expr) = pattern.as_ref() {
+                if let Some(reference) = expr.as_decl_ref() {
+                    out.entry(reference.name.to_string())
+                        .or_insert_with(|| actual.as_ref().clone());
+                } else if let CtValue::Expr(actual) = actual.as_ref() {
+                    solve_applied_args(expr, actual, out);
+                }
+            }
+        }
         (TyKind::Simd { dtype, width }, _) => {
             let actual_slots = match actual.kind() {
                 TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
@@ -669,7 +681,10 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         }
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
-        TyKind::Simd { .. } | TyKind::KgenSimd { .. } if mojito_types::types::is_symbolic(ty) => {
+        // A symbolic literal text closes the same way.
+        TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral(Some(_))
+            if mojito_types::types::is_symbolic(ty) =>
+        {
             mojito_types::types::replace_parameters(&context, ty, bindings, 0)
                 .unwrap_or_else(|_| ty.clone())
         }

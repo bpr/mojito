@@ -688,7 +688,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         }
         MirInstr::TypeName { dest, ty } => {
             if let Some(found) = cx.reg_ty(*dest)
-                && found != &TyKind::StringLiteral
+                && !found.is_string_literal()
             {
                 errors.push(format!(
                     "{prefix}: type name result register has type {found}, expected StringLiteral"

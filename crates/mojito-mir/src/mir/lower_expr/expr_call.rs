@@ -620,7 +620,7 @@ impl<'a> Flatten<'a> {
         // `"String"` conversion builtin, typed as checked.
         let stringify = mojito_symbol::symbol::is_stdlib_string_struct(name)
             && (callable_target(&node.adjustments).as_deref() == Some("String")
-                || node.ty.clone() == Some(Ty::string_literal()));
+                || node.ty.as_ref().is_some_and(Ty::is_string_literal));
         // A call's argument list anchors nested loan-carrying
         // temporaries unless another channel already carries their
         // loans (see `call_anchors_arguments`). A construction's

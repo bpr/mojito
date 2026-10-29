@@ -1913,7 +1913,7 @@ pub struct Raises {
 pub fn converts_to_error(ty: &Ty, error: &Ty) -> bool {
     matches!(error.kind(), TyKind::Error)
         && match ty.kind() {
-            TyKind::StringLiteral => true,
+            TyKind::StringLiteral(_) => true,
             TyKind::Struct(name, _) => mojito_symbol::symbol::is_stdlib_string_struct(name),
             _ => false,
         }
@@ -4145,7 +4145,7 @@ mod tests {
         let string = Ty::new(TyKind::Struct("String".into(), Vec::new()));
         assert_eq!(folds(string.clone(), string), None);
         assert_eq!(folds(lane(4), lane(4)), Some(Reg(0)));
-        let literal = Ty::new(TyKind::StringLiteral);
+        let literal = Ty::string_literal();
         assert_eq!(folds(literal.clone(), literal), Some(Reg(0)));
         assert_eq!(folds(Ty::new(TyKind::IntLiteral), Ty::int()), None);
         let reg_types = HashMap::from([(0, Ty::int()), (1, Ty::int())]);
@@ -4291,7 +4291,7 @@ mod tests {
         assert!(answers("P"));
         assert!(answers("Nested"));
         assert!(declarations.copy_is_identity(&lanes));
-        assert!(declarations.copy_is_identity(&Ty::new(TyKind::StringLiteral)));
+        assert!(declarations.copy_is_identity(&Ty::string_literal()));
         for kept in [
             "Copied",
             "Holds",
@@ -4429,7 +4429,7 @@ mod tests {
             struct_ty("Passed"),
             Ty::int(),
         ]))));
-        assert!(declarations.register_passable(&Ty::new(TyKind::StringLiteral)));
+        assert!(declarations.register_passable(&Ty::string_literal()));
         for memory_only in ["Conditional", "Movable", "String"] {
             assert!(
                 !declarations.register_passable(&struct_ty(memory_only)),

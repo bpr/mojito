@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1657**.
+Next free ID: **R1661**.
 
 ## Ordered Work
 
@@ -5191,6 +5191,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `compile_dependent_ct_expr`, and a call whose result is `!kgen.string`
     is no compile-time application there. Bound first (`comptime k =
     _get_kgen_string["llvm.", *parts]()`, `intrin=k`), it runs.
+  - Probe: `StringLiteral[_get_kgen_string["abc"]()]()` is "not a
+    compile-time Int constant: not an associated comptime expression",
+    the same `!kgen.string` call in a type argument. So upstream's
+    `comptime _from[s: StaticString] =
+    StringLiteral[_get_kgen_string[s]()]` cannot be declared in
+    `std.builtin.string_literal` (the std package then fails to build).
+    Port it with this entry.
   - Probe: `print(get_static_string["ab", "cd"]())`, which prints `abcd`
     at the pin. Upstream declares it in
     `std.collections.string.string_span` as
@@ -5953,9 +5960,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `t.k` over `t: Tag[idt(n)]` in `def g[n: Int]` reports "type
     'Tag[idt[Int](n)]' has no field 'k'", where the pin prints `1` for
     `g[1](Tag[idt(1)]())`; `t.key()` over a method returning `Self.k` runs.
-  - The bundled `StringLiteral` members read `Self.value` where upstream's
-    spell `self.value` (`std/builtin/string_literal.mojo`). Respell them
-    when this lands.
+  - The bundled `StringLiteral` members read `Self.value` and
+    `type_of(rhs).value` where upstream's spell `self.value` and
+    `rhs.value` (`std/builtin/string_literal.mojo`). Respell them when this
+    lands.
+  - A literal's `"ab".value` is the same read: today it is a compiler fold
+    (`CtValue::literal_value`, `ParamContext::field`'s literal arm), where
+    the instance's type carries the argument since R1652.
   - Found while landing R1401 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10170,46 +10181,116 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1132 (the trait) and R1608 (a library `Bool`).
   - Model: Opus, Not Planned.
 
-- [ ] **R1652 A string literal's type is the compiler's `StringLiteral`,
-  not the application `StringLiteral[value]` its text keys**
+- [ ] **R1657 A compile-time string that is no literal is typed by the
+  value-less `StringLiteral`**
 
-  `var x: StringLiteral["a".value] = "a"` is rejected, where the pin's
-  literal `"a"` is a `StringLiteral["a"]`.
-  - `std.builtin.string_literal` declares upstream's struct, and an
-    explicit application (`StringLiteral[v]()`) constructs it.
-  - A literal is still `TyKind::StringLiteral`, which holds no value, and a
-    bare `StringLiteral` annotation names that type rather than upstream's
-    auto-parameterized `StringLiteral[_]`.
-  - So a literal's `.value` is a compiler fold (`CtValue::literal_value`)
-    rather than a read of its type's parameter.
-  - Its `byte_length`, `ptr`, and `unsafe_ptr` are compiler rules
-    (`string_literal_primitive`, the VM `invoke.rs` arms, Pliron
-    `methods.rs`), where the struct's are library bodies.
-  - Lever: bridge the declaration onto the literal as R1549 bridged `SIMD`
-    (`Ty::new`, `types::nominal_parts`, `declared_receiver_member`), with
-    the literal's text as the type's argument, then delete those rules.
-  - Probe: `print(StringLiteral["ab".value]()._is_identical("ab"))` prints
-    `True` at the pin. Port `_is_identical` (over
-    `#kgen.param.identical`) and `_from[s: StaticString]` with the bridge.
-  - Depends on R1606 (a bare `StringLiteral` parameter is
-    `StringLiteral[_]`).
-  - Model: Fable, Planned.
+  `type_of(s)` over a `[s: String]` parameter is rejected ("'type_of' of a
+  literal value"), where the pin prints `String`.
+  - Since R1652 a literal's type carries its text, `StringLiteral["ab"]`.
+    `TyKind::StringLiteral(None)` remains for strings upstream gives another
+    type, and upstream has no such type.
+  - Producers: a compile-time `String` or `StringLiteral` value parameter
+    (`annotations.rs` `scalar_type_name`, `comptime/params.rs`), a reflected
+    name (`reflection.rs`, `call_inference.rs`'s `_unqualified_type_name`
+    arm), `infer_stringify` (`builtins.rs`), `call_defaults.rs`'s key
+    register, and `CtValue::Str`'s `MetaTy` (`param_expr.rs`).
+  - The join of two literals of different texts (`common_string_literal`,
+    `checker/builtins.rs`) is one too, where upstream's is a `String`.
+  - Each should get upstream's type: `String`, `StaticString`, or a
+    `StringLiteral[expr]`.
+  - Probe: `comptime m = "a" if True else "bb"` then
+    `print(_unqualified_type_name[type_of(m)]())` prints `String` at the
+    pin, and is rejected here.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
-- [ ] **R1651 `@__nonmaterializable(String)` is not read, so a bound
-  `StringLiteral[v]` stays a literal**
+- [ ] **R1658 A bare `StringLiteral` argument is a checker rule, where
+  upstream auto-parameterizes it**
 
-  `var s = StringLiteral["ab".value]()` binds a `StringLiteral["ab"]` here,
-  where the pin materializes it as a `String`.
-  - Upstream declares `StringLiteral` `@__nonmaterializable(String)`. The
-    parser rejects the decorator, so the bundled struct omits it.
-  - Mojito materializes only the compiler literal, by rule
-    (`generics::unify`'s `TyKind::StringLiteral` arm and the binding
-    rules that default a literal).
+  `def f(s: StringLiteral) -> Bool: return s._is_identical("abc")` reports
+  "type 'StringLiteral' has no method '_is_identical'", where the pin
+  prints `True False` for `f("abc"), f("x")`.
+  - The parser makes the bare name `Type::StringLiteral`, not a
+    `Type::Named`, so R1606's `auto_parameterize.rs` never sees it.
+  - The checker types it as the value-less `StringLiteral`, which no
+    declared member answers, under the `bare_literal_parameter` flag
+    (`declarations.rs`, `statements.rs`) that `Checker::bare_literal`
+    (`type_resolution.rs`) reads.
+  - Lever: parse it as `Type::Named`, delete that flag and
+    `is_string_literal_annotation`, and let the argument instantiate per
+    text as `StringLiteral[_]`.
+  - `String.__init__(data: StringLiteral)`, `StringSpan.__init__(literal:
+    StringLiteral)`, `Path.__init__`, and `StringDict._insert` then
+    instantiate per text. Their conversions are reached through
+    `implicit_conversion_target(&Ty::string_literal(), ...)`
+    (`call_inference.rs`, `iteration.rs`), whose value-less source must
+    carry the literal's type first.
+  - Respell the bundled `_is_identical`'s `rhs: StringLiteral[_]` as the
+    bare `StringLiteral`.
+  - Probe: `print(StringLiteral.__init__)` and every other bare
+    `StringLiteral` in an expression is "Undefined variable", because
+    `Type::StringLiteral` respells as an identifier no scope binds
+    (`ast.rs`).
+  - Depends on R1657 (the value-less conversion source).
+  - Model: Fable, Not Planned.
+
+- [ ] **R1659 The value-less `StringLiteral`'s byte primitives are
+  compiler rules**
+
+  `byte_length`, `ptr`, and `unsafe_ptr` on a value-less `StringLiteral`
+  receiver run compiler rules, where upstream runs the struct's bodies.
+  - The rules are `string_literal_primitive`
+    (`method_calls/intrinsic_receivers.rs`), the VM's `Value::Str` arms
+    (`invoke.rs`, guarded by `declared_owner`), and Pliron's
+    `lower/methods.rs` arms.
+  - A literal whose type carries its text already runs the declared
+    members (R1652).
+  - Delete the rules and `TyKind::StringLiteral(None)` itself.
+  - Probe: `def f(s: StringLiteral) -> Int: return s.byte_length()`
+    prints `3` for `f("abc")`. Done when `rg string_literal_primitive
+    crates` is empty.
+  - Depends on R1658.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1660 A `StringLiteral[value]` application is the compiler's
+  literal type, held as a 16-byte descriptor**
+
+  The `Ty::new` bridge (`bridged_string_literal`, `types.rs`) maps the
+  declared struct's application onto `TyKind::StringLiteral`, where
+  upstream's type is the struct itself, empty and register-passable.
+  - So the declared `__init__`'s empty body would build nothing: the
+    checker constructs `StringLiteral[v]()` by rule
+    (`string_literal_construction`, `call_inference.rs`) as a
+    `ConstructType` whose default construction is the literal's text
+    (`type_construction.rs`).
+  - The bridge also keeps literal-specific arms beside every `SIMD` one:
+    `nominal_parts`, `declared_receiver_member`, `self_receiver_ty`
+    (`mir.rs`), `types_compatible` (`verify/types.rs`), the walkers in
+    `types.rs`, and the elaborator's `substitute.rs` and `unify.rs`.
+  - Pliron writes a literal's `repr` through the nominal `String`'s
+    `write_repr_to` (`lower_repr_builtin`), because a literal type has no
+    struct instance whose member table names one.
+  - This is `SIMD`'s R1557 for the literal. Done when `rg
+    bridged_string_literal crates` is empty.
+  - Depends on R1659.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1651 `@__nonmaterializable(String)` is not read, so a literal
+  materializes by a compiler rule**
+
+  A bound `StringLiteral` becomes a `String` by rule
+  (`generics::unify`'s `TyKind::StringLiteral` arm and the binding rules
+  that default a literal), where upstream reads the struct's
+  `@__nonmaterializable(String)`.
+  - The parser rejects the decorator, so the bundled struct omits it.
+  - Since R1652 the rule also covers an explicit application, so `var s =
+    StringLiteral["ab".value](); print(s.as_string_slice())` fails as at
+    the pin ("no method 'as_string_slice'" on `String`).
   - Lever: parse the decorator onto the declaration and read it where a
     binding materializes, so the literal's rule is that one instance.
-  - Probe: `var s = StringLiteral["ab".value](); print(s.as_string_slice())`
-    fails at the pin with "'String' value has no attribute
-    'as_string_slice'", and runs here.
+  - Probe: the bundled struct declares `@__nonmaterializable(String)` and
+    `rg 'TyKind::StringLiteral' crates/mojito-checker/src/checker/generics.rs`
+    finds no materialization arm.
   - Depends on R1652 (`String`'s constructor from the literal takes the
     struct).
   - Model: Opus, Not Planned.
@@ -10262,7 +10343,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The bundled `write_to` and `write_repr_to` read `as_string_slice()`
     for that reason. Respell them as upstream's when this lands, and add
     `FloatableRaising`, `IntableRaising`, and `PathLike`.
-  - Depends on R1190 (a run-time `!kgen.string`) and R1652 (the bare
+  - Depends on R1190 (a run-time `!kgen.string`) and R1658 (the bare
     `lit: StringLiteral` parameter).
   - Model: Opus, Not Planned.
 

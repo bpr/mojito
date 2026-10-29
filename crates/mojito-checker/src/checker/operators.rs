@@ -305,9 +305,16 @@ impl Checker {
             // Upstream's `Bool.__and__`/`__or__`/`__xor__`: the eager `i1` op.
             BitAnd | BitOr | BitXor if lt == TyKind::Bool && rt == TyKind::Bool => Some(Ty::bool()),
             // `+` concatenates String, or adds numbers (result = common type).
-            Add if lt == TyKind::StringLiteral && rt == TyKind::StringLiteral => {
-                Some(Ty::string_literal())
-            }
+            // Two known texts concatenate to the literal of both.
+            Add if lt.is_string_literal() && rt.is_string_literal() => Some(
+                match (
+                    lt.kind().string_literal_text(),
+                    rt.kind().string_literal_text(),
+                ) {
+                    (Some(left), Some(right)) => Ty::string_literal_of(&format!("{left}{right}")),
+                    _ => Ty::string_literal(),
+                },
+            ),
             // Literal arithmetic, bitwise logic, and shifts keep the literal
             // type; the same operators beside a `SIMD` are its dunders above.
             Add | Sub | Mul | FloorDiv
@@ -344,7 +351,13 @@ impl Checker {
             }
             // Equality: between numbers (any common type), or equal non-numeric
             // scalars (Bool/String/None).
-            Eq | Ne if common.is_some() || (lt == rt && is_scalar(&lt)) => Some(Ty::bool()),
+            Eq | Ne
+                if common.is_some()
+                    || (lt == rt && is_scalar(&lt))
+                    || (lt.is_string_literal() && rt.is_string_literal()) =>
+            {
+                Some(Ty::bool())
+            }
             _ => None,
         };
         if let Some(ty) = result {
@@ -356,7 +369,7 @@ impl Checker {
         // A string literal before a nominal `String` converts to `String`
         // through the `@implicit` literal constructor, whose dunder the
         // operator then calls.
-        if lt == TyKind::StringLiteral
+        if lt.is_string_literal()
             && self.is_nominal_string(&rt)
             && op.dunder().is_some()
             && self.record_implicit_conversion(left, &lt, &rt)?
@@ -642,7 +655,7 @@ impl Checker {
                     TyKind::Tuple(elements) => self.tuple_elements_equatable(elements),
                     _ => self.is_list_equatable(lt),
                 },
-                TyKind::StringLiteral => *lt == TyKind::StringLiteral,
+                TyKind::StringLiteral(_) => lt.is_string_literal(),
                 _ => false,
             };
         if ok {
@@ -887,7 +900,7 @@ impl Checker {
         let aty = self.infer(&args[0])?;
         let nominal_string = matches!(aty.kind(), TyKind::Struct(name, args)
             if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
-        if aty != TyKind::StringLiteral && !nominal_string {
+        if !aty.is_string_literal() && !nominal_string {
             return Err(TypeError::TypeMismatch {
                 expected: "String".to_string(),
                 found: aty.to_string(),

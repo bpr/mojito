@@ -407,10 +407,18 @@ impl VmBackend {
                 self.store_at_call_place(frame_id, place, Value::Str(text), regs, vars)?;
                 Ok(Value::None)
             }
-            Value::Str(text) if method == "byte_length" && args.is_empty() => {
+            // The value-less `StringLiteral`'s byte primitives (R1659); a
+            // literal whose type carries its text runs `StringLiteral`'s.
+            Value::Str(text)
+                if method == "byte_length" && args.is_empty() && declared_owner.is_none() =>
+            {
                 Ok(Value::Int(text.len() as i64))
             }
-            Value::Str(text) if matches!(method, "ptr" | "unsafe_ptr") && args.is_empty() => {
+            Value::Str(text)
+                if matches!(method, "ptr" | "unsafe_ptr")
+                    && args.is_empty()
+                    && declared_owner.is_none() =>
+            {
                 let allocation = self.static_literal_bytes(text)?;
                 Ok(Value::Pointer {
                     allocation,

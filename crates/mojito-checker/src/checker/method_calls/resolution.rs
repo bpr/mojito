@@ -46,14 +46,19 @@ impl Checker {
 
     /// The declaration a compiler-typed receiver's member `method` is read
     /// from before the compiler's rule: `SIMD`'s, for a `TyKind::Simd`
-    /// receiver whose struct declares it. A literal receiver is no instance
-    /// (`(5).__len__()` has no such attribute at the pin).
+    /// receiver whose struct declares it, and `StringLiteral`'s, for a
+    /// string literal whose type carries its value. A numeric literal
+    /// receiver is no instance (`(5).__len__()` has no such attribute at
+    /// the pin), and neither is the value-less `StringLiteral`.
     pub(in crate::checker) fn declared_receiver_member<'t>(
         &self,
         ty: &'t Ty,
         method: &str,
     ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
-        if !matches!(ty.kind(), TyKind::Simd { .. }) {
+        if !matches!(
+            ty.kind(),
+            TyKind::Simd { .. } | TyKind::StringLiteral(Some(_))
+        ) {
             return None;
         }
         self.nominal_struct(ty).filter(|(name, _)| {

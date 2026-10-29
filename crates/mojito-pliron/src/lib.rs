@@ -1037,10 +1037,15 @@ impl<'p> CallEdges<'p, '_> {
             // instance in the lowered expansion.
             MirInstr::Call { func, args, .. } if func.0 == "repr" => {
                 for arg in args {
-                    if let Some(TyKind::Struct(name, _)) =
-                        self.function.reg_types.get(&arg.0).map(Ty::kind)
-                    {
-                        self.push_members(name, "write_repr_to");
+                    match self.function.reg_types.get(&arg.0).map(Ty::kind) {
+                        Some(TyKind::Struct(name, _)) => self.push_members(name, "write_repr_to"),
+                        // A literal's repr writes through the nominal
+                        // `String`'s member.
+                        Some(TyKind::StringLiteral(_)) => self.push_members(
+                            mojito_symbol::symbol::STDLIB_STRING_STRUCT,
+                            "write_repr_to",
+                        ),
+                        _ => {}
                     }
                 }
             }
@@ -1140,7 +1145,7 @@ impl<'p> CallEdges<'p, '_> {
                     // alternative's instances are edges.
                     let mut nominal_alternatives: Vec<&str> = Vec::new();
                     let mut string_leaf =
-                        matches!(receiver.map(Ty::kind), Some(TyKind::StringLiteral));
+                        matches!(receiver.map(Ty::kind), Some(TyKind::StringLiteral(_)));
                     if let Some(TyKind::Variant(alternatives)) = receiver.map(Ty::kind) {
                         for alternative in alternatives {
                             if let TyKind::Struct(name, _) = alternative.kind() {

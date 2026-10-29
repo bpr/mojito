@@ -1194,7 +1194,7 @@ mod native_abi_cross_checks {
                     TyKind::Pointer { .. } | TyKind::Ref(_) => {
                         LLVMPointerTypeInContext(self.ctx, 0)
                     }
-                    TyKind::StringLiteral => {
+                    TyKind::StringLiteral(_) => {
                         let ptr = LLVMPointerTypeInContext(self.ctx, 0);
                         let len = LLVMInt64TypeInContext(self.ctx);
                         self.strukt(&[ptr, len])

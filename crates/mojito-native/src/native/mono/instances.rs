@@ -85,7 +85,7 @@ impl Specializer<'_> {
             )?;
             return Ok(());
         }
-        if matches!(receiver.kind(), TyKind::StringLiteral) {
+        if matches!(receiver.kind(), TyKind::StringLiteral(_)) {
             let string = Ty::new(TyKind::Struct(
                 mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
                 Vec::new(),
@@ -263,6 +263,19 @@ impl Specializer<'_> {
         function: &MirFunction,
         arg: Reg,
     ) -> Result<(), MonoError> {
+        // A string literal's repr is its `as_string_slice()`'s, which the
+        // backends write through the nominal `String`'s member (R1660).
+        if function
+            .reg_types
+            .get(&arg.0)
+            .is_some_and(|ty| peel_refs(ty).is_string_literal())
+        {
+            let string = Ty::new(TyKind::Struct(
+                mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
+                Vec::new(),
+            ));
+            return self.enqueue_format_ty_instance(owner, &string, "write_repr_to");
+        }
         self.enqueue_format_instance(owner, function, arg, "write_repr_to")
     }
 
@@ -276,14 +289,22 @@ impl Specializer<'_> {
         let Some(ty) = function.reg_types.get(&arg.0) else {
             return Ok(());
         };
-        let ty = peel_refs(ty).clone();
+        self.enqueue_format_ty_instance(owner, peel_refs(ty), method)
+    }
+
+    fn enqueue_format_ty_instance(
+        &mut self,
+        owner: &str,
+        ty: &Ty,
+        method: &str,
+    ) -> Result<(), MonoError> {
         let TyKind::Struct(name, arguments) = ty.kind() else {
             return Ok(());
         };
         let exact = format!("{name}.{method}");
         if self.functions.contains_key(exact.as_str()) {
             if self.writes_protocol(&exact) {
-                self.enqueue_nominal_method_instance(owner, &ty, method, 1, &[])?;
+                self.enqueue_nominal_method_instance(owner, ty, method, 1, &[])?;
             }
             return Ok(());
         }

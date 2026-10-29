@@ -1814,6 +1814,12 @@ impl Checker {
             CtValue::IntLiteral(_) => Some(Ty::int_literal()),
             CtValue::FloatLiteral(_) => Some(Ty::float_literal()),
             CtValue::Bool(_) => Some(Ty::bool()),
+            // Against a `StringLiteral[v]` slot the value is the literal of
+            // its text, which solves `v`; elsewhere it is still the
+            // value-less compile-time string (R1657).
+            CtValue::Str(text) if matches!(self_ty.kind(), TyKind::StringLiteral(Some(_))) => {
+                Some(Ty::string_literal_of(text))
+            }
             CtValue::Str(_) => Some(Ty::string_literal()),
             CtValue::Dtype(_) => Some(Ty::dtype()),
             CtValue::Trait(traits) => Some(TyKind::AnyTrait(traits.clone()).into()),
@@ -2678,7 +2684,10 @@ impl Checker {
             return self.is_trivial_register_passable(&element);
         }
         super::builtins::is_numeric(ty)
-            || matches!(ty.kind(), TyKind::Bool | TyKind::Dtype)
+            || matches!(
+                ty.kind(),
+                TyKind::Bool | TyKind::Dtype | TyKind::StringLiteral(_)
+            )
             || super::builtins::simd_valued_ty(ty)
             || match ty.kind() {
                 TyKind::Struct(name, args) => {
@@ -2709,7 +2718,7 @@ impl Checker {
         }
         let proves = |bound: &str| self.trait_implies(bound, "RegisterPassable");
         match ty.kind() {
-            TyKind::StringLiteral | TyKind::None => Proven,
+            TyKind::StringLiteral(_) | TyKind::None => Proven,
             TyKind::Tuple(elements) => elements.iter().fold(Proven, |joined, element| {
                 match (joined, self.register_passability(element)) {
                     (Excluded, _) | (_, Excluded) => Excluded,

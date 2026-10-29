@@ -221,7 +221,11 @@ fn default_construction<S: BuildHasher>(
         TyKind::INT | TyKind::IntLiteral | TyKind::UINT => Some(Const::Int(0)),
         TyKind::Bool => Some(Const::Bool(false)),
         TyKind::FLOAT64 | TyKind::FloatLiteral => Some(Const::Float(0.0)),
-        TyKind::StringLiteral => Some(Const::Str(String::new())),
+        // A literal's type names its one value, as upstream's empty
+        // `StringLiteral[value]` struct does.
+        kind @ TyKind::StringLiteral(_) => Some(Const::Str(
+            kind.string_literal_text().unwrap_or_default().to_string(),
+        )),
         TyKind::None => Some(Const::None),
         _ => None,
     };

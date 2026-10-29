@@ -2107,7 +2107,21 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::INT => "Int".into(),
         TyKind::UINT => "UInt".into(),
         TyKind::Bool => "Bool".into(),
-        TyKind::StringLiteral => "StringLiteral".into(),
+        TyKind::StringLiteral(None) => "StringLiteral".into(),
+        // A literal whose type carries its value is spelled as the struct
+        // application the decoder's `Ty::new` bridges back.
+        TyKind::StringLiteral(Some(_)) => mojito_types::types::nominal_parts(ty).map_or_else(
+            || "StringLiteral".into(),
+            |(name, args)| {
+                record(
+                    "struct_type",
+                    &[
+                        ("name", symbol(name)),
+                        ("arguments", list(args.iter().map(ty_arg))),
+                    ],
+                )
+            },
+        ),
         TyKind::FLOAT64 => "Float64".into(),
         TyKind::None => "None".into(),
         TyKind::Never => "Never".into(),

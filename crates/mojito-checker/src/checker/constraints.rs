@@ -1013,8 +1013,9 @@ impl Checker {
     /// type of the operand, which is typed without being evaluated (inside a
     /// probe, as upstream emits it into a block it then erases). A trait or a
     /// trait composition gives the trait metatype. A type operand's metatype
-    /// and a literal value's value-parameterized literal type have no `Ty`,
-    /// so each is rejected. In a signature the operand reads the parameters
+    /// and a numeric literal value's value-parameterized literal type have
+    /// no `Ty`, so each is rejected; a string literal's type carries its
+    /// value. In a signature the operand reads the parameters
     /// declared before it ([`Self::in_signature_scope`]).
     pub(super) fn type_of_operand(&self, operand: &Expr) -> Result<Ty, TypeError> {
         if let Some(traits) = self.trait_value(operand) {
@@ -1036,10 +1037,15 @@ impl Checker {
         });
         self.annotation_depth.set(depth);
         let (ty, literal) = typed?;
+        // A string literal's type carries its value: `type_of("ab")` is
+        // `StringLiteral["ab"]`.
+        if matches!(ty.kind(), TyKind::StringLiteral(Some(_))) {
+            return Ok(ty);
+        }
         if literal
             || matches!(
                 ty.kind(),
-                TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral
+                TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral(None)
             )
         {
             return Err(TypeError::Unsupported(
@@ -1539,7 +1545,7 @@ impl Checker {
         if args.is_empty() {
             // A type value names the nominal `String`, not the compile-time
             // literal type a `[text: String]` value parameter binds.
-            if let Some(ty) = scalar_type_name(name).filter(|ty| *ty != TyKind::StringLiteral) {
+            if let Some(ty) = scalar_type_name(name).filter(|ty| !ty.is_string_literal()) {
                 return Ok(Some((CtValue::Type(ty), Vec::new())));
             }
             if name == "None" {
@@ -2287,7 +2293,7 @@ impl Checker {
         let closed = literal
             .as_constant()
             .is_some_and(|value| value.literal_value().is_some());
-        let parameter = matches!(literal.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::StringLiteral));
+        let parameter = matches!(literal.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::StringLiteral(_)));
         (closed || parameter).then_some(literal)
     }
 
@@ -2771,10 +2777,24 @@ impl Checker {
                     .op(ParamOp::DataToStr, &[string, rest])
                     .map_err(param_error)
             }
+            // Whole-value identity of two parameters of one type, a
+            // `Bool` (`StringLiteral._is_identical`).
+            ("#kgen.param.identical<{},{}>:!kgen.scalar<bool>", [left, right]) => {
+                let left = self.bracket_operand(left, recording)?;
+                let right = self.bracket_operand(right, recording)?;
+                if left.meta() != right.meta() {
+                    return Err(TypeError::TypeMismatch {
+                        expected: left.meta().to_string(),
+                        found: right.meta().to_string(),
+                        context: "the operands of '#kgen.param.identical'".to_string(),
+                    });
+                }
+                Ok(context.identical(&left, &right))
+            }
             _ => Err(TypeError::Unsupported(format!(
                 "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
-                 attribute, '#kgen.param_list.size', '#kgen.param_list.get', and \
-                 '#kgen.param.expr<data_to_str>' are read"
+                 attribute, '#kgen.param_list.size', '#kgen.param_list.get', \
+                 '#kgen.param.expr<data_to_str>', and '#kgen.param.identical' are read"
             ))),
         }
     }
@@ -2798,6 +2818,10 @@ impl Checker {
                 if let Some(list) = self.self_raw_list(field) =>
             {
                 Ok(list)
+            }
+            // `Self.value`, a value parameter a bracket parses as a type.
+            ParamArg::Type(source) if let Some(read) = self.type_spelled_member_read(source) => {
+                self.build_ct(&read, recording)
             }
             ParamArg::Type(ty) => self
                 .trait_type_arg(operand)
@@ -3042,7 +3066,10 @@ impl Checker {
                     mojito_types::param_expr::MetaTy::value(ty),
                 )))
             }
-            TyKind::Struct(name, arguments) => {
+            // A declared struct's member, a bridged type's (`StringLiteral`'s
+            // `value`) included.
+            _ => {
+                let (name, arguments) = self.nominal_struct(&subject)?;
                 let info = self.structs.get(name)?;
                 // A type member is no value, but read through a generator it
                 // is first rejected for depending on the unbound parameters.
@@ -3054,14 +3081,13 @@ impl Checker {
                     return Some(Err(error));
                 }
                 let value = self
-                    .struct_value_member(info, arguments, field)
-                    .or_else(|| self.struct_generator_member(&subject, info, arguments, field))?;
+                    .struct_value_member(info, &arguments, field)
+                    .or_else(|| self.struct_generator_member(&subject, info, &arguments, field))?;
                 Some(value.and_then(|value| {
                     self.reject_generator_dependence(object, field, &value)
                         .map(|()| value)
                 }))
             }
-            _ => None,
         }
     }
 

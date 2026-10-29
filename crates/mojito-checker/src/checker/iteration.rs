@@ -283,7 +283,7 @@ impl Checker {
     /// other unplaced String source. Seams without the linked stdlib struct
     /// keep the literal (and reject downstream).
     pub(super) fn convert_literal_iterable(&self, iter: &Expr, iter_ty: Ty) -> Ty {
-        if iter_ty != TyKind::StringLiteral {
+        if !iter_ty.is_string_literal() {
             return iter_ty;
         }
         let nominal = Ty::new(TyKind::Struct(

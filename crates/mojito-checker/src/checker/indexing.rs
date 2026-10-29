@@ -992,7 +992,7 @@ impl Checker {
             // Positional slicing on a StringLiteral value is gone at the
             // audited head along with nominal String positional slicing;
             // only the keyword-unit spellings remain.
-            TyKind::StringLiteral => {
+            TyKind::StringLiteral(_) => {
                 return Err(TypeError::Unsupported(
                     "String positional slicing was removed in current Mojo; spell the \
                      unit explicitly: 's[byte=a:b]' or 's[codepoint=a:b]'"
@@ -1886,7 +1886,7 @@ impl Checker {
         // A string literal's `value` parameter is its KGEN string, which a
         // compile-time position reads and no runtime value holds.
         if field == mojito_types::ct::LITERAL_VALUE_MEMBER
-            && matches!(obj_ty.kind(), TyKind::StringLiteral)
+            && matches!(obj_ty.kind(), TyKind::StringLiteral(_))
         {
             return if self.crosses_to_runtime() {
                 Err(super::comptime_validation::kgen_string_runtime_read())

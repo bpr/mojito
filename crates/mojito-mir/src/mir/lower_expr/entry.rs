@@ -576,7 +576,7 @@ impl<'a> Flatten<'a> {
     fn nominal_string_view_source(&mut self, e: Node<'a>, value: Reg, target: &str) -> Reg {
         if !matches!(
             self.f.reg_types.get(&value.0).map(Ty::kind),
-            Some(TyKind::StringLiteral)
+            Some(TyKind::StringLiteral(_))
         ) || !mojito_symbol::symbol::single_nominal_string_ctor(target)
         {
             return value;

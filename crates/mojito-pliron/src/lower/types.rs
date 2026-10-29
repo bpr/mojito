@@ -168,7 +168,7 @@ pub fn lower_ty(
         | TyKind::RuntimePack(_)
         | TyKind::Variant(_)
         | TyKind::Simd { .. }
-        | TyKind::StringLiteral
+        | TyKind::StringLiteral(_)
         | TyKind::Func(_) => match layout.layout_of(ty) {
             Ok(computed) => Ok(LowerTy::Aggregate {
                 ty: ty.clone(),

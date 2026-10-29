@@ -4850,11 +4850,17 @@ Everything else (comparison, concatenation, membership, hashing, decoding,
 slicing, and the result APIs, which live on the view with `String`
 forwarding through `StringSpan(self)`) is pure library code.
 
-The `StringLiteral`-vs-`String` split is realized at the type level. The
-compile-time literal type is `TyKind::StringLiteral` (spelled `StringLiteral` in
-source, mirroring `TyKind::IntLiteral`); string literals and literal-only
-operations stay on it, as do comptime strings, `[text: String]` value
-parameters, kwargs keys, and Writer payloads inside the stdlib. A source
+The `StringLiteral`-vs-`String` split is realized at the type level. A
+string literal `"ab"` is upstream's `StringLiteral["ab"]`, the application of
+the struct `std/builtin/string_literal.mojo` declares; the `Ty::new` bridge
+holds that application as `TyKind::StringLiteral(Some(value))`, as it holds
+`SIMD`'s as `TyKind::Simd`, so the compiler's descriptor representation and
+the struct's library members serve one type, and `nominal_parts` answers it
+as the struct's instance. Literal-only operations stay on it. The value-less
+`TyKind::StringLiteral(None)`, which upstream has no type for, still types
+comptime strings, `[text: String]` value parameters, a bare run-time
+`StringLiteral` argument, kwargs keys, and Writer payloads inside the stdlib
+(R1657, R1658). A source
 `String` annotation is not a builtin type keyword: it parses as an ordinary
 name, the prelude rewrite qualifies it, and ordinary struct lookup resolves
 the nominal struct — no dedicated checker path. A literal converts wherever

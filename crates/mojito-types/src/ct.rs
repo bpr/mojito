@@ -1049,7 +1049,7 @@ impl CtValue {
             | (value @ Self::IntLiteral(_), TyKind::IntLiteral)
             | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral)
             | (value @ Self::Bool(_), TyKind::Bool | TyKind::I1)
-            | (value @ Self::Str(_), TyKind::StringLiteral) => Some(value),
+            | (value @ Self::Str(_), TyKind::StringLiteral(_)) => Some(value),
             // A string literal is the nominal `String`'s compile-time form
             // (`comptime E: Dict[String, Int] = {"a": 1}`).
             (value @ Self::Str(_), TyKind::Struct(name, args))
@@ -1439,7 +1439,7 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         TyKind::INT | TyKind::IntLiteral => Type::Int,
         TyKind::UINT => Type::UInt,
         TyKind::Bool => Type::Bool,
-        TyKind::StringLiteral => Type::StringLiteral,
+        TyKind::StringLiteral(_) => Type::StringLiteral,
         TyKind::FLOAT64 | TyKind::FloatLiteral => Type::Float64,
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),

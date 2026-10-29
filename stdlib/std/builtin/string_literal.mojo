@@ -1,17 +1,23 @@
 # Upstream's `std/builtin/string_literal.mojo`, in part: the
 # `StringLiteral[value]` struct with its default initializer, `__bool__`,
-# `byte_length`, `ptr`, `as_string_slice`, `as_bytes`, `write_to`, and
-# `write_repr_to`. A literal's own type is still the compiler's
-# `StringLiteral`, and a bare `StringLiteral` annotation names it (R1652),
-# so this struct is what an explicit application `StringLiteral[v]` names.
-# The comparisons and `__add__` (R1653), `__hash__` (R1654), and the
-# members whose bodies read `StringSlice(self)` (R1655) are not ported, and
-# for that reason `write_to` and `write_repr_to` read `as_string_slice()`.
+# `byte_length`, `ptr`, `unsafe_ptr`, `as_string_slice`, `as_bytes`,
+# `_is_identical`, `write_to`, and `write_repr_to`. A literal `"ab"` is a
+# `StringLiteral["ab"]`, whose members are these bodies. The compiler holds
+# an application as its literal type (R1660), and builds one by rule, so
+# the default initializer's empty body constructs nothing. A bare run-time
+# `StringLiteral` argument is still a value-less compiler type rather than
+# upstream's `StringLiteral[_]` (R1658), which is why `_is_identical` spells
+# its `rhs` as `StringLiteral[_]`. `_from` is not ported: a call returning
+# `!kgen.string` is no type argument yet (R1190). The comparisons and
+# `__add__` (R1653), `__hash__` (R1654), and the members whose bodies read
+# `StringSlice(self)` (R1655) are not ported, and for that reason
+# `write_to` and `write_repr_to` read `as_string_slice()`.
 # `@__nonmaterializable(String)` is not read (R1651). The struct declares
 # only the traits whose requirements are ported here. A member reads its
-# parameter as `Self.value` where upstream's spell `self.value` (R1447),
-# and `ptr` takes `pop.string.address` as the `Pointer` itself, where
-# upstream's wraps the `!kgen.pointer` it gives (R1316).
+# parameter as `Self.value` and `type_of(rhs).value` where upstream's spell
+# `self.value` and `rhs.value` (R1447), and `ptr` takes
+# `pop.string.address` as the `Pointer` itself, where upstream's wraps the
+# `!kgen.pointer` it gives (R1316).
 """Implements the StringLiteral struct.
 
 These are Mojo built-ins, so you don't need to import them.
@@ -89,6 +95,19 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         """
         return __mlir_op.`pop.string.address`(Self.value)
 
+    @doc_hidden
+    @inline(.nodebug)
+    @deprecated(use=ptr)
+    def unsafe_ptr(
+        self,
+    ) -> Pointer[Byte, ImmStaticOrigin]:
+        """Get a pointer to the underlying data.
+
+        Returns:
+            The pointer to the data.
+        """
+        return self.ptr()
+
     @inline(.nodebug)
     def as_string_slice(self) -> StaticString:
         """Returns a string slice of this static string literal.
@@ -119,6 +138,18 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         return Span[Byte, ImmStaticOrigin](
             unsafe_ptr=self.ptr(), length=self.byte_length()
         )
+
+    @always_inline("builtin")
+    def _is_identical(self, rhs: StringLiteral[_]) -> Bool:
+        """Returns whether two string literals have identical KGEN parameters.
+        """
+        return __mlir_attr[
+            `#kgen.param.identical<`,
+            Self.value,
+            `, `,
+            type_of(rhs).value,
+            `> : !kgen.scalar<bool>`,
+        ]
 
     def write_to(self, mut writer: Some[Writer]):
         """

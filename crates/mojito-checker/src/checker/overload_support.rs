@@ -830,28 +830,34 @@ impl ArgumentBinding {
 /// conversion to `String`, a numeric one the unit of its default type.
 pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
     match actual.kind() {
-        TyKind::StringLiteral => CONVERSION_UNIT,
+        TyKind::StringLiteral(_) => CONVERSION_UNIT,
         TyKind::IntLiteral | TyKind::FloatLiteral => 1,
         _ => 0,
     }
 }
 
 /// The conversion cost of one argument, in `CONVERSION_UNIT`s: 0 for an
-/// exact match, one unit for a numeric literal at its contextual default
+/// exact match (a literal against the value-less `StringLiteral` is one,
+/// as the pin's literal is the `StringLiteral[_]` it binds), one unit for a numeric literal at its contextual default
 /// type, and one whole conversion for an implicit conversion. A string
 /// literal converting to anything but the nominal `String` costs two:
 /// `String` is the literal's contextual default type, so it ranks above the
 /// literal's other converting constructors (`StringSpan`), keeping
 /// `s.__eq__("x")` selecting the `String`-typed overload beside the view one.
 pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
-    if actual == expected {
+    if actual == expected
+        || matches!(
+            (actual.kind(), expected.kind()),
+            (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(None))
+        )
+    {
         0
     } else if matches!(actual.kind(), TyKind::IntLiteral) && matches!(expected.kind(), TyKind::INT)
         || matches!(actual.kind(), TyKind::FloatLiteral)
             && matches!(expected.kind(), TyKind::FLOAT64)
     {
         1
-    } else if matches!(actual.kind(), TyKind::StringLiteral)
+    } else if matches!(actual.kind(), TyKind::StringLiteral(_))
         && !matches!(
             expected.kind(),
             TyKind::Struct(name, args)

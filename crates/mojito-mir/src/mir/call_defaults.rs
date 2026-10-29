@@ -1727,7 +1727,7 @@ fn literal_type(literal: &CheckedConst) -> Ty {
         CheckedConst::Int(_) => Ty::int_literal(),
         CheckedConst::Float(_) => Ty::float_literal(),
         CheckedConst::Bool(_) => Ty::bool(),
-        CheckedConst::String(_) => Ty::string_literal(),
+        CheckedConst::String(text) => Ty::string_literal_of(text),
         CheckedConst::None => Ty::none(),
         CheckedConst::Dtype(_) => Ty::dtype(),
         CheckedConst::Construct { .. } | CheckedConst::Evaluate { .. } => Ty::error(),

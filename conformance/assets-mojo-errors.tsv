@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	924
+# swept-count	925
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -827,6 +827,7 @@ assets/type_error/string_grapheme_slice_rejected.mojo	compile-reject	agree	error
 assets/type_error/string_iadd_view_aliases_receiver.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'other' argument in '__iadd__' call
 assets/type_error/string_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.
 assets/type_error/string_literal_positional_slice_removed.mojo	compile-reject	agree	error: String does not support direct positional slicing like `s[a:b]` because Mojo strings are UTF-8 encoded, and the same range can mean different things. Use `s[byte=a:b]` to slice by raw UTF-8 byte positions, or `s[codepoint=a:b]` to slice by Unicode code points.
+assets/type_error/string_literal_value_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["b"]' value to 'StringLiteral["a"]'
 assets/type_error/string_span_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.
 assets/type_error/string_span_return_temporary.mojo	compile-reject	agree	error: cannot implicitly convert 'String' value to 'StringSpan[origin_of(self)]'
 assets/type_error/struct_binder_origin_store_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'RefBox[origin_of(other)]' value to 'RefBox[origin]'

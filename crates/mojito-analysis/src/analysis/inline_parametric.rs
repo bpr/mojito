@@ -712,7 +712,7 @@ impl Literal {
                 )
             }
             (CheckedConst::Bool(value), TyKind::Bool) => (Const::Bool(*value), None),
-            (CheckedConst::String(value), TyKind::StringLiteral) => {
+            (CheckedConst::String(value), TyKind::StringLiteral(_)) => {
                 (Const::Str(value.clone()), None)
             }
             (CheckedConst::Dtype(value), TyKind::Dtype) => (Const::Dtype(*value), None),

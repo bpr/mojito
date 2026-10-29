@@ -37,6 +37,11 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if held_found != *found || held_expected != *expected {
         return types_compatible(&held_found, &held_expected);
     }
+    // Every string literal is one held descriptor whatever its text, which
+    // the checker owns, value-less or still a parameter (R1660).
+    if found.is_string_literal() && expected.is_string_literal() {
+        return true;
+    }
     if let (Some(found), Some(expected)) =
         (callable_environment(found), callable_environment(expected))
         && !mojito_types::types::callable_environment_coerces(found, expected)
@@ -591,6 +596,7 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
             elements.iter().any(contains_type_param)
         }
         TyKind::Ref(reference) => contains_type_param(&reference.referent),
+        TyKind::StringLiteral(Some(value)) => matches!(value.as_ref(), CtValue::Expr(_)),
         TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             mojito_types::types::TyArg::Ty(inner) => contains_type_param(inner),
             // A symbolic value argument (`Counter[Self.length]` in an erased

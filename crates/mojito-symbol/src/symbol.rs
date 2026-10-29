@@ -265,7 +265,7 @@ impl CallableLookup for MemberCandidates<'_> {
 pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
     use mojito_types::types::erase_origin_arguments;
     match argument {
-        TyArg::Ty(ty) if *ty == TyKind::StringLiteral => {
+        TyArg::Ty(ty) if ty.is_string_literal() => {
             TyArg::Ty(TyKind::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()).into())
         }
         TyArg::Ty(ty) => TyArg::Ty(erase_origin_arguments(&erase_capture_environment(
@@ -316,7 +316,7 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
             // Overload keys intentionally collapse StringLiteral and nominal
             // String, but generic instances cannot: their native layouts are
             // a 16-byte borrowed descriptor versus a 24-byte owning value.
-            InstanceArg::Ty(ty) if *ty == TyKind::StringLiteral => "TStringLiteral".to_string(),
+            InstanceArg::Ty(ty) if ty.is_string_literal() => "TStringLiteral".to_string(),
             InstanceArg::Ty(ty) => format!("T{}", ty_raw_in(ty, None, KeyMode::Instance)),
             InstanceArg::Value(value) => format!("V{value}"),
         };
@@ -1504,7 +1504,13 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::UINT => "UInt".to_string(),
         TyKind::FLOAT64 | TyKind::FloatLiteral => "Float64".to_string(),
         TyKind::Bool => "Bool".to_string(),
-        TyKind::StringLiteral => "StringLiteral".to_string(),
+        TyKind::StringLiteral(None) => "StringLiteral".to_string(),
+        // A literal whose type carries its value spells as the application
+        // `StringLiteral[value]` it bridges.
+        TyKind::StringLiteral(Some(value)) => format!(
+            "{}$V{value}",
+            encode_identifier(mojito_types::types::STRING_LITERAL_TYPE_NAME)
+        ),
         TyKind::None => "None".to_string(),
         TyKind::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw_in(elem, self_ty, mode)),
         TyKind::ParamList(elem) => format!("__ParamList${}", ty_raw_in(elem, self_ty, mode)),

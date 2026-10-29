@@ -98,10 +98,13 @@ point, as upstream's toolchain does.
   `Int` converts to, and that converts to any `SIMD` through the compiler
   `SIMD`'s `@implicit __init__(SIMDLength)`. The prelude exports it.
 - `std/builtin/string_literal.mojo` — upstream's `StringLiteral[value]`
-  struct, in part: what an explicit application `StringLiteral[v]` names,
-  with the members that read its `!kgen.string` through `pop.string.size`
-  and `pop.string.address`. A literal's own type is still the compiler's
-  `StringLiteral` (roadmap R1652). The prelude exports it.
+  struct, in part: the type of a string literal (`"ab"` is
+  `StringLiteral["ab"]`) and of an explicit application, with the members
+  that read its `!kgen.string` through `pop.string.size`,
+  `pop.string.address`, and `#kgen.param.identical`. The compiler holds an
+  application as its literal type (roadmap R1660), and a bare run-time
+  `StringLiteral` argument is still a value-less compiler type (R1658).
+  The prelude exports it.
 - `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
   `pop.bitcast`, re-exported by `std.memory`; `std/builtin/dtype.mojo`
   bundles `_uint_type_of_width`, `_integral_type_of`, and

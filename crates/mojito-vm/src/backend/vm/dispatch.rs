@@ -661,7 +661,7 @@ impl VmBackend {
             .filter(|(_, symbol)| {
                 prog.sigs.get(*symbol).is_none_or(|sig| {
                     sig.param_types.first().is_some_and(|parameter| {
-                        *parameter == mojito_types::types::TyKind::StringLiteral
+                        parameter.is_string_literal()
                             || mojito_types::types::is_writer_parameter(parameter)
                     })
                 })

@@ -150,32 +150,11 @@ impl<'a> FnLowering<'a> {
         };
         let place = place.clone();
         let hasher_ptr = self.place_address(ctx, &place, dest)?.0;
-        if matches!(receiver.kind(), TyKind::StringLiteral) {
+        if matches!(receiver.kind(), TyKind::StringLiteral(_)) {
             // Materialize the literal as an owned nominal String, hash it
             // through the struct's own `__hash__`, and release the copy.
             let target = self.string_hash_instance(dest, hasher_name)?;
-            let storage = self.entry_alloca(ctx, 24, 8);
-            if let Some(bytes) = self.str_consts.get(&recv.0).cloned() {
-                let len = bytes.len() as u64;
-                let global = self.shared.intern_string(ctx, &bytes);
-                let len_value = self.uint_constant(ctx, len);
-                let data = self.emit_alloc(ctx, len_value, 1, dest);
-                if len > 0 {
-                    let literal = self.global_address(ctx, &global, dest);
-                    self.mem_copy(ctx, data, literal, len, dest);
-                }
-                self.store_string_fields(ctx, storage, data, len_value, len_value, dest);
-            } else if let Some(descriptor) = self.str_runtime.get(&recv.0).copied() {
-                let data = self.emit_alloc(ctx, descriptor.len, 1, dest);
-                self.mem_copy_dynamic(ctx, data, descriptor.data, descriptor.len, dest);
-                self.store_string_fields(ctx, storage, data, descriptor.len, descriptor.len, dest);
-            } else {
-                let ptr = self.reg_ptr(ctx, recv)?;
-                let (src_data, len) = self.string_parts(ctx, ptr, dest);
-                let data = self.emit_alloc(ctx, len, 1, dest);
-                self.mem_copy_dynamic(ctx, data, src_data, len, dest);
-                self.store_string_fields(ctx, storage, data, len, len, dest);
-            }
+            let storage = self.owned_string_of_literal(ctx, recv, dest)?;
             self.emit_bound_call(ctx, dest, &target, vec![storage, hasher_ptr])?;
             let (data, _) = self.string_parts(ctx, storage, dest);
             self.emit_free(ctx, data);
@@ -194,6 +173,39 @@ impl<'a> FnLowering<'a> {
             _ => self.arg_value(ctx, recv, &expected, false, dest)?,
         };
         self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, operand])
+    }
+
+    /// The string literal `recv` as an owned nominal `String` in fresh
+    /// storage, whose buffer the caller releases.
+    pub(super) fn owned_string_of_literal(
+        &mut self,
+        ctx: &mut Context,
+        recv: Reg,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let storage = self.entry_alloca(ctx, 24, 8);
+        if let Some(bytes) = self.str_consts.get(&recv.0).cloned() {
+            let len = bytes.len() as u64;
+            let global = self.shared.intern_string(ctx, &bytes);
+            let len_value = self.uint_constant(ctx, len);
+            let data = self.emit_alloc(ctx, len_value, 1, dest);
+            if len > 0 {
+                let literal = self.global_address(ctx, &global, dest);
+                self.mem_copy(ctx, data, literal, len, dest);
+            }
+            self.store_string_fields(ctx, storage, data, len_value, len_value, dest);
+        } else if let Some(descriptor) = self.str_runtime.get(&recv.0).copied() {
+            let data = self.emit_alloc(ctx, descriptor.len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, descriptor.data, descriptor.len, dest);
+            self.store_string_fields(ctx, storage, data, descriptor.len, descriptor.len, dest);
+        } else {
+            let ptr = self.reg_ptr(ctx, recv)?;
+            let (src_data, len) = self.string_parts(ctx, ptr, dest);
+            let data = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, src_data, len, dest);
+            self.store_string_fields(ctx, storage, data, len, len, dest);
+        }
+        Ok(storage)
     }
 
     /// The `hasher`'s `_update_with_simd` instance the elaborator minted at
@@ -359,7 +371,7 @@ impl<'a> FnLowering<'a> {
                 mojito_symbol::symbol::is_stdlib_string_struct(name)
                     || mojito_types::types::is_stdlib_string_span_struct(name)
             }
-            Some(TyKind::StringLiteral) => true,
+            Some(TyKind::StringLiteral(_)) => true,
             _ => false,
         };
         if is_string {
@@ -702,7 +714,7 @@ impl<'a> FnLowering<'a> {
             return Ok((descriptor.data, descriptor.len));
         }
         match self.func.reg_types.get(&reg.0).map(Ty::kind) {
-            Some(TyKind::StringLiteral | TyKind::Error) => {
+            Some(TyKind::StringLiteral(_) | TyKind::Error) => {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }
@@ -909,7 +921,7 @@ impl<'a> FnLowering<'a> {
                 self.signatures.contains_key(*symbol)
                     && self.declarations.get(*symbol).is_none_or(|declaration| {
                         declaration.param_types.first().is_some_and(|parameter| {
-                            *parameter == TyKind::StringLiteral
+                            parameter.is_string_literal()
                                 || mojito_types::types::is_writer_parameter(parameter)
                         })
                     })

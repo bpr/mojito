@@ -32,7 +32,7 @@ pub(super) fn push_sugar_arguments(
                 .iter()
                 .any(|decl| *decl.id() == binder.id)
             && let Some(bound) = bindings.types.get(binder)
-            && *bound != TyKind::StringLiteral
+            && !bound.is_string_literal()
         {
             arguments.push(InstanceArg::Ty(bound.clone()));
         }
@@ -343,12 +343,20 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 }
             }
         }
+        // A literal's text binds a `StringLiteral[v]` pattern's binder.
+        TyKind::StringLiteral(Some(slot))
+            if let CtValue::Expr(expr) = slot.as_ref()
+                && let Some(binder) = expr.as_decl_ref()
+                && let TyKind::StringLiteral(Some(text)) = actual.kind() =>
+        {
+            bind_value(binder, text, bindings)
+        }
         // A literal-typed register materializes into whatever concrete
         // storage the checker admitted (`MaterializeLiteral` converts the
         // value at the boundary); the pattern constrains nothing here.
         _ if matches!(
             actual.kind(),
-            TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral
+            TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral(_)
         ) && pattern != actual =>
         {
             Ok(())
@@ -680,7 +688,7 @@ pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> 
     let literal = |ty: &Ty| {
         matches!(
             ty.kind(),
-            TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral
+            TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral(_)
         )
     };
     match bindings.types.get(binder) {

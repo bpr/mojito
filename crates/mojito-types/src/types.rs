@@ -582,10 +582,17 @@ impl fmt::Display for LaneMask {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TyKind {
     Bool,
-    /// The compile-time string literal type (Mojo's `StringLiteral`). Its
-    /// source spelling is concrete only as a parameter annotation; the
-    /// nominal runtime `String` is the self-hosted stdlib struct.
-    StringLiteral,
+    /// A string literal's type, upstream's `StringLiteral[value]`: the
+    /// application of the struct `std.builtin.string_literal` declares,
+    /// which the [`Ty::new`] bridge holds as this variant.
+    ///
+    /// Its slot is the struct's `value` argument, a
+    /// [`CtValue::KgenString`] once the text is known or a
+    /// [`CtValue::Expr`] of type `!kgen.string` while it is symbolic.
+    /// `None` is a value-less compiler string that upstream has no type
+    /// for: a compile-time `String` value, a reflected name, or a bare
+    /// run-time `StringLiteral` argument. R1657 and R1659 retire it.
+    StringLiteral(Option<Box<CtValue>>),
     None,
     /// Bottom type: no runtime value can inhabit it.
     Never,
@@ -806,6 +813,7 @@ macro_rules! dataless_types {
             fn dataless(kind: &TyKind) -> Option<Self> {
                 match kind {
                     $(TyKind::$variant => Some(Self::$name()),)*
+                    TyKind::StringLiteral(None) => Some(Self::string_literal()),
                     TyKind::INT => Some(Self::int()),
                     TyKind::UINT => Some(Self::uint()),
                     TyKind::FLOAT64 => Some(Self::float64()),
@@ -832,6 +840,8 @@ macro_rules! shared_scalar_types {
 }
 
 shared_scalar_types! {
+    /// The value-less `StringLiteral` ([`TyKind::StringLiteral(_)`]).
+    string_literal => STRING_LITERAL,
     /// `Int`, `Scalar[DType.int]`.
     int => INT,
     /// `UInt`, `Scalar[DType.uint]`.
@@ -843,8 +853,6 @@ shared_scalar_types! {
 dataless_types! {
     /// `Bool`.
     bool => Bool,
-    /// `StringLiteral`.
-    string_literal => StringLiteral,
     /// `None`.
     none => None,
     /// `Never`.
@@ -874,16 +882,31 @@ impl Ty {
         Self::new(TyKind::Generator(Box::new(GeneratorTy { params, result })))
     }
 
+    /// The type of the string literal `text`, `StringLiteral[text]`.
+    pub fn string_literal_of(text: &str) -> Self {
+        Self::new(TyKind::StringLiteral(Some(Box::new(CtValue::KgenString(
+            text.to_string(),
+        )))))
+    }
+
+    /// Whether this is a string literal's type, value-less or not.
+    pub fn is_string_literal(&self) -> bool {
+        self.kind().is_string_literal()
+    }
+
     /// The type of variant `kind`. A variant that carries no data shares one
     /// node per compilation.
     ///
     /// A `SIMD[dtype, length]` application of the declared struct is the
     /// compiler's [`TyKind::Simd`] ([`bridged_simd`]), so the declaration's
     /// `Self` and every substitution of it keep one representation until
-    /// R1557 makes the struct the only one.
+    /// R1557 makes the struct the only one. A `StringLiteral[value]`
+    /// application is likewise a [`TyKind::StringLiteral(_)`]
+    /// ([`bridged_string_literal`]) until R1660 deletes that bridge.
     pub fn new(kind: TyKind) -> Self {
         Self::dataless(&kind)
             .or_else(|| bridged_simd(&kind))
+            .or_else(|| bridged_string_literal(&kind))
             .unwrap_or_else(|| Self(Arc::new(TyNode::new(kind))))
     }
 
@@ -986,6 +1009,24 @@ impl TyKind {
         dtype: SimdDtype::Known(Dtype::Float64),
         width: SimdWidth::Known(1),
     };
+    /// The value-less `StringLiteral` ([`TyKind::StringLiteral(_)`]).
+    pub const STRING_LITERAL: &'static Self = &Self::StringLiteral(None);
+
+    /// Whether this is a string literal's type, value-less or not.
+    pub const fn is_string_literal(&self) -> bool {
+        matches!(self, Self::StringLiteral(_))
+    }
+
+    /// The text of a string literal whose value is known.
+    pub fn string_literal_text(&self) -> Option<&str> {
+        match self {
+            Self::StringLiteral(Some(value)) => match value.as_ref() {
+                CtValue::KgenString(text) => Some(text),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 
     /// The signature of a callable type, generic or not.
     pub fn callable(&self) -> Option<&FuncTy> {
@@ -1242,6 +1283,10 @@ pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
 
 /// The name of upstream's `SIMD`, declared in `std.simd`.
 pub const SIMD_TYPE_NAME: &str = "SIMD";
+
+/// The name `std.builtin.string_literal` declares a string literal's struct
+/// under; its applications are [`TyKind::StringLiteral(_)`]s.
+pub const STRING_LITERAL_TYPE_NAME: &str = "StringLiteral";
 
 /// The bound of a type binder whose type is upstream's `!kgen.type`
 /// ([`TyKind::TypeType`]), the name the pin prints for it: every type
@@ -1719,7 +1764,7 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
         TyKind::FloatLiteral => "SIMD[DType.float64, 1]".to_string(),
         TyKind::Bool => "Bool".to_string(),
         TyKind::Simd { dtype, width } => format!("SIMD[{dtype}, {width}]"),
-        TyKind::StringLiteral => "StringLiteral".to_string(),
+        TyKind::StringLiteral(_) => "StringLiteral".to_string(),
         TyKind::None => "NoneType".to_string(),
         TyKind::Struct(name, args) => {
             // A public tuple's specialization symbol encodes its elements;
@@ -2057,7 +2102,7 @@ pub fn contains_infer(ty: &Ty) -> bool {
 /// `String` struct's, so an instantiation argument that mentions it never
 /// selects a nominal-`String` instance.
 pub fn contains_string_literal(ty: &Ty) -> bool {
-    mentions_open(ty, &|ty| matches!(ty.kind(), TyKind::StringLiteral))
+    mentions_open(ty, &|ty| ty.is_string_literal())
 }
 
 /// Whether a struct type in `ty`, itself or nested, has an argument its
@@ -2687,7 +2732,8 @@ impl fmt::Display for TyKind {
         match self {
             Self::IntLiteral => write!(f, "Int"),
             Self::Bool => write!(f, "Bool"),
-            Self::StringLiteral => write!(f, "StringLiteral"),
+            Self::StringLiteral(None) => write!(f, "StringLiteral"),
+            Self::StringLiteral(Some(value)) => write!(f, "StringLiteral[{value}]"),
             Self::FloatLiteral => write!(f, "Float64"),
             Self::Infer => write!(f, "_"),
             Self::Dtype => write!(f, "DType"),
@@ -3285,19 +3331,25 @@ pub fn simd_struct_arguments(ty: &TyKind) -> Option<Vec<TyArg>> {
 
 /// The declared struct `ty` is an instance of, and its arguments.
 ///
-/// A struct answers its own, and a [`TyKind::Simd`] answers `SIMD`'s
-/// ([`simd_struct_arguments`]). A literal's flexible type is no instance:
-/// it materializes only where a conversion asks for it.
+/// A struct answers its own, a [`TyKind::Simd`] answers `SIMD`'s
+/// ([`simd_struct_arguments`]), and a string literal whose value the type
+/// carries answers `StringLiteral[value]`. A numeric literal's flexible
+/// type and the value-less `StringLiteral` are no instance: they
+/// materialize only where a conversion asks for it.
 ///
 /// Nominal identity is read through this, never by matching
-/// `TyKind::Struct`, while the [`Ty::new`] bridge holds `SIMD` as the
-/// compiler's type.
+/// `TyKind::Struct`, while the [`Ty::new`] bridge holds `SIMD` and
+/// `StringLiteral` as the compiler's types.
 pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
     match ty.kind() {
         TyKind::Struct(name, args) => Some((name, std::borrow::Cow::Borrowed(args))),
         kind @ TyKind::Simd { .. } => Some((
             SIMD_TYPE_NAME,
             std::borrow::Cow::Owned(simd_struct_arguments(kind)?),
+        )),
+        TyKind::StringLiteral(Some(value)) => Some((
+            STRING_LITERAL_TYPE_NAME,
+            std::borrow::Cow::Owned(vec![TyArg::Val(value.as_ref().clone())]),
         )),
         _ => None,
     }
@@ -3428,6 +3480,9 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                     _ => false,
                 })
         }
+        // A literal whose type carries its text is still the compiler's
+        // value-less string (R1657).
+        (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(None)) => true,
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
@@ -3744,7 +3799,7 @@ pub const fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
     copy_is_identity(ty)
         || matches!(
             ty,
-            TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral
+            TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral(_)
         )
 }
 
@@ -4391,7 +4446,12 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             }
             ty.reusing(TyKind::Struct(name.clone(), args))
         }
-        TyKind::Dependent(_) | TyKind::Simd { .. } | TyKind::KgenSimd { .. } if is_symbolic(ty) => {
+        TyKind::Dependent(_)
+        | TyKind::Simd { .. }
+        | TyKind::KgenSimd { .. }
+        | TyKind::StringLiteral(Some(_))
+            if is_symbolic(ty) =>
+        {
             replace_parameters(&ParamContext::detached(), ty, &type_bindings(subst), 0)
                 .unwrap_or_else(|_| ty.clone())
         }
@@ -4714,8 +4774,12 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             )?;
             simd_storage(&vector).unwrap_or(vector)
         }
+        TyKind::StringLiteral(Some(value)) => Ty::new(TyKind::Struct(
+            STRING_LITERAL_TYPE_NAME.to_string(),
+            vec![TyArg::Val(rewrite_value(value, rewrite)?)],
+        )),
         TyKind::Bool
-        | TyKind::StringLiteral
+        | TyKind::StringLiteral(None)
         | TyKind::None
         | TyKind::Never
         | TyKind::IntLiteral
@@ -5238,6 +5302,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Tuple(types)
         | TyKind::RuntimePack(types)
         | TyKind::Variant(types) => types.iter().any(is_symbolic),
+        TyKind::StringLiteral(Some(value)) => ct_value_is_symbolic(value),
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
@@ -5256,7 +5321,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Index
         | TyKind::I1
         | TyKind::Bool
-        | TyKind::StringLiteral
+        | TyKind::StringLiteral(None)
         | TyKind::None
         | TyKind::Never
         | TyKind::IntLiteral
@@ -5476,6 +5541,10 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         | TyKind::PopArray { element, .. }
         | TyKind::Pointer { element, .. } => mentions(element, predicate),
         TyKind::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
+        TyKind::StringLiteral(Some(value)) => match value.as_ref() {
+            CtValue::Expr(expr) => expr_mentions(expr, predicate),
+            _ => false,
+        },
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(|element| mentions(element, predicate))
         }
@@ -5819,7 +5888,9 @@ fn expand_packs<S: std::hash::BuildHasher>(
         }
         // A lane dtype or width naming a folded value binder closes and
         // re-canonicalizes (`Scalar[dt]` at `dt = DType.int` is `Int`).
-        TyKind::Simd { .. } | TyKind::KgenSimd { .. } if !values.is_empty() && is_symbolic(ty) => {
+        TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral(Some(_))
+            if !values.is_empty() && is_symbolic(ty) =>
+        {
             let context = ParamContext::detached();
             replace_parameters(
                 &context,
@@ -6046,6 +6117,40 @@ fn bridged_simd(kind: &TyKind) -> Option<Ty> {
     };
     let width = SimdWidth::of_length(&ParamContext::detached(), length).ok()?;
     simd_ty_from_slots(dtype, width).ok()
+}
+
+/// The [`TyKind::StringLiteral(_)`] a `StringLiteral[value]` application is:
+/// a known KGEN string, or a symbolic `!kgen.string` expression. Any other
+/// shape (the bare template, an erased or deferred argument) stays the
+/// struct.
+fn bridged_string_literal(kind: &TyKind) -> Option<Ty> {
+    let TyKind::Struct(name, args) = kind else {
+        return None;
+    };
+    let [TyArg::Val(value)] = args.as_slice() else {
+        return None;
+    };
+    if name != STRING_LITERAL_TYPE_NAME {
+        return None;
+    }
+    let value = match value {
+        CtValue::KgenString(_) => value.clone(),
+        CtValue::Expr(expr) => match expr.as_constant() {
+            Some(value @ CtValue::KgenString(_)) => value.clone(),
+            _ if matches!(
+                expr.meta().as_value().map(Ty::kind),
+                Some(TyKind::KgenString)
+            ) =>
+            {
+                value.clone()
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(Ty(Arc::new(TyNode::new(TyKind::StringLiteral(Some(
+        Box::new(value),
+    ))))))
 }
 
 /// The pieces of an MLIR bracket spelling, each text piece through `piece`

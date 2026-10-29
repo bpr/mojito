@@ -53,7 +53,7 @@ impl FnLowering<'_> {
                         || self.str_runtime.contains_key(&reg.0)
                         || matches!(
                             self.func.reg_types.get(&reg.0).map(Ty::kind),
-                            Some(TyKind::StringLiteral)
+                            Some(TyKind::StringLiteral(_))
                         ))
                 {
                     return self.materialize_string_argument(ctx, reg, owned, dest);

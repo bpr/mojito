@@ -105,7 +105,7 @@ impl LayoutCx<'_> {
             TyKind::None => Ok(Layout::ZERO),
             // The borrowed string-literal descriptor: `{ data: ptr, len: u64 }`
             // (`MjStrDesc` in the runtime contract).
-            TyKind::StringLiteral => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
+            TyKind::StringLiteral(_) => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
             // The built-in error value: `{ message: MjString }` where
             // `MjString` is `{ data: ptr, size: i64, cap: i64 }`.
             TyKind::Error => Ok(self.mj_error()),
