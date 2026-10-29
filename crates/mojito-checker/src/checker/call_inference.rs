@@ -219,14 +219,21 @@ impl Checker {
             "SIMD" if let Some(storage) = lone_storage_keyword(param_args, args, kwargs) => {
                 self.infer_inferred_storage_construction(span, name, storage)
             }
-            // `Bool(value=b)`: upstream's initializer from an `i1`, which
-            // Mojito holds as the `Bool` itself.
+            // `Bool(value=i)`: upstream's initializer from an `i1`, or its
+            // `Boolable` initializer at a `Bool`, the overload the keyword
+            // also names.
             "Bool"
                 if args.is_empty()
                     && param_args.is_empty()
                     && matches!(kwargs, [keyword] if keyword.name == "value") =>
             {
-                self.infer_storage_construction(span, name, &Ty::bool(), &kwargs[0])
+                let source = if self.infer(&kwargs[0].value)? == Ty::i1() {
+                    Ty::i1()
+                } else {
+                    Ty::bool()
+                };
+                self.infer_storage_construction(span, name, &source, &kwargs[0])
+                    .map(|_| Ty::bool())
             }
             // `Bool(mlir_value=s)`: upstream's initializer from the
             // `!kgen.scalar<bool>` a `pop.simd.reduce_and` gives, which
@@ -957,12 +964,12 @@ impl Checker {
         self.infer_storage_construction(span, name, &ty, storage)
     }
 
-    /// `Name(mlir_value=v)` on a SIMD type, or `Bool(value=b)`: upstream's
-    /// initializer from the `!kgen.simd` storage of the type or the `i1`
-    /// (which Mojito holds as the `Bool` itself), so the argument must
-    /// already be that storage, never a literal, a value of the type, or
-    /// another width or dtype. `Int`'s overload from an `index` casts it to
-    /// that storage.
+    /// `Name(mlir_value=v)` on a SIMD type, or `Bool(value=i)` at `ty` the
+    /// `i1` or `Bool` it takes: upstream's initializer from the
+    /// `!kgen.simd` storage of the type, or from the `i1` both backends hold
+    /// as a `Bool`, so the argument must already be that storage, never a
+    /// literal, a value of the type, or another width or dtype. `Int`'s
+    /// overload from an `index` casts it to that storage.
     fn infer_storage_construction(
         &self,
         span: SourceSpan,

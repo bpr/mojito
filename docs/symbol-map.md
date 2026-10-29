@@ -2608,8 +2608,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   values are `CtValue::MlirAttr` (MIR `ct_mlir_attr`), which never cross
   into the VM. `Checker::infer_member` (`indexing.rs`) and `build_ct`
   (`constraints.rs`) read an attribute through
-  `comptime_validation::untyped_mlir_attribute`, which rejects a typed
-  `X : T` one. A body whose result is `!kgen.deferred` runs only at
+  `comptime_validation::mlir_attribute`, which gives a typed `X : T` one
+  the constant and type of `T`: an `` `N : index` `` a `CtValue::Index`,
+  and a `` `#kgen.simd<…> : !kgen.scalar<dt>` `` (or `!kgen.simd<n, dt>`)
+  a `CtValue::Simd` at its storage type, its lanes parsed by
+  `ct::CtLane::parse_attribute`; a typed constant reads at run time too. A body whose result is `!kgen.deferred` runs only at
   compile time (`Checker::deferred_result_bodies`): elsewhere a run-time
   read is `kgen_deferred_runtime_read` and a run-time call
   `kgen_deferred_runtime_call` (`Checker::reject_runtime_deferred_call`,
@@ -2652,6 +2655,29 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `verify_builtin_cast` (`mir/verify/instr.rs`) checks it, the VM copies
   the register, and Pliron aliases the i64. `reflects_no_conformance`
   answers for it as for `!kgen.string`.
+- Upstream's MLIR builtin `__mlir_type.i1` is `TyKind::I1` (`Ty::i1()`,
+  displayed `types::MLIR_I1_TYPE_SPELLING`, MIR type `i1`), resolved by
+  `types::mlir_type_named`. `Bool.__mlir_i1__()` (`mc_infer.rs`) and
+  `index.cmp` (`index_op_result`, `method_calls/pop_ops.rs`) give one;
+  `Bool(i)` (`ScalarConversion::casts_from`), `Bool(value=i)`
+  (`infer_unbound_call`), and `Checker::record_implicit_conversion`'s
+  stand-in for upstream's `@implicit Bool.__init__(value: i1)` take one;
+  `Checker::condition_truthiness` rejects it as a condition.
+  `builtin_cast_result` admits the casts between it and a `Bool`'s
+  `!kgen.scalar<bool>` storage, which `builtin_fold::mlir_op_operator`
+  folds as `Bool(mlir_value=s).__mlir_i1__()` and
+  `Bool(i).__mlir_bool__()`. Both backends hold it as a `Bool`:
+  `types::held_ty` maps it (and `!kgen.simd` storage, as `held_simd_ty`
+  does) to its held type for the verifier's `types_compatible`,
+  `verify_builtin_cast`, and `LlvmIntrinsic::signature_error`, and
+  `require_bool` (`verify/structure.rs`) takes it as a condition, which an
+  inlined `-> Bool` body returning `index.cmp` leaves. The VM's
+  `builtin.cast` converts between `Value::Bool` and a one-lane mask.
+  `SemanticAdjustment::BoolStorage` (recorded by `Checker::infer_member`)
+  makes a `Bool`'s `_mlir_value` a read of the `Bool` splat to its
+  storage (`Flatten::bool_storage`, `lower_expr/expr_access.rs`, shared
+  with `__mlir_bool__`), never a place; `Checker::check_set_place`
+  rejects a store to it.
 
 ## The compile-time branch and the request path (2026-10-03)
 

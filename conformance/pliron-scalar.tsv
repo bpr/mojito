@@ -55,6 +55,7 @@ assets/ok/bit_count_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bitwise_shift_precedence.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_alias_predicate_where.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_bitwise_operators.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bool_storage_primitives.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_generic_write_to.mojo	-	ineligible	no-scalar-entry-shape

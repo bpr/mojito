@@ -68,11 +68,23 @@ impl<'a> Flatten<'a> {
         self.constant_at(location, ty, k)
     }
 
+    /// The `!kgen.scalar<bool>` storage of the `Bool` `object`
+    /// (`b._mlir_value`, `b.__mlir_bool__()`): the one-lane `bool` vector
+    /// the `Bool` splats to.
+    pub(in crate::mir) fn bool_storage(&mut self, object: Node<'a>, location: SourceSpan) -> Reg {
+        let value = self.expr(object);
+        let storage = mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1);
+        self.splat_scalar(value, &storage, location)
+    }
+
     /// Read member node `e`, `object.field`.
     pub(super) fn member_expr(&mut self, e: Node<'a>, object: Node<'a>, field: &str) -> Reg {
         let node = e.checked;
         if e.is_simd_storage() {
             return self.expr(object);
+        }
+        if e.is_bool_storage() {
+            return self.bool_storage(object, e.location());
         }
         // `v.length` on a SIMD value is its `SIMDLength` parameter, after
         // a value receiver (`f().length`) runs.

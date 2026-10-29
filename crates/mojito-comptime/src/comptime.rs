@@ -490,6 +490,7 @@ fn source_type_from_ty_with_origins(
         TyKind::KgenString => kgen_string_source_type(),
         TyKind::KgenDeferred => mlir_source_type("!kgen.deferred"),
         TyKind::Index => mlir_source_type("index"),
+        TyKind::I1 => mlir_source_type("i1"),
         // A callable has no source spelling a clone could carry.
         TyKind::Func(_) | TyKind::GenericFunc(_) => return None,
         TyKind::ComptimeList(element) => Type::Named(

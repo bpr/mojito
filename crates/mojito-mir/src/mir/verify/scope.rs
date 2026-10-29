@@ -699,6 +699,7 @@ impl ScopeCx<'_> {
             | TyKind::KgenString
             | TyKind::KgenDeferred
             | TyKind::Index
+            | TyKind::I1
             | TyKind::SelfType
             | TyKind::Error => {}
         }

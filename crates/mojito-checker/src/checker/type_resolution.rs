@@ -4489,6 +4489,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::KgenString
         | TyKind::KgenDeferred
         | TyKind::Index
+        | TyKind::I1
         | TyKind::Error => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
@@ -4590,7 +4591,7 @@ fn origin_has_subtree_tail(origin: &mojito_types::origin::PointerOrigin) -> bool
 fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
-         '__mlir_type.index', '__mlir_type.`!kgen.scalar<dtype>`', \
+         '__mlir_type.index', '__mlir_type.i1', '__mlir_type.`!kgen.scalar<dtype>`', \
          '__mlir_type.`!kgen.type`', '__mlir_type.`!kgen.string`', \
          '__mlir_type[`!kgen.param_list<`, T, `>`]', \
          '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]', \

@@ -1672,18 +1672,22 @@ impl Checker {
         }
         // An untyped `` __mlir_attr.`#…` `` is upstream's `!kgen.deferred`
         // constant, which only a compile-time position or a body returning
-        // one reads.
+        // one reads; a typed one is a constant of its type, which the pin
+        // also lowers at run time.
         if let ExprKind::Identifier(base) = &object.kind
             && base == "__mlir_attr"
             && self.lookup(base).is_none()
         {
-            let value = super::comptime_validation::untyped_mlir_attribute(field)?;
-            if self.crosses_to_runtime() && self.deferred_result_bodies.last() != Some(&true) {
+            let (value, ty) = super::comptime_validation::mlir_attribute(field)?;
+            if ty == TyKind::KgenDeferred
+                && self.crosses_to_runtime()
+                && self.deferred_result_bodies.last() != Some(&true)
+            {
                 return Err(super::comptime_validation::kgen_deferred_runtime_read());
             }
             let value = self.param_context.constant(value).map_err(param_error)?;
             self.record_member_value(span, value);
-            return Ok(TyKind::KgenDeferred.into());
+            return Ok(ty);
         }
         if let Some(dtype) = self.dtype_constant(object, field) {
             self.record_at(span).adjustment = Some(Box::new(
@@ -1771,6 +1775,17 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::SimdStorage,
             ));
             return Ok(storage);
+        }
+        // `b._mlir_value` is upstream's `!kgen.scalar<bool>` storage field of
+        // a `Bool`.
+        if field == mojito_types::ct::MLIR_VALUE_FIELD && *obj_ty == TyKind::Bool {
+            self.record_at(span).adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::BoolStorage,
+            ));
+            return Ok(mojito_types::types::kgen_simd_ty(
+                mojito_ast::ast::Dtype::Bool,
+                1,
+            ));
         }
         // `v.dtype` is upstream's lane-dtype parameter, the slot itself.
         if field == "dtype"

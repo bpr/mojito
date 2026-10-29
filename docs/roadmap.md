@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1608**.
+Next free ID: **R1613**.
 
 ## Ordered Work
 
@@ -6607,28 +6607,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1536 A typed `__mlir_attr` has no expression form, so a typed
-  attribute constant such as an `index` cannot be spelled**
+- [ ] **R1536 The bracketed `__mlir_attr[…]` has no expression form, so a
+  `#kgen.param_list` attribute cannot be spelled**
 
-  `` __mlir_attr.`7 : index` `` and the bracketed
-  ``__mlir_attr[`#kgen.param_list.size<:`, …, `> : index`]`` are rejected,
-  where the pin reads each as a compile-time attribute of the type after
-  the colon.
-  - An untyped `` __mlir_attr.`#…` `` is a compile-time `!kgen.deferred`
-    value (`CtValue::MlirAttr`), and
-    `comptime_validation::untyped_mlir_attribute` rejects a typed one as
-    outside the subset.
-  - Probe: `comptime j: __mlir_type.index = __mlir_attr.`7 : index``
-    then `print(Int(mlir_value=j))` prints `7` at the pin.
+  ``__mlir_attr[`#kgen.param_list.size<:`, …, `> : index`]`` is rejected,
+  where the pin reads it as a compile-time attribute of the type after the
+  colon.
+  - `comptime_validation::mlir_attribute` reads the dotted form only: an
+    untyped `` __mlir_attr.`#…` `` (`CtValue::MlirAttr`), an
+    `` `N : index` ``, and a `#kgen.simd<…>` storage constant.
   - Probe: upstream's `TypeList._raw_length` (`#kgen.param_list.size`)
     and `_get_type_at_index[idx: __mlir_type.index]`
     (`#kgen.param_list.get`, `std/builtin/variadics.mojo`) are left out of
     the bundled `TypeList`.
-  - Probe: R1188's `` __mlir_attr.`#kgen.simd<true> : !kgen.scalar<bool>` ``.
-  - Lever: an `N : index` attribute is `CtValue::Index`, and the bracket
-    form's `#kgen.param_list.size` and `#kgen.param_list.get` are the
-    builder's existing `PackQuery::Length` and list read
-    (`checker/constraints.rs`).
+  - Lever: the bracket form's `#kgen.param_list.size` and
+    `#kgen.param_list.get` are the builder's existing `PackQuery::Length`
+    and list read (`checker/constraints.rs`).
   - Found while landing R1531 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -9768,33 +9762,119 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1188 `Bool` is a compiler-modelled scalar where upstream's is a
-  library struct**
+- [ ] **R1608 `Bool` has no declaration, so its members are compiler
+  rules and `Bool.MIN` is undefined**
 
-  Problem: `True.__int__()` fails with "type 'Bool' has no method
-  '__int__'", where the pin runs it, because Mojito answers `Bool`'s
-  members by compiler rules rather than upstream's `bool.mojo`
-  declarations.
-  - `Bool` is `TyKind::Bool`, and its operators, conversions, and traits
-    are checker, VM, and native rules. There is no `struct Bool` under
-    `stdlib/`.
-  - Port it as a library struct over its `i1` storage, the way R1157 and
-    R1158 port the slices.
-  - Upstream's bodies need `__mlir_type.i1` as a type of its own,
-    `Bool(mlir_value=)`, `pop.cast_from_builtin` and `pop.cast_to_builtin`
-    between `i1` and `!kgen.scalar<bool>`, and typed attribute constants
-    (``__mlir_attr.`#kgen.simd<true> : !kgen.scalar<bool>` ``). Today `i1`
-    is the `Bool` itself, read by the stand-in `Bool(value=b)`.
-  - Probe: `b.__mlir_i1__()` is a compiler identity on `Bool`
-    (`mc_infer.rs`), where upstream's body is `pop.cast_to_builtin`.
-  - Port `Bool.__hash__` with the struct and retire its hash-leaf arms
-    (`builtin_hashable_ty`, `hash_leaf_ty`, the VM's `__hash__` arm,
-    `lower_hash_leaf`, `enqueue_hash_leaf_instances`); R1192 retires the last leaf.
-  - The planning session splits it into chained one-session entries if
-    one session cannot land it.
-  - Found while planning R1132 (2026-10-20).
+  Problem: `print(Bool.MIN, Bool.MAX)` and `Bool.__eq__(True, False)`
+  fail with "Undefined variable 'Bool'", where the pin prints `False True`
+  and `False`, because there is no `struct Bool` under `stdlib/`.
+  - Declare `struct Bool(Boolable, Defaultable, Floatable, Hashable,
+    ImplicitlyCopyable, Intable, TrivialRegisterPassable)` in
+    `std/builtin/bool.mojo` with upstream's field `var _mlir_value:
+    __mlir_type.`!kgen.scalar<bool>``, `MIN`, `MAX`, the `__*_is_trivial`
+    constants, and the bodies of `__bool__`, `__mlir_bool__`,
+    `__mlir_i1__` (`pop.cast_to_builtin`), `__int__`, `__float__`, and
+    `__hash__`.
+  - Add the `("std.builtin.bool", "Bool")` row to
+    `implicit_public_identity` (`mojito-module`), `PRELUDE_EXPORTS`, and
+    the prelude import. Drop Python interop and
+    `@lldb_formatter_wrapping_type`, as R1549 did for `SIMD`.
+  - Bridge the declaration onto `TyKind::Bool` as R1549 bridges `SIMD`:
+    `Ty::new`, `types::nominal_parts`, `declared_receiver_member`,
+    `decide_type_conforms`, and the VM's `declared_owner`.
+  - Delete the rules the bodies replace: `mc_infer.rs`'s `TyKind::Bool`
+    early returns, `mlir_conversion`'s `__mlir_bool__`/`__mlir_i1__` arms,
+    the VM `invoke.rs` and Pliron `methods.rs` conversion arms on a `Bool`,
+    `modelled_conformance`'s `Bool` arms for the declared traits, and the
+    `Bool` hash leaf (`builtin_hashable_ty`, both `hash_leaf_ty`s, the VM
+    `__hash__` arm, `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
+  - A `Bool`'s `_mlir_value` stays the read `SemanticAdjustment::BoolStorage`
+    while the bridge holds `Bool` as `i1`.
+  - Probe: `hash(True)` and `hash(False)` stay `7121024052126637824
+    14824966480498192933`.
+  - Trap: check for an import cycle through `std.hash` → `std.simd` →
+    `std.builtin.bool` (R592), and run the members natively, not only on
+    the VM (R1549's `resolved.is_none()` arms).
+  - Plan: `R1188-bool-is-a-compiler-modelled-scalar-plan.md`, entry A.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R1609 `Bool`'s initializers are checker rules, so `Bool()` and
+  `Bool(None)` are rejected**
+
+  Problem: `print(Bool(), Bool(None))` fails with "expected a numeric or
+  Bool value, found None", where the pin prints `False False`, because
+  `Bool(...)` is typed by `infer_unbound_call`'s and `builtins.rs`'s
+  conversion rules rather than upstream's overloads.
+  - Declare the six non-Python overloads: `__init__(out self)`,
+    `@implicit __init__(value: __mlir_type.i1)` over
+    `pop.cast_from_builtin`, `@implicit __init__(mlir_value: …)`,
+    `__init__[T: Boolable, //](value: T)`, `__init__(value: None)`, and
+    `@implicit __init__(value: Scalar[DType.bool])`.
+  - Construction is declared-first with the rule fallback, as R1555 did
+    for `SIMD`.
+  - `self._mlir_value = …` in an initializer lowers as a `scalar.cast` to
+    `Bool` into `self`'s place, the store half of `BoolStorage`, which the
+    checker rejects outside an initializer today.
+  - Delete the two `"Bool"` arms of `infer_unbound_call` and the `Bool`
+    arm of the conversion rule in `builtins.rs`.
+  - The `@implicit` stand-ins in `Checker::record_implicit_conversion`
+    (`i1` and `Scalar[DType.bool]` to `Bool`) stay until R1612.
+  - Probe: `Bool(Foo(3))` over a user `Boolable`, `Bool(3)`, `Bool(0.0)`,
+    and `Bool(value=t)` still print as at the pin.
+  - Depends on R1608.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1610 `Bool`'s comparison and bitwise operators are checker rules,
+  so `t.__eq__(f)` has no method**
+
+  Problem: `t.__eq__(f)` and `t.__invert__()` over `Bool`s fail with "type
+  'Bool' has no method '__eq__'", where the pin prints `False` and the
+  inverse, because `==` and `~` over a `Bool` are `infer_infix` and
+  `infer_prefix` arms (`checker/operators.rs`).
+  - Declare upstream's `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__`,
+    `__ge__`, `__invert__` (over a typed
+    ``__mlir_attr.`#kgen.simd<true> : !kgen.scalar<bool>` ``), the
+    `and`/`or`/`xor` dunders with their `__i*__` and `__r*__` forms, and
+    `Comparable`.
+  - Delete the `TyKind::Bool` arms of `infer_prefix` and `infer_infix`.
+    `not` stays a rule, since upstream's is not a dunder.
+  - `comptime x = True == False` and `~True` must keep folding: follow
+    whichever of R1551/R1553's routes kept `SIMD`'s operators folding.
+  - Probe on the pin whether `True == 1` and `b == mask` take an implicit
+    conversion or the reflected dunder.
+  - Depends on R1608.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1611 `Bool.write_to` and `write_repr_to` are compiler printing
+  where upstream's are library bodies**
+
+  Problem: `Bool`'s `Writable` is a modelled conformance, because
+  upstream's body writes `StaticString("True") if self else
+  StaticString("False")` and `StaticString` is undefined (R432).
+  - Declare both members and `Writable`, and delete `Writable`'s `Bool`
+    arm in `modelled_conformance`.
+  - `print(b)`'s builtin path stays only while `SIMD`'s does (R276).
+  - Depends on R1608 and R432.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1612 `Bool` is `TyKind::Bool` in the checker, where upstream's is
+  the declared struct**
+
+  Problem: once R1608–R1611 land, the `Ty::new` bridge and the `@implicit`
+  stand-ins are all that keep `Bool` a compiler type.
+  - Delete the bridge, so `Bool` resolves to `Struct("Bool", [])`, and
+    `nominal_parts`'s `Bool` arm.
+  - Delete the `i1` and `Scalar[DType.bool]` to `Bool` conversions in
+    `Checker::record_implicit_conversion` for the declared `@implicit`
+    overloads, and `ScalarConversion::casts_from`'s `i1` arm.
+  - Decide whether MIR keeps holding the struct as an `i1` (R1396's
+    one-field register-passable hold), and with it `types::held_ty`'s
+    `i1`-as-`Bool` arm, `require_bool`'s `i1` arm, and the VM's
+    `builtin.cast` conversion between `Value::Bool` and a one-lane mask.
+  - Like R1557 for `SIMD`.
+  - Depends on R1608, R1609, R1610, R1611, and R1189.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1189 `Bool` does not conform to `EnumLike`**
 
@@ -9810,7 +9890,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Delete the modelled-`Bool` arm of `enum_constructors`
     (`checker/coverage.rs`) once the library `Bool` conforms.
   - Found while planning R1132 (2026-10-20).
-  - Depends on R1132 (the trait) and R1188 (a library `Bool`).
+  - Depends on R1132 (the trait) and R1608 (a library `Bool`).
   - Model: Opus, Not Planned.
 
 - [ ] **R1192 `StringLiteral` is a compiler-modelled type where upstream's
@@ -9822,7 +9902,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `StringLiteral` is `TyKind::StringLiteral`, and a literal's `.value` is
     a compiler fold (`CtValue::literal_value`) rather than a read of the
     type's parameter.
-  - Port upstream's `std/builtin/string_literal.mojo` struct, the way R1188
+  - Port upstream's `std/builtin/string_literal.mojo` struct, the way R1608
     ports `Bool`, so a literal's type is the application its text keys.
   - Probe: `StringLiteral[v]().byte_length()` over `comptime v =
     "None".value`, which prints `4` at the pin.
@@ -9837,7 +9917,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port `StringLiteral.__hash__` with the struct and retire its hash-leaf
     arms (`builtin_hashable_ty`, the VM's `__hash__` arm,
     `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
-  - Once R160 and R1188 have retired the `DType` and `Bool` leaves too,
+  - Once R160 and R1608 have retired the `DType` and `Bool` leaves too,
     `__hash__` and `_update_with_simd` leave `mir::TYPE_REACHED_MEMBERS`,
     and Pliron's type-reached member push (`lib.rs`) goes with them.
   - The planning session splits it into chained one-session entries if
@@ -10149,7 +10229,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `infer_storage_construction`'s `Int` arm stand in for upstream's
   overloads at `simd.mojo:871`, `:894`, and `:920`.
   - All three refine `out self`, which R1594 supports on a declared
-    struct. The first two read `Bool`'s `_mlir_value` (R1188).
+    struct. The first two read `Bool`'s `_mlir_value`, which reads as its
+    `!kgen.scalar<bool>` storage (`SemanticAdjustment::BoolStorage`); the
+    first `rebind`s it to the mask's storage type.
   - `Checker::solve_refined_construction` and `refinement_admits` read a
     refinement through `types::nominal_parts`, but rebuild the spelled
     instance as a `TyKind::Struct`, not through `SIMD`'s `TyKind::Simd`
@@ -10162,7 +10244,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     splatting" (`assets/type_error/simd_bool_positional_splat.mojo`).
   - Remove `Bool` from `Checker::binds_undeclared_overload`.
   - Found while landing R1555 (2026-10-28).
-  - Depends on R1594 and R1188.
+  - Depends on R1594.
   - Model: Fable, Not Planned.
 
 - [ ] **R1596 `SIMD` has no `MAX`, `MIN`, `MAX_FINITE`, or `MIN_FINITE`**

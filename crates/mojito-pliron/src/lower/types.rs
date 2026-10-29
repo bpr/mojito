@@ -133,7 +133,8 @@ pub fn lower_ty(
     location: Option<SourceSpan>,
 ) -> Result<LowerTy, PlironError> {
     match ty.kind() {
-        TyKind::Bool => Ok(LowerTy::Scalar(ScalarTy::Bool)),
+        // The MLIR builtin `i1` is held as the `Bool` it casts from.
+        TyKind::Bool | TyKind::I1 => Ok(LowerTy::Scalar(ScalarTy::Bool)),
         TyKind::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
         // The MLIR builtin `index` is held as the `Int` it casts from.
         TyKind::Index => Ok(LowerTy::Scalar(ScalarTy::Int)),

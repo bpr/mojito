@@ -2524,9 +2524,10 @@ impl Checker {
         }
     }
 
-    /// The KGEN type `` __mlir_type.`name` `` names, or the untyped
-    /// attribute `` __mlir_attr.`text` ``, upstream's `!kgen.deferred`
-    /// constant. `None` for any other member.
+    /// The KGEN type `` __mlir_type.`name` `` names, or the attribute
+    /// `` __mlir_attr.`text` ``: an untyped one upstream's `!kgen.deferred`
+    /// constant, a typed one a constant of its type. `None` for any other
+    /// member.
     fn mlir_member(&self, object: &Expr, field: &str) -> Option<Result<ParamExpr, TypeError>> {
         let ExprKind::Identifier(base) = &object.kind else {
             return None;
@@ -2535,8 +2536,8 @@ impl Checker {
             "__mlir_type" => mojito_types::types::mlir_type_named(field)
                 .map(|ty| Ok(self.param_context.type_shape(ty))),
             "__mlir_attr" => Some(
-                super::comptime_validation::untyped_mlir_attribute(field)
-                    .and_then(|value| self.ct_param(value)),
+                super::comptime_validation::mlir_attribute(field)
+                    .and_then(|(value, _)| self.ct_param(value)),
             ),
             _ => None,
         }

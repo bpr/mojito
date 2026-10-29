@@ -2480,6 +2480,18 @@ impl Checker {
         // rooted at a mutable variable or `mut self`); the value must
         // keep the place's type. A width-1 SIMD target (a lane write, or
         // a scalar-alias field) additionally accepts a splatting literal.
+        // A `Bool`'s storage is a read of the `Bool` while `Bool` is a
+        // compiler type, never a place.
+        if let ExprKind::Member { object, field } = &place.kind
+            && field == mojito_types::ct::MLIR_VALUE_FIELD
+            && *self.infer(object)? == TyKind::Bool
+        {
+            return Err(TypeError::Unsupported(
+                "a store to a `Bool`'s `_mlir_value` storage is outside the subset; \
+                 construct the `Bool` with `Bool(mlir_value=...)` instead"
+                    .to_string(),
+            ));
+        }
         let target = self.check_place(place)?;
         if let ExprKind::Call { name, .. } | ExprKind::MethodCall { method: name, .. } = &place.kind
         {

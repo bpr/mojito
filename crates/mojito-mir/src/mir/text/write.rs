@@ -2119,6 +2119,7 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::KgenString => "KgenString".into(),
         TyKind::KgenDeferred => "KgenDeferred".into(),
         TyKind::Index => "index".into(),
+        TyKind::I1 => "i1".into(),
         TyKind::SelfType => "Self".into(),
         TyKind::Error => "Error".into(),
         TyKind::Func(func) => {

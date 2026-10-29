@@ -301,6 +301,7 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
             | TyKind::FloatLiteral
             | TyKind::Dtype
             | TyKind::Index
+            | TyKind::I1
             | TyKind::Simd { .. }
             | TyKind::KgenSimd { .. }
     )

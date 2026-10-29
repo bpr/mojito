@@ -386,6 +386,8 @@ fn verify_region(
     );
 }
 
+/// A condition is a `Bool`, or the builtin `i1` held as one that an
+/// inlined `-> Bool` body returns (`index.cmp`).
 fn require_bool(
     prefix: &str,
     function: &MirFunction,
@@ -394,7 +396,7 @@ fn require_bool(
     errors: &mut Vec<String>,
 ) {
     if let Some(found) = function.reg_types.get(&cond.0)
-        && *found != TyKind::Bool
+        && !matches!(found.kind(), TyKind::Bool | TyKind::I1)
     {
         errors.push(format!("{prefix}: `{what}` condition has type {found}"));
     }

@@ -703,6 +703,13 @@ pub enum TyKind {
     /// from an `Int`'s `!kgen.scalar<index>` storage. Both backends hold it
     /// as they hold an `Int`.
     Index,
+    /// Upstream's MLIR builtin `i1` (`__mlir_type.i1`), what
+    /// `Bool.__mlir_i1__` returns and `Bool`'s `@implicit` initializer
+    /// takes, displayed `__mlir_type.i1`. `pop.cast_from_builtin` and
+    /// `pop.cast_to_builtin` convert it to and from a `Bool`'s
+    /// `!kgen.scalar<bool>` storage. It has no members and conforms to no
+    /// trait. Both backends hold it as they hold a `Bool`.
+    I1,
     /// Upstream's KGEN vector storage `!kgen.simd<width, dtype>`, the type
     /// of a `SIMD`'s `_mlir_value` field, displayed
     /// ``__mlir_type.`!kgen.simd<4, si32>` `` (``__mlir_type.`!kgen.scalar<index>` ``
@@ -854,6 +861,8 @@ dataless_types! {
     self_type => SelfType,
     /// The MLIR builtin `index`.
     index => Index,
+    /// The MLIR builtin `i1`.
+    i1 => I1,
     /// `Error`.
     error => Error,
 }
@@ -1251,6 +1260,10 @@ pub const KGEN_DEFERRED_TYPE_SPELLING: &str = "__mlir_type.`!kgen.deferred`";
 /// as the pin prints it.
 pub const MLIR_INDEX_TYPE_SPELLING: &str = "__mlir_type.index";
 
+/// The spelling of upstream's MLIR builtin `i1` type ([`TyKind::I1`]), as
+/// the pin prints it.
+pub const MLIR_I1_TYPE_SPELLING: &str = "__mlir_type.i1";
+
 pub const TSTRING_TYPE_NAME: &str = "TString";
 /// The public `Variant` struct's name.
 pub const VARIANT_TYPE_NAME: &str = "Variant";
@@ -1268,8 +1281,8 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 
 /// The MLIR type an `` __mlir_type.`name` `` spelling names.
 ///
-/// It is one of the types the subset reads: the builtin `index`
-/// ([`TyKind::Index`]), a scalar's `!kgen.scalar<dtype>` storage
+/// It is one of the types the subset reads: the builtins `index`
+/// ([`TyKind::Index`]) and `i1` ([`TyKind::I1`]), a scalar's `!kgen.scalar<dtype>` storage
 /// ([`TyKind::KgenSimd`], `!kgen.scalar<index>` for an `Int`), or the
 /// compile-time-only `!kgen.type` ([`TyKind::TypeType`]), `!kgen.string`
 /// ([`TyKind::KgenString`]), and `!kgen.deferred`
@@ -1277,6 +1290,7 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 pub fn mlir_type_named(name: &str) -> Option<Ty> {
     match name {
         "index" => Some(Ty::index()),
+        "i1" => Some(Ty::i1()),
         "!kgen.type" => Some(TyKind::TypeType.into()),
         "!kgen.string" => Some(TyKind::KgenString.into()),
         "!kgen.deferred" => Some(TyKind::KgenDeferred.into()),
@@ -1340,6 +1354,16 @@ pub fn held_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 /// `!kgen.simd` storage type, and any other type itself.
 pub fn held_simd_ty(ty: &Ty) -> Ty {
     storage_simd(ty).unwrap_or_else(|| ty.clone())
+}
+
+/// The type a backend holds a register of `ty` as: the vector of a
+/// `!kgen.simd` storage type, a `Bool` for the MLIR builtin `i1`, and any
+/// other type itself.
+pub fn held_ty(ty: &Ty) -> Ty {
+    match ty.kind() {
+        TyKind::I1 => Ty::bool(),
+        _ => held_simd_ty(ty),
+    }
 }
 
 /// A bracketed `__mlir_type[...]` spelling as KGEN concatenates it.
@@ -2781,6 +2805,7 @@ impl fmt::Display for TyKind {
             Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
             Self::KgenDeferred => f.write_str(KGEN_DEFERRED_TYPE_SPELLING),
             Self::Index => f.write_str(MLIR_INDEX_TYPE_SPELLING),
+            Self::I1 => f.write_str(MLIR_I1_TYPE_SPELLING),
             Self::KgenSimd { dtype, width } => {
                 let dtype = match dtype {
                     SimdDtype::Known(dtype) => dtype.kgen_mnemonic().to_string(),
@@ -3370,7 +3395,8 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::TypeType, TyKind::TypeType)
         | (TyKind::KgenString, TyKind::KgenString)
         | (TyKind::KgenDeferred, TyKind::KgenDeferred)
-        | (TyKind::Index, TyKind::Index) => true,
+        | (TyKind::Index, TyKind::Index)
+        | (TyKind::I1, TyKind::I1) => true,
         (
             TyKind::Pointer {
                 element: a,
@@ -3655,6 +3681,7 @@ pub const fn copy_is_identity(ty: &TyKind) -> bool {
         TyKind::Bool
             | TyKind::Dtype
             | TyKind::Index
+            | TyKind::I1
             | TyKind::IntLiteral
             | TyKind::FloatLiteral
             | TyKind::None
@@ -4652,6 +4679,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::KgenString
         | TyKind::KgenDeferred
         | TyKind::Index
+        | TyKind::I1
         | TyKind::SelfType
         | TyKind::Error => ty.clone(),
     })
@@ -5177,6 +5205,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::KgenString
         | TyKind::KgenDeferred
         | TyKind::Index
+        | TyKind::I1
         | TyKind::Bool
         | TyKind::StringLiteral
         | TyKind::None
@@ -5552,6 +5581,7 @@ fn closed_kind(kind: &TyKind) -> bool {
         | TyKind::Never
         | TyKind::Dtype
         | TyKind::Index
+        | TyKind::I1
         | TyKind::Error => true,
         TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
             !dtype.is_expr() && !width.is_expr()

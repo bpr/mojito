@@ -5,7 +5,7 @@ use super::*;
 use crate::mir::{MirCaptureMode, MirClosureCapture};
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::TyKind;
-use mojito_types::types::held_simd_ty;
+use mojito_types::types::{held_simd_ty, held_ty};
 
 pub(super) fn verify_instruction(
     name: &str,
@@ -1264,9 +1264,9 @@ fn verify_pop(
         return;
     };
     if op.is_compare() {
-        if *result != Ty::bool() {
+        if *result != Ty::i1() {
             errors.push(format!(
-                "{prefix}: pop.{} defines a register of type {result}, not Bool",
+                "{prefix}: pop.{} defines a register of type {result}, not i1",
                 op.mnemonic()
             ));
         }
@@ -1394,12 +1394,20 @@ fn verify_builtin_cast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec
     let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
         return;
     };
-    let (to, from) = (&held_simd_ty(to), &held_simd_ty(from));
-    let index = Ty::index();
-    let int = Ty::int();
-    if !((*from == index && *to == int) || (*from == int && *to == index)) {
+    let (to, from) = (&held_ty(to), &held_ty(from));
+    let pairs = [
+        (Ty::index(), Ty::int()),
+        (
+            Ty::bool(),
+            mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1),
+        ),
+    ];
+    if !pairs.iter().any(|(builtin, storage)| {
+        (from == builtin && to == storage) || (from == storage && to == builtin)
+    }) {
         errors.push(format!(
-            "{}: builtin cast from {from} to {to} is not between `index` and `Int`",
+            "{}: builtin cast from {from} to {to} is not between `index` and `Int` \
+             or `i1` and `Scalar[DType.bool]`",
             cx.prefix
         ));
     }

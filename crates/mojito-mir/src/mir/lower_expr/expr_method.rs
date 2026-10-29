@@ -488,18 +488,16 @@ impl<'a> Flatten<'a> {
             return Some(self.builtin_cast(call.location(), value, Ty::index()));
         }
         // `b.__mlir_bool__()` on a `Bool` is its `!kgen.scalar<bool>`
-        // storage, the one-lane `bool` vector the `Bool` splats to.
+        // storage.
         if method == "__mlir_bool__"
             && object
                 .ty()
                 .is_some_and(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Bool))
         {
-            let value = self.expr(object);
-            let storage = mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1);
-            return Some(self.splat_scalar(value, &storage, call.location()));
+            return Some(self.bool_storage(object, call.location()));
         }
-        // `b.__mlir_i1__()` on a `Bool` is the identity conversion to the
-        // builtin `i1` (`Bool`), and a heterogeneous collector's
+        // `b.__mlir_i1__()` on a `Bool` is the conversion to the builtin
+        // `i1`, held as the `Bool` itself, and a heterogeneous collector's
         // `get_loaded_kgen_pack()` the collector itself.
         if object.ty().is_some_and(|ty| match method {
             "__mlir_i1__" => matches!(ty.kind(), mojito_types::types::TyKind::Bool),

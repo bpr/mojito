@@ -2580,6 +2580,31 @@ fn kgen_deferred_attribute_round_trips() {
     assert!(text.contains("KgenDeferred") && text.contains("ct_mlir_attr(\"#pop.fmf<fast>\")"));
 }
 
+/// Schema 1.133 spells upstream's MLIR builtin `i1` type `i1`, and a
+/// `builtin.cast` between it and a `Bool`'s storage.
+#[test]
+fn mlir_i1_round_trips() {
+    let storage = mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1);
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::i1(), storage],
+            vec![
+                MirInstr::Const {
+                    dest: Reg(0),
+                    k: Const::Bool(true),
+                },
+                MirInstr::BuiltinCast {
+                    dest: Reg(1),
+                    value: Reg(0),
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    assert!(write::program(&program).contains("i1"));
+}
+
 /// Schema 1.129 spells upstream's `!kgen.simd` vector storage
 /// `kgen_simd { dtype, width }`, a type apart from the `simd` it stores.
 #[test]

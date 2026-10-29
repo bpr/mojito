@@ -573,7 +573,9 @@ impl Checker {
 /// b`. A builtin cast is its sugar: `pop.cast_to_builtin` over `s` is
 /// `s.__mlir_index__()` and `pop.cast_from_builtin` over `i` is
 /// `Int(mlir_value=i)`, the result type its `_type=` names being the one
-/// the check gave the op. `None` for any other expression or op.
+/// the check gave the op; at the `bool` pair they are
+/// `Bool(mlir_value=s).__mlir_i1__()` and `Bool(i).__mlir_bool__()`.
+/// `None` for any other expression or op.
 pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
     let (callee, param_args, args, kwargs) = match &expr.kind {
         ExprKind::MethodCall {
@@ -605,34 +607,57 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
     }
     let mut predicate = None;
     let mut typed = false;
+    let mut boolean = false;
     for argument in param_args {
         match argument {
             mojito_ast::ast::ParamArg::Named { name, value } if name == "pred" => {
                 predicate = Some(super::method_calls::mlir_attribute(value)?);
             }
-            mojito_ast::ast::ParamArg::Named { name, .. } if name == "_type" => typed = true,
+            mojito_ast::ast::ParamArg::Named { name, value } if name == "_type" => {
+                typed = true;
+                boolean = names_bool_builtin_pair(value);
+            }
             _ => return None,
         }
     }
+    let at_call = |kind: ExprKind| {
+        let mut call = Expr::new(kind, expr.span);
+        call.source.clone_from(&expr.source);
+        call
+    };
+    let method_call = |object: Expr, method: &str| ExprKind::MethodCall {
+        object: Box::new(object),
+        method: method.to_string(),
+        args: Vec::new(),
+        kwargs: Vec::new(),
+    };
+    let storage_call = |name: &str, value: &Expr| ExprKind::Call {
+        name: name.to_string(),
+        param_args: Vec::new(),
+        args: Vec::new(),
+        kwargs: vec![mojito_ast::ast::KwArg {
+            name: "mlir_value".to_string(),
+            value: value.clone(),
+        }],
+    };
     let op = MlirOp::parse(name, predicate).ok()?;
     let kind = match (op.lowering(), args.as_slice()) {
-        (MlirLowering::BuiltinCast, [operand]) if typed && op == MlirOp::PopCastToBuiltin => {
-            ExprKind::MethodCall {
-                object: Box::new(operand.clone()),
-                method: "__mlir_index__".to_string(),
-                args: Vec::new(),
-                kwargs: Vec::new(),
-            }
+        (MlirLowering::BuiltinCast, [operand]) if boolean && op == MlirOp::PopCastToBuiltin => {
+            method_call(at_call(storage_call("Bool", operand)), "__mlir_i1__")
         }
-        (MlirLowering::BuiltinCast, [operand]) if typed => ExprKind::Call {
-            name: "Int".to_string(),
-            param_args: Vec::new(),
-            args: Vec::new(),
-            kwargs: vec![mojito_ast::ast::KwArg {
-                name: "mlir_value".to_string(),
-                value: operand.clone(),
-            }],
-        },
+        (MlirLowering::BuiltinCast, [operand]) if boolean => method_call(
+            at_call(ExprKind::Call {
+                name: "Bool".to_string(),
+                param_args: Vec::new(),
+                args: vec![operand.clone()],
+                kwargs: Vec::new(),
+            }),
+            "__mlir_bool__",
+        ),
+        (MlirLowering::BuiltinCast, [operand]) if typed && op == MlirOp::PopCastToBuiltin => {
+            method_call(operand.clone(), "__mlir_index__")
+        }
+        (MlirLowering::BuiltinCast, [operand]) if typed => storage_call("Int", operand),
         _ if typed => return None,
         // `pop.cmp` is elementwise, where an infix comparison is the
         // reducing dunder.
@@ -663,6 +688,25 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
     let mut operator = Expr::new(kind, expr.span);
     operator.source.clone_from(&expr.source);
     Some(operator)
+}
+
+/// Whether a builtin cast's `_type=` names one side of the `bool` pair:
+/// `__mlir_type.i1` or ``__mlir_type.`!kgen.scalar<bool>` ``.
+fn names_bool_builtin_pair(argument: &mojito_ast::ast::ParamArg) -> bool {
+    let named = |name: &str| matches!(name, "i1" | "!kgen.scalar<bool>");
+    match argument {
+        mojito_ast::ast::ParamArg::Type(ty) => {
+            super::comptime_validation::mlir_source_name(ty).is_some_and(named)
+        }
+        mojito_ast::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
+            ..
+        }) => {
+            matches!(&object.kind, ExprKind::Identifier(base) if base == "__mlir_type")
+                && named(field)
+        }
+        _ => false,
+    }
 }
 
 /// A rejection of a builtin body, in the pin's words.

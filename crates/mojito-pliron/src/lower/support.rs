@@ -205,7 +205,7 @@ pub fn scalar_type(
     location: Option<SourceSpan>,
 ) -> Result<ScalarTy, PlironError> {
     match ty.kind() {
-        TyKind::Bool => Ok(ScalarTy::Bool),
+        TyKind::Bool | TyKind::I1 => Ok(ScalarTy::Bool),
         TyKind::Dtype => Ok(ScalarTy::Dtype),
         TyKind::Index => Ok(ScalarTy::Int),
         TyKind::KgenSimd { .. } => {

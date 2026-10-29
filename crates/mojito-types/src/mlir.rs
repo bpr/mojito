@@ -6,7 +6,8 @@
 //! lane ops (select, extract, insert, and the `bool`
 //! reductions), the `index` ops over `__mlir_type.index`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
-//! and its `!kgen.scalar<index>` storage, with the
+//! and its `!kgen.scalar<index>` storage and between `i1` and its
+//! `!kgen.scalar<bool>` storage, with the
 //! `__mlir_attr` spellings their attributes take. The checker verifies an op's operands
 //! as upstream's op verifier does and records the [`MlirOp`]. MIR lowering
 //! reads [`MlirOp::lowering`], and the backends compute a [`PopOp`] lane by

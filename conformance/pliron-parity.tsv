@@ -55,6 +55,7 @@ assets/ok/bit_count_ops.mojo	main	exe-differential	sanitized
 assets/ok/bitwise_shift_precedence.mojo	main	exe-differential	sanitized
 assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
 assets/ok/bool_bitwise_operators.mojo	main	exe-differential	sanitized
+assets/ok/bool_storage_primitives.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized

@@ -114,15 +114,16 @@ impl Checker {
         {
             return Ok(Ty::index());
         }
-        // `Bool.__mlir_i1__()` is upstream's conversion to the builtin `i1`,
-        // which is `Bool` while `Bool` is a compiler type.
+        // `Bool.__mlir_i1__()` is upstream's `pop.cast_to_builtin` of its
+        // storage to the builtin `i1`, which both backends hold as the
+        // `Bool` while `Bool` is a compiler type.
         if method == "__mlir_i1__"
             && args.is_empty()
             && kwargs.is_empty()
             && param_args.is_empty()
             && matches!(obj_ty.kind(), TyKind::Bool)
         {
-            return Ok(Ty::bool());
+            return Ok(Ty::i1());
         }
         // `Bool.__mlir_bool__()` is upstream's read of its
         // `!kgen.scalar<bool>` storage, held as the one-lane `bool` vector

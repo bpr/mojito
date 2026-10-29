@@ -19,11 +19,11 @@ impl Checker {
     /// ([`TyKind::KgenSimd`], never the `SIMD` value holding it), an `index`
     /// op `__mlir_type.index` ones. Arithmetic keeps the operand type,
     /// `pop.cmp` gives the `bool` mask storage of the operand width,
-    /// `index.cmp` an `i1` (`Bool`), and
+    /// `index.cmp` an `i1`, and
     /// `pop.cast`, `pop.bitcast`, and `pop.simd.splat` the type their
     /// `_type` attribute names. `pop.select` is typed by [`select_result`], the lane ops by
-    /// [`lane_op_result`], the casts between `index` and its storage by
-    /// [`builtin_cast_result`].
+    /// [`lane_op_result`], the casts between `index` or `i1` and its
+    /// storage by [`builtin_cast_result`].
     pub(super) fn infer_pop_op(
         &self,
         span: &SourceSpan,
@@ -247,11 +247,13 @@ enum PopTypeError {
     Subset(String),
 }
 
-/// How an MLIR verifier spells `ty`: the builtin `index` as `index`, and a
-/// `!kgen.simd` storage type unwrapped from its `__mlir_type` spelling.
+/// How an MLIR verifier spells `ty`: the builtins `index` and `i1` bare,
+/// and a `!kgen.simd` storage type unwrapped from its `__mlir_type`
+/// spelling.
 fn mlir_spelling(ty: &Ty) -> String {
     match ty.kind() {
         TyKind::Index => "index".to_string(),
+        TyKind::I1 => "i1".to_string(),
         TyKind::KgenSimd { .. } => ty
             .to_string()
             .trim_start_matches("__mlir_type.`")
@@ -274,7 +276,7 @@ fn storage_of(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, String> {
 }
 
 /// The result of an `index` op: every operand is an `index`; the compare
-/// gives an `i1` (`Bool`), the rest an `index`.
+/// gives an `i1`, the rest an `index`.
 fn index_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
     if let Some((position, found)) = operands
         .iter()
@@ -287,7 +289,7 @@ fn index_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
         ));
     }
     Ok(if matches!(op, MlirOp::IndexCmp(_)) {
-        Ty::bool()
+        Ty::i1()
     } else {
         Ty::index()
     })
@@ -330,28 +332,32 @@ fn select_result(
     Ok(case.clone())
 }
 
-/// The result of `pop.cast_from_builtin` (an `index` to the `_type`
-/// storage `!kgen.scalar<index>`, an `Int`'s) or `pop.cast_to_builtin` (that
-/// storage to the `_type` builtin `index`), as upstream's verifier types
-/// them. The pin's other builtin pairs (`i1` and `!kgen.scalar<bool>`) are
-/// outside the subset.
+/// The result of `pop.cast_from_builtin` (a builtin `index` or `i1` to
+/// the `_type` storage `!kgen.scalar<index>` or `!kgen.scalar<bool>`, an
+/// `Int`'s or a `Bool`'s) or `pop.cast_to_builtin` (that storage to the
+/// `_type` builtin), as upstream's verifier types them. The pin's other
+/// builtin pairs are outside the subset.
 fn builtin_cast_result(op: MlirOp, operands: &[Ty], target: Ty) -> Result<Ty, PopTypeError> {
     let operand = &operands[0];
     let outside = || {
         PopTypeError::Subset(format!(
-            "from '{}' to '{}' is outside the subset: Mojito admits the casts between              'index' and '!kgen.scalar<index>'",
+            "from '{}' to '{}' is outside the subset: Mojito admits the casts between \
+             'index' and '!kgen.scalar<index>', and between 'i1' and '!kgen.scalar<bool>'",
             mlir_spelling(operand),
             mlir_spelling(&target)
         ))
     };
-    let int_storage = mojito_types::types::kgen_simd_ty(Dtype::Int, 1);
+    let pairs = [(Ty::index(), Dtype::Int), (Ty::i1(), Dtype::Bool)]
+        .map(|(builtin, dtype)| (builtin, dtype, mojito_types::types::kgen_simd_ty(dtype, 1)));
     if op == MlirOp::PopCastFromBuiltin {
-        if target != int_storage {
+        let Some((builtin, dtype, _)) = pairs.iter().find(|(_, _, storage)| *storage == target)
+        else {
             return Err(outside());
-        }
-        if *operand != Ty::index() {
+        };
+        if operand != builtin {
             return Err(PopTypeError::Verifier(format!(
-                "op cannot convert to scalar dtype index from '{}'",
+                "op cannot convert to scalar dtype {} from '{}'",
+                dtype.kgen_mnemonic(),
                 mlir_spelling(operand)
             )));
         }
@@ -362,7 +368,10 @@ fn builtin_cast_result(op: MlirOp, operands: &[Ty], target: Ty) -> Result<Ty, Po
                 mlir_spelling(operand)
             )));
         }
-        if target != Ty::index() || *operand != int_storage {
+        if !pairs
+            .iter()
+            .any(|(builtin, _, storage)| *builtin == target && storage == operand)
+        {
             return Err(outside());
         }
     }

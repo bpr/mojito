@@ -130,6 +130,41 @@ impl CtLane {
             .flatten()
             .map(|lane| Self::Float(lane.to_bits()))
     }
+
+    /// One lane of a `#kgen.simd<…>` attribute of `dtype`, spelled as the
+    /// pin reads it: `true` or `false` for a `bool` lane, a decimal integer
+    /// for an integer lane, and a quoted decimal float, `"inf"`, `"-inf"`,
+    /// or `"nan"` for a float lane. `None` for any other spelling.
+    pub fn parse_attribute(text: &str, dtype: mojito_ast::ast::Dtype) -> Option<Self> {
+        let text = text.trim();
+        if dtype == mojito_ast::ast::Dtype::Bool {
+            return match text {
+                "true" => Some(Self::Bool(true)),
+                "false" => Some(Self::Bool(false)),
+                _ => None,
+            };
+        }
+        if dtype.is_float() {
+            let text = text.strip_prefix('"')?.strip_suffix('"')?;
+            let (negative, magnitude) = text
+                .strip_prefix('-')
+                .map_or((false, text), |magnitude| (true, magnitude));
+            return match FloatLiteral::parse_decimal(magnitude) {
+                Some(literal) => {
+                    Self::of_float_literal(&if negative { literal.neg() } else { literal }, dtype)
+                }
+                None => matches!(magnitude, "inf" | "nan")
+                    .then(|| text.parse::<f64>().ok())
+                    .flatten()
+                    .map(|value| Self::Float(dtype.round_lane(value).to_bits())),
+            };
+        }
+        let (negative, magnitude) = text
+            .strip_prefix('-')
+            .map_or((false, text), |magnitude| (true, magnitude));
+        let literal = IntLiteral::parse_radix(magnitude, 10)?;
+        Self::of_int_literal(&if negative { literal.neg() } else { literal }, dtype)
+    }
 }
 
 /// Why a compile-time `SIMD[dtype, width](values…)` construction has no
@@ -356,8 +391,9 @@ impl ScalarConversion {
     }
 
     /// Whether a value of type `ty` converts by this conversion as a cast:
-    /// a numeric scalar or literal, a `Bool`, a width-one SIMD value, and,
-    /// to `Int`, a pointer (its address).
+    /// a numeric scalar or literal, a `Bool`, a width-one SIMD value, to
+    /// `Int` a pointer (its address), and to `Bool` the MLIR builtin `i1`
+    /// (upstream's `@implicit Bool.__init__(value: __mlir_type.i1)`).
     pub fn casts_from(self, ty: &Ty) -> bool {
         matches!(
             ty.kind(),
@@ -369,6 +405,7 @@ impl ScalarConversion {
                 | TyKind::Bool
         ) || crate::types::is_scalar_simd(ty.kind())
             || (self == Self::Int && matches!(ty.kind(), TyKind::Pointer { .. }))
+            || (self == Self::Bool && *ty.kind() == TyKind::I1)
     }
 }
 
@@ -1008,7 +1045,7 @@ impl CtValue {
             | (value @ Self::Float(_), TyKind::FLOAT64)
             | (value @ Self::IntLiteral(_), TyKind::IntLiteral)
             | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral)
-            | (value @ Self::Bool(_), TyKind::Bool)
+            | (value @ Self::Bool(_), TyKind::Bool | TyKind::I1)
             | (value @ Self::Str(_), TyKind::StringLiteral) => Some(value),
             // A string literal is the nominal `String`'s compile-time form
             // (`comptime E: Dict[String, Int] = {"a": 1}`).

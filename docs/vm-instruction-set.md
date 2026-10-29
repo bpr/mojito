@@ -96,7 +96,7 @@ accessed; the compact notation omits this analysis-only field.
 | `add` through `not_in` | `BinOp` | Binary arithmetic, comparison, logic, or membership |
 | `literal.materialize` | `MaterializeLiteral` | Convert an exact numeric literal once to its checked runtime scalar type |
 | `scalar.cast` | `ScalarCast` | `Int(x)`, `UInt(x)`, `Float64(x)`, or `Bool(x)` of a scalar operand |
-| `builtin.cast` | `BuiltinCast` | Retype an `index` as its `Int` storage or back |
+| `builtin.cast` | `BuiltinCast` | Retype an `index` as its `Int` storage, or an `i1` as its `Scalar[DType.bool]` storage, or back |
 
 ### Calls
 
@@ -265,10 +265,12 @@ builtin.cast %dest, %value
 ```
 
 Upstream's `pop.cast_from_builtin` (an `index` to its `!kgen.scalar<index>`
-storage, an `Int`) or `pop.cast_to_builtin` (back). The register keeps its
-bits; both backends hold an `index` as the `Int` it casts from. The verifier
-requires exactly one of the two registers to be an `index` and the other an
-`Int`.
+storage, an `Int`, or an `i1` to its `!kgen.scalar<bool>` storage) or
+`pop.cast_to_builtin` (back). Both backends hold an `index` as the `Int` it
+casts from, so the register keeps its bits; they hold an `i1` as a `Bool`,
+which the VM converts to and from the one-lane `bool` vector its storage is
+held as, and which is one `i1` natively. The verifier requires one of the
+two registers to be the builtin and the other its storage's held type.
 
 ### `var.copy` — Copy Variable
 

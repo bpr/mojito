@@ -3926,6 +3926,7 @@ fn is_scalar_domain(ty: &Ty) -> bool {
             | TyKind::FLOAT64
             | TyKind::FloatLiteral
             | TyKind::Bool
+            | TyKind::I1
             | TyKind::StringLiteral
             | TyKind::Dtype
             | TyKind::Simd { .. }

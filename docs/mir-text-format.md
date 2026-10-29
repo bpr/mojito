@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.132
+mojito-mir 1.133
 ```
 
-The writer emits 1.132. The reader accepts 1.0 through 1.132; *Schema 1.0*
+The writer emits 1.133. The reader accepts 1.0 through 1.133; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -877,6 +877,12 @@ and the constant `ct_mlir_attr("text")`, an untyped
 `FastMathFlag` and `SIMD.fma`, `std.math` declares `fma`, and the
 compiler's `__fma__` rule is gone.
 
+Schema 1.133 adds the type `i1`, upstream's MLIR builtin `i1`, which
+`index.cmp` and the unsigned `pop` compares now define, and lets
+`builtin.cast` convert between `i1` and a `Bool`'s `!kgen.scalar<bool>`
+storage. A condition may be an `i1`. The package format moves to
+`mojito-package 143`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1451,6 +1457,11 @@ type of a `StringLiteral`'s `value` parameter, whose values are
 an untyped MLIR attribute and of a function result returning one, whose
 values are `ct_mlir_attr`. It is compile-time only, as `any_trait` is.
 
+`i1` (schema 1.133) is upstream's MLIR builtin `i1`, what
+`Bool.__mlir_i1__` returns and `pop.cast_to_builtin` gives from a `Bool`'s
+`!kgen.scalar<bool>` storage. Both backends hold it as a `Bool`, and the
+verifier compares the two as one held representation.
+
 `kgen_simd { dtype, width }` (schema 1.129) is upstream's vector storage
 `!kgen.simd<width, dtype>` (`!kgen.scalar<dtype>` at width one), the type of
 a `SIMD`'s `_mlir_value` field and of `pop` op operands, with `simd`'s slots.
@@ -1624,9 +1635,9 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`: a capture is a `reference` or a lambda's storage moved in) |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
-| `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): exactly one of `dest` and `value` is an `index`, the other an `Int`; the bits are unchanged |
+| `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage |
 | `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
-| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into a `Bool`; an integer division by zero traps |
+| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133); an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |

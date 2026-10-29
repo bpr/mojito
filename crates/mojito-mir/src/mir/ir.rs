@@ -2116,8 +2116,9 @@ pub enum MirInstr {
     },
     /// Upstream's `pop.cast_from_builtin` or `pop.cast_to_builtin`: the
     /// operand's bits retyped between the MLIR builtin `index` and its
-    /// `!kgen.scalar<index>` storage, an `Int`. Exactly one of `dest` and
-    /// `value` is an `index`, which names the direction.
+    /// `!kgen.scalar<index>` storage, an `Int`, or between the builtin `i1`
+    /// and its `!kgen.scalar<bool>` storage. Exactly one of `dest` and
+    /// `value` is the builtin, which names the direction.
     BuiltinCast {
         dest: Reg,
         value: Reg,
@@ -3813,7 +3814,7 @@ fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
     match (constant, ty.kind()) {
         (Const::Int(value), TyKind::INT) => Some(CtValue::Int(*value)),
         (Const::Float(value), TyKind::FLOAT64) => Some(CtValue::Float(value.to_bits())),
-        (Const::Bool(value), TyKind::Bool) => Some(CtValue::Bool(*value)),
+        (Const::Bool(value), TyKind::Bool | TyKind::I1) => Some(CtValue::Bool(*value)),
         (Const::IntLiteral(value), TyKind::IntLiteral) => Some(CtValue::IntLiteral(value.clone())),
         (Const::FloatLiteral(value), TyKind::FloatLiteral) => {
             Some(CtValue::FloatLiteral(value.clone()))
@@ -3874,7 +3875,7 @@ fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
     match (value, ty.kind()) {
         (CtValue::Int(value), TyKind::INT) => Some(Const::Int(value)),
         (CtValue::Float(bits), TyKind::FLOAT64) => Some(Const::Float(f64::from_bits(bits))),
-        (CtValue::Bool(value), TyKind::Bool) => Some(Const::Bool(value)),
+        (CtValue::Bool(value), TyKind::Bool | TyKind::I1) => Some(Const::Bool(value)),
         (CtValue::IntLiteral(value), TyKind::IntLiteral) => Some(Const::IntLiteral(value)),
         (CtValue::FloatLiteral(value), TyKind::FloatLiteral) => Some(Const::FloatLiteral(value)),
         (value @ (CtValue::UInt(_) | CtValue::Index(_) | CtValue::Simd { .. }), _) => {

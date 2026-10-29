@@ -8431,6 +8431,25 @@ fn pop_and_index_op_verifier_errors_are_rejected() {
 }
 
 #[test]
+fn mlir_i1_is_no_condition_and_bool_storage_no_place() {
+    // An `i1` declares no `__bool__`, so it is no condition, as at the pin;
+    // a `Bool`'s `_mlir_value` is read, never stored, in the subset.
+    for (source, message) in [
+        (
+            "def main():\n    var a = True.__mlir_i1__()\n    if a:\n        print(1)\n",
+            "'__mlir_type.i1' does not implement the '__bool__' method",
+        ),
+        (
+            "def main():\n    var t = True\n    t._mlir_value = False._mlir_value\n    print(t)\n",
+            "a store to a `Bool`'s `_mlir_value` storage is outside the subset",
+        ),
+    ] {
+        let error = err(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[test]
 fn pop_simd_lane_ops_type_as_their_verifiers_do() {
     // `select` keeps its cases' type, `extractelement` and the reductions
     // give one lane (`!kgen.scalar<dt>`), which `Bool(mlir_value=)` takes

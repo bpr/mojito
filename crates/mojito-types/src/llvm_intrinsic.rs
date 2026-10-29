@@ -318,12 +318,12 @@ impl LlvmIntrinsic {
     /// lowering unwraps it, and the caller unwraps it before asking. A
     /// literal struct is a `TyKind::Tuple`, upstream's
     /// `!kgen.struct<…isParamPack>`, which is never unwrapped. A vector's
-    /// `!kgen.simd` storage translates as the vector, and the builtin
-    /// `index` as the `Int` it casts from.
+    /// `!kgen.simd` storage translates as the vector, the builtin `index`
+    /// as the `Int` it casts from, and the builtin `i1` as the `Bool`.
     pub fn signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
         let translated = |ty: &Ty| match ty.kind() {
             TyKind::Index => Ty::int(),
-            _ => crate::types::held_simd_ty(ty),
+            _ => crate::types::held_ty(ty),
         };
         let operands: Vec<Ty> = operands.iter().map(translated).collect();
         self.translated_signature_error(&translated(result), &operands)

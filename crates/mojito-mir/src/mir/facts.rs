@@ -249,6 +249,17 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether this is `b._mlir_value` on a `Bool`, a read of `b` splat to
+    /// its storage.
+    pub(super) fn is_bool_storage(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::BoolStorage
+            )
+        })
+    }
+
     /// Project `place`, the place of this member node's object, to the
     /// member `field`; a SIMD value's storage is the value's own place.
     pub(super) fn project_member(self, place: &mut MirPlace, field: &str) {

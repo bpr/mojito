@@ -358,28 +358,54 @@ pub(super) fn kgen_string_runtime_read() -> TypeError {
     ))
 }
 
-/// The value of the untyped attribute `` __mlir_attr.`text` ``, upstream's
-/// `!kgen.deferred` constant. A typed attribute (`` `7 : index` ``), whose
-/// type follows a colon outside the attribute's brackets, is outside the
-/// subset.
-pub(super) fn untyped_mlir_attribute(text: &str) -> Result<CtValue, TypeError> {
+/// The value and type of the attribute `` __mlir_attr.`text` ``.
+///
+/// An untyped attribute is upstream's `!kgen.deferred` constant
+/// ([`CtValue::MlirAttr`]). A typed one, whose type follows a colon outside
+/// the attribute's brackets, is a constant of that type: a
+/// `` `#kgen.simd<…> : !kgen.scalar<dt>` `` (or `!kgen.simd<n, dt>`) lane
+/// constant of the storage type, held as its vector, and an
+/// `` `7 : index` `` builtin `index`. Any other typed attribute is outside
+/// the subset.
+pub(super) fn mlir_attribute(text: &str) -> Result<(CtValue, Ty), TypeError> {
     let mut depth = 0_usize;
-    let typed = text.chars().any(|c| {
+    let colon = text.char_indices().find_map(|(at, c)| {
         match c {
             '<' | '(' | '[' | '{' => depth += 1,
             '>' | ')' | ']' | '}' => depth = depth.saturating_sub(1),
             _ => {}
         }
-        c == ':' && depth == 0
+        (c == ':' && depth == 0).then_some(at)
     });
-    if typed {
-        return Err(TypeError::Unsupported(format!(
+    let Some(colon) = colon else {
+        return Ok((
+            CtValue::MlirAttr(text.to_string()),
+            TyKind::KgenDeferred.into(),
+        ));
+    };
+    let (body, ty) = (text[..colon].trim(), text[colon + 1..].trim());
+    typed_mlir_attribute(body, ty).ok_or_else(|| {
+        TypeError::Unsupported(format!(
             "the typed attribute '__mlir_attr.`{text}`' is outside the subset; only an untyped \
-             '{}' attribute is read",
+             '{}' attribute, a '#kgen.simd<...>' constant of a '!kgen.scalar<dtype>' or \
+             '!kgen.simd<width, dtype>' type, and an integer of type 'index' are read",
             mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING
-        )));
+        ))
+    })
+}
+
+/// The `name` of an `` __mlir_type.`name` `` spelling.
+pub(super) fn mlir_source_name(ty: &SourceType) -> Option<&str> {
+    match ty {
+        SourceType::Assoc { base, name, args }
+            if args.is_empty()
+                && matches!(base.as_ref(), SourceType::Named(base, base_args)
+                    if base == "__mlir_type" && base_args.is_empty()) =>
+        {
+            Some(name)
+        }
+        _ => None,
     }
-    Ok(CtValue::MlirAttr(text.to_string()))
 }
 
 /// The rejection of an untyped `__mlir_attr` read at run time outside a
@@ -1235,6 +1261,7 @@ impl Checker {
             TyKind::Struct(..)
             | TyKind::Simd { .. }
             | TyKind::Index
+            | TyKind::I1
             | TyKind::Dtype
             | TyKind::KgenDeferred
                 if called.is_some() =>
@@ -1744,6 +1771,7 @@ impl Checker {
                 TyKind::INT
                     | TyKind::UINT
                     | TyKind::Index
+                    | TyKind::I1
                     | TyKind::Bool
                     | TyKind::FLOAT64
                     | TyKind::Dtype
@@ -4643,6 +4671,7 @@ fn declared_slot_value(ty: &Ty) -> bool {
             | TyKind::Bool
             | TyKind::FLOAT64
             | TyKind::Index
+            | TyKind::I1
             | TyKind::IntLiteral
             | TyKind::Dtype
     )
@@ -4696,6 +4725,7 @@ impl ApplicableShape<'_> {
             SourceType::Float64 => Some(SlotType::Scalar(Ty::float64())),
             SourceType::SelfType => Some(SlotType::Owner),
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
+            ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
             ty if super::declarations::is_int_literal_annotation(ty) => {
                 Some(SlotType::Scalar(Ty::int_literal()))
             }
@@ -5047,11 +5077,7 @@ fn is_mlir_index_source(ty: &SourceType) -> bool {
 
 /// Whether `ty` spells `` __mlir_type.`name` ``.
 fn is_mlir_source(ty: &SourceType, mlir_name: &str) -> bool {
-    matches!(ty, SourceType::Assoc { base, name, args }
-        if name == mlir_name
-            && args.is_empty()
-            && matches!(base.as_ref(), SourceType::Named(base, base_args)
-                if base == "__mlir_type" && base_args.is_empty()))
+    mlir_source_name(ty) == Some(mlir_name)
 }
 
 /// Whether `value` is a scalar or a string attribute.
@@ -5141,3 +5167,35 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
 }
 
 const VARIADICS_MODULE: &str = "std.builtin.variadics";
+
+/// The constant `` `body : ty` `` spells and its type, for the typed
+/// attributes the subset reads ([`mlir_attribute`]).
+fn typed_mlir_attribute(body: &str, ty: &str) -> Option<(CtValue, Ty)> {
+    if ty == "index" {
+        return Some((CtValue::Index(body.parse().ok()?), Ty::index()));
+    }
+    let storage = mojito_types::types::mlir_type_named(ty).or_else(|| {
+        let (width, dtype) = ty
+            .strip_prefix("!kgen.simd<")?
+            .strip_suffix('>')?
+            .split_once(',')?;
+        let dtype = mojito_ast::ast::Dtype::from_kgen_mnemonic(dtype.trim())?;
+        Some(mojito_types::types::kgen_simd_ty(
+            dtype,
+            width.trim().parse().ok()?,
+        ))
+    })?;
+    let (SimdDtype::Known(dtype), SimdWidth::Known(width)) =
+        mojito_types::types::kgen_simd_slots(storage.kind())?
+    else {
+        return None;
+    };
+    let lanes = body
+        .strip_prefix("#kgen.simd<")?
+        .strip_suffix('>')?
+        .split(',')
+        .map(|lane| mojito_types::ct::CtLane::parse_attribute(lane, dtype))
+        .collect::<Option<Vec<_>>>()?;
+    (i64::try_from(lanes.len()).ok() == Some(width))
+        .then_some((CtValue::Simd { dtype, lanes }, storage))
+}

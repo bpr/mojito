@@ -1970,6 +1970,11 @@ impl Checker {
             self.record_selected_conversion(expression, "Bool".to_string(), to, None, None)?;
             return Ok(true);
         }
+        // Upstream's `@implicit Bool.__init__(value: __mlir_type.i1)`, which
+        // both backends hold as the `Bool` it constructs.
+        if *to == TyKind::Bool && *from == TyKind::I1 {
+            return Ok(true);
+        }
         let Some(SelectedConversion {
             target,
             source_borrow,
@@ -2275,7 +2280,7 @@ impl Checker {
     /// `Float64`, or a width-1 lane such as `if a == b` over `UInt64`s), a
     /// `Boolable` type parameter or pack element, or a struct whose
     /// `__bool__` supplies its truth value (`if collection:`), and an error
-    /// for anything else.
+    /// for anything else, an MLIR type (`i1`) among them.
     fn condition_truthiness(&self, ty: &Ty, context: &str) -> Result<bool, TypeError> {
         let bounded = self.opaque_element(ty).unwrap_or_else(|| ty.clone());
         if *ty == TyKind::Bool {
@@ -2286,6 +2291,12 @@ impl Checker {
         } else if let Some(result) = self.struct_dunder(ty, "__bool__", &[]) {
             require_dunder_ret(result?, &Ty::bool(), "__bool__")?;
             Ok(true)
+        } else if mojito_types::conformance::reflects_no_conformance(ty) {
+            // An MLIR type (`i1`, `index`) declares no `__bool__`, and the
+            // pin's condition names the missing method.
+            Err(TypeError::MatchPattern(format!(
+                "'{ty}' does not implement the '__bool__' method"
+            )))
         } else {
             Err(TypeError::TypeMismatch {
                 expected: "Bool".to_string(),

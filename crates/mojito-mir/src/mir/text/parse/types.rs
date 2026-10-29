@@ -25,6 +25,7 @@ impl Decoder {
                 "KgenString" => TyKind::KgenString.into(),
                 "KgenDeferred" => TyKind::KgenDeferred.into(),
                 "index" => Ty::index(),
+                "i1" => Ty::i1(),
                 "Self" => Ty::self_type(),
                 "Error" => Ty::error(),
                 other => {

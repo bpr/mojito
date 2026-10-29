@@ -1980,10 +1980,12 @@ impl<'a> Flatten<'a> {
                 Some(p)
             }
             (CheckedOp::Member { field, .. }, Some(object)) => {
-                // A compile-time member read (`T.K`, `A.K`) is a value.
+                // A compile-time member read (`T.K`, `A.K`) is a value, and
+                // so is a `Bool`'s storage.
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
+                    || e.is_bool_storage()
                 {
                     return None;
                 }
@@ -2023,10 +2025,12 @@ impl<'a> Flatten<'a> {
         }
         match (e.op(), e.object()) {
             (CheckedOp::Member { field, .. }, Some(object)) => {
-                // A compile-time member read (`T.K`, `A.K`) is a value.
+                // A compile-time member read (`T.K`, `A.K`) is a value, and
+                // so is a `Bool`'s storage.
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
+                    || e.is_bool_storage()
                 {
                     return None;
                 }
@@ -2061,10 +2065,12 @@ impl<'a> Flatten<'a> {
                 Some(p)
             }
             (CheckedOp::Member { field, .. }, Some(object)) => {
-                // A compile-time member read (`T.K`, `A.K`) is a value.
+                // A compile-time member read (`T.K`, `A.K`) is a value, and
+                // so is a `Bool`'s storage.
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
+                    || e.is_bool_storage()
                 {
                     return None;
                 }

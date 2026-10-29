@@ -339,8 +339,21 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     crate::runtime::builtin_convert(*target, regs[value.0 as usize].clone())?;
             }
+            // An `index` and its `Int` storage are one value; an `i1` is
+            // held as a `Bool`, and its `!kgen.scalar<bool>` storage as the
+            // one-lane `bool` vector.
             MirInstr::BuiltinCast { dest, value } => {
-                regs[dest.0 as usize] = regs[value.0 as usize].clone();
+                regs[dest.0 as usize] = match &regs[value.0 as usize] {
+                    bit @ Value::Bool(_) => simd_from_values(
+                        mojito_ast::ast::Dtype::Bool,
+                        1,
+                        std::slice::from_ref(bit),
+                    )?,
+                    lane @ Value::Simd { .. } => {
+                        crate::runtime::builtin_convert(ScalarConversion::Bool, lane.clone())?
+                    }
+                    value => value.clone(),
+                };
             }
             MirInstr::IsRunInComptimeInterpreter { dest } => {
                 regs[dest.0 as usize] = Value::Bool(self.ctfe_fuel.is_some());

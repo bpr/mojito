@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `__mlir_type.i1` is upstream's MLIR builtin `i1`, a type of its own:
+  `Bool.__mlir_i1__()` and `index.cmp` give one, `Bool(i)`,
+  `Bool(value=i)`, and an implicit conversion take one, and
+  `pop.cast_to_builtin`/`pop.cast_from_builtin` convert it to and from a
+  `Bool`'s `!kgen.scalar<bool>` storage, which `b._mlir_value` now reads,
+  on the VM and natively. As at the pin, `print(i)` and `if i:` over an
+  `i1` are rejected, where Mojito accepted both. A typed attribute is a
+  constant of its type: `` __mlir_attr.`#kgen.simd<true> :
+  !kgen.scalar<bool>` ``, `!kgen.simd<n, dt>` vectors, and
+  `` __mlir_attr.`7 : index` ``. `Bool`'s library port continues as
+  R1608–R1612. The MIR schema moves to 1.133 and the package format to
+  `mojito-package 143`.
 - An initializer may refine its `out self` type, as at the pin (R1594):
   `def __init__(out self: W[2], *, two: Int)` on `struct W[n: Int]` parses,
   `W(two=8)` infers `n = 2`, `W[3](two=7)` matches no initializer, an

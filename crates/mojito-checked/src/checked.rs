@@ -970,6 +970,11 @@ pub enum SemanticAdjustment {
     /// both backends hold as the vector while `SIMD` is a compiler type: the
     /// read, borrow, or store of `v`.
     SimdStorage,
+    /// `b._mlir_value` on a `Bool` — its `!kgen.scalar<bool>` storage, the
+    /// one-lane `bool` vector the `Bool` splats to while `Bool` is a
+    /// compiler type. Unlike [`Self::SimdStorage`] the two are held
+    /// differently, so it is a read of `b`, never a place.
+    BoolStorage,
     /// `DType.<name>` read as a runtime value, or the `dtype` of a `SIMD` type
     /// or value (`Int32.dtype`, `v.dtype`) — the dtype, lowered as a dtype
     /// constant when known and as a read of its binder in a generator. A
