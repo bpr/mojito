@@ -6779,21 +6779,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1631 A static method called on a bare struct name does not bind
-  the struct's defaulted parameters**
-
-  `T.answer()` and `T[].answer()`, over `struct T[n: Int = 3]` whose static
-  `answer` returns `Self.n`, stop with "keeps the parameter constant `n` in
-  elaborated MIR", where the pin prints `3`.
-  - `T[3].answer()` and `T().answer()` run, so the defaults are applied
-    to a construction but not to a bare type name used as a call's base.
-  - An infer-only defaulted parameter (`struct T[n: Int = 3, //]`) fails
-    the same way. That is `CompilationTarget.has_avx2()` (R1562).
-  - The root is not located.
-  - Found while planning R1562 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1632 A struct's `comptime` member cannot name its own struct**
 
   `comptime current = Self` inside `struct T[n: Int]` stops `T[4].current

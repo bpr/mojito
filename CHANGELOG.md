@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A static method called on a bare parametric struct name binds the
+  struct's defaulted parameters, infer-only ones included, so `T.answer()`
+  over `struct T[n: Int = 3]` reads `Self.n` as `3` on both backends, as
+  at the pin (R1631): the bare name denotes the instance the call solved,
+  which the elaborator receives and the method's own instantiation is
+  keyed by.
 - A function returning `!kgen.deferred` runs at compile time (R1630): the
   elaborator's VM holds the attribute it returns as a value, so
   `F[attr()]`, `comptime a = attr()`, a body branching on a parameter,

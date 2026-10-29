@@ -155,7 +155,7 @@ impl Checker {
             return self.infer_instance_receiver_call(span, object, &instance?, method, call);
         }
         if let ExprKind::Identifier(sname) = &object.kind {
-            return self.infer_struct_name_call(span, sname, method, call);
+            return self.infer_struct_name_call(span, object, sname, method, call);
         }
         Ok(None)
     }
@@ -211,6 +211,7 @@ impl Checker {
     fn infer_struct_name_call(
         &self,
         span: &SourceSpan,
+        object: &Expr,
         sname: &str,
         method: &str,
         call: MethodCallArguments<'_>,
@@ -229,14 +230,20 @@ impl Checker {
             return Ok(None);
         };
         // A parametric struct's static needs the struct's own parameters
-        // solved (here, inferred from the call's argument types — the
-        // explicit spelling arrives as a `TypeApply` receiver above); the
-        // dedicated path owns that. Non-parametric statics keep the
-        // established path below.
+        // solved (here, inferred from the call's argument types or filled
+        // from their defaults — the explicit spelling arrives as a
+        // `TypeApply` receiver above); the dedicated path owns that. The
+        // bare name then denotes the instance it was solved at (`T` in
+        // `T.answer()` is `T[3]`), which lowering hands the elaborator.
+        // Non-parametric statics keep the established path below.
         if !info.decls.is_empty() && signatures.iter().any(|sig| !sig.has_self) {
-            return self
-                .infer_struct_static_method(span.clone(), sname, (&[], None), method, call)
-                .map(Some);
+            let (ty, arguments) =
+                self.infer_struct_static_call(span.clone(), sname, (&[], None), method, call)?;
+            if !arguments.is_empty() {
+                self.record_at(object.source_span()).ty =
+                    Some(TyKind::Struct(sname.to_string(), arguments).into());
+            }
+            return Ok(Some(ty));
         }
         // The bare type name (never an expression binding) with only
         // instance methods of that name: the receiver is the first

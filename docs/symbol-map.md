@@ -517,7 +517,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   explicit `TypeApply`/subscript-parsed receivers, whose origin slots
   partition out through `partition_struct_origin_args` as construction does,
   and bare receivers with struct parameters inferred from argument types via
-  `resolve_use_params`; `finish_static_call` completes every static, on both
+  `resolve_use_params`, or filled from their defaults — `infer_struct_static_call`
+  returns the arguments the selected static was solved at, which
+  `infer_struct_name_call` records as the bare name's instance for lowering; `finish_static_call` completes every static, on both
   the parametric and the bare non-parametric path — binding `ref [Self.o]`
   slots and explicit origins through the constructor's
   `bind_constructor_origins`/`record_constructor_reference_borrows`, retaining

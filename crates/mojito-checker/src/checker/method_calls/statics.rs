@@ -228,10 +228,26 @@ impl Checker {
         &self,
         span: SourceSpan,
         sname: &str,
-        (struct_targs, receiver): (&[mojito_ast::ast::ParamArg], Option<&Ty>),
+        receiver: (&[mojito_ast::ast::ParamArg], Option<&Ty>),
         method: &str,
         call: MethodCallArguments<'_>,
     ) -> Result<Ty, TypeError> {
+        self.infer_struct_static_call(span, sname, receiver, method, call)
+            .map(|(ty, _)| ty)
+    }
+
+    /// [`Self::infer_struct_static_method`], also returning the struct
+    /// arguments the selected static was solved at: the receiver's explicit
+    /// arguments, those its argument types infer, and the declared defaults
+    /// of the rest.
+    pub(super) fn infer_struct_static_call(
+        &self,
+        span: SourceSpan,
+        sname: &str,
+        (struct_targs, receiver): (&[mojito_ast::ast::ParamArg], Option<&Ty>),
+        method: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<(Ty, Vec<TyArg>), TypeError> {
         let MethodCallArguments {
             param_args,
             args,
@@ -268,6 +284,7 @@ impl Checker {
         // The signature behind each match, recovered after selection by its
         // parameter shape (origin binding needs the declared binders).
         let mut candidate_sigs: Vec<(&MethodSig, Vec<Ty>)> = Vec::new();
+        let mut candidate_struct_args: Vec<Vec<TyArg>> = Vec::new();
         let mut availability_failure = None;
         let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
         for sig in signatures.iter().filter(|sig| !sig.has_self) {
@@ -357,6 +374,7 @@ impl Checker {
                 kwargs,
             ) {
                 candidate_sigs.push((sig, params.clone()));
+                candidate_struct_args.push(tyargs.clone());
                 matches.push(MethodCallResolution {
                     conversion_score: scored.rank,
                     simd_erasures: scored.simd_erasures,
@@ -434,15 +452,20 @@ impl Checker {
                 }
                 .to_string(),
             })?;
+        let struct_arguments = candidate_sigs
+            .iter()
+            .position(|(_, params)| *params == selected.param_types)
+            .map(|index| candidate_struct_args.swap_remove(index))
+            .unwrap_or_default();
         self.record_bracket_attributes(span.clone(), selected.bracket_attributes.clone());
         if parameterized_syntax {
             self.record_at(span.clone()).parameterized_method_call =
                 Some(selected.param_decls.clone());
         }
         if let Some(arguments) = &selected.instantiation {
-            // An explicit receiver instance (`Box[Int].has[Bool]()`, or the
-            // type `type_of(b)` denotes) keys the request by the instance,
-            // like a method call on one.
+            // The receiver instance (`Box[Int].has[Bool]()`, the type
+            // `type_of(b)` denotes, or the one a bare name was solved at)
+            // keys the request, like a method call on one.
             let receiver_targs = receiver
                 .and_then(mojito_types::types::nominal_parts)
                 .map(|(_, arguments)| arguments.to_vec())
@@ -457,7 +480,7 @@ impl Checker {
                         })
                         .flatten()
                 })
-                .unwrap_or_default();
+                .unwrap_or_else(|| struct_arguments.clone());
             let owner_arguments = self
                 .instance_arguments(sname, &receiver_targs)
                 .unwrap_or_default();
@@ -505,6 +528,7 @@ impl Checker {
             args,
             kwargs,
         )
+        .map(|ty| (ty, struct_arguments))
     }
 
     /// Complete a selected static call: bind the struct's origin parameters
