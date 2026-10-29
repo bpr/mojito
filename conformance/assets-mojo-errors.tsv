@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	904
+# swept-count	912
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -734,6 +734,12 @@ assets/type_error/reference_call_immutable_assignment_target.mojo	compile-reject
 assets/type_error/reference_call_write_linear_parameter.mojo	compile-reject	agree	error: value abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/reference_method_read_param_assignment_target.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/reference_write_explicit_destroy.mojo	compile-reject	agree	error: value abandoned without being explicitly destroyed: call close()
+assets/type_error/refined_implicit_conversion_mismatch.mojo	compile-reject	agree	error: invalid call to 'take_three': value passed to 'w' cannot be converted from 'Bool' to 'W[Int(3)]'
+assets/type_error/refined_out_self_not_an_instance.mojo	compile-reject	agree	error: 'self' argument must have type 'W[n]', but actually has type 'Int'
+assets/type_error/refined_out_self_overload_on_result.mojo	compile-reject	agree	error: redefinition of function '__init__', cannot overload on return type
+assets/type_error/refined_out_self_parameter_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/refined_out_self_redefines_parameter.mojo	compile-reject	agree	error: cannot use Self parameter 'b' in constructor whose result defines it to 'a'
+assets/type_error/refined_out_self_uninferred_parameter.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/reflected_field_proof_is_positional.mojo	compile-reject	agree	error: invalid call to '__init__': no candidates found
 assets/type_error/reflected_field_type_needs_proof.mojo	compile-reject	agree	error: invalid call to '__init__': no candidates found
 assets/type_error/reflected_type_argument_is_anytype.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'T' has 'Copyable' type, but value has type 'AnyType'
@@ -751,6 +757,7 @@ assets/type_error/return_origin_widening_wrapper_adapter.mojo	compile-reject	agr
 assets/type_error/roundable_missing_ndigits_overload.mojo	compile-reject	agree	error: 'R' does not implement all requirements for 'Roundable'
 assets/type_error/scalar_range_float_needs_step.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/scalar_range_mixed_dtypes.mojo	compile-reject	agree	error: no matching function in call to 'range'
+assets/type_error/self_annotation_not_self.mojo	compile-reject	agree	error: 'self' argument must have type 'Self'; use a 'where' clause to constrain the 'Self' type instead
 assets/type_error/set_clear_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'clear_with': value passed to 'destroy_func' cannot be converted from 'def `lambda_0(a: Int, b: Int) thin -> None' to 'T'
 assets/type_error/set_display_requires_deinitable_element.mojo	compile-reject	agree	error: invalid call to '__init__': lacking evidence to prove correctness
 assets/type_error/set_element_ref_write.mojo	runs	subset	the pin runs it;Mojito rejects: must be mutable
@@ -855,6 +862,7 @@ assets/type_error/trait_parameter_runtime_read.mojo	compile-reject	agree	error: 
 assets/type_error/trait_parameter_type_argument.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[AnyType]' type, but value has type 'AnyStruct[Int]'
 assets/type_error/trait_parameter_unrefined_trait.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[Copyable]' type, but value has type 'AnyTrait[Movable]'
 assets/type_error/trait_reads_missing_struct_member.mojo	compile-reject	agree	error: 'M' value has no attribute 'Y'
+assets/type_error/trait_refined_out_self.mojo	compile-reject	agree	error: 'self' argument must have type 'Self' in trait method declaration, but actually has type 'Int'
 assets/type_error/trait_requirement_collector_convention.mojo	compile-reject	agree	error: 'C' does not implement all requirements for 'Eater'
 assets/type_error/trait_requirement_collector_missing.mojo	compile-reject	agree	error: 'Bad' does not implement all requirements for 'Taker'
 assets/type_error/trait_requirement_pack_element_mismatch.mojo	compile-reject	agree	error: 'S' does not implement all requirements for 'Getter'

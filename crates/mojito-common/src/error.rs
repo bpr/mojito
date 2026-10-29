@@ -169,6 +169,12 @@ pub enum TypeError {
     /// call selecting it or a reference naming it. Carries the pin's
     /// message: the decorator's reason, or its `use=` replacement.
     Unavailable(String),
+    /// A method's `self` annotation the pin rejects: a non-`Self` type on a
+    /// receiver other than an initializer's `out self`, or a refined
+    /// `out self` type that is not an instance of the enclosing struct or
+    /// moves one of its parameters, or two initializers that differ only
+    /// in their refined types. Carries the pin's message.
+    InvalidReceiver(String),
     /// A bare assignment (`x = e` or `a, b = e`) targets a name that is not in
     /// scope. Mojito requires `var` to declare a new variable.
     AssignToUndeclared(String),
@@ -686,7 +692,9 @@ impl fmt::Display for TypeError {
             Self::ReservedName(name) => {
                 write!(f, "'{name}' is a reserved word and cannot name a function")
             }
-            Self::InvalidDecorator(message) | Self::Unavailable(message) => f.write_str(message),
+            Self::InvalidDecorator(message)
+            | Self::Unavailable(message)
+            | Self::InvalidReceiver(message) => f.write_str(message),
             Self::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")
             }

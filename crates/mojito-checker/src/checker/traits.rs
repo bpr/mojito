@@ -297,6 +297,14 @@ impl Checker {
                 }
                 self.push_param_scope(&decls);
                 let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
+                    if let Some(annotation) = &m.self_type {
+                        let ty = this.ty_from_anno(annotation)?;
+                        if ty != Ty::self_type() {
+                            return Err(TypeError::InvalidReceiver(format!(
+                                "'self' argument must have type 'Self' in trait method declaration, but actually has type '{ty}'"
+                            )));
+                        }
+                    }
                     Ok((
                         m.params
                             .iter()
@@ -384,6 +392,7 @@ impl Checker {
                     raises: error.as_ref().is_some_and(|ty| *ty != TyKind::Never),
                     error,
                     self_convention: m.self_convention,
+                    refined_self: None,
                     ref_params: lower_ref_param_sigs(&m.type_params, &regular_params, 0)?,
                     ref_return,
                     view_return_interior: view_return_interior_tags(m.ret.as_ref()),
@@ -936,13 +945,21 @@ impl Checker {
                 TypeError::InvariantViolation(format!("struct '{name}' was not registered"))
             })?;
             let overloads = info.methods.entry(method_name.to_string()).or_default();
-            if overloads.iter().any(|existing| {
+            if let Some(existing) = overloads.iter().find(|existing| {
                 same_method_shape(existing, &sig)
                     && existing.has_self == sig.has_self
                     && (!mojito_symbol::symbol::receiver_overloaded_method(method_name)
                         || existing.self_convention == sig.self_convention)
             }) {
-                return Err(TypeError::Redeclaration(method_name.to_string()));
+                // Initializers differing only in their refined result type
+                // overload on it, which the pin rejects in its own words.
+                return Err(if existing.refined_self == sig.refined_self {
+                    TypeError::Redeclaration(method_name.to_string())
+                } else {
+                    TypeError::InvalidReceiver(format!(
+                        "redefinition of function '{method_name}', cannot overload on return type"
+                    ))
+                });
             }
             overloads.push(sig);
         }
@@ -1433,6 +1450,7 @@ impl Checker {
                 .as_ref()
                 .map(|error| self.requirement_ty_at(error, self_ty)),
             self_convention: req_sig.self_convention,
+            refined_self: None,
             ref_params: req_sig.ref_params.clone(),
             ref_return: req_sig.ref_return.clone(),
             view_return_interior: req_sig.view_return_interior.clone(),

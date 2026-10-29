@@ -586,7 +586,7 @@ struct_member: field | struct_comptime | method
 field: 'var' NAME ':' type NEWLINE
 struct_comptime: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression NEWLINE
 method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' type] where_clause* ':' block
-receiver: [convention] 'self'    # instance method; absent ⇒ a @staticmethod (no self)
+receiver: [convention] 'self' [':' type]    # instance method; absent ⇒ a @staticmethod (no self)
 ```
 
 An optional `params_decl` list after the name makes the struct generic
@@ -644,7 +644,7 @@ members the compiler generates from its cases (see `docs/notes/enums.md`).
 trait_def: 'trait' NAME [conformance] ':' trait_block         # conformance here = super-traits (refinement)
 trait_block: NEWLINE INDENT trait_member+ DEDENT
 trait_member: trait_method | trait_comptime | 'pass' NEWLINE  # `pass` declares nothing (`trait Named(Sized): pass`)
-trait_method: decorators 'def' NAME [params_decl] '(' 'self' [',' params] ')' ['raises' [type]] ['->' type] where_clause* ':' NEWLINE INDENT (trait_req | block) DEDENT
+trait_method: decorators 'def' NAME [params_decl] '(' receiver [',' params] ')' ['raises' [type]] ['->' type] where_clause* ':' NEWLINE INDENT (trait_req | block) DEDENT
 trait_req: [STRING NEWLINE] '...' NEWLINE                    # a pure requirement; the STRING is a triple-quoted docstring
 trait_comptime: 'comptime' NAME [params_decl] ':' type where_clause* ['=' expr] NEWLINE
                                                               # a compile-time member requirement, optionally defaulted
@@ -681,8 +681,13 @@ fields (Mojo has none — members are `comptime`).
 A struct is a value type with typed `var` fields and `def` methods. The body has at
 least one member; fields and methods may interleave.
 
-- **`self`** is the implicit, untyped first parameter of every method (its type is the
-  enclosing struct). By default `self` is **read-only** (a method may read `self.field`
+- **`self`** is the implicit first parameter of every method (its type is the
+  enclosing struct). It may carry an annotation: on an initializer's `out self`
+  the annotation is the initializer's refined result type (`def __init__(out
+  self: W[2], *, two: Int)` on `struct W[n: Int]`), an instance of the
+  enclosing struct whose arguments define the struct parameters it spells, so
+  `W(two=7)` infers `n = 2` and `W[3](two=7)` is no candidate; on any other
+  receiver, and on a trait requirement's, the annotation must be `Self`. By default `self` is **read-only** (a method may read `self.field`
   and call `self.method(...)` but not assign a field). Declaring the receiver **`mut self`**
   makes `self` writable: the method may do `self.field = e` (and call other `mut self`
   methods), and those mutations are **written back** to the receiver — so `c.increment()`

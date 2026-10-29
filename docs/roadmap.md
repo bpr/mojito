@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1607**.
+Next free ID: **R1608**.
 
 ## Ordered Work
 
@@ -3644,25 +3644,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
-
-- [ ] **R1594 An initializer cannot refine its `out self` type**
-
-  `def __init__(out self: W[2], *, two: Int)` on `struct W[n: Int]` stops
-  the parser at the colon ("Expected ')' after the parameters"), where the
-  pin runs `W[2](two=7)`.
-  - `parse_method` (`parser/items.rs`) takes a convention, then the bare
-    word `self`.
-  - Upstream's `SIMD` declares six such overloads (`Scalar[target_dtype]`,
-    `Int`, `Float64`, and the `bool` mask's), which R1399 and R1595 port.
-  - An overload whose refined type does not unify with the constructed
-    type is no candidate. One whose type names its own binders
-    (`target_dtype`) solves them from the constructed type.
-  - Grammar first (`docs/grammar.md`), then the AST receiver type, the
-    parser, and the candidate filter in `Checker::infer_construction_of`.
-  - Related: R1154 (`out self` after another parameter).
-  - Found while landing R1555 (2026-10-28).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1598 The `assert` statement does not parse**
 
@@ -10167,8 +10148,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `infer_simd_fill`, `check_simd_args`'s positional-`Bool` rejection, and
   `infer_storage_construction`'s `Int` arm stand in for upstream's
   overloads at `simd.mojo:871`, `:894`, and `:920`.
-  - All three refine `out self` (R1594). The first two read `Bool`'s
-    `_mlir_value` (R1188).
+  - All three refine `out self`, which R1594 supports on a declared
+    struct. The first two read `Bool`'s `_mlir_value` (R1188).
+  - `Checker::solve_refined_construction` and `refinement_admits` read a
+    refinement through `types::nominal_parts`, but rebuild the spelled
+    instance as a `TyKind::Struct`, not through `SIMD`'s `TyKind::Simd`
+    bridge, and `SIMD`'s MIR receiver is spelled at its binders where a
+    user struct's is the bare name: a refined `SIMD` overload needs both
+    checked, and a refined MIR receiver if `mir::verify` rejects the
+    store into `self`.
   - `SIMD[DType.bool, 4](True)` then fails with the pin's "constraint
     failed: must be a scalar; use the `fill` keyword instead for explicit
     splatting" (`assets/type_error/simd_bool_positional_splat.mojo`).
@@ -10315,6 +10303,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `__init__[T: FloatableRaising](out self: Float64, ...) raises`.
   - Port the overloads, including the refined `out self` they use, and
     delete the scalar arms of all three sites.
+  - A refined `SIMD` initializer meets the `TyKind::Simd` bridge and MIR
+    receiver gap R1595 names for `solve_refined_construction`.
   - Porting `Intable` removes a non-`SIMD` argument from
     `Checker::binds_undeclared_overload` (`checker/call_inference.rs`), so
     a sized alias over an `Intable` value takes the declared overload too.
@@ -11181,6 +11171,25 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on R792, R178.
   - Model: Opus, Not Planned.
 
+- [ ] **R1607 `OwnedPointer` lacks upstream's refined initializers**
+
+  `OwnedPointer(copy_value=s)` matches no initializer, where the pin copies
+  `s` into a new allocation.
+  - Upstream declares four `__init__[_T](out self: OwnedPointer[_T], ...)`
+    overloads (`var value`, `copy_value=`, a copying `value` ranked lower by
+    a dummy `U: NoneType = None` binder, and `other=`), which define `T`
+    through the refined `out self` R1594 supports.
+  - The bundled `stdlib/std/memory/owned_pointer.mojo` declares one
+    `__init__(out self, var value: Self.T, /) where conforms_to(Self.T,
+    Movable)` instead.
+  - Upstream's `other=` body reads `other[]`, the empty subscript Mojito
+    reserves for raw pointers (a subset gap the bundled file records).
+  - Probe: `var p = OwnedPointer(copy_value=String("hi"));
+    print(p.unsafe_ptr()[0])` prints `hi` at the pin.
+  - Found while landing R1594 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1421 `Optional` stores its value in a heap allocation, where
   upstream's holds it inline**
 
@@ -11324,7 +11333,9 @@ residue found inside a task moves to the task that owns its fix.
     origin_of(iterable)].Element])`.
   - The parser takes a method's receiver only as its first parameter
     (`parser/items.rs`: "a receiver convention must be followed by
-    'self'"), so the overload does not parse.
+    'self'"), so the overload does not parse. Its refined `out self`
+    annotation itself is supported (R1594 landed); only the position
+    after another parameter, whose type the refinement reads, remains.
   - Probe: `conformance/probes/list_from_iterable.mojo`.
   - Found while landing R190 (2026-10-19).
   - Depends on nothing.

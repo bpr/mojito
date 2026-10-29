@@ -870,6 +870,7 @@ assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_iteration_temporary_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_result_view_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_return_forwarded_accessor.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/refined_out_self_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflect_self_generic_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape

@@ -669,6 +669,7 @@ pub fn walk_method<V: Visitor>(visitor: &mut V, method: &Method) {
     walk_fn_params(visitor, &method.params);
     walk_optional_type(visitor, method.raises_type.as_ref());
     walk_optional_type(visitor, method.ret.as_ref());
+    walk_optional_type(visitor, method.self_type.as_ref());
     walk_exprs(visitor, &method.where_clauses);
     walk_block(visitor, &method.body);
 }
@@ -696,6 +697,7 @@ pub fn walk_trait_method<V: Visitor>(visitor: &mut V, method: &TraitMethod) {
     walk_fn_params(visitor, &method.params);
     walk_optional_type(visitor, method.raises_type.as_ref());
     walk_optional_type(visitor, method.ret.as_ref());
+    walk_optional_type(visitor, method.self_type.as_ref());
     walk_exprs(visitor, &method.where_clauses);
     walk_optional_block(visitor, method.default_body.as_deref());
 }
@@ -1058,26 +1060,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             }
             walk_decorators_mut(visitor, decorators);
             for method in methods {
-                walk_type_params_mut(visitor, &mut method.type_params);
-                if let Some(origins) = &mut method.self_origin {
-                    for origin in origins {
-                        walk_expr_mut(visitor, origin);
-                    }
-                }
-                for param in &mut method.params {
-                    walk_fn_param_mut(visitor, param);
-                }
-                if let Some(error) = &mut method.raises_type {
-                    walk_type_mut(visitor, error);
-                }
-                if let Some(ret) = &mut method.ret {
-                    walk_type_mut(visitor, ret);
-                }
-                for condition in &mut method.where_clauses {
-                    walk_expr_mut(visitor, condition);
-                }
-                walk_decorators_mut(visitor, &mut method.decorators);
-                walk_block_mut(visitor, &mut method.body);
+                walk_method_mut(visitor, method);
             }
         }
         StmtKind::Trait {
@@ -1086,28 +1069,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             ..
         } => {
             for method in methods {
-                walk_type_params_mut(visitor, &mut method.type_params);
-                if let Some(origins) = &mut method.self_origin {
-                    for origin in origins {
-                        walk_expr_mut(visitor, origin);
-                    }
-                }
-                for param in &mut method.params {
-                    walk_fn_param_mut(visitor, param);
-                }
-                if let Some(error) = &mut method.raises_type {
-                    walk_type_mut(visitor, error);
-                }
-                if let Some(ret) = &mut method.ret {
-                    walk_type_mut(visitor, ret);
-                }
-                for condition in &mut method.where_clauses {
-                    walk_expr_mut(visitor, condition);
-                }
-                walk_decorators_mut(visitor, &mut method.decorators);
-                if let Some(body) = &mut method.default_body {
-                    walk_block_mut(visitor, body);
-                }
+                walk_trait_method_mut(visitor, method);
             }
             for member in comptime_members {
                 walk_type_params_mut(visitor, &mut member.params);
@@ -1488,6 +1450,60 @@ fn walk_fn_param_mut<V: MutVisitor>(visitor: &mut V, param: &mut FnParam) {
     walk_type_mut(visitor, &mut param.ty);
     if let Some(value) = &mut param.default {
         walk_expr_mut(visitor, value);
+    }
+}
+
+/// A struct method's signature, decorators, and body.
+fn walk_method_mut<V: MutVisitor>(visitor: &mut V, method: &mut Method) {
+    walk_type_params_mut(visitor, &mut method.type_params);
+    for origin in method.self_origin.iter_mut().flatten() {
+        walk_expr_mut(visitor, origin);
+    }
+    for param in &mut method.params {
+        walk_fn_param_mut(visitor, param);
+    }
+    for ty in [
+        &mut method.raises_type,
+        &mut method.ret,
+        &mut method.self_type,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        walk_type_mut(visitor, ty);
+    }
+    for condition in &mut method.where_clauses {
+        walk_expr_mut(visitor, condition);
+    }
+    walk_decorators_mut(visitor, &mut method.decorators);
+    walk_block_mut(visitor, &mut method.body);
+}
+
+/// A trait method's signature, decorators, and default body.
+fn walk_trait_method_mut<V: MutVisitor>(visitor: &mut V, method: &mut TraitMethod) {
+    walk_type_params_mut(visitor, &mut method.type_params);
+    for origin in method.self_origin.iter_mut().flatten() {
+        walk_expr_mut(visitor, origin);
+    }
+    for param in &mut method.params {
+        walk_fn_param_mut(visitor, param);
+    }
+    for ty in [
+        &mut method.raises_type,
+        &mut method.ret,
+        &mut method.self_type,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        walk_type_mut(visitor, ty);
+    }
+    for condition in &mut method.where_clauses {
+        walk_expr_mut(visitor, condition);
+    }
+    walk_decorators_mut(visitor, &mut method.decorators);
+    if let Some(body) = &mut method.default_body {
+        walk_block_mut(visitor, body);
     }
 }
 

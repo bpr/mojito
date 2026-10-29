@@ -686,6 +686,7 @@ impl Checker {
             raises: error.as_ref().is_some_and(|ty| *ty != TyKind::Never),
             error,
             self_convention: method.self_convention,
+            refined_self: self.refined_receiver(method)?,
             ref_params: lower_ref_param_sigs(
                 &self.enclosing_type_params,
                 &regular_params,
@@ -726,6 +727,60 @@ impl Checker {
             nested_origins: NestedOrigins::of(&method.decorators),
             overload: None,
         })
+    }
+
+    /// The refined result type an initializer's `out self` annotation
+    /// declares (`out self: W[2]`), checked against the pin's receiver
+    /// rules: an instance of the enclosing struct whose argument at each
+    /// position is that position's own binder or names none of the struct's.
+    /// `None` when the receiver is unannotated or spelled at `Self`.
+    fn refined_receiver(&self, method: &Method) -> Result<Option<Ty>, TypeError> {
+        let (Some(annotation), Some(self_ty)) = (&method.self_type, &self.self_ty) else {
+            return Ok(None);
+        };
+        let refined = self.ty_from_anno(annotation)?;
+        if refined == *self_ty {
+            return Ok(None);
+        }
+        if method.self_convention != Some(ArgConvention::Out) {
+            return Err(TypeError::InvalidReceiver(
+                "'self' argument must have type 'Self'; use a 'where' clause to constrain the \
+                 'Self' type instead"
+                    .to_string(),
+            ));
+        }
+        let not_an_instance = || {
+            TypeError::InvalidReceiver(format!(
+                "'self' argument must have type '{self_ty}', but actually has type '{refined}'"
+            ))
+        };
+        let (Some((name, own)), Some((refined_name, arguments))) = (
+            mojito_types::types::nominal_parts(self_ty),
+            mojito_types::types::nominal_parts(&refined),
+        ) else {
+            return Err(not_an_instance());
+        };
+        if name != refined_name {
+            return Err(not_an_instance());
+        }
+        let decls = self
+            .structs
+            .get(name)
+            .map(|info| info.decls.as_slice())
+            .unwrap_or_default();
+        for ((binder, argument), decl) in own.iter().zip(arguments.iter()).zip(decls) {
+            if argument == binder {
+                continue;
+            }
+            if mentioned_binder(argument, decls).is_some() {
+                return Err(TypeError::InvalidReceiver(format!(
+                    "cannot use Self parameter '{argument}' in constructor whose result defines \
+                     it to '{}'",
+                    decl.name()
+                )));
+            }
+        }
+        Ok(Some(refined))
     }
 
     /// Classify a `[...]` parameter list into type and value parameters, and
@@ -1702,7 +1757,15 @@ impl Checker {
             &reference_type_params,
         );
         if m.has_self {
-            self.bind_receiver(self_ty, self_writable)?;
+            // A refined initializer's `self` has its refined type, while
+            // `Self` stays the struct at its own binders, as at the pin.
+            let receiver = match &m.self_type {
+                Some(annotation) if m.self_convention == Some(ArgConvention::Out) => {
+                    self.ty_from_anno(annotation)?
+                }
+                _ => self_ty.clone(),
+            };
+            self.bind_receiver(&receiver, self_writable)?;
         }
         for p in &m.params {
             // Parameter annotations follow the initialized-local rule
@@ -2399,6 +2462,11 @@ impl Checker {
                     && self
                         .method_constraint_result(sig, &[], &info.decls, arguments)
                         .is_ok()
+                    && sig.refined_self.as_ref().is_none_or(|refined| {
+                        self.self_instance_ty(name).is_some_and(|instance| {
+                            refinement_admits(refined, &instance, &sig.decls, target)
+                        })
+                    })
             })
             .map(|sig| {
                 let rank = overload_rank(
@@ -2765,6 +2833,7 @@ impl Checker {
             if sigs.len() == 1
                 && kwargs.is_empty()
                 && sigs[0].variadic.is_none()
+                && sigs[0].refined_self.is_none()
                 && args.len() <= sigs[0].params.len()
             {
                 let sig = &sigs[0];
@@ -3023,6 +3092,7 @@ impl Checker {
                     .collect();
                 let (instance_patterns, instance_actuals) =
                     self.constructed_unification(name, constructed, &patterns, &arg_tys);
+                let mut refined_own = None;
                 let resolved_use = Self::reject_unconstrained_pack(
                     name,
                     &decls,
@@ -3030,14 +3100,35 @@ impl Checker {
                     constructed,
                     &patterns,
                 )
-                .and_then(|()| {
-                    self.resolve_use_params(
+                .and_then(|()| match &sig.refined_self {
+                    Some(refined) => {
+                        let bound = patterns
+                            .iter()
+                            .zip(&arg_tys)
+                            .enumerate()
+                            .filter(|(index, _)| Some(*index) != forwarded_index)
+                            .map(|(_, (pattern, actual))| (pattern.clone(), actual.clone()))
+                            .collect::<Vec<_>>();
+                        self.solve_refined_construction(
+                            name,
+                            sig,
+                            refined,
+                            param_args,
+                            constructed,
+                            &bound,
+                        )
+                        .map(|(parameters, own)| {
+                            refined_own = Some(own);
+                            parameters
+                        })
+                    }
+                    None => self.resolve_use_params(
                         name,
                         &decls,
                         param_args,
                         &instance_patterns,
                         &instance_actuals,
-                    )
+                    ),
                 });
                 // A value spelled where the struct takes a type
                 // (`Tuple[Int, Tuple[3]]()`) is wrong whichever constructor
@@ -3052,10 +3143,13 @@ impl Checker {
                 {
                     return Err(error.clone());
                 }
-                if let Err(
-                    error @ (TypeError::TraitNotSatisfied { .. }
-                    | TypeError::CannotInferTypeParam { .. }),
-                ) = &resolved_use
+                if let Err(error) = &resolved_use
+                    && (sig.refined_self.is_some()
+                        || matches!(
+                            error,
+                            TypeError::TraitNotSatisfied { .. }
+                                | TypeError::CannotInferTypeParam { .. }
+                        ))
                     && bound_failure.is_none()
                 {
                     bound_failure = Some(error.clone());
@@ -3093,17 +3187,22 @@ impl Checker {
                         ids: mojito_types::param_expr::ParamBindings::new(),
                         origins: HashMap::new(),
                     };
-                    let own = match self.solve_constructor_own_params(
-                        name,
-                        sig,
-                        patterns
-                            .iter()
-                            .zip(&arg_tys)
-                            .enumerate()
-                            .filter(|(index, _)| Some(*index) != forwarded_index)
-                            .map(|(_, (pattern, actual))| {
-                                (substitute_assoc(pattern, &bindings), actual.clone())
-                            }),
+                    let own = match refined_own.take().map_or_else(
+                        || {
+                            self.solve_constructor_own_params(
+                                name,
+                                sig,
+                                patterns
+                                    .iter()
+                                    .zip(&arg_tys)
+                                    .enumerate()
+                                    .filter(|(index, _)| Some(*index) != forwarded_index)
+                                    .map(|(_, (pattern, actual))| {
+                                        (substitute_assoc(pattern, &bindings), actual.clone())
+                                    }),
+                            )
+                        },
+                        Ok,
                     ) {
                         Ok(own) => own,
                         Err(error) => {
@@ -4515,6 +4614,172 @@ impl Checker {
         })
     }
 
+    /// The struct and own parameters of a construction selecting `sig`, an
+    /// initializer whose `out self` refines its result to `refined`, solved
+    /// as the pin solves one: a function generic over the struct parameters
+    /// the refinement leaves free and its own, whose parameter patterns have
+    /// each defined struct parameter replaced by its refinement and whose
+    /// result is the refinement. The bracket instance the call spells (or
+    /// `constructed`, an alias's) solves the own parameters a refinement
+    /// names, and must agree with every position the refinement defines.
+    fn solve_refined_construction(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        refined: &Ty,
+        param_args: &[mojito_ast::ast::ParamArg],
+        constructed: Option<&Ty>,
+        bound: &[(Ty, Ty)],
+    ) -> Result<(BoundParameters, OwnParameters), TypeError> {
+        let unregistered = || {
+            TypeError::InvariantViolation(format!("refined initializer of unregistered '{name}'"))
+        };
+        let decls = &self.structs.get(name).ok_or_else(unregistered)?.decls;
+        let instance = self.self_instance_ty(name).ok_or_else(unregistered)?;
+        let binders = mojito_types::types::nominal_parts(&instance)
+            .map(|(_, arguments)| arguments.into_owned())
+            .unwrap_or_default();
+        let refinement = mojito_types::types::nominal_parts(refined)
+            .map(|(_, arguments)| arguments.into_owned())
+            .unwrap_or_default();
+        let defined: Vec<bool> = decls
+            .iter()
+            .enumerate()
+            .map(|(index, _)| binders.get(index) != refinement.get(index))
+            .collect();
+        let defining = |arguments: &[TyArg]| AssocBindings {
+            types: decls
+                .iter()
+                .zip(arguments)
+                .zip(&defined)
+                .filter_map(|((decl, argument), defined)| match (decl, argument) {
+                    (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) if *defined => {
+                        Some((id.clone(), ty.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
+            values: decls
+                .iter()
+                .zip(arguments)
+                .zip(&defined)
+                .filter_map(|((decl, argument), defined)| match (decl, argument) {
+                    (ParamDecl::Value { name, .. }, TyArg::Val(value)) if *defined => {
+                        Some((name.clone(), value.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
+            ids: mojito_types::param_expr::ParamBindings::new(),
+            origins: HashMap::new(),
+        };
+        // The instance the brackets or an alias spell, whole.
+        let known = if param_args.is_empty() {
+            constructed.and_then(|ty| {
+                mojito_types::types::nominal_parts(ty).map(|(_, arguments)| arguments.into_owned())
+            })
+        } else {
+            self.resolve_use_params(name, decls, param_args, &[], &[])
+                .ok()
+                .map(|bound| bound.arguments)
+        };
+        let own_patterns: Vec<(Ty, Ty)> = bound
+            .iter()
+            .map(|(pattern, actual)| {
+                (
+                    substitute_assoc(pattern, &defining(&refinement)),
+                    actual.clone(),
+                )
+            })
+            .chain(known.iter().map(|arguments| {
+                (
+                    refined.clone(),
+                    TyKind::Struct(name.to_string(), arguments.clone()).into(),
+                )
+            }))
+            .collect();
+        // A default of the initializer's own never feeds the struct: a
+        // refinement naming an own parameter no argument and no spelled
+        // instance determines leaves its struct parameter uninferred.
+        for ((decl, argument), defined) in decls.iter().zip(&refinement).zip(&defined) {
+            if !defined || known.is_some() {
+                continue;
+            }
+            let undetermined = sig.decls.iter().any(|own| {
+                let own = std::slice::from_ref(own);
+                mentioned_binder(argument, own).is_some()
+                    && !own_patterns.iter().any(|(pattern, _)| {
+                        mentioned_binder(&TyArg::Ty(pattern.clone()), own).is_some()
+                    })
+            });
+            if undetermined {
+                return Err(TypeError::CannotInferTypeParam {
+                    name: name.to_string(),
+                    param: decl.name().to_string(),
+                });
+            }
+        }
+        let own = self.solve_constructor_own_params(name, sig, own_patterns.into_iter())?;
+        let solved = own.apply(self, refined)?;
+        let solved_refinement = mojito_types::types::nominal_parts(&solved)
+            .map(|(_, arguments)| arguments.into_owned())
+            .unwrap_or_default();
+        // The defined positions bind as the solved refinement spells them;
+        // a free one is solved as an unrefined construction solves it.
+        let masked = |arguments: &[TyArg]| -> Ty {
+            TyKind::Struct(
+                name.to_string(),
+                arguments
+                    .iter()
+                    .zip(&defined)
+                    .map(|(argument, defined)| {
+                        if *defined {
+                            argument.clone()
+                        } else {
+                            TyArg::Ty(Ty::none())
+                        }
+                    })
+                    .collect(),
+            )
+            .into()
+        };
+        let (patterns, actuals): (Vec<Ty>, Vec<Ty>) =
+            std::iter::once((masked(&binders), masked(&solved_refinement)))
+                .chain(
+                    bound
+                        .iter()
+                        .map(|(pattern, actual)| {
+                            Ok::<_, TypeError>((
+                                own.apply(
+                                    self,
+                                    &substitute_assoc(pattern, &defining(&solved_refinement)),
+                                )?,
+                                actual.clone(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+                .unzip();
+        let (patterns, actuals) =
+            self.constructed_unification(name, constructed, &patterns, &actuals);
+        let bound_parameters =
+            self.resolve_use_params(name, decls, param_args, &patterns, &actuals)?;
+        for ((decl, (argument, expected)), defined) in decls
+            .iter()
+            .zip(bound_parameters.arguments.iter().zip(&solved_refinement))
+            .zip(&defined)
+        {
+            if *defined && argument != expected {
+                return Err(TypeError::TypeMismatch {
+                    expected: argument.to_string(),
+                    found: expected.to_string(),
+                    context: format!("parameter '{}' of the return type '{solved}'", decl.name()),
+                });
+            }
+        }
+        Ok((bound_parameters, own))
+    }
+
     /// A pack element materializes like any other inferred instantiation
     /// argument (a literal binds `Int`/`String`). A seam without the linked
     /// String struct keeps the literal: materializing to an absent struct
@@ -4594,6 +4859,78 @@ fn collector_takes_bound_pack(
 /// A generic constructor's own type arguments, as `subst` solved them in
 /// declaration order; none unless every one is a solved type (a value
 /// parameter of its own is left to the call's arguments).
+/// Whether an initializer whose `out self` refines its result to `refined`
+/// can construct `target`, an instance of the struct at its own binders
+/// `instance`: every position the refinement defines is `target`'s, or
+/// names one of the initializer's own parameters (`own`), which a call
+/// solves.
+pub(super) fn refinement_admits(
+    refined: &Ty,
+    instance: &Ty,
+    own: &[ParamDecl],
+    target: &Ty,
+) -> bool {
+    let arguments =
+        |ty| mojito_types::types::nominal_parts(ty).map(|(_, arguments)| arguments.into_owned());
+    let (Some(refinement), Some(binders), Some(target)) =
+        (arguments(refined), arguments(instance), arguments(target))
+    else {
+        return false;
+    };
+    refinement
+        .iter()
+        .zip(&binders)
+        .zip(&target)
+        .all(|((defined, binder), argument)| {
+            defined == binder || defined == argument || mentioned_binder(defined, own).is_some()
+        })
+}
+
+/// The name of the first of `decls`' binders `argument` mentions, a type
+/// binder anywhere in a type or a value binder in a compile-time expression.
+fn mentioned_binder<'d>(argument: &TyArg, decls: &'d [ParamDecl]) -> Option<&'d str> {
+    let binder = |id: &mojito_types::param_expr::ParamId| {
+        decls
+            .iter()
+            .find(|decl| decl.id() == id)
+            .map(ParamDecl::name)
+    };
+    let in_value = |value: &CtValue| match value {
+        CtValue::Expr(expression) => expression
+            .free_parameters()
+            .iter()
+            .find_map(|reference| binder(&reference.id)),
+        CtValue::Type(ty) => mentioned_binder(&TyArg::Ty(ty.clone()), decls),
+        _ => None,
+    };
+    match argument {
+        TyArg::Ty(ty) => {
+            let found = std::cell::Cell::new(None);
+            mojito_types::types::mentions(ty, &|nested| {
+                let hit = match nested.kind() {
+                    TyKind::Param {
+                        binder: reference, ..
+                    } => binder(&reference.id),
+                    TyKind::Struct(_, arguments) => {
+                        arguments.iter().find_map(|argument| match argument {
+                            TyArg::Val(value) => in_value(value),
+                            _ => None,
+                        })
+                    }
+                    _ => None,
+                };
+                if hit.is_some() {
+                    found.set(hit);
+                }
+                hit.is_some()
+            });
+            found.get()
+        }
+        TyArg::Val(value) => in_value(value),
+        TyArg::Origin(_) => None,
+    }
+}
+
 /// `subst` without the bindings of `sig`'s own compile-time parameters,
 /// which [`Checker::solve_constructor_own_params`] solves apart.
 fn struct_binders_only(subst: &TySubst, sig: &MethodSig) -> TySubst {

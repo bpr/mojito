@@ -100,6 +100,7 @@ pub(super) fn synthesize_copyable_copy(
             has_self: true,
             self_convention: None,
             self_origin: None,
+            self_type: None,
             decorators: Vec::new(),
             params: Vec::new(),
             positional_only: None,
@@ -219,6 +220,7 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             has_self: true,
             self_convention: None,
             self_origin: None,
+            self_type: None,
             decorators: Vec::new(),
             params: vec![mojito_ast::ast::FnParam {
                 name: "hasher".to_string(),
@@ -311,6 +313,7 @@ pub(super) fn synthesize_writable_defaults(
                 has_self: true,
                 self_convention: None,
                 self_origin: None,
+                self_type: None,
                 decorators: Vec::new(),
                 params: vec![mojito_ast::ast::FnParam {
                     name: "writer".to_string(),
@@ -441,6 +444,7 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
             has_self: true,
             self_convention: None,
             self_origin: None,
+            self_type: None,
             decorators: Vec::new(),
             params: vec![mojito_ast::ast::FnParam {
                 name: "other".to_string(),

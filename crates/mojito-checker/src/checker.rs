@@ -1783,6 +1783,11 @@ impl Checker {
                 sig.implicit
                     && sig.params.len() == 1
                     && coerces(from, &substitute(&sig.params[0], &subst))
+                    && sig.refined_self.as_ref().is_none_or(|refined| {
+                        self.self_instance_ty(name).is_some_and(|instance| {
+                            declarations::refinement_admits(refined, &instance, &sig.decls, to)
+                        })
+                    })
             })
             .collect::<Vec<_>>();
         // Several converting constructors may accept the source; one whose
@@ -2335,6 +2340,12 @@ struct MethodSig {
     /// requirements can compare them exactly. Today only `mut self` changes call
     /// checking behavior.
     self_convention: Option<mojito_ast::ast::ArgConvention>,
+    /// An initializer's refined result type (`out self: W[2]` on `struct
+    /// W[n: Int]`): an instance of the enclosing struct whose argument at
+    /// each position is that position's own binder (the parameter stays
+    /// free) or a type over the initializer's own binders, which defines
+    /// it. `None` for an unannotated receiver and for `Self`.
+    refined_self: Option<Ty>,
     ref_params: Vec<Option<mojito_types::origin::RefSig>>,
     ref_return: Option<mojito_types::origin::RefSig>,
     /// The owned-interior tags a struct-typed view return projects on the
@@ -2392,6 +2403,7 @@ impl MethodSig {
             raises: false,
             error: None,
             self_convention: None,
+            refined_self: None,
             ref_params: vec![None; len],
             ref_return: None,
             view_return_interior: Vec::new(),

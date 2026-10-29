@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An initializer may refine its `out self` type, as at the pin (R1594):
+  `def __init__(out self: W[2], *, two: Int)` on `struct W[n: Int]` parses,
+  `W(two=8)` infers `n = 2`, `W[3](two=7)` matches no initializer, an
+  `@implicit` refined initializer converts only into its refinement, and an
+  initializer's own parameters solve from the spelled instance or the
+  arguments (`Box(5)` over `out self: Box[U]`). A receiver annotation other
+  than an initializer's refinement must be `Self`, with the pin's
+  declaration diagnostics.
 - `any` and `all` over a `SIMD` value are upstream's `std/builtin/bool.mojo`
   overloads, exported from the prelude (R1568): `any(mask)`, `all(v.gt(0))`,
   and `any(Int8(0))` reduce the lanes' truthiness as at the pin, where they

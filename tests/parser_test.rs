@@ -235,6 +235,7 @@ fn parses_struct_with_field_and_method() {
                 has_self: true,
                 self_convention: None,
                 self_origin: None,
+                self_type: None,
                 decorators: vec![],
                 params: vec![],
                 positional_only: None,
@@ -792,6 +793,7 @@ fn parses_trait_with_method_requirements() {
                     name: "quack".into(),
                     self_convention: None,
                     self_origin: None,
+                    self_type: None,
                     params: vec![],
                     positional_only: None,
                     keyword_only: None,
@@ -807,6 +809,7 @@ fn parses_trait_with_method_requirements() {
                     name: "volume".into(),
                     self_convention: None,
                     self_origin: None,
+                    self_type: None,
                     params: vec![fnparam("loud", Type::Bool)],
                     positional_only: None,
                     keyword_only: None,
@@ -3574,6 +3577,39 @@ fn parses_ref_self_receiver() {
         }
         other => panic!("expected a struct, got {other:?}"),
     }
+}
+
+#[test]
+fn parses_an_annotated_self_receiver() {
+    // `out self: W[2]` refines an initializer's result; `mut self: Self`
+    // spells the receiver's own type.
+    let stmts = parse(
+        "struct W[n: Int]:\n    def __init__(out self: W[2], *, two: Int):\n        pass\n    def f(mut self: Self):\n        pass\n    def g(self):\n        pass\n",
+    );
+    let StmtKind::Struct { methods, .. } = &stmts[0].kind else {
+        panic!("expected a struct");
+    };
+    assert_eq!(methods[0].self_convention, Some(ArgConvention::Out));
+    assert!(
+        matches!(&methods[0].self_type, Some(Type::Named(name, args)) if name == "W" && args.len() == 1)
+    );
+    assert_eq!(methods[0].params.len(), 1);
+    assert!(matches!(&methods[1].self_type, Some(Type::SelfType)));
+    assert!(methods[2].self_type.is_none());
+
+    let stmts = parse("trait T:\n    def __init__(out self: Self, *, x: Int):\n        ...\n");
+    let StmtKind::Trait { methods, .. } = &stmts[0].kind else {
+        panic!("expected a trait");
+    };
+    assert!(matches!(&methods[0].self_type, Some(Type::SelfType)));
+}
+
+#[test]
+fn rejects_a_receiver_annotation_without_a_type() {
+    let mut parser = Parser::new(Lexer::new(
+        "struct W:\n    def f(out self:, x: Int):\n        pass\n",
+    ));
+    assert!(parser.parse_program().is_err());
 }
 
 #[test]

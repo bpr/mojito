@@ -2059,6 +2059,9 @@ fn rewrite_stmt(
                 if let Some(ret) = &mut m.ret {
                     rewrite_type(ret, names, namespaces);
                 }
+                if let Some(receiver) = &mut m.self_type {
+                    rewrite_type(receiver, names, namespaces);
+                }
                 for condition in &mut m.where_clauses {
                     rewrite_expr(condition, names, namespaces);
                 }
@@ -2097,6 +2100,9 @@ fn rewrite_stmt(
                 }
                 if let Some(ret) = &mut m.ret {
                     rewrite_type(ret, names, namespaces);
+                }
+                if let Some(receiver) = &mut m.self_type {
+                    rewrite_type(receiver, names, namespaces);
                 }
                 for condition in &mut m.where_clauses {
                     rewrite_expr(condition, names, namespaces);

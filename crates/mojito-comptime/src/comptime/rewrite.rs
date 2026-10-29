@@ -1358,6 +1358,9 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                     if let Some(ret) = &mut method.ret {
                         rewrite_type(ret, method_subs);
                     }
+                    if let Some(receiver) = &mut method.self_type {
+                        rewrite_type(receiver, method_subs);
+                    }
                     for condition in &mut method.where_clauses {
                         rewrite_expr(condition, method_subs);
                     }
@@ -1405,6 +1408,9 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                     }
                     if let Some(ret) = &mut method.ret {
                         rewrite_type(ret, inner);
+                    }
+                    if let Some(receiver) = &mut method.self_type {
+                        rewrite_type(receiver, inner);
                     }
                     for condition in &mut method.where_clauses {
                         rewrite_expr(condition, inner);
@@ -1693,11 +1699,15 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 for parameter in &mut method.params {
                     retype_fn_parameter(parameter, &inner);
                 }
-                if let Some(ret) = &mut method.ret {
-                    substitute_type_bindings_in_type(ret, &inner);
-                }
-                if let Some(error) = &mut method.raises_type {
-                    substitute_type_bindings_in_type(error, &inner);
+                for ty in [
+                    &mut method.ret,
+                    &mut method.self_type,
+                    &mut method.raises_type,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    substitute_type_bindings_in_type(ty, &inner);
                 }
                 for condition in &mut method.where_clauses {
                     retype_expr(condition, &inner);
@@ -1978,11 +1988,15 @@ fn retype_method(method: &mut mojito_ast::ast::Method, subs: TypeSubs) {
     for parameter in &mut method.params {
         retype_fn_parameter(parameter, &inner);
     }
-    if let Some(ret) = &mut method.ret {
-        substitute_type_bindings_in_type(ret, &inner);
-    }
-    if let Some(error) = &mut method.raises_type {
-        substitute_type_bindings_in_type(error, &inner);
+    for ty in [
+        &mut method.ret,
+        &mut method.self_type,
+        &mut method.raises_type,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        substitute_type_bindings_in_type(ty, &inner);
     }
     for predicate in &mut method.where_clauses {
         retype_expr(predicate, &inner);

@@ -106,6 +106,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `checker/traits_support.rs`. Submodules extract by responsibility, not by
   line count; a moved method is `pub(super)` so siblings and the parent can call
   it.
+- An initializer's refined `out self` (`out self: W[2]`) is
+  `MethodSig::refined_self`, resolved and checked against the pin's receiver
+  rules by `Checker::refined_receiver` (`checker/declarations.rs`, errors as
+  `TypeError::InvalidReceiver`) and kept across module interfaces in
+  `MethodResidue`. `Checker::solve_refined_construction` solves a
+  construction selecting one in `infer_construction_of`'s generic loop: the
+  refinement defines the struct parameters it spells, the spelled instance
+  or the arguments solve the initializer's own, and a disagreeing bracket
+  makes it no candidate. `refinement_admits` filters `@implicit` conversions
+  (`implicit_conversion_constructor`) and `empty_constructor` by it.
 - `checker/statements.rs` owns `check_program`, block scoping, and the
   `check_stmt` statement dispatcher, including generic comptime alias lowering
   (`check_generic_comptime_alias` fills the `Checker.comptime_aliases`

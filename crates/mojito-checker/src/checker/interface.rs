@@ -629,6 +629,7 @@ struct ProjectedStruct {
 struct MethodResidue {
     function: u32,
     variadic_name: Option<String>,
+    refined_self: Option<Ty>,
     ref_params: Vec<Option<mojito_types::origin::RefSig>>,
     ref_return: Option<mojito_types::origin::RefSig>,
     view_return_interior: Vec<String>,
@@ -1599,6 +1600,7 @@ impl MethodResidue {
         Self {
             function,
             variadic_name: sig.variadic_name.clone(),
+            refined_self: sig.refined_self.clone(),
             ref_params: sig.ref_params.clone(),
             ref_return: sig.ref_return.clone(),
             view_return_interior: sig.view_return_interior.clone(),
@@ -1648,6 +1650,7 @@ impl MethodResidue {
             raises: declaration.raises,
             error: declaration.error_ty.clone(),
             self_convention: declaration.receiver_convention,
+            refined_self: self.refined_self,
             ref_params: self.ref_params,
             ref_return: self.ref_return,
             view_return_interior: self.view_return_interior,

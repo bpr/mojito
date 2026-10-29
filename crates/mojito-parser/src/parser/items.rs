@@ -639,6 +639,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 "a method's first parameter must be 'self'".into(),
             ));
         }
+        let self_type = self.parse_optional_receiver_type()?;
         let ParamList {
             params,
             positional_only,
@@ -682,6 +683,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             type_params,
             self_convention,
             self_origin,
+            self_type,
             params,
             positional_only,
             keyword_only,
@@ -749,6 +751,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // No receiver — a static method.
             (false, None, None)
         };
+        let self_type = if has_self {
+            self.parse_optional_receiver_type()?
+        } else {
+            None
+        };
         // Parameters: for an instance method they follow an optional comma after
         // `self`; for a static method they are the whole list.
         let ParamList {
@@ -790,6 +797,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             has_self,
             self_convention,
             self_origin,
+            self_type,
             decorators,
             params,
             positional_only,
@@ -836,6 +844,15 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 }
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
+    /// The optional `: type` annotating a method's `self` receiver.
+    fn parse_optional_receiver_type(&mut self) -> Result<Option<Type>, ParseError> {
+        if !matches!(self.peek_token()?, Some(Token::Colon)) {
+            return Ok(None);
+        }
+        self.next_token()?;
+        self.parse_type().map(Some)
+    }
+
     /// A method of a struct or enum body. An enum method whose body is only
     /// `...` is rejected as upstream rejects it, since `...` is reserved
     /// there; an `@unavailable` method keeps the placeholder.

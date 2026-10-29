@@ -978,8 +978,8 @@ pub struct Decorator {
     pub kwargs: Vec<KwArg>,
 }
 
-/// A `def` method inside a `struct`. `self` (the implicit, untyped first
-/// parameter) is not stored in `params`.
+/// A `def` method inside a `struct`. `self` (the implicit first parameter)
+/// is not stored in `params`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Method {
     pub name: String,
@@ -993,6 +993,10 @@ pub struct Method {
     /// owned/read receivers participate in lifecycle and call checking.
     pub self_convention: Option<ArgConvention>,
     pub self_origin: Option<OriginSpec>,
+    /// The receiver's annotation (`out self: W[2]`), `None` when `self` is
+    /// unannotated. On `out self` it is the initializer's refined result
+    /// type; on any other receiver the checker accepts only `Self`.
+    pub self_type: Option<Type>,
     /// Decorators preceding the method (`@staticmethod`, …), validated by the
     /// checker.
     pub decorators: Vec<Decorator>,
@@ -1044,6 +1048,9 @@ pub struct TraitMethod {
     /// `params`.
     pub self_convention: Option<ArgConvention>,
     pub self_origin: Option<OriginSpec>,
+    /// The receiver's annotation, `None` when `self` is unannotated. A trait
+    /// requirement accepts only `Self`.
+    pub self_type: Option<Type>,
     pub params: Vec<FnParam>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
@@ -3362,11 +3369,15 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         for param in &mut method.params {
                             self.param(param);
                         }
-                        if let Some(error) = &mut method.raises_type {
-                            self.ty(error);
-                        }
-                        if let Some(ret) = &mut method.ret {
-                            self.ty(ret);
+                        for ty in [
+                            &mut method.raises_type,
+                            &mut method.ret,
+                            &mut method.self_type,
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            self.ty(ty);
                         }
                         self.decorators(&mut method.decorators);
                         for condition in &mut method.where_clauses {
@@ -3390,11 +3401,15 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         for param in &mut method.params {
                             self.param(param);
                         }
-                        if let Some(error) = &mut method.raises_type {
-                            self.ty(error);
-                        }
-                        if let Some(ret) = &mut method.ret {
-                            self.ty(ret);
+                        for ty in [
+                            &mut method.raises_type,
+                            &mut method.ret,
+                            &mut method.self_type,
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            self.ty(ty);
                         }
                         for condition in &mut method.where_clauses {
                             self.expr(condition);
