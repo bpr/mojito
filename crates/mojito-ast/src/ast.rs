@@ -2258,6 +2258,8 @@ pub enum PrefixOp {
     Not,
     /// Bitwise inversion, `~`.
     Invert,
+    /// Unary plus, `+`.
+    Pos,
 }
 
 impl PrefixOp {
@@ -2267,6 +2269,7 @@ impl PrefixOp {
             Self::Neg => "-",
             Self::Not => "not",
             Self::Invert => "~",
+            Self::Pos => "+",
         }
     }
 
@@ -2278,6 +2281,7 @@ impl PrefixOp {
             Self::Neg => "__neg__",
             Self::Not => "__bool__",
             Self::Invert => "__invert__",
+            Self::Pos => "__pos__",
         }
     }
 }

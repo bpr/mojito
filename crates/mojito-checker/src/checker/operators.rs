@@ -15,10 +15,10 @@ impl Checker {
         operand: &Expr,
     ) -> Result<Ty, TypeError> {
         let t = self.infer(operand)?;
-        // `-x` and `~x` over a `SIMD` are its declared `x.__neg__()` and
-        // `x.__invert__()`, as upstream's `UnaryOpNode::emitArith` emits
-        // them.
-        if matches!(op, PrefixOp::Neg | PrefixOp::Invert)
+        // `-x`, `~x`, and `+x` over a `SIMD` are its declared `x.__neg__()`,
+        // `x.__invert__()`, and `x.__pos__()`, as upstream's
+        // `UnaryOpNode::emitArith` emits them.
+        if op != PrefixOp::Not
             && self.declared_receiver_member(&t, op.dunder()).is_some()
             && let Some(ty) =
                 self.infer_operator_method_call(&span, operand, &t, op.dunder(), &[])?
@@ -26,8 +26,8 @@ impl Checker {
             return Ok(ty);
         }
         match (op, t.kind()) {
-            // A literal's negation is a literal.
-            (PrefixOp::Neg, TyKind::IntLiteral | TyKind::FloatLiteral) => {
+            // A literal's negation and unary plus are literals.
+            (PrefixOp::Neg | PrefixOp::Pos, TyKind::IntLiteral | TyKind::FloatLiteral) => {
                 return Ok(t);
             }
             (PrefixOp::Not, TyKind::Bool) => return Ok(Ty::bool()),
@@ -57,16 +57,16 @@ impl Checker {
         // declares no requirement (`Negatable`, `Invertable`) or by
         // `Boolable` for `not x` dispatches after erasure; the concrete
         // impl runs on the erased type.
-        if self.param_has_bound(&t, prefix_operation_trait(op)) {
+        if prefix_operation_trait(op).is_some_and(|bound| self.param_has_bound(&t, bound)) {
             self.record_read_temporary_argument(operand);
             return Ok(match op {
-                PrefixOp::Neg | PrefixOp::Invert => t,
+                PrefixOp::Neg | PrefixOp::Invert | PrefixOp::Pos => t,
                 PrefixOp::Not => Ty::bool(),
             });
         }
-        // A user struct's `-x` and `~x` are its dunder calls `x.__neg__()`
-        // and `x.__invert__()`, as upstream's `UnaryOpNode::emitArith` emits
-        // them.
+        // A user struct's `-x`, `~x`, and `+x` are its dunder calls
+        // `x.__neg__()`, `x.__invert__()`, and `x.__pos__()`, as upstream's
+        // `UnaryOpNode::emitArith` emits them.
         if op != PrefixOp::Not
             && self.is_checked_struct(&t)
             && let Some(ty) =

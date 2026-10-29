@@ -6,14 +6,12 @@
 # homogeneous argument collector, and its iterator.
 #
 # A pack's `Ts.length` and `Ts[i]` read `TypeList`'s `length` and
-# `__getitem_param__`. Its members stand in for upstream's
-# `#kgen.param_list.size` and `#kgen.param_list.get` attributes: `len` and a
-# subscript of the struct's own raw list, admitted in this module alone.
-# Omitted: `_mlir_type` (a member applying `_MLIR.KGENParamListType` is not
-# yet an associated comptime expression here), `_raw_length` and
-# `_get_type_at_index` (compile-time `__mlir_type.index` values are outside
-# the subset, R1531),
-# the `@implicit` upcast constructor (`#kgen.upcast`,
+# `__getitem_param__`. `TypeList`'s `_mlir_type`, `_raw_length`, `length`,
+# and `_get_type_at_index`, and `ParameterList`'s `_mlir_type` and `size`,
+# are upstream's `#kgen.param_list` bodies. `TypeList.__getitem_param__`
+# takes an `Int` and subscripts the raw list, where upstream's takes a
+# `SIMDLength` into `#kgen.param_list.get` (R1540).
+# Omitted: the `@implicit` upcast constructor (`#kgen.upcast`,
 # `#kgen.is_refined_type`), and the list vocabulary (`tabulate`, `splat`,
 # `_concat`, `reduce`, `any`, `all`, `all_conforms_to`, `contains`, `map`,
 # `filter_idx`, `reverse`, `slice`), which the compiler still answers by
@@ -76,7 +74,21 @@ struct TypeList[
         values: The types in the list.
     """
 
-    comptime length: Int = len(Self.values)
+    comptime _mlir_type = _MLIR.KGENParamListType[Self.Trait]
+    """The low-level MLIR type of the type list."""
+
+    # Raw MLIR value for stdlib bootstrap users that cannot construct `Int` or
+    # `SIMDLength` yet.
+    comptime _raw_length: __mlir_type.index = __mlir_attr[
+        `#kgen.param_list.size<:`,
+        Self._mlir_type,
+        ` `,
+        +Self.values,
+        `> : index`,
+    ]
+    """The number of types as a raw `!kgen.index`."""
+
+    comptime length = Int(mlir_value=Self._raw_length)
     """The number of types in the list."""
 
     # Upstream's index type is `SIMDLength`, which a parameter list does not
@@ -86,6 +98,27 @@ struct TypeList[
 
     Parameters:
         idx: The index of the type to access.
+    """
+
+    comptime _get_type_at_index[idx: __mlir_type.index] = __mlir_attr[
+        `#kgen.param_list.get<:`,
+        Self._mlir_type,
+        ` `,
+        +Self.values,
+        `, `,
+        idx,
+        `> : `,
+        +Self.Trait,
+    ]
+    """Gets a type at the given raw `index`.
+
+    Unlike `__getitem_param__`, this accepts a raw `!kgen.index` so callers can
+    index without constructing a `SIMDLength` (and thus without pulling in
+    `SIMDLength` comparison machinery). Used by the stdlib plugin router during
+    bootstrap.
+
+    Parameters:
+        idx: The raw `index` of the type to access.
     """
 
     @inline(.always)
@@ -167,9 +200,18 @@ struct ParameterList[type: AnyType, //, values: _MLIR.KGENParamListType[type]](
         values: The values in the list.
     """
 
-    # Upstream's `#kgen.param_list.size` over its raw list: `len` of the
-    # struct's own `Self.values` is that attribute here.
-    comptime size: Int = len(Self.values)
+    comptime _mlir_type = _MLIR.KGENParamListType[Self.type]
+    """The low-level MLIR type of the parameter list."""
+
+    comptime size: Int = Int(
+        mlir_value=__mlir_attr[
+            `#kgen.param_list.size<:`,
+            Self._mlir_type,
+            ` `,
+            +Self.values,
+            `> : index`,
+        ]
+    )
     """The number of elements in the list."""
 
     # ===-------------------------------------------------------------------===#

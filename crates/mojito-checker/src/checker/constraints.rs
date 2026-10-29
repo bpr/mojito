@@ -5,7 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::{multi_subscript_param_args, subscript_param_args};
+use mojito_ast::ast::{ParamArg, multi_subscript_param_args, subscript_param_args};
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::conformance::Conformance;
 use mojito_types::ct::SimdConstructionError;
@@ -43,6 +43,7 @@ impl Checker {
                 }
             }),
             ExprKind::Prefix(PrefixOp::Neg, e) => Ok(self.eval_ct(e)?.neg()),
+            ExprKind::Prefix(PrefixOp::Pos, e) => self.eval_ct(e),
             ExprKind::Infix(op, l, r) => {
                 let (a, b) = (self.eval_ct(l)?, self.eval_ct(r)?);
                 let folded = mojito_types::param_expr::fold::fold_infix(
@@ -1188,6 +1189,7 @@ impl Checker {
             ExprKind::Prefix(PrefixOp::Neg, operand) => {
                 context.neg(&self.applied_constant_expr(operand)?).ok()
             }
+            ExprKind::Prefix(PrefixOp::Pos, operand) => self.applied_constant_expr(operand),
             ExprKind::Infix(op, left, right) => context
                 .infix(
                     *op,
@@ -1486,6 +1488,13 @@ impl Checker {
                 Ok(context.type_shape(ty))
             }
             ExprKind::Identifier(name) => self.build_ct_name(name, recording),
+            // Upstream's bracketed attribute (`` __mlir_attr[`8`, ` : index`] ``),
+            // unless a binding shadows the name.
+            ExprKind::TypeApply { name, args }
+                if name == "__mlir_attr" && self.lookup(name).is_none() =>
+            {
+                self.mlir_bracket_attribute(args, recording)
+            }
             ExprKind::TypeApply { name, args } => {
                 let (ty, attributes) = self
                     .applied_type_value(name, args)?
@@ -1502,22 +1511,6 @@ impl Checker {
                 kwargs,
             } if name == mojito_types::param_expr::SIZE_OF_FUNCTION && kwargs.is_empty() => {
                 Ok(context.size_of(self.size_of_operand(param_args, args)?))
-            }
-            // `len(Self.values)` over the bundled `ParameterList`'s or
-            // `TypeList`'s raw list: its `#kgen.param_list.size`.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == "len"
-                && param_args.is_empty()
-                && kwargs.is_empty()
-                && let [list] = args.as_slice()
-                && let Some(pack) = self.bundled_raw_list_operand(list)
-                && let Some(pack) = pack.as_decl_ref() =>
-            {
-                Ok(context.pack_query(pack, mojito_types::param_expr::PackQuery::Length))
             }
             // The length of a pack that is still a parameter, which the
             // instance's elements fix (`len(Self.Ts)`).
@@ -1711,6 +1704,19 @@ impl Checker {
             }
             ExprKind::Prefix(PrefixOp::Invert, operand) => {
                 self.inverted_value(expr, operand, recording)
+            }
+            // `+operand`: a struct operand applies its `__pos__`, and any
+            // other is the operand, as every builtin `__pos__` returns `self`.
+            ExprKind::Prefix(PrefixOp::Pos, operand) => {
+                let built = self.build_ct(operand, recording)?;
+                if struct_valued(&built) {
+                    return self.struct_operator_value(
+                        expr,
+                        PrefixOp::Pos.symbol(),
+                        &[(operand, PrefixOp::Pos.dunder(), None)],
+                    );
+                }
+                Ok(built)
             }
             // `not b` over a compile-time `Bool`; any other operand is the
             // ordinary rejection below.
@@ -2541,6 +2547,123 @@ impl Checker {
             ),
             _ => None,
         }
+    }
+
+    /// The attribute a bracketed `__mlir_attr[…]` spells, its text pieces
+    /// concatenated with each operand spliced in, as KGEN reads it. With no
+    /// operand it is the attribute the dotted form spells
+    /// ([`super::comptime_validation::mlir_attribute`]). With operands, a
+    /// `#kgen.param_list.size` of a raw list is its length as an `index`,
+    /// and a `#kgen.param_list.get` the list's element at an `index`; any
+    /// other attribute with operands is outside the subset.
+    fn mlir_bracket_attribute(
+        &self,
+        args: &[ParamArg],
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let (text, operands) = mojito_types::types::mlir_attribute_spelling(args);
+        if operands.is_empty() {
+            return super::comptime_validation::mlir_attribute(&text)
+                .and_then(|(value, _)| self.ct_param(value));
+        }
+        let context = &self.param_context;
+        let shape: String = text.split_whitespace().collect();
+        match (shape.as_str(), operands.as_slice()) {
+            ("#kgen.param_list.size<:{}{}>:index", [list_type, list]) => {
+                let list = self.bracket_raw_list(list_type, list, recording)?;
+                context
+                    .list_length(&list)
+                    .and_then(|length| context.cast_to_builtin(&length))
+                    .map_err(param_error)
+            }
+            ("#kgen.param_list.get<:{}{},{}>:{}", [list_type, list, index, element]) => {
+                let list = self.bracket_raw_list(list_type, list, recording)?;
+                let index = self.bracket_operand(index, recording)?;
+                if *index.meta() != MetaTy::value(TyKind::Index.into()) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "an 'index' value".to_string(),
+                        found: index.meta().to_string(),
+                        context: "the index of '#kgen.param_list.get'".to_string(),
+                    });
+                }
+                let element = self.bracket_operand(element, recording)?;
+                let element = MetaTy::value(mojito_types::types::DependentType::resolve(element));
+                if list.meta() != &MetaTy::ParamList(Box::new(element.clone())) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("an element of {}", list.meta()),
+                        found: element.to_string(),
+                        context: "the result type of '#kgen.param_list.get'".to_string(),
+                    });
+                }
+                context
+                    .cast_from_builtin(&index)
+                    .and_then(|index| context.list_get(&list, &index))
+                    .map_err(param_error)
+            }
+            _ => Err(TypeError::Unsupported(format!(
+                "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
+                 attribute, '#kgen.param_list.size', and '#kgen.param_list.get' are read"
+            ))),
+        }
+    }
+
+    /// An operand of a bracketed `__mlir_attr[…]`, built as a compile-time
+    /// expression. A `+` before it (`+Self.values`) is KGEN's splice of the
+    /// operand into the attribute, not a `__pos__` call.
+    fn bracket_operand(
+        &self,
+        operand: &ParamArg,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        match operand {
+            ParamArg::Value(Expr {
+                kind: ExprKind::Prefix(PrefixOp::Pos, spliced),
+                ..
+            }) => self.build_ct(spliced, recording),
+            ParamArg::Value(expr) => self.build_ct(expr, recording),
+            // `Self.values`, which a bracket parses as a type argument.
+            ParamArg::Type(SourceType::SelfParam(field))
+                if let Some(list) = self.self_raw_list(field) =>
+            {
+                Ok(list)
+            }
+            ParamArg::Type(ty) => self
+                .trait_type_arg(operand)
+                .unwrap_or_else(|| self.ty_from_anno(ty))
+                .map(|ty| self.param_context.type_shape(ty)),
+            ParamArg::Named { name, .. } => Err(TypeError::Unsupported(format!(
+                "a keyword operand '{name}=' of a bracketed '__mlir_attr' is not supported"
+            ))),
+        }
+    }
+
+    /// The raw parameter list a `#kgen.param_list` attribute reads, and the
+    /// `KGENParamListType[T]` it spells before it, which must be the list's
+    /// own type.
+    fn bracket_raw_list(
+        &self,
+        list_type: &ParamArg,
+        list: &ParamArg,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let list = self.bracket_operand(list, recording)?;
+        if !matches!(list.meta(), MetaTy::ParamList(_)) {
+            return Err(TypeError::TypeMismatch {
+                expected: "a parameter list".to_string(),
+                found: list.meta().to_string(),
+                context: "the list operand of a '#kgen.param_list' attribute".to_string(),
+            });
+        }
+        let list_type = self.bracket_operand(list_type, recording)?;
+        let list_type = MetaTy::value(mojito_types::types::DependentType::resolve(list_type));
+        if list_type != *list.meta() {
+            return Err(TypeError::TypeMismatch {
+                expected: list.meta().to_string(),
+                found: list_type.to_string(),
+                context: "the list type of a '#kgen.param_list' attribute".to_string(),
+            });
+        }
+        Ok(list)
     }
 
     /// The fieldwise construction of a non-generic `@fieldwise_init`
@@ -3398,13 +3521,14 @@ impl Checker {
     }
 
     /// Whether `expr` builds an untyped attribute, upstream's compile-time
-    /// `!kgen.deferred` value: `` __mlir_attr.`#…` `` or a call returning
-    /// one (`flag._mlir_attr()`).
+    /// `!kgen.deferred` value: `` __mlir_attr.`#…` ``, its bracketed form,
+    /// or a call returning one (`flag._mlir_attr()`).
     pub(super) fn builds_attribute(&self, expr: &Expr) -> bool {
         let candidate = match &expr.kind {
             ExprKind::Member { object, .. } => {
                 matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_attr")
             }
+            ExprKind::TypeApply { name, .. } => name == "__mlir_attr",
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } => true,
             _ => false,
         };
@@ -5045,6 +5169,8 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
         // (current Mojo's range family) names itself as the member's body.
         ExprKind::Identifier(name) if name == "Self" => Ok(SourceType::SelfType),
         ExprKind::Identifier(name) => Ok(SourceType::Named(name.clone(), Vec::new())),
+        // A bracketed attribute is a compile-time value, whatever its type.
+        ExprKind::TypeApply { name, .. } if name == "__mlir_attr" => Err(unsupported_assoc_body()),
         ExprKind::TypeApply { name, args } => Ok(SourceType::Named(name.clone(), args.clone())),
         // A subscript of the struct's own member or parameter
         // (`Self.values[idx]`, `Self.Get[0]`).

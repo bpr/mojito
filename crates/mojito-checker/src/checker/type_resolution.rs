@@ -1325,6 +1325,10 @@ impl Checker {
         }
         match &expr.kind {
             ExprKind::Identifier(name) => trait_binder(name),
+            // The enclosing struct's own trait-valued binder (`Self.Trait`).
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+                self.trait_type_arg(&ParamArg::Type(SourceType::SelfParam(field.clone())))
+            }
             _ => None,
         }
     }

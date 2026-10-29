@@ -1374,24 +1374,17 @@ pub fn held_ty(ty: &Ty) -> Ty {
 pub fn mlir_type_spelling(
     args: &[mojito_ast::ast::ParamArg],
 ) -> (String, Vec<&mojito_ast::ast::ParamArg>) {
-    use mojito_ast::ast::{Expr, ExprKind, ParamArg};
-    let mut operands = Vec::new();
-    let text = args
-        .iter()
-        .map(|arg| match arg {
-            ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(text),
-                ..
-            }) if !text.chars().all(|c| c == '_' || c.is_alphanumeric()) => {
-                text.split_whitespace().collect::<String>()
-            }
-            operand => {
-                operands.push(operand);
-                "{}".to_string()
-            }
-        })
-        .collect();
-    (text, operands)
+    mlir_bracket_pieces(args, |text| text.split_whitespace().collect())
+}
+
+/// A bracketed `__mlir_attr[...]` spelling as KGEN concatenates it.
+///
+/// The text pieces join verbatim, each operand a `{}` hole, beside those
+/// operands in order, the pieces as [`mlir_type_spelling`] reads them.
+pub fn mlir_attribute_spelling(
+    args: &[mojito_ast::ast::ParamArg],
+) -> (String, Vec<&mojito_ast::ast::ParamArg>) {
+    mlir_bracket_pieces(args, str::to_string)
 }
 
 /// The parameter an MLIR type operand reads the `_mlir_value` of.
@@ -6034,6 +6027,39 @@ fn bridged_simd(kind: &TyKind) -> Option<Ty> {
     };
     let width = SimdWidth::of_length(&ParamContext::detached(), length).ok()?;
     simd_ty_from_slots(dtype, width).ok()
+}
+
+/// The pieces of an MLIR bracket spelling, each text piece through `piece`
+/// and each other argument a `{}` hole, beside those operands in order.
+///
+/// A text piece is a backtick-stropped argument: one no plain identifier
+/// spells, or one whose source span covers its backticks (`` `8` ``,
+/// `` `fast` ``), which the lexer drops from the name.
+fn mlir_bracket_pieces(
+    args: &[mojito_ast::ast::ParamArg],
+    piece: impl Fn(&str) -> String,
+) -> (String, Vec<&mojito_ast::ast::ParamArg>) {
+    use mojito_ast::ast::{Expr, ExprKind, ParamArg};
+    let mut operands = Vec::new();
+    let text = args
+        .iter()
+        .map(|arg| match arg {
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(text),
+                span: (start, end),
+                ..
+            }) if !text.chars().all(|c| c == '_' || c.is_alphanumeric())
+                || end.checked_sub(*start) == Some(text.len() + 2) =>
+            {
+                piece(text)
+            }
+            operand => {
+                operands.push(operand);
+                "{}".to_string()
+            }
+        })
+        .collect();
+    (text, operands)
 }
 
 #[cfg(test)]

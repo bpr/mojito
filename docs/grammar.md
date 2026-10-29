@@ -122,7 +122,10 @@ mlir_ownership_op: '`lit.ownership.mark_initialized`' | '`lit.ownership.mark_des
 # rejected.
 mlir_op_expr: '__mlir_op' '.' NAME ['[' mlir_op_attr (',' mlir_op_attr)* ']'] '(' [expression (',' expression)*] ')'
 mlir_op_attr: NAME '=' (mlir_attr | type | expression)
-mlir_attr: '__mlir_attr' '.' NAME
+# A bracketed attribute is one application of its pieces in any expression
+# position, whatever their count: a backtick-stropped piece is attribute text,
+# and any other argument (`+`-prefixed or not) is an operand KGEN splices in.
+mlir_attr: '__mlir_attr' ('.' NAME | '[' expression (',' expression)* [','] ']')
 
 compound_stmt:
     | function_def
@@ -945,6 +948,7 @@ term:
     | term '%' factor
     | factor
 factor:
+    | '+' factor
     | '-' factor
     | '~' factor
     | power
@@ -1125,9 +1129,10 @@ Notes:
   (`x^`, `raise e^`). MIR represents whole-value and projected-field moves;
   ownership analysis rejects use-after-move, double moves, conditional moves,
   and invalid partial-move uses.
-- **`factor`** has unary `-` and `~` (no unary `+`). Unary `-` applies to `Int`
+- **`factor`** has unary `+`, `-`, and `~`. Unary `-` applies to `Int`
   and `Float64` (not `UInt`); `~` applies to integers and `Bool` (and to a
-  user struct through `__invert__`).
+  user struct through `__invert__`). Unary `+x` is the call `x.__pos__()`, and
+  over a literal it is the literal.
 - **`power` (`**`) is right-associative and binds tighter than unary `-`** (so
   `-2 ** 2` is `-(2 ** 2)` and `2 ** 3 ** 2` is `2 ** (3 ** 2)`); its right operand is a
   `factor`, so `2 ** -1` is `2 ** (-1)`.

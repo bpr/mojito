@@ -2670,7 +2670,9 @@ impl<'a> Specializer<'a> {
                 } = instruction
                     && matches!(
                         op,
-                        mojito_ast::ast::PrefixOp::Neg | mojito_ast::ast::PrefixOp::Invert
+                        mojito_ast::ast::PrefixOp::Neg
+                            | mojito_ast::ast::PrefixOp::Invert
+                            | mojito_ast::ast::PrefixOp::Pos
                     )
                     && matches!(
                         (function.reg_types.get(&a.0).map(peel_refs)).map(Ty::kind),

@@ -4717,6 +4717,10 @@ impl CheckedConst {
                 Self::Float(value) => Some(Self::Float(value.neg())),
                 _ => None,
             },
+            ExprKind::Prefix(PrefixOp::Pos, inner) => match Self::from_expr(inner)? {
+                value @ (Self::Int(_) | Self::Float(_)) => Some(value),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -4739,6 +4743,10 @@ impl CheckedConst {
             CheckedOp::Prefix(PrefixOp::Neg, inner) => match Self::from_node(tables, *inner)? {
                 Self::Int(value) => Some(Self::Int(value.neg())),
                 Self::Float(value) => Some(Self::Float(value.neg())),
+                _ => None,
+            },
+            CheckedOp::Prefix(PrefixOp::Pos, inner) => match Self::from_node(tables, *inner)? {
+                value @ (Self::Int(_) | Self::Float(_)) => Some(value),
                 _ => None,
             },
             _ => None,

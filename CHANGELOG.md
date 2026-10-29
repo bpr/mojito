@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The bracketed `__mlir_attr[piece, operand, …]` is read as KGEN reads it,
+  its pieces concatenated with each operand spliced in, in a `comptime`
+  binding, a struct member, a parameter or type argument, and at run time
+  (R1536): an operand-free one is the dotted form's attribute, and
+  `#kgen.param_list.size` and `#kgen.param_list.get` over a raw parameter
+  list are its length and element at an `index`. `TypeList`'s
+  `_mlir_type`, `_raw_length`, `length`, and `_get_type_at_index`, and
+  `ParameterList`'s `size`, are upstream's bodies, retiring the bundled
+  module's `len(Self.values)` rule. Unary `+x` parses and calls
+  `x.__pos__()`, a literal operand staying a literal (R1569).
 - `v[i]` over a `SIMD`, `Int` and `Float64` included, is upstream's declared
   `__getitem__` and `__setitem__` (R1561): a read, store, augmented store,
   and `bump(v[i])` call the `std.simd` bodies, which native code inlines

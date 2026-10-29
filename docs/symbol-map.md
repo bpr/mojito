@@ -2417,10 +2417,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ParameterList.size` member, read through the value (`values.size`) by
   the instance arm of `infer_member` (`indexing.rs`, any struct's value
   member) or, at run time, by `ParameterList.__len__`; a parameter-position
-  `len(values)` is a lifted application of that call. Inside the bundled
-  module `len(Self.values)` is the raw list's length
-  (`Checker::bundled_raw_list_operand`, `eval_associated_ct`), the stand-in
-  for upstream's `#kgen.param_list.size`. A pack's `values.values` is its
+  `len(values)` is a lifted application of that call. `size` is upstream's
+  bracketed `#kgen.param_list.size` body (`Checker::mlir_bracket_attribute`,
+  below). A pack's `values.values` is its
   raw list, `ParameterList`'s own value parameter read through the
   application (`Checker::struct_value_member` / `struct_parameter_at`,
   `constraints.rs`, which also serve `S[7].n`); a compile-time position
@@ -2633,7 +2632,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the constant and type of `T`: an `` `N : index` `` a `CtValue::Index`,
   and a `` `#kgen.simd<…> : !kgen.scalar<dt>` `` (or `!kgen.simd<n, dt>`)
   a `CtValue::Simd` at its storage type, its lanes parsed by
-  `ct::CtLane::parse_attribute`; a typed constant reads at run time too. A body whose result is `!kgen.deferred` runs only at
+  `ct::CtLane::parse_attribute`; a typed constant reads at run time too.
+  The parser makes every bracketed `__mlir_attr[…]` one `TypeApply`
+  (`parser/suffix.rs`), and `types::mlir_attribute_spelling` joins its
+  pieces verbatim, a `{}` hole per operand, beside `mlir_type_spelling`
+  over the same piece walk (a backtick-stropped piece is told from a bare
+  name by its span). `Checker::mlir_bracket_attribute` (`constraints.rs`,
+  reached from `build_ct`, and at run time from `infer_impl` through
+  `Checker::read_attribute`, `indexing.rs`, which the dotted form shares)
+  reads an operand-free one as the dotted form, and over a raw list
+  `#kgen.param_list.size` as `ParamContext::list_length` cast to `index`
+  and `#kgen.param_list.get` as `ParamContext::list_get`
+  (`Checker::bracket_operand` reads a `+` operand as KGEN's splice,
+  `Checker::bracket_raw_list` checks the list type); any other is
+  rejected. A body whose result is `!kgen.deferred` runs only at
   compile time (`Checker::deferred_result_bodies`): elsewhere a run-time
   read is `kgen_deferred_runtime_read` and a run-time call
   `kgen_deferred_runtime_call` (`Checker::reject_runtime_deferred_call`,

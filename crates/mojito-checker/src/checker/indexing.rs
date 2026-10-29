@@ -1739,24 +1739,13 @@ impl Checker {
                     .unwrap_or_else(|| Err(TypeError::UnknownSelfParam(field.to_string()))),
             };
         }
-        // An untyped `` __mlir_attr.`#…` `` is upstream's `!kgen.deferred`
-        // constant, which only a compile-time position or a body returning
-        // one reads; a typed one is a constant of its type, which the pin
-        // also lowers at run time.
         if let ExprKind::Identifier(base) = &object.kind
             && base == "__mlir_attr"
             && self.lookup(base).is_none()
         {
             let (value, ty) = super::comptime_validation::mlir_attribute(field)?;
-            if ty == TyKind::KgenDeferred
-                && self.crosses_to_runtime()
-                && self.deferred_result_bodies.last() != Some(&true)
-            {
-                return Err(super::comptime_validation::kgen_deferred_runtime_read());
-            }
             let value = self.param_context.constant(value).map_err(param_error)?;
-            self.record_member_value(span, value);
-            return Ok(ty);
+            return self.read_attribute(span, value, ty);
         }
         if let Some(dtype) = self.dtype_constant(object, field) {
             self.record_at(span).adjustment = Some(Box::new(
@@ -1964,6 +1953,52 @@ impl Checker {
     }
 
     /// Record `value` as the type member value read at `span`.
+    /// An attribute (`` __mlir_attr.`…` ``, or its bracketed form) of type
+    /// `ty` read where a value is, recording its value. An untyped one is
+    /// upstream's `!kgen.deferred` constant, which only a compile-time
+    /// position or a body returning one reads; a typed one is a constant of
+    /// its type, which the pin also lowers at run time.
+    pub(super) fn read_attribute(
+        &self,
+        span: SourceSpan,
+        value: ParamExpr,
+        ty: Ty,
+    ) -> Result<Ty, TypeError> {
+        if ty == TyKind::KgenDeferred
+            && self.crosses_to_runtime()
+            && self.deferred_result_bodies.last() != Some(&true)
+        {
+            return Err(super::comptime_validation::kgen_deferred_runtime_read());
+        }
+        self.record_member_value(span, value);
+        Ok(ty)
+    }
+
+    /// A bracketed `__mlir_attr[…]` read where a value is
+    /// ([`Self::read_attribute`]): an operand-free one has the type its
+    /// text names, and one with operands the type of its value.
+    pub(super) fn read_bracketed_attribute(
+        &self,
+        expr: &Expr,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        let value = self.compile_dependent_ct_expr(expr)?;
+        let (text, operands) = mojito_types::types::mlir_attribute_spelling(args);
+        let ty = if operands.is_empty() {
+            super::comptime_validation::mlir_attribute(&text)?.1
+        } else {
+            value
+                .meta()
+                .value_ty()
+                .ok_or_else(|| TypeError::TypeMismatch {
+                    expected: "a value".to_string(),
+                    found: value.meta().to_string(),
+                    context: format!("the attribute '__mlir_attr[`{text}`]'"),
+                })?
+        };
+        self.read_attribute(expr.source_span(), value, ty)
+    }
+
     pub(super) fn record_member_value(&self, span: SourceSpan, value: ParamExpr) {
         self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ParamValue {

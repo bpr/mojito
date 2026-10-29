@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	919
+# swept-count	920
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -906,6 +906,7 @@ assets/type_error/typelist_index_out_of_range.mojo	runs	subset	the pin runs it;M
 assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: 'TypeList[Int, Bool]' value has no attribute 'size'
 assets/type_error/typelist_value_subscript_symbolic_init.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[3]' value to 'Ts.values[1]' in 'var' initializer
 assets/type_error/type_receiver_instance_mismatch.mojo	compile-reject	agree	error: invalid call to '__len__': value passed to 'self' cannot be converted from 'List[Int]' to 'List[String]'
+assets/type_error/unary_plus_without_pos.mojo	compile-reject	agree	error: 'M' does not implement the '__pos__' method
 assets/type_error/unavailable_function_body.mojo	compile-reject	agree	error: unexpected function body in @unavailable function declaration, use '...'
 assets/type_error/unavailable_function_called.mojo	compile-reject	agree	error: use g instead
 assets/type_error/unavailable_function_replacement.mojo	compile-reject	agree	error: 'f' is unavailable, use 'g' instead

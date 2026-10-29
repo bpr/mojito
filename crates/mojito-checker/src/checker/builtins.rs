@@ -125,12 +125,14 @@ pub(super) const fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Optio
     })
 }
 
-/// The operation trait a prefix operator dispatches through.
-pub(super) const fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> &'static str {
+/// The operation trait a prefix operator dispatches through; unary `+` has
+/// none, as upstream declares no trait requiring `__pos__`.
+pub(super) const fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> Option<&'static str> {
     match op {
-        mojito_ast::ast::PrefixOp::Neg => "Negatable",
-        mojito_ast::ast::PrefixOp::Not => "Boolable",
-        mojito_ast::ast::PrefixOp::Invert => "Invertable",
+        mojito_ast::ast::PrefixOp::Neg => Some("Negatable"),
+        mojito_ast::ast::PrefixOp::Not => Some("Boolable"),
+        mojito_ast::ast::PrefixOp::Invert => Some("Invertable"),
+        mojito_ast::ast::PrefixOp::Pos => None,
     }
 }
 

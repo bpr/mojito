@@ -3164,6 +3164,7 @@ const fn prefix(value: PrefixOp) -> &'static str {
         PrefixOp::Neg => "neg",
         PrefixOp::Not => "not",
         PrefixOp::Invert => "invert",
+        PrefixOp::Pos => "pos",
     }
 }
 const fn infix(value: InfixOp) -> &'static str {

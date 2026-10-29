@@ -1893,11 +1893,11 @@ impl Checker {
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)
                         || matches!(
-                            value.kind,
-                            ExprKind::Identifier(_)
-                                | ExprKind::TypeApply { .. }
-                                | ExprKind::TypeValue(_)
-                        ))
+                            &value.kind,
+                            ExprKind::Identifier(_) | ExprKind::TypeValue(_)
+                        )
+                        || matches!(&value.kind, ExprKind::TypeApply { name, .. }
+                            if name != "__mlir_attr" || self.lookup(name).is_some()))
                 {
                     // Top-level aliases were registered by `check_program`'s
                     // pre-pass; re-walking the same statement is not a

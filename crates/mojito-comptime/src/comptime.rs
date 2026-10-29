@@ -405,6 +405,7 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
         ExprKind::Prefix(PrefixOp::Neg, value) => {
             context.neg(&ct_expr_from_ast(value, siblings, owner)?).ok()
         }
+        ExprKind::Prefix(PrefixOp::Pos, value) => ct_expr_from_ast(value, siblings, owner),
         ExprKind::Infix(
             op @ (InfixOp::Add
             | InfixOp::Sub

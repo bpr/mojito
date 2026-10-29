@@ -530,7 +530,7 @@ Lowest to highest:
 - `<<`, `>>`
 - `+`, `-`
 - `*`, `/`, `//`, `%`
-- prefix unary `-`
+- prefix unary `+`, `-`, and `~`
 - `**`
 - calls, member access, indexing, and postfix transfer
 
@@ -545,7 +545,7 @@ Postfix forms bind at `Call`, the highest level.
 - the `__is_run_in_comptime_interpreter` keyword, upstream's
   `kgen.is_run_in_comptime_interpreter`, as
   `ExprKind::IsRunInComptimeInterpreter`
-- unary `-`
+- unary `+`, `-`, and `~`
 - unary `not`
 - grouped expressions
 - tuple literals

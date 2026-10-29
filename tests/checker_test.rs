@@ -8447,6 +8447,23 @@ fn pop_and_index_op_verifier_errors_are_rejected() {
 }
 
 #[test]
+fn bracketed_mlir_attr_outside_the_subset_is_rejected() {
+    // A bracketed attribute with operands is read only as
+    // `#kgen.param_list.size` or `#kgen.param_list.get`; any other is an
+    // explicit rejection, never an unknown type.
+    let error = check_with_std(
+        "def main():\n    comptime r = __mlir_attr[`#kgen.param_list.reduce<`, 3, `> : index`]\n    print(Int(mlir_value=r))\n",
+    )
+    .expect_err("expected a type error");
+    assert!(
+        error
+            .to_string()
+            .contains("'__mlir_attr[`#kgen.param_list.reduce<{}> : index`]' is outside the subset"),
+        "{error}"
+    );
+}
+
+#[test]
 fn mlir_i1_is_no_condition_and_bool_storage_no_place() {
     // An `i1` declares no `__bool__`, so it is no condition, as at the pin;
     // a `Bool`'s `_mlir_value` is read, never stored, in the subset.

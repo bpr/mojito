@@ -529,6 +529,8 @@ assets/ok/method_simd_pattern_beside_bare.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/method_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_unused_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_attr_bracket.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_attr_param_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_builtin_casts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_deferred_attribute.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_ops.mojo	-	ineligible	no-scalar-entry-shape
@@ -1306,6 +1308,7 @@ assets/ok/typelist_value_subscript_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_where_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/uint_and_scalar_value_parameters.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/uint_floordiv_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/unary_plus.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unbound_struct_member_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unread_callable_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unsafe_pointer.mojo	-	ineligible	no-scalar-entry-shape

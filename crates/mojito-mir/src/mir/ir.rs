@@ -3300,6 +3300,7 @@ impl MirInstr {
                 let folded = match (op, value) {
                     (PrefixOp::Neg, value) => fold_neg(&value).ok()?,
                     (PrefixOp::Invert, value) => fold_invert(&value).ok()?,
+                    (PrefixOp::Pos, value) => value,
                     (PrefixOp::Not, CtValue::Bool(value)) => CtValue::Bool(!value),
                     (PrefixOp::Not, _) => return None,
                 };

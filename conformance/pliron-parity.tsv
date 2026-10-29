@@ -529,6 +529,8 @@ assets/ok/method_simd_pattern_beside_bare.mojo	main	exe-differential	sanitized
 assets/ok/method_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/method_unused_receiver.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
+assets/ok/mlir_attr_bracket.mojo	main	exe-differential	sanitized
+assets/ok/mlir_attr_param_list.mojo	main	exe-differential	sanitized
 assets/ok/mlir_builtin_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_deferred_attribute.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
@@ -1306,6 +1308,7 @@ assets/ok/typelist_value_subscript_type.mojo	main	exe-differential	sanitized
 assets/ok/typelist_where_clauses.mojo	main	exe-differential	sanitized
 assets/ok/uint_and_scalar_value_parameters.mojo	main	exe-differential	sanitized
 assets/ok/uint_floordiv_zero_divisor.mojo	main	exe-differential	sanitized
+assets/ok/unary_plus.mojo	main	exe-differential	sanitized
 assets/ok/unbound_struct_member_read.mojo	main	exe-differential	sanitized
 assets/ok/unread_callable_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized

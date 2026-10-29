@@ -227,6 +227,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             })
             .collect();
 
+        // A bracketed attribute (`` __mlir_attr[`9 : index`] ``) is one
+        // application of its pieces, however many there are.
+        if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_attr") {
+            return self.parameter_application(object, param_args, start);
+        }
+
         // A named bracket argument over a lowercase (value) base is a keyword
         // subscript (`s[byte=i]`); over a capitalized type name
         // (`Origin[mut=True]`) it stays compile-time parameter application

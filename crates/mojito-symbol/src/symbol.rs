@@ -2110,6 +2110,7 @@ fn eval_comptime_int(expr: &Expr, comptimes: &dyn ModuleNames) -> Option<IntLite
         ExprKind::Int(value) => Some(value.clone()),
         ExprKind::Identifier(name) => comptimes.constant(name),
         ExprKind::Prefix(PrefixOp::Neg, value) => Some(eval_comptime_int(value, comptimes)?.neg()),
+        ExprKind::Prefix(PrefixOp::Pos, value) => eval_comptime_int(value, comptimes),
         ExprKind::Infix(op, left, right) => {
             let (left, right) = (
                 eval_comptime_int(left, comptimes)?,

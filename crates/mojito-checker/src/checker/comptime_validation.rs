@@ -791,7 +791,7 @@ impl Checker {
                     )
                 })
             }
-            ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Invert, inner) => {
+            ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Invert | PrefixOp::Pos, inner) => {
                 self.parameter_valued_scalar(inner)
             }
             ExprKind::Infix(
@@ -3631,21 +3631,6 @@ impl Checker {
             self.infer(&spelled)
                 .inspect(|ty| self.record_spelled_construction(expression, spelled, ty)),
         )
-    }
-
-    /// The raw parameter list `expr` reads where `len` of it stands for
-    /// upstream's `#kgen.param_list.size` attribute: a struct's own
-    /// `Self.values` in the bundled `std/builtin/variadics.mojo`, as
-    /// `__param_list_address` there stands for its static array.
-    pub(super) fn bundled_raw_list_operand(&self, expr: &Expr) -> Option<ParamExpr> {
-        let ExprKind::Member { object, field } = &expr.kind else {
-            return None;
-        };
-        let bundled = matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-            && super::overload_support::is_bundled_variadics_source(
-                expr.source_span().source.as_deref(),
-            );
-        bundled.then(|| self.self_raw_list(field)).flatten()
     }
 
     /// The raw parameter list a bracket argument names: the enclosing

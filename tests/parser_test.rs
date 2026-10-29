@@ -171,6 +171,41 @@ fn unary_minus_binds_tighter_than_sum() {
 }
 
 #[test]
+fn unary_plus_binds_tighter_than_product() {
+    // +a * 2  ==  (+a) * 2
+    assert_eq!(
+        parse_expr("+a * 2"),
+        Expr::from(ExprKind::Infix(
+            InfixOp::Mul,
+            bx(ExprKind::Prefix(PrefixOp::Pos, ident("a"))),
+            int(2)
+        ))
+    );
+}
+
+#[test]
+fn bracketed_mlir_attr_is_one_application_of_its_pieces() {
+    // One piece or several, `__mlir_attr[...]` is an application, never a
+    // subscript; a backtick piece is an identifier argument.
+    for source in ["__mlir_attr[`9 : index`]", "__mlir_attr[`8`, ` : index`]"] {
+        let ExprKind::TypeApply { name, args } = parse_expr(source).kind else {
+            panic!("{source} is not an application");
+        };
+        assert_eq!(name, "__mlir_attr");
+        assert!(
+            args.iter().all(|arg| matches!(
+                arg,
+                ParamArg::Value(Expr {
+                    kind: ExprKind::Identifier(_),
+                    ..
+                })
+            )),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
 fn not_binds_looser_than_comparison() {
     // not a == b  ==  not (a == b)
     assert_eq!(

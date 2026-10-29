@@ -3820,7 +3820,7 @@ pub(super) fn literal_default(default: &mojito_ast::ast::Expr) -> bool {
     match &default.kind {
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => true,
         ExprKind::None => true,
-        ExprKind::Prefix(PrefixOp::Neg, operand) => {
+        ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Pos, operand) => {
             matches!(operand.kind, ExprKind::Int(_) | ExprKind::Float(_))
         }
         _ => false,

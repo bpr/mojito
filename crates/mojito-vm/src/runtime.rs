@@ -557,6 +557,7 @@ pub fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeError> {
         (PrefixOp::Neg, Value::Float64(x)) => Ok(Value::Float64(-x)),
         (PrefixOp::Neg, Value::IntLiteral(value)) => Ok(Value::IntLiteral(value.neg())),
         (PrefixOp::Neg, Value::FloatLiteral(value)) => Ok(Value::FloatLiteral(value.neg())),
+        (PrefixOp::Pos, value @ (Value::IntLiteral(_) | Value::FloatLiteral(_))) => Ok(value),
         (PrefixOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
         // Bitwise inversion: two's complement on integers, logical on `Bool`.
         (PrefixOp::Invert, Value::Int(n)) => Ok(Value::Int(!n)),
@@ -599,6 +600,10 @@ pub fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeError> {
                 "cannot negate a bool SIMD mask".to_string(),
             )),
         },
+        (PrefixOp::Pos, v) => Err(RuntimeError::TypeError(format!(
+            "unary '+' over {} is its `__pos__` call",
+            type_name(&v)
+        ))),
         (PrefixOp::Neg, v) => Err(RuntimeError::TypeError(format!(
             "cannot negate {}",
             type_name(&v)

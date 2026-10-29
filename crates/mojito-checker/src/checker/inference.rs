@@ -1570,6 +1570,11 @@ impl Checker {
             // A parameterized type is not a runtime value; it is only valid as a
             // static-method receiver (`UnsafePointer[T].alloc(…)`), typed in
             // `infer_method_call`.
+            ExprKind::TypeApply { name, args }
+                if name == "__mlir_attr" && self.lookup(name).is_none() =>
+            {
+                self.read_bracketed_attribute(expr, args)
+            }
             ExprKind::TypeApply { name, args } => {
                 if let Some(specialized) = self.infer_specialized_callable_value(
                     expr.source_span(),

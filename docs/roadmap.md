@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1637**.
+Next free ID: **R1638**.
 
 ## Ordered Work
 
@@ -3066,17 +3066,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1569 Unary `+` does not parse**
-
-  `print(+a)` over `a: Int` is a parse error here ("Expected an
-  expression"), where the pin calls `a.__pos__()` and prints `7`.
-  - `SIMD.__pos__` is declared, so `a.__pos__()` already runs.
-  - Add unary `+` to `factor` in `docs/grammar.md`, then `PrefixOp::Pos`
-    (dunder `__pos__`), parsed and checked as `-` is.
-  - A literal operand (`+5`) stays a literal.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1248 `comptime if case` is a parse error**
 
   Problem: `comptime if case 3 = n:` inside `def f[n: Int]()` fails to
@@ -5074,15 +5063,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     = TypeList[Ts.values].__getitem_param__[1]`, `comptime if
     Ts.__getitem_param__[0] == Int:`, and a struct member `comptime First =
     Self.Ts.__getitem_param__[0]`.
-  - Probe: a member applying another struct's alias, `comptime _mlir_type
-    = _MLIR.KGENParamListType[Self.type]`, stops packaging with "not an
-    associated comptime expression". It keeps `_mlir_type` off the bundled
-    `ParameterList` and `TypeList`.
-  - Probe: the same over a user struct, `comptime Same = R.Of[Bool]` beside
-    `comptime Of[T: AnyType] = Tuple[Int, Int]`, fails with "not an
-    associated comptime expression", where the pin runs `var r: R.Same`.
-    A parameterized member's body (`comptime Same[T: AnyType] = R.Of[T]`)
-    reads it since R806.
   - Probe: the subscript spelling in a local `comptime`, `comptime T =
     TypeList[Trait=AnyType, Ts.values]()[1]`, fails with "type
     'TypeList[AnyType, Ts]' cannot be indexed here", where the pin runs it.
@@ -5094,6 +5074,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1168 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1637 A parameterized `comptime` member whose body is a value is
+  not read as a type in a type annotation**
+
+  `def take[*Ts: AnyType](x: TypeList[Ts.values]._get_type_at_index[...])`
+  is rejected ("'TypeList[AnyType, Ts]._get_type_at_index' is a
+  compile-time value member: expected a type, found a value"), where the
+  pin reads the member's type-valued attribute as the parameter's type
+  and `take[Int](5)` prints `took`.
+  - `Checker::resolve_parameterized_member` (`checker/type_resolution.rs`)
+    takes only a `MemberTemplate::Type`, a body the checker spells as a
+    type (`assoc_body_source_type`); a bracketed `__mlir_attr` body is a
+    value template even when its value is a type.
+  - The same member as a type argument (`List[…_get_type_at_index[…]]`,
+    `name[…]()`) or in a `comptime assert` already reads through
+    `build_ct`.
+  - Probe: `var v: L[Ts.values].get[1]` over a user struct's `comptime
+    get[idx: SIMDLength] = __mlir_attr[`#kgen.param_list.get<:`, …]`
+    fails with "type mismatch for associated type parameter 'idx':
+    expected a type, found a value".
+  - Lever: an annotation over a value template builds the application
+    through `build_ct` and takes its type when its meta is `Type`.
+  - Found while landing R1536 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1148 A struct parameter read through a value is rejected**
 
@@ -5211,6 +5216,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     implicitly convert 'StringLiteral["x"]' value to 'Int'"; a conformer
     taking it fails later with "comptime member 'K' does not match the
     requirement".
+  - Probe: an `index` body under an `Int` annotation, `comptime n: Int =
+    __mlir_attr[`#kgen.param_list.size<:`, …, `> : index`]`, is accepted
+    and fails later at `print(L[Ts.values].n)` (not `Writable`), where the
+    pin rejects the member with "cannot implicitly convert
+    '__mlir_type.index' value to 'Int'".
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6704,26 +6714,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1536 The bracketed `__mlir_attr[…]` has no expression form, so a
-  `#kgen.param_list` attribute cannot be spelled**
-
-  ``__mlir_attr[`#kgen.param_list.size<:`, …, `> : index`]`` is rejected,
-  where the pin reads it as a compile-time attribute of the type after the
-  colon.
-  - `comptime_validation::mlir_attribute` reads the dotted form only: an
-    untyped `` __mlir_attr.`#…` `` (`CtValue::MlirAttr`), an
-    `` `N : index` ``, and a `#kgen.simd<…>` storage constant.
-  - Probe: upstream's `TypeList._raw_length` (`#kgen.param_list.size`)
-    and `_get_type_at_index[idx: __mlir_type.index]`
-    (`#kgen.param_list.get`, `std/builtin/variadics.mojo`) are left out of
-    the bundled `TypeList`.
-  - Lever: the bracket form's `#kgen.param_list.size` and
-    `#kgen.param_list.get` are the builder's existing `PackQuery::Length`
-    and list read (`checker/constraints.rs`).
-  - Found while landing R1531 (2026-10-27).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1563 `conforms_to` over a struct with a struct-valued argument
   stays unfolded in elaborated MIR**
@@ -9812,7 +9802,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     SIMDLength".
   - Lever: a `SIMDLength` index reads as its lane count
     (`types::simd_length_image`), as the SIMD width slot reads one; then
-    respell `TypeList.__getitem_param__` and drop its comment.
+    respell `TypeList.__getitem_param__` as upstream's bracketed
+    `#kgen.param_list.get` body over `idx._mlir_value` and drop its
+    comment.
+  - Probe: that body already runs over a user struct (`comptime
+    get[idx: SIMDLength] = __mlir_attr[…, idx._mlir_value, …]`, read as
+    `l.get[1]`); respelling the bundled member with it fails packaging
+    with "not a compile-time Int constant: unsupported associated
+    comptime member access".
   - `ParameterList.__getitem_param__` (R800) takes the same index.
   - Found while landing R1539 (2026-10-27).
   - Depends on nothing.
@@ -9830,8 +9827,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Add `comptime __getitem_param__[idx: Int]: Self.type =
     Self.values[idx]` to `ParameterList` in
     `stdlib/std/builtin/variadics.mojo`, as `TypeList` already declares
-    its own, read under the raw-list gate
-    (`Checker::bundled_raw_list_operand`).
+    its own; once R1540 lands, both are upstream's bracketed
+    `#kgen.param_list.get` body.
   - Upstream's index parameter is `idx: SIMDLength`, which a parameter
     list does not take as an index yet (R1540), so the port spells it
     `Int`, as `TypeList`'s does, and says so in the module header.
