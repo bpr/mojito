@@ -30,7 +30,7 @@
 # trait list has no `Floatable`. `Scalar`, `Int`, `UInt`, the sized aliases,
 # and `Byte` stay compiler names until R1557.
 # `cast` omits upstream's `is_nvidia_gpu()` and `bfloat16`-on-AMD branches
-# (R1562), and its float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4`
+# (R1635), and its float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4`
 # branches (R65): Mojito has none of those targets or dtypes.
 # Omitted: the `@lldb_formatter_wrapping_type` decorator
 # (`std.utils._visualizers`) and `CoordLike`'s static `__len__`

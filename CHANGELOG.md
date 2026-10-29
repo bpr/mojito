@@ -2335,6 +2335,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `CompilationTarget` (R1562) stays undeclared: upstream's bodies need a
+  bracketed `__mlir_attr` (R1536), a compile-time call returning a
+  `!kgen.target` (R1630), a bare-name static call binding its struct's
+  defaults (R1631), a `comptime` member naming its own struct (R1632), the
+  host CPU as the native target (R1633), and `StaticString` (R432). The
+  entry now holds the type and its feature queries only, and `size_of`,
+  `align_of`, and the `target` parameter (R1634) and the string
+  predicates (R1635) follow it.
 - `SIMD` and `Int` constructors take upstream's `SIMD.__init__` overloads
   (R186). Several elements are each already the lane's scalar, so
   `SIMD[DType.uint8, 2](i, i)` over an `Int`, a `Float64` into a `float32`

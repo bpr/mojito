@@ -1,8 +1,9 @@
 # Upstream's `std/sys/info.mojo`, in part: `bit_width_of`, and the home of
 # `size_of`, which stays the compiler's layout query (upstream's body is a
-# `#kgen.param.expr<get_sizeof>` attribute). Omitted until R1562:
-# `CompilationTarget` and every target query, and with them the `target`
-# parameter of `size_of` and `bit_width_of`.
+# `#kgen.param.expr<get_sizeof>` attribute). Omitted: `CompilationTarget`
+# and its feature queries (R1562), its string-field predicates and the
+# free target functions (R1635), `align_of` and the `target` parameter of
+# `size_of` and `bit_width_of` (R1634), and `stdlib_plugin` (R330).
 """Implements methods for querying the host target info.
 
 You can import these APIs from the `sys` package. For example:

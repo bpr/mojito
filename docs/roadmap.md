@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1630**.
+Next free ID: **R1637**.
 
 ## Ordered Work
 
@@ -1196,6 +1196,26 @@ change that needs a new `MJRT_ABI_VERSION`.
     pass at it as well as at the compilation's exports.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1633 The native target's CPU is x86-64 baseline, where the
+  pin's defaults to the host CPU**
+
+  Mojito compiles for the `x86-64` baseline, where the pin's
+  `--target-cpu` "defaults to the host CPU", so the pin's target on this
+  host (`skylake`) has AVX2 and FMA and a 256-bit SIMD width.
+  - `CpuFeatures` (`mojito-native-core/src/target.rs`) is baseline only,
+    and Pliron emits no `target-cpu` or `target-features`.
+  - Once `CompilationTarget` lands (R1562), its `has_avx2()` and
+    `simd_bit_width()` answer from this target, so a baseline default
+    prints `False` and `128` where the pin prints `True` and `256`.
+  - Lever: detect the host's features at `NativeTarget::host()`, accept
+    `--target-cpu` and `--target-features`, and emit both in Pliron's
+    functions. The LLVM CPU name may need the LLVM crate, so only
+    `mojito-pliron` can ask it.
+  - Record the default in `docs/native-abi.md`.
+  - Found while planning R1562 (2026-10-29).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R18 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
@@ -4420,6 +4440,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     trait 'AnyType'".
   - The lever: build the binders from the struct's declared parameters,
     so the `SIMD` case becomes one instance of the general rule.
+  - Probe: a value parameter annotated with a bare struct whose parameters
+    are infer-only is not parameterized either. With `struct T[n: Int, //]`,
+    `def g[t: T]()` called as `g[T[n=4]()]()` reports "expected T, found
+    T[4]", and `def g[t: T = T[n=4]()]()` reports "not a compile-time Int
+    constant: default for parameter 't'", where the pin runs both. Upstream's
+    `size_of[…, target: CompilationTarget = CompilationTarget.current()]`
+    is this shape (R1634).
   - Found while landing R1568 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6712,6 +6739,56 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A `SIMD` instance's `SIMDLength` argument folds here, so the gap is the
     construction argument's, not the struct-valued slot's.
   - Found while landing R1550 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1630 A function returning a compile-time-only KGEN value cannot
+  run at compile time**
+
+  `F[attr()].x()`, with `def attr() -> __mlir_type.`!kgen.deferred``
+  returning `` __mlir_attr.`#pop.fmf<fast>` ``, stops with "return type
+  holds the compile-time-only metatype", where the pin runs it.
+  - The comptime interpreter holds attributes as values. Mojito's VM does
+    not: `CtValue::MlirAttr` and `KgenString` do not cross
+    (`vm/crossing.rs`), and `verify/concrete.rs` rejects a compile-time-only
+    register in every concrete instance.
+  - Lever: an opaque VM value carrying the `CtValue`, and a concrete
+    verifier that admits compile-time-only types in an instance mono reaches
+    only through a CTFE request, while still rejecting a run-time-reached
+    one.
+  - Probe: upstream's `_current_target() -> !kgen.target`, the default of
+    `CompilationTarget`'s parameter (R1562).
+  - Probe: R1600's computed fast-math flag (`flag._mlir_attr()`).
+  - Found while planning R1562 (2026-10-29).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1631 A static method called on a bare struct name does not bind
+  the struct's defaulted parameters**
+
+  `T.answer()` and `T[].answer()`, over `struct T[n: Int = 3]` whose static
+  `answer` returns `Self.n`, stop with "keeps the parameter constant `n` in
+  elaborated MIR", where the pin prints `3`.
+  - `T[3].answer()` and `T().answer()` run, so the defaults are applied
+    to a construction but not to a bare type name used as a call's base.
+  - An infer-only defaulted parameter (`struct T[n: Int = 3, //]`) fails
+    the same way. That is `CompilationTarget.has_avx2()` (R1562).
+  - The root is not located.
+  - Found while planning R1562 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1632 A struct's `comptime` member cannot name its own struct**
+
+  `comptime current = Self` inside `struct T[n: Int]` stops `T[4].current
+  .answer()` with "not a compile-time Int constant: Self", and `comptime
+  other = T[Self.n + 1]` stops `T[4].other.answer()` with "Undefined
+  variable 'T'", where the pin prints `4` and `5`.
+  - A struct's own name and `Self` are not in scope as types when its
+    `comptime` members are resolved.
+  - Upstream's `CompilationTarget.current` and `_unknown` are
+    `comptime current = CompilationTarget[_mlir_value=…]` (R1562).
+  - Found while planning R1562 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10123,22 +10200,81 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `std/sys/info.mojo` answers target queries from `#kgen.param.expr`
   attributes**
 
-  `CompilationTarget.current()` and every target query are undefined, and
-  the bundled `bit_width_of` and `size_of` take no `target` parameter.
-  - Upstream's bodies read `#kgen.param.expr<current_target>`,
-    `get_sizeof`, `get_alignof`, `target_get_field`, and `has_feature` over
-    an `!kgen.target` value. Mojito has no `!kgen.target` type and folds
-    none of these attributes.
-  - Answer them with the host's values (the layout oracle's `size_of` and
-    `align_of` included), so `size_of` and `align_of` become library bodies
-    in `stdlib/std/sys/info.mojo`.
-  - Restore the `target: CompilationTarget = CompilationTarget.current()`
-    parameter of `bit_width_of` and `size_of` (dropped in R1550).
-  - R330 reads `CompilationTarget.current().stdlib_plugin`, and R1585
-    reads `CompilationTarget.is_x86()`.
-  - Split it if one session cannot land the type and the folds together.
-  - Depends on nothing.
+  `from std.sys import CompilationTarget` finds no declaration, where the
+  pin runs `CompilationTarget.has_avx2()` and `simd_bit_width()`.
+  - Mojito has no `!kgen.target` type, and folds none of the
+    `current_target`, `target_get_field`, or `target_has_feature`
+    attributes upstream's bodies read.
+  - Add `!kgen.target` as a compile-time-only type with a
+    `#kgen.target<…>` constant (upstream's `_empty_target`).
+  - Keep `current_target` a symbolic application through the check, as the
+    pin keeps `_current_target()` an `apply` expression. Mono answers it
+    from the elaborator's `NativeTarget`, beside the layout oracle's
+    `size_of`, so one checked program serves any `--target`.
+  - Fold `target_get_field` and `target_has_feature` over a closed target.
+  - Port `_TargetType`, `_current_target`, `_empty_target`, the
+    `CompilationTarget` struct with `current` and `_unknown`,
+    `_has_feature`, the `has_*` x86 queries, and `simd_bit_width` and
+    `simd_byte_width`, verbatim.
+  - Fixture: `_has_feature["sse2"]()`, the `_unknown` answers (`False`,
+    `0`), and a `comptime if` decided by `has_avx512f()`.
+  - The `size_of`/`align_of` bodies are R1634, and the string predicates
+    are R1635.
+  - Depends on R1536 (every query body is a bracketed `__mlir_attr`),
+    R1630 (`_current_target()` returns `!kgen.target`), R1631
+    (`CompilationTarget.has_avx2()` is a bare-name static call), R1632
+    (`comptime current = CompilationTarget[…]` names its own struct), R1633
+    (the answers are the host CPU's), and R432 (`_has_feature` takes a
+    `StaticString`).
   - Model: Fable, Planned.
+
+- [ ] **R1634 `size_of` is a compiler name and `align_of` is missing,
+  where upstream's are library bodies over `get_sizeof` and `get_alignof`**
+
+  `size_of[DType.int32]()` is rejected ("expected a type, found a value")
+  and `from std.sys.info import align_of` finds nothing, where the pin
+  prints `4` and `align_of[Float64]()` prints `8`.
+  - The checker serves `size_of` by name: `call_inference.rs` records
+    `SemanticAdjustment::SizeOf` (`MirInstr::SizeOf`), `constraints.rs`
+    builds `SIZE_OF_FUNCTION`, and `simd_width.rs` reads it, and module.rs's
+    `COMPILER_NAMES` lists it.
+  - Port both overloads of `size_of` and `align_of` with their `target`
+    parameter, as upstream's `#kgen.param.expr<get_sizeof|get_alignof, …>`
+    bodies. Mono's `layout_answer` already answers the size.
+  - Restore `target: CompilationTarget = CompilationTarget.current()` on
+    `bit_width_of` (dropped in R1550), and port `simd_width_of`,
+    `is_32bit`, and `is_64bit`.
+  - Retire `SemanticAdjustment::SizeOf` and `MirInstr::SizeOf` (VM, Pliron,
+    MIR text with a schema bump, verify, cse, the specializer).
+  - `size_of_builtin`, `comptime_if_layout_query`, and
+    `comptime_layout_constant` keep their output.
+  - Depends on R1562 (`CompilationTarget`) and R1606 (the `target`
+    parameter's bare `CompilationTarget` annotation).
+  - Model: Fable, Planned.
+
+- [ ] **R1635 `CompilationTarget`'s string-field predicates are
+  undeclared**
+
+  `CompilationTarget.is_x86()`, `is_linux()`, and `_os()` are undefined,
+  where the pin prints `True`, `True`, and `linux` on this host.
+  - Each body reads a `!kgen.string` field through `target_get_field` and
+    compares it as `StringLiteral[Self.__triple_arch()]()._is_identical(…)`,
+    so it needs `StringLiteral`'s `value` parameter (R1192) and
+    `StaticString` (R432).
+  - Port `is_triple`, `_arch`, `__arch`, `_is_arch`, `__triple_arch`,
+    `__triple`, `_is_triple_arch`, `_eq_triple_and_arch`, `_os`, `is_x86`,
+    `is_arm`, the RISC-V, Apple, and Neon queries, `is_linux`, `is_macos`,
+    `is_cpu`, `is_accelerator`, `is_gpu`, `default_compile_options`, and
+    `unsupported_target_error`.
+  - Port the free functions over them too: `is_gpu`, `is_nvidia_gpu`,
+    `is_amd_gpu`, `is_apple_gpu` and their `_is_sm_*` and `_is_amd_*`
+    families, `is_little_endian`, `is_big_endian`, `Endian`, and
+    `platform_map`.
+  - The GPU predicates answer `False` on a CPU target, so `bitcast`'s and
+    `SIMD.cast`'s GPU guards (`std/memory/unsafe.mojo`, `std/simd.mojo`)
+    can be restored.
+  - Depends on R1562, R1192, and R432.
+  - Model: Opus, Planned.
 
 - [ ] **R1623 `SIMD`'s `%`, `divmod`, and `ceildiv` are checker rules
   and a trap, where upstream's are `__mod__`, `__divmod__`, and
@@ -10221,7 +10357,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Exact arithmetic implements every flag (`mlir::is_fastmath_attribute`),
     so output never differs: this is shape, not semantics.
   - Found while landing R1580 (2026-10-28).
-  - Depends on nothing.
+  - Depends on R1630, which runs a function returning a flag at compile
+    time.
   - Model: Fable, Not Planned.
 
 - [ ] **R1582 `SIMD.__round__` is a builtin rule and `SIMD` does not
@@ -10253,13 +10390,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     closure overload's binder as a trait composition with a function type
     (R1584), and call `split()` (R330).
   - `reduce_max` and `reduce_min` take `llvm.vector.reduce.*` only off
-    x86 (`CompilationTarget.is_x86()`, R1562); the host is x86_64, so the
+    x86 (`CompilationTarget.is_x86()`, R1635); the host is x86_64, so the
     tree runs.
   - Closes R187: `reduce_mul` over the sixteen `float32` lanes `1.1, 2.3,
     3.7, 4.9, 5.3, 6.1, 7.7, 8.3, 9.9, 10.1, 11.3, 12.7, 13.9, 14.1, 15.3,
     16.7` prints `68104130000000.0` at the pin and `68104122007552.0`
     here.
-  - Depends on R296, R1583, R1584, R330, and R1562.
+  - Depends on R296, R1583, R1584, R330, and R1635.
   - Model: Fable, Planned.
 
 - [ ] **R1586 `reduce_and` and `reduce_or` are checker rules and

@@ -1,7 +1,7 @@
 # Upstream's `std/memory/unsafe.mojo`: `bitcast`, `_llvm_bitwidth`, and
 # `pack_bits`. `bitcast`'s float16 asserts are not under upstream's
 # `comptime if not is_nvidia_gpu() and not is_amd_gpu():` guard, which is
-# the host's branch (R1562). `_llvm_bitwidth` omits its `_uint1`, `_uint2`,
+# the host's branch (R1635). `_llvm_bitwidth` omits its `_uint1`, `_uint2`,
 # `_uint4`, `uint128`, and `uint256` arms until R65 admits those dtypes.
 """Provides utility functions for unsafe manipulation of SIMD values.
 
