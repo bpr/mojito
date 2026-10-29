@@ -1604,7 +1604,8 @@ impl Const {
     /// nominal `String` or a vector, struct, or tuple as the typed constant a
     /// backend materializes at that type (upstream's `kgen.param.constant`),
     /// an untyped attribute as the attribute constant the compile-time
-    /// interpreter holds, and any other string as its literal.
+    /// interpreter holds, a frozen pointer read at a pointer type as the
+    /// memory a backend materializes, and any other string as its literal.
     pub fn of_parameter_value(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Self> {
         match value {
             CtValue::Int(value) => Some(Self::Int(*value)),
@@ -1635,6 +1636,11 @@ impl Const {
             }
             CtValue::KgenString(_)
                 if slot_ty.is_none_or(|ty| matches!(ty.kind(), TyKind::KgenString)) =>
+            {
+                Some(Self::Value(value.clone()))
+            }
+            CtValue::Pointer { .. }
+                if slot_ty.is_some_and(|ty| matches!(ty.kind(), TyKind::Pointer { .. })) =>
             {
                 Some(Self::Value(value.clone()))
             }

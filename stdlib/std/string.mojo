@@ -1462,6 +1462,21 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         ]()
         self._size = src.size
 
+    @inline(.always)
+    def __init__(out self, *, unsafe_from_utf8: Span[Byte, Self.origin]):
+        """Construct a new `StringSpan` from a sequence of UTF-8 encoded bytes.
+
+        Args:
+            unsafe_from_utf8: A `Span[Byte]` encoded in UTF-8.
+
+        Safety:
+            `unsafe_from_utf8` MUST be valid UTF-8 encoded data.
+        """
+        self._data = unsafe_from_utf8.unsafe_ptr().unsafe_origin_cast[
+            origin._get_owned_interior["bytes"]
+        ]()
+        self._size = unsafe_from_utf8.__len__()
+
     # Upstream's `StaticString` initializer (the origin is erased here): a
     # view over the literal's UTF-8 bytes, which live for the whole program.
     # `@implicit` lets a literal convert wherever a view is expected.

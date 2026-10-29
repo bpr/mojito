@@ -34,7 +34,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 "Int" => Ok(Type::Int),
                 "UInt" => Ok(Type::UInt),
                 "Bool" => Ok(Type::Bool),
-                "StringLiteral" => Ok(Type::StringLiteral),
+                // An application (`StringLiteral[v]`) names the declared
+                // struct; the bare name is the literal type.
+                "StringLiteral" if !matches!(self.peek_token()?, Some(Token::LBracket)) => {
+                    Ok(Type::StringLiteral)
+                }
                 "Float64" => Ok(Type::Float64),
                 // `Self.T` references one of the enclosing struct's type
                 // parameters; bare `Self` is the enclosing struct/trait type.

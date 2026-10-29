@@ -802,6 +802,22 @@ fn parses_parameterized_type_annotation() {
 }
 
 #[test]
+fn string_literal_application_is_a_named_type() {
+    // A bare `StringLiteral` is the literal type; with arguments it is the
+    // declared struct's application.
+    let stmts = parse("var a: StringLiteral = q\nvar b: StringLiteral[v] = q\n");
+    let annotation = |stmt: &Stmt| match &stmt.kind {
+        StmtKind::VarDecl { ty: Some(ty), .. } => Some(ty.clone()),
+        _ => None,
+    };
+    assert_eq!(annotation(&stmts[0]), Some(Type::StringLiteral));
+    assert!(matches!(
+        annotation(&stmts[1]),
+        Some(Type::Named(name, args)) if name == "StringLiteral" && args.len() == 1
+    ));
+}
+
+#[test]
 fn rejects_type_parameter_without_a_bound() {
     // Mojo has no unconstrained type parameters, so `[T]` is a parse error.
     let mut parser = Parser::new(Lexer::new("def f[T](x: T) -> T:\n    return x\n"));

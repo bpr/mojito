@@ -66,8 +66,8 @@ use mojito_types::param_expr::{
 };
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SimdDtype,
-    SimdWidth, Ty, TyArg, TySubst, array_element, array_parts, array_type, canonical_simd_ty,
-    contains_infer, dict_elements, dict_type, is_scalar_simd, list_element, list_type, range_type,
+    SimdWidth, Ty, TyArg, TySubst, array_element, array_parts, array_type, contains_infer,
+    dict_elements, dict_type, is_scalar_simd, list_element, list_type, range_type,
     scalar_simd_dtype, set_element, set_type, simd_slots, tuple_elements,
     tuple_type as nominal_tuple_type,
 };

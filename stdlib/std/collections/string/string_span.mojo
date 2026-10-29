@@ -4,7 +4,7 @@
 # whence this module imports `StaticString`.
 #
 # Omitted: `get_static_string`, whose `StaticString(kgen)` reads a
-# `!kgen.string` at run time (roadmap R1192), and the rest of upstream's
+# `!kgen.string` at run time (roadmap R1190), and the rest of upstream's
 # module, which lives in `std/string.mojo`.
 """Implements the `StringSpan` type and related utilities for efficient string operations."""
 

@@ -410,7 +410,11 @@ impl Checker {
                 if let Some(explicit) = explicit.iter().find(|origin| origin.id == *id) {
                     let within = match actual_origin.as_origin() {
                         Some(actual) => origin_is_within(&actual, &explicit.origin),
-                        None => matches!(explicit.origin, Origin::Untracked { .. }),
+                        None => {
+                            matches!(explicit.origin, Origin::Untracked { .. })
+                                || (*actual_origin == PointerOrigin::Static
+                                    && explicit.origin == Origin::Static)
+                        }
                     };
                     if !within {
                         return Err(TypeError::TypeMismatch {

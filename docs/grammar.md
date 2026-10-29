@@ -1192,8 +1192,9 @@ fn_effect: 'capturing' ['[' ... ']'] | 'thin' | 'raises' [type] | 'abi' '(' ... 
 
 `None` is a reserved keyword; `Int`, `UInt`, `Bool`, `Float64` are ordinary `NAME`s recognized
 here by spelling (they are **not** reserved). `String` is an ordinary `NAME` resolving to
-the prelude's nominal self-hosted `String` struct; `StringLiteral` names the compile-time
-string literal type. A string literal implicitly converts wherever the nominal `String`
+the prelude's nominal self-hosted `String` struct; a bare `StringLiteral` names the compile-time
+string literal type, and `StringLiteral[value]` with arguments is a parameterized struct
+type (the bundled `std.builtin.string_literal` declaration). A string literal implicitly converts wherever the nominal `String`
 is expected (the struct's `@implicit` literal constructor). Any other `NAME` is a **struct type**
 (`Point`), a **type parameter** in scope (a bare `T` inside a generic `def`), or a
 **parameterized struct type** with arguments (`Pair[Int]`, `Pair[T]`, or the value form

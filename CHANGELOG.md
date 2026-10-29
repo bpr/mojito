@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `StringLiteral` is now declared as upstream's `struct
+  StringLiteral[value: __mlir_type.`!kgen.string`]` in
+  `std.builtin.string_literal`, so an explicit application constructs it
+  and runs its library members on the VM, natively, and in compile-time
+  calls (R1192, in part): `print(StringLiteral["None".value]())` prints
+  `None` and `StringLiteral[v]().byte_length()` prints `4`, where both
+  were "Undefined variable 'StringLiteral'". Its `byte_length` reads the
+  KGEN string through ``__mlir_op.`pop.string.size` ``, now admitted over a
+  compile-time `!kgen.string`. A literal's own type, its operators, its
+  hash, and the members over `StringSlice(self)` are filed as
+  R1651–R1655.
+
 - A function type now composes with traits in a binder's bound, as at the
   pin (R1584): `F: ImplicitlyCopyable & RegisterPassable & def[width:
   SIMDLength](SIMD[DType.int32, width]) -> SIMD[DType.int32, width], //`
@@ -1644,6 +1656,14 @@ to evolve under the `0.x` compatibility rules.
   the package format is 70.
 
 ### Fixed
+
+- An overloaded initializer whose parameter spells a scalar alias or the
+  struct's own origin binder (`bytes: Span[Byte, Self.origin]`) now
+  declares the symbol its call selects, so `V(bytes=Span(l))` runs as at
+  the pin instead of stopping with "keyword arguments to
+  'V.__init__$ov$Span$UInt8$kw$bytes' are not supported".
+- `Span[Byte, ImmStaticOrigin](unsafe_ptr="abc".ptr(), length=3)` now
+  accepts the literal's static pointer, as at the pin.
 
 - `one_lane[4](True)` over `SIMD[DType.bool, n](b)` is rejected as at the
   pin instead of splatting the `Bool`, and `SIMD[DType.int8, 4](True)`

@@ -905,9 +905,12 @@ impl CtValue {
     /// at its read: a [closed parameter value](Self::is_closed_parameter_value)
     /// or a struct or tuple that [owns a string
     /// buffer](Self::is_constructed_parameter_value), whose every
-    /// materialization writes the frozen fields into fresh storage.
+    /// materialization writes the frozen fields into fresh storage, or a
+    /// pointer into frozen memory (a literal's bytes), which does the same.
     pub fn is_materialized_constant(&self) -> bool {
-        self.is_closed_parameter_value() || self.is_constructed_parameter_value()
+        self.is_closed_parameter_value()
+            || self.is_constructed_parameter_value()
+            || (matches!(self, Self::Pointer { .. }) && self.is_closed_leaf())
     }
 
     /// Whether this value is a struct or tuple that owns a string buffer:

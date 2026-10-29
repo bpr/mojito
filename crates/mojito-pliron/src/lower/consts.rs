@@ -169,7 +169,9 @@ impl FnLowering<'_> {
     /// variable over pairs): a `UInt` as its scalar, a vector built lane by lane as its explicit
     /// construction is (a one-lane vector is its lane scalar), and an
     /// aggregate — or a string read at the nominal `String` — written
-    /// fieldwise into fresh storage, each string leaf a fresh buffer.
+    /// fieldwise into fresh storage, each string leaf a fresh buffer. A
+    /// pointer into frozen bytes (a literal's address) is the address of
+    /// those bytes interned as a constant global.
     fn lower_parameter_value(
         &mut self,
         ctx: &mut Context,
@@ -218,6 +220,25 @@ impl FnLowering<'_> {
                 let storage = self.entry_alloca(ctx, layout.size, layout.align);
                 self.store_parameter_value(ctx, storage, value, &ty, dest)?;
                 self.reg_values.insert(dest.0, storage);
+                Ok(())
+            }
+            CtValue::Pointer {
+                memory: Some(slots),
+                offset,
+            } if let Some(bytes) = frozen_bytes(slots) => {
+                let global = self.shared.intern_string(ctx, &bytes);
+                let base = self.global_address(ctx, &global, dest);
+                let pointer = if *offset == 0 {
+                    base
+                } else {
+                    let bytes = self.int_constant(ctx, *offset);
+                    let byte_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+                    let gep =
+                        GetElementPtrOp::new(ctx, base, vec![GepIndex::Value(bytes)], byte_ty);
+                    self.append(ctx, gep.get_operation(), Some(dest));
+                    gep.get_result(ctx)
+                };
+                self.reg_values.insert(dest.0, pointer);
                 Ok(())
             }
             _ => Err(self.unsupported_reg(
@@ -671,4 +692,20 @@ fn scalar_lane_bytes(dtype: Dtype, lane: &mojito_types::ct::CtLane) -> Vec<u8> {
         CtLane::Bool(value) => u64::from(*value),
     };
     bits.to_le_bytes()[..lane_bytes(dtype)].to_vec()
+}
+
+/// The bytes a frozen pointer's memory holds when every slot is an
+/// initialized `UInt8` lane, as a string literal's are.
+fn frozen_bytes(slots: &[Option<mojito_types::ct::CtValue>]) -> Option<Vec<u8>> {
+    use mojito_types::ct::{CtLane, CtValue};
+    slots
+        .iter()
+        .map(|slot| match slot {
+            Some(CtValue::Simd {
+                dtype: mojito_ast::ast::Dtype::UInt8,
+                lanes,
+            }) if let [CtLane::Int(byte)] = lanes.as_slice() => u8::try_from(*byte).ok(),
+            _ => None,
+        })
+        .collect()
 }

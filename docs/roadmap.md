@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1651**.
+Next free ID: **R1657**.
 
 ## Ordered Work
 
@@ -4481,6 +4481,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `comptime I32 = SIMD[DType.int32, _]`, reports "cannot infer type
     parameter 'length' of 'I32' from the arguments", where the pin prints
     `4` for a four-lane argument.
+  - Probe: upstream's `StringLiteral._is_identical(self, rhs:
+    StringLiteral)` parameterizes `rhs` over the struct's `value`, where
+    a bare `StringLiteral` annotation names the compiler literal here
+    (R1652).
   - Found while landing R1568 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5222,6 +5226,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `compile_dependent_ct_expr`, and a call whose result is `!kgen.string`
     is no compile-time application there. Bound first (`comptime k =
     _get_kgen_string["llvm.", *parts]()`, `intrin=k`), it runs.
+  - Probe: `print(get_static_string["ab", "cd"]())`, which prints `abcd`
+    at the pin. Upstream declares it in
+    `std.collections.string.string_span` as
+    `StaticString(_get_kgen_string[string, *extra]())`, over
+    `StringSpan.__init__(out self: StaticString, _kgen:
+    __mlir_type.`!kgen.string`)`. That initializer's `pop.string.size` and
+    `pop.string.address` read a run-time operand, where the checker folds
+    them only over a compile-time one (`infer_string_op`,
+    `method_calls/mlir_op.rs`). Port both with this entry.
+  - Probe: `def f(x: __mlir_type.`!kgen.string`) -> Int` returning
+    `Int(SIMDLength(mlir_value=__mlir_op.`pop.string.size`(x)))`, which
+    prints `2` for `f("ab".value)` at the pin and reports "no constructor
+    overload matches" for `SIMDLength` here.
   - A sibling of R1149's raw-list runtime form.
   - Found while landing R1183 (2026-10-20).
   - Depends on nothing.
@@ -5971,6 +5988,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `t.k` over `t: Tag[idt(n)]` in `def g[n: Int]` reports "type
     'Tag[idt[Int](n)]' has no field 'k'", where the pin prints `1` for
     `g[1](Tag[idt(1)]())`; `t.key()` over a method returning `Self.k` runs.
+  - The bundled `StringLiteral` members read `Self.value` where upstream's
+    spell `self.value` (`std/builtin/string_literal.mojo`). Respell them
+    when this lands.
   - Found while landing R1401 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8477,6 +8497,22 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1656 A construction that leaves a struct's origin parameter
+  uninferred is accepted**
+
+  `V(5)` over `struct V[mut: Bool, //, origin: Origin[mut=mut]]` with
+  `def __init__(out self, k: Int)` prints its field here, where the pin
+  rejects it with "failed to infer parameter 'mut' of parent struct 'V'".
+  - `OriginBindings::bind_tail` (`checker/origins/construct.rs`) leaves an
+    origin slot no argument binds as `Origin::Unbound`, and the
+    construction proceeds.
+  - Reject the construction when a slot stays unbound and no explicit
+    application supplies it, as upstream's inference does.
+  - Probe: `V[origin_of(l)](5)` over a local `l` runs at both.
+  - Found while landing R1192 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -9143,6 +9179,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `Pointer` is a compiler built-in here (`TyKind::Pointer`), so each is a
     built-in member, as `unsafe_origin_cast` is
     (`checker/method_calls/builtin_types.rs`).
+  - `pop.string.address` is typed `Pointer[Byte, ImmStaticOrigin]` and
+    admitted only in `std/builtin/string_literal.mojo`, where upstream's
+    gives the `!kgen.pointer` that `StringLiteral.ptr` wraps with
+    `Pointer[_, ImmStaticOrigin](_mlir_value=…).unsafe_bitcast[Byte]()`.
+    Respell `ptr` as upstream's when the spelling lands.
   - Found while landing R1304 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -10029,7 +10070,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `DType.__eq__(self, rhs: Self)` replaces.
   - Port `DType.__hash__` with the struct and retire its hash-leaf arms
     (`builtin_hashable_ty`, `hash_leaf_ty`, the VM's `__hash__` arm,
-    `lower_hash_leaf`, `enqueue_hash_leaf_instances`); R1192 retires the last leaf.
+    `lower_hash_leaf`, `enqueue_hash_leaf_instances`); R1654 retires the last leaf.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -10164,43 +10205,100 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1132 (the trait) and R1608 (a library `Bool`).
   - Model: Opus, Not Planned.
 
-- [ ] **R1192 `StringLiteral` is a compiler-modelled type where upstream's
-  is `StringLiteral[value: !kgen.string]`**
+- [ ] **R1652 A string literal's type is the compiler's `StringLiteral`,
+  not the application `StringLiteral[value]` its text keys**
 
-  Problem: `print(StringLiteral["None".value]())` fails with "Undefined
-  variable 'StringLiteral'", where the pin prints `None`, because Mojito's
-  string literal type has no `value` parameter.
-  - `StringLiteral` is `TyKind::StringLiteral`, and a literal's `.value` is
-    a compiler fold (`CtValue::literal_value`) rather than a read of the
-    type's parameter.
-  - Port upstream's `std/builtin/string_literal.mojo` struct, the way R1608
-    ports `Bool`, so a literal's type is the application its text keys.
-  - Probe: `StringLiteral[v]().byte_length()` over `comptime v =
-    "None".value`, which prints `4` at the pin.
-  - Converting a KGEN string to a runtime string (`StaticString(names[i])`)
-    then follows with R432: upstream's `StringSpan.__init__(out self:
-    StaticString, _kgen: !kgen.string)` over `pop.string.size` and
-    `pop.string.address`.
-  - Probe: `get_static_string["ab", "cd"]()`, which upstream declares in
-    `std.collections.string.string_span` as
-    `StaticString(_get_kgen_string[string, *extra]())` and the bundled
-    module omits.
-  - Probe: `"x" + s` and `"ab" == s` over a `String` `s` convert the
-    literal to `String` and call `String`'s dunder (`infer_infix`'s
-    literal-left arm, `checker/operators.rs`), where upstream calls
-    `StringLiteral.__eq__(self, rhs: StringSlice)`, and for `+` the
-    reflected `String.__radd__(self, other: StringSlice)`, which the
-    bundled `stdlib/std/string.mojo` lacks. The port deletes that arm.
-  - Port `StringLiteral.__hash__` with the struct and retire its hash-leaf
-    arms (`builtin_hashable_ty`, the VM's `__hash__` arm,
-    `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
+  `var x: StringLiteral["a".value] = "a"` is rejected, where the pin's
+  literal `"a"` is a `StringLiteral["a"]`.
+  - `std.builtin.string_literal` declares upstream's struct, and an
+    explicit application (`StringLiteral[v]()`) constructs it.
+  - A literal is still `TyKind::StringLiteral`, which holds no value, and a
+    bare `StringLiteral` annotation names that type rather than upstream's
+    auto-parameterized `StringLiteral[_]`.
+  - So a literal's `.value` is a compiler fold (`CtValue::literal_value`)
+    rather than a read of its type's parameter.
+  - Its `byte_length`, `ptr`, and `unsafe_ptr` are compiler rules
+    (`string_literal_primitive`, the VM `invoke.rs` arms, Pliron
+    `methods.rs`), where the struct's are library bodies.
+  - Lever: bridge the declaration onto the literal as R1549 bridged `SIMD`
+    (`Ty::new`, `types::nominal_parts`, `declared_receiver_member`), with
+    the literal's text as the type's argument, then delete those rules.
+  - Probe: `print(StringLiteral["ab".value]()._is_identical("ab"))` prints
+    `True` at the pin. Port `_is_identical` (over
+    `#kgen.param.identical`) and `_from[s: StaticString]` with the bridge.
+  - Depends on R1606 (a bare `StringLiteral` parameter is
+    `StringLiteral[_]`).
+  - Model: Fable, Planned.
+
+- [ ] **R1651 `@__nonmaterializable(String)` is not read, so a bound
+  `StringLiteral[v]` stays a literal**
+
+  `var s = StringLiteral["ab".value]()` binds a `StringLiteral["ab"]` here,
+  where the pin materializes it as a `String`.
+  - Upstream declares `StringLiteral` `@__nonmaterializable(String)`. The
+    parser rejects the decorator, so the bundled struct omits it.
+  - Mojito materializes only the compiler literal, by rule
+    (`generics::unify`'s `TyKind::StringLiteral` arm and the binding
+    rules that default a literal).
+  - Lever: parse the decorator onto the declaration and read it where a
+    binding materializes, so the literal's rule is that one instance.
+  - Probe: `var s = StringLiteral["ab".value](); print(s.as_string_slice())`
+    fails at the pin with "'String' value has no attribute
+    'as_string_slice'", and runs here.
+  - Depends on R1652 (`String`'s constructor from the literal takes the
+    struct).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1653 `StringLiteral`'s comparisons and concatenation are checker
+  rules, where upstream's are its dunders**
+
+  `"x" + s` and `"ab" == s` over a `String` `s` convert the literal to
+  `String` and call `String`'s dunder (`infer_infix`'s literal-left arm,
+  `checker/operators.rs`).
+  - Upstream calls `StringLiteral.__eq__(self, rhs: StringSlice)` and its
+    `__ne__`, `__lt__`, `__le__`, `__gt__`, and `__ge__`.
+  - For `+` it calls the reflected `String.__radd__(self, other:
+    StringSlice)`, which `stdlib/std/string.mojo` lacks.
+  - Port those members and `__add__` (over `#pop.string_concat`), and
+    delete the arm.
+  - Probe: `print("x" + s, "ab" == s, "ab" != s)` over `s = String("ab")`
+    prints `xab True False`, here and at the pin.
+  - Depends on R1652 (a literal receiver is the struct).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1654 `StringLiteral`'s hash is a compiler leaf, where upstream's
+  is its `__hash__`**
+
+  `hash("abc")` runs through the hash-leaf arms (`builtin_hashable_ty`,
+  the VM's `__hash__` arm, `lower_hash_leaf`, `enqueue_hash_leaf_instances`),
+  where upstream's `StringLiteral` declares `__hash__` and `Hashable`.
+  - Port the member and delete the literal's arms.
   - Once R160 and R1608 have retired the `DType` and `Bool` leaves too,
     `__hash__` and `_update_with_simd` leave `mir::TYPE_REACHED_MEMBERS`,
     and Pliron's type-reached member push (`lib.rs`) goes with them.
-  - The planning session splits it into chained one-session entries if
-    one session cannot land it.
-  - Found while landing R1183 (2026-10-20).
-  - Depends on nothing.
+  - Probe: `print(hash("abc"))` stays `1671071436193132867`.
+  - Depends on R1652 (a literal receiver is the struct).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1655 `StringLiteral`'s members over `StringSlice(self)` are
+  unported**
+
+  `StringLiteral["12".value]().__int__()` in a `raises` function reports
+  "type 'StringLiteral["12"]' has no method '__int__'", where the pin
+  prints `12`.
+  - Upstream's bodies of `__mul__`, `__int__`, `__float__`, `__fspath__`,
+    `__iter__`, `__reversed__`, `count_codepoints`, `as_c_string_span`,
+    the search, case, padding, strip, and split families, the codepoint
+    and grapheme iterators, `format`, and `join` each read
+    `StringSlice(self)`.
+  - That is upstream's `StringSpan.__init__(out self: StaticString, lit:
+    StringLiteral)`, whose body is `StaticString(lit.value)`: a run-time
+    `!kgen.string` (R1190).
+  - The bundled `write_to` and `write_repr_to` read `as_string_slice()`
+    for that reason. Respell them as upstream's when this lands, and add
+    `FloatableRaising`, `IntableRaising`, and `PathLike`.
+  - Depends on R1190 (a run-time `!kgen.string`) and R1652 (the bare
+    `lit: StringLiteral` parameter).
   - Model: Opus, Not Planned.
 
 - [ ] **R1520 `!kgen.simd<n, address>` has no pointer lane**
@@ -10333,7 +10431,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   where the pin prints `True`, `True`, and `linux` on this host.
   - Each body reads a `!kgen.string` field through `target_get_field` and
     compares it as `StringLiteral[Self.__triple_arch()]()._is_identical(…)`,
-    so it needs `StringLiteral`'s `value` parameter (R1192) and a
+    so it needs `StringLiteral`'s `value` parameter (R1652) and a
     compile-time `StaticString` (R1641).
   - Port `is_triple`, `_arch`, `__arch`, `_is_arch`, `__triple_arch`,
     `__triple`, `_is_triple_arch`, `_eq_triple_and_arch`, `_os`, `is_x86`,
@@ -10349,7 +10447,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     can be restored.
   - `_arch()` is `StaticString(Self.__arch())`, a run-time call of a
     function returning `!kgen.string`, which needs R1190's run-time form.
-  - Depends on R1562, R1192, R1641, and R1190.
+  - Depends on R1562, R1652, R1641, and R1190.
   - Model: Opus, Planned.
 
 - [ ] **R1623 `SIMD`'s `%`, `divmod`, and `ceildiv` are checker rules

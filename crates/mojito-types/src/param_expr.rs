@@ -244,6 +244,7 @@ impl ParamContext {
             ParamOp::Cond => self.build_cond(operands),
             ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin => self.build_cast(op, &operands[0]),
             ParamOp::DataToStr => self.build_data_to_str(operands),
+            ParamOp::StringSize | ParamOp::StringAddress => self.build_string_read(op, operands),
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -1545,6 +1546,26 @@ impl ParamContext {
         ))
     }
 
+    /// `pop.string.size` or `pop.string.address` over a `!kgen.string`:
+    /// its byte length or the address of its bytes once the string is
+    /// constant, and otherwise the node.
+    fn build_string_read(
+        &self,
+        op: ParamOp,
+        operands: Vec<ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        if let Some(string) = operands[0].as_constant() {
+            self.count_fold();
+            return self.constant(fold_primitive(op, &[string])?);
+        }
+        let result = if op == ParamOp::StringSize {
+            TyKind::Index.into()
+        } else {
+            crate::types::static_string_address_ty()
+        };
+        Ok(self.make(MetaTy::value(result), ParamKind::Op { op, operands }))
+    }
+
     /// `and`/`or`: flatten, fold constants, drop duplicates, and sort. The
     /// dominating constant wins only once every operand is known to be a
     /// well-typed `Bool`, which the arity and domain checks established.
@@ -2607,6 +2628,13 @@ pub enum ParamOp {
     /// compile-time string view addresses, then those of each view in a
     /// list, concatenated (upstream's `_get_kgen_string`).
     DataToStr,
+    /// `pop.string.size`: the byte length of a `!kgen.string`, as an
+    /// `index` (upstream's `StringLiteral.byte_length`).
+    StringSize,
+    /// `pop.string.address`: the address of a `!kgen.string`'s
+    /// nul-terminated bytes, which live for the whole program (upstream's
+    /// `StringLiteral.ptr`).
+    StringAddress,
 }
 
 impl ParamOp {
@@ -2636,6 +2664,8 @@ impl ParamOp {
             Self::CastToBuiltin => "cast_to_builtin",
             Self::CastFromBuiltin => "cast_from_builtin",
             Self::DataToStr => "data_to_str",
+            Self::StringSize => "string_size",
+            Self::StringAddress => "string_address",
         }
     }
 
@@ -2671,7 +2701,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 23] = [
+    const ALL: [Self; 25] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -2695,11 +2725,17 @@ impl ParamOp {
         Self::CastToBuiltin,
         Self::CastFromBuiltin,
         Self::DataToStr,
+        Self::StringSize,
+        Self::StringAddress,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
         match self {
-            Self::Neg | Self::CastToBuiltin | Self::CastFromBuiltin => arity == 1,
+            Self::Neg
+            | Self::CastToBuiltin
+            | Self::CastFromBuiltin
+            | Self::StringSize
+            | Self::StringAddress => arity == 1,
             Self::Cond => arity == 3,
             Self::Add | Self::Mul | Self::BoolAnd | Self::BoolOr | Self::BoolXor => arity >= 2,
             _ => arity == 2,
@@ -2729,7 +2765,9 @@ impl ParamOp {
             | Self::Cond
             | Self::CastToBuiltin
             | Self::CastFromBuiltin
-            | Self::DataToStr => return None,
+            | Self::DataToStr
+            | Self::StringSize
+            | Self::StringAddress => return None,
         })
     }
 
@@ -3908,6 +3946,8 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::CastToBuiltin, [operand]) => fold::fold_cast_to_builtin(operand),
         (ParamOp::CastFromBuiltin, [operand]) => fold::fold_cast_from_builtin(operand),
         (ParamOp::DataToStr, [string, rest]) => fold::fold_data_to_str(string, rest),
+        (ParamOp::StringSize, [string]) => fold::fold_string_size(string),
+        (ParamOp::StringAddress, [string]) => fold::fold_string_address(string),
         (ParamOp::Cond, [condition, then_value, else_value]) => match condition {
             CtValue::Bool(true) => Ok((*then_value).clone()),
             CtValue::Bool(false) => Ok((*else_value).clone()),
@@ -4007,7 +4047,11 @@ const fn precedence(op: ParamOp) -> u8 {
         ParamOp::Mul | ParamOp::Div | ParamOp::FloorDiv | ParamOp::Mod => 11,
         ParamOp::Neg => 12,
         ParamOp::Pow => 13,
-        ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin | ParamOp::DataToStr => 14,
+        ParamOp::CastToBuiltin
+        | ParamOp::CastFromBuiltin
+        | ParamOp::DataToStr
+        | ParamOp::StringSize
+        | ParamOp::StringAddress => 14,
     }
 }
 
@@ -4035,6 +4079,8 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::CastToBuiltin => ".__mlir_index__()",
         ParamOp::CastFromBuiltin => "Int(mlir_value=)",
         ParamOp::DataToStr => "data_to_str",
+        ParamOp::StringSize => "pop.string.size",
+        ParamOp::StringAddress => "pop.string.address",
     }
 }
 

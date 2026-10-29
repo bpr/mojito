@@ -302,6 +302,42 @@ pub fn fold_data_to_str(string: &CtValue, rest: &CtValue) -> Result<CtValue, Par
         .map_err(|_| unsupported("'data_to_str' reads bytes that are not UTF-8"))
 }
 
+/// `pop.string.size` over a concrete `!kgen.string`: its byte length as an
+/// `index`.
+pub fn fold_string_size(string: &CtValue) -> Result<CtValue, ParamError> {
+    match string {
+        CtValue::KgenString(text) => i64::try_from(text.len())
+            .map(CtValue::Index)
+            .map_err(|_| unsupported("'pop.string.size' reads a string too long for an 'index'")),
+        _ => Err(unsupported(&format!(
+            "'pop.string.size' expects a compile-time '{}'",
+            crate::types::KGEN_STRING_TYPE_SPELLING
+        ))),
+    }
+}
+
+/// `pop.string.address` over a concrete `!kgen.string`: a pointer to its
+/// bytes and their nul terminator, frozen as the memory a literal's static
+/// bytes are.
+pub fn fold_string_address(string: &CtValue) -> Result<CtValue, ParamError> {
+    let CtValue::KgenString(text) = string else {
+        return Err(unsupported(&format!(
+            "'pop.string.address' expects a compile-time '{}'",
+            crate::types::KGEN_STRING_TYPE_SPELLING
+        )));
+    };
+    let byte = |byte: u8| {
+        Some(CtValue::Simd {
+            dtype: Dtype::UInt8,
+            lanes: vec![CtLane::Int(i128::from(byte))],
+        })
+    };
+    Ok(CtValue::Pointer {
+        memory: Some(text.bytes().chain([0]).map(byte).collect()),
+        offset: 0,
+    })
+}
+
 /// The integer a concrete value denotes, across the integer kinds.
 pub fn integer_value(value: &CtValue) -> Option<IntLiteral> {
     match value {
@@ -612,7 +648,9 @@ fn unsupported(message: &str) -> ParamError {
 
 #[cfg(test)]
 mod tests {
-    use super::{fold_comparison, fold_data_to_str, fold_infix};
+    use super::{
+        fold_comparison, fold_data_to_str, fold_infix, fold_string_address, fold_string_size,
+    };
     use crate::ct::{CtLane, CtValue};
     use mojito_ast::ast::{Dtype, InfixOp};
     use mojito_common::literal::{FloatLiteral, IntLiteral};
@@ -724,5 +762,23 @@ mod tests {
             panic!("an elementwise `pop.cmp ne` is a mask");
         };
         assert_eq!(lanes, vec![CtLane::Bool(false); 2]);
+    }
+
+    #[test]
+    fn string_reads_take_the_kgen_strings_bytes() {
+        let string = CtValue::KgenString("héllo".to_string());
+        assert_eq!(fold_string_size(&string).ok(), Some(CtValue::Index(6)));
+        let memory = "héllo\0"
+            .bytes()
+            .map(|byte| Some(lane(Dtype::UInt8, CtLane::Int(i128::from(byte)))))
+            .collect();
+        assert_eq!(
+            fold_string_address(&string).ok(),
+            Some(CtValue::Pointer {
+                memory: Some(memory),
+                offset: 0,
+            })
+        );
+        assert!(fold_string_size(&CtValue::Str("ab".to_string())).is_err());
     }
 }

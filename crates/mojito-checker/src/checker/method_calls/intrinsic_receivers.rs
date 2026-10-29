@@ -301,13 +301,7 @@ impl Checker {
 fn string_literal_primitive(method: &str) -> Option<Ty> {
     match method {
         "byte_length" => Some(Ty::int()),
-        "ptr" | "unsafe_ptr" => Some(
-            TyKind::Pointer {
-                element: canonical_simd_ty(Dtype::UInt8, 1),
-                origin: mojito_types::origin::PointerOrigin::Static,
-            }
-            .into(),
-        ),
+        "ptr" | "unsafe_ptr" => Some(mojito_types::types::static_string_address_ty()),
         _ => None,
     }
 }

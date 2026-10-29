@@ -635,6 +635,7 @@ assets/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry
 assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_dir_operations.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_path_functions.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overload_key_scalar_alias_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_nested_application_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_transfer_effect_isolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_var_copy_beside_generic.mojo	-	ineligible	no-scalar-entry-shape
@@ -1025,6 +1026,7 @@ assets/ok/string_grapheme_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_iadd_view_operand.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_bytes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_overload.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/string_literal_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_overload_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_span_equatable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_span_implicit_temporary.mojo	-	ineligible	no-scalar-entry-shape

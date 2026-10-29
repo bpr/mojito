@@ -635,6 +635,7 @@ assets/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	saniti
 assets/ok/origin_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/os_dir_operations.mojo	main	exe-differential	sanitized
 assets/ok/os_path_functions.mojo	main	exe-differential	sanitized
+assets/ok/overload_key_scalar_alias_origin.mojo	main	exe-differential	sanitized
 assets/ok/overload_nested_application_parameter.mojo	main	exe-differential	sanitized
 assets/ok/overload_transfer_effect_isolation.mojo	main	exe-differential	sanitized
 assets/ok/overload_var_copy_beside_generic.mojo	main	exe-differential	sanitized
@@ -1025,6 +1026,7 @@ assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
 assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_overload.mojo	main	exe-differential	sanitized
+assets/ok/string_literal_struct.mojo	main	exe-differential	sanitized
 assets/ok/string_overload_conversion.mojo	main	exe-differential	sanitized
 assets/ok/string_span_equatable.mojo	main	exe-differential	sanitized
 assets/ok/string_span_implicit_temporary.mojo	main	exe-differential	sanitized

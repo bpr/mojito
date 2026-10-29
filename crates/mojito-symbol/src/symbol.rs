@@ -1731,6 +1731,15 @@ fn ast_raw(
         // Mirror `ty_raw`: the `NoneType` annotation resolves to `TyKind::None`,
         // which mangles as `None`.
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
+        // A scalar alias (`Byte`, `UInt8`) mangles as the width-1 vector it
+        // names, as `ty_raw` spells the resolved `TyKind::Simd`.
+        Type::Named(name, args)
+            if args.is_empty()
+                && !type_bounds.contains_key(name)
+                && let Some(dtype) = mojito_ast::ast::Dtype::from_scalar_alias(name) =>
+        {
+            simd_annotation_raw(dtype, 1)
+        }
         // `Scalar[DType.x]` / `SIMD[DType.x, N]` annotations mangle as their
         // canonical checked spelling (`Scalar[DType.float32]` is the width-1
         // `Float32`), matching `ty_raw`'s display of the resolved `TyKind::Simd`.
@@ -2251,8 +2260,17 @@ fn syntactic_origin_argument(
     arg: &ParamArg,
     type_bounds: &HashMap<String, BinderSpelling>,
 ) -> bool {
-    let ParamArg::Value(value) = arg else {
-        return false;
+    let is_origin_binder = |name: &str| {
+        matches!(
+            type_bounds.get(name).map(|binder| binder.bounds.as_slice()),
+            Some([only]) if only == "Origin" || only == "OriginSet"
+        )
+    };
+    let value = match arg {
+        ParamArg::Value(value) => value,
+        // A struct's own origin binder, spelled `Self.origin`.
+        ParamArg::Type(Type::SelfParam(name)) => return is_origin_binder(name),
+        _ => return false,
     };
     match &value.kind {
         ExprKind::Identifier(name) => {
@@ -2264,10 +2282,7 @@ fn syntactic_origin_argument(
                     | "ImmUnsafeAnyOrigin"
                     | "MutUnsafeAnyOrigin"
                     | "MutUntrackedOrigin"
-            ) || matches!(
-                type_bounds.get(name).map(|binder| binder.bounds.as_slice()),
-                Some([only]) if only == "Origin" || only == "OriginSet"
-            )
+            ) || is_origin_binder(name)
         }
         ExprKind::Call { name, .. } => {
             matches!(name.as_str(), "origin_of" | "ImmOrigin" | "MutOrigin")

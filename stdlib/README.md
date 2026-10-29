@@ -97,6 +97,11 @@ point, as upstream's toolchain does.
   type of `SIMD`'s width: a wrapper of the MLIR `index` that a literal or an
   `Int` converts to, and that converts to any `SIMD` through the compiler
   `SIMD`'s `@implicit __init__(SIMDLength)`. The prelude exports it.
+- `std/builtin/string_literal.mojo` — upstream's `StringLiteral[value]`
+  struct, in part: what an explicit application `StringLiteral[v]` names,
+  with the members that read its `!kgen.string` through `pop.string.size`
+  and `pop.string.address`. A literal's own type is still the compiler's
+  `StringLiteral` (roadmap R1652). The prelude exports it.
 - `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
   `pop.bitcast`, re-exported by `std.memory`; `std/builtin/dtype.mojo`
   bundles `_uint_type_of_width`, `_integral_type_of`, and
@@ -267,7 +272,7 @@ point, as upstream's toolchain does.
   upstream module path, the `!kgen.string` of the views' bytes, which
   `std/sys/intrinsics.mojo`'s `llvm_intrinsic` reads its `intrin` through.
   The rest of upstream's module lives in `std/string.mojo`;
-  `get_static_string` waits for `StaticString(kgen)` (roadmap R1192).
+  `get_static_string` waits for `StaticString(kgen)` (roadmap R1190).
 
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is

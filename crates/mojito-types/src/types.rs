@@ -3303,6 +3303,16 @@ pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
     }
 }
 
+/// The type of a string literal's bytes' address: a `Pointer[Byte]` into
+/// the static memory that lives for the whole program.
+pub fn static_string_address_ty() -> Ty {
+    TyKind::Pointer {
+        element: canonical_simd_ty(Dtype::UInt8, 1),
+        origin: crate::origin::PointerOrigin::Static,
+    }
+    .into()
+}
+
 /// Whether `ty` is a width-one `TyKind::Simd` (a scalar alias such as `Int`
 /// or `Float32`), whatever its dtype slot.
 pub const fn is_scalar_simd(ty: &TyKind) -> bool {
