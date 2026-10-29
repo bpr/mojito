@@ -4764,9 +4764,14 @@ impl Checker {
             self.constructed_unification(name, constructed, &patterns, &actuals);
         let bound_parameters =
             self.resolve_use_params(name, decls, param_args, &patterns, &actuals)?;
+        let spelled = canonical_arguments(name, &bound_parameters.arguments);
         for ((decl, (argument, expected)), defined) in decls
             .iter()
-            .zip(bound_parameters.arguments.iter().zip(&solved_refinement))
+            .zip(
+                spelled
+                    .iter()
+                    .zip(&canonical_arguments(name, &solved_refinement)),
+            )
             .zip(&defined)
         {
             if *defined && argument != expected {
@@ -5285,4 +5290,15 @@ fn bind_instance_origins(
             *entry = origin.clone();
         }
     }
+}
+
+/// `arguments` as the instance of `name` they spell holds them: a bridged
+/// struct's (`SIMD`'s) arguments fold as its `Ty` does, so a bracket's
+/// `SIMDLength(1)` application and a refinement's folded `1` agree.
+fn canonical_arguments(name: &str, arguments: &[TyArg]) -> Vec<TyArg> {
+    let instance: Ty = TyKind::Struct(name.to_string(), arguments.to_vec()).into();
+    mojito_types::types::nominal_parts(&instance).map_or_else(
+        || arguments.to_vec(),
+        |(_, arguments)| arguments.into_owned(),
+    )
 }

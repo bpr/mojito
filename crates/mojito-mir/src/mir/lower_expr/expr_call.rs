@@ -24,7 +24,7 @@ impl<'a> Flatten<'a> {
         }
         // SIMD construction resolves its `[DType.<dt>, width]` parameters
         // here (the MIR is otherwise untyped about them).
-        if let Some(r) = self.try_simd_call(call, args, kwargs) {
+        if let Some(r) = self.try_simd_call(call, args) {
             return r;
         }
         // `objs[0](3)` / `grid[i, j](x)`: the checker re-dispatched
@@ -177,14 +177,6 @@ impl<'a> Flatten<'a> {
         kwargs: &[(&'a str, Node<'a>)],
     ) -> Option<Reg> {
         let node = call.checked;
-        // `Int(mlir_value=i)` over an `index`: upstream's
-        // `pop.cast_from_builtin`.
-        if Self::checked_mlir_op(call) == Some(mojito_types::mlir::MlirOp::PopCastFromBuiltin)
-            && let [(_, storage)] = kwargs
-        {
-            let value = self.expr(*storage);
-            return Some(self.builtin_cast(call.location(), value, Ty::int()));
-        }
         if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,

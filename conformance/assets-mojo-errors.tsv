@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	914
+# swept-count	918
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -479,6 +479,7 @@ assets/type_error/instantiated_generic_abandoned_binding.mojo	compile-reject	agr
 assets/type_error/int_literal_local_not_concrete.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[3]' value to 'IntLiteral[_]'
 assets/type_error/int_literal_parameter_int_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Int' to 'IntLiteral[x.value]', it depends on an unresolved parameter 'x.value'
 assets/type_error/int_literal_receiver_len.mojo	compile-reject	agree	error: 'IntLiteral[5]' value has no attribute '__len__'
+assets/type_error/int_mlir_value_index_vector.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/int_storage_init_from_int.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
@@ -765,6 +766,7 @@ assets/type_error/set_element_ref_write.mojo	runs	subset	the pin runs it;Mojito 
 assets/type_error/set_requires_hashable_element.mojo	compile-reject	agree	error: 'Set' parameter 'T' has 'KeyElement' type, but value has type 'AnyStruct[Elem]'
 assets/type_error/setter_without_getter.mojo	compile-reject	agree	error: 'Sink' has '__setitem__' but no '__getitem__' method
 assets/type_error/signature_application_unfolded.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 't' cannot be converted from 'Tag[Int(1)]' to 'Tag[idt[Int](Int(1))]'
+assets/type_error/simd_bool_generic_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_lane_multiply.mojo	compile-reject	agree	error: 'pop.mul' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!kgen.simd<2, bool>'
 assets/type_error/simd_bool_lane_subtract.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_mask_inplace_add.mojo	compile-reject	agree	error: function instantiation failed
@@ -774,6 +776,7 @@ assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: fu
 assets/type_error/simd_element_intable_struct.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_element_int_narrowing.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_element_wider_float.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/simd_fill_non_bool_mask.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_float_bitwise_and.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_float_is_power_of_two.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_fma_bool_lanes.mojo	compile-reject	agree	error: function instantiation failed
@@ -784,6 +787,7 @@ assets/type_error/simd_inferred_width_from_elements.mojo	compile-reject	agree	er
 assets/type_error/simd_intable_bound_vector.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_intable_multi_lane_splat.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_int_vector.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_int_vector_positional_bool.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_int_width_binder_from_alias.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 'x' cannot be converted from 'SIMD[.int32, L]' to 'SIMD[.int32, w]', it depends on an unresolved parameter 'w'
 assets/type_error/simd_int_width_binder_from_length.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 'x' cannot be converted from 'SIMD[.int32, m]' to 'SIMD[.int32, w]', it depends on an unresolved parameter 'w'
 assets/type_error/simd_int_width_binder_not_inferred.mojo	compile-reject	agree	error: invalid call to 'lanes': value passed to 'v' cannot be converted from 'SIMD[.int32, 4]' to 'SIMD[.int32, n]', it depends on an unresolved parameter 'n'

@@ -811,43 +811,6 @@ impl Checker {
         simd_of(dtype, width)
     }
 
-    /// Type upstream's mask splat `SIMD[DType.bool, N](fill=b)`: `Bool` is not
-    /// a `Scalar`, so a mask takes its one lane by keyword, not positionally.
-    pub(super) fn infer_simd_fill(
-        &self,
-        span: &SourceSpan,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<Ty, TypeError> {
-        let (dtype, width, attributes) = self.simd_dims(param_args)?;
-        self.record_bracket_attributes(span.clone(), attributes);
-        let not_a_fill = || TypeError::BadCall {
-            func: "SIMD".to_string(),
-            reason: "only a DType.bool mask of a known width takes 'fill=', its one Bool lane"
-                .to_string(),
-        };
-        let [fill] = kwargs else {
-            return Err(not_a_fill());
-        };
-        if fill.name != "fill"
-            || !args.is_empty()
-            || dtype.known() != Some(Dtype::Bool)
-            || width.known().is_none_or(|width| width < 1)
-        {
-            return Err(not_a_fill());
-        }
-        let fill_ty = self.infer(&fill.value)?;
-        if !converts_to_lane(&fill_ty, &dtype) {
-            return Err(TypeError::TypeMismatch {
-                expected: "a Bool fill".to_string(),
-                found: fill_ty.to_string(),
-                context: "SIMD fill".to_string(),
-            });
-        }
-        simd_of(dtype, width)
-    }
-
     /// Type a scalar-alias construction `Int32(x)` = `SIMD[DType.int32, 1](x)`.
     pub(super) fn infer_simd_alias_construction(
         &self,
@@ -896,19 +859,6 @@ impl Checker {
             return Err(TypeError::SimdArity {
                 width,
                 got: args.len(),
-            });
-        }
-        // `Bool` is not a `Scalar`, so a multi-lane mask splats one `Bool`
-        // only through `fill=`; an integer literal splats through the
-        // `IntLiteral` initializer, as into any other lane.
-        if dtype.known() == Some(Dtype::Bool)
-            && width.known().is_some_and(|width| width > 1)
-            && let [arg] = args
-            && *self.infer(arg)?.kind() != TyKind::IntLiteral
-        {
-            return Err(TypeError::BadCall {
-                func: "SIMD".to_string(),
-                reason: format!("a {width}-lane DType.bool mask splats one Bool only as 'fill='"),
             });
         }
         if let [arg] = args {

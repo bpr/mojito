@@ -10093,9 +10093,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     them as `+` is routed (`Checker::infer_infix`).
   - Port `__ifloordiv__` (`simd.mojo:1722`) and `__imod__` (`:1735`)
     too, so `//=` and `%=` call them, as R1552 routes `+=`.
-  - The bodies need `and` over masks (R97), `Self._Mask(fill=…)` at a
-    symbolic width (R1595), `any` (R1568), and `Self()` and `Self(1)`
-    inside the struct; `trunc` and `cast` over a vector are its declared
+  - The bodies need `and` over masks (R97), `any` (R1568), and `Self()`
+    and `Self(1)` inside the struct; `trunc` and `cast` over a vector are its declared
     members.
   - List `DivModable` and `CeilDivable` in `SIMD`'s declaration, and drop
     their `modelled_conformance` arms for `SIMD`.
@@ -10274,31 +10273,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1595 `SIMD`'s `Bool`, `fill=`, and `Int`-from-`index`
-  initializers are checker rules**
-
-  `infer_simd_fill`, `check_simd_args`'s positional-`Bool` rejection, and
-  `infer_storage_construction`'s `Int` arm stand in for upstream's
-  overloads at `simd.mojo:871`, `:894`, and `:920`.
-  - All three refine `out self`, which R1594 supports on a declared
-    struct. The first two read `Bool`'s `_mlir_value`, which reads as its
-    `!kgen.scalar<bool>` storage (`SemanticAdjustment::BoolStorage`); the
-    first `rebind`s it to the mask's storage type.
-  - `Checker::solve_refined_construction` and `refinement_admits` read a
-    refinement through `types::nominal_parts`, but rebuild the spelled
-    instance as a `TyKind::Struct`, not through `SIMD`'s `TyKind::Simd`
-    bridge, and `SIMD`'s MIR receiver is spelled at its binders where a
-    user struct's is the bare name: a refined `SIMD` overload needs both
-    checked, and a refined MIR receiver if `mir::verify` rejects the
-    store into `self`.
-  - `SIMD[DType.bool, 4](True)` then fails with the pin's "constraint
-    failed: must be a scalar; use the `fill` keyword instead for explicit
-    splatting" (`assets/type_error/simd_bool_positional_splat.mojo`).
-  - Remove `Bool` from `Checker::binds_undeclared_overload`.
-  - Found while landing R1555 (2026-10-28).
-  - Depends on R1594.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1596 `SIMD` has no `MAX`, `MIN`, `MAX_FINITE`, or `MIN_FINITE`**
 
   `SIMD[DType.int32, 1].MAX` is "a parameterized type is not a value",
@@ -10332,6 +10306,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     declines every typed op), and request the variadic one as any
     non-builtin compile-time call.
   - The values agree today: the gap is structural.
+  - The declared `fill=` and `from_int=` initializers fail at compile
+    time instead: `Specializer` (`native/mono/specializer.rs`) reads the
+    constructed instance as a `TyKind::Struct` where `nominal_parts` is
+    needed ("reads an instance that is no struct `SIMD[DType.bool, 4]`"),
+    and past that the VM's CTFE fails "expects 2 argument(s), got 1".
+  - Probe: `comptime M = SIMD[DType.bool, 4](fill=True)` prints `[True,
+    True, True, True]` at the pin, `f[SIMD[DType.bool, 2](fill=True)]()`
+    prints `[True, True]`, and `comptime Y = SIMD[DType.int32,
+    2](from_int=5)` prints `[5, 5]`.
   - Found while landing R1555 (2026-10-28).
   - Depends on R1592.
   - Model: Fable, Not Planned.
@@ -10541,11 +10524,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `__init__[T: FloatableRaising](out self: Float64, ...) raises`.
   - Port the overloads, including the refined `out self` they use, and
     delete the scalar arms of all three sites.
-  - A refined `SIMD` initializer meets the `TyKind::Simd` bridge and MIR
-    receiver gap R1595 names for `solve_refined_construction`.
   - Porting `Intable` removes a non-`SIMD` argument from
     `Checker::binds_undeclared_overload` (`checker/call_inference.rs`), so
     a sized alias over an `Intable` value takes the declared overload too.
+  - That includes its `Bool` clause: a lone `Bool` into a one-lane
+    instance whose dtype is not known to be `bool` stays the rule's, where
+    the pin selects `__init__[T: Intable]`.
+  - Probe: `def h[dt: DType](b: Bool) -> SIMD[dt, 1]: return SIMD[dt,
+    1](b)` gives `1` at `DType.int8` and fails "constructing from an
+    `Intable` value requires an integral dtype" at `DType.bool` at the pin;
+    Mojito rejects both ("expected a dt element, found Bool").
   - Probe: `UInt8(True)` and `SIMD[DType.int, _](True)` print `1` at the
     pin, through `__init__[T: Intable]` (`Bool` is `Intable`). Mojito's
     rule (`check_simd_value`) takes only a struct or a parameter as

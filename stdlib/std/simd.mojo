@@ -1,8 +1,9 @@
 # Upstream's `std/simd.mojo`, in part: the `SIMD` struct, its storage, the
 # `_simd_dtype_checks` and `_simd_construction_checks` helpers, the
 # initializers `__init__(out self)`, the cast from `SIMD[other_dtype,
-# Self.length]`, the `SIMDLength` splat, `from_int=`, and the
-# `Scalar[Self.dtype]` splat, and its instance `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
+# Self.length]`, the `SIMDLength` splat, `from_int=`, `Bool`, `fill=`, `Int`
+# from an `index`, and the `Scalar[Self.dtype]` splat, and its instance
+# `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
 # `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
 # comparisons `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, and
@@ -18,8 +19,7 @@
 # members are still served by the compiler (R184, R1566, R1567, R1581,
 # R1582, R1585, R1586, R1596, R330, R276), and so are the other initializers:
 # `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
-# `Bool`, `fill=`, and `Int` from an `index` (R1595), `IntLiteral` and
-# `FloatLiteral` (R1507), and the `Intable`, `IntableRaising`, `Floatable`,
+# `IntLiteral` and `FloatLiteral` (R1507), and the `Intable`, `IntableRaising`, `Floatable`,
 # and `FloatableRaising` conversions (R1399); `py=` is not ported. Until
 # then a construction takes a declared overload only where its arguments
 # select one at the pin. `_simd_dtype_checks` is `True`: Mojito has no
@@ -526,6 +526,51 @@ struct SIMD[dtype: DType, length: SIMDLength](
     def __init__(out self, *, from_int: Int):
         _simd_construction_checks[Self.dtype, Self.length]()
         self = Self(from_int)
+
+    @inline(.nodebug)
+    @implicit
+    def __init__(out self: SIMD[.bool, Self.length], value: Bool, /):
+        """Initializes a Scalar with a bool value.
+
+        Since this constructor does not splat, it can be implicit.
+
+        Args:
+            value: The bool value to initialize the Scalar with.
+        """
+
+        # NOTE: due to some issues with the out Self parameter not always being
+        # respected (i.e. through implicit conversion paths), it's better to do
+        # this check instead of constraining the signature, because otherwise
+        # the error would point to a type mismatch. All this should be fixed by
+        # using a requires clause when it becomes available.
+        comptime assert Self.length == 1, (
+            "must be a scalar; use the `fill` keyword instead for explicit"
+            " splatting"
+        )
+
+        _simd_construction_checks[Self.dtype, Self.length]()
+        self._mlir_value = rebind[Self._Mask._mlir_type](value._mlir_value)
+
+    @inline(.nodebug)
+    def __init__(out self: SIMD[.bool, Self.length], *, fill: Bool):
+        """Initializes the SIMD vector with a bool value.
+
+        The bool value is splatted across all elements of the SIMD vector.
+
+        Args:
+            fill: The bool value to fill each element of the SIMD vector with.
+        """
+        _simd_construction_checks[Self.dtype, Self.length]()
+        self._mlir_value = __mlir_op.`pop.simd.splat`[
+            _type=Self._Mask._mlir_type
+        ](fill._mlir_value)
+
+    @doc_hidden
+    @always_inline("builtin")
+    def __init__(out self: Int, *, mlir_value: __mlir_type.index):
+        self._mlir_value = __mlir_op.`pop.cast_from_builtin`[
+            _type=__mlir_type.`!kgen.scalar<index>`
+        ](mlir_value)
 
     @always_inline("builtin")
     @implicit

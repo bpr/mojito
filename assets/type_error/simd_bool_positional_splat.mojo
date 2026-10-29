@@ -1,5 +1,6 @@
-# expect: splats one Bool only as 'fill='
-# `Bool` is not a `Scalar`, so a multi-lane mask does not splat a positional
-# `Bool`; `SIMD[DType.bool, 4](fill=True)` is the spelling.
+# expect: constraint failed: must be a scalar; use the `fill` keyword instead for explicit splatting
+# The `Bool` initializer does not splat: its `comptime assert Self.length
+# == 1` rejects a multi-lane mask, and `SIMD[DType.bool, 4](fill=True)` is
+# the spelling.
 def main():
     print(SIMD[DType.bool, 4](True))

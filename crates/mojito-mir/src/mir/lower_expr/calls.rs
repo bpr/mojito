@@ -259,7 +259,6 @@ impl<'a> Flatten<'a> {
         &mut self,
         call: Node<'a>,
         args: &[Node<'a>],
-        kwargs: &[(&'a str, Node<'a>)],
     ) -> Option<Reg> {
         let (dtype, width) = call
             .adjustments()
@@ -270,14 +269,12 @@ impl<'a> Flatten<'a> {
                 }
                 _ => None,
             })?;
-        // `SIMD[DType.bool, N](fill=b)` is the one-lane splat, by keyword.
         // A nullary construction splats a zero lane.
-        let elems = match (kwargs, args) {
-            ([(_, fill)], _) => vec![self.expr(*fill)],
-            ([], []) if dtype.known() == Some(Dtype::Bool) => {
+        let elems = match args {
+            [] if dtype.known() == Some(Dtype::Bool) => {
                 vec![self.constant(call, Const::Bool(false))]
             }
-            ([], []) => vec![self.constant(call, Const::IntLiteral(0.into()))],
+            [] => vec![self.constant(call, Const::IntLiteral(0.into()))],
             _ => args.iter().map(|arg| self.read_operand(*arg)).collect(),
         };
         let d = self.fresh(call.location(), None);

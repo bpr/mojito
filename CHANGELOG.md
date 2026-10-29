@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD`'s `Bool`, `fill=`, and `Int`-from-`index` initializers are
+  upstream's declared overloads in `std.simd`, each refining `out self`
+  (R1595): `SIMD[DType.bool, n](fill=b)` now works at a symbolic width,
+  and a positional `Bool` into a wider instance fails with the pin's "must
+  be a scalar; use the `fill` keyword instead for explicit splatting".
+  A lone `Bool` into a one-lane instance whose dtype is not known to be
+  `bool` stays the `Intable` rule's (R1399).
 - `__mlir_type.i1` is upstream's MLIR builtin `i1`, a type of its own:
   `Bool.__mlir_i1__()` and `index.cmp` give one, `Bool(i)`,
   `Bool(value=i)`, and an implicit conversion take one, and
@@ -1519,6 +1526,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `one_lane[4](True)` over `SIMD[DType.bool, n](b)` is rejected as at the
+  pin instead of splatting the `Bool`, and `SIMD[DType.int8, 4](True)`
+  fails the same `comptime assert`.
 - An instance's `comptime if`s, `comptime assert`s, and `comptime for`s
   are elaborated in one in-order walk before the instance is substituted,
   as upstream's work list elaborates them, so a `comptime if` is decided and
