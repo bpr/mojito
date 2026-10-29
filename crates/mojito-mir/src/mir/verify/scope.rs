@@ -721,8 +721,17 @@ impl ScopeCx<'_> {
             self.expr(role, "spread list", list, &MetaTy::type_list(), nested);
             return;
         }
-        // A value parameter typed by a sibling type binder (`v: T`) has the
-        // kind that binder's argument gives it.
+        // A value parameter typed by a sibling binder (`v: T`, `t:
+        // Tag[n=n]`) has the kind that binder's argument gives it.
+        let context = mojito_types::param_expr::ParamContext::detached();
+        let values = declared
+            .map(|decls| mojito_types::types::struct_argument_bindings(&context, decls, args));
+        let names_value_binder = |ty: &Ty| {
+            declared.into_iter().flatten().any(|decl| {
+                matches!(decl, ParamDecl::Value { .. })
+                    && mojito_types::types::names_binder(ty, &decl.binder())
+            })
+        };
         let types: mojito_types::types::TySubst = declared
             .into_iter()
             .flatten()
@@ -738,8 +747,24 @@ impl ScopeCx<'_> {
                 TyArg::Val(value) => {
                     let expected = declared
                         .and_then(|decls| decls.get(slot))
-                        .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
-                        .map(ParamDecl::binder_meta)
+                        .and_then(|decl| match decl {
+                            ParamDecl::Value { ty, .. } => Some(
+                                values
+                                    .as_ref()
+                                    .filter(|_| names_value_binder(ty))
+                                    .and_then(|values| {
+                                        mojito_types::types::replace_parameters(
+                                            &context, ty, values, 0,
+                                        )
+                                        .ok()
+                                    })
+                                    .map_or_else(
+                                        || decl.binder_meta(),
+                                        |ty| decl.with_value_type(ty).binder_meta(),
+                                    ),
+                            ),
+                            ParamDecl::Type { .. } => None,
+                        })
                         .map(|expected| expected.substitute(&types));
                     self.value(role, value, expected.as_ref(), nested);
                 }

@@ -1713,10 +1713,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`lower/print.rs`) call the struct's `write_to`/`write_repr_to` instance,
   which Pliron's `dispatch_edges` (`lib.rs`) makes reachable for every
   `print`, `repr`, and `$write_formatted` argument.
-- `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
-  (`desugar_simd_wildcard_parameters`: an infer-only `DType` or
-  `SIMDLength` binder per `_` slot of a `SIMD` parameter of a `def`,
-  method, or trait requirement, a bare `SIMD` holding two such slots), the vector-alias bound fold, and the value reading
+- `comptime/auto_parameterize.rs` owns upstream's automatic
+  parameterization (`parameterize_unbound_arguments`, upstream's
+  `addImplicitTypeParams`): an infer-only `$<param>_<argument>` binder per
+  parameter an argument's struct type leaves unbound (bare, `_`, `...`, a
+  bare partially bound alias), read off the program's own struct or the
+  package's (`InstalledInterfaces::struct_parameters`), on a `def`, a
+  method, a trait requirement, and a struct-typed compile-time parameter.
+  The check solves an infer-only value binder from a later bracket
+  argument's type or its default's (`Checker::resolve_use_params`,
+  `with_earlier_arguments`).
+- `comptime/synth.rs` also owns the vector-alias bound fold, and the value reading
   of a `Self.`-spelled `materialize` operand
   (`read_materialize_self_operands`: `materialize[Self.n]()`,
   `materialize[Self.values[i]]()`).
@@ -1812,7 +1819,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 | Syntax or AST shape | [`grammar.md`](grammar.md), `parser.rs`, `ast.rs` | Parser tests, `frontend.md`, feature matrix. |
 | A `case` pattern, a destructuring target, or a `case` condition | `parser/patterns.rs` (`parse_match`, `parse_condition`, `parse_target_display`, `parse_loop_target` for `for` and comprehension targets, `expr_to_target`), `ast.rs` (`MatchPattern`, `DestructureTarget`, `Condition`, `MatchCase`) | `visit.rs` (`walk_pattern`, `walk_target`, `walk_condition`), `checked.rs` (`CheckedPattern`, `CheckedTarget`, `CheckedCondition`), every AST walker (`module.rs`, `comptime/rewrite.rs`, `explicit_destroy.rs`), `docs/notes/pattern-matching-evidence.md`. |
 | Argument binding | `call.rs` | Checker/VM adapters and call-parity tests. |
-| Which declarations use a parameter as a lane width | `mojito-ast/simd_width.rs` | `comptime/synth.rs` (`desugar_simd_wildcard_parameters`), `checker/comptime_validation.rs`, and `native::mono`'s lane closing (`mono/gather.rs`). |
+| Which declarations use a parameter as a lane width | `mojito-ast/simd_width.rs` | `comptime/auto_parameterize.rs` (`parameterize_unbound_arguments`), `checker/comptime_validation.rs`, and `native::mono`'s lane closing (`mono/gather.rs`). |
 | An AST walk (read-only `Visitor`, in-place `MutVisitor`; patterns and targets have their own hooks) | `mojito-ast/visit.rs` | `comptime/pack_qualification.rs`, `ast::stamp_source`, `checker/rebind.rs`. |
 | Overload identity | `symbol.rs` | Checker selection, MIR declarations, symbol/rejection tests. |
 | Type rules | `checker.rs` or focused checker child | `CheckedProgram`, negative checker tests. |

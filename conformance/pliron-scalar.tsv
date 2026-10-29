@@ -55,6 +55,8 @@ assets/ok/associated_value_self_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_bitwise_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_shift_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_store_copies_nothing.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/auto_parameterized_arguments.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/auto_parameterized_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bit_count_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bitwise_shift_precedence.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_alias_predicate_where.mojo	-	ineligible	no-scalar-entry-shape

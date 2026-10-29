@@ -6314,6 +6314,32 @@ fn vector_argument_infers_dtype_and_simd_length_binders() {
 }
 
 #[test]
+fn unbound_struct_parameters_of_an_argument_are_inferred() {
+    // Upstream's automatic parameterization: a bare struct, a `_`, and a
+    // `...` each leave parameters the callee infers from the argument.
+    ok_std(
+        "def f(x: List) -> Int:\n    return len(x)\n\ndef g(x: List[_]) -> Int:\n    return len(x)\n\ndef h(x: SIMD[DType.int32, ...]) -> Int:\n    return len(x)\n\ndef main():\n    var a = f([1, 2]) + g([\"a\"]) + h(SIMD[DType.int32, 2](1))\n",
+    );
+}
+
+#[test]
+fn partially_bound_argument_type_keeps_its_bound_parameters() {
+    // A `_` frees only its own slot: the bound element type still has to
+    // match, and a keyword application that names no hole leaves an
+    // omitted positional parameter for the call to infer, which it cannot.
+    assert!(matches!(
+        err_std(
+            "def g(x: SIMD[DType.int32, _]) -> Int:\n    return len(x)\n\ndef main():\n    var a = g(SIMD[DType.float32, 2](1))\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+    assert!(matches!(
+        err("@fieldwise_init\nstruct Pair[A: Copyable & Deinitable, n: Int](Copyable):\n    var a: Self.A\n\ndef k(x: Pair[n=3]) -> Int:\n    return 1\n\ndef main():\n    var a = k(Pair[Int, 3](1))\n"),
+        TypeError::CannotInferTypeParam { param, .. } if param == "A"
+    ));
+}
+
+#[test]
 fn int_width_binder_is_not_inferred_from_a_vector() {
     // SIMD's width parameter is a `SIMDLength`: an `Int` binder in the slot
     // is a conversion the pin leaves unresolved.

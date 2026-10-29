@@ -314,6 +314,17 @@ impl InstalledInterfaces {
             .map(|(_, info)| info.refines.as_slice())
     }
 
+    /// The compile-time parameters the reached struct `name` declares, as
+    /// its source spells them, decoding its declaration's record on first
+    /// use.
+    pub fn struct_parameters(&self, name: &str) -> Option<&[mojito_ast::ast::TypeParam]> {
+        self.declaration(Table::Structs, name)?
+            .structs
+            .iter()
+            .find(|(struct_name, _)| struct_name == name)
+            .map(|(_, info)| info.source_params.as_slice())
+    }
+
     /// The reached part of the package, whose declarations answer a name
     /// the program's own overload sets miss.
     pub fn package_scope(&self) -> mojito_checked::package::PackageScope {

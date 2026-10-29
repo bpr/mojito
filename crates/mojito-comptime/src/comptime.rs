@@ -8,8 +8,9 @@
 //! expressions only in its elaborator, after sema.
 //!
 //! - **Preparation** ([`prepare`]) — qualifies struct packs, synthesizes the
-//!   derived `copy` and `__hash__`, desugars `SIMD[_, _]` parameters, and
-//!   folds SIMD alias bounds and `!kgen.type` parameters. It selects no arm
+//!   derived `copy` and `__hash__`, parameterizes a declaration over the
+//!   parameters its arguments' struct types leave unbound, and folds SIMD
+//!   alias bounds and `!kgen.type` parameters. It selects no arm
 //!   and unrolls no loop.
 //! - **Elaboration** ([`elaborate_importing`]) — every `comptime`
 //!   declaration, `comptime if`, `comptime for`, and `comptime match` is
@@ -80,7 +81,8 @@ pub struct ImportedScope<'a> {
 ///
 /// Qualify struct packs, synthesize the derived `copy`, `__hash__`,
 /// `__eq__`, `write_to`, and `write_repr_to` methods,
-/// desugar `SIMD[_, _]` parameters, fold SIMD alias bounds, and fold a
+/// parameterize each declaration over the parameters its arguments' struct
+/// types leave unbound, fold SIMD alias bounds, and fold a
 /// `!kgen.type`-typed parameter into a type binder. A trait
 /// default stays in its trait; a conformer's wrapper for a default it
 /// inherits is the check's to build, over the default's resolved signature.
@@ -107,7 +109,7 @@ pub fn prepare_importing(
     synthesize_hashable_hash(&mut own);
     synthesize_equatable_eq(&mut own);
     synthesize_writable_defaults(&mut own, installed);
-    desugar_simd_wildcard_parameters(&mut own);
+    auto_parameterize::parameterize_unbound_arguments(&mut own, installed);
     fold_simd_alias_bounds(&mut own, installed);
     fold_kgen_type_parameters(&mut own, installed)?;
     read_materialize_self_operands(&mut own);
@@ -162,6 +164,7 @@ pub fn elaborate_importing(
     Ok(result)
 }
 
+mod auto_parameterize;
 mod elab;
 mod pack_qualification;
 mod params;

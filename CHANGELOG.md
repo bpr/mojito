@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Upstream's automatic parameterization now covers every struct, not only
+  `SIMD` (R1606): each parameter an argument's struct type leaves unbound —
+  bare (`x: List`, `x: Tuple`), `_` (`List[_]`), `...` (`Pair[Int, ...]`),
+  or a bare alias over a partially bound struct (`comptime I32 =
+  SIMD[DType.int32, _]`) — becomes an infer-only binder of the declaration,
+  so `print(f([1, 2]), h([1, 2, 3]))` over `def f(x: List)` and `def h(x:
+  List[_])` prints `2 3` where both calls were rejected. A compile-time
+  parameter of a bare struct type (`def g[t: T]` over `struct T[n: Int,
+  //]`) is parameterized too, its binder solved from the explicit
+  argument's type or the default's, on a `def` and on a struct.
+
 - `StringLiteral` is now declared as upstream's `struct
   StringLiteral[value: __mlir_type.`!kgen.string`]` in
   `std.builtin.string_literal`, so an explicit application constructs it

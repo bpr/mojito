@@ -55,6 +55,8 @@ assets/ok/associated_value_self_read.mojo	main	exe-differential	sanitized
 assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_shift_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_store_copies_nothing.mojo	main	exe-differential	sanitized
+assets/ok/auto_parameterized_arguments.mojo	main	exe-differential	sanitized
+assets/ok/auto_parameterized_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/bit_count_ops.mojo	main	exe-differential	sanitized
 assets/ok/bitwise_shift_precedence.mojo	main	exe-differential	sanitized
 assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized

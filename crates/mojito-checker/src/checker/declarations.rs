@@ -3729,6 +3729,7 @@ impl Checker {
             for (pattern, actual) in patterns.iter().zip(actuals) {
                 solve_value_args(pattern, actual, &mut value_solutions);
             }
+            self.solve_value_binders_from_brackets(decls, &bound, &mut value_solutions);
             unify_through_callable_bounds(decls, &mut subst)?;
             self.solve_binders_from_values(decls, &mut subst, |index, declared| {
                 self.bound_value_ty(&bound[index], declared)
@@ -3742,8 +3743,8 @@ impl Checker {
             let mut value_environment = HashMap::new();
             for (decl, arguments) in decls.iter().zip(bound) {
                 let typed = substituted_value_decl(decl, &subst);
-                let typed =
-                    with_trait_arguments(typed.as_ref().unwrap_or(decl), decls, &tyargs).or(typed);
+                let typed = with_earlier_arguments(typed.as_ref().unwrap_or(decl), decls, &tyargs)
+                    .or(typed);
                 let decl = typed.as_ref().unwrap_or(decl);
                 let variadic = matches!(
                     decl,
@@ -3938,6 +3939,7 @@ impl Checker {
         for (pat, act) in patterns.iter().zip(actuals) {
             solve_value_args(pat, act, &mut value_solutions);
         }
+        solve_value_binders_from_defaults(decls, &mut value_solutions);
         for (pat, act) in patterns.iter().zip(actuals) {
             if let TyKind::Param { binder, bounds, .. } = pat.kind()
                 && binder.name.starts_with('*')
@@ -4008,6 +4010,8 @@ impl Checker {
         let mut value_environment = HashMap::new();
         for decl in decls {
             let typed = substituted_value_decl(decl, &subst);
+            let typed =
+                with_earlier_arguments(typed.as_ref().unwrap_or(decl), decls, &tyargs).or(typed);
             match typed.as_ref().unwrap_or(decl) {
                 ParamDecl::Value {
                     name: pname,
@@ -4329,6 +4333,24 @@ impl Checker {
                 _ => None,
             },
             None => self.param_arg_value_ty(argument, declared),
+        }
+    }
+
+    /// Solve each value binder a bracket argument's type determines
+    /// (`g[T[n=4]()]()` over `def g[n: Int, //, t: T[n=n]]`) into
+    /// `solutions`, from the arguments `bound` gives each of `decls`.
+    fn solve_value_binders_from_brackets(
+        &self,
+        decls: &[ParamDecl],
+        bound: &[Vec<(usize, &mojito_ast::ast::ParamArg)>],
+        solutions: &mut HashMap<String, CtValue>,
+    ) {
+        for (decl, arguments) in decls.iter().zip(bound) {
+            if let (ParamDecl::Value { .. }, Some(declared)) = (decl, decl.value_element_ty())
+                && let Some(actual) = self.bound_value_ty(arguments, declared)
+            {
+                solve_value_args(declared, &actual, solutions);
+            }
         }
     }
 
@@ -5027,10 +5049,31 @@ fn sibling_trait_binder(decls: &[ParamDecl], name: &str) -> Option<(ParamRef, Ve
     })
 }
 
+/// Solve each value binder a default's type determines (`def g[t: T =
+/// T[n=4]()]` over an infer-only `n`) into `solutions`.
+fn solve_value_binders_from_defaults(
+    decls: &[ParamDecl],
+    solutions: &mut HashMap<String, CtValue>,
+) {
+    for decl in decls {
+        if let ParamDecl::Value {
+            default: Some(default),
+            callable_default: None,
+            ..
+        } = decl
+            && let (Some(declared), Some(actual)) =
+                (decl.value_element_ty(), default.meta().as_value())
+        {
+            solve_value_args(declared, actual, solutions);
+        }
+    }
+}
+
 /// `decl` with each earlier trait-valued binder its value type names
-/// (`values: KGENParamList[Tr]`) replaced by the argument `arguments` bound
-/// it, or `None` when it names none.
-fn with_trait_arguments(
+/// (`values: KGENParamList[Tr]`), and each earlier infer-only value binder
+/// (`t: T[n=n]` after `n: Int, //`), replaced by the argument `arguments`
+/// bound it, or `None` when it names none.
+fn with_earlier_arguments(
     decl: &ParamDecl,
     decls: &[ParamDecl],
     arguments: &[TyArg],
@@ -5041,8 +5084,15 @@ fn with_trait_arguments(
     let context = mojito_types::param_expr::ParamContext::detached();
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
     for (sibling, argument) in decls.iter().zip(arguments) {
-        if let (ParamDecl::Value { ty: binder_ty, .. }, TyArg::Val(value)) = (sibling, argument)
-            && matches!(binder_ty.kind(), TyKind::AnyTrait(_))
+        if let (
+            ParamDecl::Value {
+                ty: binder_ty,
+                infer_only,
+                ..
+            },
+            TyArg::Val(value),
+        ) = (sibling, argument)
+            && (*infer_only || matches!(binder_ty.kind(), TyKind::AnyTrait(_)))
             && let Some(value) = match value {
                 CtValue::Expr(expr) => Some(expr.clone()),
                 value => context.constant(value.clone()).ok(),
