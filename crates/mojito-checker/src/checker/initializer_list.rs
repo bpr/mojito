@@ -58,8 +58,10 @@ impl Checker {
     /// or, for an alias spelled otherwise (`Self.First`), the construction
     /// of the type it names. A static call, a member read, or an applied
     /// member through the alias is the type's (`Q.make()` over `comptime Q =
-    /// P` is `P.make()`). The checked arena hands HIR the spelling in the
-    /// expression's place. `None` when no type alias heads `expression`.
+    /// P` is `P.make()`), as is one through a struct's `comptime` type
+    /// member (`T[4].other.answer()`, `T[4].other(10)`). The checked arena
+    /// hands HIR the spelling in the expression's place. `None` when no
+    /// type alias heads `expression`.
     pub(super) fn infer_type_alias_read(&self, expression: &Expr) -> Option<Result<Ty, TypeError>> {
         match &expression.kind {
             // `Self(...)`: the struct's own alias, so the construction of
@@ -91,12 +93,26 @@ impl Checker {
                 self.alias_construction(expression, ty, value, args, kwargs)
                     .and_then(|construction| self.infer_spelled(expression, construction))
             }),
+            // A call of a struct's type member constructs the type it names
+            // (`T[4].other(10)`).
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if let Some((ty, value)) = self.type_member_callee(object, method) => Some(
+                self.alias_construction(expression, &ty, &value, args, kwargs)
+                    .and_then(|construction| self.infer_spelled(expression, construction)),
+            ),
             _ => {
-                let spelled = over_receiver(expression, |object| {
-                    let ExprKind::Identifier(name) = &object.kind else {
-                        return None;
-                    };
-                    Some(derived_receiver(expression, self.type_alias_read(name)?.1))
+                let spelled = over_receiver(expression, |object| match &object.kind {
+                    ExprKind::Identifier(name) => {
+                        Some(derived_receiver(expression, self.type_alias_read(name)?.1))
+                    }
+                    ExprKind::Member { .. } => self
+                        .type_member_spelling(object)
+                        .map(|spelling| derived_receiver(expression, &spelling)),
+                    _ => None,
                 })?;
                 Some(self.infer_spelled(expression, spelled))
             }
@@ -243,6 +259,74 @@ impl Checker {
             self.local_type_aliases[scope].get(name)?,
             self.local_type_alias_values[scope].get(name)?,
         ))
+    }
+
+    /// The spelling of the type `object` reads when it names a struct's
+    /// closed `comptime` type member ([`Self::type_member_read`]): inside
+    /// the struct, the member's own spelling over `Self`; through a spelled
+    /// struct, the type the member resolves to there. `None` when `object`
+    /// names no such member or its type has no source spelling.
+    fn type_member_spelling(&self, object: &Expr) -> Option<Expr> {
+        let (spelling, member) = self.type_member_read(object)?;
+        if matches!(spelling, SourceType::SelfParam(_)) {
+            return member?.expression_spelling(object.span);
+        }
+        let ty = self.ty_from_anno(&spelling).ok()?;
+        mojito_types::ct::source_type(&ty, object.span)?.expression_spelling(object.span)
+    }
+
+    /// The type a call of `object.member` constructs when `member` is a
+    /// closed `comptime` type member of the struct `object` spells, beside
+    /// that type's spelling ([`Self::type_member_spelling`]).
+    fn type_member_callee(&self, object: &Expr, member: &str) -> Option<(Ty, Expr)> {
+        let read = Expr::new(
+            ExprKind::Member {
+                object: Box::new(object.clone()),
+                field: member.to_string(),
+            },
+            object.span,
+        );
+        let (spelling, _) = self.type_member_read(&read)?;
+        Some((
+            self.ty_from_anno(&spelling).ok()?,
+            self.type_member_spelling(&read)?,
+        ))
+    }
+
+    /// The type spelling of `object` when it names a struct's closed
+    /// `comptime` type member (`T[4].other`, `Self.current`), beside the
+    /// member's own spelling over `Self` when it has one, as upstream's name
+    /// lookup reads the member as its value. `None` when `object` names no
+    /// such member.
+    fn type_member_read(&self, object: &Expr) -> Option<(SourceType, Option<&SourceType>)> {
+        let ExprKind::Member { field, .. } = &object.kind else {
+            return None;
+        };
+        let spelling = object.type_spelling()?;
+        let owner = match &spelling {
+            SourceType::SelfParam(_) => self.self_ty.clone()?,
+            SourceType::Assoc { base, .. } => {
+                let mut root = base.as_ref();
+                while let SourceType::Assoc { base, .. } = root {
+                    root = base;
+                }
+                if matches!(root, SourceType::Named(name, _) if self.lookup(name).is_some()) {
+                    return None;
+                }
+                self.ty_from_anno(base).ok()?
+            }
+            _ => return None,
+        };
+        let (instance, _) = mojito_types::types::nominal_parts(&owner)?;
+        let info = self
+            .structs
+            .get(mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance))?;
+        if info.methods.contains_key(field)
+            || !matches!(info.associated.get(field), Some(CtValue::Type(_)))
+        {
+            return None;
+        }
+        Some((spelling, info.associated_spellings.get(field)))
     }
 
     /// The construction a call of a type alias of `ty`, bound to `value`,

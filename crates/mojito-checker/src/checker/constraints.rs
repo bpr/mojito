@@ -2204,6 +2204,14 @@ impl Checker {
         if let Some(generator) = self.alias_generator(name) {
             return Ok(generator);
         }
+        // `Self` is the enclosing struct over its own parameters, which a
+        // `comptime` member names as its value (`comptime current = Self`).
+        if name == "Self"
+            && self.lookup(name).is_none()
+            && let Some(self_ty) = &self.self_ty
+        {
+            return self.ct_param(CtValue::Type(self_ty.clone()));
+        }
         self.ty_value_from_name(name, &[])?
             .ok_or_else(|| TypeError::NotComptime(name.to_string()))
             .and_then(|ty| self.ct_param(ty))

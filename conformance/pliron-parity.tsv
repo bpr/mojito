@@ -1023,6 +1023,7 @@ assets/ok/string_span_literal.mojo	main	exe-differential	sanitized
 assets/ok/string_span_methods.mojo	main	exe-differential	sanitized
 assets/ok/string_view_equality.mojo	main	exe-differential	sanitized
 assets/ok/stropping.mojo	main	exe-differential	sanitized
+assets/ok/struct_comptime_member_names_own_struct.mojo	main	exe-differential	sanitized
 assets/ok/struct_comptime_member_read_order.mojo	main	exe-differential	sanitized
 assets/ok/struct_construction_parameter_application.mojo	main	exe-differential	sanitized
 assets/ok/struct_del_is_trivial_hook.mojo	main	exe-differential	sanitized

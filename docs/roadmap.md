@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1639**.
+Next free ID: **R1640**.
 
 ## Ordered Work
 
@@ -3670,53 +3670,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R59 Explicit type arguments on a static method of a non-parametric
-  struct are rejected**
+- [ ] **R59 A static method read through its struct as a value is
+  rejected**
 
-  Problem: `P.plain[Int](4)` on `@staticmethod def plain[T: Writable](x: T)`
-  prints `1` at the pin, while Mojito reports "Undefined variable 'P'".
-  - Any generic static on a struct without parameters is affected, whether
-    or not its body holds a `comptime if`.
-  - The inferred spelling `P.plain(4)` works.
-  - Probe: `var f = S.st` over `@staticmethod def st(x: Int) -> Int` fails
-    with "Undefined variable 'S'", where the pin prints `f(3)` (found
-    while landing R1032, 2026-10-17).
-  - Probe: a value member read through a type member alias at run time,
-    `print(S.B.w)` over `comptime B = Box[3]`, fails with "Undefined
-    variable 'S'", where the pin prints `30`; the local `comptime W =
-    S.B.w` works.
-  - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
-    error is raised before the non-parametric static path in
-    `checker/method_calls/type_receivers.rs` sees the call.
+  Problem: `var f = S.st` over `@staticmethod def st(x: Int) -> Int` fails
+  with "Undefined variable 'S'", where the pin prints `4` for `f(3)`.
+  - The checker reads the bare struct name `S` as a value before any
+    static-method path sees the read.
+  - The explicit-argument call `P.plain[Int](4)` this entry first named
+    already runs (checked 2026-10-29).
   - The plan must first find which pass infers the bare type name as a value.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R60 An associated alias is not constructible through a parameterized
-  base**
+- [ ] **R60 A generic `comptime` alias is not constructible**
 
-  Problem: `Holder[7].Same()` for `comptime Same = Sized[Self.n]` reports
-  `Undefined variable 'Holder'`, where the pin runs it.
-  - The annotation spelling works: `var made: Holder[7].Same = Sized[7]()`.
-  - The alias now binds the instance's value parameters
-    (`associated_type_from_base`), so only the call path is missing.
-  - Probe: a generic module alias's construction, `W[Int](8)` over
-    `comptime W[T: AnyType] = Pt[T]`, fails with "Undefined variable 'W'",
-    where the pin constructs `Pt[Int]`.
+  Problem: `W[Int](8)` over `comptime W[T: AnyType] = Pt[T]` fails with
+  "Undefined variable 'W'", where the pin constructs `Pt[Int]`.
+  - A closed alias's call already constructs the type it names
+    (`infer_type_alias_read`, `checker/initializer_list.rs`), and so does
+    a call through a struct's type member (`Holder[7].Same()`). A
+    generic alias's application has no such read.
   - Probe: over a pack, `T2[Int, Bool](1, True)` for `comptime T2[*Ts:
     Copyable] = Tuple[*Ts]`, and `comptime for v in V[1, 2, 3]()` for
     `comptime V[*vs: Int] = ParameterList[vs.values]`, fail with
     "Undefined variable", where the pin prints `True` and `1 2 3`.
   - Probe: a local `comptime a = A[4]()` over `comptime A[k: Int] = W[k]`
-    fails with "a compile-time call of 'A' is not evaluated above the
-    check", where the pin constructs `W[4]`.
-  - Probe: a construction through a non-generic struct's member alias,
-    `S.V(1)` over `comptime V = SIMD[DType.int64, Self.w]`, fails with
-    "Undefined variable 'S'", where the pin prints `[1, 1, 1, 1]`.
-  - Probe: `SIMD[DType.int32, 2]._Mask(True, False)`, and `T._Mask(True,
-    False)` over a local `comptime T = SIMD[DType.int32, 2]`, fail with
-    "type 'SIMD[…]' has no method '_Mask'", where the pin prints `[True,
-    False]` (found while landing R1555, 2026-10-28).
+    fails with "Undefined variable 'A'", where the pin constructs `W[4]`.
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -6779,17 +6759,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1632 A struct's `comptime` member cannot name its own struct**
+- [ ] **R1639 A struct's type member read through an application over a
+  symbolic parameter has no receiver**
 
-  `comptime current = Self` inside `struct T[n: Int]` stops `T[4].current
-  .answer()` with "not a compile-time Int constant: Self", and `comptime
-  other = T[Self.n + 1]` stops `T[4].other.answer()` with "Undefined
-  variable 'T'", where the pin prints `4` and `5`.
-  - A struct's own name and `Self` are not in scope as types when its
-    `comptime` members are resolved.
-  - Upstream's `CompilationTarget.current` and `_unknown` are
-    `comptime current = CompilationTarget[_mlir_value=…]` (R1562).
-  - Found while planning R1562 (2026-10-29).
+  `T[t].current.answer()` inside `def f[t: Int]()`, over `struct T[n:
+  Int]` with `comptime current = Self`, stops with "Undefined variable
+  'T'", where the pin prints `3` for `f[3]()`.
+  - The checker reads a type member through a struct as the source
+    spelling of the type it resolves to (`type_member_spelling`,
+    `checker/initializer_list.rs`). `ct::source_type` has no spelling for
+    a type whose argument is still a parameter expression (`T[t]`).
+  - MIR lowering recognizes a static call's type receiver only by its
+    syntax (`type_receiver_name`, `mir/lower_expr/expr_method.rs`): a
+    `TypeApply`, `type_of(…)`, or a bare name. A `Member` receiver the
+    checker resolved to a type is lowered as a value.
+  - Upstream reads the member as its value, a type the elaborator
+    substitutes per instance. A checked fact that a receiver denotes a
+    type, which lowering reads in place of its syntax, closes both.
+  - Probe: `T[t].boxed.n` and `T[t].boxed(10).get()` over `comptime boxed
+    = Box[Self.n + 1]`, which the pin prints as `4` and `14` for `t = 3`.
+  - Found while landing R1632 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

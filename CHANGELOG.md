@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's `comptime` member may name the struct itself, as `Self` or
+  applied (`comptime other = T[Self.n + 1]`), and a type member read
+  through its struct is the type it names, so `T[4].current.answer()`,
+  `T[4].other.n`, and `Holder[7].Same()` run on both backends as at the
+  pin (R1632). A symbolic receiver (`T[t].current`) is R1639.
 - A static method called on a bare parametric struct name binds the
   struct's defaulted parameters, infer-only ones included, so `T.answer()`
   over `struct T[n: Int = 3]` reads `Self.n` as `3` on both backends, as
