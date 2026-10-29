@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A literal now binds a `StaticString` compile-time parameter (R1641), so
+  `name["param"]()` over `def name[s: StaticString]()`, `Tag["xyz"]`
+  over `struct Tag[s: StaticString]`, `comptime if s == "a"`, and
+  `s.byte_length()` in a `SIMD` width run on both backends as at the pin.
+  Upstream's `_get_kgen_string` is declared at
+  `std.collections.string.string_span` over a `data_to_str` fold, and
+  `llvm_intrinsic` takes upstream's `intrin: StaticString`. Packs of
+  converted literals, alias-spelled constructions, and the native
+  per-read allocation of a frozen view remain (R1645–R1647).
 - A compile-time call now applies a callee whose runtime parameter is a
   `String`, a struct, a SIMD value, or a type its struct's parameters
   name (R1528), so `mylen(Foo(n))` and `ln(String("ab"))` in a signature,

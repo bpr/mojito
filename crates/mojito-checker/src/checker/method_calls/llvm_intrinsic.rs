@@ -12,7 +12,8 @@ impl Checker {
     /// hasSideEffects=…](operands)``, recording it as
     /// `SemanticAdjustment::LlvmIntrinsic`. All three attributes are
     /// required: `intrin` a compile-time `!kgen.string` (a string literal's
-    /// `value`), `_type` the result type (`None` for `NoneType`), and
+    /// `value`, or `_get_kgen_string[s]()` over a `StaticString`), `_type`
+    /// the result type (`None` for `NoneType`), and
     /// `hasSideEffects` a compile-time `Bool`'s `__mlir_i1__()`. One operand
     /// may be a heterogeneous collector, upstream's loaded `!kgen.pack`,
     /// whose elements the instance passes. A closed name outside the table

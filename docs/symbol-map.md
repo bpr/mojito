@@ -1886,8 +1886,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   a fragment built and verified once per instance
   (`Specializer::verified_fragment`, kept as a `mojito_vm::backend::
   ConcreteProgram`); a generic struct's `__init__` takes its restated
-  struct parameters from the instance (`owner_covered_prefix`), and
-  `VmBackend::call_concrete` runs an `__init__` on the skeleton a
+  struct parameters from the instance (`owner_covered_prefix`), an
+  origin-only generic struct's (`StringSpan[ImmStaticOrigin]`, the
+  `StaticString` a literal converts to) leads with its instance too
+  (`names_instance_of`), and `VmBackend::call_concrete` runs an `__init__` on the skeleton a
   construction builds (`construct_bound`), its `out self` the result
   (`ConcreteProgram::result_ty`). `Specializer::argument_value` is the
   one rule valuing an application's arguments, compile-time and runtime
@@ -2662,10 +2664,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::read_attribute`, `indexing.rs`, which the dotted form shares)
   reads an operand-free one as the dotted form, and over a raw list
   `#kgen.param_list.size` as `ParamContext::list_length` cast to `index`
-  and `#kgen.param_list.get` as `ParamContext::list_get`
-  (`Checker::bracket_operand` reads a `+` operand as KGEN's splice,
-  `Checker::bracket_raw_list` checks the list type); any other is
-  rejected. A body whose result is `!kgen.deferred` runs only at
+  and `#kgen.param_list.get` as `ParamContext::list_get`, and over a
+  `StringSpan` and a list of them `#kgen.param.expr<data_to_str, …>`
+  (upstream's `_get_kgen_string`, `stdlib/std/collections/string/
+  string_span.mojo`) as `ParamOp::DataToStr`, which
+  `fold::fold_data_to_str` (`mojito-types/src/param_expr/fold.rs`) folds
+  to a `CtValue::KgenString` by reading each frozen view's pointer slots
+  and length (`Checker::bracket_operand` reads a `+` operand as KGEN's
+  splice, `Checker::bracket_raw_list` checks the list type); any other is
+  rejected. The VM holds a `!kgen.string` as a `Value::Attribute` inside a
+  compile-time evaluation, and `verify::llvm_translation_findings` refuses
+  one that survives the pipeline. A body whose result is `!kgen.deferred` runs only at
   compile time (`Checker::deferred_result_bodies`): elsewhere a run-time
   read is `kgen_deferred_runtime_read` and a run-time call
   `kgen_deferred_runtime_call` (`Checker::reject_runtime_deferred_call`,

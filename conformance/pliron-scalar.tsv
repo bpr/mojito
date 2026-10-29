@@ -438,6 +438,7 @@ assets/ok/keyword_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_slice_subscripts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_subscript_user_struct.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/kgen_string_intrinsic_name.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/kgen_string_literal_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/kgen_type_type_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/kwargs.mojo	-	ineligible	no-scalar-entry-shape
@@ -1009,6 +1010,7 @@ assets/ok/static_method_unused_argument_instances.mojo	-	ineligible	no-scalar-en
 assets/ok/static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_reference_result_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_string.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/static_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stored_array_span_iterators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_capacity.mojo	-	ineligible	no-scalar-entry-shape

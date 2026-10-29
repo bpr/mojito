@@ -2598,9 +2598,39 @@ impl Checker {
                     .and_then(|index| context.list_get(&list, &index))
                     .map_err(param_error)
             }
+            ("#kgen.param.expr<data_to_str,{},{}>:!kgen.string", [string, rest]) => {
+                let string = self.bracket_operand(string, recording)?;
+                let is_view = |meta: &MetaTy| {
+                    matches!(meta, MetaTy::Value(ty) if matches!(
+                        ty.kind(),
+                        TyKind::Struct(name, _)
+                            if mojito_types::types::is_stdlib_string_span_struct(name)
+                    ))
+                };
+                if !is_view(string.meta()) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a 'StringSpan' value".to_string(),
+                        found: string.meta().to_string(),
+                        context: "the string operand of '#kgen.param.expr<data_to_str>'"
+                            .to_string(),
+                    });
+                }
+                let rest = self.bracket_operand(rest, recording)?;
+                if !matches!(rest.meta(), MetaTy::ParamList(element) if is_view(element)) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a parameter list of 'StringSpan' values".to_string(),
+                        found: rest.meta().to_string(),
+                        context: "the list operand of '#kgen.param.expr<data_to_str>'".to_string(),
+                    });
+                }
+                context
+                    .op(ParamOp::DataToStr, &[string, rest])
+                    .map_err(param_error)
+            }
             _ => Err(TypeError::Unsupported(format!(
                 "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
-                 attribute, '#kgen.param_list.size', and '#kgen.param_list.get' are read"
+                 attribute, '#kgen.param_list.size', '#kgen.param_list.get', and \
+                 '#kgen.param.expr<data_to_str>' are read"
             ))),
         }
     }

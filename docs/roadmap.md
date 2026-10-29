@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1645**.
+Next free ID: **R1649**.
 
 ## Ordered Work
 
@@ -1275,6 +1275,27 @@ change that needs a new `MJRT_ABI_VERSION`.
   and at the pin, while the native backend reports "unsupported string value
   in register".
   - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1647 Natively, a frozen pointer is a fresh heap allocation at
+  every read**
+
+  A `StaticString` parameter read in a loop allocates its bytes once per
+  iteration natively and never frees them, where the pin addresses one
+  constant global.
+  - Pliron's `store_parameter_value` (`mojito-pliron/src/lower/consts.rs`)
+    materializes every frozen `CtValue::Pointer` with `emit_alloc`
+    (`mjrt_alloc`) and writes its slots, at every materialization.
+  - The pin holds a static-origin view's memory as a `const_global`
+    (`#interp.memory_handle<…, const_global>` in its diagnostics), with a
+    trailing NUL byte that Mojito's frozen bytes lack.
+  - Lever: emit an immutable frozen allocation as one private constant
+    global per distinct allocation, and address it.
+  - Probe: `for _ in range(3): total += s.byte_length()` in `def f[s:
+    StaticString]() -> Int`, whose `--emit ll` calls `mjrt_alloc` inside
+    the loop body, with no free.
+  - Found while landing R1641 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4365,6 +4386,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: module `comptime W: L = 4` and `f[W]()` fail with "type
     mismatch for value parameter 'w': expected L, found 4". The pin
     prints `4`.
+  - Probe: `comptime t: StaticString = "lit"` then `name[t]()`, over
+    `def name[s: StaticString]() -> String`, local and module, fail the
+    same two ways. The pin prints `lit`.
   - Probe: `comptime n: Int = 3` in `main`, then `var x: UInt8 = n` or
     `SIMD[DType.uint8, 2](n, n)`, run, where the pin rejects "cannot
     implicitly convert 'Int' value to 'UInt8'" and "no matching function
@@ -4385,6 +4409,50 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     bind `Checker::implicit_parameter_application` of the value, as a
     parameter argument (R1533) and an application's argument already
     convert.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1645 A value-pack element an `@implicit` constructor converts
+  has no compile-time value**
+
+  `f[1, 2]()` over `def f[*xs: W]()`, where `W` declares `@implicit
+  __init__(out self, v: IntLiteral)`, fails elaboration with "value
+  parameter `*xs` is not compile-time constant", where the pin prints `2`.
+  - The checker's pack loop (`checker/declarations.rs`, "Each argument
+    binds one value of the pack's element") records each element's
+    converted application, but the application does not reach the call's
+    `MirParamArg::expr` (`MirLowerer::param_arg_regs_folding`), so
+    `mono::unify::bind_explicit_value_arguments` finds no constant.
+  - `f[W(1), W(2)]()` runs, and so does a pack of one forwarded binder
+    (`_get_kgen_string["llvm.", name]()`).
+  - Probe: `cnt["a", "b"]()` over `def cnt[*extra: StaticString]() -> Int:
+    return len(extra)`, which prints `2` at the pin.
+  - Probe: `popcount["ct", "pop"](Int64(7))` over `def popcount[*parts:
+    StaticString](x: Int64)` calling `pop.call_llvm_intrinsic` with
+    `intrin=_get_kgen_string["llvm.", *parts]()`, which prints `3` at the
+    pin.
+  - Found while landing R1641 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1646 A construction spelled through a closed type alias is no
+  compile-time application**
+
+  `comptime u = WW(5)` then `f[u]()`, over `comptime WW = W` and `def
+  f[w: W]()`, fails with "not a compile-time Int constant: u", where the
+  pin prints `5`; `comptime u = W(5)` runs.
+  - `Checker::selected_application` (`checker/comptime_validation.rs`)
+    looks the callee's name up as a function, so an alias name finds
+    nothing. A run-time call through the alias already constructs
+    (`infer_type_alias_read`).
+  - Lever: resolve a callee naming a type alias to its struct template
+    and spelled instance (`ty_from_anno`), as the `on_instance` arm does
+    for `G[2](n)`.
+  - Probe: `comptime t = StaticString("lit")` then `name[t]()`, and
+    `name[StaticString("lit")]()`, over `def name[s: StaticString]() ->
+    String`, which print `lit` at the pin. The second fails with "not an
+    associated comptime expression".
+  - Found while landing R1641 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4586,30 +4654,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     shape.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1641 A `StaticString` is no compile-time value**
-
-  `name["param"]()` over `def name[s: StaticString]() -> String` is
-  rejected, where the pin prints `param`.
-  - The elaborator has no compile-time `StringSpan` whose pointer addresses
-    a literal's bytes, the pin's `pop.string.address` and `pop.string.size`
-    over the literal's `!kgen.string`.
-  - The first failure is now the elaborator's: the check applies
-    `StringSpan`'s `@implicit` literal `__init__`, and `native::mono` stops
-    with "unsupported compile-time application of
-    `StringSpan.__init__$ov$StringLiteral` binds 2 of its 1 parameters".
-  - Fold upstream's `_get_kgen_string[string: StaticString, *extra]()`
-    (`#kgen.param.expr<data_to_str, …>`), which reads such a value's bytes
-    back as a `!kgen.string`. No `data_to_str` fold exists.
-  - Probe: the bundled `std/sys/intrinsics.mojo` declares `llvm_intrinsic`'s
-    `intrin` as a `StringLiteral` read as `intrin.value`, where upstream's
-    is a `StaticString` read through `_get_kgen_string[intrin]()`. Respell
-    it as upstream's and drop its header's divergence bullet.
-  - Probe: `CompilationTarget._has_feature[name: StaticString]()` (R1562)
-    and `_is_arch[name: StaticString]()` (R1635).
-  - Found while landing R432 (2026-10-29).
-  - Depends on R1528.
-  - Model: Fable, Not Planned.
 
 - [ ] **R602 A local `comptime` constant annotated with a sized scalar is
   no parameter value**
@@ -5147,13 +5191,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `TyKind::KgenString` has no layout, no VM value, and no native
     representation. The checker rejects a runtime read of `.value` or of a
     `!kgen.string` binder (`comptime_validation::kgen_string_runtime_read`),
-    and elaborated MIR rejects a register, slot, or signature that holds
-    one (`verify/concrete.rs`).
+    and translation legality rejects a register, slot, or signature that
+    holds one once the pipeline has run (`llvm_translation_findings`,
+    `verify/concrete.rs`). The VM holds one as a `Value::Attribute` only
+    inside a compile-time evaluation (`_get_kgen_string`).
   - Probe: a runtime parameter `def f(x: __mlir_type.`!kgen.string`)`
     called as `f("a".value)`, which the pin runs.
   - Probe: `var l = List[KGENString]()` then `l.append("a".value)` and
-    `print(len(l))`, which prints `1` at the pin. Mojito stops only in
-    elaborated MIR ("holds the compile-time-only metatype").
+    `print(len(l))`, which prints `1` at the pin. Mojito rejects it ("not
+    a compile-time Int constant: KGENString").
   - Probe: `ParameterList[names]()[0]` over `*names: KGENString`, which
     reads the elements' runtime storage through `get_span`.
   - Probe: `G[name()].x()` over `def name() -> __mlir_type.`!kgen.string``
@@ -10139,7 +10185,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `StringLiteral[v]().byte_length()` over `comptime v =
     "None".value`, which prints `4` at the pin.
   - Converting a KGEN string to a runtime string (`StaticString(names[i])`)
-    then follows with R432.
+    then follows with R432: upstream's `StringSpan.__init__(out self:
+    StaticString, _kgen: !kgen.string)` over `pop.string.size` and
+    `pop.string.address`.
+  - Probe: `get_static_string["ab", "cd"]()`, which upstream declares in
+    `std.collections.string.string_span` as
+    `StaticString(_get_kgen_string[string, *extra]())` and the bundled
+    module omits.
   - Probe: `"x" + s` and `"ab" == s` over a `String` `s` convert the
     literal to `String` and call `String`'s dunder (`infer_infix`'s
     literal-left arm, `checker/operators.rs`), where upstream calls

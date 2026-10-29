@@ -55,8 +55,9 @@ pub enum Value {
     /// An attribute the compile-time interpreter holds as a value, as
     /// upstream's `IREvaluator` holds every value as an `Attribute`. No
     /// instruction inspects it: it is copied, moved, passed, returned, and
-    /// frozen back as itself. Only an elaborator request runs a body holding
-    /// one, since LLVM translation rejects one that survives the pipeline.
+    /// frozen back as itself: an `!kgen.deferred` attribute, or a
+    /// `!kgen.string`. Only an elaborator request runs a body holding one,
+    /// since translation rejects one that survives the pipeline.
     Attribute(mojito_types::ct::CtValue),
     /// An `Error` value carrying its message (what `raise` raises).
     Error(String),
@@ -342,6 +343,9 @@ pub fn type_name(value: &Value) -> String {
         Value::FloatLiteral(_) => "FloatLiteral".to_string(),
         Value::Bool(_) => "Bool".to_string(),
         Value::Dtype(_) => "DType".to_string(),
+        Value::Attribute(mojito_types::ct::CtValue::KgenString(_)) => {
+            mojito_types::types::KGEN_STRING_TYPE_SPELLING.to_string()
+        }
         Value::Attribute(_) => mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING.to_string(),
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),

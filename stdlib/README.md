@@ -257,9 +257,17 @@ point, as upstream's toolchain does.
   the C `timespec` record `_CTimeSpec`.
 - `std/string.mojo` also hosts `StringSpan[mut: Bool, //, origin]` (the
   canonical string view; `StringSlice` is a never-emitted annotation alias),
-  upstream's `StaticString` alias (`StringSpan[ImmStaticOrigin]`)
-  and `_GraphemeIter`, the grapheme-cluster iterator behind ordinary
-  String/StringSpan/StringLiteral iteration.
+  upstream's `StaticString` alias (`StringSpan[ImmStaticOrigin]`; a
+  literal binds a `StaticString` compile-time parameter through the
+  `@implicit` literal constructor, which the elaborator runs into a frozen
+  view of the literal's bytes) and `_GraphemeIter`, the grapheme-cluster
+  iterator behind ordinary String/StringSpan/StringLiteral iteration.
+- `std/collections/string/string_span.mojo` — upstream's
+  `_get_kgen_string[string: StaticString, *extra: StaticString]()` at its
+  upstream module path, the `!kgen.string` of the views' bytes, which
+  `std/sys/intrinsics.mojo`'s `llvm_intrinsic` reads its `intrin` through.
+  The rest of upstream's module lives in `std/string.mojo`;
+  `get_static_string` waits for `StaticString(kgen)` (roadmap R1192).
 
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is

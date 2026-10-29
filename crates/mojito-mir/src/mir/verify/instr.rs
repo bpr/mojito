@@ -270,6 +270,19 @@ pub(super) fn verify_instruction(
             }
         }
         MirInstr::Const {
+            k: crate::mir::Const::Value(CtValue::KgenString(_)),
+            dest,
+        } => {
+            if let Some(ty) = cx.reg_ty(*dest)
+                && !matches!(ty.kind(), TyKind::KgenString)
+            {
+                errors.push(format!(
+                    "{}: KGEN string constant is read at `{ty}`, not `!kgen.string`",
+                    cx.prefix
+                ));
+            }
+        }
+        MirInstr::Const {
             k: crate::mir::Const::Value(value),
             ..
         } if !value.is_materialized_constant() => errors.push(format!(

@@ -4,14 +4,9 @@
 # `mojito_types::llvm_intrinsic::LlvmIntrinsic`'s; a reached call of any
 # other is rejected when its instance is elaborated.
 #
-# The body is upstream's, except:
-# - `intrin` is a `StringLiteral`, where upstream's is a `StaticString`,
-#   which Mojito does not hold as a compile-time value (roadmap R1641);
-# - its `!kgen.string` is `intrin.value`, where upstream's is
-#   `_get_kgen_string[intrin]()` over the `StaticString`;
-# - `args.get_loaded_kgen_pack()` is served by the compiler on the
-#   collector, which is compiler storage rather than upstream's nominal
-#   `VariadicPack` (roadmap R1302).
+# The body is upstream's, except that `args.get_loaded_kgen_pack()` is
+# served by the compiler on the collector, which is compiler storage rather
+# than upstream's nominal `VariadicPack` (roadmap R1302).
 # `_RegisterPackType` is upstream's, verbatim: its `!kgen.struct` field is
 # Mojito's compiler-private tuple storage of the same elements.
 # Omitted: the gather, scatter, masked load and store, prefetch,
@@ -25,10 +20,13 @@ from std.sys import llvm_intrinsic
 ```
 """
 
+from std.collections.string.string_span import _get_kgen_string
+from std.string import StaticString
+
 
 @inline(.nodebug)
 def llvm_intrinsic[
-    intrin: StringLiteral,
+    intrin: StaticString,
     type: TrivialRegisterPassable,
     *types: AnyType,
     has_side_effect: Bool = True,
@@ -51,7 +49,7 @@ def llvm_intrinsic[
 
     var loaded_pack = args.get_loaded_kgen_pack()
 
-    comptime intrin_kgen_string = intrin.value
+    comptime intrin_kgen_string = _get_kgen_string[intrin]()
 
     comptime if type == NoneType:
         __mlir_op.`pop.call_llvm_intrinsic`[

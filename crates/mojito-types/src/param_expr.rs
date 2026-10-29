@@ -243,6 +243,7 @@ impl ParamContext {
             ParamOp::Eq | ParamOp::Lt | ParamOp::Le => self.build_comparison(op, &operands),
             ParamOp::Cond => self.build_cond(operands),
             ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin => self.build_cast(op, &operands[0]),
+            ParamOp::DataToStr => self.build_data_to_str(operands),
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -1527,6 +1528,23 @@ impl ParamContext {
         Ok(self.make(meta, ParamKind::Op { op, operands }))
     }
 
+    /// KGEN's `data_to_str` over a string view and a list of views: the
+    /// `!kgen.string` of their bytes once both are constant, and otherwise
+    /// the node, as KGEN keeps an unresolved `#kgen.param.expr`.
+    fn build_data_to_str(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        if let [Some(string), Some(rest)] = [operands[0].as_constant(), operands[1].as_constant()] {
+            self.count_fold();
+            return self.constant(fold_primitive(ParamOp::DataToStr, &[string, rest])?);
+        }
+        Ok(self.make(
+            MetaTy::value(TyKind::KgenString.into()),
+            ParamKind::Op {
+                op: ParamOp::DataToStr,
+                operands,
+            },
+        ))
+    }
+
     /// `and`/`or`: flatten, fold constants, drop duplicates, and sort. The
     /// dominating constant wins only once every operand is known to be a
     /// well-typed `Bool`, which the arity and domain checks established.
@@ -2585,6 +2603,10 @@ pub enum ParamOp {
     /// `pop.cast_from_builtin`, `Int(mlir_value=i)`: an `index` as the `Int`
     /// whose storage it is; [`Self::CastToBuiltin`]'s inverse.
     CastFromBuiltin,
+    /// KGEN's `data_to_str`: the `!kgen.string` whose text is the bytes a
+    /// compile-time string view addresses, then those of each view in a
+    /// list, concatenated (upstream's `_get_kgen_string`).
+    DataToStr,
 }
 
 impl ParamOp {
@@ -2613,6 +2635,7 @@ impl ParamOp {
             Self::Cond => "cond",
             Self::CastToBuiltin => "cast_to_builtin",
             Self::CastFromBuiltin => "cast_from_builtin",
+            Self::DataToStr => "data_to_str",
         }
     }
 
@@ -2648,7 +2671,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 22] = [
+    const ALL: [Self; 23] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -2671,6 +2694,7 @@ impl ParamOp {
         Self::Cond,
         Self::CastToBuiltin,
         Self::CastFromBuiltin,
+        Self::DataToStr,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
@@ -2701,7 +2725,11 @@ impl ParamOp {
             Self::Le => InfixOp::Le,
             Self::BoolAnd => InfixOp::And,
             Self::BoolOr => InfixOp::Or,
-            Self::Neg | Self::Cond | Self::CastToBuiltin | Self::CastFromBuiltin => return None,
+            Self::Neg
+            | Self::Cond
+            | Self::CastToBuiltin
+            | Self::CastFromBuiltin
+            | Self::DataToStr => return None,
         })
     }
 
@@ -2994,12 +3022,14 @@ impl MetaTy {
     }
 
     /// A constant aggregate bound to a parameter list: every member has the
-    /// list's element meta-type.
+    /// list's element meta-type, a frozen struct by its bare name.
     fn is_list_of(&self, declared: &Self) -> bool {
         matches!(
             (self, declared),
             (Self::Tuple(members), Self::ParamList(element))
-                if members.iter().all(|member| member == &**element)
+                if members.iter().all(|member| {
+                    member == &**element || member.is_unresolved_struct(element)
+                })
         )
     }
 
@@ -3877,6 +3907,7 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::Neg, [operand]) => fold::fold_neg(operand),
         (ParamOp::CastToBuiltin, [operand]) => fold::fold_cast_to_builtin(operand),
         (ParamOp::CastFromBuiltin, [operand]) => fold::fold_cast_from_builtin(operand),
+        (ParamOp::DataToStr, [string, rest]) => fold::fold_data_to_str(string, rest),
         (ParamOp::Cond, [condition, then_value, else_value]) => match condition {
             CtValue::Bool(true) => Ok((*then_value).clone()),
             CtValue::Bool(false) => Ok((*else_value).clone()),
@@ -3976,7 +4007,7 @@ const fn precedence(op: ParamOp) -> u8 {
         ParamOp::Mul | ParamOp::Div | ParamOp::FloorDiv | ParamOp::Mod => 11,
         ParamOp::Neg => 12,
         ParamOp::Pow => 13,
-        ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin => 14,
+        ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin | ParamOp::DataToStr => 14,
     }
 }
 
@@ -4003,6 +4034,7 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::Cond => "if",
         ParamOp::CastToBuiltin => ".__mlir_index__()",
         ParamOp::CastFromBuiltin => "Int(mlir_value=)",
+        ParamOp::DataToStr => "data_to_str",
     }
 }
 

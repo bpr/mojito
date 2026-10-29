@@ -69,7 +69,8 @@ pub fn concrete_function_findings(
 /// survived the pipeline, as upstream's KGEN-to-LLVM lowering does: a
 /// signature that mentions one ("failed to convert func signature"), a
 /// call whose result does ("failed to convert call result type"), and any
-/// other value of one.
+/// other value of one. A surviving `!kgen.string`, which upstream lowers
+/// but Mojito has no run-time form for, is refused too.
 ///
 /// [`has_no_llvm_type`]: mojito_types::types::has_no_llvm_type
 /// [`LlvmIntrinsic::index_is_immediate`]: mojito_types::llvm_intrinsic::LlvmIntrinsic::index_is_immediate
@@ -204,17 +205,13 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
             "{head} {role} holds the compile-time-only raw parameter list type `{ty}`"
         ));
     }
-    // A trait, a type, a KGEN string, or a generator is a compile-time
-    // value: no run-time value holds one. An attribute is not in that list:
+    // A trait, a type, or a generator is a compile-time value: no run-time
+    // value holds one. An attribute or a KGEN string is not in that list:
     // elaborated MIR may hold one, and LLVM translation decides.
     if mojito_types::types::mentions(ty, &|ty| {
         matches!(
             ty.kind(),
-            TyKind::AnyTrait(_)
-                | TyKind::Trait(_)
-                | TyKind::TypeType
-                | TyKind::KgenString
-                | TyKind::Generator(_)
+            TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType | TyKind::Generator(_)
         )
     }) {
         errors.push(format!(
@@ -690,6 +687,23 @@ fn untranslatable_values(function: &MirFunction, errors: &mut Vec<String>) {
         if untranslatable(ty) {
             errors.push(format!("failed to legalize slot {var} of type `{ty}`"));
         }
+    }
+    // A `!kgen.string` has no run-time form here, so one that survives the
+    // pipeline is refused as the checker refuses a run-time read of one.
+    let kgen_string =
+        |ty: &Ty| mojito_types::types::mentions(ty, &|ty| matches!(ty.kind(), TyKind::KgenString));
+    if function
+        .param_types
+        .iter()
+        .chain(function.ret_ty.iter())
+        .chain(function.reg_types.values())
+        .chain(function.var_tys.values())
+        .any(kgen_string)
+    {
+        errors.push(format!(
+            "a '{}' value read at run time is not supported",
+            mojito_types::types::KGEN_STRING_TYPE_SPELLING
+        ));
     }
 }
 

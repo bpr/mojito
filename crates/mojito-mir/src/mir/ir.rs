@@ -1633,6 +1633,11 @@ impl Const {
             {
                 Some(Self::Value(value.clone()))
             }
+            CtValue::KgenString(_)
+                if slot_ty.is_none_or(|ty| matches!(ty.kind(), TyKind::KgenString)) =>
+            {
+                Some(Self::Value(value.clone()))
+            }
             _ => None,
         }
     }

@@ -438,6 +438,7 @@ assets/ok/keyword_call.mojo	main	exe-differential	sanitized
 assets/ok/keyword_only.mojo	main	exe-differential	sanitized
 assets/ok/keyword_slice_subscripts.mojo	main	exe-differential	sanitized
 assets/ok/keyword_subscript_user_struct.mojo	main	exe-differential	sanitized
+assets/ok/kgen_string_intrinsic_name.mojo	main	exe-differential	sanitized
 assets/ok/kgen_string_literal_value.mojo	main	exe-differential	sanitized
 assets/ok/kgen_type_type_parameter.mojo	main	exe-differential	sanitized
 assets/ok/kwargs.mojo	main	exe-differential	sanitized
@@ -1009,6 +1010,7 @@ assets/ok/static_method_unused_argument_instances.mojo	main	exe-differential	san
 assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/static_reference_result_argument.mojo	main	exe-differential	sanitized
 assets/ok/static_string.mojo	main	exe-differential	sanitized
+assets/ok/static_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/stored_array_span_iterators.mojo	main	exe-differential	sanitized
 assets/ok/string_capacity.mojo	main	exe-differential	sanitized

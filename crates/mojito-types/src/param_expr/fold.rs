@@ -287,6 +287,21 @@ pub fn fold_cast_from_builtin(value: &CtValue) -> Result<CtValue, ParamError> {
     }
 }
 
+/// KGEN's `data_to_str` over concrete operands: the text of the view
+/// `string`, then of each view in the list `rest`, as a `!kgen.string`.
+pub fn fold_data_to_str(string: &CtValue, rest: &CtValue) -> Result<CtValue, ParamError> {
+    let (CtValue::Tuple(rest) | CtValue::List(rest)) = rest else {
+        return Err(unsupported("'data_to_str' expects a list of string views"));
+    };
+    let mut bytes = view_bytes(string)?;
+    for view in rest {
+        bytes.extend(view_bytes(view)?);
+    }
+    String::from_utf8(bytes)
+        .map(CtValue::KgenString)
+        .map_err(|_| unsupported("'data_to_str' reads bytes that are not UTF-8"))
+}
+
 /// The integer a concrete value denotes, across the integer kinds.
 pub fn integer_value(value: &CtValue) -> Option<IntLiteral> {
     match value {
@@ -535,6 +550,58 @@ fn machine_float(value: &CtValue) -> Result<f64, ParamError> {
     .ok_or_else(|| arithmetic("invalid exact compile-time arithmetic"))
 }
 
+/// The bytes a frozen string view addresses, read from its storage as
+/// KGEN's interpreter reads it: the view's leaves are a pointer into
+/// compile-time memory of `UInt8` slots and a byte length.
+fn view_bytes(view: &CtValue) -> Result<Vec<u8>, ParamError> {
+    let malformed = || {
+        unsupported(&format!(
+            "'data_to_str' expects a string view, found {view}"
+        ))
+    };
+    let mut leaves = Vec::new();
+    flatten_fields(view, &mut leaves);
+    let [
+        CtValue::Pointer {
+            memory: Some(memory),
+            offset,
+        },
+        CtValue::Int(length),
+    ] = leaves.as_slice()
+    else {
+        return Err(malformed());
+    };
+    let start = usize::try_from(*offset).map_err(|_| malformed())?;
+    let length = usize::try_from(*length).map_err(|_| malformed())?;
+    memory
+        .get(start..start + length)
+        .ok_or_else(malformed)?
+        .iter()
+        .map(|slot| match slot {
+            Some(CtValue::Simd {
+                dtype: Dtype::UInt8,
+                lanes,
+            }) if let [CtLane::Int(byte)] = lanes.as_slice() => {
+                u8::try_from(*byte).map_err(|_| malformed())
+            }
+            _ => Err(malformed()),
+        })
+        .collect()
+}
+
+/// The leaves of a frozen struct value, its nested fields in declaration
+/// order.
+fn flatten_fields<'a>(value: &'a CtValue, leaves: &mut Vec<&'a CtValue>) {
+    match value {
+        CtValue::Struct { fields, .. } => {
+            for (_, field) in fields {
+                flatten_fields(field, leaves);
+            }
+        }
+        _ => leaves.push(value),
+    }
+}
+
 fn arithmetic(message: &str) -> ParamError {
     ParamError::Arithmetic(message.to_string())
 }
@@ -545,7 +612,7 @@ fn unsupported(message: &str) -> ParamError {
 
 #[cfg(test)]
 mod tests {
-    use super::{fold_comparison, fold_infix};
+    use super::{fold_comparison, fold_data_to_str, fold_infix};
     use crate::ct::{CtLane, CtValue};
     use mojito_ast::ast::{Dtype, InfixOp};
     use mojito_common::literal::{FloatLiteral, IntLiteral};
@@ -586,6 +653,37 @@ mod tests {
             Some(single(3.0))
         );
         assert!(fold_infix(InfixOp::Add, &byte(1), &two).is_err());
+    }
+
+    #[test]
+    fn data_to_str_reads_each_view_through_its_storage() {
+        let view = |text: &str, offset: i64, length: i64| CtValue::Struct {
+            name: "StringSpan".to_string(),
+            fields: vec![
+                (
+                    "_data".to_string(),
+                    CtValue::Pointer {
+                        memory: Some(
+                            text.bytes()
+                                .map(|byte| Some(lane(Dtype::UInt8, CtLane::Int(byte.into()))))
+                                .collect(),
+                        ),
+                        offset,
+                    },
+                ),
+                ("_size".to_string(), CtValue::Int(length)),
+            ],
+        };
+        assert_eq!(
+            fold_data_to_str(
+                &view("llvm.", 0, 5),
+                &CtValue::Tuple(vec![view("xctpop", 1, 5)])
+            )
+            .ok(),
+            Some(CtValue::KgenString("llvm.ctpop".to_string()))
+        );
+        assert!(fold_data_to_str(&view("ab", 1, 2), &CtValue::Tuple(Vec::new())).is_err());
+        assert!(fold_data_to_str(&CtValue::Int(1), &CtValue::Tuple(Vec::new())).is_err());
     }
 
     #[test]

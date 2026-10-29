@@ -1491,11 +1491,27 @@ impl<'a> Specializer<'a> {
             )
         })?;
         let result_ty = declaration.ret_ty.clone();
+        // A method's receiver is its first runtime argument; an
+        // `__init__`'s `out self` is its result.
+        let receives = declaration.has_receiver
+            && declaration.receiver_convention != Some(mojito_ast::ast::ArgConvention::Out);
+        let arity = |decls: &[ParamDecl]| {
+            decls.len() + usize::from(receives) + declaration.param_types.len()
+        };
         // A static method of a generic struct is applied to the instance it
-        // is called on first (`G[n].f()`).
+        // is called on first (`G[n].f()`). A struct whose parameters are all
+        // origins binds none of them, since origins are erased, but its
+        // instance still carries them (`StringSpan[ImmStaticOrigin]`): it
+        // is the owner when the application leads with that instance past
+        // the method's own arity.
         let owner = mojito_symbol::symbol::split_method_symbol(function)
-            .and_then(|(owner, _)| self.structs.get(owner))
-            .filter(|owner| !owner.param_decls.is_empty());
+            .and_then(|(name, _)| self.structs.get(name).map(|owner| (name, owner)))
+            .filter(|(name, owner)| {
+                !owner.param_decls.is_empty()
+                    || (args.len() == arity(&declaration.param_decls) + 1
+                        && args.first().is_some_and(|arg| names_instance_of(arg, name)))
+            })
+            .map(|(_, owner)| owner);
         let (instance, args) = match (owner, args.split_first()) {
             (Some(owner), Some((instance, args))) => (Some((owner, instance)), args),
             _ => (None, args),
@@ -1506,11 +1522,7 @@ impl<'a> Specializer<'a> {
         let own_decls = &declaration.param_decls[instance.map_or(0, |(owner, _)| {
             owner_covered_prefix(&owner.param_decls, &declaration.param_decls)
         })..];
-        // A method's receiver is its first runtime argument; an
-        // `__init__`'s `out self` is its result.
-        let receives = declaration.has_receiver
-            && declaration.receiver_convention != Some(mojito_ast::ast::ArgConvention::Out);
-        let parameters = own_decls.len() + usize::from(receives) + declaration.param_types.len();
+        let parameters = arity(own_decls);
         if parameters != args.len() {
             return Err(self.error(
                 Some(template),
@@ -4491,4 +4503,14 @@ fn comparison_of_dunder(method: &str) -> Option<mojito_ast::ast::InfixOp> {
     [Eq, Ne, Lt, Le, Gt, Ge]
         .into_iter()
         .find(|op| op.dunder() == Some(method))
+}
+
+/// Whether `arg` is a type naming an instance of the struct `owner`.
+fn names_instance_of(arg: &ParamExpr, owner: &str) -> bool {
+    match arg.kind() {
+        ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
+            matches!(ty.kind(), TyKind::Struct(name, _) if nominal_template(name) == owner)
+        }
+        _ => false,
+    }
 }
