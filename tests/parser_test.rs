@@ -3327,10 +3327,13 @@ fn parses_a_spread_of_a_type_list_expression() {
         &spread_operand(ret).kind,
         ExprKind::MethodCall { method, .. } if method == "reverse"
     ));
-    // In expression position the bracketed spread is a type application.
+    // In expression position the bracket is one operand, the spread, which
+    // the checker classifies by what `Tuple` denotes.
     assert!(matches!(
         &parse_expr("Tuple[*Ts.reverse()]").kind,
-        ExprKind::TypeApply { name, .. } if name == "Tuple"
+        ExprKind::Index { object, index }
+            if matches!(&object.kind, ExprKind::Identifier(name) if name == "Tuple")
+                && matches!(index.kind, ExprKind::Spread(_))
     ));
     mojito::parse("def bad(t: Tuple[*]):\n    pass\n").expect_err("a bare '*' must reject");
 }
@@ -4451,23 +4454,19 @@ fn keyword_subscripts_parse_on_value_bases_and_type_applications_stay() {
 #[test]
 fn origin_capability_cast_keeps_a_parameter_application() {
     // Upstream's capability cast `ImmOrigin(o)` is a compile-time Origin
-    // value like `origin_of(x)`, so a bracket over a type name stays a
-    // parameter application rather than a runtime subscript.
+    // value like `origin_of(x)`. The bracket is one operand, which the
+    // checker classifies by what `V` denotes, as upstream's `SubscriptNode`.
     let program = mojito::parse("x = V[ImmOrigin(origin_of(y))]\n").expect("parse");
     let StmtKind::Assign { value, .. } = &program[0].kind else {
         panic!("assign");
     };
-    let ExprKind::TypeApply { name, args } = &value.kind else {
-        panic!("expected TypeApply, got {:?}", value.kind);
+    let ExprKind::Index { object, index } = &value.kind else {
+        panic!("expected Index, got {:?}", value.kind);
     };
-    assert_eq!(name, "V");
+    assert!(matches!(&object.kind, ExprKind::Identifier(name) if name == "V"));
     assert!(
-        matches!(
-            args.as_slice(),
-            [mojito::ast::ParamArg::Value(cast)]
-                if matches!(&cast.kind, ExprKind::Call { name, .. } if name == "ImmOrigin")
-        ),
-        "one ImmOrigin(...) argument: {args:?}"
+        matches!(&index.kind, ExprKind::Call { name, .. } if name == "ImmOrigin"),
+        "one ImmOrigin(...) operand: {index:?}"
     );
 }
 

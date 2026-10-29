@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1613**.
+Next free ID: **R1623**.
 
 ## Ordered Work
 
@@ -1857,6 +1857,42 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `VariadicList.__deinit__` call on the narrowed list.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1613 A list display of elements that are not `Deinitable` fails to
+  elaborate**
+
+  `var conns: List[Conn] = [Conn(1), Conn(2)]` over an `@explicit_destroy`
+  `Conn` fails with "function instantiation of `VariadicList.__deinit__`
+  failed", where the pin runs it.
+  - The bundled `List` and `Array` literal initializers move the elements
+    out with `for var value in values^` (R32). The narrowed list is then
+    destroyed by `VariadicList.__deinit__`, whose `comptime assert
+    conforms_to(Self.element_type, Deinitable)` fails.
+  - Upstream's initializers hand the list to `values^.consume_elements(
+    init_elt)`, a capture-list closure writing each element in place, so the
+    destructor is never instantiated.
+  - Port `VariadicList.consume_elements` and `_annihilate`, then both
+    initializers. A `def(idx: Int, var elt: T) capturing[_]` handler stands
+    in for upstream's `Some[def(...)]` until R813.
+  - Since dcbecf4e every list display calls the literal initializer, so
+    this used to work through the compiler-built display.
+  - Pinned by `conformance/probes/list_display_linear_elements.mojo`.
+  - Depends on R1614 (the closure must package with the library).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1614 The bundled library cannot hold a capture-list closure**
+
+  A nested `def` with a capture list in a bundled library method fails the
+  package build, so the library is compiled from source on every run.
+  - The first refusal is the overload check
+    (`InterfaceExport::records`): the closure's `__storage` struct and its
+    body method are lowered declarations no source scan declares.
+  - Past that, `DeclarationRecord::refuse_unjoinable` refuses a record
+    holding a struct not its own: the storage struct is placed in its
+    enclosing struct's record.
+  - Found while porting upstream's `List` literal initializer (R1613).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R740 A list display runs the move initializer three times per
   element**
@@ -6674,6 +6710,22 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R1615 A `for` over a bound declaring only `Element` iterates, where
+  the pin requires `__iter__`**
+
+  `for item in xs` over `C: Items`, a trait declaring `comptime Element` and
+  no `__iter__`, runs in Mojito, where the pin rejects it: "'C' does not
+  implement the '__iter__' method".
+  - The checker's generic iteration accepts a bound naming an `Element`
+    (`iteration_protocol`, the `TyKind::Param` arm), not only one that is
+    `Iterable`.
+  - Pinned by `conformance/probes/for_over_element_only_bound.mojo`.
+  - `abstract_element_copyability_derives_from_member_bounds` in
+    `tests/checker_test.rs` uses the accepted form; rewrite it over an
+    `Iterable` bound when this lands.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1587 An instance drops the `comptime assert`s after a selected
   `comptime if` arm that never falls through**
 
@@ -10354,6 +10406,110 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1557.
   - Model: Fable, Planned.
 
+- [ ] **R1618 A compile-time argument computed by an inlined dunder keeps
+  its function's parameter**
+
+  `subscript_expr_fwd[n]`, returning `Grid(7)[n + 1]` over a
+  `__getitem_param__[i]` that never reads `i`, keeps `n` and makes one
+  instance per `n`, where `Grid(5)[10 // n]` removes it.
+  - Since R1551 `n + 1` is `SIMD.__add__`'s inlined body, a region whose
+    result is the argument, where `10 // n` is still a `binary` the
+    forward analysis (`mir::param_uses`) traces into the removed binder.
+  - Upstream folds the `@always_inline("builtin")` dunder into the
+    parameter expression `n + 1`, which forwards as any other.
+  - `forwarded_parameters_leave_the_instance_key` in
+    `tests/compiler_test.rs` expects two instances until this lands.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1619 A local `comptime` bound to an `IsTrivially*` predicate is
+  rejected**
+
+  `comptime trivially = IsTriviallyMovable[Int]` inside `main` fails with
+  "a generic comptime alias must be declared at module scope", where the
+  pin prints `True`.
+  - The application parses as a type application, so the local statement
+    takes the alias route (`check_generic_comptime_alias`), which refuses
+    any alias inside a function.
+  - Routed as a value instead, `IsTriviallyMovable[…]` types as a type
+    (`infer`'s `TypeApply` arm), and the compile-time path reads the name
+    as an unknown type. Only `compile_generic_constraint` knows the
+    predicate.
+  - Pinned by `conformance/probes/trivially_predicate_local_comptime.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1620 A moved-in pack capture forwarded whole fails MIR verification
+  instead of the ownership check**
+
+  `def relay() {args^} -> Int: return score(40, *args^)` inside a pack
+  generic is rejected by the MIR verifier after `canonicalize` ("drop.var
+  of slot $v1 ('args') that some path reaching it does not hold"), where
+  the ownership check should report "'args' is uninitialized at return",
+  as the pin rejects it.
+  - The program is rejected either way: the diagnostic and the phase are
+    wrong.
+  - Pinned by `captured_outer_pack_forwarding_must_refill_the_captured_pack`
+    in `tests/comptime_test.rs`, failing until this lands.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1621 A capture-list closure over a pack element in a `comptime for`
+  fails specialized MIR verification**
+
+  `comptime for i in range(Ts.length): var x = args[i]; def show() {x}:
+  print(x)` over `*args: *Ts` fails with "variable slot 4 retains ABI-only
+  RuntimePack type outer$show$__storage$mono…", where the pin prints each
+  element.
+  - The failing slot is in `outer$mono$T$pack$Int$Bool`, the instance
+    over the whole pack, and its type is the closure's storage struct.
+  - Pinned by `cloned_comptime_bodies_keep_distinct_checked_occurrence_facts`
+    in `tests/comptime_test.rs`, failing until this lands.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1622 Twenty-one `inline-parametric` pass cases spell a value
+  binder read as a frame-slot read, which lowering no longer emits**
+
+  Since R662 a read of a non-callable value binder lowers to its parameter
+  constant (`const { value: param(param_decl_ref { … }) }`), and the inliner
+  no longer rewrites a binder's slot. The cases under
+  `tests/mir_passes/inline-parametric/` written before that still read the
+  binder through a `var.use` of a slot nothing stores, so the splice now
+  leaves those reads in place and 21 expectations fail.
+  - Failing cases include `generic_value`, `generic_method`,
+    `generic_struct_method`, `nested_captures`, `tuple_members`, and
+    `tuple_reverse_closed`; `cargo nextest run --test mir_pass_test
+    inline-parametric` lists them all.
+  - Bisected to 628ca72a (R662); the test target did not compile in the
+    10-29 gate, which hid them.
+  - Several cases also changed in ways unrelated to the binder slots, such
+    as a `ref.make`/`ref.read` pair that is now one `place.load`; judge each
+    one before blessing it.
+  - Fix: re-derive each input from current lowering by the recipe in
+    `tests/mir_passes/README.md`, then bless and read each expectation.
+    Do not bless the current outputs, which read never-stored slots.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1617 A `SIMD` initializer called without inlining has no receiver
+  in the VM**
+
+  `Int32(Byte(200))` at module scope in the snippet dialect, or anywhere
+  with the pre-elaboration pipeline off, fails with "vm backend does not
+  support default/keyword/variadic arguments yet (call passed 1 args to
+  2-parameter function 'SIMD.__init__$ov$SIMD$other…')".
+  - The instance takes its `out self` as parameter slot zero, as every
+    initializer does, but the VM prepends that slot only for a declared
+    struct (`Prog::lifecycle_constructor`, `Prog::declared_struct`), and a
+    `SIMD` result is the compiler's vector type.
+  - Every other call inlines the always-inline initializer first, which
+    hides it. `__toplevel__` takes no call-graph pass.
+  - `runtime_scalar_conversions_wrap_bit_accurately` in
+    `tests/evaluator_test.rs` runs in `main` until this lands.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1398 The checker, VM, and Pliron keep `SIMD` member rules no
   program reaches**
 
@@ -10725,6 +10881,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1383 (2026-10-26), refiled from R269.
   - Depends on R77 and R1210.
   - Model: Fable, Not Planned.
+
+- [ ] **R1616 A conformer's mismatched method keeps the trait's default out**
+
+  An `Equatable` struct declaring `__eq__(self, var other: Coin)` and
+  `__ne__(self, var other: Coin)` is rejected, "method '__ne__' does not
+  match the signature required by trait 'Equatable'", where the pin runs it.
+  - At the pin neither method satisfies the `other: Self, /` requirement,
+    so the trait's defaults fill both, and the struct's methods are
+    overloads beside them.
+  - `trait_defaults::inherited_defaults` skips a default whose overload
+    key a struct method spells, whatever its conventions, and the
+    conformance check then finds no matching witness.
+  - Mojito synthesizes `__eq__` per conformer that declares none (R1481),
+    so `__eq__` needs the trait's own default body first.
+  - Pinned by `conformance/probes/equatable_by_value_operand_overloads.mojo`.
+  - Depends on R1481 (the reflective `__eq__` default).
+  - Model: Opus, Not Planned.
 
 - [ ] **R1287 `print` is a compiler builtin where upstream's is an
   `@inline(.never)` library function**

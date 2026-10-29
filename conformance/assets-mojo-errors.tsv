@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	913
+# swept-count	914
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -585,22 +585,22 @@ assets/type_error/method_result_pointer_field_read_self_write.mojo	compile-rejec
 assets/type_error/method_two_named_results.mojo	compile-reject	agree	error: function may not have multiple 'out' arguments
 assets/type_error/mlir_call_llvm_intrinsic_literal_name.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op attribute 'intrin' failed to satisfy constraint: TypedAttr instance String type for parameters
 assets/type_error/mlir_call_llvm_intrinsic_without_side_effects.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op requires attribute 'hasSideEffects'
-assets/type_error/mlir_cast_from_builtin_storage_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cast_from_builtin' op cannot convert to scalar dtype index from '!kgen.scalar<index>'
-assets/type_error/mlir_cast_to_builtin_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cast_to_builtin' op operand #0 must be parameterized SIMD vector type, but got 'index'
+assets/type_error/mlir_cast_from_builtin_storage_operand.mojo	compile-reject	agree	error: 'pop.cast_from_builtin' op cannot convert to scalar dtype index from '!kgen.scalar<index>'
+assets/type_error/mlir_cast_to_builtin_index_operand.mojo	compile-reject	agree	error: 'pop.cast_to_builtin' op operand #0 must be parameterized SIMD vector type, but got 'index'
 assets/type_error/mlir_deferred_runtime_call.mojo	compile-reject	agree	error: failed to convert call result type
 assets/type_error/mlir_i1_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__mlir_type.i1' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/mlir_index_not_int.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to 'Int'
-assets/type_error/mlir_index_op_storage_operand.mojo	compile-reject	agree	error: MLIR verification error: 'index.add' op operand #0 must be index, but got '!kgen.scalar<index>'
+assets/type_error/mlir_index_op_storage_operand.mojo	compile-reject	agree	error: 'index.add' op operand #0 must be index, but got '!kgen.scalar<index>'
 assets/type_error/mlir_index_parameter_literal_argument.mojo	compile-reject	agree	error: invalid call to 'f': 'f' parameter 'n' has '__mlir_type.index' type, but value has type 'IntLiteral[3]'
 assets/type_error/mlir_index_parameter_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'S[4]' value to 'S[3]'
 assets/type_error/mlir_index_parameter_symbolic_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'S[(k * Int(2)).__mlir_index__()]' value to 'S[(k + Int(1)).__mlir_index__()]'
-assets/type_error/mlir_op_cmp_without_predicate.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cmp' op requires attribute 'pred'
-assets/type_error/mlir_op_operand_types_differ.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op requires the same type for all operands and results
-assets/type_error/mlir_op_select_cases_differ.mojo	compile-reject	agree	error: MLIR verification error: 'pop.select' op failed to verify that all of {trueValue, falseValue, result} have same type
-assets/type_error/mlir_op_select_condition_not_scalar.mojo	compile-reject	agree	error: MLIR verification error: 'pop.select' op operand #0 must be !kgen.scalar<bool>, but got '!kgen.simd<2, bool>'
-assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'
-assets/type_error/mlir_pop_op_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got 'index'
-assets/type_error/mlir_pop_op_simd_struct_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype si32}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {2}>>'
+assets/type_error/mlir_op_cmp_without_predicate.mojo	compile-reject	agree	error: 'pop.cmp' op requires attribute 'pred'
+assets/type_error/mlir_op_operand_types_differ.mojo	compile-reject	agree	error: 'pop.add' op requires the same type for all operands and results
+assets/type_error/mlir_op_select_cases_differ.mojo	compile-reject	agree	error: 'pop.select' op failed to verify that all of {trueValue, falseValue, result} have same type
+assets/type_error/mlir_op_select_condition_not_scalar.mojo	compile-reject	agree	error: 'pop.select' op operand #0 must be !kgen.scalar<bool>, but got '!kgen.simd<2, bool>'
+assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'
+assets/type_error/mlir_pop_op_index_operand.mojo	compile-reject	agree	error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got 'index'
+assets/type_error/mlir_pop_op_simd_struct_operand.mojo	compile-reject	agree	error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype si32}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {2}>>'
 assets/type_error/mlir_scalar_storage_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__mlir_type.`!kgen.scalar<index>`' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/mlir_simd_int_length_operand.mojo	compile-reject	agree	error: invalid MLIR type: !kgen.simd<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> length, "_mlir_value"> : !kgen.scalar<index>, #lit.struct.extract<:!lit.struct<@std::@builtin::@dtype::@DType> dtype, "_mlir_value"> : !kgen.dtype>
 assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to '__mlir_type.i64' in return value
@@ -705,7 +705,7 @@ assets/type_error/pointer_placeholder_return.mojo	compile-reject	agree	error: 'P
 assets/type_error/pointer_take_tracked_nontrivial.mojo	runs	subset	the pin runs it; Mojito rejects: requires a trivially destructible element
 assets/type_error/pointer_to_place_offset_rejected.mojo	runs	subset	the pin runs it;Mojito rejects: designates a single value
 assets/type_error/pointer_to_ref_param_write_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment
-assets/type_error/pop_bitcast_cast_incompatible.mojo	compile-reject	agree	error: MLIR verification error: 'pop.bitcast' op input type '!kgen.scalar<ui32>' and result type '!kgen.scalar<ui16>' are cast incompatible
+assets/type_error/pop_bitcast_cast_incompatible.mojo	compile-reject	agree	error: 'pop.bitcast' op input type '!kgen.scalar<ui32>' and result type '!kgen.scalar<ui16>' are cast incompatible
 assets/type_error/positional_only_by_keyword.mojo	compile-reject	agree	error: invalid call to 'first': missing required argument: 'a'
 assets/type_error/predicate_alias_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/predicate_alias_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
@@ -768,6 +768,7 @@ assets/type_error/signature_application_unfolded.mojo	compile-reject	agree	error
 assets/type_error/simd_bool_lane_multiply.mojo	compile-reject	agree	error: 'pop.mul' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!kgen.simd<2, bool>'
 assets/type_error/simd_bool_lane_subtract.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_mask_inplace_add.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_bool_mask_negate.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_mask_shift.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_element_intable_struct.mojo	compile-reject	agree	error: no matching function in initialization

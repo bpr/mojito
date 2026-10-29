@@ -8,11 +8,13 @@
 # nested in one on what it reads, and a loop nested in the loop adds a
 # binder it may leave unread. A struct instance's method calls the instance
 # of a `def` declared in its loop, not a constructor of the struct.
+@no_inline
 def ignores[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(y: Int) -> Int:
             return y + 1
 
@@ -20,11 +22,13 @@ def ignores[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def reads_index[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(y: Int) -> Int:
             return y + i
 
@@ -32,11 +36,13 @@ def reads_index[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def reads_outer[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(y: Int) -> Int:
             return y + n
 
@@ -44,11 +50,13 @@ def reads_outer[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def generic_ignores[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner[m: Int](y: Int) -> Int:
             return y * 2
 
@@ -56,11 +64,13 @@ def generic_ignores[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def generic_reads_own[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner[m: Int](y: Int) -> Int:
             return y + m
 
@@ -68,6 +78,7 @@ def generic_reads_own[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def two_loops[n: Int](x: Int) -> Int:
     var total = 0
 
@@ -75,6 +86,7 @@ def two_loops[n: Int](x: Int) -> Int:
 
         comptime for j in range(2):
 
+            @no_inline
             def inner(y: Int) -> Int:
                 return y + i
 
@@ -82,11 +94,13 @@ def two_loops[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def valued[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(y: Int) -> Int:
             return y - 1
 
@@ -95,12 +109,15 @@ def valued[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def outer_loop[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def middle(y: Int) -> Int:
+            @no_inline
             def leaf(z: Int) -> Int:
                 return z + 3
 
@@ -113,14 +130,17 @@ def outer_loop[n: Int](x: Int) -> Int:
 struct Counter[k: Int]:
     var v: Int
 
+    @no_inline
     def __init__(out self, v: Int):
         self.v = v
 
+    @no_inline
     def get(self) -> Int:
         var total = 0
 
         comptime for i in range(2):
 
+            @no_inline
             def bump(y: Int) -> Int:
                 return y + 1
 

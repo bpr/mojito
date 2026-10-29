@@ -14,11 +14,13 @@ struct Arr[n: Int](Copyable, Movable):
     var v: SIMD[DType.int64, Self.n]
 
 
+@no_inline
 def looped[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(a: Arr[n], y: Int) -> Int:
             return y + 1
 
@@ -26,11 +28,13 @@ def looped[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def indexed(x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(a: Arr[i + 1], y: Int) -> Int:
             return y + 3
 
@@ -38,11 +42,13 @@ def indexed(x: Int) -> Int:
     return total
 
 
+@no_inline
 def generic(x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner[m: Int](a: Arr[m], y: Int) -> Int:
             return y * 2
 
@@ -52,11 +58,13 @@ def generic(x: Int) -> Int:
     return total
 
 
+@no_inline
 def keyword[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(y: Int, a: Arr[n]) -> Int:
             return y + 2
 
@@ -64,11 +72,13 @@ def keyword[n: Int](x: Int) -> Int:
     return total
 
 
+@no_inline
 def reads_index(x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(a: Arr[i + 1], y: Int) -> Int:
             return y + i
 
@@ -76,11 +86,13 @@ def reads_index(x: Int) -> Int:
     return total
 
 
+@no_inline
 def valued[n: Int](x: Int) -> Int:
     var total = 0
 
     comptime for i in range(2):
 
+        @no_inline
         def inner(a: Arr[n], y: Int) -> Int:
             return y - 1
 

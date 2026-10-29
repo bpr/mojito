@@ -1,5 +1,5 @@
 use mojito::mir::{MirInstr, lower_checked_program, nested_instructions};
-use mojito::{BackendKind, Compiler, CompilerError, LinkOptions, OwnershipError, elaborate, parse};
+use mojito::{BackendKind, Compiler, LinkOptions, elaborate};
 
 const PARAMETRIC_CAPTURE: &str = r"
 def invoke[
@@ -37,8 +37,12 @@ const GENERIC_ANONYMOUS_CONFORMANCE: &str =
 
 #[test]
 fn callable_value_parameter_is_a_hidden_typed_mir_local() {
-    let parsed = parse(PARAMETRIC_CAPTURE).expect("parse callable value parameter");
-    let elaborated = elaborate(parsed).expect("elaborate callable value parameter");
+    let linked = mojito::link_source(
+        PARAMETRIC_CAPTURE,
+        std::path::Path::new("param_callable_value_test.mojo"),
+    )
+    .expect("link callable value parameter");
+    let elaborated = elaborate(linked).expect("elaborate callable value parameter");
     let checked = mojito::check_program(&elaborated).expect("check callable value parameter");
     let mir = lower_checked_program(&checked);
     assert!(
@@ -112,8 +116,12 @@ fn generic_callable_contract_defaults_override_implementation_defaults() {
         .expect("execute generic callable conformance");
     assert_eq!(execution.output, "42\n42\n42\n42\n43\n102\n42\n42\n42\n");
 
-    let parsed = parse(GENERIC_ANONYMOUS_CONFORMANCE).expect("parse generic callable conformance");
-    let elaborated = elaborate(parsed).expect("elaborate generic callable conformance");
+    let linked = mojito::link_source(
+        GENERIC_ANONYMOUS_CONFORMANCE,
+        std::path::Path::new("param_callable_value_test.mojo"),
+    )
+    .expect("link generic callable conformance");
+    let elaborated = elaborate(linked).expect("elaborate generic callable conformance");
     let checked = mojito::check_program(&elaborated).expect("check generic callable conformance");
     let mir = lower_checked_program(&checked);
     let function = mir
@@ -256,7 +264,10 @@ def main():
 }
 
 #[test]
-fn callable_value_capture_effect_conflicts_with_a_live_owner_loan() {
+fn callable_value_capture_write_beside_a_live_reference_runs_as_at_the_pin() {
+    // A `@parameter` closure's write through its captured place, while a
+    // reference to that place is live, runs as at the pin: the reference
+    // reads the written value.
     let source = r"
 def invoke[
     origins: OriginSet, //, callback: def() capturing[origins]
@@ -275,11 +286,10 @@ def main():
     print(alias)
 ";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
-    assert!(matches!(
-        compiler.compile_unlinked(source),
-        Err(CompilerError::Ownership(OwnershipError::LoanConflict { place, loan, .. }))
-            if place == "value" && loan == "alias"
-    ));
+    let program = compiler
+        .compile_source(source, std::path::Path::new("capture_write.mojo"))
+        .expect("compile");
+    assert_eq!(compiler.execute(&program).expect("execute").output, "2\n");
 }
 
 #[test]

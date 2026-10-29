@@ -1149,13 +1149,15 @@ fn a_struct_conformance_is_decided_from_its_declaration_when_asked() {
         |ty: &Ty, trait_name: &str| specializer.type_conforms(ty, trait_name, &mut HashSet::new());
     // The package answered no clause ahead of use: `List` decides
     // `Iterable` from its declared conformances.
+    // `Iterable` is the bundled `std.iter` module's trait.
+    let iterable = "__module$std$iter$Iterable";
     assert!(
         specializer.structs["List"]
             .conformances
             .iter()
-            .all(|row| row.trait_name != "Iterable")
+            .all(|row| row.trait_name != iterable)
     );
-    assert_eq!(conforms(&list, "Iterable"), Some(true));
+    assert_eq!(conforms(&list, iterable), Some(true));
     assert_eq!(
         conforms(&list, "Absable"),
         Some(false),
@@ -1402,7 +1404,11 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
          \x20       print(\"flag\")\n\
          def main():\n\
          \x20   f[1](True)\n";
-    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    // No pipeline runs, so the instance holds the elaborator's selection
+    // alone, not the library bodies the inliner splices in.
+    let compiler = mojito::Compiler::default()
+        .with_snippet_module_scope()
+        .with_pre_elaboration(false);
     let compiled = compiler
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile the region");
@@ -2957,7 +2963,7 @@ fn a_reduced_instance_is_no_member_table_entry() {
         Vec::<String>::new()
     );
     assert_eq!(
-        functions_naming(&specialized, "__add__"),
+        functions_naming(&specialized, "G.__add__"),
         ["G.__add__$REMOVED$ARG$mono"]
     );
     let entries: Vec<&str> = specialized
@@ -2996,11 +3002,11 @@ fn a_protocol_member_call_names_its_reduced_generator() {
         Vec::<String>::new()
     );
     assert_eq!(
-        functions_naming(&specialized, "__len__"),
+        functions_naming(&specialized, "L.__len__"),
         ["L.__len__$REMOVED$ARG$mono"]
     );
     assert_eq!(
-        functions_naming(&specialized, "__eq__"),
+        functions_naming(&specialized, "L.__eq__"),
         ["L.__eq__$REMOVED$ARG$mono"]
     );
 }

@@ -3408,13 +3408,16 @@ impl Checker {
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } => true,
             _ => false,
         };
+        // Asking compiles the expression, so a call that builds no
+        // attribute (`comptime d = L(6)`) leaves nothing of the question
+        // behind for its own binding.
         candidate
-            && {
+            && self.probe(|| {
                 let _lifting = self.lifting_position();
                 self.compile_dependent_ct_expr(expr).is_ok_and(|value| {
-                matches!(value.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::KgenDeferred))
+                    matches!(value.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::KgenDeferred))
+                })
             })
-            }
     }
 
     /// Whether `expr` reads a closed raw list off a struct's parameter

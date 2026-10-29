@@ -1667,13 +1667,19 @@ impl Checker {
                     });
                 if !nominal_subscript && inplace_operand {
                     // A reference-returning call's facts share the place's
-                    // span, so its dunder is selected on a temporary receiver.
-                    let contract = if matches!(
+                    // span, so its dunder is selected on a temporary receiver:
+                    // an explicit call, or a subscript the check selected an
+                    // accessor call for (`v[Int]`'s `__getitem_param__`).
+                    let call_place = matches!(
                         place.kind,
                         ExprKind::Call { .. }
                             | ExprKind::MethodCall { .. }
                             | ExprKind::Invoke { .. }
-                    ) {
+                    ) || matches!(place.kind, ExprKind::Index { .. })
+                        && self
+                            .fact(&place.source_span(), |facts| facts.selected_call.as_deref())
+                            .is_some();
+                    let contract = if call_place {
                         self.select_subscript_inplace_operator(place, *op, value, &target)?
                     } else {
                         self.select_inplace_operator(

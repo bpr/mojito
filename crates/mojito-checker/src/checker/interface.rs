@@ -1992,6 +1992,7 @@ mod tests {
         MethodResidue {
             function: 0,
             variadic_name: None,
+            refined_self: None,
             ref_params: Vec::new(),
             ref_return: None,
             view_return_interior: Vec::new(),

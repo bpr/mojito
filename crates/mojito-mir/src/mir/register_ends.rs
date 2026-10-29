@@ -1092,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn a_struct_name_call_binds_its_initializer() {
+    fn a_construction_binds_its_initializer() {
         let mut declarations = declarations_with(vec![Some(ArgConvention::Var)]);
         declarations.functions[0].lowered_name = "S.__init__".into();
         declarations.structs.push(MirStructDeclaration {
@@ -1112,9 +1112,10 @@ mod tests {
             witness_tables: Vec::new(),
             members: Vec::new(),
         });
+        // A construction names its initializer, as upstream's does.
         let mut construct = call(vec![Reg(1)]);
         if let MirInstr::Call { func, .. } = &mut construct {
-            *func = FuncRef("S".into());
+            *func = FuncRef("S.__init__".into());
         }
         assert_eq!(consumed(&construct, &declarations), vec![Reg(1)]);
     }

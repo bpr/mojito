@@ -579,7 +579,11 @@ mod tests {
             fold_infix(InfixOp::Mul, &single(1.5), &two).ok(),
             Some(single(3.0))
         );
-        assert!(fold_infix(InfixOp::FloorDiv, &single(7.5), &two).is_err());
+        // Float lanes take `//`, as the VM's `pop.floordiv` does.
+        assert_eq!(
+            fold_infix(InfixOp::FloorDiv, &single(7.5), &two).ok(),
+            Some(single(3.0))
+        );
         assert!(fold_infix(InfixOp::Add, &byte(1), &two).is_err());
     }
 

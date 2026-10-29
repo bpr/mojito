@@ -199,9 +199,10 @@ use mojito_types::param_expr::{
 };
 use mojito_types::types::{
     GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
-    default_literal, is_scalar_simd, list_spread_argument, names_binder, nominal_parts,
-    pack_spread, pack_spread_argument, replace_argument_parameters, replace_constraint_parameters,
-    replace_parameters, replace_value_parameters, rewrite_ty, scalar_simd_dtype,
+    default_literal, erase_origins, is_scalar_simd, list_spread_argument, names_binder,
+    nominal_parts, pack_spread, pack_spread_argument, replace_argument_parameters,
+    replace_constraint_parameters, replace_parameters, replace_value_parameters, rewrite_ty,
+    scalar_simd_dtype,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -1710,6 +1711,10 @@ impl<'c> Inliner<'_, 'c> {
             for reg in returned {
                 function.reg_types.insert(reg.0, ty.clone());
             }
+        } else if result == Returned::Value
+            && let Some(ty) = function.reg_types.get(&dest.0).cloned()
+        {
+            retype_erased_values(function, &mut blocks, &ty);
         }
         for (var, name) in callee.var_names.iter().enumerate() {
             function.var_names.push(format!("{name}$inline{var_base}"));
@@ -2953,6 +2958,26 @@ fn retype_reference_results(blocks: &mut [MirBlock], returned: &[Reg], ty: &Ty) 
     }
 }
 
+/// Give each value `blocks` return, and each a region result they return
+/// merges, `ty`, the call's own type, where it is `ty` with its origins
+/// erased: an instance spells the types its bindings carry without their
+/// origins ([`erase_origins`]), so `id(Pointer(to=x))` returns a static
+/// pointer the caller's type names as `x`'s.
+fn retype_erased_values(function: &mut MirFunction, blocks: &mut [MirBlock], ty: &Ty) {
+    let erased = erase_origins(ty);
+    let mut returned = Vec::new();
+    references_and_returns(blocks, &mut HashMap::new(), &mut returned);
+    carried_values(blocks, &mut returned);
+    for reg in returned {
+        if let Some(own) = function.reg_types.get_mut(&reg.0)
+            && own != ty
+            && erase_origins(own) == erased
+        {
+            *own = ty.clone();
+        }
+    }
+}
+
 /// Whether the callee has a shape the splice handles: a receiver of a
 /// declared struct's type ([`nominal_parts`]) if any, and blocks of plain
 /// or structured control flow, at any depth, with no closure. A
@@ -4017,14 +4042,16 @@ impl Instantiation {
     /// binder survives the substitution (a pack queried under a loop
     /// binder, which only the elaborator's unrolling closes).
     fn instantiate(&self, ty: &Ty) -> Result<Ty, ParamError> {
+        // The owner is the call's own type, spelled over the caller's
+        // binders: it replaces the bare template after the substitution, so
+        // a caller of the same struct (`Counter[1 + Self.length]` built in
+        // a `Counter` method) does not see its binders substituted again.
+        let ty = replace_parameters(&self.context, ty, &self.bindings, 0)?;
         let ty = match &self.owner {
-            Some((template, owner)) => rewrite_ty(ty, &mut BareOwner { template, owner })?,
-            None => ty.clone(),
+            Some((template, owner)) => rewrite_ty(&ty, &mut BareOwner { template, owner })?,
+            None => ty,
         };
-        let ty = rewrite_ty(
-            &replace_parameters(&self.context, &ty, &self.bindings, 0)?,
-            &mut SelectedShapes,
-        )?;
+        let ty = rewrite_ty(&ty, &mut SelectedShapes)?;
         if let Some(binder) = self.types.iter().find(|binder| names_binder(&ty, binder)) {
             return Err(ParamError::Unsupported(format!(
                 "`{ty}` still names the bound binder `{}`",

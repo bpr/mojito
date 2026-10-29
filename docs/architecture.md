@@ -2490,9 +2490,12 @@ the checker's
 instantiation records reset it to unbound so a place origin (a per-check owner
 id) never makes an instantiation look new across passes. An instance's
 bindings are its key's origin-erased form (`Bindings::erase_origins`, sharing
-the key's one erasure `origin_erased`), as upstream binds a type parameter to a
-type whose origins read `origin={ }`, so no caller's binders or places leak
-into the instance whichever caller demands it first. The instance's own origin
+the key's one erasure `mojito_types::types::erase_origins`), as upstream binds a
+type parameter to a type whose origins read `origin={ }`, so no caller's
+binders or places leak into the instance whichever caller demands it first.
+The post-elaboration inliner gives a value an inlined instance returns the
+call's own type where the two agree once erased, so a caller's dereference of
+`id(Pointer(to=x))` keeps `x`'s origin. The instance's own origin
 binders and its body's own places stay symbolic, as upstream keeps an
 instance's origin parameters unspecialized (`$0`, `$1`), so concrete MIR
 admits `Origin::Param`.
@@ -5378,7 +5381,13 @@ current Mojo:
   the dead source's storage. A raising argument evaluated after the
   construction keeps the move, as at the pin. A type parameter's
   `T(copy=x)` (still `ConstructTypeParam` at that point), a field source,
-  `.copy()`, and a source that dies only on a successor edge stay copies.
+  `.copy()`, and a source that dies only on a successor edge stay copies,
+  and so does every copy of a struct whose `IsTriviallyCopyable` row holds
+  at its arguments (`MirDeclarations::copy_runs_no_code`) and whose
+  destruction runs code: upstream copies such a value bit for bit, with no
+  copy initialization for its lifetime check to fold, so the source still
+  dies after its copy (`a < b < c` over
+  a struct with only a destructor of its own destroys `b` and its copy).
   An implicit copy of a dying whole slot (a `var.use` copy, or a struct's
   `value.copy` of a fresh load, whatever constructor it already names)
   gets the same treatment: one an owned parameter, an owned receiver, or

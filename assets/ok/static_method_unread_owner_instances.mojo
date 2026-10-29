@@ -9,24 +9,29 @@
 # `down` and `down_self` share one instance each, as on the pin.
 struct S[n: Int]:
     @staticmethod
+    @no_inline
     def st() -> Int:
         return 7
 
     @staticmethod
+    @no_inline
     def reads() -> Int:
         return Self.n
 
     @staticmethod
+    @no_inline
     def chained() -> Int:
         return S[Self.n].st() + 1
 
     @staticmethod
+    @no_inline
     def down(k: Int) -> Int:
         if k == 0:
             return 7
         return S[Self.n].down(k - 1)
 
     @staticmethod
+    @no_inline
     def down_self(k: Int) -> Int:
         if k == 0:
             return 8
@@ -35,10 +40,12 @@ struct S[n: Int]:
 
 struct P[a: Int, b: Int]:
     @staticmethod
+    @no_inline
     def first() -> Int:
         return Self.a
 
 
+@no_inline
 def caller[n: Int]() -> Int:
     return S[n].st()
 

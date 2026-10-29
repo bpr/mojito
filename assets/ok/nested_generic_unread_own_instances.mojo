@@ -6,58 +6,75 @@
 # keeps one instance too, while a body reading `m`, directly, in its
 # signature, through its own nested body, or by passing it to a callee
 # that reads it, keeps one per value.
+@no_inline
 def leaf[k: Int](x: Int) -> Int:
     return x - 1
 
 
+@no_inline
 def keeper[k: Int](x: Int) -> Int:
     return x + k
 
 
+@no_inline
 def ignores[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[m: Int](y: Int) -> Int:
         return y + 1
 
     return inner[1](x) + inner[2](x)
 
 
+@no_inline
 def reads[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[m: Int](y: Int) -> Int:
         return y + m
 
     return inner[1](x) + inner[2](x)
 
 
+@no_inline
 def forwards[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[m: Int](y: Int) -> Int:
         return y * 2
 
     return inner[n](x)
 
 
+@no_inline
 def reads_outer[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[m: Int](y: Int) -> Int:
         return y + n
 
     return inner[1](x) + inner[2](x)
 
 
+@no_inline
 def through_leaf[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[m: Int](y: Int) -> Int:
         return leaf[m](y)
 
     return inner[1](x) + inner[2](x)
 
 
+@no_inline
 def through_keeper[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[m: Int](y: Int) -> Int:
         return keeper[m](y)
 
     return inner[1](x) + inner[2](x)
 
 
+@no_inline
 def deeper[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[m: Int](y: Int) -> Int:
+        @no_inline
         def leafy(z: Int) -> Int:
             return z + m
 
@@ -66,21 +83,27 @@ def deeper[n: Int](x: Int) -> Int:
     return inner[1](x) + inner[2](x)
 
 
+@no_inline
 def typed[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[T: Copyable & Writable](v: T) -> Int:
         return 7
 
     return inner(x) + inner(String("a"))
 
 
+@no_inline
 def defaulted[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[m: Int = 3](y: Int) -> Int:
         return y + 4
 
     return inner(x) + inner[5](x)
 
 
+@no_inline
 def keyword[n: Int](x: Int) -> Int:
+    @no_inline
     def inner[a: Int, b: Int](y: Int) -> Int:
         return y + b
 

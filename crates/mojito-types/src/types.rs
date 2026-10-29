@@ -2955,6 +2955,56 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
     }
 }
 
+/// `ty` with every struct origin argument unbound and every pointer origin
+/// static.
+///
+/// It is the one origin erasure an instance's key and its bindings share,
+/// so an instance's body spells the types a caller binds without their
+/// origins. Origins erase from the runtime ABI and from the instance symbol.
+pub fn erase_origins(ty: &Ty) -> Ty {
+    let recur = erase_origins;
+    match ty.kind() {
+        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
+                    TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Origin(_) => TyArg::Origin(crate::origin::Origin::Unbound),
+                })
+                .collect(),
+        )),
+        TyKind::Pointer { element, .. } => TyKind::Pointer {
+            element: recur(element),
+            origin: crate::origin::PointerOrigin::Static,
+        }
+        .into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: recur(element),
+        }
+        .into(),
+        TyKind::RuntimePack(elements) => {
+            TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
+        }
+        TyKind::Variant(alternatives) => {
+            TyKind::Variant(alternatives.iter().map(recur).collect()).into()
+        }
+        TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::Ref(reference).into()
+        }
+        _ => ty.clone(),
+    }
+}
+
 /// The type with each origin parameter `origins` binds replaced by its
 /// argument.
 ///

@@ -1865,15 +1865,18 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     }
 
     /// The binders of an owner the lifted body `name` declares and its
-    /// removals keep; every one when they are not at hand.
+    /// removals keep: every one it declares when they are not at hand, as
+    /// a lifted body reads no binder it does not declare, and every
+    /// parameter when its declaration is not either.
     fn lifted_reads(&mut self, name: &str) {
-        let Some((removed, declaration)) = (self.nested)(name).zip(
-            self.declarations
-                .and_then(|declarations| declarations.function(name)),
-        ) else {
+        let Some(declaration) = self
+            .declarations
+            .and_then(|declarations| declarations.function(name))
+        else {
             self.reads_all = true;
             return;
         };
+        let removed = (self.nested)(name).unwrap_or_default();
         for id in declaration
             .param_decls
             .iter()

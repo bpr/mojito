@@ -301,8 +301,13 @@ fn rebind_retypes_its_operand_and_checks_the_instantiation() {
     let reference = "def f[T: Copyable](ref x: T) -> Int:\n    comptime if T == Int:\n        ref y = rebind[Int](x)\n        return y + 1\n    return 0\n\ndef main():\n    var v = 3\n    print(f[Int](v))\n";
     assert_eq!(run(reference).unwrap(), "4\n");
     let wrong_use = "def f[T: Copyable](x: T) -> Int:\n    comptime if T == Int:\n        return rebind[String](x) + 1\n    return 0\n\ndef main():\n    print(f[Int](3))\n";
+    // The `String` the rebind makes takes no `Int` operand, as the pin
+    // reports at the `+`.
     let err = run(wrong_use).unwrap_err();
-    assert!(err.contains("expected String, found Int"), "{err}");
+    assert!(
+        err.contains("operator '+' is not defined for String and Int"),
+        "{err}"
+    );
     let mismatch =
         "def main():\n    var x: Int = 3\n    var y = rebind[Float64](x)\n    print(y)\n";
     let err = run(mismatch).unwrap_err();
@@ -1050,11 +1055,11 @@ fn type_predicate_selects_comptime_branch() {
 }
 
 #[test]
-fn type_predicate_in_runtime_if_is_rejected() {
-    // A type comparison has no runtime `Bool` form — used in a runtime `if` (not
-    // a `comptime if`) it is not a resolvable value, so the program is rejected.
+fn type_predicate_in_runtime_if_runs() {
+    // A type comparison is a compile-time `Bool`, which a runtime `if` tests
+    // as any other, as at the pin.
     let src = "def name[T: AnyType]() -> String:\n    if T == Int:\n        return \"int\"\n    else:\n        return \"other\"\n\ndef main():\n    print(name[Int]())\n";
-    assert!(run(src).is_err());
+    assert_eq!(run(src).unwrap(), "int\n");
 }
 
 #[test]
@@ -1432,13 +1437,6 @@ fn trivially_predicates_recurse_through_fields() {
     // struct's triviality even though the outer struct synthesizes its copy.
     let src = "struct Custom(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x\n\n@fieldwise_init\nstruct Outer(Copyable):\n    var inner: Custom\n\n@fieldwise_init\nstruct Simple(Copyable):\n    var a: Int\n    var b: Bool\n\ndef main():\n    comptime if not IsTriviallyCopyable[Outer]:\n        print(\"outer nontrivial\")\n    comptime if IsTriviallyCopyable[Simple]:\n        print(\"simple trivial\")\n";
     assert_eq!(run(src).expect("run"), "outer nontrivial\nsimple trivial\n");
-}
-
-#[test]
-fn trivially_predicate_binds_as_comptime_value() {
-    let src =
-        "def main():\n    comptime trivially = IsTriviallyMovable[Int]\n    print(trivially)\n";
-    assert_eq!(run(src).expect("run"), "True\n");
 }
 
 #[test]

@@ -4609,17 +4609,19 @@ mod tests {
             )
             .is_none()
         );
+        // An ordered float comparison over NaN is `False`, as the VM's
+        // `pop.cmp` computes it.
         let nan = Const::Float(f64::NAN);
-        assert!(
+        assert!(matches!(
             binary(
                 InfixOp::Lt,
                 nan.clone(),
                 nan,
                 TyKind::FLOAT64.clone(),
                 TyKind::Bool
-            )
-            .is_none()
-        );
+            ),
+            Some(Const::Bool(false))
+        ));
         let param = Const::Param(
             ParamContext::new()
                 .constant(CtValue::Int(1))
@@ -4846,16 +4848,18 @@ mod tests {
             Some(Const::Value(CtValue::Simd { lanes, .. }))
                 if lanes == [CtLane::Float(3.0f64.to_bits())]
         ));
-        assert!(
+        // Float lanes take `//`, as the VM's `pop.floordiv` does.
+        assert!(matches!(
             lanes(
                 InfixOp::FloorDiv,
                 single(7.5),
                 single(2.0),
                 lane(Dtype::Float32),
                 lane(Dtype::Float32)
-            )
-            .is_none()
-        );
+            ),
+            Some(Const::Value(CtValue::Simd { lanes, .. }))
+                if lanes == [CtLane::Float(3.0f64.to_bits())]
+        ));
 
         let make = |width: i64| {
             let target = mojito_types::types::canonical_simd_ty(Dtype::UInt8, width);

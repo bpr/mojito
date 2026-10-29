@@ -336,6 +336,16 @@ impl VmBackend {
                 value,
                 target,
             } => {
+                if self.ctfe_fuel.is_some() {
+                    let integral = match target {
+                        ScalarConversion::Int => Some(mojito_ast::ast::Dtype::Int),
+                        ScalarConversion::UInt => Some(mojito_ast::ast::Dtype::UInt),
+                        ScalarConversion::Float64 | ScalarConversion::Bool => None,
+                    };
+                    if let Some(integral) = integral {
+                        crate::runtime::ctfe_float_to_int(integral, &regs[value.0 as usize])?;
+                    }
+                }
                 regs[dest.0 as usize] =
                     crate::runtime::builtin_convert(*target, regs[value.0 as usize].clone())?;
             }
@@ -1573,6 +1583,9 @@ impl VmBackend {
                 width,
             } => {
                 let (dtype, _) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;
+                if self.ctfe_fuel.is_some() {
+                    crate::runtime::ctfe_float_to_int(dtype, &regs[value.0 as usize])?;
+                }
                 regs[dest.0 as usize] = crate::runtime::simd_cast(dtype, &regs[value.0 as usize])?;
             }
             MirInstr::SimdBitcast {

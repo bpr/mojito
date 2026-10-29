@@ -67,7 +67,7 @@ use mojito_mir::mir::{
     UseMode, count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
     instruction_slots, retire_slots, terminator_regs,
 };
-use mojito_types::types::{Ty, TyKind};
+use mojito_types::types::{GenericConstraint, Ty, TyKind};
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
@@ -411,10 +411,38 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
         return None;
     }
     let fields = declarations.field_types(ty)?;
+    // A struct declaring `TrivialRegisterPassable` copies and drops whole
+    // without naming a member, which a field whose type records one cannot
+    // (`OptionalReg[T]`'s `Optional[T]`).
+    let records_lifecycle = |ty: &Ty| {
+        ["__copyinit__", "__deinit__"]
+            .iter()
+            .any(|member| declarations.struct_member(ty, member).is_some())
+    };
+    let trivial = declares_trivially_register_passable(ty, declarations);
     fields
         .iter()
-        .all(|(_, field)| !matches!(field.kind(), TyKind::Pointer { .. } | TyKind::Ref(_)))
+        .all(|(_, field)| {
+            let addressed = matches!(field.kind(), TyKind::Pointer { .. } | TyKind::Ref(_));
+            let unnamed_lifecycle = trivial && records_lifecycle(field);
+            !(addressed || unnamed_lifecycle)
+        })
         .then_some(fields)
+}
+
+/// Whether the struct `ty` declares `TrivialRegisterPassable`, or a trait
+/// refining it, unconditionally.
+fn declares_trivially_register_passable(ty: &Ty, declarations: &MirDeclarations) -> bool {
+    let TyKind::Struct(name, _) = ty.kind() else {
+        return false;
+    };
+    declarations.structure(name).is_some_and(|declaration| {
+        declaration.declared.iter().any(|row| {
+            (row.trait_name == "TrivialRegisterPassable"
+                || declarations.trait_refines(&row.trait_name, "TrivialRegisterPassable"))
+                && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
+        })
+    })
 }
 
 /// Keep each memory-only candidate in `census` that upstream passes by

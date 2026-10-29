@@ -3124,8 +3124,11 @@ impl Checker {
             });
         }
         let (element, attributes) = self.collection_type_arguments("List", args)?;
-        // `List[T: AnyType]`: only a `!kgen.type` binder falls short.
-        if !self.conforms_to(&element[0], "AnyType") {
+        // `List[T: AnyType]`: only a `!kgen.type` binder falls short. An
+        // inference hole (`List[_]`) is unknown until its binding solves it.
+        if self.conformance(&element[0], "AnyType")
+            == mojito_types::conformance::Conformance::Refuted
+        {
             return Err(TypeError::TraitNotSatisfied {
                 param: "T".to_string(),
                 ty: element[0].to_string(),
@@ -4328,19 +4331,26 @@ impl Checker {
     /// its width is that constructor's folded body, the same value.
     pub(super) fn simd_length_of_lanes(&self, lanes: &ParamExpr) -> Option<ParamExpr> {
         let length = mojito_types::types::simd_length_ty();
-        if !self
-            .structs
-            .contains_key(mojito_types::types::SIMD_LENGTH_TYPE_NAME)
-        {
-            return mojito_types::types::simd_length_converted(
+        let by_symbol = || {
+            mojito_types::types::simd_length_converted(
                 &self.param_context,
                 mojito_symbol::symbol::SIMD_LENGTH_FROM_INT,
                 lanes,
             )
-            .ok();
+            .ok()
+        };
+        if !self
+            .structs
+            .contains_key(mojito_types::types::SIMD_LENGTH_TYPE_NAME)
+        {
+            return by_symbol();
         }
+        // A field type resolved before the bundled `SIMDLength`'s
+        // initializers are checked applies the same constructor by symbol.
         self.implicit_parameter_application(&Ty::int(), &length, |_| Some(lanes.clone()))
-            .ok()?
+            .ok()
+            .flatten()
+            .or_else(by_symbol)
     }
 
     /// The value an index-valued bracket argument evaluates to: a

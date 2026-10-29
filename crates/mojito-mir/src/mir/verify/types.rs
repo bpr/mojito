@@ -189,7 +189,11 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
 /// generator removed a parameter takes the struct with each argument naming
 /// it erased ([`CtValue::RemovedArg`], upstream's `_REMOVED_ARG`), which the
 /// elaborator declares only where no field reads an erased argument, so it
-/// lays out as every instance agreeing on the kept ones.
+/// lays out as every instance agreeing on the kept ones. Origin arguments
+/// erase from the layout, and an instance that removed every parameter
+/// keeps none. A kept type argument agrees either way round: the reduced generator is keyed by the
+/// elaborator's instance identity, which spells a callable without its
+/// environment, so its `self` holds the struct a `thin` instance names.
 fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
     let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
         (found.kind(), expected.kind())
@@ -197,6 +201,13 @@ fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
         return false;
     };
     let erased = |arg: &TyArg| matches!(arg, TyArg::Val(CtValue::RemovedArg));
+    let kept = |args: &'_ [TyArg]| -> Vec<TyArg> {
+        args.iter()
+            .filter(|arg| !matches!(arg, TyArg::Origin(_)))
+            .cloned()
+            .collect()
+    };
+    let (found_args, expected_args) = (kept(found_args), kept(expected_args));
     found_name != expected_name
         && mojito_types::types::struct_template(found_name)
             == mojito_types::types::struct_template(expected_name)
@@ -205,12 +216,13 @@ fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
             || mojito_types::types::erases_an_argument(expected))
         && found_args
             .iter()
-            .zip(expected_args)
+            .zip(&expected_args)
             .all(|(found, expected)| match (found, expected) {
                 _ if erased(found) || erased(expected) => true,
-                (TyArg::Ty(found), TyArg::Ty(expected)) => types_compatible(found, expected),
+                (TyArg::Ty(found), TyArg::Ty(expected)) => {
+                    types_compatible(found, expected) || types_compatible(expected, found)
+                }
                 (TyArg::Val(found), TyArg::Val(expected)) => found == expected,
-                (TyArg::Origin(_), TyArg::Origin(_)) => true,
                 _ => false,
             })
 }

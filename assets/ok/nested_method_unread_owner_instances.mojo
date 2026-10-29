@@ -12,46 +12,59 @@
 struct Counter[k: Int]:
     var v: Int
 
+    @no_inline
     def __init__(out self, v: Int):
         self.v = v
 
+    @no_inline
     def get(self) -> Int:
+        @no_inline
         def bump(y: Int) -> Int:
             return y + 1
 
         return bump(self.v)
 
     @staticmethod
+    @no_inline
     def st(x: Int) -> Int:
+        @no_inline
         def bump[m: Int](y: Int) -> Int:
             return y + m
 
         return bump[1](x) + bump[2](x)
 
+    @no_inline
     def loop_get(self) -> Int:
         var total = 0
 
         comptime for i in range(2):
 
+            @no_inline
             def bump(y: Int) -> Int:
                 return y + 1
 
             total += bump(self.v)
         return total
 
+    @no_inline
     def nested_reads(self) -> Int:
+        @no_inline
         def bump(y: Int) -> Int:
             return y + Self.k
 
         return bump(self.v)
 
+    @no_inline
     def method_reads(self) -> Int:
+        @no_inline
         def bump(y: Int) -> Int:
             return y + 1
 
         return bump(self.v) + Self.k
 
+    @no_inline
     def valued(self) -> Int:
+        @no_inline
         def bump(y: Int) -> Int:
             return y + 2
 

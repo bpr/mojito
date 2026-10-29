@@ -13,6 +13,15 @@ use mojito::{Compiler, SemanticAdjustment, Ty, parse};
 use std::collections::HashMap;
 use std::path::Path;
 
+/// `source` linked against the bundled standard library and elaborated:
+/// `Int`'s operators are `SIMD`'s library dunders, which only a linked
+/// program declares.
+fn linked(source: &str) -> Vec<mojito::Stmt> {
+    let linked =
+        mojito::link_source(source, std::path::Path::new("mir_test.mojo")).expect("link error");
+    mojito::elaborate(linked).expect("elaborate")
+}
+
 #[test]
 fn free_function_union_reference_result_retains_a_typed_handle_slot() {
     let source = include_str!("../assets/origin_ok/returned_union.mojo");
@@ -45,16 +54,15 @@ fn free_function_union_reference_result_retains_a_typed_handle_slot() {
 }
 
 #[test]
-fn value_binder_slot_is_typed_by_its_declaration() {
+fn value_binder_has_no_slot_and_every_used_slot_is_typed() {
     let source = "def plain[n: Int]() -> Int:\n    return n\n\n\
                   def gt[T: Copyable & ImplicitlyCopyable, v: T]() -> T:\n    return v\n\n\
                   def main():\n    print(plain[3]())\n    print(gt[Int, 4]())\n";
     let mir = checked_program_mir(source);
+    // A value binder's read is its `kgen.param.constant`: no slot is named
+    // after it.
     let plain = mir_function(&mir, "plain");
-    assert!(
-        matches!(binder_slot_ty(plain, "n"), Some(TyKind::INT)),
-        "{plain:#?}"
-    );
+    assert!(binder_slot_ty(plain, "n").is_none(), "{plain:#?}");
     for var in nested_instructions(&plain.blocks)
         .into_iter()
         .filter_map(|instr| match instr {
@@ -68,10 +76,7 @@ fn value_binder_slot_is_typed_by_its_declaration() {
         );
     }
     let gt = mir_function(&mir, "gt");
-    assert!(
-        matches!(binder_slot_ty(gt, "v"), Some(TyKind::Param { .. })),
-        "{gt:#?}"
-    );
+    assert!(binder_slot_ty(gt, "v").is_none(), "{gt:#?}");
 }
 
 #[test]
@@ -594,7 +599,7 @@ fn owned_iteration_iterator_has_a_slot_of_its_own() {
 #[test]
 fn raising_next_is_called_in_a_try_whose_handler_breaks() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
-    let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
+    let program = lower_program(&linked(source)).expect("checked lowering");
     let main = mir_function(&program, "main");
     let element = nested_instructions(&main.blocks)
         .into_iter()
@@ -1690,7 +1695,7 @@ fn parameterized_explicit_destroy_receiver_consumes_its_place() {
     // place, as the unparameterized `counter^.take()` does: the call
     // consumes the storage, with no forwarded copy of it in a register.
     let source = "struct Counter(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter^.take_param[2]())\n";
-    let mir = lower_program(&parse(source).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(source)).expect("checked lowering");
     let main = &mir
         .functions
         .iter()
@@ -1764,7 +1769,7 @@ fn memory_only_slice_literal_is_read_from_its_call_result_slot() {
 #[test]
 fn parameterized_implicit_receiver_copy_drops_the_source_place_metadata() {
     let source = "@fieldwise_init\nstruct Counter(ImplicitlyCopyable):\n    var value: Int\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter.take_param[2]())\n    print(counter.value)\n";
-    let mir = lower_program(&parse(source).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(source)).expect("checked lowering");
     let main = &mir
         .functions
         .iter()
@@ -1802,7 +1807,7 @@ fn parameterized_implicit_receiver_copy_drops_the_source_place_metadata() {
 #[test]
 fn raising_iterator_lowers_to_a_typed_raising_next_call() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
-    let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
+    let program = lower_program(&linked(source)).expect("checked lowering");
     let main = mir_function(&program, "main");
     let instructions = nested_instructions(&main.blocks);
     let (dest, reference_result) = instructions
@@ -1815,11 +1820,13 @@ fn raising_iterator_lowers_to_a_typed_raising_next_call() {
                 raises: Some(raises),
                 reference_result,
                 ..
+            // The program's own `StopIteration` is module-qualified beside
+            // the library's.
             } if method == "__next__"
                 && matches!(
                     raises.ty.kind(),
                     mojito::TyKind::Struct(name, arguments)
-                        if name == "StopIteration" && arguments.is_empty()
+                        if name.ends_with("$StopIteration") && arguments.is_empty()
                 ) =>
             {
                 Some((dest, reference_result))
@@ -2035,16 +2042,11 @@ fn temps_carry_real_source_spans() {
         "spans must be real, not the placeholder"
     );
 
-    let use_reg = mir.blocks[0]
-        .instrs
-        .iter()
-        .find_map(|i| match i {
-            MirInstr::UseVar { dest, .. } => Some(dest.0),
-            _ => None,
-        })
-        .expect("a UseVar temp");
-    let (uspan, origin) = &spans[&use_reg];
-    assert_eq!(&src[uspan.span.0..uspan.span.1], "y");
+    // The `y` read, the operator's receiver, records its origin.
+    let (_, origin) = spans
+        .values()
+        .find(|(span, _)| &src[span.span.0..span.span.1] == "y")
+        .expect("a read of `y`");
     assert!(origin.is_some(), "a variable read records its origin VarId");
 }
 
@@ -2339,15 +2341,10 @@ fn nested_place_write_stacks_projections() {
 
 #[test]
 fn aug_assign_on_a_name_is_read_modify_write() {
-    // `x += 1` ⇒ UseVar(x); Const(1); BinOp(+); DefVar(x) — one read, one write.
+    // `x += 1` ⇒ a read of `x`, then `SIMD.__iadd__` over `x`'s own place,
+    // as upstream's in-place dunder mutates its receiver: the declaration is
+    // the one write.
     let is = instrs("def main():\n    var x = 1\n    x += 1\n");
-    let reads: Vec<_> = is
-        .iter()
-        .filter_map(|i| match i {
-            MirInstr::UseVar { var, .. } => Some(*var),
-            _ => None,
-        })
-        .collect();
     let writes: Vec<_> = is
         .iter()
         .filter_map(|i| match i {
@@ -2355,21 +2352,28 @@ fn aug_assign_on_a_name_is_read_modify_write() {
             _ => None,
         })
         .collect();
-    assert_eq!(reads.len(), 1, "{is:?}");
-    // The declaration and the write-back both name the variable read.
-    assert_eq!(writes, [reads[0], reads[0]], "{is:?}");
-    assert_eq!(
-        is.iter()
-            .filter(|i| matches!(i, MirInstr::BinOp { .. }))
-            .count(),
-        1
-    );
+    assert_eq!(writes.len(), 1, "{is:?}");
+    let in_place: Vec<_> = is
+        .iter()
+        .filter_map(|i| match i {
+            MirInstr::MethodCall {
+                method,
+                resolved,
+                recv_place: Some(place),
+                recv_writes: true,
+                ..
+            } if method == "__iadd__" => Some((resolved.as_deref(), place.root)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(in_place, [(Some("SIMD.__iadd__"), writes[0])], "{is:?}");
 }
 
 #[test]
 fn aug_assign_through_a_place_loads_and_stores_the_same_place() {
-    // `xs[0] += 1` ⇒ one LoadPlace + one Store, both over the SAME place — i.e. the
-    // subscript index is flattened once and shared (not re-evaluated for the store).
+    // `xs[0] += 1` ⇒ one LoadPlace, then `__iadd__` writing the SAME place —
+    // i.e. the subscript index is flattened once and shared (not re-evaluated
+    // for the write).
     let is = instrs(&pointer_program("    xs[0] += 1\n"));
     let idx_reg = |p: &MirPlace| match p.proj.as_slice() {
         [Proj::Index(r)] => *r,
@@ -2380,12 +2384,16 @@ fn aug_assign_through_a_place_loads_and_stores_the_same_place() {
         _ => None,
     });
     let stored = is.iter().find_map(|i| match i {
-        MirInstr::Store { place, .. } => Some(idx_reg(place)),
+        MirInstr::MethodCall {
+            method,
+            recv_place: Some(place),
+            ..
+        } if method == "__iadd__" => Some(idx_reg(place)),
         _ => None,
     });
     assert!(
         loaded.is_some() && loaded == stored,
-        "load and store share one index reg: {is:?}"
+        "load and in-place write share one index reg: {is:?}"
     );
 }
 
@@ -2602,10 +2610,9 @@ fn inferred_generic_method_calls_retain_parameter_declarations() {
 
 #[test]
 fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
-    let program = parse(
-        "from std.collections.set import Set\n\ndef main():\n    var xs = List[Int](18446744073709551616)\n    var unique = Set[Int](18446744073709551616)\n    var table: Dict[Int, Int] = {18446744073709551616: 18446744073709551616}\n    for i in range(18446744073709551616):\n        pass\n",
-    )
-    .expect("parse");
+    let program = linked(
+        "from std.collections.set import Set\n\ndef main():\n    var xs: List[Int] = [18446744073709551616]\n    var unique: Set[Int] = {18446744073709551616}\n    var table: Dict[Int, Int] = {18446744073709551616: 18446744073709551616}\n    for i in range(18446744073709551616):\n        pass\n",
+    );
     let checked = mojito::check_program(&program).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     let main = &mir
@@ -2630,10 +2637,9 @@ fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
 
 #[test]
 fn comprehension_binders_receive_distinct_mir_slots_from_outer_locals() {
-    let program = parse(
+    let program = linked(
         "def main():\n    var x = 100\n    var result = [x for x in range(2) for x in range(x + 1)]\n    print(x, result)\n",
-    )
-    .expect("parse");
+    );
     let checked = mojito::check_program(&program).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     let function = mir
@@ -4062,7 +4068,7 @@ fn ref_returning_subscript_retains_a_typed_receiver_place() {
 #[test]
 fn chained_reference_subscript_materializes_a_retained_handle() {
     let src = "@fieldwise_init\nstruct Item(Copyable, Movable):\n    var value: Int\n    def bump(mut self):\n        self.value += 1\n\n@fieldwise_init\nstruct Shelf(Copyable, Movable):\n    var item: Item\n    def __getitem__(\n        ref self, index: Int\n    ) -> ref[origin_of(self.item)] Item:\n        return self.item\n\ndef main():\n    var shelf = Shelf(Item(41))\n    shelf[0].bump()\n    print(shelf.item.value)\n";
-    let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");
+    let checked = mojito::check_program(&linked(src)).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     let (_, main) = mir
         .functions
@@ -4202,7 +4208,7 @@ fn pack_element_read_argument_retains_its_place() {
 #[test]
 fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
     let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.value)] Int:\n        return self.value\n\ndef index() -> Int:\n    return 0\n\ndef bump(mut value: Int):\n    value += 2\n\ndef main():\n    var box = Box(40)\n    bump(box[index()])\n";
-    let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");
+    let checked = mojito::check_program(&linked(src)).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     let (_, main) = mir
         .functions
@@ -4248,7 +4254,7 @@ fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
 #[test]
 fn nominal_setter_mir_orders_receiver_index_and_rhs_evaluation() {
     let src = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\n@fieldwise_init\nstruct Outer(Copyable, Movable):\n    var box: Box\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.box)] Box:\n        return self.box\n\ndef rhs() -> Int:\n    return 40\n\ndef receiver_index() -> Int:\n    return 0\n\ndef index() -> Int:\n    return 2\n\ndef main():\n    var outer = Outer(Box(0))\n    outer[receiver_index()][index()] = rhs()\n";
-    let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");
+    let checked = mojito::check_program(&linked(src)).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     let (_, main) = mir
         .functions
@@ -4363,8 +4369,10 @@ fn checked_lowering_records_declaration_contracts() {
 
 #[test]
 fn recursively_lifted_declarations_preserve_checked_call_abis() {
+    // `inner`'s body, a method of its storage struct nested in `middle`'s.
+    const DEEP: &str = "outer$middle$__storage.middle$inner$__storage.inner";
     let src = "def outer() raises -> Int:\n    var base = 40\n    def middle() raises {base} -> Int:\n        def inner(head: Int, /, tail: Int = 0, *, bump: Int = 0) raises {base} -> Int:\n            return base + head + tail + bump\n        return inner(1, bump=1)\n    return middle()\n\ndef main():\n    try:\n        print(outer())\n    except error:\n        print(error)\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -4374,24 +4382,27 @@ fn recursively_lifted_declarations_preserve_checked_call_abis() {
         .declarations
         .functions
         .iter()
-        .find(|declaration| declaration.lowered_name == "outer$middle$inner")
+        .find(|declaration| declaration.lowered_name == DEEP)
         .expect("deep declaration");
-    assert_eq!(declaration.param_names, ["self", "head", "tail", "bump"]);
-    assert_eq!(declaration.param_types.len(), 4);
-    assert_eq!(declaration.defaults.len(), 4);
+    // The closure's body is a method of its storage struct: the receiver is
+    // the storage, and the lists name the source's own parameters.
+    assert!(declaration.has_receiver);
+    assert_eq!(declaration.param_names, ["head", "tail", "bump"]);
+    assert_eq!(declaration.param_types.len(), 3);
+    assert_eq!(declaration.defaults.len(), 3);
+    assert!(declaration.defaults[1].is_some());
     assert!(declaration.defaults[2].is_some());
-    assert!(declaration.defaults[3].is_some());
-    assert_eq!(declaration.required, [true, true, false, false]);
-    assert_eq!(declaration.positional_only, Some(2));
-    assert_eq!(declaration.keyword_only, Some(3));
+    assert_eq!(declaration.required, [true, false, false]);
+    assert_eq!(declaration.positional_only, Some(1));
+    assert_eq!(declaration.keyword_only, Some(2));
     assert!(declaration.raises);
     assert_eq!(declaration.ret_ty, Ty::int());
-    assert_eq!(declaration.ref_params, [false, false, false, false]);
+    assert_eq!(declaration.ref_params, [false, false, false]);
 
     let function = &mir
         .functions
         .iter()
-        .find(|(name, _)| name == "outer$middle$inner")
+        .find(|(name, _)| name == DEEP)
         .expect("deep function")
         .1;
     assert!(function.raises);
@@ -4401,7 +4412,7 @@ fn recursively_lifted_declarations_preserve_checked_call_abis() {
 #[test]
 fn recursively_lifted_reference_return_keeps_its_checked_contract() {
     let src = "def main():\n    var value = 40\n    def middle(mut middle_item: Int):\n        def inner(ref inner_item: Int) -> ref[inner_item] Int:\n            return inner_item\n        ref alias = inner(middle_item)\n        alias += 2\n    middle(value)\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -4613,7 +4624,7 @@ fn lifted_body_takes_its_storage_and_reads_captures_through_its_fields() {
     // and `twice`'s direct call of `get` calls the method on the storage
     // it reaches through its own capture of `get`.
     let src = "def main():\n    var k = 1\n    def get() {imm k} -> Int:\n        return k\n    def twice() {get} -> Int:\n        return get() + get()\n    k = 2\n    print(twice())\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     let storage = mir
         .declarations
         .structure("main$get$__storage")
@@ -4666,7 +4677,7 @@ fn lifted_body_takes_its_storage_and_reads_captures_through_its_fields() {
 #[test]
 fn forwarded_sibling_capture_parameter_keeps_its_storage_type() {
     let src = "def outer() -> Int:\n    var base = 40\n    def helper() {base} -> Int:\n        return base + 2\n    def middle() {helper} -> Int:\n        def inner() {helper} -> Int:\n            return helper()\n        return inner()\n    return middle()\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     let middle = &mir
         .functions
         .iter()
@@ -4730,7 +4741,7 @@ fn nested_call_by_name_passes_its_closure_storage() {
     // slot; no closure is made for it. The storage is a `read` receiver:
     // a `mut` capture writes its referent, not the storage.
     let src = "def outer(k: Int) -> Int:\n    var m = k\n    def cap(x: Int) {imm k} -> Int:\n        return k + x\n    def bump(x: Int) {mut m} -> Int:\n        m += x\n        return m\n    return cap(5) + bump(1)\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     let outer = &mir
         .functions
         .iter()
@@ -4807,7 +4818,7 @@ fn closure_storage_carries_the_binders_its_body_names() {
     // no enclosing binder. The closure's own parameter `m` stays its
     // method's, which is nested in no other declaration.
     let src = "def frame[n: Int](v: Int) -> Int:\n    var x = v\n    def body() {var x} -> Int:\n        return x + n\n    def sig[m: Int](y: Int) {var x} -> Int:\n        return x + m + y\n    return body() + sig[7](1)\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -4848,8 +4859,10 @@ fn closure_over_a_method_binds_its_receiver_to_a_storage_capture() {
     // A lambda used as a value moves its storage into a closure of the
     // storage's method, whose first capture is the method's receiver: a
     // capture of any other type binds no receiver.
-    let src = "def twice[F: def() -> Int](f: F) -> Int:\n    return f() + f()\n\ndef main():\n    var x = 1\n    print(twice(lambda {var x} -> Int: x))\n";
-    let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    // A generic binder takes the storage struct itself; a run-time
+    // `capturing` callable is the closure.
+    let src = "def twice(f: def() capturing[_] -> Int) -> Int:\n    return f() + f()\n\ndef main():\n    var x = 1\n    print(twice(lambda {var x} -> Int: x))\n";
+    let mut mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -4889,7 +4902,7 @@ fn nested_def_closure_is_made_at_its_first_class_use() {
     // function value of it is made where it is used, and a call by name
     // beside that use is still direct.
     let src = "def apply(f: def(Int) thin -> Int) -> Int:\n    return f(4)\n\ndef esc(k: Int) -> Int:\n    def ign(x: Int) -> Int:\n        return 3\n    return apply(ign) + ign(9)\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     let esc = &mir
         .functions
         .iter()
@@ -4917,7 +4930,7 @@ fn copied_capture_lives_in_the_storage_slot() {
     // the storage's method, which takes its `var` capture's copy from the
     // storage the declaration builds in its slot.
     let src = "def outer(k: Int) -> Int:\n    var m = k\n    def vc(x: Int) {var m} -> Int:\n        return m + x\n    return vc(2)\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     let outer = &mir
         .functions
         .iter()
@@ -4958,7 +4971,7 @@ fn closure_value_is_its_storage_struct() {
     // site, and the storage declares the `__call__` witness a call through
     // the value devirtualizes to.
     let src = "def outer(k: Int) -> Int:\n    var m = k\n    def vc(x: Int) {var m} -> Int:\n        return m + x\n    var g = vc\n    return g(2)\n";
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     let outer = &mir
         .functions
         .iter()
@@ -4995,7 +5008,7 @@ fn closure_value_is_its_storage_struct() {
 #[test]
 fn origin_specialized_function_values_use_indirect_call_mir() {
     let src = "def borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += 2\n";
-    let program = parse(src).expect("parse");
+    let program = linked(src);
     let checked = mojito::check_program(&program).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     assert!(
@@ -5027,7 +5040,7 @@ fn origin_specialized_function_values_use_indirect_call_mir() {
 #[test]
 fn explicit_origin_selection_erases_semantic_arguments_and_types_function_constants() {
     let direct = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = choose[origin_of(value)](value)\n    selected += 2\n";
-    let checked = mojito::check_program(&parse(direct).expect("parse")).expect("check");
+    let checked = mojito::check_program(&linked(direct)).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     assert!(
         mir.invariant_errors.is_empty(),
@@ -5059,7 +5072,7 @@ fn explicit_origin_selection_erases_semantic_arguments_and_types_function_consta
     ));
 
     let contextual = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    var function: def(ref[origin_of(value)] Int) thin -> ref[origin_of(value)] Int = choose[origin_of(value)]\n    ref selected = function(value)\n";
-    let checked = mojito::check_program(&parse(contextual).expect("parse")).expect("check");
+    let checked = mojito::check_program(&linked(contextual)).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     assert!(
         mir.invariant_errors.is_empty(),
@@ -5093,7 +5106,7 @@ fn explicit_origin_selection_erases_semantic_arguments_and_types_function_consta
 #[test]
 fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
     let src = "def apply[F: def(Int) -> Int](callback: F, value: Int) -> Int:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(apply(increment, 41))\n";
-    let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mut mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -5173,7 +5186,7 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
     }
 
     let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
-    let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mut mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -5239,7 +5252,7 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
     use mojito::origin::SigOrigin;
 
     let src = include_str!("../conformance/fixtures/nested_origin_specialized_function_value.mojo");
-    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -5781,8 +5794,8 @@ fn closed_aggregate_parameter_argument_has_no_runtime_form() {
 #[test]
 fn lone_struct_dunder_operator_names_its_method() {
     // A struct operator is its dunder call: the checker names the selected
-    // dunder even when it is the struct's only declaration, while a scalar
-    // operator names none.
+    // dunder even when it is the struct's only declaration, and a scalar
+    // operator names `SIMD`'s library dunder.
     let instructions = instrs(
         "struct S(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __add__(self, o: Int) -> Int:\n        return self.v + o\n\ndef main():\n    var s = S(4)\n    var n = 1\n    print(s + 1)\n    print(n + 2)\n",
     );
@@ -5796,7 +5809,11 @@ fn lone_struct_dunder_operator_names_its_method() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(resolved, [Some("S.__add__"), None], "{instructions:#?}");
+    assert_eq!(
+        resolved,
+        [Some("S.__add__"), Some("SIMD.__add__")],
+        "{instructions:#?}"
+    );
 }
 
 #[test]
@@ -5840,10 +5857,18 @@ fn owned_receiver_struct_operators_are_method_calls() {
 
 #[test]
 fn chained_comparison_links_name_their_dunders() {
-    // Each link of a struct chain is its dunder's call, as a lone operator
-    // is; a scalar chain's links name none.
-    let mir = checked_program_mir(
+    // Each link of a chain is its dunder's call, as a lone operator is: a
+    // struct's own, and a scalar's `SIMD` library dunder. The program is
+    // lowered from source, so the library's declarations type the links.
+    let checked = mojito::check_program(&linked(
         "struct S(ImplicitlyCopyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __lt__(self, o: Self) -> Bool:\n        return self.v < o.v\n\ndef main():\n    var a = S(1)\n    var b = S(2)\n    var c = S(3)\n    print(a < b < c)\n    var n = 1\n    print(0 < n < 2)\n",
+    ))
+    .expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
     );
     // A later link runs in the `if` on the one before it.
     let mut resolved = mojito::mir::nested_instructions(&mir_function(&mir, "main").blocks)
@@ -5857,7 +5882,15 @@ fn chained_comparison_links_name_their_dunders() {
         })
         .collect::<Vec<_>>();
     resolved.sort_unstable();
-    assert_eq!(resolved, [None, None, Some("S.__lt__"), Some("S.__lt__")]);
+    assert_eq!(
+        resolved,
+        [
+            Some("S.__lt__"),
+            Some("S.__lt__"),
+            Some("SIMD.__lt__"),
+            Some("SIMD.__lt__")
+        ]
+    );
 }
 
 #[test]
@@ -6039,18 +6072,23 @@ def main() raises:
     let outer = calls("outer");
     assert_eq!(
         defaults(&outer),
-        [("$default$outer$inner$y".to_string(), 1)]
+        [("$default$outer$inner$__storage.inner$y".to_string(), 1)]
     );
-    // A call of the nested `def` by name is a direct call of its lifted
-    // body: its closure's storage, then `x`, then `y`, filled or written.
+    // A call of the nested `def` by name is a call of its body, a method of
+    // its closure's storage: the storage is the receiver, then `x`, then
+    // `y`, filled or written.
     let inner_arities: Vec<usize> = outer
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::Call { func, args, .. } if func.0.ends_with("$inner") => Some(args.len()),
+            MirInstr::MethodCall { resolved, args, .. }
+                if resolved.as_deref() == Some("outer$inner$__storage.inner") =>
+            {
+                Some(args.len())
+            }
             _ => None,
         })
         .collect();
-    assert_eq!(inner_arities, [3, 3]);
+    assert_eq!(inner_arities, [2, 2]);
     let main = calls("main");
     assert!(
         defaults(&main)

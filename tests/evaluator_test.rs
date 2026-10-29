@@ -957,14 +957,15 @@ fn simd_negation_select_and_reductions_execute() {
 #[test]
 fn runtime_scalar_conversions_wrap_bit_accurately() {
     // 300 wraps to 44 in uint8; a byte widens exactly into int32; an integer
-    // converts numerically into a float lane.
-    let e = run(
-        "var i = 300\nvar b: Byte = Byte(i)\nvar n: Int32 = Int32(Byte(200))\nvar f: Float32 = Float32(i)\nvar v: SIMD[DType.uint8, 2] = SIMD[DType.uint8, 2](Byte(i), 259)\n",
-    );
-    assert_eq!(binding(&e, "b").to_string(), "44");
-    assert_eq!(binding(&e, "n").to_string(), "200");
-    assert_eq!(binding(&e, "f").to_string(), "300.0");
-    assert_eq!(binding(&e, "v").to_string(), "[44, 3]");
+    // converts numerically into a float lane. The conversions run in `main`:
+    // `SIMD`'s cast initializer is always-inline, which a module-scope
+    // snippet does not splice (R1617).
+    let output = execute(
+        "def main():\n    var i = 300\n    var b: Byte = Byte(i)\n    var n: Int32 = Int32(Byte(200))\n    var f: Float32 = Float32(i)\n    var v: SIMD[DType.uint8, 2] = SIMD[DType.uint8, 2](Byte(i), 259)\n    print(b, n, f, v)\n",
+    )
+    .expect("runtime error")
+    .output;
+    assert_eq!(output, "44 200 300.0 [44, 3]\n");
 }
 
 #[test]

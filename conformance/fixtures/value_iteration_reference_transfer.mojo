@@ -34,8 +34,8 @@ def take(var item: Item):
 
 
 def main():
-    # A `ref` target over a value (rvalue) result owns its per-iteration storage
-    # well enough to transfer the item onward with `^`.
+    # A `ref` target over a value (rvalue) result designates no origin, so
+    # transferring the item onward with `^` is rejected, as at the pin.
     var source = Values()
     for ref item in source:
         take(item^)

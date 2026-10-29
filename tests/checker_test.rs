@@ -37,6 +37,22 @@ fn checked_with_std(source: &str) -> Result<mojito::checked::CheckedProgram, Typ
     check_program(&program)
 }
 
+/// Whether `source`, a checked node's module path, is the bundled library's:
+/// a test over a program with the library linked reads only its own nodes.
+fn from_library(source: Option<&str>) -> bool {
+    source.is_some_and(|source| source.contains("/stdlib/std/"))
+}
+
+/// The expressions `checked` holds outside the bundled library.
+fn own_expressions(
+    checked: &mojito::checked::CheckedProgram,
+) -> impl Iterator<Item = &mojito::checked::CheckedExpr> {
+    checked
+        .expressions()
+        .iter()
+        .filter(|expression| !from_library(expression.source.as_deref()))
+}
+
 /// Like [`ok`], with the standard library linked.
 fn ok_std(source: &str) {
     check_with_std(source).expect("expected the program to type-check");
@@ -58,7 +74,7 @@ fn accepts_well_typed_declarations() {
 
 #[test]
 fn accepts_functions_and_calls() {
-    ok("def add(x: Int, y: Int) -> Int:\n    return x + y\n\nvar s: Int = add(3, 4)\n");
+    ok_std("def add(x: Int, y: Int) -> Int:\n    return x + y\n\nvar s: Int = add(3, 4)\n");
 }
 
 #[test]
@@ -70,7 +86,7 @@ fn reserved_function_words_remain_valid_for_methods() {
 
 #[test]
 fn accepts_a_named_out_result_as_the_function_return() {
-    ok(
+    ok_std(
         "def doubled(value: Int, out result: Int):\n    result = value * 2\n\ndef main():\n    var answer: Int = doubled(21)\n",
     );
 }
@@ -90,7 +106,7 @@ fn accepts_recursion() {
 
 #[test]
 fn accepts_lexical_capture_downward_funarg() {
-    ok(
+    ok_std(
         "def adder(n: Int) -> Int:\n    def add_n(x: Int) {n} -> Int:\n        return x + n\n    return add_n(100)\n\nvar c: Int = adder(42)\n",
     );
 }
@@ -258,8 +274,7 @@ fn nominal_callable_rejects_a_value_result_for_a_reference_result_contract() {
 #[test]
 fn nominal_callable_selects_the_contract_matching_same_arity_overload() {
     let source = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
-    let program = mojito::parse(source).expect("parse overloaded nominal callable");
-    let checked = mojito::check_program(&program).expect("check overloaded nominal callable");
+    let checked = checked_with_std(source).expect("check overloaded nominal callable");
     assert!(
         checked
             .overload_targets()
@@ -286,7 +301,7 @@ fn nominal_callable_rejects_when_no_same_arity_overload_matches_the_contract() {
 
 #[test]
 fn nominal_callable_struct_is_not_a_def_typed_value() {
-    let error = err(
+    let error = err_std(
         "@fieldwise_init\nstruct Scale(def(Int) -> Int):\n    var factor: Int\n    def __call__(self, value: Int) -> Int:\n        return value * self.factor\n\ndef apply(callback: def(Int) -> Int, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(apply(Scale(3), 14))\n",
     );
     assert!(
@@ -476,7 +491,7 @@ const POINT: &str = "@fieldwise_init\nstruct Point:\n    var x: Int\n    var y: 
 
 #[test]
 fn accepts_struct_construction_field_and_method() {
-    ok(&format!(
+    ok_std(&format!(
         "{POINT}var p: Point = Point(1, 2)\nvar s: Int = p.sum()\nvar a: Int = p.x\n"
     ));
 }
@@ -490,7 +505,7 @@ fn accepts_struct_typed_field_and_chained_access() {
 
 #[test]
 fn rejects_unknown_field() {
-    let e = err(&format!(
+    let e = err_std(&format!(
         "{POINT}var p: Point = Point(1, 2)\nvar z: Int = p.z\n"
     ));
     assert!(matches!(e, TypeError::NoSuchField { .. }), "got {e:?}");
@@ -498,7 +513,7 @@ fn rejects_unknown_field() {
 
 #[test]
 fn rejects_unknown_method() {
-    let e = err(&format!(
+    let e = err_std(&format!(
         "{POINT}var p: Point = Point(1, 2)\nvar z: Int = p.nope()\n"
     ));
     assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {e:?}");
@@ -507,11 +522,11 @@ fn rejects_unknown_method() {
 #[test]
 fn rejects_construction_arity_and_type() {
     assert!(matches!(
-        err(&format!("{POINT}var p: Point = Point(1)\n")),
+        err_std(&format!("{POINT}var p: Point = Point(1)\n")),
         TypeError::ArityMismatch { .. }
     ));
     assert!(matches!(
-        err(&format!("{POINT}var p: Point = Point(1, True)\n")),
+        err_std(&format!("{POINT}var p: Point = Point(1, True)\n")),
         TypeError::TypeMismatch { .. }
     ));
 }
@@ -580,7 +595,7 @@ fn rejects_float_literal_to_int() {
 #[test]
 fn int_literal_coerces_to_uint_and_float() {
     // Literal coercion: bare literals materialize to the annotated type.
-    ok("var u: UInt = 0\nvar f: Float64 = 3\nvar g: Float64 = 1 + 2\nu = u + 1\n");
+    ok_std("var u: UInt = 0\nvar f: Float64 = 3\nvar g: Float64 = 1 + 2\nu = u + 1\n");
 }
 
 #[test]
@@ -637,12 +652,12 @@ fn rejects_conversion_of_string() {
 
 #[test]
 fn accepts_assignment_keeping_the_declared_type() {
-    ok("var x: Int = 1\nx = 2\nx = x + 40\n");
+    ok_std("var x: Int = 1\nx = 2\nx = x + 40\n");
 }
 
 #[test]
 fn accepts_assignment_to_an_outer_variable_from_a_loop() {
-    ok("var total: Int = 0\nfor i in range(10):\n    total = total + i\n");
+    ok_std("var total: Int = 0\nfor i in range(10):\n    total = total + i\n");
 }
 
 #[test]
@@ -727,7 +742,7 @@ fn accepts_while_with_bool_condition() {
 #[test]
 fn accepts_for_over_range_with_int_loop_var() {
     // The loop variable is Int and is in scope in the body.
-    ok("for i in range(10):\n    var x: Int = i + 1\n");
+    ok_std("for i in range(10):\n    var x: Int = i + 1\n");
 }
 
 #[test]
@@ -780,10 +795,10 @@ fn checks_owned_iteration_and_collection_comprehensions() {
 
 #[test]
 fn comprehension_binders_are_lexical_and_enforce_linear_cleanup() {
-    ok(
+    ok_std(
         "def main():\n    var x = 100\n    var values = [x for x in range(3)]\n    print(x, values)\n",
     );
-    ok(
+    ok_std(
         "def main():\n    var values = [x for x in range(2) for x in range(x + 1)]\n    print(values)\n",
     );
 
@@ -791,7 +806,7 @@ fn comprehension_binders_are_lexical_and_enforce_linear_cleanup() {
     // iteration requires `Movable & Deinitable` elements (current Mojo bounds).
     let linear = "@explicit_destroy(\"close Item\")\nstruct Item(Deinitable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
     assert!(matches!(
-        err(&format!(
+        err_std(&format!(
             "{linear}def main():\n    var values: List[Item] = [Item(1)]\n    var result = [item^.close() for var item in values^]\n"
         )),
         TypeError::Unsupported(message) if message.contains("requires 'Movable & Deinitable' elements")
@@ -1146,7 +1161,9 @@ fn closed_bracket_arguments_record_their_folded_positions() {
             .collect()
     };
     assert_eq!(folded("tup"), vec![(true, vec![0])]);
-    assert_eq!(folded("one"), vec![(true, vec![0])]);
+    // A struct construction is the application of its `__init__`, which the
+    // elaborator evaluates, so it is no closed value at the check.
+    assert_eq!(folded("one"), vec![(false, vec![])]);
     let scalar = folded("s");
     assert!(scalar.contains(&(true, vec![0])), "{scalar:?}");
     assert!(
@@ -1164,9 +1181,12 @@ fn abstract_element_copyability_derives_from_member_bounds() {
     // a generic loop, while a Copyable-only element still needs an explicit
     // copy and an ImplicitlyCopyable element may be returned directly.
     let movable = "trait Items:\n    comptime Element: Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
+    // A Movable-only element is not `Deinitable` either, which the loop
+    // item's abandonment judges first.
     let error = err_std(movable);
     assert!(
-        matches!(&error, TypeError::NonCopyable { ty, .. } if ty == "C.Element"),
+        matches!(&error, TypeError::TraitNotSatisfied { ty, trait_name, .. }
+            if ty == "C.Element" && trait_name == "Deinitable"),
         "got {error:?}"
     );
     let copyable = "trait Items:\n    comptime Element: Copyable & Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
@@ -1208,10 +1228,10 @@ fn projected_origin_iterator_contract_carries_parametric_mutability() {
     let mutable = format!(
         "{header}def main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n"
     );
-    ok(&mutable);
+    ok_std(&mutable);
     let immutable =
         format!("{header}def bump(nums: Numbers):\n    for ref x in nums:\n        x += 1\n");
-    let error = err(&immutable);
+    let error = err_std(&immutable);
     assert!(
         matches!(&error, TypeError::ImmutableInPlaceDestination(name) if name == "x")
             || matches!(&error, TypeError::Unsupported(_)),
@@ -1336,10 +1356,10 @@ fn struct_declarations_resolve_order_independently() {
     // top-level struct before any body checks, so same-module declarations may
     // reference each other in either order — including mutually, as an
     // iterator holding `ref[o] Container` declared above its container.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Holder:\n    var b: Bin\n\n@fieldwise_init\nstruct Bin(Copyable, Movable):\n    var n: Int\n\ndef main():\n    var h = Holder(Bin(3))\n    print(h.b.n)\n",
     );
-    ok(
+    ok_std(
         "struct A:\n    var n: Int\n\n    def __init__(out self):\n        self.n = 1\n\n    def make(self) -> Int:\n        var b = B(2)\n        return b.n + self.n\n\n@fieldwise_init\nstruct B:\n    var n: Int\n\ndef main():\n    print(A().make())\n",
     );
 }
@@ -1417,20 +1437,20 @@ fn accepts_calling_bound_trait_method_on_type_parameter() {
 
 #[test]
 fn accepts_trait_receiver_convention_requirements() {
-    ok(
+    ok_std(
         "trait Bumpable:\n    def bump(mut self):\n        ...\n\n@fieldwise_init\nstruct Counter(Bumpable):\n    var n: Int\n\n    def bump(mut self):\n        self.n = self.n + 1\n\ndef inc[T: Bumpable](mut x: T):\n    x.bump()\n",
     );
-    ok(
+    ok_std(
         "trait Consumable:\n    def consume(var self):\n        ...\n\n@fieldwise_init\nstruct Box(Consumable):\n    var n: Int\n\n    def consume(var self):\n        pass\n",
     );
 }
 
 #[test]
 fn rejects_assignment_to_immutable_parameter_but_allows_mut_parameter() {
-    let e = err("def f(a: Int):\n    a = a + 1\n");
+    let e = err_std("def f(a: Int):\n    a = a + 1\n");
     assert_eq!(e, TypeError::ImmutableBinding("a".into()));
 
-    ok("def f(mut a: Int):\n    a = a + 1\n");
+    ok_std("def f(mut a: Int):\n    a = a + 1\n");
 }
 
 #[test]
@@ -1627,7 +1647,7 @@ fn a_registered_iterator_trait_is_not_a_shallow_builtin_marker() {
 }
 
 #[test]
-fn a_raising_iter_step_is_rejected_only_in_a_chained_normalization() {
+fn a_raising_iter_runs_and_an_iter_result_without_next_is_rejected() {
     let iterator = "@fieldwise_init\nstruct It(Iterator):\n    comptime Element = Int\n    var n: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        raise StopIteration()\n\n";
     ok_std(&format!(
         "{iterator}struct Bad:\n    def __init__(out self):\n        pass\n    def __iter__(ref self) raises -> It:\n        raise Error(\"bad\")\n\ndef main() raises:\n    for x in Bad():\n        print(x)\n"
@@ -1635,8 +1655,10 @@ fn a_raising_iter_step_is_rejected_only_in_a_chained_normalization() {
     let error = err_std(&format!(
         "{iterator}@fieldwise_init\nstruct Mid(Copyable):\n    var z: Int\n    def __iter__(ref self) raises -> It:\n        raise Error(\"mid\")\n\nstruct Top:\n    def __init__(out self):\n        pass\n    def __iter__(ref self) -> Mid:\n        return Mid(0)\n\ndef main() raises:\n    for x in Top():\n        print(x)\n"
     ));
+    // `Mid` is no iterator: its own `__iter__` is not chained, and the pin
+    // rejects it as not conforming to `Iterable`.
     assert!(
-        matches!(error, TypeError::Unsupported(ref message) if message.contains("raising '__iter__'")),
+        matches!(&error, TypeError::TypeMismatch { context, .. } if context == "__iter__ return type"),
         "{error:?}"
     );
 }
@@ -1690,18 +1712,18 @@ fn a_witness_defaults_apart_from_its_requirement() {
     // differently, or not at all, and still conform.
     let requirement = "trait Scaler:\n    def scale(self, value: Int, factor: Int = -2) -> Int: ...\n\n@fieldwise_init\nstruct Twice(Scaler):\n    var base: Int\n";
     for witness in ["factor: Int = -2", "factor: Int = 7", "factor: Int"] {
-        ok(&format!(
+        ok_std(&format!(
             "{requirement}    def scale(self, value: Int, {witness}) -> Int:\n        return value * factor\n"
         ));
     }
-    ok(
+    ok_std(
         "trait Scaler:\n    def scale(self, value: Int, factor: Int) -> Int: ...\n\n@fieldwise_init\nstruct Twice(Scaler):\n    var base: Int\n    def scale(self, value: Int, factor: Int = 3) -> Int:\n        return value * factor\n",
     );
 
     // A module constant, declared before or after the trait, folds to the
     // value it names in the trait's scope.
     for default in ["TWO", "-TWO * 3 + LATER", "FLAG"] {
-        ok(&format!(
+        ok_std(&format!(
             "comptime TWO = 2\ncomptime FLAG = True\n\ntrait Scaler:\n    def scale(self, value: Int, factor: {} = {default}) -> Int: ...\n\ncomptime LATER = 1\n",
             if default == "FLAG" { "Bool" } else { "Int" }
         ));
@@ -1710,13 +1732,13 @@ fn a_witness_defaults_apart_from_its_requirement() {
     // A default may read the method's own value parameters, beside module
     // constants: a call through the bound spells its compile-time
     // arguments in their place.
-    ok(
+    ok_std(
         "comptime TWO = 2\n\ntrait Scaler:\n    def scale[n: Int](self, value: Int, factor: Int = n * TWO - 1) -> Int: ...\n",
     );
 
     // A call, or a type parameter, is not folded.
     for default in ["len(\"ab\")", "T"] {
-        let error = err(&format!(
+        let error = err_std(&format!(
             "trait Scaler:\n    def scale[T: AnyType](self, value: Int, factor: Int = {default}) -> Int: ...\n"
         ));
         assert!(
@@ -2012,7 +2034,7 @@ fn accepts_comptime_arithmetic_argument() {
 
 #[test]
 fn accepts_value_parameter_function() {
-    ok("def doubled[n: Int]() -> Int:\n    return n * 2\n\nvar d: Int = doubled[21]()\n");
+    ok_std("def doubled[n: Int]() -> Int:\n    return n * 2\n\nvar d: Int = doubled[21]()\n");
 }
 
 #[test]
@@ -2103,7 +2125,7 @@ fn rejects_explicit_params_on_non_generic_function() {
 
 #[test]
 fn accepts_simd_construction_ops_and_index() {
-    ok(
+    ok_std(
         "var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar w: SIMD[DType.int32, 4] = v + v * v\nvar lane: Int32 = w[0]\n",
     );
 }
@@ -2132,7 +2154,7 @@ fn simd_comparison_types_the_reducing_dunder() {
 
 #[test]
 fn accepts_literal_splat_in_simd_operator() {
-    ok(
+    ok_std(
         "var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar w: SIMD[DType.int32, 4] = v + 100\n",
     );
 }
@@ -2197,19 +2219,19 @@ fn called_function_in_a_signature_keeps_application_identity() {
         struct Wrap[n: Int]:\n    var v: SIMD[DType.int32, later(Self.n)]\n\n\
         \x20   def __init__(out self):\n        self.v = 3\n\n\
         def later(n: Int) -> Int:\n    return n * 2\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{prefix}def main():\n    var v: SIMD[DType.int32, h(2)] = make[2]()\n    \
          var explicit = total[2](v)\n    var inferred = total(v)\n    \
          var w = Wrap[2]()\n    var field: SIMD[DType.int32, later(2)] = w.v\n"
     ));
-    let computed = err(&format!(
+    let computed = err_std(&format!(
         "{prefix}def main():\n    var v: SIMD[DType.int32, 4] = make[2]()\n"
     ));
     assert!(
         matches!(computed, TypeError::TypeMismatch { expected, found, .. }
             if expected == "SIMD[DType.int32, 4]" && found == "SIMD[DType.int32, h(2)]")
     );
-    let argument = err(&format!(
+    let argument = err_std(&format!(
         "{prefix}def main():\n    var result = total[2](SIMD[DType.int32, 4](3))\n"
     ));
     assert!(
@@ -2218,7 +2240,7 @@ fn called_function_in_a_signature_keeps_application_identity() {
     );
     // A width the function does not spell leaves the parameter unsolved.
     assert!(
-        check_source(&format!(
+        check_with_std(&format!(
             "{prefix}def main():\n    var result = total(SIMD[DType.int32, 4](3))\n"
         ))
         .is_err()
@@ -2244,7 +2266,7 @@ fn called_callable_shapes_keep_application_identity() {
         def static[n: Int]() -> SIMD[DType.int32, S.f(n)]:\n    \
         return SIMD[DType.int32, S.f(n)](7)\n\n\
         def on_instance[n: Int](v: SIMD[DType.int32, G[n].w()]) -> Int:\n    return n\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{prefix}def main():\n    var a: SIMD[DType.int32, twice[2]()] = generic[2]()\n    \
          var b: SIMD[DType.int32, ov(2)] = overloaded[2]()\n    \
          var c: SIMD[DType.int32, d(2, 3)] = defaulted[2]()\n    \
@@ -2254,13 +2276,13 @@ fn called_callable_shapes_keep_application_identity() {
     ));
     // An application is not the value it computes, and one overload is not
     // another.
-    let computed = err(&format!(
+    let computed = err_std(&format!(
         "{prefix}def main():\n    var a: SIMD[DType.int32, 4] = generic[2]()\n"
     ));
     assert!(matches!(computed, TypeError::TypeMismatch { expected, .. }
             if expected == "SIMD[DType.int32, 4]"));
     assert!(
-        check_source(&format!(
+        check_with_std(&format!(
             "{prefix}def main():\n    var b: SIMD[DType.int32, ov(True)] = overloaded[2]()\n"
         ))
         .is_err()
@@ -2332,8 +2354,10 @@ fn comptime_not_and_conditional_compile_to_parameter_operators() {
 
 #[test]
 fn rejects_a_raising_call_in_a_type_parameter() {
-    let raising = err("def r(n: Int) raises -> Int:\n    return n * 2\n\n\
-         def gen[n: Int]() -> SIMD[DType.int32, r(n)]:\n    return SIMD[DType.int32, 2](7)\n");
+    let raising = err_std(
+        "def r(n: Int) raises -> Int:\n    return n * 2\n\n\
+         def gen[n: Int]() -> SIMD[DType.int32, r(n)]:\n    return SIMD[DType.int32, 2](7)\n",
+    );
     assert!(
         matches!(&raising, TypeError::BadCall { func, reason }
             if func == "r" && reason == "cannot call raising function in type parameter"),
@@ -2386,7 +2410,7 @@ fn rejects_indexing_a_non_simd() {
 
 #[test]
 fn accepts_lanes_and_simd_methods_on_host_scalars() {
-    ok(
+    ok_std(
         "def main():\n    var x = Int(5)\n    var lane: Int = x[0]\n    x[0] = 7\n    var f: Float64 = Float64(1.5)[0]\n    var m: SIMD[DType.bool, 1] = Float64(1.5).ne(2.5)\n    var total: UInt = UInt(4).reduce_add()\n    var narrow: Int32 = x.cast[DType.int32]()\n",
     );
 }
@@ -2462,13 +2486,8 @@ fn rejects_bad_simd_shuffle_masks() {
 
 #[test]
 fn rejects_simd_mask_negation_and_shape_misuse() {
-    // A bool mask does not negate.
-    assert!(matches!(
-        err(
-            "def main():\n    var m = SIMD[DType.int32, 2](1, 2).lt(SIMD[DType.int32, 2](2, 2))\n    var bad = -m\n"
-        ),
-        TypeError::BadOperator { .. }
-    ));
+    // A bool mask does not negate: `SIMD.__neg__`'s `comptime assert` fails
+    // in the instance (`assets/type_error/simd_bool_mask_negate.mojo`).
     // The cases of the declared `select` must share the mask's width (a
     // non-`bool` mask fails its `comptime assert` in the instance:
     // `assets/type_error/simd_select_non_bool_mask.mojo`).
@@ -2510,26 +2529,22 @@ fn accepts_intable_sources_for_integer_lanes() {
 }
 
 #[test]
-fn rejects_float_sources_for_integer_lanes() {
-    // A float source spells its truncation explicitly (`Int(x)` first).
+fn rejects_float_literal_sources_for_integer_lanes() {
+    // A float literal fails the `FloatLiteral` initializer's float-dtype
+    // assert, as at the pin; a float value converts through `SIMD`'s cast
+    // initializer (`Int8(f)` truncates).
     assert!(matches!(
-        err("def main():\n    var b = Byte(1.5)\n"),
-        TypeError::TypeMismatch { .. }
+        err_std("def main():\n    var b = Byte(1.5)\n"),
+        TypeError::BadCall { .. }
     ));
-    assert!(matches!(
-        err("def main():\n    var f = 2.5\n    var b = Int8(f)\n"),
-        TypeError::TypeMismatch { .. }
-    ));
-    assert!(matches!(
-        err("def main():\n    var g: Float32 = Float32(1.0)\n    var b = Int8(g)\n"),
-        TypeError::TypeMismatch { .. }
-    ));
+    ok_std("def main():\n    var f = 2.5\n    var b = Int8(f)\n");
+    ok_std("def main():\n    var g: Float32 = Float32(1.0)\n    var b = Int8(g)\n");
 }
 
 #[test]
 fn rejects_float_literal_for_integer_dtype() {
-    let e = err("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1.5, 2.5)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    let e = err_std("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1.5, 2.5)\n");
+    assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2883,7 +2898,7 @@ fn collection_literal_annotations_solve_only_direct_type_holes() {
 
 #[test]
 fn accepts_len_index_and_iteration() {
-    ok(
+    ok_std(
         "var xs: List[Int] = [10, 20, 30]\nvar n: Int = len(xs)\nvar first: Int = xs[0]\nvar sum: Int = 0\nfor x in xs:\n    sum = sum + x\n",
     );
 }
@@ -2962,16 +2977,16 @@ fn rejects_mutating_a_non_variable_list() {
 #[test]
 fn accepts_simd_lane_write() {
     // A SIMD lane write `v[i] = e` takes a splatting literal or a same-dtype scalar.
-    ok(
+    ok_std(
         "var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nv[0] = 9\nv[1] = Int32(5)\nv[2] += 100\n",
     );
     // ...but not a value of the wrong element kind, nor a whole vector.
     assert!(matches!(
-        err("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1, 2)\nv[0] = True\n"),
+        err_std("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1, 2)\nv[0] = True\n"),
         TypeError::TypeMismatch { .. }
     ));
     assert!(matches!(
-        err(
+        err_std(
             "var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1, 2)\nv[0] = SIMD[DType.int32, 2](1, 2)\n"
         ),
         TypeError::TypeMismatch { .. }
@@ -3083,20 +3098,20 @@ const MUTPT: &str = "@fieldwise_init\nstruct Point:\n    var x: Int\n    var y: 
 
 #[test]
 fn accepts_field_and_nested_place_writes() {
-    ok(&format!(
+    ok_std(&format!(
         "{MUTPT}var p: Point = Point(1, 2)\np.x = 10\np.y = p.x + 1\n"
     ));
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct In:\n    var v: Int\n\n@fieldwise_init\nstruct Out:\n    var inner: In\n\nvar o: Out = Out(In(5))\no.inner.v = 100\n",
     );
-    ok(&format!(
+    ok_std(&format!(
         "{MUTPT}var ps: List[Point] = [Point(1, 1)]\nps[0].x = 9\n"
     ));
 }
 
 #[test]
 fn accepts_mut_self_method_and_mutation() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Counter:\n    var n: Int\n\n    def inc(mut self):\n        self.n = self.n + 1\n\nvar c: Counter = Counter(0)\nc.inc()\n",
     );
 }
@@ -3118,7 +3133,7 @@ fn rejects_field_write_on_read_only_self() {
 
 #[test]
 fn rejects_mut_self_call_on_a_temporary() {
-    let e = err(
+    let e = err_std(
         "@fieldwise_init\nstruct C:\n    var n: Int\n\n    def inc(mut self):\n        self.n = self.n + 1\n\nC(0).inc()\n",
     );
     assert!(matches!(e, TypeError::InvalidAssignTarget(_)), "got {e:?}");
@@ -3193,14 +3208,14 @@ fn float64_and_simd_float64_1_are_the_same_type() {
 
 #[test]
 fn accepts_float64_vectors_and_lane_ops() {
-    ok(
+    ok_std(
         "var v: SIMD[DType.float64, 4] = SIMD[DType.float64, 4](1.0, 2.0, 3.0, 4.0)\nvar d: SIMD[DType.float64, 4] = v + v\nvar q: SIMD[DType.float64, 4] = v / SIMD[DType.float64, 4](2.0)\nvar lane: Float64 = v[2]\nv[0] = 9.0\nv[1] += 1.0\nvar m: SIMD[DType.bool, 4] = v.lt(d)\n",
     );
 }
 
 #[test]
 fn float64_scalar_splats_into_a_float64_vector() {
-    ok(
+    ok_std(
         "var a: Float64 = 2.0\nvar v: SIMD[DType.float64, 2] = SIMD[DType.float64, 2](1.0, 2.0)\nvar w: SIMD[DType.float64, 2] = v + a\nv[0] = a\n",
     );
 }
@@ -3315,10 +3330,8 @@ fn public_tuple_satisfies_comparable() {
 #[test]
 fn checked_calls_mark_ordinary_and_parameterized_implicit_receiver_copies() {
     let source = "@fieldwise_init\nstruct Counter(ImplicitlyCopyable):\n    var value: Int\n    def take(deinit self) -> Int:\n        return self.value\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter.take())\n    print(counter.take_param[2]())\n    print(counter.value)\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
-    let copied_calls = checked
-        .expressions()
-        .iter()
+    let checked = checked_with_std(source).expect("check");
+    let copied_calls = own_expressions(&checked)
         .filter(|expression| {
             expression.adjustments.iter().any(|adjustment| {
                 matches!(
@@ -3348,10 +3361,8 @@ fn parameter_valued_conditions_mark_their_conditionals_comptime() {
     // `flag` and `n > 0` are parameter values; a call of an ordinary `def`
     // and an `and` are run-time values, as the pin's `getIfPValue` has them.
     let source = "def is_zero(n: Int) -> Bool:\n    return n == 0\n\ndef pick[flag: Bool, n: Int]() -> Int:\n    var a = 1 if flag else 2\n    var b = 3 if n > 0 else 4\n    var c = 5 if is_zero(n) else 6\n    var d = 7 if flag and n > 0 else 8\n    return a + b + c + d\n\ndef main():\n    print(pick[True, 1]())\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
-    let marked: Vec<bool> = checked
-        .expressions()
-        .iter()
+    let checked = checked_with_std(source).expect("check");
+    let marked: Vec<bool> = own_expressions(&checked)
         .filter(|expression| matches!(expression.op, mojito::checked::CheckedOp::IfExpr { .. }))
         .map(|expression| {
             expression
@@ -3400,7 +3411,7 @@ fn losing_overload_probe_leaves_no_compile_time_argument_fact() {
     // `kind[n]` passes `n` as a runtime value node, while `kind[T]`'s
     // value-shaped `T` is the type attribute binding recorded.
     let source = "def kind[T: AnyType](a: Int) -> Int:\n    return a\n\ndef kind[n: Int](a: Float64) -> Int:\n    return n\n\ndef both[n: Int, T: AnyType](a: Float64) -> Int:\n    return kind[T](1) + kind[n](a)\n\ndef main():\n    print(both[5, Int](1.0))\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let kind_arguments = bracket_arguments(&checked, "kind");
     assert!(
         kind_arguments.iter().any(|arguments| matches!(
@@ -3636,27 +3647,29 @@ fn bounded_trait_methods_share_generic_keyword_collection_and_effect_checks() {
 
 #[test]
 fn accepts_positional_only_and_keyword_only_markers() {
-    ok("def first(a: Int, b: Int, /) -> Int:\n    return a\n\nvar x: Int = first(1, 2)\n");
-    ok("def scale(a: Int, *, by: Int) -> Int:\n    return a * by\n\nvar x: Int = scale(4, by=5)\n");
+    ok_std("def first(a: Int, b: Int, /) -> Int:\n    return a\n\nvar x: Int = first(1, 2)\n");
+    ok_std(
+        "def scale(a: Int, *, by: Int) -> Int:\n    return a * by\n\nvar x: Int = scale(4, by=5)\n",
+    );
     ok_std(
         "def total(*values: Int, scale: Int) -> Int:\n    var t: Int = 0\n    for v in values:\n        t = t + v\n    return t * scale\n\nvar x: Int = total(1, 2, 3, scale=10)\n",
     );
-    ok(
+    ok_std(
         "def needs_kw(a: Int = 1, *, b: Int) -> Int:\n    return a + b\n\nvar x: Int = needs_kw(b=4)\n",
     );
 
     assert!(matches!(
-        err("def first(a: Int, /) -> Int:\n    return a\n\nvar x: Int = first(a=1)\n"),
+        err_std("def first(a: Int, /) -> Int:\n    return a\n\nvar x: Int = first(a=1)\n"),
         TypeError::BadCall { .. }
     ));
     assert!(matches!(
-        err(
+        err_std(
             "def scale(a: Int, *, by: Int) -> Int:\n    return a * by\n\nvar x: Int = scale(4, 5)\n"
         ),
         TypeError::ArityMismatch { .. }
     ));
     assert!(matches!(
-        err(
+        err_std(
             "def needs_kw(a: Int = 1, *, b: Int) -> Int:\n    return a + b\n\nvar x: Int = needs_kw()\n"
         ),
         TypeError::BadCall { .. }
@@ -3899,12 +3912,10 @@ fn enforces_trailing_where_constraints_and_type_equality() {
         ),
         TypeError::BadCall { .. }
     ));
-    assert!(matches!(
-        err_std(
-            "def comparable[T: AnyType](value: T) -> Int where conforms_to(T, Comparable):\n    return 1\n\nvar a = comparable(\"no\")\n"
-        ),
-        TypeError::BadCall { .. }
-    ));
+    // A string literal is `Comparable`, as at the pin.
+    ok_std(
+        "def comparable[T: AnyType](value: T) -> Int where conforms_to(T, Comparable):\n    return 1\n\nvar a = comparable(\"no\")\n",
+    );
 }
 
 #[test]
@@ -4034,7 +4045,7 @@ fn accepts_implicit_conversion_in_parameter_defaults() {
     // binding and argument positions allow) — the upstream `arg: Optional[T] =
     // None` pattern, exercised here stdlib-free with a user `@implicit` ctor at
     // both the free-function and method default sites.
-    ok(concat!(
+    ok_std(concat!(
         "struct Wrap(Copyable, Movable):\n",
         "    var v: Int\n",
         "    @implicit\n",
@@ -4106,7 +4117,7 @@ fn generic_calls_share_ordinary_argument_binding() {
 #[test]
 fn accepts_keyword_arguments_and_reports_mismatches() {
     // Keyword args to a free function type-check (any order, mixed with positional).
-    ok(
+    ok_std(
         "def f(a: Int, b: Int) -> Int:\n    return a - b\n\nvar z: Int = f(b=1, a=2)\nvar w: Int = f(2, b=1)\n",
     );
     // Unknown keyword, an argument bound twice, or a missing required argument.
@@ -4116,32 +4127,32 @@ fn accepts_keyword_arguments_and_reports_mismatches() {
         "def f(a: Int, b: Int) -> Int:\n    return a\n\nvar z: Int = f(b=2)\n",
     ] {
         assert!(
-            matches!(err(src), TypeError::BadCall { .. }),
+            matches!(err_std(src), TypeError::BadCall { .. }),
             "expected BadCall for: {src}"
         );
     }
     // A keyword-argument type mismatch is still a TypeMismatch.
     assert!(matches!(
-        err("def f(a: Int) -> Int:\n    return a\n\nvar z: Int = f(a=\"x\")\n"),
+        err_std("def f(a: Int) -> Int:\n    return a\n\nvar z: Int = f(a=\"x\")\n"),
         TypeError::TypeMismatch { .. }
     ));
     // Keyword args to a built-in are rejected.
     assert!(matches!(
-        err("def main():\n    print(len(x=\"hi\"))\n"),
+        err_std("def main():\n    print(len(x=\"hi\"))\n"),
         TypeError::BadCall { .. }
     ));
     // Ordinary user methods use the same keyword matcher.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct C:\n    var n: Int\n\n    def g(self, k: Int) -> Int:\n        return k\n\nvar z: Int = C(1).g(k=2)\n",
     );
 }
 
 #[test]
 fn method_argument_markers_and_keywords_are_checked() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct C:\n    var n: Int\n    def f(self, x: Int, /, y: Int = 2, *, scale: Int = 1) -> Int:\n        return (x + y) * scale\n\nvar c: C = C(0)\nvar n: Int = c.f(1, scale=3)\n",
     );
-    let error = err(
+    let error = err_std(
         "@fieldwise_init\nstruct C:\n    var n: Int\n    def f(self, x: Int, /) -> Int:\n        return x\n\nvar c: C = C(0)\nvar n: Int = c.f(x=1)\n",
     );
     assert!(matches!(error, TypeError::BadCall { .. }), "got {error:?}");
@@ -4157,9 +4168,9 @@ fn accepts_advanced_forms_on_methods_and_traits() {
 
 #[test]
 fn plain_signatures_are_unaffected() {
-    ok("def add(a: Int, b: Int) -> Int:\n    return a + b\n\nvar z: Int = add(1, 2)\n");
+    ok_std("def add(a: Int, b: Int) -> Int:\n    return a + b\n\nvar z: Int = add(1, 2)\n");
     // A parameter literally named after a convention word still works.
-    ok("def g(read: Int) -> Int:\n    return read\n\nvar z: Int = g(5)\n");
+    ok_std("def g(read: Int) -> Int:\n    return read\n\nvar z: Int = g(5)\n");
 }
 
 // --- Expression syntax parsed but semantics deferred (syntax-first phase) ---
@@ -4306,7 +4317,7 @@ fn inline_decorator_operands_match_the_pin() {
 
 #[test]
 fn builtin_body_rules_match_the_pin() {
-    let rejected = |body: &str| match err(&format!(
+    let rejected = |body: &str| match err_std(&format!(
         "@always_inline(\"builtin\")\ndef f(n: Int) -> Int:\n{body}\n"
     )) {
         TypeError::InvalidDecorator(message) => message,
@@ -4333,13 +4344,13 @@ fn builtin_body_rules_match_the_pin() {
     assert_eq!(rejected("    return n // 2"), calls);
     assert_eq!(rejected("    return n % 2"), calls);
     assert_eq!(
-        err(
+        err_std(
             "def g(n: Int) -> Int:\n    return n\n@always_inline(\"builtin\")\ndef f(n: Int) -> Int:\n    return g(n)\n"
         ),
         TypeError::InvalidDecorator(calls)
     );
     assert_eq!(
-        err("@always_inline(\"builtin\")\ndef f(n: Int) raises -> Int:\n    return n\n"),
+        err_std("@always_inline(\"builtin\")\ndef f(n: Int) raises -> Int:\n    return n\n"),
         TypeError::InvalidDecorator(reason("does not support this argument convention"))
     );
     // A folded body is its expression, so the call and the spelled
@@ -4350,9 +4361,9 @@ fn builtin_body_rules_match_the_pin() {
              def f[n: Int](x: SIMD[DType.int8, twice(n)]) -> SIMD[DType.int8, n + n]:\n    return x\n"
         )
     };
-    ok(&signature("@always_inline(\"builtin\")"));
+    ok_std(&signature("@always_inline(\"builtin\")"));
     assert!(matches!(
-        err(&signature("@always_inline")),
+        err_std(&signature("@always_inline")),
         TypeError::TypeMismatch { .. }
     ));
 }
@@ -4464,11 +4475,11 @@ fn trait_refinement_inherits_requirements_and_capabilities() {
 
 #[test]
 fn checks_callable_parameters_and_indirect_invocation() {
-    ok(
+    ok_std(
         "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    var callback: def(Int) thin -> Int = increment\n    print(apply(callback, 41))\n",
     );
     assert!(matches!(
-        err(
+        err_std(
             "def wrong(x: StringLiteral) -> Int:\n    return 0\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    print(apply(wrong, 41))\n"
         ),
         TypeError::TypeMismatch { .. }
@@ -4477,16 +4488,16 @@ fn checks_callable_parameters_and_indirect_invocation() {
 
 #[test]
 fn callable_type_bounds_are_dependent_nominal_and_directional() {
-    ok(
+    ok_std(
         "def apply[T: Copyable & Deinitable, F: def(T) -> T](callback: F, value: T) -> T:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(apply(increment, 41))\n",
     );
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Add(def(Int) -> Int):\n    var delta: Int\n    def __call__(self, value: Int) -> Int:\n        return value + self.delta\n\ndef apply[F: def(Int) -> Int](callback: F, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(apply(Add(1), 41))\n",
     );
     // A read-only implementation demands less access than the mutable bound
     // promises to provide, and a non-raising implementation satisfies a raising
     // bound.
-    ok(
+    ok_std(
         "def inspect(value: Int):\n    pass\n\ndef apply[F: def(mut Int) raises -> None](callback: F, mut value: Int) raises:\n    callback(value)\n\ndef main() raises:\n    var value = 1\n    apply(inspect, value)\n",
     );
 }
@@ -4524,27 +4535,27 @@ fn rejects_parametric_function_types_as_runtime_parameter_annotations() {
 
 #[test]
 fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effects() {
-    let structural = err(
+    let structural = err_std(
         "@fieldwise_init\nstruct Structural:\n    def __call__(self, value: Int) -> Int:\n        return value\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(Structural()))\n",
     );
     assert!(matches!(structural, TypeError::TraitNotSatisfied { .. }));
 
-    let raising = err(
+    let raising = err_std(
         "def fail(value: Int) raises -> Int:\n    raise Error(\"failure\")\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(fail))\n",
     );
     assert!(matches!(raising, TypeError::TraitNotSatisfied { .. }));
 
-    let mutable = err(
+    let mutable = err_std(
         "def change(mut value: Int):\n    value += 1\n\ndef apply[F: def(Int) -> None](callback: F, value: Int):\n    callback(value)\n\ndef main():\n    apply(change, 1)\n",
     );
     assert!(matches!(mutable, TypeError::TraitNotSatisfied { .. }));
 
-    let generic = err(
+    let generic = err_std(
         "def identity[T: Copyable & Deinitable](value: T) -> T:\n    return value.copy()\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(identity))\n",
     );
     assert!(matches!(generic, TypeError::TraitNotSatisfied { .. }));
 
-    let overloaded = err(
+    let overloaded = err_std(
         "def choose(value: Int) -> Int:\n    return value\n\ndef choose(value: StringLiteral) -> Int:\n    return 0\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(choose))\n",
     );
     assert!(matches!(overloaded, TypeError::TraitNotSatisfied { .. }));
@@ -4565,11 +4576,11 @@ fn rejects_contextual_generic_callable_specialization() {
 #[test]
 fn explicitly_specializes_callable_origin_values() {
     let declaration = "def borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{declaration}def main():\n    var value = 40\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += 2\n"
     ));
 
-    let error = err(&format!(
+    let error = err_std(&format!(
         "{declaration}def main():\n    var value = 40\n    var other = 2\n    var function = borrow[origin_of(value)]\n    ref result = function(other)\n"
     ));
     assert!(
@@ -4585,10 +4596,10 @@ fn a_bracket_over_a_function_binds_its_parameters() {
     // `def` its operands bind the parameters, positional or by keyword,
     // and the value is the instance's function type.
     let declarations = "def twice[n: Int]() -> Int:\n    return n * 2\n\ndef pair[a: Int, b: Int]() -> Int:\n    return a + b\n\ndef inc(x: Int) -> Int:\n    return x + 1\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{declarations}def main():\n    var f: def() thin -> Int = twice[4]\n    var g = pair[a=3, b=4]\n    var h = pair[1, 2]\n    print(f() + g() + h())\n"
     ));
-    let error = err(&format!(
+    let error = err_std(&format!(
         "{declarations}def main():\n    var f: def() thin -> Bool = twice[4]\n"
     ));
     assert!(
@@ -4596,7 +4607,7 @@ fn a_bracket_over_a_function_binds_its_parameters() {
         "got {error:?}"
     );
     // A non-generic function binds no parameter.
-    let error = err(&format!("{declarations}def main():\n    var f = inc[0]\n"));
+    let error = err_std(&format!("{declarations}def main():\n    var f = inc[0]\n"));
     assert!(
         matches!(
             error,
@@ -4612,13 +4623,13 @@ fn a_bracket_over_a_function_binds_its_parameters() {
 
 #[test]
 fn explicitly_specializes_nested_callable_origin_values() {
-    ok(include_str!(
+    ok_std(include_str!(
         "../conformance/fixtures/nested_origin_specialized_function_value.mojo"
     ));
 
     // The pinned compiler rejects materializing an Origin specialization of a
     // nested function that has a capture environment.
-    let TypeError::Unsupported(message) = err(
+    let TypeError::Unsupported(message) = err_std(
         "def main():\n    var marker = 2\n    var value = 40\n    def borrow[origin: Origin[mut=True]](ref[origin] item: Int) {imm marker} -> ref[origin] Int:\n        print(marker)\n        return item\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += marker\n",
     ) else {
         panic!("expected an unsupported-feature error");
@@ -4631,13 +4642,13 @@ fn explicitly_specializes_nested_callable_origin_values() {
 
 #[test]
 fn explicit_origins_participate_in_overload_and_generic_candidate_selection() {
-    ok(
+    ok_std(
         "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = choose[origin_of(value)](value)\n    selected += 2\n",
     );
-    ok(
+    ok_std(
         "def borrow[T: Copyable & Deinitable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[Int, origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n",
     );
-    ok(
+    ok_std(
         "def borrow[T: Copyable & Deinitable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = borrow[origin=origin_of(value)](value)\n    selected += 2\n",
     );
 }
@@ -4664,11 +4675,11 @@ fn explicit_origin_argument_binds_the_result_type_origin_slots() {
 #[test]
 fn contextual_type_selects_an_origin_specialized_overload_value() {
     let declarations = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{declarations}def main():\n    var value = 40\n    var function: def(ref[origin_of(value)] Int) thin -> ref[origin_of(value)] Int = choose[origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n"
     ));
 
-    let error = err(&format!(
+    let error = err_std(&format!(
         "{declarations}def main():\n    var value = 40\n    var function = choose[origin_of(value)]\n"
     ));
     assert!(
@@ -4680,7 +4691,7 @@ fn contextual_type_selects_an_origin_specialized_overload_value() {
 
 #[test]
 fn contextually_selects_an_overloaded_callable_value() {
-    ok(
+    ok_std(
         "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return 0\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    var result: Int = callback(41)\n",
     );
 }
@@ -4720,9 +4731,9 @@ fn owned_self_and_owned_params_are_accepted() {
     // conventions bind by value and now type-check (their ownership meaning is
     // handled by the ownership analysis / ASAP drops).
     assert!(
-        check_source("@fieldwise_init\nstruct R:\n    var x: Int\n    def __deinit__(deinit self):\n        print(self.x)\n").is_ok()
+        check_with_std("@fieldwise_init\nstruct R:\n    var x: Int\n    def __deinit__(deinit self):\n        print(self.x)\n").is_ok()
     );
-    assert!(check_source("def f(var a: Int, imm b: Int) -> Int:\n    return a + b\n").is_ok());
+    assert!(check_with_std("def f(var a: Int, imm b: Int) -> Int:\n    return a + b\n").is_ok());
 }
 
 #[test]
@@ -4803,23 +4814,23 @@ fn named_out_result_mut_self_and_parametric_ref_self_are_checked() {
 #[test]
 fn validates_named_origins_and_parametric_mutability() {
     assert!(
-        check_source(
+        check_with_std(
             "def observe[is_mutable: Bool, //, origin: Origin[mut=is_mutable]](ref[origin] value: Int):\n    print(value)\n"
         )
         .is_ok()
     );
     assert!(matches!(
-        check_source("def bad(ref[missing] value: Int):\n    pass\n"),
+        check_with_std("def bad(ref[missing] value: Int):\n    pass\n"),
         Err(TypeError::UndefinedVariable(name)) if name == "missing"
     ));
     assert!(
-        check_source(
+        check_with_std(
             "def pair[origin: Origin[mut=False]](ref[origin] left: Int, ref[origin] right: Int):\n    print(left + right)\n"
         )
         .is_ok()
     );
     assert!(matches!(
-        check_source(
+        check_with_std(
             "def bad[origin: Origin[mut=False]](ref[origin] value: Int):\n    value = 2\n"
         ),
         Err(TypeError::ImmutableBinding(name)) if name == "value"
@@ -4828,21 +4839,21 @@ fn validates_named_origins_and_parametric_mutability() {
 
 #[test]
 fn checks_reference_returns_substitution_and_escapes() {
-    assert!(check_source(
+    assert!(check_with_std(
         "def borrow[origin: Origin[mut=False]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n"
     )
     .is_ok());
-    assert!(check_source(
+    assert!(check_with_std(
         "def choose(ref left: Int, ref right: Int, flag: Bool) -> ref[left, right] Int:\n    if flag:\n        return left\n    else:\n        return right\n"
     )
     .is_ok());
     assert!(matches!(
-        check_source(
+        check_with_std(
             "def bad(ref source: Int) -> ref[source] Int:\n    var local = 1\n    return local\n"
         ),
         Err(TypeError::ReturnsReferenceToLocal)
     ));
-    assert!(check_source(
+    assert!(check_with_std(
         "def pair[origin: Origin[mut=False]](ref[origin] left: Int, ref[origin] right: Int):\n    print(left + right)\n\ndef main():\n    var value = 1\n    pair(value, value)\n"
     )
     .is_ok());
@@ -5105,7 +5116,8 @@ fn pointer_to_ref_parameter_mints_the_declared_struct_binder() {
     // parameter carries the struct binder `o` exactly as the field declares
     // it, so the store type-checks by identity (bare `o` and `Self.o` field
     // spellings alike).
-    ok("struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
+    ok_std(
+        "struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
     var src: Pointer[List[Int], Self.o]
     var index: Int
 
@@ -5123,8 +5135,10 @@ def main():
     data.append(3)
     var v = EntryIter(data, 0)
     print(v.next_val())
-");
-    ok("struct View[m: Bool, //, o: Origin[mut=m]]:
+",
+    );
+    ok_std(
+        "struct View[m: Bool, //, o: Origin[mut=m]]:
     var src: Pointer[Int, o]
 
     def __init__(out self, ref[Self.o] n: Int):
@@ -5134,11 +5148,12 @@ def main():
     var n = 7
     var v = View(n)
     print(v.src[])
-");
+",
+    );
     // A plain read parameter's pointer has a fresh place origin, not the
     // initializer's fixed binder.
     assert!(matches!(
-        err(
+        err_std(
             "struct View[m: Bool, //, o: Origin[mut=m]]:
     var src: Pointer[Int, Self.o]
 
@@ -5175,18 +5190,18 @@ fn structs_are_non_copyable_by_default() {
     // a `^` transfer, or making the struct `Copyable`, is fine. Scalars copy freely.
     let nc = "@fieldwise_init\nstruct T:\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a\n    print(b.x)\n";
     assert!(matches!(
-        check_source(nc),
+        check_with_std(nc),
         Err(TypeError::NonCopyable { .. })
     ));
 
     let moved = "@fieldwise_init\nstruct T:\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a^\n    print(b.x)\n";
-    assert!(check_source(moved).is_ok());
+    assert!(check_with_std(moved).is_ok());
 
     // `Copyable` alone permits only explicit copies and transfers: the
     // implicit place copy needs `ImplicitlyCopyable`.
     let copyable = "@fieldwise_init\nstruct T(Copyable):\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a\n    print(b.x)\n";
     assert!(matches!(
-        check_source(copyable),
+        check_with_std(copyable),
         Err(TypeError::ImplicitCopy {
             transferable: true,
             copyable: true,
@@ -5194,13 +5209,13 @@ fn structs_are_non_copyable_by_default() {
         })
     ));
     let copyable_moved = "@fieldwise_init\nstruct T(Copyable):\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a^\n    print(b.x)\n";
-    assert!(check_source(copyable_moved).is_ok());
+    assert!(check_with_std(copyable_moved).is_ok());
     let implicitly_copyable = "@fieldwise_init\nstruct T(ImplicitlyCopyable):\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a\n    print(b.x)\n";
-    assert!(check_source(implicitly_copyable).is_ok());
+    assert!(check_with_std(implicitly_copyable).is_ok());
 
     // Scalars are Copyable.
     assert!(
-        check_source("def main():\n    var a: Int = 1\n    var b: Int = a\n    print(a + b)\n")
+        check_with_std("def main():\n    var a: Int = 1\n    var b: Int = a\n    print(a + b)\n")
             .is_ok()
     );
 }
@@ -5263,23 +5278,23 @@ fn owned_arg_consumes_but_read_and_mut_borrow() {
         "{common}def take(var t: T) -> Int:\n    return t.x\n\ndef main():\n    var a: T = T(1)\n    print(take(a))\n"
     );
     assert!(matches!(
-        check_source(&owned),
+        check_with_std(&owned),
         Err(TypeError::NonCopyable { .. })
     ));
     // `owned` with `^` is a move → fine.
     let moved = format!(
         "{common}def take(var t: T) -> Int:\n    return t.x\n\ndef main():\n    var a: T = T(1)\n    print(take(a^))\n"
     );
-    assert!(check_source(&moved).is_ok());
+    assert!(check_with_std(&moved).is_ok());
     // `read` (default) and `mut` borrow → no copy, fine.
     let read = format!(
         "{common}def peek(t: T) -> Int:\n    return t.x\n\ndef main():\n    var a: T = T(1)\n    print(peek(a))\n"
     );
-    assert!(check_source(&read).is_ok());
+    assert!(check_with_std(&read).is_ok());
     let mutp = format!(
         "{common}def bump(mut t: T):\n    t.x = t.x + 1\n\ndef main():\n    var a: T = T(1)\n    bump(a)\n    print(a.x)\n"
     );
-    assert!(check_source(&mutp).is_ok());
+    assert!(check_with_std(&mutp).is_ok());
 }
 
 #[test]
@@ -5288,24 +5303,24 @@ fn borrow_check_rejects_mutable_aliasing() {
     // exclusive for the call.
     let two_mut = "def f(mut a: Int, mut b: Int):\n    a = b\n\ndef main():\n    var x: Int = 5\n    f(x, x)\n";
     assert!(matches!(
-        check_source(two_mut),
+        check_with_std(two_mut),
         Err(TypeError::AliasingViolation { .. })
     ));
 
     let mut_and_shared = "def f(mut a: Int, b: Int):\n    a = a + b\n\ndef main():\n    var x: Int = 5\n    f(x, x)\n";
-    assert!(check_source(mut_and_shared).is_ok());
+    assert!(check_with_std(mut_and_shared).is_ok());
 
     let noncopyable = "@fieldwise_init\nstruct Box:\n    var x: Int\n\ndef f(mut a: Box, b: Box):\n    pass\n\ndef main():\n    var x = Box(5)\n    f(x, x)\n";
     assert!(matches!(
-        check_source(noncopyable),
+        check_with_std(noncopyable),
         Err(TypeError::AliasingViolation { .. })
     ));
 
     // Distinct variables, or two shared borrows, are fine.
     let distinct = "def f(mut a: Int, mut b: Int):\n    a = b\n\ndef main():\n    var x: Int = 5\n    var y: Int = 6\n    f(x, y)\n";
-    assert!(check_source(distinct).is_ok());
+    assert!(check_with_std(distinct).is_ok());
     let two_shared = "def f(a: Int, b: Int) -> Int:\n    return a + b\n\ndef main():\n    var x: Int = 5\n    print(f(x, x))\n";
-    assert!(check_source(two_shared).is_ok());
+    assert!(check_with_std(two_shared).is_ok());
 }
 
 #[test]
@@ -5536,7 +5551,7 @@ fn setter_value_passes_by_the_first_setters_name() {
 #[test]
 fn augmented_subscript_retains_distinct_getter_and_setter_contracts() {
     let source = include_str!("../conformance/fixtures/augmented_subscript_contract.mojo");
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let expression = checked
         .expressions()
         .iter()
@@ -5577,7 +5592,7 @@ fn augmented_subscript_freezes_distinct_getter_and_setter_value_adjustments() {
     use mojito::checked::CheckedCallValueAdjustment;
 
     let source = "struct Wrapped(Copyable, Movable):\n    var value: Int\n    @implicit\n    def __init__(out self, value: Int):\n        self.value = value\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(self, index: Wrapped) -> Int:\n        return self.value + index.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\ndef index() -> Int:\n    return 2\n\ndef main():\n    var box = Box(1)\n    box[index()] += 3\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let pair = checked
         .expressions()
         .iter()
@@ -5630,7 +5645,7 @@ fn augmented_subscript_freezes_setter_only_index_normalization() {
 #[test]
 fn augmented_subscript_call_effects_remain_attached_to_their_call() {
     let source = "@fieldwise_init\nstruct Box:\n    var value: Int\n    var seen: Int\n    def __getitem__(self, mut index: Int) -> Int:\n        index += 1\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.seen = index\n        self.value = value\n\ndef main():\n    var box = Box(40, -1)\n    var index = 0\n    box[index] += 2\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let pair = checked
         .expressions()
         .iter()
@@ -5655,7 +5670,7 @@ fn augmented_subscript_call_effects_remain_attached_to_their_call() {
 #[test]
 fn augmented_subscript_mutable_reference_getter_writes_without_a_setter() {
     let source = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(mut self, index: Int) -> ref[origin_of(self.value)] Int:\n        return self.value\n\ndef main():\n    var box = Box(40)\n    box[0] += 2\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let pair = checked
         .expressions()
         .iter()
@@ -5713,10 +5728,8 @@ fn multi_indexer_normalization_uses_each_argument_position() {
 #[test]
 fn checked_subscript_retains_the_selected_call_contract() {
     let source = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __getitem__(\n        ref self, mut index: Int\n    ) raises -> ref[origin_of(self.value)] Int:\n        if index < 0:\n            raise Error(\"negative\")\n        index += 1\n        return self.value\n\ndef main():\n    var box = Box(40)\n    var index = 0\n    try:\n        print(box[index])\n    except error:\n        pass\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
-    let contract = checked
-        .expressions()
-        .iter()
+    let checked = checked_with_std(source).expect("check");
+    let contract = own_expressions(&checked)
         .find_map(|expression| {
             matches!(expression.op, mojito::checked::CheckedOp::Index { .. }).then(|| {
                 expression
@@ -5752,7 +5765,7 @@ fn checked_subscript_retains_the_selected_call_contract() {
 #[test]
 fn subscript_contract_rejects_overlapping_mutable_receiver_and_argument() {
     assert!(matches!(
-        check_source(include_str!(
+        check_with_std(include_str!(
             "../conformance/fixtures/subscript_mutable_aliasing.mojo"
         )),
         Err(TypeError::AliasingViolation { .. })
@@ -5793,12 +5806,13 @@ fn user_iterator_protocol_typing() {
 #[test]
 fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n";
-    let program = parse(source).expect("parse value-yielding iterator");
-    let checked = check_program(&program).expect("check value-yielding iterator");
+    let checked = checked_with_std(source).expect("check value-yielding iterator");
     let value = checked
         .declarations()
         .iter()
-        .find(|declaration| declaration.name == "value")
+        .find(|declaration| {
+            declaration.name == "value" && !from_library(declaration.location.source.as_deref())
+        })
         .expect("loop binding");
     assert_eq!(value.ty.as_ref(), Some(&Ty::int()));
 
@@ -5815,8 +5829,7 @@ fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
 #[test]
 fn raising_reference_iterator_preserves_the_reference_loop_binding_type() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
-    let program = parse(source).expect("parse reference-yielding iterator");
-    let checked = check_program(&program).expect("check reference-yielding iterator");
+    let checked = checked_with_std(source).expect("check reference-yielding iterator");
     let item = checked
         .declarations()
         .iter()
@@ -5938,23 +5951,27 @@ fn pointer_names_resolve_to_one_builtin_type() {
 fn empty_subscript_dereferences_a_pointer() {
     // `p[]` reads and writes the pointee at offset 0, on heap and place
     // origins alike.
-    ok(
-        "def main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[] = 41\n    p[] += 1\n    print(p[])\n    p.free()\n",
+    ok_std(
+        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    p[] = 41\n    p[] += 1\n    print(p[])\n    p.unsafe_free()\n",
     );
-    ok("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[])\n    p[] = 7\n");
+    ok_std("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[])\n    p[] = 7\n");
     // A non-pointer receiver rejects the dereference spelling…
     assert!(matches!(
-        err("def main():\n    var xs: List[Int] = [1]\n    print(xs[])\n"),
+        err_std("def main():\n    var xs: List[Int] = [1]\n    print(xs[])\n"),
         TypeError::Unsupported(message) if message.contains("is not a pointer")
     ));
     // …and `p[None]` is an ordinary (rejected) index, not a dereference.
     assert!(matches!(
-        err("def main():\n    var p = UnsafePointer[Int].alloc(1)\n    print(p[None])\n"),
+        err_std(
+            "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    print(p[None])\n"
+        ),
         TypeError::TypeMismatch { .. }
     ));
     // The dereference store still requires mutable provenance.
     assert!(matches!(
-        err("def f(x: Int):\n    var p = Pointer(to=x)\n    p[] = 1\n\ndef main():\n    f(3)\n"),
+        err_std(
+            "def f(x: Int):\n    var p = Pointer(to=x)\n    p[] = 1\n\ndef main():\n    f(3)\n"
+        ),
         TypeError::ImmutableBinding(_)
     ));
 }
@@ -6066,32 +6083,34 @@ fn unsafe_pointer_method_vocabulary_typechecks() {
 #[test]
 fn pointer_keyword_subscript_reads() {
     // `ptr[unsafe_offset=i]` is the keyword spelling of indexed dereference.
-    ok(
-        "def main():\n    var p = UnsafePointer[Int].alloc(2)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[unsafe_offset=1])\n    p.unsafe_free()\n",
+    ok_std(
+        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](2)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[unsafe_offset=1])\n    p.unsafe_free()\n",
     );
     // A place-origin pointer accepts only the constant offset 0.
-    ok("def main():\n    var x = 1\n    var q = Pointer(to=x)\n    print(q[unsafe_offset=0])\n");
+    ok_std(
+        "def main():\n    var x = 1\n    var q = Pointer(to=x)\n    print(q[unsafe_offset=0])\n",
+    );
     assert!(matches!(
-        err(
+        err_std(
             "def main():\n    var x = 1\n    var q = Pointer(to=x)\n    print(q[unsafe_offset=1])\n"
         ),
         TypeError::Unsupported(message) if message.contains("only offset 0")
     ));
     // The keyword selector is exact…
     assert!(matches!(
-        err("def main():\n    var p = UnsafePointer[Int].alloc(1)\n    print(p[offset=0])\n"),
+        err_std("from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    print(p[offset=0])\n"),
         TypeError::Unsupported(message) if message.contains("unsafe_offset=i")
     ));
     // …and the keyword spelling is a place: it stores, compound-assigns,
     // binds a `ref`, and writes through a pointer parameter (a pointer is a
     // value; the write needs the origin's mutable capability, not a mutable
     // binding).
-    ok(
-        "def bump(p: MutPointer[Int, _]):\n    p[unsafe_offset=0] += 1\n\ndef main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[unsafe_offset=0] = 1\n    p[unsafe_offset=0] += 1\n    ref r = p[unsafe_offset=0]\n    r = 2\n    bump(p)\n    p.unsafe_free()\n",
+    ok_std(
+        "from std.memory.alloc import unsafe_alloc\n\ndef bump(p: MutPointer[Int, _]):\n    p[unsafe_offset=0] += 1\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    p[unsafe_offset=0] = 1\n    p[unsafe_offset=0] += 1\n    ref r = p[unsafe_offset=0]\n    r = 2\n    bump(p)\n    p.unsafe_free()\n",
     );
     // A write through an immutable-origin pointer still rejects.
     assert!(matches!(
-        err("def f(x: Int):\n    var q = Pointer(to=x)\n    q[unsafe_offset=0] = 1\n"),
+        err_std("def f(x: Int):\n    var q = Pointer(to=x)\n    q[unsafe_offset=0] = 1\n"),
         TypeError::ImmutableBinding(_)
     ));
 }
@@ -6454,17 +6473,17 @@ fn operation_trait_conformance_requires_the_dunder() {
         Err(TypeError::TraitNotSatisfied { .. })
     ));
     // Defining the dunder satisfies the declared conformance.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Good(Addable):\n    var n: Int\n    def __add__(self, other: Good) -> Good:\n        return Good(self.n + other.n)\n",
     );
 }
 
 #[test]
 fn user_struct_prefix_operators_type_check() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct V:\n    var n: Int\n    def __neg__(self) -> V:\n        return V(-self.n)\n\ndef main():\n    var a = V(3)\n    print((-a).n)\n",
     );
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Flag:\n    var on: Bool\n    def __bool__(self) -> Bool:\n        return self.on\n\ndef main():\n    var f = Flag(False)\n    if not f:\n        print(\"off\")\n",
     );
 }
@@ -6903,11 +6922,11 @@ fn immutable_origin_cast_pins_reference_results_read_only() {
     let template = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[ImmOrigin(Self.o)] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n";
     let write = format!("{template}    for ref x in nums:\n        x += 10\n");
     assert!(matches!(
-        err(&write),
+        err_std(&write),
         TypeError::ImmutableInPlaceDestination(_) | TypeError::TypeMismatch { .. }
     ));
     let read = format!("{template}    var total = 0\n    for ref x in nums:\n        total += x\n");
-    assert!(check(&parse(&read).expect("parse")).is_ok());
+    assert!(check_with_std(&read).is_ok());
 }
 
 #[test]
@@ -6965,7 +6984,7 @@ fn rejects_bare_move_initializer_parameter() {
 
 #[test]
 fn rejects_a_capturing_closure_bound_to_an_unqualified_def_parameter() {
-    let TypeError::Unsupported(message) = err(
+    let TypeError::Unsupported(message) = err_std(
         "def apply_twice(callback: def(Int) -> None):\n    callback(2)\n    callback(3)\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n",
     ) else {
         panic!("expected an unsupported-feature error");
@@ -7432,22 +7451,17 @@ fn bool_bodied_comptime_aliases_are_predicates() {
     };
     assert_eq!(message, "a pack projection in a Bool-bodied comptime alias");
 
-    // Bounds beyond AnyType would be silently dropped by inlining; rejected.
-    let TypeError::Unsupported(message) =
-        err("comptime IsCopy[T: Movable] = conforms_to(T, Copyable)\n")
-    else {
-        panic!("expected a bounded-parameter rejection");
-    };
-    assert_eq!(
-        message,
-        "a Bool-bodied comptime alias parameter takes no bound beyond AnyType; spell the requirement in the body"
+    // A bound beyond `AnyType` is the alias's own parameter bound, as at
+    // the pin.
+    ok_std(
+        "comptime IsCopy[T: Movable] = conforms_to(T, Copyable)\n\ndef main():\n    print(IsCopy[Int])\n",
     );
 
-    // The builtin IsTrivially* spellings are not a shadowable namespace.
-    assert!(matches!(
-        err("comptime IsTriviallyCopyable[T: AnyType] = conforms_to(T, Copyable)\n"),
-        TypeError::Redeclaration(name) if name == "IsTriviallyCopyable"
-    ));
+    // A module's own declaration shadows the prelude's `IsTriviallyCopyable`,
+    // as at the pin.
+    ok_std(
+        "comptime IsTriviallyCopyable[T: AnyType] = conforms_to(T, Copyable)\n\ndef main():\n    print(IsTriviallyCopyable[Int])\n",
+    );
 }
 
 #[test]
@@ -7491,21 +7505,21 @@ fn function_typed_keyword_variadics_keep_their_collector_role() {
 #[test]
 fn accepts_thin_lambda_bindings_and_calls() {
     // `{}` and an omitted list with no free variables are both thin.
-    ok(
+    ok_std(
         "def main():\n    var f: def(x: Int) thin -> Int = lambda (x: Int) {} -> Int: x * 2\n    var r: Int = f(21)\n",
     );
-    ok(
+    ok_std(
         "def main():\n    var f: def(x: Int) thin -> Int = lambda (x: Int) -> Int: x + 1\n    var r: Int = f(1)\n",
     );
-    ok("def main():\n    var f: def() thin -> Int = lambda -> Int: 42\n    var r: Int = f()\n");
-    ok("def main():\n    var f: def() thin = lambda: None\n    f()\n");
+    ok_std("def main():\n    var f: def() thin -> Int = lambda -> Int: 42\n    var r: Int = f()\n");
+    ok_std("def main():\n    var f: def() thin = lambda: None\n    f()\n");
 }
 
 #[test]
 fn lambda_with_explicit_capture_all_is_a_closure_even_without_captures() {
     // `{imm}` is an explicit capture convention: the lambda is a closure and
     // cannot bind to an unqualified `def(...)` contract.
-    let error = err(
+    let error = err_std(
         "def main():\n    var f: def(x: Int) thin -> Int = lambda (x: Int) {imm} -> Int: x + 1\n    var r: Int = f(1)\n",
     );
     assert!(
@@ -7518,15 +7532,16 @@ fn lambda_with_explicit_capture_all_is_a_closure_even_without_captures() {
 fn lambda_omitted_capture_list_imm_captures_free_variables() {
     // The free variable makes the lambda capturing; the imm capture is
     // implicit, so a `capturing[...]` contract accepts it...
-    ok(
+    ok_std(
         "def apply(f: def(x: Int) capturing[_] -> Int, v: Int) -> Int:\n    return f(v)\n\ndef main():\n    var z = 10\n    var r: Int = apply(lambda (x: Int) -> Int: x + z, 5)\n",
     );
-    // ...and a thin contract rejects it.
-    let error = err(
+    // ...and a thin contract rejects it, naming the closure's type as the
+    // pin does (`def(x: Int) -> Int`).
+    let error = err_std(
         "def main():\n    var z = 10\n    var f: def(x: Int) thin -> Int = lambda (x: Int) -> Int: x + z\n    var r: Int = f(5)\n",
     );
     assert!(
-        matches!(&error, TypeError::TypeMismatch { found, .. } if found.contains("capturing")),
+        matches!(&error, TypeError::TypeMismatch { found, .. } if found == "def(x: Int) -> Int"),
         "unexpected error: {error:?}"
     );
 }
@@ -7598,7 +7613,7 @@ fn lambda_in_a_parameter_default_is_rejected_contextually() {
 fn generic_lambda_is_a_closure() {
     // A lambda-owned parameter list forces the capturing environment, so a
     // thin `def(...)` contract rejects it.
-    let error = err(
+    let error = err_std(
         "def main():\n    var f: def(x: Int) thin -> Int = lambda [N: Int](x: Int) {} -> Int: x + N\n    var r: Int = f(1)\n",
     );
     assert!(
@@ -7610,7 +7625,7 @@ fn generic_lambda_is_a_closure() {
 #[test]
 fn bare_element_calls_record_the_element_invocation_plan() {
     let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[0](3))\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let plans = checked
         .expressions()
         .iter()
@@ -7648,7 +7663,7 @@ fn bare_element_calls_record_the_element_invocation_plan() {
 #[test]
 fn member_base_and_multi_index_element_calls_record_plans() {
     let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var inner: Container\n\n@fieldwise_init\nstruct Grid(Copyable):\n    var first: Doubler\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var h: Holder = Holder(Container(Doubler(2)))\n    print(h.inner[0](3))\n    var g: Grid = Grid(Doubler(3))\n    print(g[1, 1](4))\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let plans = checked
         .expressions()
         .iter()
@@ -7677,21 +7692,21 @@ fn member_base_and_multi_index_element_calls_record_plans() {
 fn element_call_shapes_that_stay_rejected() {
     // A non-callable element names the element type, not the container.
     let source = "@fieldwise_init\nstruct Box(Copyable):\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n\ndef main():\n    var b: Box = Box(1)\n    print(b[0](3))\n";
-    let error = check_program(&parse(source).expect("parse")).expect_err("non-callable element");
+    let error = checked_with_std(source).expect_err("non-callable element");
     assert!(
         matches!(&error, TypeError::NotCallable { ty, .. } if ty == "Int"),
         "{error:?}"
     );
     // Type brackets over an indexable value keep the residual diagnostic.
     let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[Int](3))\n";
-    let error = check_program(&parse(source).expect("parse")).expect_err("type brackets");
+    let error = checked_with_std(source).expect_err("type brackets");
     assert!(
         matches!(&error, TypeError::Unsupported(message) if message.contains("runtime index arguments")),
         "{error:?}"
     );
     // Generic-function parameter application is untouched.
     let source = "def pick[T: Copyable](value: T) -> T:\n    return value.copy()\n\ndef main():\n    print(pick[Int](7))\n";
-    check_program(&parse(source).expect("parse")).expect("generic parameter application");
+    checked_with_std(source).expect("generic parameter application");
 }
 
 // --- Owned-`var` transfer convention ---
@@ -7851,14 +7866,14 @@ fn rejects_bare_struct_parameter_spellings() {
     // Inside a struct body the struct's own parameters are `Self.T` /
     // `Self.n`; a bare `T` field type or a bare `n` bracket slot reports
     // upstream's `use 'Self.n'` error.
-    let e = err(
+    let e = err_std(
         "struct Box[T: Copyable & Movable & Deinitable]:\n    var value: T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n",
     );
     assert!(
         matches!(e, TypeError::UnqualifiedStructParam(ref name) if name == "T"),
         "got {e:?}"
     );
-    let e = err(
+    let e = err_std(
         "struct Counter[length: Int]:\n    var i: Int\n\n    def __init__(out self):\n        self.i = 0\n\n    def fresh(self) -> Int:\n        var other = Counter[length]()\n        return other.i\n",
     );
     assert!(
@@ -7866,7 +7881,7 @@ fn rejects_bare_struct_parameter_spellings() {
             .contains("unqualified access to struct parameter 'length'; use 'Self.length' instead"),
         "got {e:?}"
     );
-    ok(
+    ok_std(
         "struct Counter[length: Int]:\n    var i: Int\n\n    def __init__(out self):\n        self.i = 0\n\n    def fresh(self) -> Int:\n        var other = Counter[Self.length]()\n        return other.i + Self.length\n",
     );
 }
@@ -7933,10 +7948,10 @@ fn with_statement_desugars_by_manager_shape() {
     // is scoped to its block.
     let plain = "struct M:\n    def __init__(out self):\n        pass\n\n    def __enter__(self) -> Int:\n        return 1\n\n    def __exit__(self):\n        pass\n\n";
     let owning = "struct G(Movable):\n    def __init__(out self):\n        pass\n\n    def __enter__(var self) -> Self:\n        return self^\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{plain}{owning}def main():\n    with M() as f:\n        print(f)\n    with M() as f:\n        print(f)\n    with G() as g:\n        print(1)\n    with G():\n        print(2)\n    with M() as a, M() as b:\n        print(a + b)\n"
     ));
-    let e = err(&format!(
+    let e = err_std(&format!(
         "{plain}def main():\n    with M() as f:\n        print(f)\n    print(f)\n"
     ));
     assert!(
@@ -8104,7 +8119,7 @@ fn a_conforms_to_arm_licenses_its_trait_for_the_arm_alone() {
     check_once(plain, "arm_plain.mojo").expect("a plain parameter is licensed");
     let pack = "def show[*Ts: AnyType](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        comptime if conforms_to(Ts[i], Writable):\n            print(args[i])\n\ndef main():\n    print(1)\n";
     check_once(pack, "arm_pack.mojo").expect("a pack element is licensed");
-    let field = "def show[T: AnyType]():\n    comptime r = reflect[T]\n    comptime for i in range(r.field_count()):\n        comptime FT = r.field_at[i].T\n        comptime if conforms_to(FT, Defaultable & Writable):\n            print(FT())\n\ndef main():\n    print(1)\n";
+    let field = "def show[T: AnyType]():\n    comptime r = reflect[T]\n    comptime for i in range(r.field_count()):\n        comptime FT = r.field_at[i].T\n        comptime if conforms_to(FT, Defaultable & Writable & Deinitable):\n            print(FT())\n\ndef main():\n    print(1)\n";
     check_once(field, "arm_field.mojo").expect("a field type is licensed");
     // The proof ends with the arm.
     let after = "def show[T: AnyType](x: T):\n    comptime if conforms_to(T, Writable):\n        pass\n    print(x)\n\ndef main():\n    print(1)\n";
@@ -8245,47 +8260,48 @@ fn param_expr_residual_is_not_false() {
     };
 
     // Proved by canonical identity, with the parameters still symbolic.
-    ok(&format!(
+    ok_std(&format!(
         "{check}def outer[n: Int]() -> Int:\n    return check[n, 1 + n]()\n"
     ));
     // Unresolved: not accepted as true, and not reported as false.
-    lacking(err(&format!(
+    lacking(err_std(&format!(
         "{ordered}def outer[n: Int, k: Int]() -> Int:\n    return check[n, k]()\n"
     )));
     // `not` over the same unresolved comparison is unresolved too — the old
     // Bool evaluator turned the missing proof into an acceptance here.
-    lacking(err(&format!(
+    lacking(err_std(&format!(
         "{negated}def outer[n: Int, k: Int]() -> Int:\n    return check[n, k]()\n"
     )));
     // The enclosing declaration's own clause is the evidence, in either
     // operand order.
-    ok(&format!(
+    ok_std(&format!(
         "{ordered}def outer[n: Int, k: Int]() -> Int where n < k:\n    return check[n, k]()\n"
     ));
-    ok(&format!(
+    ok_std(&format!(
         "{check}def outer[n: Int, k: Int]() -> Int where k == n + 1:\n    return check[n, k]()\n"
     ));
     // A method's own clause is evidence inside its body, over `Self.n` too.
-    ok(&format!(
+    ok_std(&format!(
         "{ordered}struct Box[n: Int](Copyable, Movable):\n    var v: Int\n\n    \
          def __init__(out self):\n        self.v = Self.n\n\n    \
          def above[k: Int](self) -> Int where Self.n < k:\n        return check[Self.n, k]()\n"
     ));
-    lacking(err(&format!(
+    lacking(err_std(&format!(
         "{ordered}struct Box[n: Int](Copyable, Movable):\n    var v: Int\n\n    \
          def __init__(out self):\n        self.v = Self.n\n\n    \
          def above[k: Int](self) -> Int:\n        return check[Self.n, k]()\n"
     )));
     // An assumption about other parameters is not evidence.
-    lacking(err(&format!(
+    lacking(err_std(&format!(
         "{ordered}def outer[n: Int, k: Int, j: Int]() -> Int where n < j:\n    return check[n, k]()\n"
     )));
     // Concrete applications fold to a definite verdict.
-    ok(&format!("{check}def main():\n    print(check[3, 4]())\n"));
-    let violated = err(&format!("{check}def main():\n    print(check[3, 5]())\n")).to_string();
+    ok_std(&format!("{check}def main():\n    print(check[3, 4]())\n"));
+    let violated = err_std(&format!("{check}def main():\n    print(check[3, 5]())\n")).to_string();
     assert!(violated.contains("violated constraint"), "{violated}");
-    ok(&format!("{negated}def main():\n    print(check[3, 5]())\n"));
-    let violated = err(&format!("{negated}def main():\n    print(check[3, 4]())\n")).to_string();
+    ok_std(&format!("{negated}def main():\n    print(check[3, 5]())\n"));
+    let violated =
+        err_std(&format!("{negated}def main():\n    print(check[3, 4]())\n")).to_string();
     assert!(violated.contains("violated constraint"), "{violated}");
 }
 
@@ -8295,12 +8311,12 @@ fn param_expr_residual_is_not_false() {
 #[test]
 fn param_expr_types_compare_by_canonical_form() {
     let buf = "struct Buf[n: Int](Copyable, Movable):\n    var value: Int\n\n    def __init__(out self, value: Int):\n        self.value = value\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{buf}def reorder[n: Int](var x: Buf[n + 1]) -> Buf[1 + n]:\n    return x^\n\n\
          def distribute[n: Int](var x: Buf[(n + 1) * 4]) -> Buf[n * 4 + 4]:\n    return x^\n\n\
          def collect[n: Int](var x: Buf[n + n]) -> Buf[2 * n]:\n    return x^\n"
     ));
-    let mismatch = err(&format!(
+    let mismatch = err_std(&format!(
         "{buf}def wrong[n: Int](var x: Buf[n + 1]) -> Buf[n + 2]:\n    return x^\n"
     ))
     .to_string();
@@ -8309,12 +8325,12 @@ fn param_expr_types_compare_by_canonical_form() {
         "{mismatch}"
     );
     // Unary negation is an opaque atom, as at the pin.
-    err(&format!(
+    err_std(&format!(
         "{buf}def negated[n: Int](var x: Buf[-(-n)]) -> Buf[n]:\n    return x^\n"
     ));
     // `n` of `inner` and `n` of `outer` are different parameters: the call
     // binds one to the other rather than the spellings coinciding.
-    ok(&format!(
+    ok_std(&format!(
         "{buf}def inner[n: Int](var x: Buf[n + 1]) -> Buf[n + 1]:\n    return x^\n\n\
          def outer[n: Int](var x: Buf[n + 2]) -> Buf[n + 2]:\n    return inner[n + 1](x^)\n"
     ));
@@ -8418,7 +8434,7 @@ fn pop_and_index_op_verifier_errors_are_rejected() {
         ),
         (
             "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.add`[fastmathFlags=__mlir_attr.`#pop.fmf<bogus>`](a._mlir_value, a._mlir_value)))\n",
-            "attribute 'fastmathFlags' takes one '#pop.fmf<flag>' attribute",
+            "Invalid attribute `fastmathFlags`",
         ),
         (
             "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    print(SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type](a._mlir_value)))\n",
@@ -8454,8 +8470,8 @@ fn pop_simd_lane_ops_type_as_their_verifiers_do() {
     // `select` keeps its cases' type, `extractelement` and the reductions
     // give one lane (`!kgen.scalar<dt>`), which `Bool(mlir_value=)` takes
     // for `bool` lanes, and `insertelement` keeps the vector's type.
-    ok(
-        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var m = a.gt(2)\n    var s: SIMD[DType.int32, 4] = __mlir_op.`pop.simd.select`(m._mlir_value, a._mlir_value, a._mlir_value)\n    var e: Int32 = __mlir_op.`pop.simd.extractelement`(a._mlir_value, Int(1).__mlir_index__())\n    var w: SIMD[DType.int32, 4] = __mlir_op.`pop.simd.insertelement`(a._mlir_value, e._mlir_value, Int(0).__mlir_index__())\n    var all = Bool(mlir_value=__mlir_op.`pop.simd.reduce_and`(m._mlir_value))\n    var bits: Int32 = __mlir_op.`pop.simd.reduce_or`(a._mlir_value)\n    print(s, e, w, all, bits)\n",
+    ok_std(
+        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var m = a.gt(2)\n    var s = SIMD[DType.int32, 4](mlir_value=__mlir_op.`pop.simd.select`(m._mlir_value, a._mlir_value, a._mlir_value))\n    var e = Int32(mlir_value=__mlir_op.`pop.simd.extractelement`(a._mlir_value, Int(1).__mlir_index__()))\n    var w = SIMD[DType.int32, 4](mlir_value=__mlir_op.`pop.simd.insertelement`(a._mlir_value, e._mlir_value, Int(0).__mlir_index__()))\n    var all = Bool(mlir_value=__mlir_op.`pop.simd.reduce_and`(m._mlir_value))\n    var bits = Int32(mlir_value=__mlir_op.`pop.simd.reduce_or`(a._mlir_value))\n    print(s, e, w, all, bits)\n",
     );
     for (source, message) in [
         (
@@ -8483,7 +8499,7 @@ fn pop_simd_lane_ops_type_as_their_verifiers_do() {
             "argument 'mlir_value' of 'Bool'",
         ),
     ] {
-        let error = err(source);
+        let error = err_std(source);
         assert!(error.to_string().contains(message), "{error}");
     }
 }
@@ -8809,7 +8825,7 @@ fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
     let library_path = "/library/widths.mojo";
     let mut library = parse(
         "comptime WIDTH = 4\n\
-         def double(x: Int) -> Int:\n    return x * 2\n",
+         def double(x: Int) -> Int:\n    return x\n",
     )
     .expect("parse error");
     mojito::ast::stamp_source(&mut library, library_path);
@@ -8867,7 +8883,7 @@ fn overloaded_requirement_records(
         "trait Probe:\n\
          \x20   def probe(self) -> Int: ...\n\
          \x20   def probe(self, x: Int) -> Int:\n        return x\n\
-         def total[T: Probe](t: T) -> Int:\n    return t.probe() + t.probe(2)\n",
+         def total[T: Probe](t: T) -> Int:\n    _ = t.probe()\n    return t.probe(2)\n",
     )
     .expect("parse error");
     mojito::ast::stamp_source(&mut library, library_path);
@@ -8941,12 +8957,12 @@ fn an_installed_module_interface_checks_like_its_statements() {
     let library_path = "/library/shapes.mojo";
     let mut library = parse(
         "comptime WIDTH = 4\n\
-         def double(x: Int) -> Int:\n    return x * 2\n\
+         def double(x: Int) -> Int:\n    return x\n\
          def unused(x: Int) -> Int:\n    return x\n\
          trait Shape:\n    def area(self) -> Int: ...\n\
          struct Square(Shape):\n    var side: Int\n\
          \x20   def __init__(out self, side: Int):\n        self.side = side\n\
-         \x20   def area(self) -> Int:\n        return self.side * self.side\n",
+         \x20   def area(self) -> Int:\n        return self.side\n",
     )
     .expect("parse error");
     mojito::ast::stamp_source(&mut library, library_path);

@@ -278,6 +278,18 @@ impl<'p> Symbols<'p> {
                 }
             }
         }
+        // A live method's template struct declares the binders its body is
+        // scoped by, though no type the program spells may name it: a `SIMD`
+        // value is the compiler's vector type. A concrete instance's struct
+        // is reached by its type alone.
+        if self.resolution == Resolution::Generic {
+            let owners: Vec<&'p str> = live
+                .iter()
+                .filter_map(|name| split_method_symbol(name))
+                .filter_map(|(owner, _)| self.structs.get_key_value(owner).map(|(&owner, _)| owner))
+                .collect();
+            live_structs.extend(owners);
+        }
         (live, live_structs)
     }
 

@@ -12,7 +12,10 @@
 //! so neither is rewritten. A type parameter's `T(copy=x)` is still a
 //! `ConstructTypeParam` here and stays a copy, as at Mojo. A source that dies
 //! only at a region's entry keeps its copy, and no scan reaches past a
-//! region op other than `try`.
+//! region op other than `try`. A trivially copyable struct's copy
+//! ([`MirDeclarations::copy_runs_no_code`]) runs no initializer for the
+//! check to fold, so where its source's destruction runs code it stays a
+//! copy and the source still dies, as at the pin.
 //!
 //! A copy an owned parameter or owned receiver takes is bound in place to
 //! its call-result slot ([`CALL_RESULT_SLOT`]), whose forwarding use sits at
@@ -57,6 +60,7 @@ use mojito_mir::mir::{
     CALL_RESULT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, Reg,
     RegisterEnds, UseMode, instruction_regions, instruction_regions_mut, terminator_regs,
 };
+use mojito_types::types::Ty;
 use std::collections::{HashMap, HashSet};
 
 /// Rewrite every dying named-struct copy construction in `function`, `Try`
@@ -69,6 +73,9 @@ pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirD
     let forwarded = forwarded_registers(function, declarations);
     let elision = Elision {
         var_names: &function.var_names,
+        var_tys: &function.var_tys,
+        reg_types: &function.reg_types,
+        declarations,
         uses,
         mentions: count_slot_mentions(&function.blocks),
         forwarded,
@@ -86,6 +93,9 @@ pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirD
 /// What the rewrite reads of the whole function.
 struct Elision<'a> {
     var_names: &'a [String],
+    var_tys: &'a HashMap<VarId, Ty>,
+    reg_types: &'a HashMap<u32, Ty>,
+    declarations: &'a MirDeclarations,
     /// Operand uses of each register.
     uses: HashMap<u32, usize>,
     /// Mentions of each slot outside its `DropVar`s.
@@ -93,6 +103,19 @@ struct Elision<'a> {
     /// The registers an instruction hands its callee by storage
     /// ([`RegisterEnds::forwarded`]).
     forwarded: HashSet<u32>,
+}
+
+impl Elision<'_> {
+    /// Whether a copy of type `ty` may become its dying source's move: not
+    /// when the copy runs no initializer for upstream's lifetime check to
+    /// fold with the source's destruction, which then runs as its own
+    /// (`a < b < c` destroys `b` and its copy). A copy whose source's
+    /// destruction runs no code either may go, as nothing observes it.
+    fn elidable(&self, ty: Option<&Ty>) -> bool {
+        !ty.is_some_and(|ty| {
+            self.declarations.copy_runs_no_code(ty) && !self.declarations.drop_runs_no_code(ty)
+        })
+    }
 }
 
 /// A read call-result slot whose binding a lent source replaced.
@@ -168,7 +191,7 @@ fn rewrite_blocks(blocks: &mut [MirBlock], elision: &Elision, lent: &mut Vec<Loa
         let mut at = 1;
         while at < block.instrs.len() {
             let instrs = &mut block.instrs;
-            let Some(source) = dying_copy(instrs, at, &elision.uses) else {
+            let Some(source) = dying_copy(instrs, at, elision) else {
                 at += 1;
                 continue;
             };
@@ -197,8 +220,11 @@ struct DyingCopy {
 /// The source slot and its death of the copy construction at `at`, when the
 /// construction copies a whole slot loaded just before it and that slot's
 /// `DropVar` follows it (or its in-place binding) in the run of drops.
-fn dying_copy(instrs: &[MirInstr], at: usize, uses: &HashMap<u32, usize>) -> Option<DyingCopy> {
+fn dying_copy(instrs: &[MirInstr], at: usize, elision: &Elision) -> Option<DyingCopy> {
     let (dest, operand) = copy_construction(&instrs[at])?;
+    if !elision.elidable(elision.reg_types.get(&dest.0)) {
+        return None;
+    }
     // A load through a handle reads a referent the slot does not own.
     let MirInstr::LoadPlace {
         dest: loaded,
@@ -213,7 +239,7 @@ fn dying_copy(instrs: &[MirInstr], at: usize, uses: &HashMap<u32, usize>) -> Opt
     else {
         return None;
     };
-    if loaded != operand || !proj.is_empty() || uses.get(&operand.0) != Some(&1) {
+    if loaded != operand || !proj.is_empty() || elision.uses.get(&operand.0) != Some(&1) {
         return None;
     }
     let var = *root;
@@ -508,6 +534,10 @@ fn move_dying_slot_copies(instrs: &mut Vec<MirInstr>, elision: &Elision) {
             at += 1;
             continue;
         };
+        if !elision.elidable(elision.var_tys.get(&var)) {
+            at += 1;
+            continue;
+        }
         let after = match instrs.get(at + 1) {
             Some(MirInstr::DefVar { src, .. }) if *src == dest => at + 1,
             _ => at,

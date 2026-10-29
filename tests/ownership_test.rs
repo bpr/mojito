@@ -52,10 +52,10 @@ fn pointer_loans_are_shared_aliases() {
     // Two live `Pointer(to=owner)` loans coexist (a pointer is not an
     // exclusive borrow), while the owner stays guarded by either of them.
     let ok = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = UnsafePointer(to=x)\n    print(p[0] + q[0])\n";
-    assert!(own(ok).is_ok(), "{:?}", own(ok));
+    assert!(own_linked(ok).is_ok(), "{:?}", own_linked(ok));
     let conflict = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = UnsafePointer(to=x)\n    x = 5\n    print(p[0] + q[0])\n";
     assert!(matches!(
-        own(conflict),
+        own_linked(conflict),
         Err(OwnershipError::LoanConflict { .. })
     ));
 }
@@ -81,7 +81,10 @@ fn owner_move_while_pointer_live_is_rejected() {
 #[test]
 fn pointer_aggregate_extends_the_owner_loan() {
     let src = "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef main():\n    var value = 40\n    var b = Borrowed(UnsafePointer(to=value))\n    value += 1\n    print(b.ptr[0])\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+    assert!(matches!(
+        own_linked(src),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
 }
 
 #[test]
@@ -93,19 +96,28 @@ fn dead_pointer_releases_its_owner_loan() {
 #[test]
 fn reference_aggregate_extends_the_owner_loan() {
     let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef main():\n    var value = 40\n    ref alias = value\n    var box = RefBox(alias)\n    value += 1\n    print(box.value)\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+    assert!(matches!(
+        own_linked(src),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
 }
 
 #[test]
 fn reference_aggregate_preserves_every_field_loan() {
     let src = "@fieldwise_init\nstruct RefPair[a: Origin[mut=True], b: Origin[mut=True]]:\n    var first: ref[a] Int\n    var second: ref[b] Int\n\ndef main():\n    var x = 10\n    var y = 20\n    ref rx = x\n    ref ry = y\n    var pair = RefPair(rx, ry)\n    y += 1\n    print(pair.second)\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+    assert!(matches!(
+        own_linked(src),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
 }
 
 #[test]
 fn moving_reference_aggregate_transfers_its_owner_loan() {
     let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef main():\n    var value = 40\n    ref alias = value\n    var box = RefBox(alias)\n    var moved = box^\n    value += 1\n    print(moved.value)\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+    assert!(matches!(
+        own_linked(src),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
 }
 
 #[test]
@@ -168,13 +180,13 @@ fn variant_payload_reference_is_invalidated_when_the_tag_changes() {
 #[test]
 fn list_interior_references_allow_reads_direct_writes_and_overlap() {
     let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    ref first = values[0]\n    ref same = values[0]\n    print(len(values))\n    same += 1\n    values[0] = 77\n    print(first, same)\n";
-    assert!(own(src).is_ok());
+    assert!(own_linked(src).is_ok());
 }
 
 #[test]
 fn a_reborrow_derives_permission_from_its_parent_reference() {
     let src = "def main():\n    var value = 40\n    ref first = value\n    ref second = first\n    second += 2\n    print(value)\n";
-    assert!(own(src).is_ok());
+    assert!(own_linked(src).is_ok());
 }
 
 #[test]
@@ -407,19 +419,19 @@ fn immutable_returned_reference_remains_a_shared_loan() {
 #[test]
 fn read_only_subscript_contract_coexists_with_a_shared_field_loan() {
     let src = "def borrow[origin: Origin[mut=False]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\n@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value + index\n\ndef main():\n    var box = Box(40)\n    ref alias = borrow(box.value)\n    print(box[2])\n    print(alias)\n";
-    assert!(own(src).is_ok());
+    assert!(own_linked(src).is_ok());
 }
 
 #[test]
 fn mutable_subscript_receiver_runs_beside_a_live_field_reference() {
     let src = "def borrow[origin: Origin[mut=False]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\n@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __getitem__(mut self, index: Int) -> Int:\n        self.value += index\n        return self.value\n\ndef main():\n    var box = Box(40)\n    ref alias = borrow(box.value)\n    print(box[2])\n    print(alias)\n";
-    assert!(own(src).is_ok());
+    assert!(own_linked(src).is_ok());
 }
 
 #[test]
 fn immutable_ref_subscript_argument_retains_a_read_place() {
     let src = "def borrow[origin: Origin[mut=False]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\n@fieldwise_init\nstruct Lookup(Copyable, Movable):\n    var offset: Int\n    def __getitem__[origin: Origin[mut=False]](\n        self, ref[origin] index: Int\n    ) -> Int:\n        return self.offset + index\n\ndef main():\n    var position = 2\n    ref alias = borrow(position)\n    var lookup = Lookup(40)\n    print(lookup[position])\n    print(alias)\n";
-    assert!(own(src).is_ok());
+    assert!(own_linked(src).is_ok());
 }
 
 #[test]
@@ -441,7 +453,7 @@ fn dict_lookup_keeps_an_earlier_lookup_field_reference() {
 #[test]
 fn retained_subscript_reference_is_checked_after_later_argument_evaluation() {
     let src = "def mutate(mut values: List[Int]) -> Int:\n    values.append(3)\n    return 0\n\n@fieldwise_init\nstruct Reader:\n    var marker: Int\n    def __getitem__[origin: Origin[mut=False]](\n        self, ref[origin] first: Int, second: Int\n    ) -> Int:\n        return first + second\n\ndef main():\n    var values: List[Int] = [10, 20]\n    ref first = values[0]\n    var reader = Reader(0)\n    print(reader[first, mutate(values)])\n";
-    let result = own(src);
+    let result = own_linked(src);
     assert!(
         matches!(
             &result,
@@ -455,7 +467,7 @@ fn retained_subscript_reference_is_checked_after_later_argument_evaluation() {
 #[test]
 fn copied_subscript_argument_is_not_reread_after_later_argument_evaluation() {
     let src = "def mutate(mut values: List[Int]) -> Int:\n    values.append(3)\n    return 0\n\n@fieldwise_init\nstruct Reader:\n    var marker: Int\n    def __getitem__(self, first: Int, second: Int) -> Int:\n        return first + second\n\ndef main():\n    var values: List[Int] = [10, 20]\n    ref first = values[0]\n    var reader = Reader(0)\n    print(reader[first, mutate(values)])\n";
-    assert!(own(src).is_ok());
+    assert!(own_linked(src).is_ok());
 }
 
 #[test]
@@ -600,7 +612,7 @@ fn local_reference_permits_owner_access_while_live() {
         "def main():\n    var t = (1, 2)\n    ref a = t[0]\n    ref b = t[1]\n    print(a, b)\n",
     ];
     for src in sources {
-        assert!(own(src).is_ok(), "rejected: {src}");
+        assert!(own_linked(src).is_ok(), "rejected: {src}");
     }
 }
 
@@ -913,7 +925,10 @@ fn immutable_yield_iteration_still_conflicts_with_source_mutation() {
     // iteration still conflicts (generation protection is loan-based, not
     // mutability-based).
     let src = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[ImmOrigin(Self.o)] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        nums.items.append(7)\n        print(x)\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+    assert!(matches!(
+        own_linked(src),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
 }
 
 #[test]
@@ -969,18 +984,18 @@ fn immutable_ref_arguments_are_shared_reads_at_the_call() {
     let accepted = format!(
         "{view}def main():\n    var w = 1\n    var a = View(w)\n    var b = View(w)\n    print(a.get(), b.get())\n    ref alias = borrow(w)\n    print(peek(w))\n    print(alias)\n"
     );
-    assert!(own(&accepted).is_ok());
+    assert!(own_linked(&accepted).is_ok());
     let source_write = format!(
         "{view}def main():\n    var w = 1\n    var a = View(w)\n    w += 1\n    print(a.get())\n"
     );
     assert!(matches!(
-        own(&source_write),
+        own_linked(&source_write),
         Err(OwnershipError::LoanConflict { place, loan, .. })
             if place == "w" && loan == "a"
     ));
     let mutable_twin = "struct MutView[o: Origin[mut=True]](Copyable, Movable):\n    var _v: Pointer[Int, Self.o]\n    def __init__(out self, ref[Self.o] value: Int):\n        self._v = Pointer(to=value)\n    def get(self) -> Int:\n        return self._v[]\n\ndef main():\n    var w = 1\n    var a = MutView(w)\n    var b = MutView(w)\n    print(a.get(), b.get())\n";
     assert!(matches!(
-        own(mutable_twin),
+        own_linked(mutable_twin),
         Err(OwnershipError::LoanConflict { .. })
     ));
     // Upstream's `Named[T, o: ImmOrigin]`: two over one value, bound or

@@ -549,12 +549,14 @@ fn checked_hir_places_use_owner_identity_and_typed_projections() {
 
 #[test]
 fn checked_hir_retains_distinct_comprehension_binding_owners() {
-    let program = mojito::parse(
+    let linked = mojito::link_source(
         "def main():\n    var result = [x for x in range(2) for x in range(x + 1)]\n",
+        std::path::Path::new("hir_test.mojo"),
     )
-    .expect("parse");
+    .expect("link");
+    let program = mojito::elaborate(linked).expect("elaborate");
     let checked = mojito::check_program(&program).expect("check");
-    let body = root_def_body(&checked, 0);
+    let (_, body) = function_body(&checked, "main");
     let cfg = Cfg::build_checked_fn(&checked, &[], &body);
     let expression = cfg
         .g
@@ -660,7 +662,7 @@ fn checked_hir_next_retains_a_shadowed_loop_binder_identity() {
 #[test]
 fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
-    let cfg = checked_function_cfg(source, "main");
+    let cfg = linked_function_cfg(source, "main");
     let operations: Vec<_> = cfg
         .g
         .node_weights()
@@ -670,11 +672,13 @@ fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
         .iter()
         .copied()
         .find_map(|instruction| match instruction {
+            // The program's own `StopIteration` is module-qualified beside
+            // the library's.
             mojito::hir::HirInstr::CallNext { error, call, .. }
                 if matches!(
                     error.kind(),
                     mojito::TyKind::Struct(name, arguments)
-                        if name == "StopIteration" && arguments.is_empty()
+                        if name.ends_with("$StopIteration") && arguments.is_empty()
                 ) =>
             {
                 Some(call)
@@ -735,7 +739,7 @@ fn checked_hir_reference_yielding_call_next_retains_a_reference_result() {
 #[test]
 fn checked_hir_retains_the_abstract_iterator_copy_adapter() {
     let source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
-    let cfg = checked_function_cfg(source, "first");
+    let cfg = linked_function_cfg(source, "first");
     let adapter = cfg
         .g
         .node_weights()

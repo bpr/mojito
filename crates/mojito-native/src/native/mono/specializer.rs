@@ -522,7 +522,7 @@ impl<'a> Specializer<'a> {
             arguments: arguments
                 .into_iter()
                 .map(|argument| match argument {
-                    InstanceArg::Ty(ty) => InstanceArg::Ty(origin_erased(&ty)),
+                    InstanceArg::Ty(ty) => InstanceArg::Ty(erase_origins(&ty)),
                     value @ InstanceArg::Value(_) => value,
                 })
                 .collect(),

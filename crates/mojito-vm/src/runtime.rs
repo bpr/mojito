@@ -1899,6 +1899,36 @@ const fn simd_shape(v: &Value) -> Option<(Dtype, usize)> {
     }
 }
 
+/// Refuse the compile-time cast of `value` to the integer `target` when a
+/// float lane of it is NaN or outside the target's range.
+///
+/// The pin's comptime interpreter refuses the poison LLVM's
+/// `fptosi`/`fptoui` yields there; a run-time cast saturates.
+pub fn ctfe_float_to_int(target: Dtype, value: &Value) -> Result<(), RuntimeError> {
+    if !target.is_integral() {
+        return Ok(());
+    }
+    let Some((_, SimdLanes::Float(lanes))) = simd_parts(value) else {
+        return Ok(());
+    };
+    let bits = i32::try_from(target.bit_width()).unwrap_or(i32::MAX);
+    let (low, high) = if target.is_signed() {
+        (-(2f64.powi(bits - 1)), 2f64.powi(bits - 1))
+    } else {
+        (0.0, 2f64.powi(bits))
+    };
+    match lanes
+        .iter()
+        .find(|lane| !(lane.is_finite() && lane.trunc() >= low && lane.trunc() < high))
+    {
+        Some(lane) => Err(RuntimeError::Unsupported(format!(
+            "the conversion of {lane} to {} is not a compile-time value",
+            target.name()
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// Elementwise dtype conversion, upstream's `pop.cast`.
 ///
 /// Integer targets re-wrap at the new element width, float targets convert

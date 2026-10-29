@@ -229,11 +229,15 @@ fn value_iteration_binds_droppable_items_per_iteration() {
 }
 
 #[test]
-fn value_iteration_ref_target_transfers_the_yielded_item() {
-    let output = vm(include_str!(
+fn value_iteration_ref_target_cannot_transfer_the_yielded_item() {
+    let error = run_compiled(include_str!(
         "../conformance/fixtures/value_iteration_reference_transfer.mojo"
-    ));
-    assert_eq!(output, "take 1\ndone\n");
+    ))
+    .expect_err("the pin rejects the transfer");
+    assert!(
+        error.contains("expression does not designate a value with an origin"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -1926,8 +1930,9 @@ fn container_family_owning_apis_execute() {
     // The §6 owning family: linear-capable deinit_with (List over
     // non-Deinitable elements), clear_with, and displacement-returning
     // insert, with the caller's residual consumption seeing the drained
-    // write-back state (no double teardown).
-    let src = "from std.collections.set import Set\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    conns^.deinit_with(lambda (var element: Conn): element^.close())\n    var d: Dict[Int, Int] = {1: 10}\n    var displaced = d.insert(1, 11)\n    print(\"displaced\", displaced.value().value)\n    print(\"fresh\", Bool(d.insert(2, 20)))\n    d.clear_with(lambda (var key: Int, var value: Int): print(\"cleared\", key, value))\n    print(\"len\", len(d))\n    var s: Set[Int] = {7}\n    print(\"set displaced\", s.insert(7).or_else(-1))\n    s^.deinit_with(lambda (var element: Int): print(\"torn\", element))\n";
+    // write-back state (no double teardown). The list is built by appends,
+    // as a list display of non-`Deinitable` elements is R1613.
+    let src = "from std.collections.set import Set\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = List[Conn](capacity=2)\n    conns.append(Conn(1))\n    conns.append(Conn(2))\n    conns^.deinit_with(lambda (var element: Conn): element^.close())\n    var d: Dict[Int, Int] = {1: 10}\n    var displaced = d.insert(1, 11)\n    print(\"displaced\", displaced.value().value)\n    print(\"fresh\", Bool(d.insert(2, 20)))\n    d.clear_with(lambda (var key: Int, var value: Int): print(\"cleared\", key, value))\n    print(\"len\", len(d))\n    var s: Set[Int] = {7}\n    print(\"set displaced\", s.insert(7).or_else(-1))\n    s^.deinit_with(lambda (var element: Int): print(\"torn\", element))\n";
     assert_eq!(
         run_compiled(src).expect("family APIs run"),
         "close 1\nclose 2\ndisplaced 10\nfresh False\ncleared 1 11\ncleared 2 20\nlen 0\nset displaced 7\ntorn 7\n"

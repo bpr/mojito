@@ -83,6 +83,23 @@ fn lower_source(source: &str) -> MirProgram {
     mir
 }
 
+/// [`lower_source`] with the bundled standard library linked, for a program
+/// whose operators or traits are library declarations (`Int`'s `+` is
+/// `SIMD`'s dunder).
+fn lower_linked_source(source: &str) -> MirProgram {
+    let linked =
+        mojito::link_source(source, std::path::Path::new("verify_test.mojo")).expect("link");
+    let program = mojito::elaborate(linked).expect("elaborate");
+    let checked = check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "valid source produced invalid MIR: {:?}",
+        mir.invariant_errors
+    );
+    mir
+}
+
 fn reference_ty(referent: Ty, mutability: mojito::Mutability) -> Ty {
     TyKind::Ref(mojito::RefTy {
         referent,
@@ -128,6 +145,7 @@ fn first_index_call(program: &mut MirProgram) -> &mut mojito::mir::MirSubscriptC
     program
         .functions
         .iter_mut()
+        .filter(|(name, _)| name == "main")
         .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::Index {
@@ -652,30 +670,30 @@ fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
 fn verifier_rejects_corrupt_subscript_argument_contracts() {
     const SOURCE: &str = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, mut index: Int) -> Int:\n        index += 1\n        return self.value\n\ndef main():\n    var box = Box(40)\n    var index = 0\n    print(box[index])\n";
 
-    let mut missing = lower_source(SOURCE);
+    let mut missing = lower_linked_source(SOURCE);
     first_index_call(&mut missing).arguments.clear();
     expect_finding(&missing, "declares 1 fixed parameter");
 
-    let mut out_of_range = lower_source(SOURCE);
+    let mut out_of_range = lower_linked_source(SOURCE);
     first_index_call(&mut out_of_range).arguments[0].source =
         mojito::checked::CheckedCallArgumentSource::Positional(1);
     expect_finding(&out_of_range, "positional source 1 is out of range");
     expect_finding(&out_of_range, "positional source 0 is represented 0 times");
 
-    let mut duplicate = lower_source(SOURCE);
+    let mut duplicate = lower_linked_source(SOURCE);
     let extra = first_index_call(&mut duplicate).arguments[0].clone();
     first_index_call(&mut duplicate).arguments.push(extra);
     expect_finding(&duplicate, "positional source 0 is represented 2 times");
     expect_finding(&duplicate, "has no matching variadic collector");
 
-    let mut missing_place_requirement = lower_source(SOURCE);
+    let mut missing_place_requirement = lower_linked_source(SOURCE);
     first_index_call(&mut missing_place_requirement).arguments[0].requires_place = false;
     expect_finding(
         &missing_place_requirement,
         "place requirement does not match",
     );
 
-    let mut wrong_type = lower_source(SOURCE);
+    let mut wrong_type = lower_linked_source(SOURCE);
     first_index_call(&mut wrong_type).arguments[0].parameter_ty = Ty::string_literal();
     expect_finding(&wrong_type, "subscript source has type Int");
     expect_finding(
@@ -683,7 +701,7 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
         "does not match 'Box.__getitem__' declaration Int",
     );
 
-    let mut wrong_result = lower_source(SOURCE);
+    let mut wrong_result = lower_linked_source(SOURCE);
     first_index_call(&mut wrong_result).result_ty = Ty::string_literal();
     expect_finding(&wrong_result, "subscript result has type Int");
     expect_finding(
@@ -691,14 +709,14 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
         "selected result type StringLiteral does not match 'Box.__getitem__' declaration Int",
     );
 
-    let mut missing_receiver_place_requirement = lower_source(SOURCE);
+    let mut missing_receiver_place_requirement = lower_linked_source(SOURCE);
     first_index_call(&mut missing_receiver_place_requirement).receiver_requires_place = false;
     expect_finding(
         &missing_receiver_place_requirement,
         "receiver place requirement does not match",
     );
 
-    let mut wrong_receiver_convention = lower_source(SOURCE);
+    let mut wrong_receiver_convention = lower_linked_source(SOURCE);
     first_index_call(&mut wrong_receiver_convention).receiver_convention =
         Some(mojito::ast::ArgConvention::Mut);
     expect_finding(
@@ -706,7 +724,7 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
         "subscript receiver convention Some(Mut)",
     );
 
-    let mut wrong_argument_convention = lower_source(SOURCE);
+    let mut wrong_argument_convention = lower_linked_source(SOURCE);
     first_index_call(&mut wrong_argument_convention).arguments[0].convention =
         Some(mojito::ast::ArgConvention::Imm);
     expect_finding(
@@ -714,7 +732,7 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
         "subscript parameter 0 convention Some(Imm)",
     );
 
-    let mut receiverless_declaration = lower_source(SOURCE);
+    let mut receiverless_declaration = lower_linked_source(SOURCE);
     let target = first_index_call(&mut receiverless_declaration)
         .target
         .clone();
@@ -800,12 +818,15 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
 
 #[test]
 fn verifier_types_simd_lane_instructions() {
-    let mut mir = lower_source(
-        "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var m = v.gt(2)\n    print(m.select(v, v), m.reduce_and())\n",
+    // `main` spells the op, so its operands are closed (`SIMD.select`'s own
+    // body is generic over its lanes).
+    let mut mir = lower_linked_source(
+        "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var m = v.gt(2)\n    print(SIMD[DType.int32, 4](mlir_value=__mlir_op.`pop.simd.select`(m._mlir_value, v._mlir_value, v._mlir_value)))\n",
     );
     let select = mir
         .functions
         .iter_mut()
+        .filter(|(name, _)| name == "main")
         .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find(|instruction| matches!(instruction, MirInstr::SimdSelect { .. }))
         .expect("SIMD select lowered");
@@ -1057,7 +1078,8 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
     );
     expect_finding(&program(wrong_index), "has non-Indexer type StringLiteral");
 
-    let mut non_indexed = MirPlace::root(0, Some(Ty::int()));
+    // An `Int` is a width-one `SIMD`, whose lane a subscript reads.
+    let mut non_indexed = MirPlace::root(0, Some(Ty::bool()));
     non_indexed.project(Proj::Index(Reg(0)), Ty::int());
     let non_indexed = function(
         vec![block(
@@ -1695,7 +1717,7 @@ fn verifier_rejects_misaligned_call_place_metadata() {
 #[test]
 fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
     let source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
-    let mut missing = lower_source(source);
+    let mut missing = lower_linked_source(source);
     let call = missing
         .functions
         .iter_mut()
@@ -1716,7 +1738,7 @@ fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
         "abstract value-returning __next__ call lacks its copy-reference adapter",
     );
 
-    let mut concrete = lower_source(source);
+    let mut concrete = lower_linked_source(source);
     let call = concrete
         .functions
         .iter_mut()
@@ -2137,7 +2159,7 @@ fn raising_call() -> Vec<MirInstr> {
 const TRY: TryLabel = TryLabel(0);
 
 /// A `try` labelled [`TRY`] around `body`, with `handler` as its handler.
-fn try_region(body: Vec<MirBlock>, handler: Option<Vec<MirBlock>>) -> MirInstr {
+const fn try_region(body: Vec<MirBlock>, handler: Option<Vec<MirBlock>>) -> MirInstr {
     MirInstr::Try {
         label: TRY,
         error: Some(1),

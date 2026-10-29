@@ -11,9 +11,17 @@ use mojito::checker::resolve_overload_targets;
 use mojito::mir::lower_program;
 use mojito::parse;
 
+/// `src` linked against the bundled standard library and elaborated, the
+/// program the check takes: `Int`'s operators are `SIMD`'s library dunders.
+fn linked_program(src: &str) -> Vec<mojito::Stmt> {
+    let linked =
+        mojito::link_source(src, std::path::Path::new("symbol_test.mojo")).expect("link error");
+    mojito::elaborate(linked).expect("elaborate")
+}
+
 /// The lowered function names `lower_program` emits for `src`.
 fn lowered_names(src: &str) -> HashSet<String> {
-    lower_program(&parse(src).expect("parse error"))
+    lower_program(&linked_program(src))
         .expect("type error")
         .functions
         .into_iter()
@@ -340,7 +348,7 @@ fn checker_recorded_callees_name_real_mir_functions() {
          \x20   print(pick(Pair(1, 2)))\n\
          \x20   var b: Box = Box(5)\n\
          \x20   print(b.get(), b.get(Point(3)))\n";
-    let program = parse(src).expect("parse error");
+    let program = linked_program(src);
     let targets = resolve_overload_targets(&program).expect("check error");
     let names: HashSet<String> = lower_program(&program)
         .expect("type error")
@@ -349,7 +357,17 @@ fn checker_recorded_callees_name_real_mir_functions() {
         .map(|(name, _)| name)
         .collect();
     assert!(!targets.is_empty(), "expected recorded overload targets");
-    for target in targets.values() {
+    // The program's own calls: the bundled library's are its package's.
+    let own = targets
+        .iter()
+        .filter(|(site, _)| {
+            !site
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains("/stdlib/std/"))
+        })
+        .map(|(_, target)| target);
+    for target in own {
         assert!(
             names.contains(target),
             "checker target '{target}' names no MIR function; emitted: {names:?}"
@@ -405,7 +423,7 @@ fn self_typed_overload_keys_agree_between_declaration_and_call() {
          \x20   var p: Pair = Pair(1)\n\
          \x20   var q: Pair = Pair(2)\n\
          \x20   print(p.merge(q), p.merge(5))\n";
-    let program = parse(src).expect("parse error");
+    let program = linked_program(src);
     let targets = resolve_overload_targets(&program).expect("check error");
     let names: HashSet<String> = lower_program(&program)
         .expect("type error")
@@ -422,7 +440,17 @@ fn self_typed_overload_keys_agree_between_declaration_and_call() {
         targets.values().any(|t| t == "Pair.merge$ov$Self"),
         "expected a recorded `$ov$Self` call target; got: {targets:?}"
     );
-    for target in targets.values() {
+    // The program's own calls: the bundled library's are its package's.
+    let own = targets
+        .iter()
+        .filter(|(site, _)| {
+            !site
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains("/stdlib/std/"))
+        })
+        .map(|(_, target)| target);
+    for target in own {
         assert!(
             names.contains(target),
             "checker target '{target}' names no MIR function; emitted: {names:?}"
@@ -444,7 +472,7 @@ fn mlir_typed_overload_keys_agree_between_declaration_and_call() {
          def main():\n\
          \x20   var a = Index(mlir_value=Int(3).__mlir_index__())\n\
          \x20   print(Int(mlir_value=a._mlir_value), Int(mlir_value=Index(5)._mlir_value))\n";
-    let program = parse(src).expect("parse error");
+    let program = linked_program(src);
     let targets = resolve_overload_targets(&program).expect("check error");
     let names: HashSet<String> = lower_program(&program)
         .expect("type error")
@@ -458,7 +486,17 @@ fn mlir_typed_overload_keys_agree_between_declaration_and_call() {
             .any(|t| t.starts_with("Index.__init__$ov$") && t.ends_with("$kw$mlir_value")),
         "expected a recorded `mlir_value` constructor target; got: {targets:?}"
     );
-    for target in targets.values() {
+    // The program's own calls: the bundled library's are its package's.
+    let own = targets
+        .iter()
+        .filter(|(site, _)| {
+            !site
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains("/stdlib/std/"))
+        })
+        .map(|(_, target)| target);
+    for target in own {
         assert!(
             names.contains(target),
             "checker target '{target}' names no MIR function; emitted: {names:?}"
@@ -483,7 +521,17 @@ fn type_of_parameter_overload_keys_agree_between_declaration_and_call() {
         .map(|(name, _)| name)
         .collect();
     assert!(names.contains("pick$ov$Int$Int"), "{names:?}");
-    for target in targets.values() {
+    // The program's own calls: the bundled library's are its package's.
+    let own = targets
+        .iter()
+        .filter(|(site, _)| {
+            !site
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains("/stdlib/std/"))
+        })
+        .map(|(_, target)| target);
+    for target in own {
         assert!(
             names.contains(target),
             "checker target '{target}' names no MIR function; emitted: {names:?}"
@@ -520,10 +568,15 @@ fn scan_rs_files(dir: &std::path::Path, offenders: &mut Vec<String>) {
         if path.is_dir() {
             scan_rs_files(&path, offenders);
         } else if path.extension().is_some_and(|e| e == "rs")
-            && path.file_name().is_some_and(|f| f != "symbol.rs")
+            && path
+                .file_name()
+                .is_some_and(|f| f != "symbol.rs" && f != "tests.rs")
             && std::fs::read_to_string(&path)
                 .expect("read source file")
                 .lines()
+                // Production code only: a file's test module comes last, and
+                // a crate below `mojito-symbol` cannot name its constants.
+                .take_while(|line| line.trim() != "#[cfg(test)]")
                 .any(|line| {
                     line.split_once("//")
                         .map_or(line, |(code, _)| code)

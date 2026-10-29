@@ -28,8 +28,12 @@ struct Conn(Movable, Deinitable where False):
         print("close", self.id)
 
 def main():
-    # List.deinit_with over linear elements — the §6 payoff
-    var conns: List[Conn] = [Conn(1), Conn(2)]
+    # List.deinit_with over linear elements — the §6 payoff. The list is
+    # built by `append`: a display of linear elements is
+    # `conformance/probes/list_display_linear_elements.mojo`.
+    var conns = List[Conn](capacity=2)
+    conns.append(Conn(1))
+    conns.append(Conn(2))
     conns^.deinit_with(lambda (var element: Conn): element^.close())
 
     # Array.deinit_with

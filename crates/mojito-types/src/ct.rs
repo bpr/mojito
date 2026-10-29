@@ -1762,7 +1762,7 @@ mod tests {
         );
         assert_eq!(
             float_lane_binop(InfixOp::FloorDiv, Dtype::Float32, 7.5, 2.0),
-            None
+            Some(3.0)
         );
         assert_eq!(lane_compare(InfixOp::Eq, f64::NAN, f64::NAN), Some(false));
         assert_eq!(lane_compare(InfixOp::Ne, f64::NAN, f64::NAN), Some(false));
@@ -1785,7 +1785,7 @@ mod tests {
         assert_eq!(fold(float(1e30), To::Int), None);
         assert_eq!(fold(float(f64::NAN), To::Int), None);
         assert_eq!(fold(float(-1.0), To::UInt), None);
-        assert_eq!(fold(float(f64::NAN), To::Bool), Some(CtValue::Bool(true)));
+        assert_eq!(fold(float(f64::NAN), To::Bool), Some(CtValue::Bool(false)));
         let lane = |dtype, lane| CtValue::Simd {
             dtype,
             lanes: vec![lane],

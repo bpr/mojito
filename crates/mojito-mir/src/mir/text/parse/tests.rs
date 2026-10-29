@@ -3001,7 +3001,7 @@ fn value_pack_declarations_read_their_list_from_older_artifacts() {
         match (parsed.program.functions[0].1.reg_types[&0]).kind() {
             TyKind::GenericFunc(generic) => match &generic.decls[0] {
                 ParamDecl::Value { ty, .. } => ty.clone(),
-                other => panic!("expected a value pack, read {other:?}"),
+                other @ ParamDecl::Type { .. } => panic!("expected a value pack, read {other:?}"),
             },
             other => panic!("expected a generic function type, read {other}"),
         }

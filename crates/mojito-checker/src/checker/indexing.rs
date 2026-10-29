@@ -587,10 +587,10 @@ impl Checker {
         target: &Expr,
         value: &Expr,
     ) -> Result<Option<Ty>, TypeError> {
-        reject_keyword_subscript_store(target)?;
         let Some(lvalue) = self.subscript_lvalue(target)? else {
             return Ok(None);
         };
+        reject_keyword_subscript_store(target)?;
         let SubscriptLValue::GetterSetter {
             element,
             value_name,
@@ -739,7 +739,13 @@ impl Checker {
                     "nominal subscript assignment lost its selected call contract".to_string(),
                 )
             })?;
-        let element = self.infer(value)?;
+        // The setter typed its value argument against its parameter: a
+        // display it took (`d[k] = [5, 6]`) keeps that type, where inferring
+        // it again without one would materialize it as an `Array`.
+        let element = match self.fact(&value.source_span(), |facts| facts.ty.as_ref()) {
+            Some(ty) => ty,
+            None => self.infer(value)?,
+        };
         let descriptors =
             self.bind_selected_slice_literals(&target.source_span(), &[], &descriptors)?;
         self.record_at(target.source_span()).subscript_descriptor =
@@ -2342,8 +2348,9 @@ fn setter_value_name(setter: &MethodSig) -> Option<String> {
     }
 }
 
-/// Reject a store to a subscript with a keyword argument (`s[byte=0] = v`):
-/// a keyword subscript is read-only here.
+/// Reject a store to a declared struct's subscript with a keyword argument
+/// (`s[byte=0] = v`): a keyword subscript is read-only here. A pointer's
+/// keyword offset (`p[unsafe_offset=1] = v`) stores through the pointer.
 fn reject_keyword_subscript_store(target: &Expr) -> Result<(), TypeError> {
     let ExprKind::MultiIndex { args, .. } = &target.kind else {
         return Ok(());

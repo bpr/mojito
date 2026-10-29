@@ -591,6 +591,29 @@ impl MirDeclarations {
         self.drop_runs_no_code_within(ty, &mut Vec::new())
     }
 
+    /// Whether copying a value of `ty` runs no initializer, as upstream's
+    /// `IsTriviallyCopyable` answers: a struct whose `IsTriviallyCopyable`
+    /// row holds at its arguments, which a struct declaring its own copy
+    /// initializer never has. Upstream copies such a value bit for bit, so
+    /// its lifetime check sees no copy initialization to turn into a move.
+    /// Anything else, and a row the arguments leave open, answers no.
+    pub fn copy_runs_no_code(&self, ty: &Ty) -> bool {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return false;
+        };
+        self.structure(name).is_some_and(|declaration| {
+            declaration.conformances.iter().any(|row| {
+                row.trait_name == "IsTriviallyCopyable"
+                    && row_holds_at(
+                        &row.conditions,
+                        &declaration.param_decls,
+                        arguments,
+                        &|_, _| None,
+                    ) == Some(true)
+            })
+        })
+    }
+
     /// [`Self::drop_runs_no_code`], `visiting` the structs under way: a
     /// recursive struct answers no.
     fn drop_runs_no_code_within(&self, ty: &Ty, visiting: &mut Vec<String>) -> bool {
