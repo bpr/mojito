@@ -1826,6 +1826,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "slice",
     "String",
     "StringSpan",
+    "StaticString",
     "Codepoint",
     "TString",
     "Writable",

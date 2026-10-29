@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `StaticString` is declared as upstream's `StringSpan[ImmStaticOrigin]`
+  and exported by the prelude (R432), so a parameter, field, return,
+  variable, or `List` element typed `StaticString` runs on both backends
+  as at the pin, a literal converting to it. A `StaticString`
+  compile-time parameter is R1641.
 - `--target-cpu CPU` and `--target-features LIST` select the native
   target CPU, and `--target-triple` is accepted as the pin's spelling of
   `--target` (R1633). The CPU is any of the pin's 79 x86-64 names, read

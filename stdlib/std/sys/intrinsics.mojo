@@ -6,7 +6,7 @@
 #
 # The body is upstream's, except:
 # - `intrin` is a `StringLiteral`, where upstream's is a `StaticString`,
-#   which Mojito does not declare (roadmap R432);
+#   which Mojito does not hold as a compile-time value (roadmap R1641);
 # - its `!kgen.string` is `intrin.value`, where upstream's is
 #   `_get_kgen_string[intrin]()` over the `StaticString`;
 # - `args.get_loaded_kgen_pack()` is served by the compiler on the

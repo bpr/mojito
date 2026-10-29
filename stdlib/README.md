@@ -256,7 +256,8 @@ point, as upstream's toolchain does.
   mode constants and `S_ISDIR`/`S_ISREG`/`S_ISLNK`. `std/time/time.mojo` —
   the C `timespec` record `_CTimeSpec`.
 - `std/string.mojo` also hosts `StringSpan[mut: Bool, //, origin]` (the
-  canonical string view; `StringSlice` is a never-emitted annotation alias)
+  canonical string view; `StringSlice` is a never-emitted annotation alias),
+  upstream's `StaticString` alias (`StringSpan[ImmStaticOrigin]`)
   and `_GraphemeIter`, the grapheme-cluster iterator behind ordinary
   String/StringSpan/StringLiteral iteration.
 

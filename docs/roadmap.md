@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1641**.
+Next free ID: **R1642**.
 
 ## Ordered Work
 
@@ -181,6 +181,10 @@ which names the upstream pass each one follows. Each is measured by the
     and `S`'s `@implicit __init__(out self, value: String, /)` storing
     `value.byte_length()` is rejected as unsupported ("a parameter argument
     converted by 'S.__init__' is not supported yet"). The pin prints `4`.
+  - Probe: `name["param"]()` over `def name[s: StaticString]()` is
+    rejected the same way, naming `StringSpan.__init__$ov$StringLiteral`,
+    whose parameter is a `StringLiteral`. The pin prints `param`. The
+    compile-time value it builds is R1641.
   - Probe: a construction whose `__init__` takes a struct or `String`
     parameter is still frozen fieldwise by `aggregate_value`'s
     `frozen_construction` (`checker/constraints.rs`), where the pin applies
@@ -4571,6 +4575,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     shape.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1641 A `StaticString` is no compile-time value**
+
+  `name["param"]()` over `def name[s: StaticString]() -> String` is
+  rejected, where the pin prints `param`.
+  - The elaborator has no compile-time `StringSpan` whose pointer addresses
+    a literal's bytes, the pin's `pop.string.address` and `pop.string.size`
+    over the literal's `!kgen.string`.
+  - The first failure is R1528's classifier: `StringSpan`'s `@implicit`
+    literal `__init__` is no application ("a parameter argument converted
+    by 'StringSpan.__init__$ov$StringLiteral' is not supported yet").
+  - Fold upstream's `_get_kgen_string[string: StaticString, *extra]()`
+    (`#kgen.param.expr<data_to_str, …>`), which reads such a value's bytes
+    back as a `!kgen.string`. No `data_to_str` fold exists.
+  - Probe: the bundled `std/sys/intrinsics.mojo` declares `llvm_intrinsic`'s
+    `intrin` as a `StringLiteral` read as `intrin.value`, where upstream's
+    is a `StaticString` read through `_get_kgen_string[intrin]()`. Respell
+    it as upstream's and drop its header's divergence bullet.
+  - Probe: `CompilationTarget._has_feature[name: StaticString]()` (R1562)
+    and `_is_arch[name: StaticString]()` (R1635).
+  - Found while landing R432 (2026-10-29).
+  - Depends on R1528.
+  - Model: Fable, Not Planned.
 
 - [ ] **R602 A local `comptime` constant annotated with a sized scalar is
   no parameter value**
@@ -10213,8 +10240,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     R1630 (`_current_target()` returns `!kgen.target`), R1631
     (`CompilationTarget.has_avx2()` is a bare-name static call), R1632
     (`comptime current = CompilationTarget[…]` names its own struct), R1640
-    (the answers are the host CPU's), and R432 (`_has_feature` takes a
-    `StaticString`).
+    (the answers are the host CPU's), and R1641 (`_has_feature` takes a
+    compile-time `StaticString`).
   - Model: Fable, Planned.
 
 - [ ] **R1634 `size_of` is a compiler name and `align_of` is missing,
@@ -10248,8 +10275,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   where the pin prints `True`, `True`, and `linux` on this host.
   - Each body reads a `!kgen.string` field through `target_get_field` and
     compares it as `StringLiteral[Self.__triple_arch()]()._is_identical(…)`,
-    so it needs `StringLiteral`'s `value` parameter (R1192) and
-    `StaticString` (R432).
+    so it needs `StringLiteral`'s `value` parameter (R1192) and a
+    compile-time `StaticString` (R1641).
   - Port `is_triple`, `_arch`, `__arch`, `_is_arch`, `__triple_arch`,
     `__triple`, `_is_triple_arch`, `_eq_triple_and_arch`, `_os`, `is_x86`,
     `is_arm`, the RISC-V, Apple, and Neon queries, `is_linux`, `is_macos`,
@@ -10264,7 +10291,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     can be restored.
   - `_arch()` is `StaticString(Self.__arch())`, a run-time call of a
     function returning `!kgen.string`, which needs R1190's run-time form.
-  - Depends on R1562, R1192, R432, and R1190.
+  - Depends on R1562, R1192, R1641, and R1190.
   - Model: Opus, Planned.
 
 - [ ] **R1623 `SIMD`'s `%`, `divmod`, and `ceildiv` are checker rules
@@ -12342,19 +12369,6 @@ residue found inside a task moves to the task that owns its fix.
   Problem: `bytes.unsafe_get(i)` over a `Span[UInt8]` reads the element at
   the pin, while Mojito reports "type 'Span[UInt8]' has no method
   'unsafe_get'".
-  - Found while landing R421 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R432 `StaticString` is an unknown type**
-
-  Problem: a parameter typed `StaticString` compiles at the pin, while
-  Mojito reports "unknown type 'StaticString'".
-  - Upstream's `StaticString` is `StringSlice[StaticConstantOrigin]`.
-  - Probe: the bundled `std/sys/intrinsics.mojo` declares `llvm_intrinsic`'s
-    `intrin` as a `StringLiteral` and reads its `!kgen.string` as
-    `intrin.value`, where upstream's is a `StaticString` read through
-    `_get_kgen_string[intrin]()`.
   - Found while landing R421 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.

@@ -9,7 +9,14 @@ from std.collections.array import Array
 from std.collections.list import List
 from std.format import Writable, Writer
 from std.format.tstring import TString
-from std.string import Codepoint, String, StringSpan, atof, atol
+from std.string import (
+    Codepoint,
+    StaticString,
+    String,
+    StringSpan,
+    atof,
+    atol,
+)
 from std.collections.set import Set
 from std.collections.dict import Dict
 from std.collections.optional import Optional, OptionalReg

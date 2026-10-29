@@ -1418,6 +1418,10 @@ struct Codepoint(Comparable, ImplicitlyCopyable, Intable, Movable, Writable):
         writer.write("Codepoint(", self._scalar, ")")
 
 
+comptime StaticString = StringSpan[ImmStaticOrigin]
+"""An immutable static string span."""
+
+
 # A borrowed byte view over a String's UTF-8 buffer: current Mojo's
 # `StringSpan` (upstream also accepts the older `StringSlice` spelling;
 # Mojito emits `StringSpan`). Constructing it from a String lends the

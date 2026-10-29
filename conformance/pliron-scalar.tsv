@@ -1005,6 +1005,7 @@ assets/ok/static_method_unread_owner_instances.mojo	-	ineligible	no-scalar-entry
 assets/ok/static_method_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_reference_result_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/static_string.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stored_array_span_iterators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_capacity.mojo	-	ineligible	no-scalar-entry-shape
