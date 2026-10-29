@@ -371,6 +371,10 @@ pub struct ClosureStorageEnvironment {
     /// capture's referent's, which makes the storage register-passable
     /// (upstream's meet over the captures in `emitClosure`).
     pub register_passable: bool,
+    /// Whether every capture's type is trivially register-passable, a
+    /// reference capture's referent's, which makes the storage
+    /// `TrivialRegisterPassable`, by the same meet.
+    pub trivially_register_passable: bool,
 }
 
 /// The declaration site of a closure: a nested `def`'s statement, or a

@@ -285,8 +285,9 @@ pub fn leaf_conforms(
 /// `SIMD`, `Bool`, the numeric literals, `NoneType`, and `DType`
 /// `TrivialRegisterPassable`, which refines `RegisterPassable`; `Tuple`
 /// lists `Defaultable` and `RegisterPassable` where every element
-/// conforms, which `element` answers. A closure's storage is
-/// `RegisterPassable` where each of its captures is.
+/// conforms, which `element` answers. A thin function is
+/// `TrivialRegisterPassable`, and a closure's storage `RegisterPassable`
+/// or `TrivialRegisterPassable` where each of its captures is.
 ///
 /// Every modelled leaf but a callable lists `Writable`; `Tuple` and
 /// `Variant` list it where every element conforms, which `element` answers.
@@ -354,7 +355,7 @@ pub fn modelled_conformance(
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 return every(items, trait_name, element);
             }
-            TyKind::Func(func) => matches!(
+            TyKind::Func(func) if !thin_callable(ty) => matches!(
                 &func.environment,
                 crate::origin::CallableEnvironment::Storage(storage) if storage.register_passable
             ),
@@ -430,12 +431,29 @@ pub fn simd_valued_ty(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Simd { .. }) || simd_shape(ty).is_some()
 }
 
+/// Whether `ty` is a thin function's type, generic or not: a bare function
+/// pointer, which upstream passes in a register and copies bitwise.
+pub fn thin_callable(ty: &Ty) -> bool {
+    ty.kind()
+        .callable()
+        .is_some_and(|func| matches!(func.environment, crate::origin::CallableEnvironment::Thin))
+}
+
 /// Whether the compiler-modelled `ty` stands in for an upstream struct
-/// declaring `TrivialRegisterPassable`: a `SIMD` value, `Bool`, a numeric
-/// literal, `NoneType`, or `DType`.
+/// declaring `TrivialRegisterPassable`, or is a type upstream gives that
+/// conformance: a `SIMD` value, `Bool`, a numeric literal, `NoneType`,
+/// `DType`, a thin function, or a closure's storage whose captures all are.
 fn modelled_trivial_register_passable(ty: &Ty) -> bool {
     is_numeric_like(ty)
         || simd_valued_ty(ty)
+        || thin_callable(ty)
+        || ty.kind().as_func().is_some_and(|func| {
+            matches!(
+                &func.environment,
+                crate::origin::CallableEnvironment::Storage(storage)
+                    if storage.trivially_register_passable
+            )
+        })
         || matches!(
             ty.kind(),
             TyKind::Bool

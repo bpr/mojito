@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1650**.
+Next free ID: **R1651**.
 
 ## Ordered Work
 
@@ -2915,21 +2915,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1584 A function type in a trait composition does not parse**
-
-  `F: ImplicitlyCopyable & RegisterPassable & def[width:
-  SIMDLength](SIMD[DType.int32, width]) -> SIMD[DType.int32, width], //`
-  is a parse error ("Expected a trait name after '&'"), where the pin
-  binds `F` to the function's type and runs `func[4](x)`.
-  - The composition parser reads only trait names after `&`; upstream's
-    reads a function type there as one more requirement of the binder.
-  - `docs/grammar.md` first, then parser tests.
-  - Upstream's closure overload of `SIMD.reduce` spells its binder this
-    way (R1585).
-  - Found while planning R1554 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1502 `Pointer` and `StringLiteral` are not `TrivialRegisterPassable`**
 
   Upstream declares both `TrivialRegisterPassable`, but the modelled
@@ -2948,6 +2933,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Check the predicate's other callers: `fieldwise_conventions` (a pointer
     field's fieldwise parameter becomes `read`), `origins/sig.rs`'s
     `NoMemoryOrigin`, and `patterns.rs`'s `ref` binding.
+  - Probe: a thin function and a closure's storage whose captures are
+    trivial conform to `TrivialRegisterPassable` (R1584), but
+    `is_trivial_register_passable` still answers no for both: `var g =
+    f^; print(g(1), f(2))` over `var f = inc` reports "use of
+    uninitialized value 'f'", where the pin warns the transfer has no
+    effect and prints `2 3`.
   - Found while landing R1367 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4344,6 +4335,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Fix: build the symbolic test as the `Bool(x)` application the
     elaborator folds per instance, as a closed operand's `ct_truth` does.
   - Found while landing R97 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1650 The elaborator binds a callable binder to its argument's
+  type with the environment erased, so `conforms_to` over a thin function
+  answers as for a contract**
+
+  `comptime if conforms_to(F, TrivialRegisterPassable)` in `def probe[F:
+  Copyable & def(Int) -> Int](f: F)` takes the false arm for `probe(inc)`
+  over a module `def inc`, where the pin takes the true arm; a closure
+  with trivial captures takes the true arm on both.
+  - Cause: `bind_type` (`native/mono/unify.rs`) stores the binder's
+    solution through `canonicalize_callable`, which rewrites every
+    `thin` and `capturing[...]` environment to the unqualified contract's,
+    so the specializer's `type_conforms` asks about `def(Int) -> Int`,
+    not `def(Int) thin -> Int`.
+  - Upstream's thin and capturing function types are distinct types, so
+    they are distinct instances; keep the environment in the binder's
+    solution and in instance identity, and erase only what the runtime
+    ABI erases (capture origins).
+  - Probe: the `RegisterPassable` arm of the same body is skipped too.
+  - The checker already answers both conformances for the thin argument
+    (R1584), so the gap is the elaborator's alone.
+  - Found while landing R1584 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

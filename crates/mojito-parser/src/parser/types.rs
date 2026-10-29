@@ -770,8 +770,26 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 None
             };
             let mut bounds = vec![first_bound];
+            let mut callable_bound = callable_bound;
             while matches!(self.peek_token()?, Some(Token::Amp)) {
+                // A function type ends the composition: upstream reads its
+                // result as an expression, which takes any later `& Trait`.
+                if callable_bound.is_some() {
+                    return Err(ParseError::UnexpectedToken(
+                        self.next_token()?,
+                        "a function type ends a type-parameter bound; compose its traits before it"
+                            .into(),
+                    ));
+                }
                 self.next_token()?; // consume '&'
+                // A function type composes with the traits as one more
+                // requirement of the binder (`F: ImplicitlyCopyable &
+                // def(Int) -> Int`).
+                if matches!(self.peek_token()?, Some(Token::Def)) {
+                    callable_bound = Some(self.parse_type()?);
+                    bounds.push("<function type>".to_string());
+                    continue;
+                }
                 let bound = self.expect_identifier("Expected a trait name after '&'")?;
                 bounds.push(bound);
             }

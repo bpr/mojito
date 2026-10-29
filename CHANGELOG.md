@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A function type now composes with traits in a binder's bound, as at the
+  pin (R1584): `F: ImplicitlyCopyable & RegisterPassable & def[width:
+  SIMDLength](SIMD[DType.int32, width]) -> SIMD[DType.int32, width], //`
+  binds `F` to the argument's type and runs `func[4](x)`, where it was a
+  parse error ("Expected a trait name after '&'"). A thin function, and a
+  closure whose captures all are, now conforms to `TrivialRegisterPassable`
+  and `RegisterPassable`. A trait after the function type is a parse
+  error, as the pin rejects it.
 - A call through a callable binder now converts its parameter arguments
   through the parameter's `@implicit` constructor, as a direct call does
   and as at the pin (R1583): `func[4](x)` over `func: def[width:

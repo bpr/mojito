@@ -2739,7 +2739,9 @@ impl Checker {
                 }
             }
             TyKind::Assoc { .. } | TyKind::SelfType | TyKind::Dependent(_) => Possible,
-            // A closure's storage meets its captures' passabilities.
+            // A thin function is a bare pointer, and a closure's storage
+            // meets its captures' passabilities.
+            _ if mojito_types::conformance::thin_callable(ty) => Proven,
             TyKind::Func(func) => match &func.environment {
                 mojito_types::origin::CallableEnvironment::Storage(storage)
                     if storage.register_passable =>

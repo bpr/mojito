@@ -351,6 +351,7 @@ assets/ok/forwarded_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/free_function_origin_binder_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/free_function_origin_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/func_styles.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/function_type_trait_composition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_type_where_bound.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_type_where_unconstrained_actual.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_typed_kwargs.mojo	-	ineligible	no-scalar-entry-shape

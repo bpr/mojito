@@ -3383,12 +3383,11 @@ impl Checker {
                                 || self.is_copyable(&capture.ty)
                         }),
                         register_passable: captures.iter().all(|capture| {
-                            let referent = match capture.ty.kind() {
-                                TyKind::Ref(reference) => &reference.referent,
-                                _ => &capture.ty,
-                            };
-                            self.register_passability(referent)
+                            self.register_passability(capture_referent(&capture.ty))
                                 == super::traits::RegisterPassability::Proven
+                        }),
+                        trivially_register_passable: captures.iter().all(|capture| {
+                            self.is_trivial_register_passable(capture_referent(&capture.ty))
                         }),
                     },
                 ))
@@ -3861,4 +3860,13 @@ fn conforms_to_deferred(
                     .map(|(name, _)| name),
             )
             .any(|name| trait_is_deferred(stmts, deferred, name))
+}
+
+/// The type a closure's storage holds a capture as: a reference capture's
+/// referent, and any other capture's own type.
+fn capture_referent(ty: &Ty) -> &Ty {
+    match ty.kind() {
+        TyKind::Ref(reference) => &reference.referent,
+        _ => ty,
+    }
 }

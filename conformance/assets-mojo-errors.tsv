@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	921
+# swept-count	923
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -127,6 +127,7 @@ assets/parse_error/comptime_assert_struct_body.mojo	compile-reject	agree	error: 
 assets/parse_error/comptime_if_module_level.mojo	compile-reject	agree	error: 'comptime if' must be contained in a function
 assets/parse_error/comptime_match_module_level.mojo	compile-reject	agree	error: 'comptime match' must be contained in a function
 assets/parse_error/for_target_trailing_comma.mojo	compile-reject	agree	error: unexpected token in expression
+assets/parse_error/function_type_bound_then_trait.mojo	compile-reject	agree	error: invalid call to '__and__': value passed to 'self' cannot be converted from 'AnyStruct[Int]' to 'SIMD[dtype, length]', it depends on an unresolved parameter 'dtype'
 assets/parse_error/generator_type_missing_result.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises', 'capturing', or 'thin'
 assets/parse_error/lambda_unparenthesized_args.mojo	compile-reject	agree	error: unparenthesized lambda arguments are not supported; write them in parentheses, with types, e.g. `lambda (x: Int, y: Int) -> Int: x + y`
@@ -249,6 +250,7 @@ assets/type_error/capturing_lambda_parameter_argument.mojo	compile-reject	agree	
 assets/type_error/chained_comparison_middle_not_deinitable.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
 assets/type_error/chained_comparison_middle_not_implicitly_copyable.mojo	compile-reject	agree	error: value of type 'P' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	error: cannot implicitly convert 'def() -> Int' value to 'Int'
+assets/type_error/closure_storage_not_trivially_register_passable.mojo	compile-reject	agree	error: invalid call to 'call': value passed to 'f' cannot be converted from 'def(a: Int) -> Int' to 'F', argument type 'def(a: Int) -> Int' does not conform to trait 'def(Int) -> Int & TrivialRegisterPassable'
 assets/type_error/closure_storage_parameter_argument.mojo	compile-reject	agree	error: invalid call to 'invoke': cannot use a dynamic value in a parameter list
 assets/type_error/closure_storage_reference_parameter_argument.mojo	compile-reject	agree	error: invalid call to 'apply': cannot use a dynamic value in a parameter list
 assets/type_error/collection_display_default_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization

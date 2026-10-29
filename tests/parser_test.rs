@@ -4249,6 +4249,42 @@ fn retains_callable_parameter_bounds_and_capture_effects() {
 }
 
 #[test]
+fn composes_a_function_type_after_trait_bounds() {
+    let statements = parse(
+        "def apply[F: ImplicitlyCopyable & RegisterPassable & def[w: Int](Int) -> Int, //](f: F):\n    pass\n",
+    );
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
+    assert_eq!(
+        type_params[0].bounds,
+        vec!["ImplicitlyCopyable", "RegisterPassable", "<function type>"]
+    );
+    assert!(type_params[0].infer_only);
+    assert!(matches!(
+        &type_params[0].callable_bound,
+        Some(Type::Func { ret, thin: false, .. }) if **ret == Type::Int
+    ));
+}
+
+#[test]
+fn a_function_type_ends_a_bound_composition() {
+    // The pin reads the result as an expression, which takes the `&`.
+    for source in [
+        "def f[F: def(Int) -> Int & Copyable](f: F):\n    pass\n",
+        "def f[F: Copyable & def(Int) -> Int & def(Int) -> Int](f: F):\n    pass\n",
+    ] {
+        let error = mojito::parse(source).expect_err("a bound after a function type");
+        assert!(
+            error
+                .to_string()
+                .contains("a function type ends a type-parameter bound"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn infer_only_marker_applies_to_the_parameter_prefix() {
     let statements =
         parse("def select[first: Int, second: Bool, //, explicit: Int](value: Int):\n    pass\n");

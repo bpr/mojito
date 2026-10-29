@@ -411,7 +411,7 @@ captures implicitly, mutable where the enclosing binding is mutable.
 params_decl: '[' ','.param_decl+ ']'
 param_decl: ['*'] NAME ':' ( bound | type | generator_type ) ['=' expression]
                                              # a type/callable parameter (or pack), or a value parameter
-bound: '&'.NAME+
+bound: '&'.NAME+ ['&' function_type] | function_type
 ```
 
 A value parameter's `type` may be an earlier type parameter of the same list
@@ -456,7 +456,14 @@ are limited to the explicitly implemented type constructors.
 Current Mojo also permits a function type as a generic bound (`F: def(Int) ->
 Int`). Mojito retains that shape as a dependent checked callable constraint:
 conventions, effects, reference origins, and the result type survive substitution,
-nominal conformance, bounded indirect dispatch, HIR, and verified MIR. The
+nominal conformance, bounded indirect dispatch, HIR, and verified MIR. Traits
+compose with the function type as further requirements of the binder, before
+it (`F: ImplicitlyCopyable & RegisterPassable & def[width:
+SIMDLength](SIMD[DType.int32, width]) -> SIMD[DType.int32, width]`): the
+function type ends the composition, since upstream reads its result as an
+expression that would take a later `& Trait`, so `F: def(Int) -> Int &
+Copyable` is a parse error. A thin function, and a closure whose captures
+all are, satisfies `TrivialRegisterPassable`. The
 function type may declare its own parameter list, as in
 `F: def[T: ImplicitlyCopyable](T) -> T`; binder names are alpha-equivalent, while
 arity and bounds remain part of the checked contract. A function type with its
