@@ -3599,6 +3599,12 @@ impl Checker {
                 "a generic comptime alias must be declared at module scope".to_string(),
             ));
         }
+        let generator = self.partially_bound_generator(type_params, value)?;
+        let (type_params, value) = generator
+            .as_ref()
+            .map_or((type_params, value), |(params, body)| {
+                (params.as_slice(), body)
+            });
         // The registry binds application arguments through classified
         // `ParamDecl`s, which erase origin parameters; reject them instead of
         // silently dropping a binder the template could still mention.

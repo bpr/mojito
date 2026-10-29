@@ -710,11 +710,15 @@ impl Checker {
                             Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => ty.clone(),
                             _ => Ty::self_type(),
                         };
-                        self.parameterized_assoc_application(
-                            &base,
-                            name,
-                            &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
-                        )?
+                        if self.declared_type_member(&base, name) {
+                            Some(self.member_application(&base, name, &[index_argument(index)])?)
+                        } else {
+                            self.parameterized_assoc_application(
+                                &base,
+                                name,
+                                &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
+                            )?
+                        }
                     }
                     // `C.IteratorType[..]` — a bounded type parameter or other base.
                     // If the base does not name a type (e.g. `values.element_types`
@@ -931,12 +935,8 @@ impl Checker {
         let infers = self
             .parameterized_assoc_params(&base_ty, name)
             .is_some_and(|params| params.iter().any(|param| param.infer_only));
-        let applied = if infers {
-            let argument = index.type_spelling().map_or_else(
-                || mojito_ast::ast::ParamArg::Value(index.clone()),
-                mojito_ast::ast::ParamArg::Type,
-            );
-            Some(self.member_application(&base_ty, name, &[argument])?)
+        let applied = if infers || self.declared_type_member(&base_ty, name) {
+            Some(self.member_application(&base_ty, name, &[index_argument(index)])?)
         } else {
             self.parameterized_assoc_application(
                 &base_ty,
@@ -947,6 +947,26 @@ impl Checker {
         applied
             .map(|applied| self.generator_member_type(generator, name, applied))
             .transpose()
+    }
+
+    /// Whether `name` is a concrete struct's parameterized type member
+    /// whose bracket binds against its declared parameters, as a whole
+    /// list does: a member with no origin parameter, which the declared
+    /// parameters erase.
+    fn declared_type_member(&self, base_ty: &Ty, name: &str) -> bool {
+        let TyKind::Struct(struct_name, _) = base_ty.kind() else {
+            return false;
+        };
+        self.structs
+            .get(struct_name)
+            .and_then(|info| info.parameterized_associated.get(name))
+            .is_some_and(|member| {
+                matches!(member.template, MemberTemplate::Type { .. })
+                    && !member
+                        .params
+                        .iter()
+                        .any(|param| param.is_erased_origin_param(&member.params))
+            })
     }
 
     /// Lower one application argument of a parameterized associated type into a
@@ -4732,6 +4752,15 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
         }
         _ => false,
     }
+}
+
+/// A one-argument bracket as the argument a declared parameter list binds:
+/// a type the index spells is a type argument.
+fn index_argument(index: &Expr) -> mojito_ast::ast::ParamArg {
+    index.type_spelling().map_or_else(
+        || mojito_ast::ast::ParamArg::Value(index.clone()),
+        mojito_ast::ast::ParamArg::Type,
+    )
 }
 
 /// The first of a generator's own binders a read value names

@@ -2333,7 +2333,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_struct_associated` resolves the members in `read_order` (each
   after the siblings it reads through `Self`, the pin's any-order reads)
   and installs each into the struct's shell as it resolves, so a member
-  reads it through `Self`, and
+  reads it through `Self`. A body over a partially bound struct (`SIMD[Self.dtype,
+  _]`, `Pair[1, ...]`), there or in `check_generic_comptime_alias`, is the
+  generator `constraints.rs:partially_bound_generator` spells over the
+  struct's open parameters, and a concrete struct's type member applied
+  with one bracket argument binds it against its declared parameters
+  (`type_resolution.rs:declared_type_member`), and
   `type_member_value`'s `TyKind::SelfType` arm reads a trait's own value
   requirement in its scope. A member spelled as a type in a value slot
   (`Box[Self.n]`, `Self.T.K`) is the read

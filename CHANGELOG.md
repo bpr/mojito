@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime` alias over a partially bound struct names a type once its
+  open parameters are bound (R296), so `comptime Bytes = SIMD[.uint8, _]`
+  read as `Bytes[w]`, `Pair[1, ...]`, `Pair[a=_, b=3]`, and a member
+  `comptime _T = SIMD[Self.dtype, _]` read as `Self._T[width]` run as at
+  the pin, binding positionally or by the struct's parameter names. A
+  member alias's one-argument application now binds against its declared
+  parameters, so a `SIMDLength` binder takes a value. A method's
+  `Self.Ts[i]` annotation is pinned by the same fixture. Construction
+  through such an alias is R60, and an open slot whose name the bound
+  arguments read is R1649.
 - A literal now binds a `StaticString` compile-time parameter (R1641), so
   `name["param"]()` over `def name[s: StaticString]()`, `Tag["xyz"]`
   over `struct Tag[s: StaticString]`, `comptime if s == "a"`, and

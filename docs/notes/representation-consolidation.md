@@ -27,7 +27,7 @@ command cannot use both.
    - R1503, R1561, R1562, R330, R184, R1623, R1567, R1582: initializers,
      the lane subscript, target queries, lane gathers, `/`, the rest of
      division, `**`, and `__round__`.
-   - R296, R1583, R1584, R1585, R1586: the `reduce` tree and what it needs.
+   - R1583, R1584, R1585, R1586: the `reduce` tree and what it needs.
    - R276 (`SIMD`'s text in Mojo), then R1398 (delete the dead `SIMD`
      member rules) and R1399 (`Int(x)`, `UInt(x)`, `Float64(x)` as
      `SIMD.__init__` overloads; it has no open prerequisite).

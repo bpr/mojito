@@ -235,6 +235,14 @@ impl Checker {
             if out.contains_key(&member.name) || parameterized.contains_key(&member.name) {
                 return Err(TypeError::Redeclaration(member.name.clone()));
             }
+            let generator = self
+                .partially_bound_generator(&member.params, &member.value)?
+                .map(|(params, value)| StructComptime {
+                    params,
+                    value,
+                    ..member.clone()
+                });
+            let member = generator.as_ref().unwrap_or(member);
             let member_owner = format!("{struct_name}.{}", member.name);
             // Resolve and classify the annotation now even when the member's
             // symbolic body cannot be checked until application. This keeps
@@ -389,6 +397,142 @@ impl Checker {
             }
         }
         Ok((out, value_types, constraints, parameterized))
+    }
+
+    /// The generator an unparameterized `comptime` body over a partially
+    /// bound struct names (`comptime Bytes = SIMD[.uint8, _]`, `comptime Q =
+    /// B[1, ...]`): its parameters are the struct's own unbound ones, by
+    /// their declared names, so `Bytes[16]` and `Bytes[length=16]` bind
+    /// them, and the body is the application with each unbound slot reading
+    /// its parameter. A `_` slot keeps no default, where a slot a trailing
+    /// `...` unbinds keeps its own. `None` when the body binds every slot,
+    /// or leaves open an origin or a pack, which keeps its own meaning.
+    pub(super) fn partially_bound_generator(
+        &self,
+        params: &[mojito_ast::ast::TypeParam],
+        value: &Expr,
+    ) -> Result<Option<(Vec<mojito_ast::ast::TypeParam>, Expr)>, TypeError> {
+        let Ok(SourceType::Named(struct_name, args)) = assoc_body_source_type(value) else {
+            return Ok(None);
+        };
+        if !params.is_empty() || !args.iter().any(|arg| unbound_slot(arg).is_some()) {
+            return Ok(None);
+        }
+        let Some(info) = self.structs.get(&struct_name) else {
+            return Ok(None);
+        };
+        let declared = &info.source_params;
+        let explicit: Vec<&mojito_ast::ast::TypeParam> =
+            declared.iter().filter(|param| !param.infer_only).collect();
+        let mut slots: Vec<Option<ParamArg>> = vec![None; explicit.len()];
+        let mut open: Vec<(usize, bool, Expr)> = Vec::new();
+        let mut rest = None;
+        for (position, arg) in args.iter().enumerate() {
+            let (index, inner) = match arg {
+                ParamArg::Named { name, value } => {
+                    let Some(index) = explicit.iter().position(|param| &param.name == name) else {
+                        return Ok(None);
+                    };
+                    (index, value.as_ref())
+                }
+                _ if position < explicit.len() => (position, arg),
+                _ => return Ok(None),
+            };
+            match unbound_slot(inner) {
+                Some((UnboundSlot::Rest, spelling)) if position + 1 == args.len() => {
+                    rest = Some(spelling.clone());
+                }
+                Some((UnboundSlot::Rest, _)) => return Ok(None),
+                Some((UnboundSlot::Hole, spelling)) => open.push((index, false, spelling.clone())),
+                None => slots[index] = Some(arg.clone()),
+            }
+        }
+        if let Some(spelling) = rest {
+            for (index, slot) in slots.iter().enumerate() {
+                if slot.is_none() && open.iter().all(|(open_slot, ..)| *open_slot != index) {
+                    open.push((index, true, spelling.clone()));
+                }
+            }
+        }
+        open.sort_by_key(|(index, ..)| *index);
+        // An open parameter's declaration reads the bound ones as their
+        // arguments (`v: Scalar[dt]` over `D[DType.int8, _]`).
+        let bound = BoundSiblings(
+            explicit
+                .iter()
+                .zip(&slots)
+                .filter_map(|(param, slot)| {
+                    let arg = match slot.as_ref()? {
+                        ParamArg::Named { value, .. } => value.as_ref(),
+                        arg => arg,
+                    };
+                    Some((param.name.clone(), arg.clone()))
+                })
+                .collect(),
+        );
+        let read = names_spelled(value);
+        let mut generator_params = Vec::new();
+        for (index, keeps_default, _) in &open {
+            let param = explicit[*index];
+            if param.name.starts_with('*') || param.is_erased_origin_param(declared) {
+                return Ok(None);
+            }
+            if read.contains(&param.name) {
+                return Err(TypeError::Unsupported(format!(
+                    "the unbound parameter '{}' of '{struct_name}' shares its name with a \
+                     name its bound arguments read",
+                    param.name
+                )));
+            }
+            if param.bounds.iter().any(|name| bound.0.contains_key(name)) {
+                return Err(TypeError::Unsupported(format!(
+                    "the unbound parameter '{}' of '{struct_name}' whose bound names a \
+                     bound parameter",
+                    param.name
+                )));
+            }
+            let mut generator_param = param.clone();
+            bound.substitute(&mut generator_param);
+            if !keeps_default {
+                generator_param.default = None;
+            }
+            generator_params.push(generator_param);
+        }
+        // Positional arguments stay a prefix: an unbound positional slot
+        // reads its parameter in place, and every other unbound slot binds
+        // by keyword.
+        let positional = args
+            .iter()
+            .take_while(|arg| {
+                !matches!(arg, ParamArg::Named { .. })
+                    && !matches!(unbound_slot(arg), Some((UnboundSlot::Rest, _)))
+            })
+            .count();
+        let mut rewritten = Vec::new();
+        for (index, param) in explicit.iter().enumerate() {
+            let bound = match &slots[index] {
+                Some(ParamArg::Named { value, .. }) => Some(value.as_ref().clone()),
+                Some(arg) => Some(arg.clone()),
+                None => open
+                    .iter()
+                    .find(|(slot, ..)| *slot == index)
+                    .map(|(.., spelling)| ParamArg::Value(parameter_read(spelling, &param.name))),
+            };
+            match bound {
+                Some(bound) if index < positional => rewritten.push(bound),
+                Some(bound) => rewritten.push(ParamArg::Named {
+                    name: param.name.clone(),
+                    value: Box::new(bound),
+                }),
+                None => {}
+            }
+        }
+        let mut body = value.clone();
+        body.kind = ExprKind::TypeApply {
+            name: struct_name,
+            args: rewritten,
+        };
+        Ok(Some((generator_params, body)))
     }
 
     /// A raw-list member's body converts to its declared list
@@ -5598,4 +5742,111 @@ fn generator_is_closed(generator: &mojito_types::ct::GeneratorValue) -> bool {
         };
     });
     closed
+}
+
+/// How an application leaves a parameter open: a `_` hole leaves its own
+/// slot, a trailing `...` every slot the arguments before it leave.
+#[derive(Clone, Copy)]
+enum UnboundSlot {
+    Hole,
+    Rest,
+}
+
+/// The unbound slot `arg` spells (`_`, `...`, or a keyword one) and the
+/// expression spelling it.
+fn unbound_slot(arg: &ParamArg) -> Option<(UnboundSlot, &Expr)> {
+    match arg {
+        ParamArg::Named { value, .. } => unbound_slot(value),
+        ParamArg::Value(value) => match &value.kind {
+            ExprKind::Identifier(name) if name == "_" => Some((UnboundSlot::Hole, value)),
+            ExprKind::Identifier(name) if name == "..." => Some((UnboundSlot::Rest, value)),
+            _ => None,
+        },
+        ParamArg::Type(_) => None,
+    }
+}
+
+/// A read of the generator parameter `name` at `spelling`'s location.
+fn parameter_read(spelling: &Expr, name: &str) -> Expr {
+    let mut read = spelling.clone();
+    read.kind = ExprKind::Identifier(name.to_string());
+    read
+}
+
+/// Every name `value` spells, as a value or as a type.
+fn names_spelled(value: &Expr) -> HashSet<String> {
+    let mut names = NamesSpelled(HashSet::new());
+    mojito_ast::visit::walk_expr(&mut names, value);
+    names.0
+}
+
+/// The arguments a partial application binds, by their parameters' names.
+struct BoundSiblings(HashMap<String, ParamArg>);
+
+impl BoundSiblings {
+    /// Spell `param`'s declaration over the bound arguments in place of
+    /// the parameters they bind.
+    fn substitute(&self, param: &mut mojito_ast::ast::TypeParam) {
+        use mojito_ast::visit::{walk_expr_mut, walk_type_mut};
+        for ty in [&mut param.value_type, &mut param.callable_bound]
+            .into_iter()
+            .flatten()
+        {
+            walk_type_mut(&mut &*self, ty);
+        }
+        for value in [&mut param.origin_mutability, &mut param.default]
+            .into_iter()
+            .flatten()
+            .chain(&mut param.constraints)
+        {
+            walk_expr_mut(&mut &*self, value);
+        }
+    }
+}
+
+impl mojito_ast::visit::MutVisitor for &BoundSiblings {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return;
+        };
+        match self.0.get(name) {
+            Some(ParamArg::Value(value)) => *expr = value.clone(),
+            Some(ParamArg::Type(ty)) => expr.kind = ExprKind::TypeValue(ty.clone()),
+            _ => {}
+        }
+    }
+
+    fn visit_type_mut(&mut self, ty: &mut SourceType) {
+        let SourceType::Named(name, args) = ty else {
+            return;
+        };
+        if !args.is_empty() {
+            return;
+        }
+        match self.0.get(name.as_str()) {
+            Some(ParamArg::Type(bound)) => *ty = bound.clone(),
+            Some(ParamArg::Value(value)) => {
+                *ty = value
+                    .type_spelling()
+                    .unwrap_or_else(|| SourceType::Value(Box::new(value.clone())));
+            }
+            _ => {}
+        }
+    }
+}
+
+struct NamesSpelled(HashSet<String>);
+
+impl mojito_ast::visit::Visitor for NamesSpelled {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let ExprKind::Identifier(name) = &expr.kind {
+            self.0.insert(name.clone());
+        }
+    }
+
+    fn visit_type(&mut self, ty: &SourceType) {
+        if let SourceType::Named(name, _) = ty {
+            self.0.insert(name.clone());
+        }
+    }
 }

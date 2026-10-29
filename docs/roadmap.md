@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1649**.
+Next free ID: **R1650**.
 
 ## Ordered Work
 
@@ -3713,6 +3713,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     "Undefined variable", where the pin prints `True` and `1 2 3`.
   - Probe: a local `comptime a = A[4]()` over `comptime A[k: Int] = W[k]`
     fails with "Undefined variable 'A'", where the pin constructs `W[4]`.
+  - Probe: a partially bound alias, `Bytes[4](1, 2, 3, 4)` over `comptime
+    Bytes = SIMD[.uint8, _]` and `Self._T[width](v)` over a member `comptime
+    _T = SIMD[Self.dtype, _]`, fails with "Undefined variable 'Bytes'" and
+    "Undefined variable 'Self'", where the pin constructs the vectors.
+    Upstream's `_b64encode.mojo` (`OFFSETS`) and `SIMD.reduce` construct
+    this way.
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -4479,6 +4485,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     constant: default for parameter 't'", where the pin runs both. Upstream's
     `size_of[…, target: CompilationTarget = CompilationTarget.current()]`
     is this shape (R1634).
+  - Probe: a bare partially bound alias, `def f(x: I32) -> Int` over
+    `comptime I32 = SIMD[DType.int32, _]`, reports "cannot infer type
+    parameter 'length' of 'I32' from the arguments", where the pin prints
+    `4` for a four-lane argument.
   - Found while landing R1568 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4819,6 +4829,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   'v': expected Scalar[dt], found 5", where the pin prints `6`.
   - The argument is checked against the declared type before the earlier
     binder `dt` is substituted into it.
+  - Probe: a struct application, `D[DType.int8, 5]` over `struct D[dt:
+    DType, v: Scalar[dt]]`, fails the same way, and so does `Y[5]` over
+    `comptime Y = D[DType.int8, _]`; the pin prints `5` for both.
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5596,6 +5609,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R1649 A partially bound alias whose open parameter's name its bound
+  arguments read is rejected**
+
+  Problem: `comptime X = W[n, _]` over `struct W[m: Int, n: Int]` and a
+  module `comptime n = 3` is rejected with "the unbound parameter 'n' of
+  'W' shares its name with a name its bound arguments read", where the pin
+  binds `X[4]` to `W[3, 4]`.
+  - `Checker::partially_bound_generator` (`checker/constraints.rs`) spells
+    the partial application as a generator alias whose binders are the
+    struct's open parameters, by name, so a binder would shadow the module
+    name the bound argument reads.
+  - Upstream binds the open slots on the type itself, never in the alias
+    body's scope: a struct type with open slots that an application fills.
+  - Found while landing R296 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1486 A type-valued generator is neither passed unapplied nor
   applied in a type position**
 
@@ -5943,24 +5973,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     'Tag[idt[Int](n)]' has no field 'k'", where the pin prints `1` for
     `g[1](Tag[idt(1)]())`; `t.key()` over a method returning `Self.k` runs.
   - Found while landing R1401 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R296 A method local annotated with a struct pack element's type is
-  rejected**
-
-  Problem: `var value: Self.Ts[i] = Self.Ts[i]()` in a method's `comptime
-  for` fails with "dependent type indexing requires a type-valued associated
-  member" (`checker/type_resolution.rs`), while the pin prints each
-  element's default.
-  - A `def`'s own `Ts[i]` annotation resolves to the dependent element
-    (`assets/ok/pack_element_alias_served.mojo`); the `Self.Ts[i]` spelling
-    has no such form.
-  - Probe: a member alias over an unbound `_`, `comptime _T =
-    SIMD[Self.dtype, _]` read as `Self._T[1]`, fails with the same
-    message, where the pin prints `1`. Upstream's `SIMD.reduce` reads it
-    (R1585).
-  - Found while landing R252 (2026-10-04).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10467,8 +10479,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `reduce_mul`, `reduce_max`, and `reduce_min` by name.
   - Port both `reduce` overloads (`simd.mojo:3107`, `:3135`), then
     `reduce_add`, `reduce_mul`, `reduce_max`, and `reduce_min`.
-  - Their bodies read `comptime _T = SIMD[Self.dtype, _]` as `Self._T[n]`
-    (R296), apply a callable binder at a `SIMDLength` (R1583), spell the
+  - Their bodies read `comptime _T = SIMD[Self.dtype, _]` as `Self._T[n]`,
+    which runs, apply a callable binder at a `SIMDLength` (R1583), spell the
     closure overload's binder as a trait composition with a function type
     (R1584), and call `split()` (R330).
   - `reduce_max` and `reduce_min` take `llvm.vector.reduce.*` only off
