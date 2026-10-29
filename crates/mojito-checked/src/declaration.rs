@@ -667,7 +667,9 @@ pub fn declared_overloads(
             .filter_map(FunctionDeclaration::overload_member)
             .filter(|(family, _)| match family {
                 OverloadFamily::Method(name) => {
-                    split_method_symbol(name).is_none_or(|(owner, _)| !is_trait(owner))
+                    split_method_symbol(name).is_none_or(|(owner, _)| {
+                        !is_trait(owner) && !mojito_symbol::symbol::is_closure_storage_name(owner)
+                    })
                 }
                 OverloadFamily::Free(_) => true,
             })
@@ -676,11 +678,16 @@ pub fn declared_overloads(
                     .iter()
                     .map(|(name, arity)| (OverloadFamily::Method(name), *arity)),
             ),
-        structs.iter().filter_map(|declaration| {
-            declaration
-                .fieldwise_parameters()
-                .map(|names| (declaration.name.clone(), names))
-        }),
+        structs
+            .iter()
+            .filter(|declaration| {
+                !mojito_symbol::symbol::is_closure_storage_name(&declaration.name)
+            })
+            .filter_map(|declaration| {
+                declaration
+                    .fieldwise_parameters()
+                    .map(|names| (declaration.name.clone(), names))
+            }),
     )
 }
 

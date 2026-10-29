@@ -1032,3 +1032,15 @@ fn std_resolves_at_the_bundled_library_whatever_the_roots_hold() {
         "unexpected error: {error}"
     );
 }
+
+#[test]
+fn bundled_library_packages_with_its_capture_list_closures() {
+    // `std.builtin.format_int._write_int` nests a capture-list closure: its
+    // storage struct and the `def`s nested in it join the record of the
+    // function that declares them, so the library still packages.
+    let package = mojito::package::bundled_std_package(false).expect("the bundled package");
+    assert!(
+        package.is_some(),
+        "the bundled library compiles from source"
+    );
+}

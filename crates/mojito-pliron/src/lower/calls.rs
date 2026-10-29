@@ -74,6 +74,9 @@ impl FnLowering<'_> {
                 "_mojito_abort" if args.len() == 1 && kwargs.is_empty() => {
                     return self.lower_abort_builtin(ctx, dest, args[0]);
                 }
+                "_mojito_float_text" if args.len() == 2 && kwargs.is_empty() => {
+                    return self.lower_float_text_builtin(ctx, dest, args[0], args[1]);
+                }
                 _ => {}
             }
             return Err(self.unsupported_reg(

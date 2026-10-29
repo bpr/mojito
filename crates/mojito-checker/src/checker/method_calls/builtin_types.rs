@@ -172,8 +172,14 @@ impl Checker {
                 }
                 .into())
             }
-            "unsafe_write" => {
+            // `write` overwrites a pointee whose type has no destructor, so
+            // it is `unsafe_write`'s store where upstream's `where
+            // IsTriviallyDeinitable[U]` holds.
+            "unsafe_write" | "write" => {
                 self.check_pointer_write(object, origin)?;
+                if method == "write" {
+                    self.check_pointer_overwrite(elem)?;
+                }
                 let (value, copy) = match (args, kwargs) {
                     ([value], []) => (value, false),
                     ([], [keyword]) if keyword.name == "copy" => (&keyword.value, true),
@@ -669,5 +675,17 @@ impl Checker {
                 materialized: None,
             },
         );
+    }
+
+    /// Require the pointee `elem` a `Pointer.write` overwrites to have no
+    /// destructor, as upstream's `where IsTriviallyDeinitable[U]` does.
+    fn check_pointer_overwrite(&self, elem: &Ty) -> Result<(), TypeError> {
+        if self.is_trivially(mojito_types::types::TrivialLifecycle::Deinitable, elem) {
+            return Ok(());
+        }
+        Err(TypeError::BadCall {
+            func: "Pointer.write".to_string(),
+            reason: format!("'{elem}' is not trivially deinitable; use 'unsafe_write'"),
+        })
     }
 }

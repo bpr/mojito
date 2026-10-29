@@ -350,6 +350,7 @@ impl Checker {
                 self.infer(argument)?;
                 Ok(Ty::none())
             }
+            "_mojito_float_text" => self.infer_float_text(args),
             "_mojito_abort" => {
                 let tys = self.builtin_args("_mojito_abort", 1, args)?;
                 match (tys[0]).kind() {
@@ -2649,6 +2650,32 @@ impl Checker {
             origin: mojito_types::origin::PointerOrigin::Static,
         }
         .into())
+    }
+
+    /// `_mojito_float_text(value, out)`, `std.builtin._format_float`'s
+    /// staged leaf: the shortest round-trip text of a `Float64` as bytes at
+    /// `out`, returning how many, until R159's Dragonbox body writes it in
+    /// Mojo.
+    fn infer_float_text(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args("_mojito_float_text", 2, args)?;
+        if tys[0].kind() != TyKind::FLOAT64 {
+            return Err(TypeError::TypeMismatch {
+                expected: "Float64".to_string(),
+                found: tys[0].to_string(),
+                context: "argument to '_mojito_float_text'".to_string(),
+            });
+        }
+        if !matches!(tys[1].kind(), TyKind::Pointer { element, .. }
+            if mojito_types::types::simd_slots(element)
+                .is_some_and(|(dtype, _)| dtype == mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::UInt8)))
+        {
+            return Err(TypeError::TypeMismatch {
+                expected: "UnsafePointer[Byte]".to_string(),
+                found: tys[1].to_string(),
+                context: "argument to '_mojito_float_text'".to_string(),
+            });
+        }
+        Ok(Ty::int())
     }
 }
 

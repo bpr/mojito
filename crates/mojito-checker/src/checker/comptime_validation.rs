@@ -772,9 +772,7 @@ impl Checker {
     /// else the enclosing struct's.
     fn record_comptime_condition(&self, cond: &Expr, constraint: &GenericConstraint) {
         let bound = self.bind_constraint(constraint, &[]);
-        self.record_at(cond.source_span()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ComptimeCondition(bound),
-        ));
+        self.record_at(cond.source_span()).comptime_condition = Some(bound);
     }
 
     /// Whether `operand` of a comparison is a parameter value whose builtin
@@ -1013,13 +1011,9 @@ impl Checker {
 
     /// The application of the function lifted for the `Bool(x)` conversion
     /// of the condition leaf `cond`, which MIR lowers as the leaf's
-    /// truthiness (`comptime if y >= 1.5:` over a `Float32`). A bare name
-    /// lifts nothing: the condition's record takes the span its read's
-    /// parameter value holds.
+    /// truthiness (`comptime if y >= 1.5:` over a `Float32`, `comptime if
+    /// alias:` over an `Optional`).
     fn converted_condition(&self, cond: &Expr) -> Option<ParamExpr> {
-        if matches!(cond.kind, ExprKind::Identifier(_) | ExprKind::Member { .. }) {
-            return None;
-        }
         let application = self.named_application(cond, &names_read(cond), Ty::bool())?;
         self.lifted_expressions
             .borrow_mut()

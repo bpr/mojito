@@ -15,10 +15,14 @@
 # `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
-# `_to_bits_signed`, `fma`, and `select`, with the `FastMathFlag` enum `fma`
-# takes. The other
+# `_to_bits_signed`, `fma`, `select`, `write_to`, and `write_repr_to`, with
+# the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`
+# and `_write_scalar`. The other
 # members are still served by the compiler (R184, R1623, R1567, R1581,
-# R1582, R1585, R1586, R1596, R330, R276), and so are the other initializers:
+# R1582, R1585, R1586, R1596, R330), `write_padded` is not ported (R1663),
+# and `print`, `String`, and `repr` of a value still format in the compiler
+# rather than calling `write_to` and `write_repr_to` (R1662). So are the
+# other initializers:
 # `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
 # `IntLiteral` and `FloatLiteral` (R1507), and the `Intable`, `IntableRaising`, `Floatable`,
 # and `FloatableRaising` conversions (R1399); `py=` is not ported. Until
@@ -32,6 +36,11 @@
 # `cast` omits upstream's `is_nvidia_gpu()` and `bfloat16`-on-AMD branches
 # (R1635), and its float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4`
 # branches (R65): Mojito has none of those targets or dtypes.
+# `_scalar_repr_alias` omits the `int128`, `uint128`, `int256`, `uint256`,
+# `bfloat16`, `float4`, and `float8` cases (R65). It and `_write_scalar`
+# precede the struct, where upstream's follow it, since a method cannot
+# call a function declared below its struct (R127). `Optional` and
+# `StaticString` are imported, which upstream's prelude provides (R894).
 # Omitted: the `@lldb_formatter_wrapping_type` decorator
 # (`std.utils._visualizers`) and `CoordLike`'s static `__len__`
 # (`std.utils.coord`).
@@ -69,7 +78,11 @@ domain-specific libraries for machine learning and scientific computing.
 # while the prelude bootstraps (R894).
 from std.math import Ceilable, Floorable, Truncable, max, min
 from std.sys.info import bit_width_of
+from std.builtin._format_float import _write_float
+from std.builtin.format_int import _write_int
 from std.builtin.simd_length import SIMDLength
+from std.collections.optional import Optional
+from std.string import StaticString
 from std.builtin.enum_like import EnumLike
 from std.memory import bitcast
 from std.builtin.dtype import (
@@ -128,6 +141,111 @@ def _simd_construction_checks[dtype: DType, size: SIMDLength]():
     # comptime assert (
     #     size <= 2**15
     # ), "simd size is too large and must be less than 2^15"
+
+
+def _scalar_repr_alias[dtype: DType]() -> Optional[StaticString]:
+    """Returns the scalar type alias name for a `dtype`, or `None`.
+
+    This is used by `SIMD.write_repr_to` to print scalars using their friendly
+    alias (e.g. `UInt32(4)`) instead of the verbose `SIMD[.uint32, 1](4)`
+    form.
+
+    The set of `dtype`s handled here must stay in sync with the `Scalar`
+    aliases defined near the top of this file (e.g. `Int32 = Scalar[...]`), and
+    parallels `DType.write_to`, the other exhaustive per-`dtype` chain that must
+    be updated when a `dtype` is added. A `dtype` with no scalar alias returns
+    `None` and keeps the verbose form: `DType.bool` is excluded because
+    `SIMD[.bool, 1]` is distinct from the `Bool` struct, and
+    `DType.float8_e3m4` has no `Scalar` alias. A `dtype` matching none of these
+    cases fails a `comptime` assertion, so a newly added `dtype` is caught here
+    rather than silently losing its alias.
+
+    Parameters:
+        dtype: The `DType` to look up the scalar alias name for.
+
+    Returns:
+        The scalar type alias name for `dtype`, or `None` when the `dtype` has
+        no scalar alias.
+    """
+    comptime match dtype:
+        case .int:
+            return StaticString("Int")
+        case .uint:
+            return StaticString("UInt")
+        case .int8:
+            return StaticString("Int8")
+        case .uint8:
+            return StaticString("UInt8")
+        case .int16:
+            return StaticString("Int16")
+        case .uint16:
+            return StaticString("UInt16")
+        case .int32:
+            return StaticString("Int32")
+        case .uint32:
+            return StaticString("UInt32")
+        case .int64:
+            return StaticString("Int64")
+        case .uint64:
+            return StaticString("UInt64")
+        case .float16:
+            return StaticString("Float16")
+        case .float32:
+            return StaticString("Float32")
+        case .float64:
+            return StaticString("Float64")
+        case .bool:
+            return None
+        case _:
+            comptime assert False, (
+                "unhandled dtype in `_scalar_repr_alias`: add a `Scalar` alias"
+                " branch or an explicit `None` case"
+            )
+
+
+def _write_scalar[
+    dtype: DType,
+    W: Writer,
+    //,
+](mut writer: W, value: Scalar[dtype]):
+    comptime if dtype == DType.bool:
+        if value:
+            writer.write_string("True")
+        else:
+            writer.write_string("False")
+
+    elif dtype.is_half_float():
+        # `_write_float` widens everything but `float64` and the `float8`
+        # variants to `Float32` before running dragonbox, so a half float and
+        # its `Float32` widening already format to identical text. Widening here
+        # instead lets `float16` and `bfloat16` share one `_write_float`
+        # instantiation with `float32` rather than each getting their own copy of
+        # the formatter, which dominates the compile cost of printing SIMD
+        # values. `test_simd.test_write_half_float_matches_float32` pins the
+        # equivalence.
+        _write_float(writer, value.cast[DType.float32]())
+
+    elif dtype.is_half_float():
+        # `_write_float` widens everything but `float64` and the `float8`
+        # variants to `Float32` before running dragonbox, so a half float and
+        # its `Float32` widening already format to identical text. Widening here
+        # instead lets `float16` and `bfloat16` share one `_write_float`
+        # instantiation with `float32` rather than each getting their own copy of
+        # the formatter, which dominates the compile cost of printing SIMD
+        # values. `test_simd.test_write_half_float_matches_float32` pins the
+        # equivalence.
+        _write_float(writer, value.cast[DType.float32]())
+
+    elif dtype.is_floating_point():
+        _write_float(writer, value)
+
+    # TODO(MSTDL-1039): bring in performant integer to string formatter
+    elif dtype.is_integral():
+        _ = _write_int(writer, value)
+    else:
+        comptime assert (
+            False
+        ), "unable to write dtype, only integral/float/bool supported"
 
 
 # ===----------------------------------------------------------------------=== #
@@ -290,6 +408,7 @@ struct SIMD[dtype: DType, length: SIMDLength](
     Sized,
     TrivialRegisterPassable,
     Truncable,
+    Writable,
     _FromInt,
 ):
     """Represents a vector type that leverages hardware acceleration to process
@@ -1569,6 +1688,62 @@ struct SIMD[dtype: DType, length: SIMDLength](
         comptime assert Self.dtype.is_integral(), "must be integral"
 
         return self.gt(0) & (self & (self - 1)).eq(0)
+
+    @inline(.never)
+    def write_to(self, mut writer: Some[Writer]):
+        """
+        Formats this SIMD value to the provided Writer.
+
+        Args:
+            writer: The object to write to.
+        """
+
+        # `write_string` rather than `write`: `write` promotes each literal to a
+        # `String`, so every literal costs a stack slot, the small-string branch
+        # and a refcount decrement, all of which are re-elaborated for every
+        # `SIMD[dtype, size]` that gets printed.
+        comptime if Self.length > 1:
+            writer.write_string("[")
+
+        # Write each element.
+        for i in range(Self.length):
+            var element = self[i]
+            # Write separators between each element.
+            if i != 0:
+                writer.write_string(", ")
+            _write_scalar(writer, element)
+
+        # Write a closing `]`.
+        comptime if Self.length > 1:
+            writer.write_string("]")
+
+    @inline(.never)
+    def write_repr_to(self, mut writer: Some[Writer]):
+        """Write the string representation of the SIMD value.
+
+        Args:
+            writer: The value to write to.
+        """
+        comptime scalar_alias = _scalar_repr_alias[Self.dtype]()
+        comptime if Self.length == 1 and scalar_alias:
+            # Prefer the scalar type alias (e.g. `UInt32(4)`) over the verbose
+            # `SIMD[DType.uint32, 1](4)` form for the common scalar case.
+            writer.write_string(scalar_alias.value())
+            writer.write_string("(")
+        else:
+            writer.write_string("SIMD[")
+            Self.dtype.write_repr_to(writer)
+            writer.write_string(", ")
+            writer.write(Int(Self.length))
+            writer.write_string("](")
+        # Write each element.
+        for i in range(Self.length):
+            var element = self[i]
+            # Write separators between each element.
+            if i != 0:
+                writer.write_string(", ")
+            _write_scalar(writer, element)
+        writer.write_string(")")
 
     @inline(.always)
     def to_bits[

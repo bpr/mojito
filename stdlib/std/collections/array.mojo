@@ -116,6 +116,13 @@ struct Array[T: AnyType, length: Int](
             self.data[i] = value^
             i += 1
 
+    # Upstream marks its inline storage initialized; this one leaves its
+    # allocation unwritten.
+    @inline(.always)
+    def __init__(out self, *, uninitialized: Bool):
+        self._size = Self.length
+        self.data = unsafe_alloc[Self.T](Self.length)
+
     @inline(.always)
     def __init__(out self) where conforms_to(Self.T, Defaultable):
         self._size = Self.length

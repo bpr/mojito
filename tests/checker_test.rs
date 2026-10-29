@@ -8121,20 +8121,12 @@ fn a_reflection_body_is_validated_without_instantiation() {
 }
 
 #[test]
-fn a_non_bool_comptime_condition_converts_or_is_rejected_explicitly() {
-    // An integer leaf is its `Bool(x)`, `x != 0`, and a float expression
-    // the function lifted for its conversion; a bare name of a float
-    // parameter is the explicit boundary R1470 lifts.
-    let converted = "def g[n: Int, y: Float64]():\n    comptime if n:\n        print(1)\n    comptime if y * 2.0:\n        print(2)\n    comptime assert n, \"n\"\n\ndef main():\n    g[1, 1.5]()\n";
+fn a_non_bool_comptime_condition_converts_through_its_bool() {
+    // An integer leaf is its `Bool(x)`, `x != 0`, and a float expression or
+    // a bare float name the function lifted for its conversion, which reads
+    // the name's parameter value beside the condition's record.
+    let converted = "def g[n: Int, y: Float64]():\n    comptime if n:\n        print(1)\n    comptime if y * 2.0:\n        print(2)\n    comptime if y:\n        print(3)\n    comptime assert n, \"n\"\n\ndef main():\n    g[1, 1.5]()\n";
     check_once(converted, "converted_condition.mojo").expect("a converting leaf checks");
-    let bare =
-        "def g[y: Float64]():\n    comptime if y:\n        print(1)\n\ndef main():\n    g[1.5]()\n";
-    let error = check_once(bare, "bare_float_condition.mojo").expect_err("a bare float name");
-    assert!(
-        matches!(&error, TypeError::Unsupported(message)
-            if message.contains("compiles to no parameter expression")),
-        "{error:?}"
-    );
 }
 
 #[test]
@@ -9362,4 +9354,43 @@ fn fieldwise_ref_field_construction_binds_as_its_synthesized_init_call() {
         adjustment,
         SemanticAdjustment::RetainCallPlace
     )));
+}
+
+#[test]
+fn simd_write_to_takes_its_declared_member_and_a_bound_receiver_inverts() {
+    // `SIMD`'s `write_to` and `write_repr_to` are declared Mojo members, so
+    // a direct call on a sized scalar is a method call; a `Writable`-bounded
+    // parameter has no body of its own and stays `writer.write(x)`.
+    let checked = checked_with_std(
+        "def show[T: Writable](x: T, mut s: String):\n    x.write_to(s)\n\ndef main():\n    var s = String()\n    Int8(4).write_to(s)\n    Float32(1.5).write_repr_to(s)\n    show(3, s)\n",
+    )
+    .expect("check");
+    let inverted = |method: &str| {
+        own_expressions(&checked).any(|expression| {
+            matches!(&expression.op, mojito::checked::CheckedOp::MethodCall { method: called, .. } if called == method)
+                && expression.adjustments.iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        SemanticAdjustment::InvertedWrite
+                            | SemanticAdjustment::InvertedReprWrite { .. }
+                    )
+                })
+        })
+    };
+    assert!(inverted("write_to"), "the bound receiver inverts");
+    assert!(!inverted("write_repr_to"), "a SIMD receiver does not");
+}
+
+#[test]
+fn pointer_write_overwrites_only_a_trivially_deinitable_pointee() {
+    ok_std(
+        "def main():\n    var xs: List[UInt8] = [1, 2]\n    xs.unsafe_ptr().unsafe_offset(1).write(7)\n    print(xs[1])\n",
+    );
+    let error = err_std(
+        "def main():\n    var xs: List[String] = [\"a\"]\n    xs.unsafe_ptr().write(\"b\")\n",
+    );
+    assert!(
+        error.to_string().contains("not trivially deinitable"),
+        "{error}"
+    );
 }

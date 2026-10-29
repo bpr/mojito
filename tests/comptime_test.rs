@@ -1749,3 +1749,28 @@ fn associated_self_construction_freezes_the_enclosing_struct() {
     let src = "@fieldwise_init\nstruct F(Equatable, ImplicitlyCopyable, RegisterPassable):\n    var _value: UInt8\n\n    comptime NONE = Self(0)\n    comptime FAST = Self(8)\n\n    def __eq__(self, other: Self) -> Bool:\n        return self._value == other._value\n\ndef main():\n    var f = F.FAST\n    print(f == F.NONE, f == F.FAST)\n";
     assert_eq!(run(src).as_deref(), Ok("False True\n"));
 }
+
+#[test]
+fn comptime_if_converts_a_bare_optional_binding_through_its_bool() {
+    // A bare local `comptime` name of a non-`Bool` type is its `Bool(x)`,
+    // whose lifted function reads the binding's parameter value.
+    let src = "def _alias[dtype: DType]() -> Optional[StaticString]:\n    comptime match dtype:\n        case .int8:\n            return StaticString(\"Int8\")\n        case _:\n            return None\n\ndef f[dtype: DType, n: Int]():\n    comptime a = _alias[dtype]()\n    comptime if n == 1 and a:\n        print(\"yes\", a.value())\n    elif a:\n        print(\"wide\")\n    else:\n        print(\"no\")\n\ndef main():\n    f[DType.int8, 1]()\n    f[DType.int8, 2]()\n    f[DType.bool, 1]()\n";
+    assert_eq!(run(src).expect("run"), "yes Int8\nwide\nno\n");
+}
+
+#[test]
+fn static_string_parameter_and_argument_defaults_share_one_conversion() {
+    // Both defaults convert a literal to `StaticString` through one
+    // initializer instance, demanded once through its owner and once as
+    // the generator its removed origin parameters leave.
+    let src = "comptime _D = \"0123456789\"\n\ndef f[W: Writer, //, *, digits: StaticString = _D](mut writer: W, *, prefix: StaticString = \"\"):\n    writer.write_string(prefix)\n    writer.write_string(digits)\n\ndef main():\n    var t = String()\n    f(t, prefix=\"x\")\n    print(t)\n";
+    assert_eq!(run(src).expect("run"), "x0123456789\n");
+}
+
+#[test]
+fn comptime_if_converts_a_bare_parameter_name_through_its_bool() {
+    // A bare float or sized-integer parameter is its `Bool(x)`, as at the
+    // pin, through a struct's `Self.y` too.
+    let src = "struct S[y: Float64]:\n    @staticmethod\n    def show():\n        comptime if Self.y:\n            print(\"S y\")\n        else:\n            print(\"S not y\")\n\ndef g[x: Scalar[DType.uint8]]():\n    comptime if x:\n        print(\"x\")\n    else:\n        print(\"not x\")\n\ndef main():\n    S[2.5].show()\n    S[0.0].show()\n    g[3]()\n    g[0]()\n";
+    assert_eq!(run(src).expect("run"), "S y\nS not y\nx\nnot x\n");
+}

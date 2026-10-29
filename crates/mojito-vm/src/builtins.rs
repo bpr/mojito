@@ -13,6 +13,7 @@ pub const BUILTIN_CALLEES: &[&str] = &[
     "print",
     "external_call",
     "_mojito_abort",
+    "_mojito_float_text",
     "String",
     "repr",
     "len",

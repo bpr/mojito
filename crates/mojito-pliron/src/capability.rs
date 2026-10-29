@@ -198,7 +198,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "call",
         CapabilityStatus::Partial,
-        "positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject",
+        "positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort`/`_mojito_float_text` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject",
     ),
     (
         "call.indirect",

@@ -583,17 +583,21 @@ impl<'a> Specializer<'a> {
         // Two clones of one method whose owner instance and arguments agree
         // differ only in pointer provenance (a clone origin binder with and
         // without an interior projection), which erases natively: the second
-        // is the instance the first already names.
+        // is the instance the first already names. So is a member of one
+        // template demanded once through its owner instance and once as the
+        // generator its removed owner parameters leave, when the owner
+        // instance spells nothing the template does not (`StringSpan`).
         if self.instances.iter().any(|(known, n)| {
             n == &name
-                && known.owner.is_some()
-                && known.owner == key.owner
                 && known.arguments == key.arguments
-                && self
-                    .functions
-                    .get(known.template.as_str())
-                    .zip(self.functions.get(template))
-                    .is_some_and(|(known, template)| functions_equivalent(known, template))
+                && ((known.owner.is_some()
+                    && known.owner == key.owner
+                    && self
+                        .functions
+                        .get(known.template.as_str())
+                        .zip(self.functions.get(template))
+                        .is_some_and(|(known, template)| functions_equivalent(known, template)))
+                    || (known.template == key.template && known.reduced == key.reduced))
         }) {
             self.record_struct_member(member.as_ref(), &name);
             self.note_reference(&name);

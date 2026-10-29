@@ -6651,6 +6651,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             dest: assertion.dest.clone(),
         });
     }
+    if let Some(constraint) = &facts.comptime_condition {
+        adjustments.push(SemanticAdjustment::ComptimeCondition(constraint.clone()));
+    }
     for assertion in facts.instance_assertions.iter().flatten() {
         adjustments.push(SemanticAdjustment::InstanceAssertion(Box::new(
             assertion.clone(),
@@ -6916,6 +6919,10 @@ node_facts! {
         /// A reference read as a value: whether it is writable.
         reference_value_use: bool,
         rebind_assertion: RebindAssertion,
+        /// The constraint a compile-time test or one of its leaves decides
+        /// ([`SemanticAdjustment::ComptimeCondition`]), beside the leaf's
+        /// own operation record: a bare name keeps its parameter value.
+        comptime_condition: mojito_types::types::GenericConstraint,
         /// The `comptime assert`s of the builtin dunders and constructors
         /// the occurrence applies, in application order
         /// ([`SemanticAdjustment::InstanceAssertion`]).

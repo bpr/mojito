@@ -7,7 +7,7 @@ from std.os import SEEK_SET, abort, makedirs
 from std.os.path import dirname
 from std.os.pathlike import PathLike as stdPathLike
 from std.span import Span
-from std.string import String, StringSpan
+from std.string import String, StringSlice, StringSpan
 from std.sys._libc_errno import get_errno
 
 # open() syscall flags (Linux; upstream selects them per platform).

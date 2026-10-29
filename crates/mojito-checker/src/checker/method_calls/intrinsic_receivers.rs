@@ -60,28 +60,30 @@ impl Checker {
         }
         // `x.write_to(writer)` where `x` has no `write_to` body of its own — a
         // `Writable`-bounded type parameter (the erased generic body) or a
-        // built-in Writable value (`Int`, `Float64`, `Bool`, a literal, a
-        // SIMD vector, a `StringSpan`) — is `writer.write(x)`: the checker
-        // records the operand swap and MIR lowers the `Writer.write` shape,
-        // whose formatting dispatches a struct argument through its own
-        // `write_to` (instance-clone aware) and a builtin directly. The
-        // nominal String takes the same shape (its `write_to` body is the
-        // literal bridge, which `Writer.write` already spells on both
-        // backends); every other struct receiver keeps the ordinary method
-        // path to its own `write_to`.
+        // built-in Writable value (`Bool`, a literal, a `StringSpan`) — is
+        // `writer.write(x)`: the checker records the operand swap and MIR
+        // lowers the `Writer.write` shape, whose formatting dispatches a
+        // struct argument through its own `write_to` (instance-clone aware)
+        // and a builtin directly. The nominal String takes the same shape
+        // (its `write_to` body is the literal bridge, which `Writer.write`
+        // already spells on both backends); every other struct receiver,
+        // and a `SIMD` value, whose members are declared, keeps the ordinary
+        // method path to its own `write_to`.
+        let receiver = match obj_ty.kind() {
+            TyKind::Ref(reference) => &reference.referent,
+            _ => obj_ty,
+        };
         if matches!(method, "write_to" | "write_repr_to")
             && args.len() == 1
             && kwargs.is_empty()
             && param_args.is_empty()
             && !matches!(
-                (match obj_ty.kind() {
-                    TyKind::Ref(reference) => &reference.referent,
-                    _ => obj_ty,
-                })
-                .kind(),
+                receiver.kind(),
                 TyKind::Struct(name, targs)
                     if !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
             )
+            && !(matches!(receiver.kind(), TyKind::Simd { .. })
+                && self.declared_receiver_member(receiver, method).is_some())
             && self.conforms_to(obj_ty, "Writable")
         {
             return self.infer_inverted_write(site).map(Some);

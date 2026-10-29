@@ -1525,12 +1525,23 @@ fn string_view_conflicts_with_source_mutation() {
 
 #[test]
 fn string_slice_alias_resolves_to_string_span() {
-    // `StringSlice` stays accepted as an upstream compatibility alias for
-    // the canonical StringSpan in annotations.
-    let src = "def main():\n    var s = String(\"hello\")\n    var v: StringSlice = s[byte=1:3]\n    print(v)\n";
+    // `StringSlice` is upstream's `comptime StringSlice = StringSpan`, in an
+    // annotation and in call position alike.
+    let src = "def main():\n    var s = String(\"hello\")\n    var v: StringSlice = s[byte=1:3]\n    print(v)\n    var xs: List[UInt8] = [104, 105]\n    print(StringSlice(unsafe_from_utf8=Span(xs)))\n";
     assert_eq!(
         run_compiled(src).expect("compile the StringSlice alias"),
-        "el\n"
+        "el\nhi\n"
+    );
+}
+
+#[test]
+fn write_int_writes_upstreams_pieces() {
+    // The bundled `_write_int` writes the prefix through `writer.write`
+    // and the zero branch's digit the same way, as upstream's does.
+    let src = "from std.builtin.format_int import _write_int\nfrom std.collections import Array\n\ndef main():\n    var t = String()\n    _write_int(t, Int(-9223372036854775807) - 1)\n    t += \" \"\n    _write_int(t, Int(0))\n    t += \" \"\n    _write_int(t, UInt8(255))\n    t += \" \"\n    _write_int(t, Int8(-128))\n    print(t)\n    var a = Array[Int, 3](uninitialized=True)\n    a[0] = 4\n    print(a[0], len(a))\n";
+    assert_eq!(
+        run_compiled(src).expect("run _write_int"),
+        "-9223372036854775808 0 255 -128\n4 3\n"
     );
 }
 

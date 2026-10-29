@@ -21,6 +21,29 @@ impl FnLowering<'_> {
         self.define(ctx, dest, null.get_operation(), null.get_result(ctx))
     }
 
+    /// `_mojito_float_text(value, out)`, `std.builtin._format_float`'s
+    /// staged leaf: the runtime's float display written at `out`, and its
+    /// byte count.
+    pub(super) fn lower_float_text_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: Reg,
+        out: Reg,
+    ) -> Result<(), PlironError> {
+        let value = self.reg_value(ctx, value, ScalarTy::Float64)?;
+        let out = self.reg_value(ctx, out, ScalarTy::Ptr)?;
+        let func_ty = self.shared.ensure_rt(ctx, "mjrt_fmt_f64");
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct("mjrt_fmt_f64".try_into().expect("valid identifier")),
+            func_ty,
+            vec![value, out],
+        );
+        let result = call.get_result(ctx);
+        self.define(ctx, dest, call.get_operation(), result)
+    }
+
     /// `len(x)` over the non-nominal shapes (the VM's `call_named` arm):
     /// string byte length, or the static element count of a pack. Nominal
     /// receivers were rewritten to `__len__` method calls during

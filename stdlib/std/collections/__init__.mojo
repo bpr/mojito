@@ -2,6 +2,7 @@
 # collection types (`from std.collections import Set`); the prelude exports
 # the same names.
 
+from .array import Array
 from .dict import Dict
 from .list import List
 from .set import Set

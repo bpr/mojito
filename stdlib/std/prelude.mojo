@@ -14,6 +14,7 @@ from std.string import (
     StaticString,
     String,
     StringSpan,
+    StringSlice,
     atof,
     atol,
 )

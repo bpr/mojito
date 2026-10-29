@@ -28,7 +28,8 @@ command cannot use both.
      the lane subscript, target queries, lane gathers, `/`, the rest of
      division, `**`, and `__round__`.
    - R1583, R1584, R1585, R1586: the `reduce` tree and what it needs.
-   - R276 (`SIMD`'s text in Mojo), then R1398 (delete the dead `SIMD`
+   - R1662 and R1664 (`SIMD`'s display through its members, which R276
+     declared in Mojo), then R1398 (delete the dead `SIMD`
      member rules) and R1399 (`Int(x)`, `UInt(x)`, `Float64(x)` as
      `SIMD.__init__` overloads; it has no open prerequisite).
 
@@ -40,7 +41,7 @@ command cannot use both.
    - R1557 makes `SIMD` and its aliases the declared struct in the
      checker, after R1556 (no `TyKind::Simd` pattern matches outside
      `mojito-types`), R1591 (after R240), R1592, R1593, R1399,
-     R1507, R276, and R330.
+     R1507, R1662, and R330.
    - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
      both backends.
    - R1596 (after R66) and R1597 (after R1592) finish the surface.

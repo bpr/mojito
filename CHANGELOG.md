@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD.write_to` and `write_repr_to` are now upstream's Mojo members
+  (R276), writing through upstream's `_write_scalar` and
+  `_scalar_repr_alias` and the newly bundled
+  `std.builtin.format_int._write_int` and
+  `std.builtin._format_float._write_float`, so a direct
+  `Int(12).write_to(w)` or `UInt8(7).write_repr_to(w)` hands a writer each
+  piece upstream's do, `writer.write(prefix)` included. `_write_float` is
+  a staged leaf over the compiler's float text until R159 ports
+  upstream's Dragonbox; `print`, `String`, and `repr` of a `SIMD` value
+  still format in the compiler (R1662, R1664), and `write_padded` is filed
+  as R1663.
+- `StringSlice` is upstream's `comptime StringSlice = StringSpan`, so it
+  constructs in a call too; `std.collections` exports `Array`, which takes
+  upstream's `uninitialized=True`; and a pointer has upstream's `write`
+  for a trivially deinitable pointee.
+- The bundled library may hold a capture-list closure or a nested `def`
+  in a library function or method (R1614): each belongs to its enclosing
+  declaration's record, which names each struct it holds.
+
 - A `!kgen.string` now has a run-time form (R1190): `var x = "a".value`, a
   `!kgen.string` argument or binder read in a body, and a
   `List[KGENString]` element hold one, `pop.string.size` and
@@ -1697,6 +1716,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A bare name as a `comptime if` leaf (`comptime if y:` over a `Float64`
+  parameter, `comptime if n == 1 and alias:` over a local `Optional`
+  binding) now converts through its `Bool(x)` as at the pin (R1470): the
+  condition's record no longer takes the slot of the name's parameter
+  value.
+- A function with both a `StaticString` compile-time parameter default and
+  a `StaticString` argument default now elaborates, instead of stopping
+  with "concrete instance symbol `StringSpan.__init__$ov$StringLiteral`
+  collides with an existing declaration".
 - An overloaded initializer whose parameter spells a scalar alias or the
   struct's own origin binder (`bytes: Span[Byte, Self.origin]`) now
   declares the symbol its call selects, so `V(bytes=Span(l))` runs as at

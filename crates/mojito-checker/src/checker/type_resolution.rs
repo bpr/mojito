@@ -1401,14 +1401,6 @@ impl Checker {
         if name == "NoneType" && args.is_empty() {
             return Ok(Some((Ty::none(), Vec::new())));
         }
-        // Upstream compatibility alias: `StringSlice` resolves to the
-        // canonical `StringSpan` view (never emitted; diagnostics and
-        // display always spell `StringSpan`). Resolved at the same
-        // nesting depth, so a bare `StringSlice` parameter keeps the
-        // origin inference a bare `StringSpan` gets.
-        if name == "StringSlice" && self.structs.contains_key("StringSpan") {
-            return self.applied_type_at_depth("StringSpan", args).map(Some);
-        }
         if name == "StringLiteral" && args.is_empty() {
             return self
                 .bare_literal(Ty::string_literal(), name)

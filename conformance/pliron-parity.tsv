@@ -987,6 +987,7 @@ assets/ok/simd_to_bits.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits_default_symbolic.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits_signed.mojo	main	exe-differential	sanitized
 assets/ok/simd_wide_widths.mojo	main	exe-differential	sanitized
+assets/ok/simd_write_members.mojo	main	exe-differential	sanitized
 assets/ok/size_of_builtin.mojo	main	exe-differential	sanitized
 assets/ok/sized_generic_views.mojo	main	exe-differential	sanitized
 assets/ok/sized_library_traits.mojo	main	exe-differential	sanitized

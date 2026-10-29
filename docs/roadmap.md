@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1661**.
+Next free ID: **R1665**.
 
 ## Ordered Work
 
@@ -1922,20 +1922,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Pinned by `conformance/probes/list_display_linear_elements.mojo`.
   - Depends on R1614 (the closure must package with the library).
   - Model: Opus, Not Planned.
-
-- [ ] **R1614 The bundled library cannot hold a capture-list closure**
-
-  A nested `def` with a capture list in a bundled library method fails the
-  package build, so the library is compiled from source on every run.
-  - The first refusal is the overload check
-    (`InterfaceExport::records`): the closure's `__storage` struct and its
-    body method are lowered declarations no source scan declares.
-  - Past that, `DeclarationRecord::refuse_unjoinable` refuses a record
-    holding a struct not its own: the storage struct is placed in its
-    enclosing struct's record.
-  - Found while porting upstream's `List` literal initializer (R1613).
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R740 A list display runs the move initializer three times per
   element**
@@ -3986,6 +3972,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The struct may be generic or plain.
   - The same `def` declared above the struct runs.
   - Probe: `conformance/probes/method_calls_later_generic_def.mojo`.
+  - Probe: `simd.mojo` declares `_scalar_repr_alias` and `_write_scalar`
+    above `SIMD`, where upstream's follow it; below it, `write_to` stops
+    with "Undefined variable '__module$std$simd$_write_scalar'".
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4387,6 +4376,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     conformances in the tuple form, where upstream's use `where ... else`.
   - Found at the 2026-09-21 re-pin and left unfiled; refiled at the
     2026-10-17 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1661 A `where` clause over a `DType` predicate is an unsupported
+  generic where proposition**
+
+  `def g[dtype: DType, //](x: Scalar[dtype]) -> Int where
+  dtype.is_floating_point()` stops with "unsupported generic where
+  proposition", where the pin runs `g(Float32(1.5))`.
+  - `compile_generic_constraint` (`checker/constraints.rs`) has no arm for
+    a `Bool` call, and `compile_dependent_ct_expr` builds no parameter
+    expression for `dtype.is_floating_point()` ("not an associated comptime
+    expression"); a signature has no body to lift it from.
+  - `comptime if dtype.is_floating_point()` runs, since a body lifts it.
+  - Probe: `std/builtin/_format_float.mojo`'s `_write_float` spells
+    upstream's `where dtype.is_floating_point()` as a `comptime assert`.
+  - Probe: upstream's `SIMD.write_padded` declares `where
+    self.dtype.is_integral()` (R1663).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6067,31 +6074,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `String("n is ", n)` (`constraint failed: n is 3` at `f[3]`).
   - Probe: `"lit" + "eral"`, which runs at the pin.
   - Upstream's stdlib spells such messages at about 20 sites.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1470 A bare name of a non-integer parameter is rejected as a
-  compile-time condition**
-
-  `comptime if y:` over `y: Float64` in `def g[y: Float64]()` prints `y` at
-  the pin, while Mojito rejects it with "a comptime if condition that
-  compiles to no parameter expression".
-  - Cause: the checked handoff holds one operation record per expression
-    (`NodeFacts::adjustment`).
-  - A name read as a parameter value keeps its `ParamValue` record there,
-    and the condition's `ComptimeCondition` takes the same slot.
-  - So the function lifted for the leaf's `Bool(x)` conversion could not
-    read the name, and `Checker::converted_condition` lifts none for a bare
-    name.
-  - An integer leaf needs no function: it is `x != 0`, as `Int.__bool__`
-    spells it.
-  - Lever: give the condition record its own field beside the read's, as
-    upstream's condition is the `__bool__` call's parameter expression over
-    the read.
-  - Probe: `comptime if Self.y:` over a struct's `y: Float64` parameter
-    (the pin prints `S y`).
-  - Probe: `comptime if x:` over `x: Scalar[DType.uint8]` (the pin prints
-    `x` at 3 and `not x` at 0).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7819,6 +7801,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
     over a `SIMD` calls it, as R1552 routes `+=`.
   - Pliron's `lower_true_div` and the VM's `Div` arm of `numeric_op`
     retire.
+  - Probe: `std/builtin/format_int.mojo`'s `floor_div` divides with
+    `//`, where upstream's `_write_int` writes `value / radix`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -7990,7 +7974,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   `b.write(1, "x")` in Mojito and `<<>1x>` at the pin.
   - The pin's `Int.write_to` and `Float64.write_to` are Mojo bodies that
     call `writer.write` for their digits, which re-enters the override.
-  - Mojito's checker marks `x.write_to(w)` on a builtin scalar
+  - A direct `Int(1).write_to(b)` writes `<|>|1` as at the pin since
+    R276, but the override's `args[i].write_to(self)` is a call through
+    the pack's `Writable` bound, which Mojito's checker marks
     `SemanticAdjustment::InvertedWrite`, and MIR lowers it
     (`mir/lower_expr/expr_method.rs`) to a `$write_formatted` method call
     on the writer (`mojito_symbol::symbol::WRITE_FORMATTED`).
@@ -8001,7 +7987,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Pinned by `conformance/probes/writer_override_scalar_write_to.mojo`.
   - Ledger name: `writer-override-scalar-write-to`.
   - Found while landing R414 (2026-10-06).
-  - Depends on R276, which moves the scalar text into Mojo bodies.
+  - Depends on R1462, which calls the conformer's witness through a bound.
   - Model: Opus, Not Planned.
 
 - [ ] **R1462 A `write_to` through a `Writable` bound is a host-formatted
@@ -8018,7 +8004,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `<P>`, on both backends. The direct call `P(1).write_to(w)` matches.
   - A call through the bound needs every type that can bind `T` to answer
     `write_to` as a witness, which the scalars, `Bool`, and the literals do
-    only once their text is Mojo (R276).
+    only once their text is Mojo: `SIMD`'s is since R276.
+  - Probe: `writer.write(Int(Self.length))` inside `SIMD.write_repr_to`
+    writes `<|2>` into the marking writer R159's probe describes, where
+    the pin writes `<<|>|2>`: the generic pack's `args[i].write_to(self)`
+    is still the inverted write.
   - Found while landing R424 (2026-10-26).
   - Depends on R276.
   - Model: Opus, Not Planned.
@@ -8866,6 +8856,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     UInt8 and Int"), where the pin prints `(2, 1)`: `builtin_args`
     materializes the literal to `Int` before the pair is typed, where
     upstream's `divmod[T: DivModable]` binds `T` from `UInt8`.
+  - Probe: `std/builtin/format_int.mojo`'s `neg_digit_value` calls
+    `__abs__`, where upstream's `_write_int` calls `abs`: `abs` over a
+    `Scalar[dtype]` stops with "expected a numeric value".
   - Found while landing R1361 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9789,6 +9782,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `builtin_min_max`, and Pliron's `lower_min_max_builtin`, where every
     other module calls `std.math`'s library overloads. `simd.mojo` imports
     `max` and `min` from `std.math` for `clamp`.
+  - Probe: `simd.mojo` imports `Optional` and `StaticString`, and
+    `builtin/format_int.mojo` and `builtin/_format_float.mojo` import
+    `StaticString`, `StringSlice`, and `Span`, which upstream's read from
+    the prelude: without them `std.simd`'s import of the two fails the
+    package build ("not a compile-time Int constant: StaticString",
+    "no overload matches" `write_string`).
   - Fix: bind the prelude's names in bootstrap modules too, then drop the
     six `range` imports and `simd.mojo`'s `max`/`min` import, and delete
     the `min`/`max` rule, its `call_inference.rs` arm, the VM's
@@ -9965,12 +9964,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The pin writes an exponent sign: `1e+23`, where Mojito writes `1e23`.
   - The pin renders a `Float32` at its own precision: `0.1`, where Mojito
     writes `0.10000000149011612`.
-  - The lever: transliterate a permissively licensed Rust Dragonbox (MIT or
-    Apache-2.0 — third-party crates are allowed, see `AGENTS.md`) into Mojo
-    rather than deriving the algorithm.
-  - The plan picks the source and pins the shortest-round-trip cases.
-  - Only a from-scratch derivation would want Fable.
-  - Depends on nothing.
+  - The lever: port upstream's `std/builtin/_format_float.mojo`, which is
+    already Mojo, in place of the bundled module's staged `_write_float`
+    leaf, and delete the `_mojito_float_text` builtin with its checker,
+    VM, and Pliron arms.
+  - Its `float64` cache is `UInt128` tables, which wait on R65.
+  - Probe: `Float64(-2.25).write_to(b)` into a writer that marks each
+    `write_string` with `|` and wraps each `write` in `<`/`>` gives
+    `|-2.25`, where the pin's Dragonbox writes
+    `<|-><<|>|2><|.><<|>|2><<|>|5>`.
+  - Depends on R65.
   - Model: Opus, Planned.
 
 - [ ] **R160 `DType` is a compiler builtin in Mojito where upstream's is a
@@ -9995,6 +9998,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port `DType.__hash__` with the struct and retire its hash-leaf arms
     (`builtin_hashable_ty`, `hash_leaf_ty`, the VM's `__hash__` arm,
     `lower_hash_leaf`, `enqueue_hash_leaf_instances`); R1654 retires the last leaf.
+  - Probe: `SIMD[DType.uint16, 2](1, 2).write_repr_to(b)`, into the
+    marking writer R159's probe describes, writes `|DType.uint16` for
+    `Self.dtype.write_repr_to(writer)`, where the pin's declared `DType`
+    writes `|DType.|uint16`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -10090,7 +10097,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   StaticString("False")` and `StaticString` is undefined (R432).
   - Declare both members and `Writable`, and delete `Writable`'s `Bool`
     arm in `modelled_conformance`.
-  - `print(b)`'s builtin path stays only while `SIMD`'s does (R276).
+  - `print(b)`'s builtin path stays only while `SIMD`'s does (R1662).
   - Depends on R1608 and R432.
   - Model: Opus, Not Planned.
 
@@ -10488,6 +10495,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `def f[n: Int]`, trap in their compile-time run, where the pin's
     `__mod__` makes each `0`; `W[n % 0]` in a parameter position already
     folds to `0`.
+  - Probe: `std/builtin/format_int.mojo`'s `ceil_div` inlines upstream's
+    `__ceildiv__` body, with its `divmod` as `//` and `%`, where
+    upstream's `_write_int` calls `value.__ceildiv__(radix)`.
   - Closes R850.
   - Depends on R184.
   - Model: Fable, Planned.
@@ -10760,7 +10770,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `infer_unbound_call` (`checker/call_inference.rs`).
   - The checker's implicit conversions into `SIMD` (`coerces`, `splats_to`)
     stand in for the `@implicit` overloads until the bridge goes.
-  - Depends on R1555, R276, R330, R1556, R1591, R1592, R1593, R1595,
+  - Depends on R1555, R1662, R330, R1556, R1591, R1592, R1593, R1595,
     R1399, and R1507.
   - Model: Fable, Planned.
 
@@ -11026,32 +11036,48 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R276 `SIMD` writes its text in the host where upstream's writes it in
-  Mojo**
+- [ ] **R1662 `print`, `String`, and `repr` of a `SIMD` value format in
+  the VM, where upstream's call its `write_to` and `write_repr_to`**
 
-  Problem: `print` and `repr` of a `SIMD` value are built into the VM
-  (`format_value`, `simd_repr` in `backend/vm/dispatch.rs`) and the native
-  lowering (`lower_repr_builtin`, `print_simd`). Upstream's `SIMD` is a
-  stdlib struct whose `write_to` and `write_repr_to` are Mojo, choosing the
-  scalar alias through `_scalar_repr_alias`.
-  - The texts match the pin; the shape does not.
-  - Port `_write_scalar`, `write_to`, `write_repr_to`, `write_padded`, and
-    `_scalar_repr_alias` into the declared `SIMD` (R1549), which takes a
-    `DType` parameter without R160's `DType` struct.
-  - Bundle what they import: `std/builtin/format_int.mojo` (`_write_int`)
-    and `std/builtin/_format_float.mojo` (`_write_float`). Read R159 first,
-    since the float text interacts with it.
-  - Retire the inverted-write rule for `SIMD` in `intrinsic_receivers.rs`.
-  - Probe: `x.write_repr_to(w)` on an `Int`, `UInt`, or `Float64`
-    (`SemanticAdjustment::InvertedReprWrite`, `mir/lower_expr/expr_method.rs`)
-    builds `repr(x)` into an owned `String` and writes that, where
-    upstream's `SIMD.write_repr_to` writes into the writer itself.
-  - Probe: `Int8(4).write_repr_to(t)`, `Float32(1.5).write_repr_to(t)`, and
-    `Int8(4).write_to(t)` stop with "type 'Int8' has no method
-    'write_repr_to'" (or `'write_to'`), where the pin writes `Int8(4)` and
-    `Float32(1.5)`: a sized scalar's host method table has neither.
-  - Depends on R1555.
-  - Model: Fable, Not Planned.
+  The VM builds a `SIMD` value's text in Rust for `print(x)`, `String(x)`,
+  `repr(x)`, and `w.write(x)`, though `SIMD.write_to` and `write_repr_to`
+  are declared Mojo members since R276.
+  - The host text is `format_value`'s `Int`, `UInt`, and `Simd` arms,
+    `integer_digits`, `simd_lane_texts`, `simd_repr`, and `scalar_repr`'s
+    numeric arms (`crates/mojito-vm/src/backend/vm/dispatch.rs`).
+  - The elaborator demands a display instance only for a `TyKind::Struct`
+    (`enqueue_format_ty_instance`, `mono/instances.rs`), and the VM finds
+    it through the struct's member table, which a `SIMD` instance has no
+    concrete struct declaration to hold.
+  - The plan picks how a backend reaches the instance from the value's
+    type, records that contract in `docs/architecture.md`, and moves the
+    VM onto it; Pliron follows in R1664.
+  - `_write_float`'s staged leaf calls `_mojito_float_text`, never
+    `String`, so the members do not recurse into the display they serve.
+  - The texts match the pin but for R159's floats; done when
+    `format_value` has no `Int`, `UInt`, or `Simd` arm.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1664 Pliron formats a `SIMD` value's display in the lowering,
+  where upstream calls its `write_to` and `write_repr_to`**
+
+  Native `print`, `String`, `repr`, and `Writer.write` of a `SIMD` value
+  emit its text inline, and `repr` of a vector `Bool` is unsupported.
+  - The host text is `print_simd`, `format_scalar`'s numeric arms, and the
+    `SIMD` text inside `lower_str_writer_write` (`lower/print.rs`),
+    `lower_repr_builtin`'s `SIMD` arms, and `lower_writer_write`
+    (`lower/methods.rs`).
+  - Move them onto the contract R1662 records, then retire
+    `std._intrinsics._int_digits`/`_uint_digits`, `INT_DIGITS_SYMBOL` and
+    `UINT_DIGITS_SYMBOL`, and their keep-alive in `mir/symbols.rs`.
+  - Probe: native `repr(SIMD[DType.bool, 2](True, False))` stops with
+    "unsupported type `Simd { dtype: Known(Bool), width: Known(2) }`", and
+    native `repr(Scalar[DType.bool](True))` prints `True`, where the VM and
+    the pin print `SIMD[DType.bool, 2](True, False)` and
+    `SIMD[DType.bool, 1](True)`.
+  - Depends on R1662.
+  - Model: Opus, Not Planned.
 
 - [ ] **R359 `Tuple`'s private storage destroys its elements, where
   upstream's storage is trivially destructible**
@@ -12622,6 +12648,19 @@ residue found inside a task moves to the task that owns its fix.
     `Span`, `Array`, and `String` subscripts against upstream's.
   - Found while landing R1550 (2026-10-28).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1663 `SIMD.write_padded` is missing**
+
+  `SIMD[DType.int32, 4](1, -22, 333, 4).write_padded(t, 4)` stops with
+  "type 'SIMD[DType.int32, 4]' has no method 'write_padded'", where the pin
+  writes `[   1, -22, 333,   4]`.
+  - Upstream's body reads `_calc_initial_buffer_size` from
+    `collections/string/string.mojo`, over a compile-time `Array[Int, 32]`
+    table and `is_32bit`, and calls `abs` over a `Scalar[dtype]`.
+  - Port the helpers into `stdlib/std/string.mojo`, then the member into
+    `stdlib/std/simd.mojo` beside `write_to`.
+  - Depends on R1458 and R1661.
   - Model: Opus, Not Planned.
 
 ### Packaging, Artifacts, And Developer Tooling

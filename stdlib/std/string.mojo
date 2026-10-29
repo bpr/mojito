@@ -1418,6 +1418,9 @@ struct Codepoint(Comparable, ImplicitlyCopyable, Intable, Movable, Writable):
         writer.write("Codepoint(", self._scalar, ")")
 
 
+comptime StringSlice = StringSpan
+"""The former name of `StringSpan`, kept as upstream keeps it."""
+
 comptime StaticString = StringSpan[ImmStaticOrigin]
 """An immutable static string span."""
 

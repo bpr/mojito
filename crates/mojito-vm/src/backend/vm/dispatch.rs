@@ -438,6 +438,33 @@ impl VmBackend {
                 let callee = callee.clone();
                 self.external_call(&callee, &args, arg_types)
             }
+            // `std.builtin._format_float`'s staged leaf: the float's
+            // display bytes written at the pointer, and their count.
+            "_mojito_float_text" => {
+                let [Value::Float64(value), Value::Pointer { allocation, offset }] =
+                    args.as_slice()
+                else {
+                    return Err(RuntimeError::TypeError(
+                        "vm: _mojito_float_text takes a Float64 and a byte pointer".to_string(),
+                    ));
+                };
+                let (allocation, offset) = (*allocation, *offset);
+                let text = crate::runtime::float_display(*value);
+                for (index, byte) in (0_i64..).zip(text.bytes()) {
+                    let (region, slot) = self.heap_index(allocation, offset, index)?;
+                    self.heap_store(
+                        region,
+                        slot,
+                        Value::Simd {
+                            dtype: mojito_ast::ast::Dtype::UInt8,
+                            lanes: crate::runtime::SimdLanes::Int(vec![i128::from(byte)]),
+                        },
+                    );
+                }
+                Ok(Value::Int(
+                    i64::try_from(text.len()).expect("a float's text length fits i64"),
+                ))
+            }
             // The `std.os.abort` crossing: an uncatchable trap carrying the
             // nominal String message (only `Raised` is catchable).
             "_mojito_abort" => {

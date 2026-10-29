@@ -289,8 +289,13 @@ impl InterfaceTable {
 /// Decoding joins them back.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct LoweredDeclaration {
-    /// Its own struct, when it declares one.
+    /// Its own struct, when it declares one, and the storage struct of
+    /// each capture-list closure nested in it.
     pub structs: Vec<StructDeclaration>,
+    /// The name of each struct of `structs` other than its own, aligned
+    /// with `structs`, empty for its own; filled when the record is
+    /// encoded.
+    pub struct_names: Vec<String>,
     /// Sorted by lowered name.
     pub functions: Vec<FunctionDeclaration>,
     /// Each function's row in the directory's function table, aligned with
@@ -362,12 +367,10 @@ impl LoweredDeclaration {
             ));
         }
         let own = |names: Vec<&str>| names.len() <= 1 && names.iter().all(|own| *own == name);
-        if !own(self
-            .structs
-            .iter()
-            .map(|declaration| declaration.name.as_str())
-            .collect())
-        {
+        if self.structs.iter().any(|declaration| {
+            declaration.name != name
+                && !mojito_symbol::symbol::is_closure_storage_name(&declaration.name)
+        }) {
             return Err(format!("the record of `{name}` holds a struct not its own"));
         }
         if !own(self
@@ -409,8 +412,13 @@ impl LoweredDeclaration {
             function.ref_params = function.conventions_mask();
         }
         name.clone_into(&mut self.name);
-        for declaration in &mut self.structs {
-            declaration.name.clone_from(&self.name);
+        if self.struct_names.len() != self.structs.len() {
+            return Err("its struct names are not one per struct".to_string());
+        }
+        for (declaration, own) in self.structs.iter_mut().zip(&self.struct_names) {
+            declaration
+                .name
+                .clone_from(if own.is_empty() { &self.name } else { own });
         }
         for declaration in &mut self.traits {
             declaration.name.clone_from(&self.name);
@@ -1724,6 +1732,18 @@ impl DeclarationRecords {
                 .ok_or_else(|| format!("`{name}` has no module record"))?;
             record.lowered.refuse_unjoinable(&name)?;
             record.lowered.function_rows = rows;
+            record.lowered.struct_names = record
+                .lowered
+                .structs
+                .iter()
+                .map(|declaration| {
+                    if declaration.name == name {
+                        String::new()
+                    } else {
+                        declaration.name.clone()
+                    }
+                })
+                .collect();
             let mut bytes = postcard::to_stdvec(&record.lowered)
                 .map_err(|error| format!("the declarations of `{name}` do not encode: {error}"))?;
             let residue = bytes.len();
@@ -1953,7 +1973,9 @@ impl DeclaringModules {
 
 /// The names the declaration owning `name` may have, most specific first:
 /// the name itself, an overload's base, or a member's owner, of `name` or,
-/// for a lifted function, of the name it is lifted from ([`lifted_owner`]).
+/// for a lifted function, of the name it is lifted from ([`lifted_owner`]);
+/// then, for a nested `def` or a closure's storage and its members
+/// (`f$g`, `f$g$__storage.g`), each enclosing name, innermost first.
 fn declaration_candidates(name: &str) -> impl Iterator<Item = &str> {
     let owner = match lifted_owner(name) {
         Some(
@@ -1963,13 +1985,19 @@ fn declaration_candidates(name: &str) -> impl Iterator<Item = &str> {
         ) => owner,
         None => name,
     };
+    let member_owner = owner.split_once('.').map(|(declaration, _)| declaration);
+    let enclosing = std::iter::successors(Some(member_owner.unwrap_or(owner)), |inner| {
+        inner.rsplit_once('$').map(|(outer, _)| outer)
+    })
+    .skip(1);
     [
         Some(owner),
         owner.split_once(OV_SEP).map(|(declaration, _)| declaration),
-        owner.split_once('.').map(|(declaration, _)| declaration),
+        member_owner,
     ]
     .into_iter()
     .flatten()
+    .chain(enclosing)
 }
 
 /// The value at the function index `index` in `entries`, which are sorted
