@@ -49,14 +49,15 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if !matches!(command, Some("compile" | "run"))
-        && (cli.native_opt.is_some() || cli.target.is_some() || cli.native_debug.is_some())
+        && (cli.native_opt.is_some() || cli.native_debug.is_some() || cli.has_target_flags())
     {
         eprintln!(
-            "--native-opt, --target, and --native-debug are only valid with the compile and \
-             run commands"
+            "--native-opt, --target, --target-cpu, --target-features, and --native-debug are \
+             only valid with the compile and run commands"
         );
         return ExitCode::FAILURE;
     }
+    warn_unknown_target_features(&cli);
     if !matches!(command, Some("compile" | "run" | "link")) && cli.runtime_lib.is_some() {
         eprintln!("--runtime-lib is only valid with the compile, run, and link commands");
         return ExitCode::FAILURE;
@@ -123,9 +124,16 @@ struct CliArgs {
     /// `--native-opt LEVEL` for `compile`/`run --backend pliron` (parsed by
     /// the backend; raw here so the default build carries no backend types).
     native_opt: Option<String>,
-    /// `--target TRIPLE` for `compile`/`run --backend pliron` (parsed into
-    /// the checked native target; raw here for the same reason).
+    /// `--target TRIPLE` (the pin's `--target-triple`) for `compile`/`run`
+    /// (parsed into the checked native target; raw here for the same
+    /// reason).
     target: Option<String>,
+    /// `--target-cpu CPU` for `compile`/`run` (parsed into the checked
+    /// native target).
+    target_cpu: Option<String>,
+    /// `--target-features LIST` for `compile`/`run` (parsed into the checked
+    /// native target).
+    target_features: Option<String>,
     /// `--print-toolchain` for `compile`: report the resolved external
     /// toolchain (tools, versions, runtime archive) instead of compiling.
     print_toolchain: bool,
@@ -144,6 +152,14 @@ struct CliArgs {
     passes: Vec<String>,
 }
 
+impl CliArgs {
+    /// Whether any of `--target`, `--target-cpu`, or `--target-features` was
+    /// given.
+    const fn has_target_flags(&self) -> bool {
+        self.target.is_some() || self.target_cpu.is_some() || self.target_features.is_some()
+    }
+}
+
 /// Extract global options from anywhere on the command line. Local imports win,
 /// then CLI roots in occurrence order, then the bundled stdlib fallback.
 fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
@@ -154,6 +170,8 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut output = None;
     let mut native_opt = None;
     let mut target = None;
+    let mut target_cpu = None;
+    let mut target_features = None;
     let mut print_toolchain = false;
     let mut timings = false;
     let mut native_debug = None;
@@ -193,10 +211,27 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             native_opt = Some(level.to_string());
         } else if arg == "--native-opt" {
             native_opt = Some(iter.next().ok_or("--native-opt requires a level")?);
-        } else if let Some(triple) = arg.strip_prefix("--target=") {
+        } else if let Some(triple) = arg
+            .strip_prefix("--target=")
+            .or_else(|| arg.strip_prefix("--target-triple="))
+        {
             target = Some(triple.to_string());
-        } else if arg == "--target" {
-            target = Some(iter.next().ok_or("--target requires a triple")?);
+        } else if arg == "--target" || arg == "--target-triple" {
+            target = Some(
+                iter.next()
+                    .ok_or_else(|| format!("{arg} requires a triple"))?,
+            );
+        } else if let Some(cpu) = arg.strip_prefix("--target-cpu=") {
+            target_cpu = Some(cpu.to_string());
+        } else if arg == "--target-cpu" {
+            target_cpu = Some(iter.next().ok_or("--target-cpu requires a CPU")?);
+        } else if let Some(features) = arg.strip_prefix("--target-features=") {
+            target_features = Some(features.to_string());
+        } else if arg == "--target-features" {
+            target_features = Some(
+                iter.next()
+                    .ok_or("--target-features requires a feature list")?,
+            );
         } else if arg == "--print-toolchain" {
             print_toolchain = true;
         } else if arg == "--timings" {
@@ -230,6 +265,8 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         output,
         native_opt,
         target,
+        target_cpu,
+        target_features,
         print_toolchain,
         timings,
         native_debug,
@@ -392,6 +429,11 @@ fn run_program_native(_file: Option<&str>, _cli: &CliArgs) -> Result<(), String>
 
 fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Result<(), String> {
     let compiler = Compiler::new(cli.link_options.clone(), backend);
+    let compiler = if cli.has_target_flags() {
+        compiler.with_target(native_target(cli)?)
+    } else {
+        compiler
+    };
     let compiled = {
         let _frontend = mojito::timing::span("frontend");
         compile_input(&compiler, file)?
@@ -593,16 +635,35 @@ fn native_opt_level(cli: &CliArgs) -> Result<mojito::backend::pliron::OptLevel, 
     }
 }
 
-/// The checked `--target` (default: the build host, when supported).
-#[cfg(feature = "backend-pliron")]
+/// The checked `--target`, `--target-cpu`, and `--target-features`
+/// (default: the build host's triple, when supported, and `x86-64`).
 fn native_target(cli: &CliArgs) -> Result<mojito::native::target::NativeTarget, String> {
-    use mojito::native::target::{NativeTarget, Triple};
-    match cli.target.as_deref() {
-        Some(triple) => Ok(NativeTarget::new(Triple::parse(triple)?)),
+    use mojito::native::target::{NativeTarget, TargetCpu, Triple};
+    let target = match cli.target.as_deref() {
+        Some(triple) => NativeTarget::new(Triple::parse(triple)?),
         None => NativeTarget::host().ok_or_else(|| {
             "this host is not a supported native target; pass an explicit --target TRIPLE"
                 .to_string()
-        }),
+        })?,
+    };
+    Ok(target.with_cpu(TargetCpu::parse(
+        cli.target_cpu.as_deref(),
+        cli.target_features.as_deref(),
+    )?))
+}
+
+/// Warn, as the pin does, about each `--target-features` name LLVM does not
+/// recognize; the name stays in the feature list.
+fn warn_unknown_target_features(cli: &CliArgs) {
+    let Ok(cpu) = mojito::native::target::TargetCpu::parse(
+        cli.target_cpu.as_deref(),
+        cli.target_features.as_deref(),
+    ) else {
+        return;
+    };
+    for (name, enabled) in cpu.unknown_features() {
+        let sign = if enabled { '+' } else { '-' };
+        eprintln!("'{sign}{name}' is not a recognized feature for this target (ignoring feature)");
     }
 }
 
@@ -846,7 +907,9 @@ fn print_usage() {
          \x20 --emit KIND            compile output: plir|ll|bc|obj|exe (default ll)\n\
          \x20 -o, --output PATH      compile or precompile output path (required for bc|obj|exe)\n\
          \x20 --native-opt LEVEL     native optimization profile: 0|release (alias: 1; default 0)\n\
-         \x20 --target TRIPLE        native target triple (default: the host)\n\
+         \x20 --target TRIPLE        native target triple (default: the host; alias --target-triple)\n\
+         \x20 --target-cpu CPU       native target CPU (default: x86-64)\n\
+         \x20 --target-features LIST native target feature edits, e.g. +avx2,-fma (default: the CPU's)\n\
          \x20 --native-debug LEVEL   native debug info: none|lines (default lines)\n\
          \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\
          \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\

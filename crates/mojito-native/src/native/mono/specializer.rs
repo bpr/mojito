@@ -1829,7 +1829,7 @@ impl<'a> Specializer<'a> {
     /// the instances discovered before it and the source's non-generic
     /// structs. `None` on a host with no native target.
     fn layout_oracle(&self) -> Option<Rc<LayoutOracle>> {
-        let target = *self.target?;
+        let target = self.target?.clone();
         Some(Rc::new(LayoutOracle {
             target,
             structs: Rc::clone(&self.layout_structs),

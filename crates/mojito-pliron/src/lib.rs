@@ -171,6 +171,7 @@ pub fn compile(
     pipeline::timing("pliron-passes", || {
         pipeline::Pipeline::run_pliron_passes(&mut context, module)
     })?;
+    lower::stamp_target_attributes(&context, module, &options.target);
     verify_module(&context, module)?;
 
     pliron::builtin::given_names::erase_given_names(&context, module.get_operation());
@@ -185,7 +186,7 @@ pub fn compile(
         canonical_text,
         functions,
         entries: specialized.entries.clone(),
-        target: options.target,
+        target: options.target.clone(),
         exe_wrapper_added: false,
         unhandled_error_declared: shared.declared_rt("mjrt_unhandled_error"),
         debug_table,
@@ -296,7 +297,7 @@ impl NativeModule {
 
     /// Textual LLVM IR of the converted module.
     pub fn llvm_ir(&self, opt: OptLevel) -> Result<String, PlironError> {
-        emit::llvm_ir(&self.context, self.module, self.target, opt)
+        emit::llvm_ir(&self.context, self.module, &self.target, opt)
     }
 
     /// Write LLVM bitcode to `path`.
@@ -309,7 +310,7 @@ impl NativeModule {
         emit::write_bitcode(
             &self.context,
             self.module,
-            self.target,
+            &self.target,
             path,
             opt,
             self.debug_policy(debug),
@@ -330,7 +331,7 @@ impl NativeModule {
         emit::write_object(
             &self.context,
             self.module,
-            self.target,
+            &self.target,
             path,
             opt,
             self.debug_policy(debug),
@@ -351,7 +352,7 @@ impl NativeModule {
         emit::write_executable(
             &self.context,
             self.module,
-            self.target,
+            &self.target,
             path,
             opt,
             self.debug_policy(debug),
@@ -370,7 +371,7 @@ impl NativeModule {
         emit::write_executable_sanitized(
             &self.context,
             self.module,
-            self.target,
+            &self.target,
             path,
             opt,
             self.debug_policy(debug),
@@ -389,7 +390,7 @@ impl NativeModule {
     /// correlation. The corpus test pins this to empty; production emission
     /// degrades identically but silently.
     pub fn debug_degradations(&self) -> Result<Vec<String>, PlironError> {
-        emit::debug_degradations(&self.context, self.module, self.target, &self.debug_table)
+        emit::debug_degradations(&self.context, self.module, &self.target, &self.debug_table)
     }
 
     /// JIT-execute a compiled zero-argument value-returning MIR function and
@@ -438,7 +439,7 @@ impl NativeModule {
         jit::run_value(
             &self.context,
             self.module,
-            self.target,
+            &self.target,
             &meta.mangled,
             meta.ret,
             opt,
@@ -514,6 +515,7 @@ impl NativeModule {
             &callees,
             self.unhandled_error_declared,
         )?;
+        lower::stamp_target_attributes(&self.context, self.module, &self.target);
         verify_module(&self.context, self.module)?;
         self.exe_wrapper_added = true;
         Ok(())

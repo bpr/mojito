@@ -26,14 +26,22 @@ fn pliron_toolchain_report_leads_with_stable_keys() {
         .map(|line| line.split('\t').next().unwrap())
         .collect();
     assert_eq!(
-        &keys[..4],
-        ["target", "data-layout", "profile", "llvm-pipeline"],
+        &keys[..6],
+        [
+            "target",
+            "data-layout",
+            "target-cpu",
+            "target-features",
+            "profile",
+            "llvm-pipeline"
+        ],
         "report:\n{report}"
     );
     assert!(
         report.contains("target\tx86_64-unknown-linux-gnu\n"),
         "report:\n{report}"
     );
+    assert!(report.contains("target-cpu\tx86-64\n"), "report:\n{report}");
     assert!(report.contains("profile\t0\n"), "report:\n{report}");
     assert!(
         report.contains("llvm-pipeline\t(none)\n"),

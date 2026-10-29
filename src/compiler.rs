@@ -296,7 +296,8 @@ pub struct Compiler {
     /// `MOJITO_BODY_FACT_REUSE` environment variable (`0` disables).
     body_fact_reuse: Option<bool>,
     /// The native target the elaborator answers layout queries for: the
-    /// `--target` of a native compile, otherwise the host. `None` on a host
+    /// `--target`/`--target-cpu`/`--target-features` of a native compile or
+    /// a run, otherwise the host with the `x86-64` CPU. `None` on a host
     /// with no native target, where a program that asks a layout fails.
     target: Option<crate::native::target::NativeTarget>,
     /// Import the bundled library's compiled package instead of checking
@@ -375,7 +376,7 @@ impl Compiler {
     }
     /// Elaborate for `target` instead of the host.
     #[must_use]
-    pub const fn with_target(mut self, target: crate::native::target::NativeTarget) -> Self {
+    pub fn with_target(mut self, target: crate::native::target::NativeTarget) -> Self {
         self.target = Some(target);
         self
     }
@@ -622,7 +623,7 @@ impl Compiler {
             elaborated: OnceLock::new(),
             complete: OnceLock::new(),
             concrete: OnceLock::new(),
-            target: self.target,
+            target: self.target.clone(),
             package,
             pre_elaboration: self.pre_elaboration(),
             exports: self.exports.clone(),

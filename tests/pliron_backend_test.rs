@@ -121,7 +121,7 @@ fn fib_lowers_verifies_and_prints_canonically() {
                 v11 = llvm.call @mj_fib (v10) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !6;
                 v12 = llvm.add v9, v11 <{nsw=false,nuw=false}>: builtin.integer i64 !7;
                 llvm.br ^block4v1(v12)
-            };
+            } !8;
             llvm.func @mj_compute: llvm.func <builtin.integer i64() variadic = false>
               [] 
             {
@@ -129,10 +129,13 @@ fn fib_lowers_verifies_and_prints_canonically() {
                 llvm.br ^block8v1()
 
               ^block8v1():
-                v14 = llvm.constant <builtin.integer <10: i64>> : builtin.integer i64;
-                v15 = llvm.call @mj_fib (v14) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !8;
-                llvm.return v15 !9
-            }
+                v14 = llvm.constant <builtin.integer <9: i64>> : builtin.integer i64;
+                v15 = llvm.call @mj_fib (v14) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !9;
+                v16 = llvm.constant <builtin.integer <8: i64>> : builtin.integer i64;
+                v17 = llvm.call @mj_fib (v16) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !10;
+                v18 = llvm.add v15, v17 <{nsw=false,nuw=false}>: builtin.integer i64 !11;
+                llvm.return v18 !12
+            } !13
         }
 
         outlined_attributes:
@@ -144,8 +147,12 @@ fn fib_lowers_verifies_and_prints_canonically() {
         !5 = @["pliron_fixture.mojo": line: 4, column: 29], []
         !6 = @["pliron_fixture.mojo": line: 4, column: 25], []
         !7 = @["pliron_fixture.mojo": line: 4, column: 12], []
-        !8 = @["pliron_fixture.mojo": line: 7, column: 12], []
+        !8 = [llvm_func_attrs = llvm.attributes ["target-cpu" = "x86-64", "target-features" = "+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87"]]
         !9 = @["pliron_fixture.mojo": line: 7, column: 12], []
+        !10 = @["pliron_fixture.mojo": line: 7, column: 12], []
+        !11 = @["pliron_fixture.mojo": line: 7, column: 12], []
+        !12 = @["pliron_fixture.mojo": line: 7, column: 12], []
+        !13 = [llvm_func_attrs = llvm.attributes ["target-cpu" = "x86-64", "target-features" = "+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87"]]
     "#]].assert_eq(module.plir_text());
 }
 

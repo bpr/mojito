@@ -38,7 +38,7 @@ use super::{DebugInfo, OptLevel, PlironError, PlironErrorKind};
 pub fn to_llvm(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
 ) -> Result<(LLVMContext, LLVMModule), PlironError> {
     let stamped_text = to_stamped_ir(ctx, module, target)?;
     let stamped_ctx = LLVMContext::default();
@@ -60,7 +60,7 @@ pub fn to_llvm(
 fn to_stamped_ir(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
 ) -> Result<String, PlironError> {
     timing("llvm-convert", || {
         let llvm_ctx = LLVMContext::default();
@@ -91,7 +91,7 @@ fn to_stamped_ir(
 pub fn to_llvm_optimized(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     opt: OptLevel,
 ) -> Result<(LLVMContext, LLVMModule), PlironError> {
     let (llvm_ctx, llvm_module) = to_llvm(ctx, module, target)?;
@@ -127,7 +127,7 @@ pub fn to_llvm_optimized(
 pub fn llvm_ir(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     opt: OptLevel,
 ) -> Result<String, PlironError> {
     let (_llvm_ctx, llvm_module) = to_llvm_optimized(ctx, module, target, opt)?;
@@ -138,7 +138,7 @@ pub fn llvm_ir(
 pub fn write_bitcode(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     path: &Path,
     opt: OptLevel,
     debug: DebugPolicy<'_>,
@@ -163,7 +163,7 @@ pub fn write_bitcode(
 pub fn debug_degradations(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     table: &DebugTable,
 ) -> Result<Vec<String>, PlironError> {
     let stamped_text = to_stamped_ir(ctx, module, target)?;
@@ -178,7 +178,7 @@ pub fn debug_degradations(
 pub fn write_object(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     path: &Path,
     opt: OptLevel,
     debug: DebugPolicy<'_>,
@@ -254,7 +254,7 @@ pub fn link_object(object_path: &Path, output: &Path) -> Result<(), PlironError>
     expect("object-sha256", &object_sha)?;
 
     let toolchain = ResolvedToolchain::resolve(
-        target,
+        &target,
         OptLevel::O0,
         ToolchainNeeds {
             clang: true,
@@ -278,7 +278,7 @@ pub fn link_object(object_path: &Path, output: &Path) -> Result<(), PlironError>
     }
     let link_inputs = vec![runtime.path.clone()];
     write_atomic(output, |temp| {
-        let args = clang_args(target, EXE_LINK_ARGS, object_path, &link_inputs, temp);
+        let args = clang_args(&target, EXE_LINK_ARGS, object_path, &link_inputs, temp);
         let run = Command::new(&clang.path)
             .args(&args)
             .env("LC_ALL", "C")
@@ -301,7 +301,7 @@ pub fn link_object(object_path: &Path, output: &Path) -> Result<(), PlironError>
 /// when an archive is discoverable at emission time and validated at link
 /// time when present.
 fn write_link_manifest(
-    target: NativeTarget,
+    target: &NativeTarget,
     object_path: &Path,
     toolchain: &ResolvedToolchain,
 ) -> Result<(), PlironError> {
@@ -371,7 +371,7 @@ fn sha256_file(path: &Path) -> Result<String, PlironError> {
 pub fn write_executable(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     path: &Path,
     opt: OptLevel,
     debug: DebugPolicy<'_>,
@@ -394,7 +394,7 @@ pub fn write_executable(
 pub fn write_executable_sanitized(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     path: &Path,
     opt: OptLevel,
     debug: DebugPolicy<'_>,
@@ -428,7 +428,7 @@ const SANITIZED_LINK_ARGS: &[&str] = &["-fsanitize=address", "-g", "-lm", "-Wl,-
 fn clang_from_bitcode(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     path: &Path,
     extra_args: &[&str],
     toolchain: &ResolvedToolchain,
@@ -473,7 +473,7 @@ fn clang_from_bitcode(
 /// inputs and outputs in fixed positions. Argument-order changes are policy
 /// changes; the snapshot test below pins the rendering.
 fn clang_args(
-    target: NativeTarget,
+    target: &NativeTarget,
     extra_args: &[&str],
     bitcode: &Path,
     link_inputs: &[PathBuf],
@@ -527,7 +527,7 @@ fn optimize_bitcode(path: &Path, toolchain: &ResolvedToolchain) -> Result<(), Pl
 fn emit_bitcode(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     path: &Path,
     debug: DebugPolicy<'_>,
 ) -> Result<(), PlironError> {
@@ -589,7 +589,7 @@ mod tests {
     fn pliron_clang_args_render_deterministically() {
         let target = NativeTarget::new(Triple::X86_64UnknownLinuxGnu);
         let args = clang_args(
-            target,
+            &target,
             EXE_LINK_ARGS,
             Path::new("/tmp/in.bc"),
             &[PathBuf::from("/rt/libmojito_runtime.a")],

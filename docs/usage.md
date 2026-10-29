@@ -86,11 +86,15 @@ cargo run -- emit-mir assets/ok/defines_main.mojo | cargo run -- exec -
 text kinds print to stdout unless `-o PATH` is given, binary kinds require
 `-o PATH`) and rejects any program whose reachable-from-`main` call graph
 leaves the scalar subset — including `print`, until the native runtime stage.
-`--target TRIPLE` selects the checked native target (default: the build
-host; `x86_64-unknown-linux-gnu` is currently the only supported triple) and
-`--native-opt 0|release` (with `1` as a permanent alias of `release`) the
-optimization profile; both also apply to
-`run --backend pliron`. `--timings` works with every command (the
+`--target TRIPLE` (or the pin's spelling, `--target-triple`) selects the
+checked native target (default: the build host;
+`x86_64-unknown-linux-gnu` is currently the only supported triple),
+`--target-cpu CPU` the target CPU (any of the pin's x86-64 CPU names;
+default `x86-64`), `--target-features LIST` edits over that CPU's features
+(`+avx2,-fma`; merged as the pin merges them, see `docs/native-abi.md`),
+and `--native-opt 0|release` (with `1` as a permanent alias of `release`)
+the optimization profile; all of them also apply to
+`run --backend pliron`, and the three target flags to `run` on the VM. `--timings` works with every command (the
 `elaborate` counters appear only for commands that elaborate, `run` and
 `compile`): it prints one
 `timing\t<phase path>\t<inclusive µs>\t<self µs>\t<count>` record per

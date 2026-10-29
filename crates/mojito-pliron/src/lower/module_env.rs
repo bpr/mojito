@@ -1,6 +1,6 @@
 //! Module-wide lowering environment: compiled-signature construction
 //! ([`ModuleShared`] helpers), [`declare_function`], the synthesized `main`
-//! exe wrapper, and the intercepted-call filter.
+//! exe wrapper, the target-attribute stamp, and the intercepted-call filter.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -497,6 +497,38 @@ pub fn synthesize_exe_wrapper(
     let ret = ReturnOp::new(ctx, Some(zero.get_result(ctx)));
     ret.get_operation().insert_at_back(current, ctx);
     Ok(())
+}
+
+/// Stamp `target`'s CPU and effective feature list on every function
+/// `module` defines, as LLVM's `"target-cpu"` and `"target-features"`
+/// string attributes; declarations stay bare. All of one module's functions
+/// share the pair, so vector arguments agree across the module. Restamping
+/// replaces the pair.
+pub fn stamp_target_attributes(
+    ctx: &Context,
+    module: ModuleOp,
+    target: &mojito_native::native::target::NativeTarget,
+) {
+    use pliron_llvm::llvm_attrs::{LlvmAttrValue, LlvmAttributesAttr};
+
+    let defined: Vec<FuncOp> = module
+        .get_body(ctx, 0)
+        .iter(ctx)
+        .filter_map(|op| Operation::get_op::<FuncOp>(op, ctx))
+        .filter(|func| func.get_entry_block(ctx).is_some())
+        .collect();
+    let features = target.cpu.features_string();
+    for func in defined {
+        let mut attrs = func
+            .get_attr_llvm_func_attrs(ctx)
+            .map_or_else(LlvmAttributesAttr::new, |attrs| attrs.clone());
+        attrs.set(
+            "target-cpu",
+            LlvmAttrValue::Str(target.cpu.name().to_string()),
+        );
+        attrs.set("target-features", LlvmAttrValue::Str(features.clone()));
+        func.set_attr_llvm_func_attrs(ctx, attrs);
+    }
 }
 
 /// Calls the backend lowers as runtime-ABI intrinsics instead of compiling

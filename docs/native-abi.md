@@ -69,18 +69,43 @@ its own explicit support decision and testing infrastructure.
   Both are stamped as `target datalayout`/`target triple` on every emitted
   LLVM module, and every `clang` invocation passes `--target=<triple>`.
   The string is pinned against the installed LLVM 23.1 toolchain by test.
-- **CPU features** — `CpuFeatures`; only the target baseline is accepted.
+- **Target CPU** — `TargetCpu`: a CPU name from the pin's x86-64 table
+  (`native/target/x86_cpus.rs`, generated from the pin's
+  `--print-supported-cpus` and `--print-effective-target` by
+  `scripts/gen-x86-cpu-table`), plus the user's `--target-features` edits.
+  - A name outside the table is rejected (`unknown target CPU 'NAME'`).
+  - The default is `x86-64` (`+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87`). The
+    pin's default is the host CPU's name; that gap is R1640.
+  - The effective feature list is the pin's merge rule. An item is
+    `+name`, `-name`, or a bare `name` (enabled); empty items are skipped.
+    Each edited name keeps its last sign at its first position. The `+`
+    edits come first, then the CPU's table features the user did not name,
+    then the `-` edits. No implication is applied (`-sse2` keeps `+sse`).
+  - A name LLVM does not know is kept, with the pin's warning
+    (`'+NAME' is not a recognized feature for this target (ignoring
+    feature)`).
+  - `TargetCpu::has_feature` is literal `+name` membership of that list.
+  - The elaborator holds the same target as the backend, so `run` on the
+    VM answers a target query for the requested CPU, as `mojo run` does.
+  - Every function a native module defines carries `"target-cpu"` and
+    `"target-features"` string attributes with these values; declarations
+    carry none. All functions of one module share the pair, so vector
+    arguments agree across the module. The runtime C ABI passes no
+    vectors, so the CPU is not part of `MJRT_ABI_VERSION`.
 - **Optimization profile** — `OptLevel`: `O0` (backend baseline cleanup
   only) or `Release` (LLVM `default<O1>` over the emitted bitcode).
 - **Output kind** — `EmitKind`: `plir | ll | bc | obj | exe`; binary kinds
   require an output path (`BuildConfig::validate`).
-- **CLI** — `--target TRIPLE` (default: the build host; error when the host
-  is unsupported), `--native-opt 0|release` (alias: `1`), `--emit KIND`,
+- **CLI** — `--target TRIPLE` or the pin's `--target-triple TRIPLE`
+  (default: the build host; error when the host is unsupported),
+  `--target-cpu CPU` (default `x86-64`), `--target-features LIST` (edits
+  over the CPU's table), `--native-opt 0|release` (alias: `1`), `--emit KIND`,
   `-o PATH`, `--native-debug none|lines` (default `lines`: DWARF
   subprograms plus call-site file/line locations on objects and
   executables; source labels are embedded exactly as given, never
   absolute build paths), and `--print-toolchain` (report the resolved
-  clang/`opt` paths and versions, target data layout, and runtime archive
+  clang/`opt` paths and versions, target data layout, target CPU and
+  effective features, and runtime archive
   with its provenance, sha256, and embedded ABI version, as stable
   `key\tvalue` lines). Runtime-archive discovery follows a fixed ordered
   contract: `--runtime-lib PATH`, then `MOJITO_RUNTIME_LIB`, then the

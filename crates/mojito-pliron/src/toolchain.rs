@@ -36,6 +36,8 @@ pub fn toolchain_report(target: &NativeTarget, profile: OptLevel) -> String {
     };
     line("target", target.triple.name());
     line("data-layout", target.triple.data_layout());
+    line("target-cpu", target.cpu.name());
+    line("target-features", &target.cpu.features_string());
     line("profile", profile.name());
     line(
         "llvm-pipeline",
@@ -96,7 +98,7 @@ pub fn check_toolchain(
             runtime: true,
         },
     };
-    ResolvedToolchain::resolve(*target, profile, needs)
+    ResolvedToolchain::resolve(target, profile, needs)
         .map(|_| ())
         .map_err(|error| error.to_string())
 }
@@ -126,7 +128,7 @@ impl ResolvedToolchain {
     /// major versions, a missing archive, and a runtime ABI mismatch all
     /// fail here, before any lowering or emission work.
     pub(super) fn resolve(
-        _target: NativeTarget,
+        _target: &NativeTarget,
         profile: OptLevel,
         needs: ToolchainNeeds,
     ) -> Result<Self, PlironError> {

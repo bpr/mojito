@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `--target-cpu CPU` and `--target-features LIST` select the native
+  target CPU, and `--target-triple` is accepted as the pin's spelling of
+  `--target` (R1633). The CPU is any of the pin's 79 x86-64 names, read
+  from a table `scripts/gen-x86-cpu-table` generates from the pin; the
+  feature edits merge over that CPU's table as the pin merges them, an
+  unknown name warning as at the pin. Every function a Pliron module
+  defines now carries `"target-cpu"` and `"target-features"`, so
+  `--target-cpu skylake` emits AVX2 code, and `run` on the VM elaborates
+  for the requested target. The default stays `x86-64`, where the pin's is
+  the host CPU (R1640).
 - A struct's `comptime` member may name the struct itself, as `Self` or
   applied (`comptime other = T[Self.n + 1]`), and a type member read
   through its struct is the type it names, so `T[4].current.answer()`,

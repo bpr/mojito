@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1640**.
+Next free ID: **R1641**.
 
 ## Ordered Work
 
@@ -1197,23 +1197,34 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1633 The native target's CPU is x86-64 baseline, where the
+- [ ] **R1640 The native target's CPU defaults to `x86-64`, where the
   pin's defaults to the host CPU**
 
-  Mojito compiles for the `x86-64` baseline, where the pin's
-  `--target-cpu` "defaults to the host CPU", so the pin's target on this
-  host (`skylake`) has AVX2 and FMA and a 256-bit SIMD width.
-  - `CpuFeatures` (`mojito-native-core/src/target.rs`) is baseline only,
-    and Pliron emits no `target-cpu` or `target-features`.
-  - Once `CompilationTarget` lands (R1562), its `has_avx2()` and
-    `simd_bit_width()` answer from this target, so a baseline default
-    prints `False` and `128` where the pin prints `True` and `256`.
-  - Lever: detect the host's features at `NativeTarget::host()`, accept
-    `--target-cpu` and `--target-features`, and emit both in Pliron's
-    functions. The LLVM CPU name may need the LLVM crate, so only
-    `mojito-pliron` can ask it.
-  - Record the default in `docs/native-abi.md`.
-  - Found while planning R1562 (2026-10-29).
+  Mojito's default `TargetCpu` is `x86-64`, where the pin's `--target-cpu`
+  "defaults to the host CPU", so on this host (`skylake`) its
+  `CompilationTarget` answers `has_avx2()` `True` and `simd_bit_width()`
+  `256`.
+  - The pin's default is the host CPU's *name* with that name's table
+    features (`clang -march=skylake`'s list), not cpuid's detected set,
+    so only the name needs detecting.
+  - Lever: port LLVM 23.1's x86 `sys::getHostCPUName`
+    (`llvm/lib/TargetParser/Host.cpp`: `detectX86FamilyModel`,
+    `getAvailableFeatures`, `getIntelProcessorTypeAndSubtype`,
+    `getAMDProcessorTypeAndSubtype`, the Zhaoxin/Hygon arms) into
+    `mojito-native-core/src/target/x86_host.rs` over the safe
+    `std::arch::x86_64::__cpuid_count`.
+  - `TargetCpu::host()` is the detected name when the pin's table has it,
+    and `x86-64` otherwise. `NativeTarget::host()`, `Compiler::new`'s
+    default, and `TargetCpu::parse(None, …)` start from it.
+  - Cross-check in the pliron lane: the port's name equals
+    `LLVMGetHostCPUName()`, beside
+    `pliron_pinned_data_layout_matches_installed_clang`.
+  - Probe: `mojito compile --backend pliron --emit ll` shows
+    `"target-cpu"="skylake"` with the pin's `--print-effective-target`
+    list, and `--target-cpu x86-64` restores the baseline string.
+  - Docs: `docs/native-abi.md`, the help text, and `docs/usage.md` say
+    "Defaults to the host CPU".
+  - Found while landing R1633 (2026-10-29).
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -10212,6 +10223,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     from the elaborator's `NativeTarget`, beside the layout oracle's
     `size_of`, so one checked program serves any `--target`.
   - Fold `target_get_field` and `target_has_feature` over a closed target.
+  - At the pin `has_feature(name)` is literal `+name` membership of the
+    target's feature list (`_has_feature["bogus"]` is `True` under
+    `--target-features +bogus`), and `TargetCpu::has_feature` answers it.
+  - `simd_bit_width` is 512 under `+avx512f`, else 256 under `+avx2`,
+    else 128 (AVX without AVX2 is 128).
   - Port `_TargetType`, `_current_target`, `_empty_target`, the
     `CompilationTarget` struct with `current` and `_unknown`,
     `_has_feature`, the `has_*` x86 queries, and `simd_bit_width` and
@@ -10223,7 +10239,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1536 (every query body is a bracketed `__mlir_attr`),
     R1630 (`_current_target()` returns `!kgen.target`), R1631
     (`CompilationTarget.has_avx2()` is a bare-name static call), R1632
-    (`comptime current = CompilationTarget[…]` names its own struct), R1633
+    (`comptime current = CompilationTarget[…]` names its own struct), R1640
     (the answers are the host CPU's), and R432 (`_has_feature` takes a
     `StaticString`).
   - Model: Fable, Planned.

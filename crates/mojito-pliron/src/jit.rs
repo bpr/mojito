@@ -21,7 +21,7 @@ use super::{JitValue, OptLevel, PlironError, PlironErrorKind, RetKind, emit};
 pub fn run_value(
     ctx: &Context,
     module: ModuleOp,
-    target: NativeTarget,
+    target: &NativeTarget,
     symbol: &str,
     ret: RetKind,
     opt: OptLevel,
