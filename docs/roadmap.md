@@ -4418,29 +4418,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1645 A value-pack element an `@implicit` constructor converts
-  has no compile-time value**
-
-  `f[1, 2]()` over `def f[*xs: W]()`, where `W` declares `@implicit
-  __init__(out self, v: IntLiteral)`, fails elaboration with "value
-  parameter `*xs` is not compile-time constant", where the pin prints `2`.
-  - The checker's pack loop (`checker/declarations.rs`, "Each argument
-    binds one value of the pack's element") records each element's
-    converted application, but the application does not reach the call's
-    `MirParamArg::expr` (`MirLowerer::param_arg_regs_folding`), so
-    `mono::unify::bind_explicit_value_arguments` finds no constant.
-  - `f[W(1), W(2)]()` runs, and so does a pack of one forwarded binder
-    (`_get_kgen_string["llvm.", name]()`).
-  - Probe: `cnt["a", "b"]()` over `def cnt[*extra: StaticString]() -> Int:
-    return len(extra)`, which prints `2` at the pin.
-  - Probe: `popcount["ct", "pop"](Int64(7))` over `def popcount[*parts:
-    StaticString](x: Int64)` calling `pop.call_llvm_intrinsic` with
-    `intrin=_get_kgen_string["llvm.", *parts]()`, which prints `3` at the
-    pin.
-  - Found while landing R1641 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1646 A construction spelled through a closed type alias is no
   compile-time application**
 
@@ -5223,6 +5200,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     name()` reads `"abc".value` as a field of a run-time `Str` ("field
     access on non-struct String"), so the literal's KGEN string needs this
     entry's run-time form.
+  - Probe: ``__mlir_op.`pop.call_llvm_intrinsic`[intrin=_get_kgen_string[
+    "llvm.ctpop"](), ...](x)`` over an `Int64` is "not a compile-time Int
+    constant: not an associated comptime expression", where the pin prints
+    `3` for `7`. `llvm_intrinsic_name` builds the attribute with
+    `compile_dependent_ct_expr`, and a call whose result is `!kgen.string`
+    is no compile-time application there. Bound first (`comptime k =
+    _get_kgen_string["llvm.", *parts]()`, `intrin=k`), it runs.
   - A sibling of R1149's raw-list runtime form.
   - Found while landing R1183 (2026-10-20).
   - Depends on nothing.
@@ -6089,24 +6073,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     fails the same way, where the pin prints `3` for `x = 2`.
   - A bare reference to a generic `def` (`apply(as_int, 3)`, `var g =
     as_int`) is rejected at the pin too, so it is not part of this entry.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1583 A call through a callable binder does not convert its
-  parameter arguments**
-
-  `func[4](x)` over `func: def[width: SIMDLength](SIMD[DType.int32,
-  width]) thin -> SIMD[DType.int32, width]` bound to a generic `dbl` stops
-  with "in `dbl`: unsupported value parameter `width` is not compile-time
-  constant", where the pin prints `[2, 4, 6, 8]`.
-  - With `width: Int` the same call runs, so the `4` reaches `dbl`'s
-    instance unconverted: R1533 applies `SIMDLength`'s `@implicit
-    __init__` to a direct call's struct value-parameter argument, and the
-    callable-binder application skips that conversion.
-  - Upstream's `SIMD.reduce` takes such a binder (`func: def[width:
-    SIMDLength](SIMD[Self.dtype, width], SIMD[Self.dtype, width]) ->
-    SIMD[Self.dtype, width]`, R1585).
-  - Found while planning R1554 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

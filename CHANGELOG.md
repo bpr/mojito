@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call through a callable binder now converts its parameter arguments
+  through the parameter's `@implicit` constructor, as a direct call does
+  and as at the pin (R1583): `func[4](x)` over `func: def[width:
+  SIMDLength](SIMD[DType.int32, width]) thin -> SIMD[DType.int32, width]`
+  bound to a generic `dbl` prints `[2, 4, 6, 8]`, where it stopped with
+  "unsupported value parameter `width` is not compile-time constant".
+  Each element of a value pack converts the same way, so `f[1, 2]()` over
+  `*xs: W` and `cnt["a", "b"]()` over `*extra: StaticString` run (R1645).
 - A `comptime` alias over a partially bound struct names a type once its
   open parameters are bound (R296), so `comptime Bytes = SIMD[.uint8, _]`
   read as `Bytes[w]`, `Pair[1, ...]`, `Pair[a=_, b=3]`, and a member

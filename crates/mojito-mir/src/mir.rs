@@ -4226,16 +4226,27 @@ impl<'a> Flatten<'a> {
     }
 
     /// The expression a bracket argument built from the enclosing value
-    /// binders denotes (`1 + n`, `Self.n`); none for an argument naming no
-    /// binder, whose register is already its constant.
+    /// binders denotes (`1 + n`, `Self.n`), or the construction an
+    /// `@implicit` conversion made of it (`SIMDLength(4)`); none for an
+    /// argument naming no binder, whose register is already its constant.
     fn forwarded_value(&self, argument: &CheckedParamArg) -> Option<ParamExpr> {
         let expr = match argument {
             CheckedParamArg::Named { value, .. } => return self.forwarded_value(value),
-            // An enclosing value binder the argument names (`Self.n`).
             CheckedParamArg::Attribute {
                 value: Some(TyArg::Val(CtValue::Expr(expr))),
                 ..
-            } => self.enclosing_binders.binder_value(expr),
+            } => match expr.kind() {
+                // An enclosing value binder the argument names (`Self.n`).
+                mojito_types::param_expr::ParamKind::DeclRef(_) => {
+                    self.enclosing_binders.binder_value(expr)
+                }
+                // A converted argument is its constructor's application or
+                // folded value, which the elaborator evaluates per instance
+                // as Mojo's does the call's parameter attribute: a call
+                // through a callable binder has no instance arguments to
+                // carry it (`func[4](x)`).
+                _ => Some(expr.clone()),
+            },
             CheckedParamArg::Attribute { .. } => None,
             CheckedParamArg::Value(value) => self.value_binder_node(*value),
         }?;

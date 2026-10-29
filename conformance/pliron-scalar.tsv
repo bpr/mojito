@@ -83,6 +83,7 @@ assets/ok/call_result_pointer_field_local_write.mojo	-	ineligible	no-scalar-entr
 assets/ok/call_result_pointer_field_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_result_pointer_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_temporary_ref_receiver.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/callable_binder_parameter_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_element_call_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_element_invocation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_transfer_after_last_use.mojo	-	ineligible	no-scalar-entry-shape
@@ -1334,6 +1335,7 @@ assets/ok/value_getter_subscript_argument.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/value_pack_aggregate_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_bracket_spread.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_pack_implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_parameter_list_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_parameter_list_writable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_runtime_read.mojo	-	ineligible	no-scalar-entry-shape

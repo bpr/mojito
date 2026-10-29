@@ -2693,7 +2693,11 @@ lookup. A value argument built from the caller's own value binders
 for the VM and records the expression over those binders beside it
 (`MirParamArg::expr`, built by `Flatten::forwarded_value` through
 `ParamContext`), which the monomorphizer evaluates under the caller
-instance's bindings (`bind_explicit_value_arguments`, `eval_ct`). A closed
+instance's bindings (`bind_explicit_value_arguments`, `eval_ct`). An
+argument an `@implicit` constructor converted records that construction
+the same way, since neither a call through a callable binder (`func[4](x)`
+over `func: def[width: SIMDLength](...)`) nor a value-pack element
+(`f[1, 2]()` over `*xs: W`) has an instantiated argument to carry it. A closed
 bracket argument of a generic call (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`,
 `f["x"]()`) or of a construction (`Counter[4](1)`) has no run-time form: as
 Mojo's call carries a parameter attribute, the call carries the value in its

@@ -83,6 +83,7 @@ assets/ok/call_result_pointer_field_local_write.mojo	main	exe-differential	sanit
 assets/ok/call_result_pointer_field_read.mojo	main	exe-differential	sanitized
 assets/ok/call_result_pointer_field_write.mojo	main	exe-differential	sanitized
 assets/ok/call_temporary_ref_receiver.mojo	main	exe-differential	sanitized
+assets/ok/callable_binder_parameter_conversion.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
@@ -1334,6 +1335,7 @@ assets/ok/value_getter_subscript_argument.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_aggregate_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_bracket_spread.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_comptime_for_served.mojo	main	exe-differential	sanitized
+assets/ok/value_pack_implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_parameter_list_members.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_parameter_list_writable.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_runtime_read.mojo	main	exe-differential	sanitized
