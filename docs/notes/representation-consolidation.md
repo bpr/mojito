@@ -11,195 +11,180 @@ The next step is always at the top. Finished steps are deleted;
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
 with `--dry-run` or `scripts/roadmap.py deps R1445`. Every command runs on
-Opus, with a plan pass for each entry whose `Model:` bullet says Fable.
-`--task` runs an entry after its open prerequisites. `--only` runs exactly
-the entries named. A single command cannot use both.
+Opus. `--plan-fable-on-opus` gives a plan pass to every entry whose
+`Model:` bullet says Fable, `Planned` or not. `--task` runs an entry after
+its open prerequisites. `--only` runs exactly the entries named. A single
+command cannot use both.
 
 ## Recommended order
 
-1. **Finish gap D** (size). R1356 landed in part on 10-26: register
-   passability judges a conditional conformance at closed arguments, and
-   a memory-only slice literal lives in its call-result slot. Its census
+1. **Finish the library `SIMD`** (conformance, in progress). The run
+   started 10-27 landed R1389–R1397, the `SIMD` declaration, and its
+   member ports (R1549–R1555, R1578–R1581, R1589, R1594). It was stopped
+   on 10-28 after R1188 for the overnight gate. Its remaining work order,
+   which reruns from R1595:
+   - R1595, R1566, R1503, R1561, R1562, R330, R1567, R1582: initializers,
+     division, the lane subscript, target queries, lane gathers, `**`,
+     and `__round__`.
+   - R296, R1583, R1584, R1585, R1586: the `reduce` tree and what it needs.
+   - R276 (`SIMD`'s text in Mojo), then R1398 (delete the dead `SIMD`
+     member rules) and R1399 (`Int(x)`, `UInt(x)`, `Float64(x)` as
+     `SIMD.__init__` overloads; it has no open prerequisite).
+
+   ```sh
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1398 --task R1399 -n 0
+   ```
+
+2. **`SIMD` as the declared struct everywhere** (the port's end).
+   - R1557 makes `SIMD` and its aliases the declared struct in the
+     checker, after R1556 (no `TyKind::Simd` pattern matches outside
+     `mojito-types`), R1591 (after R240), R1592, R1593, R1595, R1399,
+     R1507, R276, and R330.
+   - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
+     both backends.
+   - R1596 (after R66) and R1597 (after R1592) finish the surface.
+
+   ```sh
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1558 --task R1596 --task R1597 -n 0
+   ```
+
+3. **`Bool` as a library struct** (R1188's residue). R1188 made
+   `__mlir_type.i1` a type of its own and split the port:
+   - R1608 declares `Bool` and its members.
+   - R1609 (initializers), R1610 (operators), and R1611 (printing, after
+     R432) follow it.
+   - R1612 retires `TyKind::Bool`, after those and R1189.
+
+   ```sh
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1612 -n 0
+   ```
+
+4. **Finish gap D** (size). R1356 landed in part on 10-26. Its census
    filed the shapes that still destroy a memory-only register as R1440
    (reference results copied for a `read` parameter), R1441 (builtin
    arguments), R1442 (operands off the call-result path), R1443 (copied
    consuming receivers), and R1444 (callable binder copies), with probes
-   on R1435 and R1095.
-
-   R1445, the verifier rule, comes last, behind all of them.
+   on R1435 and R1095. R1445, the verifier rule, comes last.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1445 -n 0
    ```
 
-2. **Sweep the stale entries** (leverage, cheap). R1400–R1406 cover 99
-   open entries, one sweep per track:
-   - 17 entries are already fixed, partly fixed, or meet their own done
-     condition, by probes and `rg` checks run on 10-25.
-   - The rest name code no longer in `crates/`, wait on an entry that has
-     landed, or restate another entry.
-   - Each sweep re-runs the probes, deletes what matches the pin, rewrites
-     the rest against today's code, merges duplicates, and adds the
-     `Depends` links the 10-25 cores need.
-
-   This shrinks every cluster below before any of them is planned.
+5. **Gap E: compile-time values are slots** (size, small). R662 and R663
+   landed. A callable binder's read is still a frame slot (R1449), and
+   `remove-unused-params` still counts slot reads (R1451).
 
    ```sh
-   scripts/claude_loop.py --model opus --only R1400 --only R1401 --only R1402 --only R1403 \
-     --only R1404 --only R1405 --only R1406 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1449 --task R1451 -n 0
    ```
 
-3. **Gap E: compile-time values are slots** (size, small).
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R663 -n 0
-   ```
-
-   R662 landed (2026-10-26): a non-callable value binder's read is its
-   `kgen.param.constant`. A callable binder's read is still a slot
-   (R1449; gap G's R533 landed).
-
-4. **The inliner's `try` veto** (size). R1288 and R1286 landed
-   (2026-10-26): a callee holding a `try` inlines, and a loop's `__iter__`
-   is an ordinary call the inliner splices, so loop-bearing
-   `@always_inline` bodies inline below the bound and R1280 (gap F) is
-   reachable. The pin keeps some that inline here, because it measures a
-   callee before cleaning what it spliced in (R1452).
-
-5. **Gap F: members reached by name, not called** (size, the largest
-   lever left, about 30 entries). It lands in three stages.
-
-   First, the bundled library declares the compiler-known traits, so every
-   conformance has a witness table. This stage is complete: R424
-   (`Writable`, with R109, R433, and R434) landed last, and R1461 makes its
-   synthesized reflective defaults the trait's own bodies. R578 (the bundled types declare what upstream's do), R705 (`Equatable`,
-   `Comparable`, with R706, R708, and R419), R1360 (`Boolable`, `Intable`,
-   `Floatable`, `Indexer`, `Identifiable`, with R191), R1361 (the
-   `std.math` traits), R1362 (`Hashable`, `Hasher`), and R1363
-   (`Defaultable`, `RegisterPassable`, `TrivialRegisterPassable`, with
-   R861, R863, and R1459) landed on 2026-10-26. R1361 left R1457 (the
-   other `SIMD` values) and R1458 (`abs`, `round`, `divmod`, `pow` as
-   library functions).
-
-   Second, operators become calls of the requirement. R1357 (landed) has
-   the checker check `a op b` as `a.__op__(b)`. R1358 (landed) does the
-   same for an operator over a bound, and R1359 (landed) for tuple
-   comparison. R1348 (landed) made a struct operator a call in MIR.
-
-   Third, R1281 (landed) has the elaborator read the witness table instead
-   of composing a name: `Copyable`'s table records its `copy` default, and
-   a generic `for` names the requirements its bound declares. Only a
-   struct callee's `def(...)` contract still composes its `__call__`
-   (R1466). Under R1109 (landed), every protocol member a call reaches (`len`,
-   `in`, `for`, `==`, a subscript read or store) now names its member's
-   generator without the unused arguments. Only the members a backend
-   still reaches from a value's type (`mir::TYPE_REACHED_MEMBERS`) keep
-   theirs, each until its entry makes the reach a library call: display
-   (R1287, R422), the hash leaf (R1397), a scalar construction's
-   `__int__` (R1399), and a `Variant` handler's `__call__` (R1444, R1466).
+6. **Gap F: members reached by name, not called** (size, the largest
+   lever left). Its three stages have landed: the bundled library
+   declares the compiler-known traits, operators are calls of the
+   requirement, and the elaborator reads the witness table. What is left:
+   - The members a backend still reaches from a value's type
+     (`mir::TYPE_REACHED_MEMBERS`): display (R1287, R422); the `DType`,
+     `Bool`, and `StringLiteral` hash leaves (R160, R1608, R1192); a
+     scalar construction's `__int__` (R1399); and a `Variant` handler's
+     `__call__` (R1444, R1466).
+   - A struct callee's `def(...)` contract still composes its `__call__`
+     (R1466).
+   - R1280: the iteration step cannot inline.
+   - R1461: `Writable`'s synthesized reflective defaults become the
+     trait's own bodies.
 
    The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
    filed. The checker's copy and move synthesis is tied to them, and
    upstream declares them in `std/traits/`.
 
-6. **Gap G: a capture-list closure is a capture list, not a struct**
-   (size).
-   - R1376 and R1377 landed: every capture-list `def` builds the pin's
-     `__storage` struct at its declaration, its lifted body takes the
-     struct as `self`, and every call passes it.
-   - R1427 landed: every capturing lambda builds its storage where it
-     stands, an immediately invoked one calls the body passing it, and
-     one used as a value moves it into its closure. R1428 makes the body
-     a real method of the struct.
-   - R1378 landed: the closure's value is the struct, a runtime value
-     only, which the check names by its site and MIR resolves (R1436
-     moves the struct into the check). Run-time `capturing[...]` values
-     still convert it to a closure of its body until R1433, R176, and
-     R1434 withdraw them.
-   - R533 landed (2026-10-26): every legacy `@parameter` closure bound to
-     a callable parameter takes upstream's environment-pointer path, generic
-     or not, and R172, R980, and R983 closed with it.
-   - R1344 and R1345 (both landed) serve capture-free and `@parameter` closures.
-
-7. **Gap H: three compile-time evaluators** (the largest block, about 45
-   entries).
-   - The size lever is partial: R389 (landed 2026-10-26: the check names
-     every lifted compile-time expression and MIR mints none) stops equal
-     applications splitting instance keys, and R893 stops an
-     instance-budget blowup.
-   - The chain R1379–R1388 is `docs/parametric-mir-plan.md` P4's unfinished
-     remainder. It moves each kind of site off `Elab::eval` and onto the
-     check plus `native::mono`, then deletes `Elab`'s evaluator and type
-     resolver (R1388).
-   - R1385–R1387 (landed) give the checker one folder for bracket arguments,
-     associated members, and type operands.
-
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1388 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1280 --task R1466 --task R1287 --task R1461 -n 0
    ```
 
-8. **Gap I: packs are binder kinds** (slight size, about 20 entries):
+7. **Gap G: a capture-list closure is a capture list** (size). Its cores
+   landed (R1376–R1378, R1427, R1428, R533, R1344, R1345). What is left:
+   - R1436 moves the closure's storage struct into the check.
+   - R1433 → R176 → R1434 withdraw run-time `capturing[...]` values,
+     which still convert the struct to a closure of its body.
+
+   ```sh
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1436 --task R1434 -n 0
+   ```
+
+8. **Gap H's residues** (size, partial). The chain R1379–R1388 landed:
+   `mojito-comptime` evaluates nothing, and the check binds every
+   `comptime` declaration. What is left:
+   - R1474 (a condition compiled without its binders in scope) and R1475
+     (a `comptime if` condition kept as a `GenericConstraint`).
+   - R1480 (a package's module constants exported as an `Elaborated`
+     table) and R1482 (the bundled `List`'s field layout).
+   - R893 stops an instance-budget blowup.
+   - The members under *H* below were filed against `Elab`'s arms or the
+     checker's folds. Re-probe each before planning it.
+
+   ```sh
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1474 --task R1475 --task R1480 --task R1482 --task R893 -n 0
+   ```
+
+9. **Gap I: packs are binder kinds** (slight size, about 20 entries):
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1491 --only R1492 --only R1485 --only R1486 -n 0
    ```
 
-9. **The conformance blocks**. These do not shrink generic code. Each is
-   one cause behind 5 to 30 entries, listed under *Blocks without a size
-   lever*. The four filed on 10-25 are:
-   - A library `SIMD` as the one scalar type: R1389–R1399, with R1397 the
-     port itself.
-   - Type versus value decided by what a name denotes: R1369–R1372.
-   - One subscript lvalue: R1373–R1375.
-   - The checker's conformance evidence (R1364, R1365), transfers (R1366,
-     R1367), and abandonment (R1368).
+10. **Residues of the 10-27/28 `SIMD` run** outside its work order. Each
+    is independent unless noted.
+    - Compile-time applications: R1528 → R1529 → R1530 (displays and
+      aggregates as parameter values), R1523 and R1527 (builtin bodies),
+      R1574 (folding `SIMD` comparisons), R1563, R1587, R1588.
+    - Parameter binding and conversion: R1537, R1538, R1541, R1544,
+      R1545, R1540, R1606, R1565, R1571, R1572, R1604, R1548.
+    - `SIMD` storage and intrinsics: R1520, R1521, R1536, R1600, R1575.
+    - Ownership and the VM: R1570, R1573, R1603, R1601, R1524. R1601 and
+      R1603 are wrong-code bugs.
+    - Syntax and library: R1569 (unary `+`), R1598 (`assert`), R1602,
+      R1564, R1607, R1605 (after R792 and R178).
 
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1368 --task R1367 -n 0
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1371 --task R1372 --task R1375 --task R1374 -n 0
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1398 --task R1399 -n 0
-   ```
+    ```sh
+    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1601 --task R1603 --task R1570 --task R1573 \
+      --task R1524 --task R1569 --task R1598 --task R1602 --task R1564 --task R1607 -n 0
+    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1530 --task R1523 --task R1527 --task R1574 \
+      --task R1563 --task R1587 --task R1588 -n 0
+    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1537 --task R1538 --task R1541 --task R1544 \
+      --task R1545 --task R1540 --task R1606 --task R1565 --task R1571 --task R1572 --task R1604 --task R1548 -n 0
+    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1520 --task R1521 --task R1536 --task R1600 \
+      --task R1575 -n 0
+    ```
 
-## Where things stand (2026-10-25)
+## Where things stand (2026-10-28)
 
-The first pass's four gaps (10-21 to 10-24) are closed except for three
-entries.
-- Gap A (raises are explicit region exits) has fully landed, with R890
-  last.
-- Gap C (the call builds the library pack value) has fully landed, with
-  R1304 last.
-- Gap B has fully landed, with R1338 last. Its residues are conformance
+- Gaps A, B, and C have fully landed. Gap B's residues are conformance
   and cleanup: R1414 (a display's elements bind as call arguments), R695
   after it, R1415 (fieldwise keywords), and R1416 (hand-written MIR).
-- Gap D has R1355 and R1356 left, and R1355 turns out to be the core of a
-  larger cluster (gap D′).
+- Gap D has R1440–R1445 left.
+- Of the 10-25 gaps, E, F, G, and H have their cores in; I has R1491,
+  R1492, R1485, and R1486 left.
+- Of the 10-25 conformance blocks, four have landed: type versus value
+  (R1369–R1372), one subscript lvalue (R1373–R1375), conformance
+  evidence (R1364, R1365), transfers (R1366, R1367), and abandonment
+  (R1368). Their leftovers are under *Blocks without a size lever*. The
+  scalar block is steps 1–3.
+- The stale-entry sweeps R1400–R1406 have landed.
 
-To find the next gaps, the whole roadmap was read on 10-25, track by track,
-for entries sharing one cause. The explicit `Depends` graph shows almost
-nothing: the largest transitive fan-out of any open entry is 5. The
-leverage is in shared causes that the entries name in prose but do not
-link. Five new gaps (E–I) affect generic code size. Another dozen clusters
-are conformance only.
+`enum` (10-25) moves no gap: each enum is an ordinary struct whose
+members `mojito_parser::enums` generates as Mojo text, over the
+`TyKind::Variant` intrinsic `__EnumStorage[*Ts]`. Its residues R1407,
+R1408, R1409, and R1412 are under *Blocks without a size lever*, and
+R1410, R1411, and R1413 under *Entries outside the gaps*.
 
-`enum` landed after that reading (10-25) and moves no gap:
-- Each enum is an ordinary struct. `mojito_parser::enums` generates its
-  members as Mojo text, so they elaborate and instantiate like any
-  hand-written struct's.
-- Its storage, `__EnumStorage[*Ts]`, is the `TyKind::Variant` intrinsic
-  `Variant` already used, selected by case index.
-- It closed R1236. Its seven residues joined existing blocks: R1407,
-  R1408, R1409, and R1412 (see *Blocks without a size lever*). R1410,
-  R1411, and R1413 are under *Entries outside the gaps*.
-- R1407 also waits on gap G's R1378 and the `Tuple` block's R1124.
-
-| gap | upstream's shape | core entries | entries that close or shrink | size lever |
+| gap | upstream's shape | open core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
-| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1440–R1444, then R1445 | about 25 (below) | yes |
-| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 (landed), R1449, R1451 | R788, R378, R472, R508, R602, R1194 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1363, R424, R705, R578, R1360, R1361, and R1362 (landed); R1461; R1357 and R1358 (landed); R1359; R1348 and R1281 (landed) | about 30 (below) | yes, the largest |
-| G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 (landed) for the other closure forms | R1104, R100, R1230, R1333, R172, R980, R983 (closed), R534, R176 | yes |
-| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R1379, R1380, R1381, R1382, R1383, R1385–R1387, and R603 (landed); R1384, R1388 | about 45 (below) | partial |
-| I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 (landed), R1491, R1492, R1485, R1486 | about 20 (below) | slight |
+| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1440–R1444, then R1445 | about 15 (below) | yes |
+| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1449, R1451 | R788, R378, R472, R508, R602 | yes |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1280, R1466, R1287, R1461, and the hash and `__int__` leaves (steps 1–3) | about 20 (below) | yes, the largest |
+| G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1436; R1433 → R176 → R1434 | R176, R1349 | yes |
+| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1474, R1475, R1480, R1482 | about 25 (below) | partial |
+| I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1491, R1492, R1485, R1486 | about 20 (below) | slight |
 
 ### D′. Memory-only values live in registers
 
@@ -207,176 +192,79 @@ are conformance only.
   written once into its destination or a synthesized
   `__call_result_tmp__`, and each consumer borrows or takes that storage.
   Only register-passable values are SSA registers (`CheckLifetimes`).
-- **Mojito**: the result stays in a register, and each consumer binds its
-  own hidden slot through `Node::is_fresh_temporary`. The slots are
-  `$tmp_arg_r`, `$arg_loan_r`, `$mat_r`, `$ptr_tmp_r`, `$fwd_arg_r`,
-  `$tmp_recv_r`, `$tmp_field_r`, `$discard_r`, and the checker's
-  `materialize_temporary_holder`. Each has its own lifetime.
-- **R1355 closes**:
-  - R1331 and R123: the `$arg_loan_r` anchor outlives its call or destroys
-    twice.
-  - R715: a `^` argument gets no slot.
-  - R1212: `$mat_r` drops the owner loan `$ptr_tmp_r` keeps.
-  - R406: a forwarded call-result subscript has no place.
-  - R716: a t-string temporary dies early. Re-probe it after R1328 and
-    R1336.
-- **R1355 shrinks** R691, R1234, R118, R54, R1221, R718, and R121's
-  second probe.
-- **R136** landed 10-25: an implicit copy at its source's last use
-  forwards or moves, and R827 closed with it. R473 stays open: its
-  discard still copies, and a move into storage that dies unread runs.
-- **R1293** landed 10-25: a `try`'s raises store their error into its
-  error slot, which dies as a variable.
-- **R1437** landed 10-26: a raise out of a function stores its error into
-  the function's error slot, which dies as a variable too. A raising call
-  still hands its callee's error back in a register (R1438).
-- **R1356** landed in part 10-26 (see *Recommended order*): **R1445 then
-  rejects the class**, behind R1440–R1444, R1435, and R1095.
+- **Mojito**: R1355 and R1356 moved most consumers onto the call-result
+  slot. The shapes left are R1440–R1444, with probes on R1435 and R1095,
+  and R1445 then rejects the class in the verifier.
+- **Still open from R1355's list**: R1331 and R123 (the `$arg_loan_r`
+  anchor), R715 (a `^` argument), R1212 (`$mat_r`), and R406 (a forwarded
+  call-result subscript). Re-probe each.
+- **Shrinks** R691, R1234, R118, R54, R1221, and R718.
+- R473 stays open: its discard still copies, and a move into storage that
+  dies unread runs.
+- A raising call still hands its callee's error back in a register
+  (R1438).
 
 ### F. Members reached by name, not called as the requirement
 
-The struct-named construction of gap B is gone. This is the larger lookup
-by type that remains. It also accounts for most of the inlining reach still
-missing.
-
-- **Mojito** reaches these members by name, not through a call of the
-  requirement:
-  - MIR lowers a struct operator as a `binary` naming its dunder, a
-    multi-subscript as `index.multi` or `slice` naming an accessor, and an
-    iteration step as `__trait_dispatch.*` / `__iterator_dispatch.*`
-    names.
-  - The elaborator composes `{struct}.{method}` (`resolve_method_symbol`,
-    `Instances::dispatched_overload_target`).
-  - The backends dispatch display, the hash leaf, a scalar
-    construction's `__int__`, and a `Variant` handler's `__call__` from
-    the value's type, through `mir::TYPE_REACHED_MEMBERS`.
-  - R1052 folded the witness only for traits that have a declaration. The
-    rest of `mojito_types::conformance::COMPILER_TRAITS` records no
-    witness table.
-  - The checker types operators apart from method calls (`infer_infix`,
-    `infer_prefix` over the compiler-known operation traits).
-- **Upstream**: the traits are library declarations with default bodies.
-  `a op b` is checked as `a.__op__(b)` and emitted as a `kgen.call` of
-  the requirement, which substitution folds to the member.
-- **Size**:
-  - Each `mir::TYPE_REACHED_MEMBERS` member that ignores an argument
-    keeps one instance per `n` (R1109 closed it for every call-reached
-    member).
-  - R987 counts 868 `List.__len__` and 523 `Span.__len__` instances
-    reached through trait-bound calls.
-  - R1280's iteration step cannot inline.
-- **Closes**:
-  - Dispatch: R1280, R1466 (R1031 and R1109 closed).
-  - Operators: R81 (R708, R1332, R697, R1282, and R1238 closed).
-  - Traits: R712, R579 (R707, R706, R191, and R109 closed).
-- **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, and R860
-  (R861 and R863 closed).
+- **Mojito**: the backends dispatch display, the hash leaves, a scalar
+  construction's `__int__`, and a `Variant` handler's `__call__` from the
+  value's type, through `mir::TYPE_REACHED_MEMBERS`. Each such member
+  keeps every argument, so it keeps one instance per `n`.
+- **Upstream**: the traits are library declarations with default bodies,
+  and every operator and protocol step is a `kgen.call` of the
+  requirement, which substitution folds to the member.
+- **Size**: R987 counts 868 `List.__len__` and 523 `Span.__len__`
+  instances reached through trait-bound calls. R1280's iteration step
+  cannot inline.
+- **Closes**: R1280, R1466, R712, R579.
+- **Shrinks** R987, R1291, R113, R1119, R25, R817, and R860.
 
 ### G. A capture-list closure is a capture list
 
-- **Mojito**: `closure.make` keeps a closure's captures as a list, and
-  `call.indirect`'s `callee_place` names a slot. Both closure forms share
-  that representation: capture-list nested `def`s and legacy `@parameter`
-  closures.
-- **Upstream** treats the two forms differently:
-  - A capture-list closure is a `<fn>::__storage` struct, one field per
-    capture, built by `ClosureEmitter::emitClosure`. `liftClosureIntoMethod`
-    makes its body a method taking the struct. A `F: def(...)` binder is
-    instantiated at the struct type, so every call is direct.
-  - A legacy `@parameter` closure is keyed on its body, and its
-    environment goes in as trailing pointer arguments. That is Mojito's
-    environment path, the only one since R533 landed.
-  - `kgen.create_closure` is made only for capture-free values, the form
-    `CallIndirectOp::canonicalize` folds (R1344, R1345).
+- **Mojito**: every capture-list closure builds the pin's `__storage`
+  struct, its body a method of it, and its value is the struct, a runtime
+  value only. The check still names the struct by its site, MIR resolves
+  it (R1436), and run-time `capturing[...]` values convert it to a
+  closure of its body (R1433, R176, R1434).
+- **Upstream**: a `F: def(...)` binder is instantiated at the struct
+  type, so every call is direct. `kgen.create_closure` is made only for
+  capture-free values.
 - **Size**: an indirect call becomes direct, inlinable, and promotable.
-- **Cores**:
-  - R1376 builds the storage struct.
-  - R1377 makes the body a method taking it.
-  - R1378 (landed) types the closure as the struct, a runtime value only.
-    The pin rejects a capturing capture-list closure as a compile-time
-    argument.
-- **Members**:
-  - R1104 closes. R100, R534, and R176 close or shrink.
-  - R983, R980, and R172 closed with R533 (landed); R303 is the inliner's.
-  - R1349 and R1018 are independent.
-  - The generic-closure entries (R71, R83, R452, R498) are about naming
-    parametric functions, not closure representation.
+- **Members**: R176 closes or shrinks. R303 is the inliner's.
+  R1349 is independent. The generic-closure entries (R71, R83, R452) are
+  about naming parametric functions, not closure representation.
 
 ### H. Three compile-time evaluators
 
-- **Mojito** evaluates compile-time expressions above MIR in three places,
-  each with one arm per expression shape:
-  - `mojito-comptime`'s `Elab`: `eval`, `type_from_name`, and
-    `associated_value_at`. It has its own name resolution and no `Self`.
-  - The checker's `compile_dependent_ct_expr` (`checker/constraints.rs`),
-    with `eval_associated_ct` its `CtValue` adapter and
-    `constraint_operand` and `comptime_type_operand` its type-operand
-    adapters (R1387), beside `member_type_operand`.
-  - The lifted fallback (`Checker::lifted_application`). It serves only
-    `Int` and `Bool` results, and mints a `$comptime$$N` function per
-    occurrence rather than per expression.
+- **Mojito**: `mojito-comptime`'s evaluator is deleted (R1388). The
+  check still folds in two places: `compile_dependent_ct_expr`
+  (`checker/constraints.rs`) with its adapters, and the lifted fallback
+  (`Checker::lifted_application`).
 - **Upstream** checks each expression once into a typed parameter
   expression. One elaborator evaluates it by CTFE, over any result type.
-- **Core chain**, `docs/parametric-mir-plan.md` P4's remainder, one kind
-  of site per entry:
-  - R1379 (landed): local value bindings.
-  - R1380 (landed): local type aliases.
-  - R1381 (landed): module constants. Its residue: the check's five
-    constant tables (R1479).
-  - R1382 (landed): module and generic aliases. Its residue: a package's
-    module value constants exported as the elaborator folded them (R1480).
-  - R1383 (landed): reflection, which only the check and mono answer.
-    Its residues: the reflective `Equatable`/`Hashable` defaults (R1481)
-    and the bundled `List`'s field layout (R1482).
-  - R1384: struct-valued bracket arguments.
-  - R1385: associated members that apply a callable.
-  - R1386 (landed): the checker's second per-shape folder. Its residue,
-    a symbolic aggregate with no parameter expression, is R1472.
-  - R1387 (landed): type operands, and a type comparison as one `Bool`
-    parameter value. Its residues: a condition compiled without its
-    binders in scope (R1474), and a `comptime if` condition kept as a
-    `GenericConstraint` (R1475).
-  - R1388: delete what is left of `Elab`'s evaluator and type resolver.
-- **Slices filed earlier**:
-  - R386 (landed): a `Float64`, `UInt`, or `String` result lifts, a
-    `String` one binding a `String` value parameter as a compile-time
-    string.
-  - R389 (landed): one lifted function per expression, so equal
-    applications are one type (R380, R390).
-  - R849: every condition is decided by `param_expr::fold`.
-  - R603 (landed with R1382): one static receiver for `Self.X`,
-    `Alias.X`, and `Type.X`.
-- **Members**:
-  - `Elab` arms: R475, R1170, R1206, R1171, R489, R802,
-    R1178, R1208.
-  - `Self` and associated reads: R513, R338 (landed with R1382), R436, R415.
-  - Checker arms: R1194, R1199, R332, R462,
-    R1220, R1210, R448, R512.
-  - Domain: R480, R893, R396, R397, R901, R481, R1197.
-  - Constructions: R1179, R1175.
+- **Members**, filed before R1388, to re-probe:
+  - Former `Elab` arms: R1171, R1178, R1208.
+  - `Self` and associated reads: R513, R436, R415.
+  - Checker arms: R1199, R332, R1220, R1210, R448.
+  - Domain: R480, R893, R396, R901, R481, R1197.
+  - Constructions: R1175.
   - Spelling: R388 and R398.
-  - Library-side folds: R217, R231, R197, and R198.
+  - Library-side folds: R231, R197, and R198.
 - Gap H also unblocks most of the reflection block below.
 
 ### I. Packs are binder kinds
 
 - **Mojito**: `*Ts` and `*values` are scoped binders, read at run time
-  as the `TypeList` / `ParameterList` value the pin types them as
-  (R1169 landed the type-pack half: run-time `len(Ts)` is
-  `TypeList.__len__`). A compile-time `len`, subscript, and the
-  `TypeList` vocabulary are still answered by spelling
-  (`pack_length_binder`, `typelist_receiver`,
-  `comptime/rewrite.rs:fold_pack_typelist_use`; R1284). A `__generator_type`
-  parameter takes a value-bodied or predicate generator (R808), but not
-  an unbound application (R1485) or a type-valued generator (R1486).
+  as the `TypeList` / `ParameterList` value the pin types them as. A
+  compile-time `len`, subscript, and the `TypeList` vocabulary are still
+  answered by spelling (`pack_length_binder`, `typelist_receiver`,
+  R1284). A `__generator_type` parameter takes neither an unbound
+  application (R1485) nor a type-valued generator (R1486).
 - **Upstream**: a pack is a `TypeList` / `ParameterList` value, and its
   library members run by CTFE.
-- **Cores**: R1169 (a type pack is a `TypeList` value, landed), R1151 (a value
-  pack is declared with the raw list it binds, landed), R1491 and R1492 (a
-  value pack, then a type pack, declares upstream's two binders: the
-  hidden `vs.values` list and the visible `ParameterList` / `TypeList`),
-  R808 (generator parameters, landed), R1485 (unbound applications), and
-  R1486 (type-valued generators).
+- **Cores**: R1491 and R1492 (a value pack, then a type pack, declares
+  upstream's two binders: the hidden `vs.values` list and the visible
+  `ParameterList` / `TypeList`), R1485, and R1486.
 - **Members**:
   - Queries: R1284, R800, R904, R1182, R1302, R445, R803, R345, R804,
     R348, R1071.
@@ -392,45 +280,31 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R1408 (R1392 landed), R143, R335, R331, R430, R850, R212, R1019, R423, R1352, R186 (landed), R185 (landed), R851, R187, R171, R330, R1539, R857 (landed), R1189, R427, R432 |
-| `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 (R424 landed: `Writable` is declared, its defaults synthesized) | R1461, R1462, R1463, R1409, R275, R18, R159, R937 |
-| Reflection is a builtin, not `Reflected[T]` | R324 (after gap H) | R271, R497, R272, R76, R77, R78, R443, R444, R273, R900, R904, R1481 |
+| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1398, R1399, R1557 → R1558, R1608 → R1612), R160, R276, R1192 | R1408, R331, R850, R212, R1019, R423, R1352, R851, R187, R171, R330, R1189, R427, R432 |
+| `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R275, R18, R159, R937 |
+| Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R77, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
-| The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768, R521 |
-| The parser decides type versus value | R1369 → R1370 → R1371, R1372 | R377, R381, R512, R383, R482, R1203, R72, R326, R490, R134 |
+| The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768 |
 | Origins are dropped from `ParamDecl` | R761 → R762 → R763 | R1300, R1299, R1213, R674, R133, R353, R104, R242, R726 |
 | Loans come from call shape, not type-carried origins | R87 | R88, R93, R122, R126, R304, R355, R1323, R94, R89 |
-| Overload identity is a partial mangled string | R600, R934 → R935 | R1172, R105, R64, R1294, R570, R1111, R91 |
+| Overload identity is a partial mangled string | R600, R934 → R935 | R1172, R105, R64, R1294, R570, R1111 |
 | Relocations name no `__moveinit__` | R1047, R341 | R731, R738, R732, R739, R740, R32, R1048 |
-| One-shot parameter inference | R52 | R53, R479, R382, R537, R726, R61 |
-| No evidence environment for conformance | R1364 → R1365 | R667, R792, R704, R128, R698, R1412 |
-| No single lvalue | R1373 → R1374, R1375 | R35, R690, R1247, R1224, R1233 |
-| A transfer's source is judged case by case | R1366 → R1367 | R31, R116, R120, R121, R750 |
-| Abandonment is the `explicit_destroy` walk, not `Deinitable` | R1368 (after R1364, R1365) | R30, R302, R711, R667 |
+| One-shot parameter inference | R52 | R53, R537, R726, R61 |
 | `Tuple` is `__RuntimeTuple` storage | R341, R359 | R343, R1121, R208, R1122, R1124, R207 |
 
-### Stale entries
-
-The sweep entries hold the lists, each with its reason:
-- R1400 and R1401: `comptime`.
-- R1402: `mojo-shape`.
-- R1403: `divergences`, `pmir`, `native`, `code-org`, and `tooling`.
-- R1404: `calls`.
-- R1405: `stdlib`.
-- R1406: `ownership`.
-
-The sweeps also add the members' `Depends` links to the 10-25 cores:
-- R667 and R129 on R1364.
-- R1224 on R1374.
-- R1539 (R336's successor, refiled from R1535) on nothing: R1532–R1534 and R1535's prerequisites landed.
-- R276 on R1397.
-- R983, R172, and R303 on R533.
+The landed 10-25 blocks left one or two entries each, none with a core
+to wait on:
+- Type versus value: R383, R490.
+- Conformance evidence: R792 (`conforms_to` takes one name and one
+  trait), R1412.
+- One lvalue: R1224. Transfers: R750. Abandonment: R302.
 
 ## Entries outside the gaps
 
 None of these unblocks another entry. Run them whenever they are useful.
 
-- **Inlining reach**: R1346, R1347, R1350, R1339, R1340, R1341.
+- **Inlining reach**: R1346, R1347, R1350, R1339, R1340, R1341, and R1452
+  (the pin measures a callee before cleaning what it spliced in).
 - **Bugs**: R1112, R1035, R933, R1289.
 - **Hygiene**: R944, R868, R1276.
 - **Library ports**: R1410 (`String`'s variadic constructor), R1411
@@ -440,7 +314,7 @@ None of these unblocks another entry. Run them whenever they are useful.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1346 --only R1347 --only R1350 \
-  --only R1339 --only R1340 --only R1341 --only R1112 --only R1035 --only R933 --only R1289 -n 0
+  --only R1339 --only R1340 --only R1341 --only R1452 --only R1112 --only R1035 --only R933 --only R1289 -n 0
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R944 --only R868 --only R1276 \
   --only R896 --only R897 --only R924 --only R1255 --only R1256 -n 0
 scripts/claude_loop.py --model opus --only R1410 --only R1411 --only R1413 -n 0
@@ -459,45 +333,35 @@ Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
 | generator instances | 26,868 | 13,804 | 13,989 | 14,619 |
 | instances per generator | 1.62 | 1.57 | 1.52 | 1.54 |
 
-- The 10-24 baseline covers 1,200 fixtures, 31 more than 10-22's. Over
-  the same period, gap A gave every raising call an error region, as
-  expected. Compare runs with `scripts/instantiation-report --check`, over
-  the fixtures both runs elaborate, not with the raw totals.
+- Compare runs with `scripts/instantiation-report --check`, over the
+  fixtures both runs elaborate, not with the raw totals.
 - The program is less than half its 10-13 size. Almost all of that came
   from dead code removal, inlining, and the unused-argument removal that
   landed 10-17.
 - Instances per generator has barely moved: a generic body is still copied
-  about as often as before. Gaps E, F, and G aim at that ratio. Gap F's
-  R1109 is the most direct attack on it.
-- Refresh the table after each step above.
+  about as often as before. Gaps E, F, and G aim at that ratio.
+- The library `SIMD` (10-27/28) is real generic code and inlined operator
+  chains. Refresh the table after the overnight gate, before step 2, to
+  see what it cost.
 
 ## Landed so far
 
-The first four representation gaps (10-16/17):
-- nested `def` calls are direct (R1037);
-- defaults are filled at call binding (R1077, R1060);
-- lifecycle operations are synthesized calls (R1041–R1046);
-- `inline-parametric` is one substitution over every binder kind
-  (R1078–R1081).
-
-The region chain (10-20/21) moved these onto `hlcf` regions with values
-(R875–R883, R886, R1258–R1260): the ownership checks, drop elaboration, the
-pre-elaboration pipeline, the elaborator, the post-elaboration pipeline,
-the VM, and Pliron. Since R1274, MIR has no CFG terminator. In the same
-period:
-- `Mem2Reg` carries slots through regions (R927);
-- `SROA` landed (R928) and takes generic slots (R1266);
-- `cse` merges reads, trivial values, and built-in operators (R926, R929,
-  R930, R1270);
-- unused-argument removal followed (R974, R975, R1032–R1034, R1039).
-
-The second pass (10-21 to 10-24) landed:
-- gap A, every raise point an explicit region exit (R906, R831, R20, R884,
-  R890, and its last column);
-- gap C, where the call builds the library pack value (R1102, R1103, R743,
-  R1070, R1073, R1304);
-- gap B (R1049, R1050, R1052, R1029, R1097, R988, R1075,
-  R1283, R1278, and on 10-25 R1338);
-- gap D except R1445 and its prerequisites (R1251, R1252, R931, R932,
-  R1306, R832, R1310–R1313, R1309, R1319, R1320, R1325, R1329, R1327,
-  R1336, R1321, R1330, R1326, R1337, R1328, R1355, and R1356).
+- The first four representation gaps (10-16/17): direct nested `def`
+  calls, defaults filled at call binding, synthesized lifecycle calls,
+  and one `inline-parametric` substitution.
+- The region chain (10-20/21): every phase from the ownership checks to
+  Pliron on `hlcf` regions, with `Mem2Reg`, `SROA`, `cse`, and
+  unused-argument removal following.
+- The second pass (10-21 to 10-24): gaps A, B, and C, and gap D except
+  R1440–R1445.
+- 10-25 to 10-26: gap H's chain (R1379–R1388), gap F's three stages,
+  gap G's cores, and the stale-entry sweeps (R1400–R1406).
+- 10-26 to 10-27: the conformance blocks for type versus value, the
+  subscript lvalue, conformance evidence, transfers, and abandonment
+  (R1364–R1375).
+- 10-27 to 10-28: `Int`, `UInt`, and `Float64` as width-one `SIMD`
+  (R1389–R1391), `pop`/`index` ops and LLVM intrinsics (R1392–R1394,
+  R1516, R1517, R1519, R1546, R1547), builtin folds (R1395, R1522,
+  R1525, R1526), the declared `SIMD`
+  and its member ports (R1397, R1549–R1555, R1578–R1581, R1589), and
+  `__mlir_type.i1` (R1188).
