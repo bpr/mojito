@@ -5562,10 +5562,13 @@ impl<'a> ArenaBuilder<'a> {
         };
         let node = self.expr(&construction.0);
         // A conversion the sugar takes converts its construction, a `for`
-        // loop iterates the construction it spells, and a `comptime for`
-        // steps it.
+        // loop iterates the construction it spells, a `comptime for` steps
+        // it, and `and`/`or` tests its truth.
         let facts = self.facts(&expression.source_span());
         let conversions = conversion_adjustments(facts);
+        let truthiness = facts
+            .truthiness_condition
+            .then_some(SemanticAdjustment::Truthiness);
         let loops: Vec<SemanticAdjustment> = facts
             .iteration_protocol
             .iter()
@@ -5579,6 +5582,7 @@ impl<'a> ArenaBuilder<'a> {
             .collect();
         self.nodes[node.0 as usize].adjustments.extend(conversions);
         self.nodes[node.0 as usize].adjustments.extend(loops);
+        self.nodes[node.0 as usize].adjustments.extend(truthiness);
         self.nodes[node.0 as usize].adjustments.extend(lifted);
         Some(node)
     }

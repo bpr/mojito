@@ -160,7 +160,7 @@ impl Checker {
         if matches!(op, In | NotIn) {
             return self.infer_membership(span, op, left, right, &lt, &rt);
         }
-        // `+`, `-`, `*`, the bitwise operators, the shifts, and the
+        // `+`, `-`, `*`, `//`, the bitwise operators, the shifts, and the
         // comparisons beside a `SIMD` operand, a scalar's included, are
         // `SIMD`'s declared dunders, `a.__add__(b)` else the reflected
         // `b.__radd__(a)`, as upstream's `emitBinOpCall` resolves them. A
@@ -174,10 +174,12 @@ impl Checker {
             |ty: &Ty| matches!(ty.kind(), TyKind::Pointer { .. }) || is_bound_archetype(ty);
         let comparison = matches!(op, Eq | Ne | Lt | Gt | Le | Ge);
         if let Some(span) = &span
-            && (matches!(op, Add | Sub | Mul | BitAnd | BitOr | BitXor | Shl | Shr)
-                || (comparison
-                    && self.comptime_positions.get() == 0
-                    && self.structs.contains_key("SIMD")))
+            && (matches!(
+                op,
+                Add | Sub | Mul | FloorDiv | BitAnd | BitOr | BitXor | Shl | Shr
+            ) || (comparison
+                && self.comptime_positions.get() == 0
+                && self.structs.contains_key("SIMD")))
             && (matches!(lt.kind(), TyKind::Simd { .. })
                 || matches!(rt.kind(), TyKind::Simd { .. }))
             && !pointer_or_archetype(&lt)
@@ -308,7 +310,7 @@ impl Checker {
             }
             // Literal arithmetic, bitwise logic, and shifts keep the literal
             // type; the same operators beside a `SIMD` are its dunders above.
-            Add | Sub | Mul
+            Add | Sub | Mul | FloorDiv
                 if common.as_ref().is_some_and(|ty| {
                     matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
                 }) =>
@@ -320,9 +322,9 @@ impl Checker {
             {
                 common
             }
-            // `//`, `%`, and `**` keep the common type until their `SIMD`
-            // dunders land (R1566, R1567).
-            FloorDiv | Mod | Pow => common,
+            // `%` and `**` keep the common type until their `SIMD` dunders
+            // land (R1623, R1567).
+            Mod | Pow => common,
             // Literal division stays exact until a runtime context chooses
             // Float64; concrete operands perform fixed-width runtime division.
             Div if common.is_some() => Some(
@@ -1260,13 +1262,13 @@ fn union_subtree_place(
     })
 }
 
-/// Type a SIMD operator that is not yet a declared dunder (`//`, `%`,
-/// `/`, R1566 and R184), or a comparison in a compile-time position,
+/// Type a SIMD operator that is not yet a declared dunder (`%` and `/`,
+/// R1623 and R184), or a comparison in a compile-time position,
 /// which is the dunder folded, a `Bool`. Both operands must be the same
 /// SIMD type, except a numeric *literal* splats to the other operand's
 /// type. Arithmetic is elementwise and keeps the operand type.
 fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
-    use InfixOp::{Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Ne};
+    use InfixOp::{Div, Eq, Ge, Gt, Le, Lt, Mod, Ne};
     let bad = || TypeError::BadOperator {
         op: op.symbol().to_string(),
         operands: format!("{lt} and {rt}"),
@@ -1294,10 +1296,8 @@ fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
     };
     let same = || simd_of(dtype.clone(), width.clone());
     match op {
-        // Floor division on numeric lanes (`pop.floordiv`); remainder on
-        // integer lanes (upstream defines it on float lanes too, a
-        // recorded gap).
-        FloorDiv if dtype.licenses(|d| d != Dtype::Bool) => same(),
+        // Remainder on integer lanes (upstream defines it on float lanes
+        // too, R850).
         Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
         // True division is defined on float lanes only.
         Div if dtype.licenses(Dtype::is_float) => same(),

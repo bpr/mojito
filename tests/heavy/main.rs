@@ -193,8 +193,8 @@ fn scalar_capability_manifest_and_differential() {
         "differential coverage unexpectedly shrank: {differential} < 20"
     );
     assert!(
-        traps >= 4,
-        "trap-differential coverage unexpectedly shrank: {traps} < 4"
+        traps >= 3,
+        "trap-differential coverage unexpectedly shrank: {traps} < 3"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
@@ -490,12 +490,12 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 1460,
+            differential == 1466,
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 862"
         );
         assert!(
-            errors == 36,
-            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 36"
+            errors == 34,
+            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 34"
         );
         assert!(
             excluded == 0,

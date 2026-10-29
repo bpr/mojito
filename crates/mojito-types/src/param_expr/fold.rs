@@ -398,7 +398,8 @@ fn fold_int(op: InfixOp, a: i64, b: i64) -> Result<i64, ParamError> {
         InfixOp::Add => a.wrapping_add(b),
         InfixOp::Sub => a.wrapping_sub(b),
         InfixOp::Mul => a.wrapping_mul(b),
-        InfixOp::FloorDiv | InfixOp::Mod if b == 0 => return Err(arithmetic("division by zero")),
+        // `SIMD.__floordiv__`/`__mod__` mask a zero divisor to a zero lane.
+        InfixOp::FloorDiv | InfixOp::Mod if b == 0 => 0,
         InfixOp::FloorDiv => {
             let quotient = a.wrapping_div(b);
             if a.wrapping_rem(b) != 0 && ((a < 0) != (b < 0)) {
@@ -434,7 +435,7 @@ fn fold_uint(op: InfixOp, a: u64, b: u64) -> Result<u64, ParamError> {
         InfixOp::Add => a.wrapping_add(b),
         InfixOp::Sub => a.wrapping_sub(b),
         InfixOp::Mul => a.wrapping_mul(b),
-        InfixOp::FloorDiv | InfixOp::Mod if b == 0 => return Err(arithmetic("division by zero")),
+        InfixOp::FloorDiv | InfixOp::Mod if b == 0 => 0,
         InfixOp::FloorDiv => a / b,
         InfixOp::Mod => a % b,
         InfixOp::Pow => u32::try_from(b)

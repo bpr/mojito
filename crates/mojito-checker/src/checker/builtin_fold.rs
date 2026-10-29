@@ -192,10 +192,11 @@ impl Checker {
     /// calls a callable the pin's fold cannot inline: an applicable
     /// function or static method not declared builtin (`h(n)`,
     /// `Self.ok(n)`, `G[1].ok(n)`), a method of `self` or of a `Self`
-    /// parameter no overload of which is builtin (`self.ord()`), `//`,
-    /// `%`, or `**` over a non-literal operand (upstream's `SIMD` declares
-    /// none of the three builtin), or arithmetic converting a
-    /// `FloatLiteral` operand.
+    /// parameter no overload of which is builtin (`self.ord()`), an
+    /// operator over a non-literal operand whose `SIMD` dunder is not
+    /// builtin (`//`, `SIMD.__floordiv__`), `%` or `**` over one (their
+    /// dunders are not ported, R1623 and R1567, and upstream's are not
+    /// builtin), or arithmetic converting a `FloatLiteral` operand.
     fn non_builtin_operation(
         &self,
         declaration: &ApplicableDeclaration<'_>,
@@ -235,12 +236,14 @@ impl Checker {
             fn visit_expr(&mut self, expr: &Expr) {
                 self.found |= match &expr.kind {
                     ExprKind::Infix(
-                        InfixOp::FloorDiv | InfixOp::Mod | InfixOp::Pow,
+                        op @ (InfixOp::FloorDiv | InfixOp::Mod | InfixOp::Pow),
                         left,
                         right,
                     ) => {
                         !(matches!(left.kind, ExprKind::Int(_))
                             && matches!(right.kind, ExprKind::Int(_)))
+                            && (*op != InfixOp::FloorDiv
+                                || !self.checker.simd_dunder_is_builtin("__floordiv__"))
                     }
                     ExprKind::Infix(
                         InfixOp::Add | InfixOp::Sub | InfixOp::Mul | InfixOp::Div,
@@ -292,6 +295,18 @@ impl Checker {
         };
         mojito_ast::visit::walk_stmt(&mut operations, statement);
         operations.found.then(non_builtin_call)
+    }
+
+    /// Whether `SIMD` declares its `method` dunder builtin, as an operator
+    /// over a non-literal operand calls it.
+    fn simd_dunder_is_builtin(&self, method: &str) -> bool {
+        self.applicable_functions
+            .get(&format!("SIMD.{method}"))
+            .is_some_and(|overloads| {
+                overloads
+                    .iter()
+                    .any(|function| function.inline == InlineLevel::Builtin)
+            })
     }
 
     /// Whether a call of `method` on `object` applies a static method no

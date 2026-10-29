@@ -161,8 +161,9 @@ Mojito may reject valid Mojo.
   sound program.
 - Six `runtime_error` fixtures trap on use-after-free, double-free, and reads of
   uninitialized `MaybeUninit` storage; the pin runs each one to exit 0.
-- Five more trap on integer division or modulo by zero and on a negative `**`
-  exponent, which the pin leaves to the hardware.
+- Three more trap on an integer literal's `//` by zero, on `Int` modulo by zero,
+  and on a negative `**` exponent, which the pin folds or leaves to the
+  hardware.
 - `external_call_unknown_callee.mojo` names Mojito's own mechanism, the libc
   allowlist, which has no upstream counterpart to agree with.
 - `mapping_key_ref_write.mojo` and `set_element_ref_write.mojo` reject a write
@@ -244,21 +245,6 @@ of `min(-0.0, +0.0)`.
 
 - Fixtures avoid mixed-sign zeros in min/max reductions.
 - Revisit only if upstream pins a rule.
-
-### A compile-time `//` or `%` by zero stays an error
-
-The pinned Mojo folds `comptime a = Int(7) // Int(0)` (and the literal and `%`
-forms) to `0`. Mojito reports `division by zero`, a rejection the subset rule
-allows.
-
-- The pin's `0` reads as an artifact of its folder, not as language
-  semantics; nothing documents it.
-- The shared folder (`mojito_types::param_expr::fold`) keeps the structured
-  error, and a closed partial operator in an untaken branch stays unevaluated.
-- A cancellation keeps the error only in the node it builds: an operator
-  built over that node (`(1 // 0 - 1 // 0) + 1`), and `fold`, drop the
-  zero-coefficient term again, which lands on the pin's answer.
-- Revisit only if upstream documents the fold as the rule.
 
 ### `Pointer(to=<temporary>)` is unsupported
 

@@ -3304,6 +3304,16 @@ impl MirInstr {
                 if bool_operands && !matches!(op, InfixOp::Eq | InfixOp::Ne) {
                     return None;
                 }
+                // The folder masks a zero divisor as `SIMD.__floordiv__`
+                // does, where a scalar's run-time `//` and `%` trap.
+                if matches!(op, InfixOp::FloorDiv | InfixOp::Mod)
+                    && matches!(
+                        right,
+                        CtValue::Int(0) | CtValue::UInt(0) | CtValue::Index(0)
+                    )
+                {
+                    return None;
+                }
                 (dest, fold_infix(*op, &left, &right).ok()?)
             }
             Self::UnOp {

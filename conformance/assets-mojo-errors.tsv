@@ -162,10 +162,8 @@ assets/runtime_error/pliron_raise_error_value.mojo	trap	agree	boom from a var
 assets/runtime_error/pliron_raise_iter_body.mojo	trap	agree	boom at 2
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	compile-reject	skip	error: 'main()' can only raise 'Error'; remove the explicit error type
 assets/runtime_error/pliron_raise_unhandled.mojo	trap	agree	negative input
-assets/runtime_error/pliron_trap_div_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero
 assets/runtime_error/pliron_trap_mod_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero
 assets/runtime_error/pliron_trap_pow_negative.mojo	runs	subset	the pin runs it; Mojito rejects: '**' exponent must be a non-negative Int
-assets/runtime_error/pliron_trap_uint_div_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero
 assets/runtime_error/pointer_dangling.mojo	trap	agree	error: execution crashed
 assets/runtime_error/pointer_double_free.mojo	runs	subset	the pin runs it; Mojito rejects: double free
 assets/runtime_error/pointer_use_after_free.mojo	runs	subset	the pin runs it; Mojito rejects: use after
@@ -769,7 +767,9 @@ assets/type_error/signature_application_unfolded.mojo	compile-reject	agree	error
 assets/type_error/simd_bool_generic_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_lane_multiply.mojo	compile-reject	agree	error: 'pop.mul' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!kgen.simd<2, bool>'
 assets/type_error/simd_bool_lane_subtract.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_bool_mask_floordiv.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_mask_inplace_add.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_bool_mask_inplace_floordiv.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_mask_negate.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_mask_shift.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: function instantiation failed

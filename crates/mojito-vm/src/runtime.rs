@@ -1601,15 +1601,16 @@ fn materialize_like_numeric(literal: Value, concrete: &Value) -> Result<Value, R
     }
 }
 
-/// Build a SIMD `Value` from `dtype`+`lanes`, representing a width-one
-/// `float64`, `int`, or `uint` as the host scalar `Value::Float64`,
-/// `Value::Int`, or `Value::UInt`.
-/// The one lane of a width-one `Int`, `UInt`, or `Float64` host scalar.
+/// The one lane of a width-one `Int`, `UInt`, or `Float64` host scalar,
+/// and of a host `Bool`, which is a one-lane mask: `n.eq(0)` over an `Int`
+/// compares host scalars into a `Bool` that `select` reads as its mask, the
+/// representation `builtin.cast` converts to and from `Scalar[DType.bool]`.
 fn host_scalar_parts(value: &Value) -> Option<(Dtype, SimdLanes)> {
     match value {
         Value::Int(n) => Some((Dtype::Int, SimdLanes::Int(vec![i128::from(*n)]))),
         Value::UInt(n) => Some((Dtype::UInt, SimdLanes::Int(vec![i128::from(*n)]))),
         Value::Float64(x) => Some((Dtype::Float64, SimdLanes::Float(vec![*x]))),
+        Value::Bool(b) => Some((Dtype::Bool, SimdLanes::Bool(vec![*b]))),
         _ => None,
     }
 }

@@ -210,7 +210,7 @@ point, as upstream's toolchain does.
   `Ceilable`, `Floorable`, and `Truncable` in `std/simd.mojo`; for
   `Powable`, `Roundable`, `DivModable`, and `CeilDivable`, `Int`, `UInt`, and
   `Float64` conform as upstream's `SIMD` declares and answer each
-  requirement intrinsically, and other `SIMD` values do not yet (R1566,
+  requirement intrinsically, and other `SIMD` values do not yet (R1623,
   R1567, R1582).
 - `std/span.mojo` — the prelude-exported borrowed view `Span[mut: Bool, //,
   T: AnyType, origin: Origin[mut=mut]]` (upstream's bound): a multi-element origin-bearing

@@ -340,14 +340,30 @@ fn invalid_nodes_are_rejected() {
 #[test]
 fn partial_operators_stay_unevaluated_until_required() {
     let context = ParamContext::new();
-    let one = context.constant(CtValue::Int(1)).expect("constant");
-    let zero = context.constant(CtValue::Int(0)).expect("constant");
-    let divided = infix(&context, InfixOp::FloorDiv, &one, &zero);
+    let divided = infix(
+        &context,
+        InfixOp::FloorDiv,
+        &literal(&context, 1),
+        &literal(&context, 0),
+    );
     assert!(divided.as_constant().is_none());
     assert!(divided.is_closed());
     assert_eq!(
         divided.require_constant(),
-        Err(ParamError::Arithmetic("division by zero".to_string()))
+        Err(ParamError::Arithmetic(
+            "invalid exact compile-time arithmetic".to_string()
+        ))
+    );
+    // An `Int` zero divisor is total: `__floordiv__` masks it to `0`.
+    let one = context.constant(CtValue::Int(1)).expect("constant");
+    let zero = context.constant(CtValue::Int(0)).expect("constant");
+    assert_eq!(
+        infix(&context, InfixOp::FloorDiv, &one, &zero).require_constant(),
+        Ok(CtValue::Int(0))
+    );
+    assert_eq!(
+        infix(&context, InfixOp::Mod, &one, &zero).require_constant(),
+        Ok(CtValue::Int(0))
     );
     // A cancellation does not erase the partial atom's error.
     let cancelled = infix(&context, InfixOp::Sub, &divided, &divided);
@@ -381,9 +397,10 @@ fn rebuild_keeps_unfolded_atoms_and_cancelled_partial_terms() {
 
     let one = context.constant(CtValue::Int(1)).expect("constant");
     let zero = context.constant(CtValue::Int(0)).expect("constant");
-    let divided = infix(&context, InfixOp::FloorDiv, &one, &zero);
+    let negative = context.constant(CtValue::Int(-1)).expect("constant");
+    let invalid = infix(&context, InfixOp::Shl, &one, &negative);
     let m = int_param(&context, "f", 1, "m");
-    let product = infix(&context, InfixOp::Mul, &m, &divided);
+    let product = infix(&context, InfixOp::Mul, &m, &invalid);
     let cancelled = infix(&context, InfixOp::Sub, &product, &product);
     let shifted = context
         .rebuild(ParamOp::Add, &[cancelled.clone(), n.clone()])

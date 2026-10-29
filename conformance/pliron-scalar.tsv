@@ -28,6 +28,7 @@ assets/ok/always_inline_nodebug_tuple_members.mojo	-	ineligible	no-scalar-entry-
 assets/ok/always_inline_nodebug_type_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_result_runs_no_move.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_small_calls.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/and_alias_construction_operand.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/and_or_operand_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/and_or_value_operands.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_where_clause.mojo	-	ineligible	no-scalar-entry-shape
@@ -120,6 +121,7 @@ assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_display_binding_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_display_binding_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_display_binding_reads.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_floordiv_mod_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_aggregate_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_annotated_binding.mojo	-	ineligible	no-scalar-entry-shape
@@ -421,6 +423,7 @@ assets/ok/inplace_subscript_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_var.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/input.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/instance_constructor_symbols.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/int_floordiv_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_index_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_parameter_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-scalar-entry-shape
@@ -894,6 +897,7 @@ assets/ok/same_arity_generic_method_overloads.mojo	-	ineligible	no-scalar-entry-
 assets/ok/same_spelled_type_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_dtype_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/scalar_mask_select.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_float_strided.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_sequential.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_strided.mojo	-	ineligible	no-scalar-entry-shape
@@ -932,6 +936,7 @@ assets/ok/simd_dtype_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtypes_int_lanes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_float_div.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floats.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_floordiv_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floordiv_mod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_fma.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_generic_width.mojo	-	ineligible	no-scalar-entry-shape
@@ -1297,6 +1302,7 @@ assets/ok/typelist_self_pack_member_clause.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/typelist_value_subscript_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_where_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/uint_and_scalar_value_parameters.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/uint_floordiv_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unbound_struct_member_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unread_callable_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unsafe_pointer.mojo	-	ineligible	no-scalar-entry-shape
@@ -1470,10 +1476,8 @@ assets/runtime_error/pliron_raise_error_value.mojo	-	ineligible	no-scalar-entry-
 assets/runtime_error/pliron_raise_iter_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_raise_unhandled.mojo	-	ineligible	no-scalar-entry-shape
-assets/runtime_error/pliron_trap_div_zero.mojo	main	trap-differential	category=DivModZero
 assets/runtime_error/pliron_trap_mod_zero.mojo	main	trap-differential	category=DivModZero
 assets/runtime_error/pliron_trap_pow_negative.mojo	main	trap-differential	category=PowExponent
-assets/runtime_error/pliron_trap_uint_div_zero.mojo	main	trap-differential	category=DivModZero
 assets/runtime_error/pointer_dangling.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_double_free.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_use_after_free.mojo	-	ineligible	no-scalar-entry-shape

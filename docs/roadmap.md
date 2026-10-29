@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1623**.
+Next free ID: **R1625**.
 
 ## Ordered Work
 
@@ -4355,6 +4355,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     implicitly convert 'Int' value to 'UInt8'" and "no matching function
     in initialization": the binding stays an `IntLiteral`, which converts
     to any lane. A module `comptime N: Int = 3` does the same.
+  - Probe: `comptime g = x // 0` over a module `comptime x: Int = 7`, then
+    `print(g)`, fails with "keeps the parameter constant `7 // 0`", where
+    the pin prints `0`: the literal pair's `//` by zero does not fold (R1624),
+    where an `Int`'s folds to `0`.
   - Cause, module: `Checker::fold_module_constants`
     (`checker/constraints.rs`) folds the initializer to an `IntLiteral`
     before any struct registers, ignoring the annotation, and the later
@@ -6710,6 +6714,27 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R1624 An integer literal's `//` or `%` by zero is an error, where
+  the pin folds it to `0`**
+
+  `print(10 // 0, 10 % 0, -7 // 0)` traps, and `comptime c = 10 // 0` fails
+  its compile-time evaluation, where the pin prints `0 0 0` and `0`.
+  - Upstream's `IntLiteral.__floordiv__`/`__mod__` fold through
+    `int_literal_bin`, which yields `0` for a zero divisor, as `SIMD`'s
+    `__floordiv__` masks one.
+  - Mojito's `IntLiteral::floor_div`/`floor_mod` (`mojito-common`) return
+    `None` there, so `param_expr::fold`'s `fold_int_literal` reports an
+    arithmetic error and the VM's literal division traps.
+  - Ledger name: `assets/runtime_error/div_by_zero.mojo`, which moves to
+    `assets/ok` when this lands, with its errors-ledger and manifest rows.
+  - Also R1538's `comptime g = x // 0` probe, whose `x` stays a literal.
+  - `docs/non-goals.md` no longer keeps a compile-time zero divisor an
+    error: `SIMD.__floordiv__`'s mask makes the `Int` form `0`, and this
+    entry makes the literal form follow `int_literal_bin`.
+  - Found while landing R1566 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1615 A `for` over a bound declaring only `Element` iterates, where
   the pin requires `__iter__`**
 
@@ -7392,9 +7417,13 @@ retained on purpose and re-probed rather than fixed; they are listed in
     overflow), so the plan decides which are bugs and which are recorded
     choices.
   - Ledger name: `native-arithmetic-edge-cases`.
-  - R1566 (`simd_floordiv_mod.mojo`: the pin's zero-divisor rule) and R1567
-    (`pliron_float_pow.mojo`: `_powf_scalar`'s `exp(log)`) each remove a
-    row.
+  - `simd_floordiv_mod.mojo` differs only at `MIN // -1`, a lane the pin's
+    compile-time fold makes `0` and Mojito leaves `MIN`. At run time the
+    pin prints `-128` for an `Int8` lane, as Mojito does, and crashes
+    (SIGFPE) on `Int`, so the fixture's row pins LLVM's undefined case,
+    not a zero-divisor rule.
+  - R1567 (`pliron_float_pow.mojo`: `_powf_scalar`'s `exp(log)`) removes
+    a row.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -8694,6 +8723,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     as a method.
   - Closes R1441's `divmod`/`round`/`abs` probe: a `read` parameter binds
     the argument in place.
+  - Probe: `divmod(UInt8(7), 3)` is rejected ("'divmod' is not defined for
+    UInt8 and Int"), where the pin prints `(2, 1)`: `builtin_args`
+    materializes the literal to `Int` before the pair is typed, where
+    upstream's `divmod[T: DivModable]` binds `T` from `UInt8`.
   - Found while landing R1361 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10082,32 +10115,48 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1566 `SIMD`'s `//`, `%`, `divmod`, and `ceildiv` are checker
-  rules and a trap, where upstream's are `__floordiv__` … `__ceildiv__`
-  bodies**
+- [ ] **R1623 `SIMD`'s `%`, `divmod`, and `ceildiv` are checker rules
+  and a trap, where upstream's are `__mod__`, `__divmod__`, and
+  `__ceildiv__` bodies**
 
-  `a // 0` traps here, where upstream's `__floordiv__` and `__mod__` mask a
-  zero divisor and return `0` (`Int(7) // 0` prints `0` at the pin).
-  - Port `__floordiv__`, `__mod__`, `__divmod__`, `__ceildiv__`,
-    `__rfloordiv__`, and `__rmod__` verbatim, and route `//` and `%` to
-    them as `+` is routed (`Checker::infer_infix`).
-  - Port `__ifloordiv__` (`simd.mojo:1722`) and `__imod__` (`:1735`)
-    too, so `//=` and `%=` call them, as R1552 routes `+=`.
-  - The bodies need `and` over masks (R97), `any` (R1568), and `Self()`
-    and `Self(1)` inside the struct; `trunc` and `cast` over a vector are its declared
-    members.
-  - List `DivModable` and `CeilDivable` in `SIMD`'s declaration, and drop
-    their `modelled_conformance` arms for `SIMD`.
-  - `assets/runtime_error/pliron_trap_{div,mod,uint_div}_zero.mojo` then
-    run: move them to `assets/ok` with the pin's output, drop their
-    errors-ledger rows, and update `docs/non-goals.md`'s trap sentence.
+  `Int(7) % 0` traps here, where upstream's `__mod__` masks a zero divisor
+  and returns `0`, and `Float32(7.5) % 2.0` is rejected (R850).
+  - The signed branches of `__mod__` and `__divmod__` compute `self /
+    safe_divisor` over integer lanes, which is upstream's truncating
+    `__truediv__` (R184). Today's `/` gives `3.5` or garbage there, so the
+    port waits on R184 and must not respell `/` as a raw `pop.div`.
+  - Port `__mod__`, `__divmod__`, `__rmod__`, `__imod__` (`simd.mojo:1735`),
+    and `__ceildiv__` verbatim, beside the landed `__floordiv__`, and route
+    `%` in `Checker::infer_infix` as `//` is routed.
+  - `std.simd` imports `CeilDivable`, `DivModable`, and `trunc` from
+    `std.math`, and `any` from `std.builtin.bool`.
+  - `__ceildiv__`'s unsigned branch calls `divmod(self, denominator)`:
+    `Checker::infer_divmod` must type a `SIMD` pair, a symbolic one
+    included, as `Tuple[common, common]`, and the elaborator's builtin
+    rewrite (`mono/specializer.rs`) must make it `__divmod__` for every
+    `TyKind::Simd` operand.
+  - List `CeilDivable` and `DivModable` in `SIMD`'s declaration, and drop
+    their `modelled_conformance` arms.
   - Retire the VM's `__ceildiv__`/`__divmod__` arms
-    (`backend/vm/invoke.rs`), Pliron's (`lower/methods.rs`), and the
-    checker's `math_operation_requirement` rows for them.
-  - `builtin_fold.rs`'s syntactic `FloorDiv | Mod` body rule becomes the
-    dunder's inline level.
-  - Closes R850. Removes `simd_floordiv_mod.mojo` from R171.
-  - Depends on R97, R1554, R1555, R1568, and R1595.
+    (`backend/vm/invoke.rs`), Pliron's (`lower/methods.rs`,
+    `lower_ceildiv`), the checker's `math_operation_requirement` rows, and
+    `simd_infix`'s `Mod` arm; `builtin_fold.rs` reads `__mod__`'s inline
+    level as it reads `__floordiv__`'s.
+  - `assets/runtime_error/pliron_trap_mod_zero.mojo` then runs: move it to
+    `assets/ok` with a `print(x)`, drop its ledger and manifest rows, and
+    update `docs/non-goals.md`'s trap sentence.
+  - Add `assets/type_error/simd_bool_mask_inplace_mod.mojo` (the pin:
+    "the SIMD type must be numeric", `simd.mojo:1744`).
+  - Probe: `print(Int(7) % 0, divmod(Int(7), 0), ceildiv(UInt8(250),
+    UInt8(7)), Int(-7) % 2, Float64(-7.5) % 2.0)` prints `0 (0, 0) 36 1
+    0.5` at the pin; a 2026-10-29 prototype of this port matched it on
+    both backends once `/` truncated.
+  - Probe: `comptime r = UInt(7) % 0`, and `comptime k = n % 0` inside
+    `def f[n: Int]`, trap in their compile-time run, where the pin's
+    `__mod__` makes each `0`; `W[n % 0]` in a parameter position already
+    folds to `0`.
+  - Closes R850.
+  - Depends on R184.
   - Model: Fable, Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
@@ -12204,9 +12253,9 @@ residue found inside a task moves to the task that owns its fix.
     differ. Each step rounds to the lane.
   - Once the VM computes it, add it to `ct::float_lane_binop`, so `sccp`
     folds it too.
-  - Closed by R1566, which ports upstream's `__mod__`.
+  - Closed by R1623, which ports upstream's `__mod__`.
   - Found while landing R846 (2026-10-14).
-  - Depends on R1566.
+  - Depends on R1623.
   - Model: Opus, Not Planned.
 
 - [ ] **R1410 `String`'s variadic constructor is rejected**

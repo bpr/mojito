@@ -9,7 +9,7 @@
 # declares `Absable`, `Ceilable`, `Floorable`, and `Truncable` in
 # `std.simd`; for the other operation traits the compiler-modelled `Int`,
 # `UInt`, and `Float64` conform as upstream's `SIMD` declares, other `SIMD`
-# values do not yet (R1566, R1567, R1582), and each answers a requirement
+# values do not yet (R1623, R1567, R1582), and each answers a requirement
 # intrinsically.
 
 from std.sys import llvm_intrinsic

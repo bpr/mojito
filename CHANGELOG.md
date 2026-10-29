@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `//` over a `SIMD`, `Int` and `UInt` included, is upstream's declared
+  `__floordiv__`, `7 // n` its `__rfloordiv__`, and `//=` its
+  `__ifloordiv__` (R1566): an integer divided by zero is `0`, as at the
+  pin, where it trapped, and a `bool` mask's `//` fails the pin's
+  `comptime assert`. A compile-time `//` by zero, and a `%` by zero in a
+  parameter position, fold to `0`. `and`/`or` now test a left operand constructed
+  through an alias, and an `Int`, `UInt`, or `Float64` comparison is a mask
+  `select` takes. `%`, `divmod`, and `ceildiv` follow once `/` truncates
+  (R1623 after R184), and a literal's `10 // 0` is R1624.
 - `SIMD`'s `Bool`, `fill=`, and `Int`-from-`index` initializers are
   upstream's declared overloads in `std.simd`, each refining `out self`
   (R1595): `SIMD[DType.bool, n](fill=b)` now works at a symbolic width,

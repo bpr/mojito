@@ -28,6 +28,7 @@ assets/ok/always_inline_nodebug_tuple_members.mojo	main	exe-differential	sanitiz
 assets/ok/always_inline_nodebug_type_construction.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_result_runs_no_move.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_small_calls.mojo	main	exe-differential	sanitized
+assets/ok/and_alias_construction_operand.mojo	main	exe-differential	sanitized
 assets/ok/and_or_operand_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/and_or_value_operands.mojo	main	exe-differential	sanitized
 assets/ok/application_where_clause.mojo	main	exe-differential	sanitized
@@ -120,6 +121,7 @@ assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_alias.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_arguments.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_reads.mojo	main	exe-differential	sanitized
+assets/ok/comptime_floordiv_mod_zero_divisor.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_aggregate_binder.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_annotated_binding.mojo	main	exe-differential	sanitized
@@ -421,6 +423,7 @@ assets/ok/inplace_subscript_value.mojo	main	exe-differential	sanitized
 assets/ok/inplace_var.mojo	main	exe-differential	sanitized
 assets/ok/input.mojo	main	exe-differential	sanitized
 assets/ok/instance_constructor_symbols.mojo	main	exe-differential	sanitized
+assets/ok/int_floordiv_zero_divisor.mojo	main	exe-differential	sanitized
 assets/ok/int_literal_index_constructor.mojo	main	exe-differential	sanitized
 assets/ok/int_literal_parameter_overload.mojo	main	exe-differential	sanitized
 assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
@@ -894,6 +897,7 @@ assets/ok/same_arity_generic_method_overloads.mojo	main	exe-differential	sanitiz
 assets/ok/same_spelled_type_params.mojo	main	exe-differential	sanitized
 assets/ok/scalar_default_construction.mojo	main	exe-differential	sanitized
 assets/ok/scalar_dtype_construction.mojo	main	exe-differential	sanitized
+assets/ok/scalar_mask_select.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_float_strided.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_sequential.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_strided.mojo	main	exe-differential	sanitized
@@ -932,6 +936,7 @@ assets/ok/simd_dtype_alias.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtypes_int_lanes.mojo	main	exe-differential	sanitized
 assets/ok/simd_float_div.mojo	main	exe-differential	sanitized
 assets/ok/simd_floats.mojo	main	exe-differential	sanitized
+assets/ok/simd_floordiv_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_floordiv_mod.mojo	main	exe-differential	sanitized
 assets/ok/simd_fma.mojo	main	exe-differential	sanitized
 assets/ok/simd_generic_width.mojo	main	exe-differential	sanitized
@@ -1297,6 +1302,7 @@ assets/ok/typelist_self_pack_member_clause.mojo	main	exe-differential	sanitized
 assets/ok/typelist_value_subscript_type.mojo	main	exe-differential	sanitized
 assets/ok/typelist_where_clauses.mojo	main	exe-differential	sanitized
 assets/ok/uint_and_scalar_value_parameters.mojo	main	exe-differential	sanitized
+assets/ok/uint_floordiv_zero_divisor.mojo	main	exe-differential	sanitized
 assets/ok/unbound_struct_member_read.mojo	main	exe-differential	sanitized
 assets/ok/unread_callable_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized
@@ -1493,10 +1499,8 @@ assets/runtime_error/pliron_raise_error_value.mojo	main,__toplevel__	error-diffe
 assets/runtime_error/pliron_raise_iter_body.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/pliron_raise_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
-assets/runtime_error/pliron_trap_div_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
 assets/runtime_error/pliron_trap_mod_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
 assets/runtime_error/pliron_trap_pow_negative.mojo	main,__toplevel__	error-differential	category=PowExponent
-assets/runtime_error/pliron_trap_uint_div_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
 assets/runtime_error/pointer_dangling.mojo	main,__toplevel__	error-differential	category=PointerDangling
 assets/runtime_error/pointer_double_free.mojo	main,__toplevel__	error-differential	category=PointerDoubleFree
 assets/runtime_error/pointer_use_after_free.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree

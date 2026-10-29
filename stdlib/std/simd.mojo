@@ -3,20 +3,21 @@
 # initializers `__init__(out self)`, the cast from `SIMD[other_dtype,
 # Self.length]`, the `SIMDLength` splat, `from_int=`, `Bool`, `fill=`, `Int`
 # from an `index`, and the `Scalar[Self.dtype]` splat, and its instance
-# `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
-# `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`, `__and__`,
+# `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
+# `__sub__`, `__mul__`, `__floordiv__`, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
 # comparisons `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, and
 # `__le__`, the elementwise `eq`, `ne`, `gt`, `ge`, `lt`, and `le` with
 # their `_Mask` alias, the in-place `__iadd__`, `__isub__`, `__imul__`,
-# `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and `__irshift__`, the
-# reflected `__radd__`, `__rsub__`, `__rmul__`, `__rand__`, `__rxor__`,
-# `__ror__`, `__rlshift__`, and `__rrshift__`, `__bool__`, `__int__`,
+# `__ifloordiv__`, `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and
+# `__irshift__`, the reflected `__radd__`, `__rsub__`, `__rmul__`,
+# `__rfloordiv__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
+# `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
 # `_to_bits_signed`, `fma`, and `select`, with the `FastMathFlag` enum `fma`
 # takes. The other
-# members are still served by the compiler (R184, R1566, R1567, R1581,
+# members are still served by the compiler (R184, R1623, R1567, R1581,
 # R1582, R1585, R1586, R1596, R330, R276), and so are the other initializers:
 # `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
 # `IntLiteral` and `FloatLiteral` (R1507), and the `Intable`, `IntableRaising`, `Floatable`,
@@ -678,6 +679,34 @@ struct SIMD[dtype: DType, length: SIMDLength](
             mlir_value=__mlir_op.`pop.mul`(self._mlir_value, rhs._mlir_value)
         )
 
+    @inline(.nodebug)
+    def __floordiv__(self, rhs: Self) -> Self:
+        """Returns the division of self and rhs rounded down to the nearest
+        integer.
+
+        Constraints:
+            The element type of the SIMD vector must be numeric.
+
+        Args:
+            rhs: The value to divide with.
+
+        Returns:
+            `floor(self / rhs)` value.
+        """
+        comptime assert Self.dtype.is_numeric(), "the type must be numeric"
+
+        var is_zero_mask = Self._Mask(fill=Self.dtype.is_integral()) and rhs.eq(
+            0
+        )
+        var safe_divisor = is_zero_mask.select(Self(1), rhs)
+
+        var floordiv = Self(
+            mlir_value=__mlir_op.`pop.floordiv`(
+                self._mlir_value, safe_divisor._mlir_value
+            )
+        )
+        return is_zero_mask.select(Self(), floordiv)
+
     @always_inline("builtin")
     def __pos__(self) -> Self:
         """Defines the unary `+` operation.
@@ -1065,6 +1094,19 @@ struct SIMD[dtype: DType, length: SIMDLength](
         self = self * rhs
 
     @inline(.nodebug)
+    def __ifloordiv__(mut self, rhs: Self):
+        """In-place flood div operator.
+
+        The vector is mutated where each element at position `i` is computed as
+        `self[i] // rhs[i]`.
+
+        Args:
+            rhs: The rhs of the operation.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        self = self // rhs
+
+    @inline(.nodebug)
     def __iand__(mut self, rhs: Self):
         """Computes `self & rhs` and save the result in `self`.
 
@@ -1177,6 +1219,23 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
         return value * self
+
+    @inline(.nodebug)
+    def __rfloordiv__(self, rhs: Self) -> Self:
+        """Returns the division of rhs and self rounded down to the nearest
+        integer.
+
+        Constraints:
+            The element type of the SIMD vector must be numeric.
+
+        Args:
+            rhs: The value to divide by self.
+
+        Returns:
+            `floor(rhs / self)` value.
+        """
+        comptime assert Self.dtype.is_numeric(), "the type must be numeric"
+        return rhs // self
 
     @always_inline("builtin")
     def __rand__(self, value: Self) -> Self:
