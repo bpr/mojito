@@ -665,9 +665,11 @@ impl<'a> Flatten<'a> {
             return Some(self.param_value_register(node, value));
         }
         Some(match node.op() {
-            CheckedOp::Call { name, .. } => self.call_op(node, name),
-            CheckedOp::Invoke { .. } => self.invoke_expr(node),
-            CheckedOp::MethodCall { method, .. } => self.method_call_expr(node, method),
+            CheckedOp::Call { name, .. } => self.with_write_backs(|this| this.call_op(node, name)),
+            CheckedOp::Invoke { .. } => self.with_write_backs(|this| this.invoke_expr(node)),
+            CheckedOp::MethodCall { method, .. } => {
+                self.with_write_backs(|this| this.method_call_expr(node, method))
+            }
             CheckedOp::TypeApply { name, .. } if !variant_projection(checked) => {
                 if checked
                     .binding

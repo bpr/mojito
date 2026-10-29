@@ -1588,23 +1588,7 @@ impl Checker {
                 // raw writable projection: infer its getter first, then select
                 // the setter against the computed operator result.
                 let shared_argument_sources = if nominal_subscript {
-                    match &place.kind {
-                        ExprKind::Index { index, .. } => vec![index.source_span()],
-                        ExprKind::MultiIndex { args, .. } => {
-                            args.iter()
-                                .filter_map(|argument| match argument {
-                                    SubscriptArg::Index(index)
-                                    | SubscriptArg::Keyword { value: index, .. } => {
-                                        Some(index.source_span())
-                                    }
-                                    SubscriptArg::Slice { .. }
-                                    | SubscriptArg::KeywordSlice { .. } => None,
-                                })
-                                .collect()
-                        }
-                        ExprKind::Slice { .. } => Vec::new(),
-                        _ => unreachable!("nominal subscript classification"),
-                    }
+                    super::indexing::subscript_argument_sources(place)
                 } else {
                     Vec::new()
                 };

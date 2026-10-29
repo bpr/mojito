@@ -1047,6 +1047,8 @@ assets/ok/struct_value_param_application.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_parameter_declared_type_reads.mojo	main	exe-differential	sanitized
 assets/ok/subscript_store_setter_by_element_type.mojo	main	exe-differential	sanitized
+assets/ok/subscript_write_back.mojo	main	exe-differential	sanitized
+assets/ok/subscript_write_back_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/symbolic_instance_construction.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized

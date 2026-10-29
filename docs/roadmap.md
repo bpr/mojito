@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1625**.
+Next free ID: **R1629**.
 
 ## Ordered Work
 
@@ -2749,35 +2749,85 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1503 A value-getter subscript used as a mutable base is not
-  written back through `__setitem__`**
+- [ ] **R1625 A written-back subscript is loaded once where an augmented
+  store loads it twice**
 
-  Problem: `s[0].x = 5`, `s[0].bump()` (a `mut self` method), and `s[0][1] =
-  7` over a value-returning `__getitem__` and a `__setitem__` run at the pin
-  through get, modify, set, while Mojito rejects them ("a value
-  '__getitem__' result of 'S' used as a mutable place is written back
-  through '__setitem__' (get, modify, set); not supported yet").
-  - Upstream's `StoredAttributeRefDLValue::emitStore` (`DLValues.cpp`) loads
-    the element through the getter, stores into the loaded value, and stores
-    the whole value back through the `SubscriptDLValue`; a `mut` argument
-    over a DLValue does the same around the call.
-  - The checker's `subscript_reference_place` (`checker/indexing.rs`) is
-    where the rejection sits; the lever is a write-back plan recorded on the
-    place beside `subscript_lvalue`, and a MIR get-modify-set beside
-    `lower_augmented_subscript` that ends in `store_through_subscript`'s
-    setter call.
-  - Probe: `s[0].x = 5` with `__getitem__(self, i: Int) -> P` and
-    `__setitem__(mut self, i: Int, value: P)` prints `5` at the pin.
-  - Probe: `s[0].bump()` on the same struct prints `get`, `set`, `1` at the
-    pin.
-  - Probe: `s[0][1] = 7`, both levels a value getter and a setter, prints
-    `get`, `inner set`, `set`, `7` at the pin.
-  - Probe: `bump(v[1])`, a `mut` argument over the same getter and setter,
-    passes the check and then fails MIR verification ("dynamic element
-    projection requires checked indexed storage"), where the pin writes
-    the bumped value back and prints `1 12`.
-  - R1561 moves `bump(v[i])` over a `SIMD` lane onto this path.
-  - Found while landing R1373 (2026-10-27).
+  Problem: an augmented store whose place is rooted in a value
+  `__getitem__` with a `__setitem__` calls the getter once, before its
+  right-hand side, where the pin calls it after the right-hand side, once
+  for the load and again for the store.
+  - Cause: MIR flattens a place once per statement, so the write-back
+    temporary `materialize_write_back_place` (`mir/write_back.rs`) makes
+    serves both the read and the write.
+  - Upstream's `SubscriptDLValue` reloads its base at every access: the
+    load of the augmented place and its store each call the getter.
+  - Lever: split the write-back into its once-evaluated operands and a
+    getter call the augmented paths (the projected-place arm of
+    `lower_stmt`'s `AugAssign`, `lower_augmented_index`,
+    `lower_augmented_in_place`) emit once for the load and once for the
+    store.
+  - Probe: `s[idx(0)].x += rhs(4)`, `s` with a printing value getter and
+    setter, prints `idx`, `rhs`, `get 0`, `get 0`, `set 0` at the pin,
+    while Mojito prints `idx`, `get 0`, `rhs`, `set 0`.
+  - Probe: `o[0][0] += 3`, both levels a value getter and a setter, prints
+    `get`, `get`, `inner set`, `set` at the pin, while Mojito prints one
+    `get`.
+  - Found while landing R1503 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1626 A store through a projected place evaluates its right-hand
+  side before the place's operands**
+
+  Problem: `ps[idx(0)].x = rhs(5)` over a `List[P]` prints `rhs` before
+  `idx`, while the pin evaluates the target's operands first and prints
+  `idx`, `rhs`.
+  - Cause: `lower_set_place` (`mir/lower_stmt.rs`) lowers the value
+    (`lower_assignment_value`) before it flattens the place, while a
+    nominal subscript store (`lower_subscript_setter`) already evaluates
+    its receiver and indices first.
+  - Upstream's `emitAssign` forms the target's lvalue before it emits the
+    right-hand side, then stores.
+  - Probe: the same store through a value getter with a setter,
+    `s[idx(0)].x = rhs(5)`, prints `rhs`, `idx`, `get 0`, `set 0` where the
+    pin prints `idx`, `rhs`, `get 0`, `set 0`.
+  - Found while landing R1503 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1627 A sliced value-getter subscript is not written back as a
+  mutable place**
+
+  Problem: a subscript with a slice argument, over a value `__getitem__`
+  and a `__setitem__`, used as a mutable place is rejected ("a sliced value
+  '__getitem__' result used as a mutable place is written back through
+  '__setitem__'"), where the pin loads it, modifies it, and stores it back.
+  - Cause: the checker's `record_subscript_write_back`
+    (`checker/indexing.rs`) and `materialize_write_back_place`
+    (`mir/write_back.rs`) take index arguments only; a slice literal is
+    rebuilt per accessor, as the augmented store's `slice_set_argument`
+    does.
+  - Probe: `s[0:2].bump()` with `__getitem__(self, sl: Slice) -> W` and
+    `__setitem__(mut self, sl: Slice, value: W)`.
+  - Probe: `bump(s[1:])`, a `mut` argument over the same accessors.
+  - Probe: `g[0, 1:].x = 5` over a two-argument getter and setter.
+  - Found while landing R1503 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1628 A temporary passed to a `mut` parameter is accepted**
+
+  Problem: `bump(five())` over `def bump(mut x: Int)` passes the check and
+  fails MIR verification ("write-back parameter 0 of 'bump' has no caller
+  place"), where the pin rejects it ("value passed to mutable argument 'x'
+  must be mutable").
+  - Cause: a call's `mut` arguments are checked for a `^` transfer
+    (`reject_transfer_into_mutable`, `checker/places.rs`) and, since
+    R1503, for a value subscript (`bind_mutable_subscript_arguments`), but
+    not for being a place at all.
+  - Lever: require `designates_place` (or a mutable reference result) of
+    every `mut` argument beside those two checks.
+  - Found while landing R1503 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

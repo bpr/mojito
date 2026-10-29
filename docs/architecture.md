@@ -2635,6 +2635,16 @@ the getter's result in its call-result slot, which `__setitem__` then takes (an
 owned value parameter) or reads in place (a `read` one). Either way the RHS is
 the dunder's argument, passed by its convention.
 
+A value getter's result used as a mutable place — the base of a field store,
+a `mut self` receiver, the receiver of a nested setter, or a `mut` argument —
+is upstream's `SubscriptDLValue` loaded, modified, and stored. The checker
+records both accessors on the subscript as a `CheckedSubscriptWriteBack`;
+MIR evaluates the receiver and indices once where written, calls the getter
+into a call-result temporary at the enclosing call's setup, lowers the
+operation on the temporary, and calls `__setitem__` with it when the
+operation returns (`mir/write_back.rs`). A raising operation leaves through
+its error region before the store.
+
 Printing and `String()` require `Writable`. A custom `write_to` or
 `write_repr_to` receives `Some[Writer]`; `Writer` and `Writable` are the
 bundled traits (`std/format/__init__.mojo`). `Writer`'s default `write` writes

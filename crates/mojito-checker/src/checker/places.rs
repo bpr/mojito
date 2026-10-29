@@ -95,6 +95,52 @@ impl Checker {
         }
     }
 
+    /// Bind each nominal subscript passed to a `mut` parameter of `func` as
+    /// a mutable place: a value getter with a setter is written back around
+    /// the call ([`Self::check_place`]), as upstream passes a
+    /// `SubscriptDLValue` through a temporary; a getter without a setter
+    /// must return a mutable reference.
+    pub(super) fn bind_mutable_subscript_arguments(
+        &self,
+        func: &str,
+        slots: &[ArgSlot],
+        conventions: &[Option<ArgConvention>],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<(), TypeError> {
+        for (index, slot) in slots.iter().enumerate() {
+            if !matches!(conventions.get(index), Some(Some(ArgConvention::Mut))) {
+                continue;
+            }
+            let argument = match slot {
+                ArgSlot::Positional(position) => &args[*position],
+                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Default => continue,
+            };
+            match self.subscript_lvalue(argument)? {
+                Some(super::indexing::SubscriptLValue::GetterSetter {
+                    getter_returns_ref: false,
+                    ..
+                }) => {
+                    self.check_place(argument)?;
+                }
+                Some(super::indexing::SubscriptLValue::Getter)
+                    if self.is_owned_subscript(argument) =>
+                {
+                    return Err(TypeError::BadCall {
+                        func: func.to_string(),
+                        reason: "value passed to a mutable argument must be mutable; a \
+                                 subscript whose '__getitem__' returns a value and that \
+                                 declares no '__setitem__' is not a place"
+                            .to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Whether `expr` designates a place rather than a fresh value: a
     /// syntactic place ([`is_place_expr`]) other than a subscript whose
     /// selected getter returns by value. A subscript is its getter's call,

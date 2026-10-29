@@ -200,6 +200,7 @@ impl Checker {
             args,
             kwargs,
         )?;
+        self.bind_mutable_subscript_arguments(callee.name, slots, conventions, args, kwargs)?;
         crate::checker::places::check_call_aliasing(
             slots,
             conventions,

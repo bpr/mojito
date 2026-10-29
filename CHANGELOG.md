@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A value `__getitem__`'s result used as a mutable place is written back
+  through `__setitem__`, as at the pin (R1503): `s[0].x = 5`,
+  `s[0].bump()`, `s[0][1] = 7`, and `bump(s[0])` load the element through
+  the getter after the operation's other operands, mutate it, and store it
+  back, over one index or several. A value getter without a setter passed
+  to a `mut` parameter is now rejected as at the pin. The augmented
+  double load is R1625, store operand order R1626, slices R1627, and a
+  temporary `mut` argument R1628.
 - `//` over a `SIMD`, `Int` and `UInt` included, is upstream's declared
   `__floordiv__`, `7 // n` its `__rfloordiv__`, and `//=` its
   `__ifloordiv__` (R1566): an integer divided by zero is `0`, as at the

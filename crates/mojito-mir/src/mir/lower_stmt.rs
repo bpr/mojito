@@ -74,7 +74,7 @@ impl<'a> Flatten<'a> {
         // returned — at the latest the instruction's end — via a `KeepAlive`
         // use; an assignment flushes them before its store.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
-        self.lower_instr_dispatch(i);
+        self.with_write_backs(|this| this.lower_instr_dispatch(i));
         self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
     }
@@ -581,6 +581,9 @@ impl<'a> Flatten<'a> {
         }
         if let Some(name) = self.name_spelled(e) {
             return self.name_place_root(&name, e);
+        }
+        if let Some(place) = self.materialize_write_back_place(e) {
+            return place;
         }
         // A call returning a mutable reference: its result is the place.
         if e.is_call()
@@ -1415,7 +1418,7 @@ impl<'a> Flatten<'a> {
     /// parameter by its convention: taken by an owned (`var`/`deinit`)
     /// parameter or one the checker adapts, and read in place, with its
     /// place, by a `read` one.
-    fn augmented_setter_value(
+    pub(super) fn augmented_setter_value(
         &mut self,
         target: Node<'a>,
         setter: &mojito_checked::checked::CheckedCallContract,
@@ -1935,6 +1938,7 @@ impl<'a> Flatten<'a> {
         let conversion_view_loans = self.conversion_view_loans.clone();
         let transfer_domain_loans = self.transfer_domain_loans.clone();
         let pending_argument_anchors = std::mem::take(&mut self.pending_argument_anchors);
+        let pending_write_backs = std::mem::take(&mut self.pending_write_backs);
         let call_setups = std::mem::take(&mut self.call_setups);
         let argument_depth = std::mem::replace(&mut self.argument_depth, 0);
         let allow_argument_anchors = std::mem::replace(&mut self.allow_argument_anchors, false);
@@ -1948,6 +1952,7 @@ impl<'a> Flatten<'a> {
         self.conversion_view_loans = conversion_view_loans;
         self.transfer_domain_loans = transfer_domain_loans;
         self.pending_argument_anchors = pending_argument_anchors;
+        self.pending_write_backs = pending_write_backs;
         self.call_setups = call_setups;
         self.argument_depth = argument_depth;
         self.allow_argument_anchors = allow_argument_anchors;
@@ -2051,6 +2056,9 @@ impl<'a> Flatten<'a> {
         if let Some(name) = self.name_spelled(e) {
             return Some(self.name_place_root(&name, e));
         }
+        if let Some(place) = self.materialize_write_back_place(e) {
+            return Some(place);
+        }
         match (e.op(), e.object()) {
             (CheckedOp::MultiIndex { .. }, _)
                 if let Some((object, offset)) = e.pointer_keyword_subscript() =>
@@ -2130,7 +2138,7 @@ impl<'a> Flatten<'a> {
         // Nested statement lowering saves and restores the enclosing list, so
         // each statement flushes exactly its own anchors.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
-        self.lower_stmt_dispatch(node, hir);
+        self.with_write_backs(|this| this.lower_stmt_dispatch(node, hir));
         self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
     }

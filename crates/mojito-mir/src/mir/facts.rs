@@ -320,6 +320,19 @@ impl<'a> Node<'a> {
             })
     }
 
+    pub(super) fn subscript_write_back(
+        self,
+    ) -> Option<mojito_checked::checked::CheckedSubscriptWriteBack> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::SubscriptWriteBack(plan) => {
+                    Some((**plan).clone())
+                }
+                _ => None,
+            })
+    }
+
     pub(super) fn augmented_subscript(
         self,
     ) -> Option<mojito_checked::checked::CheckedAugmentedSubscript> {

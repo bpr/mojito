@@ -24,6 +24,25 @@ pub(super) enum SubscriptLValue {
     },
 }
 
+/// The source operands a nominal subscript's getter and setter share: its
+/// positional and keyword index expressions. Slice literals are rebuilt per
+/// accessor and are not listed.
+pub(super) fn subscript_argument_sources(place: &Expr) -> Vec<SourceSpan> {
+    match &place.kind {
+        ExprKind::Index { index, .. } => vec![index.source_span()],
+        ExprKind::MultiIndex { args, .. } => args
+            .iter()
+            .filter_map(|argument| match argument {
+                SubscriptArg::Index(index) | SubscriptArg::Keyword { value: index, .. } => {
+                    Some(index.source_span())
+                }
+                SubscriptArg::Slice { .. } | SubscriptArg::KeywordSlice { .. } => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 impl Checker {
     /// Validate an assignment **place** and return the type stored there. A place
     /// is a chain of field (`.x`) and index (`[i]`) accesses over a root that
@@ -810,14 +829,12 @@ impl Checker {
         lvalue: &SubscriptLValue,
     ) -> Result<Ty, TypeError> {
         if let SubscriptLValue::GetterSetter {
+            element,
             getter_returns_ref: false,
-            ..
+            value_name,
         } = lvalue
         {
-            return Err(TypeError::Unsupported(format!(
-                "a value '__getitem__' result of '{receiver}' used as a mutable place is \
-                 written back through '__setitem__' (get, modify, set); not supported yet"
-            )));
+            return self.record_subscript_write_back(place, element, value_name);
         }
         let referent = self.infer(place)?;
         let span = place.source_span();
@@ -837,6 +854,62 @@ impl Checker {
                 "the value a subscript of '{receiver}' returns"
             ))),
         }
+    }
+
+    /// The nominal subscript `place`, whose getter returns `element` by
+    /// value and whose setter takes it under `value_name`, as a mutable
+    /// place: upstream's `SubscriptDLValue` loaded through the getter,
+    /// modified, and stored back through the setter. Both accessors are
+    /// selected here, each over the shared index operands in their
+    /// pre-call state, and the pair is recorded as the place's write-back
+    /// plan; the getter stays the node's selected call.
+    fn record_subscript_write_back(
+        &self,
+        place: &Expr,
+        element: &Ty,
+        value_name: &str,
+    ) -> Result<Ty, TypeError> {
+        let indices_only = match &place.kind {
+            ExprKind::Index { .. } => true,
+            ExprKind::MultiIndex { args, .. } => args
+                .iter()
+                .all(|argument| matches!(argument, SubscriptArg::Index(_))),
+            _ => false,
+        };
+        if !indices_only {
+            return Err(TypeError::Unsupported(
+                "a sliced value '__getitem__' result used as a mutable place is written back \
+                 through '__setitem__' (get, modify, set); not supported yet"
+                    .to_string(),
+            ));
+        }
+        let shared = self.snapshot_value_adjustments(&subscript_argument_sources(place));
+        let site = place.source_span();
+        self.infer(place)?;
+        let getter = self
+            .fact(&site, |facts| facts.selected_call.as_deref())
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "a written-back subscript lost its getter contract".to_string(),
+                )
+            })?;
+        self.restore_value_adjustments(&shared);
+        self.remove_call_boundary_invalidations(&site, &getter.boundary);
+        let value = self.synthetic_store_value(place, element);
+        let mut setter = self.store_through_subscript(place, value_name, &value)?;
+        self.release_synthetic_store_value(&site, &value, &mut setter);
+        self.restore_value_adjustments(&shared);
+        self.remove_call_boundary_invalidations(&site, &setter.boundary);
+        self.record_at(site.clone()).selected_call = Some(Box::new(getter.clone()));
+        self.record_at(site).subscript_write_back = Some(Box::new(
+            mojito_checked::checked::CheckedSubscriptWriteBack {
+                getter,
+                setter,
+                value_keyword: value_name.to_string(),
+                element: element.clone(),
+            },
+        ));
+        Ok(element.clone())
     }
 
     /// Check `receiver[index] = value` against a mutable-reference-returning

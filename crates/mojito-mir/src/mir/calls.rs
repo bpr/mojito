@@ -338,6 +338,17 @@ impl<'a> Flatten<'a> {
         })
     }
 
+    /// Begin `expression`'s setup read here when its call's setup awaits it
+    /// ([`Self::awaits_setup_read`]): what is emitted from now on moves to
+    /// that setup.
+    pub(super) fn begin_awaited_setup_read(&mut self, expression: Node<'a>) {
+        if self.awaits_setup_read(expression)
+            && let Some(pending) = self.setup_reference.as_mut()
+        {
+            pending.read_start = Some((self.cur, self.f.blocks[self.cur].instrs.len()));
+        }
+    }
+
     /// Whether `expression` is a by-value operand whose reference result
     /// belongs to call setup: an accessor subscript or a `ref`-returning call
     /// read as a value, not a borrow, a materialized temporary, a module
@@ -348,6 +359,9 @@ impl<'a> Flatten<'a> {
     fn setup_reference(&mut self, expression: Node<'a>) -> bool {
         // The root's place is probed last: interning it allocates a slot,
         // and an operand that is no reference (`DType.float32`) names none.
+        if expression.subscript_write_back().is_some() {
+            return true;
+        }
         expression.reference_result().is_some()
             && expression.spread_operand().is_none()
             && expression.transfer_operand().is_none()
@@ -554,6 +568,15 @@ impl<'a> Flatten<'a> {
             return (value, None);
         }
 
+        // A written-back subscript's getter runs at the call's setup, after
+        // its sibling arguments; its operands are evaluated where written.
+        if expression.subscript_write_back().is_some() {
+            let lower = |this: &mut Self| this.lower_call_receiver(expression);
+            return match setup {
+                Some(source) => self.defer_to_setup(expression, Some(source), true, lower),
+                None => lower(self),
+            };
+        }
         // A pure root/field place needs no emitted projection state, so keep
         // the existing expression lowering (notably its reference-field
         // handling) and attach the place afterward. A bare aggregate variable
@@ -1256,6 +1279,9 @@ impl<'a> Flatten<'a> {
         &mut self,
         expression: Node<'a>,
     ) -> Option<MirPlace> {
+        if let Some(place) = self.materialize_write_back_place(expression) {
+            return Some(place);
+        }
         let base_place = |this: &mut Self, base: Node<'a>| {
             if base.reference_result().is_some() {
                 this.materialize_reference_result_place(base)
@@ -1489,7 +1515,10 @@ impl<'a> Flatten<'a> {
         receiver: Node<'a>,
         lower: impl FnOnce(&mut Self) -> (Reg, Option<MirPlace>),
     ) -> (Reg, Option<MirPlace>) {
-        if reads_receiver_by_value(call) {
+        // A written-back subscript receiver is a place whose getter runs at
+        // setup, after the arguments, as upstream loads a `SubscriptDLValue`
+        // where the call uses it.
+        if reads_receiver_by_value(call) || receiver.subscript_write_back().is_some() {
             self.open_call_setup();
             return self.lower_setup_operand(receiver, None, false, lower);
         }

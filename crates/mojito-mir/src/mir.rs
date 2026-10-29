@@ -107,6 +107,7 @@ pub use type_construction::{
     ConstructionTypes, TypeConstructionError, construct_type_parameters, struct_copy,
 };
 mod unused_args;
+mod write_back;
 pub use unused_args::{
     CallOperands, erase_removed_operands, removed_argument_operands, shed_subscript_contract,
     shed_subscript_operands, unused_arguments, used_slots, with_removed_argument_forwards_erased,
@@ -3121,6 +3122,10 @@ struct Flatten<'a> {
     /// consuming call — the temporary's upstream lifetime is the full
     /// statement.
     pending_argument_anchors: Vec<VarId>,
+    /// Write-back places materialized inside the operation being lowered,
+    /// innermost last, each awaiting its setter call
+    /// ([`write_back::PendingWriteBack`]).
+    pending_write_backs: Vec<write_back::PendingWriteBack<'a>>,
     /// The open calls' setup frames, innermost last. A frame holds the
     /// deferred reads of exactly one call's immediate by-value place
     /// arguments ([`calls::CallSetup`]).
@@ -4835,6 +4840,7 @@ fn lower_cfg_nested(
             pointer_addresses: HashMap::new(),
             conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),
+            pending_write_backs: Vec::new(),
             call_setups: Vec::new(),
             call_result_slots: HashMap::new(),
             setup_reference: None,

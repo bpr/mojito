@@ -215,6 +215,28 @@ pub struct CheckedAugmentedSubscript {
     pub result_ty: Ty,
 }
 
+/// The accessor pair through which a value `__getitem__`'s result, used as
+/// a mutable place, is written back, as upstream's `SubscriptDLValue` is
+/// loaded, modified, and stored.
+///
+/// The place is the base of a store (`receiver[index].field = value`,
+/// `receiver[i][j] = value`), a `mut self` receiver, or a `mut` argument.
+/// Lowering calls the getter into a temporary, applies the operation to the
+/// temporary, then passes it to the setter. The receiver and indices are
+/// evaluated once.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedSubscriptWriteBack {
+    /// The selected `__getitem__`, also the node's `SelectedCall`.
+    pub getter: CheckedCallContract,
+    /// The selected `__setitem__`, over a value of the element type; it
+    /// receives the temporary by its value parameter's convention.
+    pub setter: CheckedCallContract,
+    /// The keyword the setter takes its value under.
+    pub value_keyword: String,
+    /// The getter's result type, the temporary's.
+    pub element: Ty,
+}
+
 /// The two-call plan for a bare element call `value[i](args)` (also member
 /// bases and multi-index brackets): subscript the indexable runtime value,
 /// then dispatch the element as a callable.
@@ -619,6 +641,9 @@ pub enum SemanticAdjustment {
     /// coexisting `SelectedCall` is the setter for consumers that only inspect
     /// assignment syntax; MIR uses this record as the authoritative pair.
     AugmentedSubscript(Box<CheckedAugmentedSubscript>),
+    /// Accessor pair writing back a value getter's result used as a mutable
+    /// place ([`CheckedSubscriptWriteBack`]).
+    SubscriptWriteBack(Box<CheckedSubscriptWriteBack>),
     /// In-place dunder selected for `place OP= rhs` on a user-defined value
     /// (`counter += 2` → `counter.__iadd__(2)`). The contract carries the
     /// `mut self` receiver, argument conventions/conversions, effects, and raising
@@ -6629,6 +6654,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             width: width.clone(),
         });
     }
+    if let Some(plan) = &facts.subscript_write_back {
+        adjustments.push(SemanticAdjustment::SubscriptWriteBack(plan.clone()));
+    }
     if let Some(operation) = facts.adjustment.as_deref() {
         adjustments.push(operation.clone());
         if let SemanticAdjustment::ReceiverFromFirstArgument { inner: Some(inner) }
@@ -6865,6 +6893,8 @@ node_facts! {
         /// for its iterable by (`seq.__iter__()`).
         comptime_iteration: Box<ComptimeIteration>,
         simd_construction: (SimdDtype, SimdWidth),
+        /// See [`SemanticAdjustment::SubscriptWriteBack`].
+        subscript_write_back: Box<CheckedSubscriptWriteBack>,
         /// The one operation record of the occurrence.
         adjustment: Box<SemanticAdjustment>,
         parameterized_method_call: Vec<mojito_types::types::ParamDecl>,

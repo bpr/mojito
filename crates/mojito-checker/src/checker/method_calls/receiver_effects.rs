@@ -410,6 +410,13 @@ impl Checker {
             args,
             kwargs,
         )?;
+        self.bind_mutable_subscript_arguments(
+            method,
+            &resolved.slots,
+            &effective_conventions,
+            args,
+            kwargs,
+        )?;
         check_call_aliasing(
             &resolved.slots,
             &effective_conventions,

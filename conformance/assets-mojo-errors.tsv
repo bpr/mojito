@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	918
+# swept-count	919
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -606,6 +606,7 @@ assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot 
 assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'
 assets/type_error/mut_argument_aliases_variadic_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'both' call
 assets/type_error/mut_argument_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'xs' argument and passed mutably to 'b' argument in 'f' call
+assets/type_error/mut_argument_value_getter_without_setter.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to mutable argument 'x' must be mutable
 assets/type_error/mut_capture_transfer.mojo	compile-reject	agree	error: cannot consume indirect references to values
 assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
 assets/type_error/mut_origin_constructor_rejects_immutable_pointer.mojo	compile-reject	agree	error: no matching function in initialization
