@@ -635,6 +635,10 @@ pub struct Checker {
     /// compiles to no parameter expression is lifted as a function
     /// ([`Self::lifted_application`]).
     lifting_positions: std::rc::Rc<std::cell::Cell<usize>>,
+    /// The constructions whose instance the check is inferring from their
+    /// run-time typing ([`Self::run_time_type`]), which applies none of
+    /// them again meanwhile.
+    instance_inferences: RefCell<HashSet<SourceSpan>>,
     /// The module functions and static methods a compile-time call applies
     /// by name, every overload under the name a call spells
     /// ([`comptime_validation::applicable_functions`]): known before any
@@ -1057,6 +1061,7 @@ impl Checker {
             comptime_binding_owners: HashSet::new(),
             installed: None,
             lifting_positions: std::rc::Rc::default(),
+            instance_inferences: RefCell::new(HashSet::new()),
             applicable_functions: declaration_table::DeclarationTable::default(),
             module_def_results: declaration_table::DeclarationTable::default(),
             lifted_applications: RefCell::new(Vec::new()),

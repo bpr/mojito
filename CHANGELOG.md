@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time call now applies a callee whose runtime parameter is a
+  `String`, a struct, a SIMD value, or a type its struct's parameters
+  name (R1528), so `mylen(Foo(n))` and `ln(String("ab"))` in a signature,
+  `TB[Box(5)]` over `@fieldwise_init struct Box[T]`, and an `@implicit`
+  constructor taking a `String` that converts a parameter argument run
+  as at the pin. A closed construction taking a `String` field is now its
+  constructor's application rather than a frozen struct value. Collectors,
+  non-builtin `self` methods, and `ref` parameters remain (R1642–R1644).
 - `StaticString` is declared as upstream's `StringSpan[ImmStaticOrigin]`
   and exported by the prelude (R432), so a parameter, field, return,
   variable, or `List` element typed `StaticString` runs on both backends

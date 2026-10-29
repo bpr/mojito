@@ -3774,12 +3774,14 @@ impl Checker {
         Ok(ty)
     }
 
-    /// `value`, an argument of a value parameter of type `ty`, in the
-    /// parameter's domain: an application computing a `String`
-    /// (`label[pick(n)]()`) binds a `String` value parameter as the
-    /// compile-time string the elaborator freezes its result to, which the
-    /// call carries as the argument's attribute ([`bracket_attribute`]).
-    fn string_parameter_value(&self, value: CtValue, ty: &Ty) -> CtValue {
+    /// `value`, an argument of a value parameter or of an applied
+    /// callable's runtime parameter of type `ty`, in the parameter's
+    /// domain: an application computing a `String` (`label[pick(n)]()`,
+    /// `ln(String("ab"))`) binds a `String` parameter as the compile-time
+    /// string the elaborator freezes its result to, which a value
+    /// parameter's call carries as the argument's attribute
+    /// ([`bracket_attribute`]).
+    pub(super) fn string_parameter_value(&self, value: CtValue, ty: &Ty) -> CtValue {
         let CtValue::Expr(application) = &value else {
             return value;
         };

@@ -2434,8 +2434,7 @@ impl Checker {
     }
 
     /// A tuple's or list's value over its elements' values, which may be
-    /// symbolic, or a closed fieldwise construction's no `__init__`
-    /// applies. `None` for any other expression.
+    /// symbolic. `None` for any other expression.
     fn aggregate_value(
         &self,
         expr: &Expr,
@@ -2450,15 +2449,6 @@ impl Checker {
         match &expr.kind {
             ExprKind::TupleLit(values) => Some(elements(values).map(CtValue::Tuple)),
             ExprKind::ListLit(values) => Some(elements(values).map(CtValue::List)),
-            // A construction an `__init__` applies is that application
-            // (`build_ct_rest`'s positioned application), which
-            // `native::mono` evaluates. A closed fieldwise construction
-            // whose `__init__` takes a parameter no application takes yet
-            // (a `String` field) is a frozen struct value until R1528
-            // applies it.
-            ExprKind::Call { .. } if self.called_application(expr).is_none() => {
-                self.frozen_construction(expr, recording)
-            }
             _ => None,
         }
     }
@@ -2520,7 +2510,7 @@ impl Checker {
     }
 
     /// The value of an element of a display or of a frozen construction,
-    /// each frozen element by element (R1529, R1528): a closed
+    /// each frozen element by element (R1529): a closed
     /// construction among them is its frozen struct value, as an aggregate
     /// of applications has no parameter expression.
     fn element_value(&self, value: &Expr, recording: Recording) -> Result<CtValue, TypeError> {

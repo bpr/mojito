@@ -137,10 +137,12 @@ pub(super) struct ForwardedPack {
 /// ([`Checker::called_application`]): a module `def`, a static method of a
 /// struct, a struct's `__init__`, or an `@always_inline("builtin")` method
 /// taking `self`. Its own compile-time parameters are any but a pack, an
-/// origin, or a callable; each runtime parameter is an `Int`, a `UInt`, a
-/// `Bool`, a `Float64`, an `index`, an `IntLiteral`, a `DType`, its struct's
-/// `Self`, or one of its own type parameters; and it returns one of those
-/// or a named struct. A call binds its parameters as a runtime call's do
+/// origin, or a callable; each runtime parameter is taken `read` or `var`
+/// at a type a parameter expression holds ([`parameter_value_type`]) —
+/// a scalar, a `String` (the domain's `StringLiteral`), a `DType`, a struct,
+/// its struct's `Self` or own parameters, or one of its own type
+/// parameters — and none is a collector; and it returns a scalar or a
+/// named type. A call binds its parameters as a runtime call's do
 /// ([`Checker::resolve_use_params`]), its `where` clauses included.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
@@ -1326,8 +1328,10 @@ impl Checker {
     /// struct's `__init__` denotes when every argument is a compile-time
     /// value of its parameter's type (`h(n)`, `h(Self.n + 1)`,
     /// `twice[n]()`, `S.f(n)`, `d(n, m=4)`, `Extent(n, 2)`, `G[2](n)`,
-    /// `idt(n)` over `idt[T: ImplicitlyCopyable](x: T)`, a construction's
-    /// result the instance it constructs): the callable applied to its
+    /// `idt(n)` over `idt[T: ImplicitlyCopyable](x: T)`, `mylen(Foo(n))`,
+    /// `ln(s)` over a `String` parameter, a construction's result the
+    /// instance it constructs, `Box(5)`'s the one its run-time construction
+    /// infers): the callable applied to its
     /// compile-time parameters as the call binds them
     /// ([`Self::applied_arguments`]), then to its runtime arguments in
     /// declared order, a default standing where the call omits one, as the
@@ -1666,13 +1670,15 @@ impl Checker {
             .filter_map(|function| {
                 // A generic struct's construction is bracketed by the
                 // instance it constructs (`G[2](n)`), not by binders of its
-                // `__init__`.
+                // `__init__`; spelled without them (`G(n)`), it constructs
+                // the instance its run-time construction infers.
                 let (instance, param_args) = match (function.constructs(), function.on_instance) {
                     (true, true) if !param_args.is_empty() => (
                         self.ty_from_anno(&SourceType::Named(name.clone(), param_args.to_vec()))
                             .ok(),
                         [].as_slice(),
                     ),
+                    (true, true) => (self.run_time_type(expr), param_args),
                     _ => (instance.clone(), param_args),
                 };
                 if (function.on_instance && instance.is_none()) || function.constraints.is_none() {
@@ -1736,15 +1742,36 @@ impl Checker {
                 .and_then(|facts| facts.overload_target.clone())
         };
         recorded().or_else(|| {
-            let lifting = self.lifting_positions.replace(0);
-            let typed = {
-                let _position = self.comptime_position();
-                self.infer(expr)
-            };
-            self.lifting_positions.set(lifting);
-            typed.ok()?;
+            self.run_time_typing(expr).ok()?;
             recorded()
         })
+    }
+
+    /// The struct `expr`'s run-time construction builds, as its run-time
+    /// typing infers it (`Box[Int]` for `Box(5)`). `None` while that typing
+    /// is under way, which asks for no application of `expr` itself.
+    fn run_time_type(&self, expr: &Expr) -> Option<Ty> {
+        let span = expr.source_span();
+        if !self.instance_inferences.borrow_mut().insert(span.clone()) {
+            return None;
+        }
+        let typed = self.run_time_typing(expr);
+        self.instance_inferences.borrow_mut().remove(&span);
+        typed
+            .ok()
+            .filter(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+    }
+
+    /// `expr` typed as a run-time expression in a compile-time position,
+    /// lifting nothing.
+    fn run_time_typing(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        let lifting = self.lifting_positions.replace(0);
+        let typed = {
+            let _position = self.comptime_position();
+            self.infer(expr)
+        };
+        self.lifting_positions.set(lifting);
+        typed
     }
 
     /// The application `selected` denotes ([`Self::called_application`]):
@@ -1840,7 +1867,13 @@ impl Checker {
                 return folded;
             }
         }
-        Some(application)
+        // The elaborator constructs, and binds the parameters of, a
+        // declared struct only: a SIMD instance's constructor is no
+        // application.
+        instance
+            .as_ref()
+            .is_none_or(|instance| matches!(instance.kind(), TyKind::Struct(..)))
+            .then_some(application)
     }
 
     /// The name a call of `method` on `object` spells, the struct instance
@@ -2014,20 +2047,34 @@ impl Checker {
                     ArgSlot::Keyword(index) => &kwargs[*index].value,
                     ArgSlot::Default => return Some(None),
                 };
+                // An initializer list is the construction its run-time
+                // typing spelled for the slot (`{1, 2}` at a `Box`).
+                let spelled = self.spelled_construction(argument);
                 let _lifting = self.lifting_position();
-                self.compile_dependent_ct_expr(argument).ok().map(Some)
+                self.compile_dependent_ct_expr(spelled.as_ref().unwrap_or(argument))
+                    .ok()
+                    .map(Some)
             })
             .collect::<Option<Vec<_>>>()?;
+        // A slot typed by its struct's parameters (`v: Self.T`) is typed at
+        // the instance.
+        let at_owner = |ty: &Ty| match owner.map(Ty::kind) {
+            Some(TyKind::Struct(name, instance_args)) => self
+                .structs
+                .get(template_name(name))
+                .map_or_else(|| ty.clone(), |info| substitute_at(ty, info, instance_args)),
+            _ => ty.clone(),
+        };
         let mut patterns = Vec::new();
         let mut actuals = Vec::new();
         for (argument, param) in supplied.iter().zip(&function.params) {
             if let (SlotType::Declared(_, declared), Some(argument)) = (&param.ty, argument) {
-                patterns.push(declared.clone()?);
+                patterns.push(at_owner(declared.as_ref()?));
                 actuals.push(
                     argument
                         .meta()
                         .as_value()
-                        .filter(|ty| declared_slot_value(ty))?
+                        .filter(|ty| parameter_value_type(ty))?
                         .clone(),
                 );
             }
@@ -2055,7 +2102,7 @@ impl Checker {
         for (argument, param) in supplied.into_iter().zip(&function.params) {
             let ty = match &param.ty {
                 SlotType::Declared(_, declared) => {
-                    resolve(declared.as_ref()?).filter(declared_slot_value)?
+                    resolve(&at_owner(declared.as_ref()?)).filter(parameter_value_type)?
                 }
                 slot_type => slot_type.resolved(owner)?.clone(),
             };
@@ -2102,6 +2149,7 @@ impl Checker {
     /// over `__add__(self, rhs: Self)` applies `__add__` to `L(4)` and
     /// `L(1)` ([`Self::implicit_parameter_application`]).
     pub(super) fn applied_value(&self, value: CtValue, ty: &Ty) -> Option<ParamExpr> {
+        let value = self.string_parameter_value(value, ty);
         let argument = match &value {
             CtValue::Expr(argument) => Some(argument.clone()),
             closed => closed
@@ -4624,14 +4672,16 @@ enum SelfSlot {
 /// The type of an [`ApplicableParameter`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum SlotType {
-    /// An `Int`, a `UInt`, a `Bool`, a `Float64`, an `index`, or an
-    /// `IntLiteral`.
+    /// An `Int`, a `UInt`, a `Bool`, a `Float64`, an `index`, an `i1`, an
+    /// `IntLiteral`, or a `StringLiteral`, a `String` parameter's included.
     Scalar(Ty),
     /// `Self`, the struct a call's instance or receiver resolves.
     Owner,
-    /// A `DType` or one of the callable's own type parameters, as its
-    /// signature classifies it ([`Checker::classify_applicable_signatures`]);
-    /// `None` until it does.
+    /// Any other named type — a `DType`, a struct, a SIMD vector, its
+    /// struct's own parameters, or one of the callable's own type
+    /// parameters — as its signature classifies it
+    /// ([`Checker::classify_applicable_signatures`]); `None` until it does,
+    /// and one that resolves to no [`parameter_value_type`] takes no call.
     Declared(SourceType, Option<Ty>),
 }
 
@@ -4646,9 +4696,11 @@ impl SlotType {
     }
 }
 
-/// Whether `ty` is a value a [`SlotType::Declared`] parameter takes: a
-/// scalar or a `DType`.
-fn declared_slot_value(ty: &Ty) -> bool {
+/// Whether `ty` is a value a [`SlotType::Declared`] parameter takes, the
+/// types a parameter expression holds: a scalar, an `IntLiteral`, a
+/// `StringLiteral`, a `DType`, a struct, or a SIMD vector. A reference, a
+/// pointer, an origin, or a function is no such value.
+fn parameter_value_type(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
         TyKind::INT
@@ -4658,7 +4710,10 @@ fn declared_slot_value(ty: &Ty) -> bool {
             | TyKind::Index
             | TyKind::I1
             | TyKind::IntLiteral
+            | TyKind::StringLiteral
             | TyKind::Dtype
+            | TyKind::Struct(..)
+            | TyKind::Simd { .. }
     )
 }
 
@@ -4695,26 +4750,29 @@ impl ApplicableShape<'_> {
                 .then(|| binder.name.clone())
             })
             .collect::<Option<_>>()?;
-        let declared = |ty: &SourceType| match ty {
-            SourceType::Named(name, args)
-                if args.is_empty() && (name == "DType" || binders.contains(name)) =>
-            {
-                Some(SlotType::Declared(ty.clone(), None))
-            }
-            _ => None,
-        };
         let slot = |ty: &SourceType| match ty {
             SourceType::Int => Some(SlotType::Scalar(Ty::int())),
             SourceType::UInt => Some(SlotType::Scalar(Ty::uint())),
             SourceType::Bool => Some(SlotType::Scalar(Ty::bool())),
             SourceType::Float64 => Some(SlotType::Scalar(Ty::float64())),
             SourceType::SelfType => Some(SlotType::Owner),
+            // A string is the parameter domain's string, as a `[s:
+            // String]` binder is.
+            SourceType::StringLiteral => Some(SlotType::Scalar(Ty::string_literal())),
+            SourceType::Named(name, args)
+                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
+            {
+                Some(SlotType::Scalar(Ty::string_literal()))
+            }
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
             ty if super::declarations::is_int_literal_annotation(ty) => {
                 Some(SlotType::Scalar(Ty::int_literal()))
             }
-            ty => declared(ty),
+            SourceType::Named(..) | SourceType::SelfParam(_) | SourceType::Assoc { .. } => {
+                Some(SlotType::Declared(ty.clone(), None))
+            }
+            _ => None,
         };
         let params = self
             .params

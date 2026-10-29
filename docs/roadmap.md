@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1642**.
+Next free ID: **R1645**.
 
 ## Ordered Work
 
@@ -155,73 +155,84 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1528 An application takes only scalar parameters**
+- [ ] **R1642 A variadic collector is no parameter of a compile-time
+  application**
 
-  `ApplicableShape::applicable` (`checker/comptime_validation.rs`) admits
-  only by-value scalar, `DType`, `Self`, and type-parameter-typed runtime
-  parameters, so
-  a call over a `String`, a struct, or a `*xs: T` collector denotes nothing
-  in a type, where the pin keeps each as its callee's application.
+  `ApplicableShape::applicable` (`checker/comptime_validation.rs`) lists
+  no callable with a `*xs` collector, so a call of one denotes nothing in
+  a type, where the pin keeps it as the callee's application with its
+  arguments flat (`total(n, Int(1))`).
   - Probe: `f[1](SIMD[DType.int8, total(1, 1)](1))` over `def f[n:
     Int](x: SIMD[DType.int8, total(n, 1)]) -> SIMD[DType.int8, total(n,
     1)]` and `def total(*xs: Int) -> Int` stops with "not a compile-time
     Int constant: not an associated comptime expression". The pin prints
     `[1, 1]`.
-  - Probe: `SIMD[DType.int8, ln(String("ab"))]` over `def ln(s: String) ->
-    Int` fails the same way. The pin prints `[2, 2]` for it in a
-    signature.
   - Probe: `SIMD[DType.int8, total(n, 1)]` against `SIMD[DType.int8, n +
-    1]` is rejected at the pin naming `total(n, Int(1))`.
-  - The lever: accept any resolved parameter type and a homogeneous or
-    type-pack collector, bound through `mojito-ast`'s call binder.
-    `Specializer::demand_application` regroups a collector's run into the
-    one value its MIR parameter takes (read the VM's `thaw` first).
-  - `IntLiteral` parameters are admitted since R1533.
-  - Probe: `f[s]()` over `def f[w: S]()`, `comptime s: String = "abcd"`,
-    and `S`'s `@implicit __init__(out self, value: String, /)` storing
-    `value.byte_length()` is rejected as unsupported ("a parameter argument
-    converted by 'S.__init__' is not supported yet"). The pin prints `4`.
-  - Probe: `name["param"]()` over `def name[s: StaticString]()` is
-    rejected the same way, naming `StringSpan.__init__$ov$StringLiteral`,
-    whose parameter is a `StringLiteral`. The pin prints `param`. The
-    compile-time value it builds is R1641.
-  - Probe: a construction whose `__init__` takes a struct or `String`
-    parameter is still frozen fieldwise by `aggregate_value`'s
-    `frozen_construction` (`checker/constraints.rs`), where the pin applies
-    it: `fields[Q(8, "x")]()` in
-    `assets/ok/value_parameter_string_aggregate.mojo` and `ints[N(8,
-    In(9))]()` in `assets/ok/value_parameter_field_read.mojo`. Delete that
-    arm here.
-  - Probe: a non-builtin `ord(self) -> Int` in `SIMD[DType.int8,
-    L(n).ord()]` is an application at the pin (`L(Int(1)).ord()` in its
-    message), where Mojito says "not an associated comptime expression".
-    `SIMD[DType.int8, Self.l.get()]` over a non-builtin `get` in a method
-    of `struct Tagged[l: L]` fails the same way; the pin prints `1` for
-    `Tagged[L(1)]`. A method with `self` is listed only when builtin
-    (`applicable_declarations`): list every one once a struct argument
-    applies, its receiver the struct value the elaborator thaws.
-  - Probe: `TB[Box[Int](6)]` and `TB[Box(5)]` over `@fieldwise_init struct
-    Box[T: ImplicitlyCopyable & Deinitable]` with `var v: Self.T` stop with
-    "not an associated comptime expression": the constructor's parameter
-    is typed by the struct's binder. The pin prints `12` and `10`.
-  - Probe: `SIMD[DType.int8, M(L(n), 3).l.v * 2]` against
-    `SIMD[DType.int8, 2 * n]`, where `M`'s `@always_inline("builtin")` `__init__(out self, l: L,
-    w: Int)` stores `self.l = l` and `L`'s stores `self.v = v`, prints
-    `[1, 1]` at the pin; Mojito says "unsupported associated comptime
-    member access", since `M.__init__` takes a struct, so no
-    `FoldedBody::Fields` is built for it.
-  - A runtime parameter typed by the callee's own type parameter (`x:
-    T`) applies only at a scalar or `DType` argument
-    (`declared_slot_value`).
-  - Probe: `SIMD[DType.int32, inf(SIMD[DType.int32, n](0))]` over `def
-    inf[n: Int, //](x: SIMD[DType.int32, n]) -> Int` is "not an
-    associated comptime expression"; the pin prints `[1, 1]` for `n = 2`.
-  - A callee with a pack, callable, or origin compile-time parameter is
-    not listed (`ApplicableShape::applicable`).
-  - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 1.
-  - Found while landing R1472 (2026-10-27).
+    1]` is rejected at the pin naming `total(n, Int(1))`; Mojito stops
+    with the same "not an associated comptime expression".
+  - Probe: `SIMD[DType.int8, cnt(n, True)]` over `def cnt[*Ts:
+    AnyType](*xs: *Ts) -> Int` fails the same way. The pin prints `[1, 1]`
+    for `n = 5`.
+  - Checker: `ApplicableFunction` records the collector's index and its
+    element `SlotType`, or the `*Ts` binder typing it. `Checker::applied_arguments`
+    matches with `CallVariadics { positional: true, .. }`, applies each
+    overflow argument at the element type, and binds a type pack through
+    `resolve_use_params`, one `Param(Ts)` pattern per overflow argument.
+  - Elaborator: `Specializer::demand_application` regroups the run at the
+    declaration's `variadic_index` into one `CtValue::Tuple`.
+  - VM: `VmBackend::thaw` gains a `VariadicList` target arm building what
+    `mir::variadic_list::build_variadic_list` builds. The type-pack
+    collector's `RuntimePack` arm exists.
+  - `tests/checker_test.rs`'s "a callable over a pack is applied by no
+    call yet" assertion flips.
+  - Found while landing R1528 (2026-10-29).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1643 A method taking `self` applies at compile time only when
+  builtin**
+
+  `applicable_declarations` (`checker/comptime_validation.rs`) lists a
+  method with `self` only when it is `@always_inline("builtin")` or
+  returns `!kgen.deferred`, so an ordinary method called on a
+  compile-time struct value denotes nothing in a signature, where the pin
+  keeps it as the method's application with the struct as receiver.
+  - Probe: `SIMD[DType.int8, L(n).ord()]` over a non-builtin `def
+    ord(self) -> Int` of `@fieldwise_init struct L` is "not an associated
+    comptime expression"; the pin names `L(Int(2)).ord()` in a mismatch
+    and prints `[1, 1]` when matched.
+  - Probe: `-> SIMD[DType.int8, Self.l.get()]` as the return type of a
+    method of `struct Tagged[l: L]`, over a non-builtin `get`, fails the
+    same way; the pin prints `1` for `Tagged[L(1)]`. In a body it already
+    runs, lifted as a thunk.
+  - Lever: list every `imm`/default-receiver method. The receiver is the
+    struct value the elaborator thaws (`demand_application` already counts
+    `has_receiver`).
+  - Trap: R397's `len[T: Sized]` made every `len(x)` a candidate and the
+    std package check took minutes. Time a cold package build
+    (`MOJITO_CACHE_DIR=$(mktemp -d)`) before and after.
+  - Found while landing R1528 (2026-10-29).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1644 A callee with a `ref` parameter, or with a callable or
+  origin compile-time parameter, is no compile-time application**
+
+  `ApplicableShape::applicable` (`checker/comptime_validation.rs`) admits
+  only a `read` or `var` runtime parameter (`passed_by_value`) and drops a
+  callee whose own compile-time parameters include a callable or an
+  origin, where the pin applies each.
+  - Probe: `SIMD[DType.int8, bc(String("ab"))]` over `def bc(ref s:
+    String) -> Int` is "not an associated comptime expression"; the pin
+    prints `[2, 2]`.
+  - Library case: `StringSpan.__init__(ref [Self.origin] src: String)`,
+    which also blocks a compile-time `StringSpan` built from a `String`.
+  - The elaborator thaws the argument as a value; a `ref` slot needs it
+    addressed in compile-time memory (`store_to_comptime_memory`), as the
+    VM addresses a `ref` argument at run time.
+  - Found while landing R1528 (2026-10-29).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1529 A tuple or list display in a parameter position is frozen
   element by element, not applied**
@@ -4583,9 +4594,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The elaborator has no compile-time `StringSpan` whose pointer addresses
     a literal's bytes, the pin's `pop.string.address` and `pop.string.size`
     over the literal's `!kgen.string`.
-  - The first failure is R1528's classifier: `StringSpan`'s `@implicit`
-    literal `__init__` is no application ("a parameter argument converted
-    by 'StringSpan.__init__$ov$StringLiteral' is not supported yet").
+  - The first failure is now the elaborator's: the check applies
+    `StringSpan`'s `@implicit` literal `__init__`, and `native::mono` stops
+    with "unsupported compile-time application of
+    `StringSpan.__init__$ov$StringLiteral` binds 2 of its 1 parameters".
   - Fold upstream's `_get_kgen_string[string: StaticString, *extra]()`
     (`#kgen.param.expr<data_to_str, …>`), which reads such a value's bytes
     back as a `!kgen.string`. No `data_to_str` fold exists.
@@ -6917,7 +6929,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
     __init__(out self, value: String, /)` storing `value.byte_length()` is
     rejected ("expected S, found StringLiteral"), where the pin prints `3`:
     `StringLiteral` does not coerce to `String`. `f["abc"]()` over `def
-    f[w: S]()` (pin `3`) also needs R1528.
+    f[w: S]()` (pin `3`) fails the same way ("type mismatch for value
+    parameter 'w': expected S, found StringLiteral").
   - Found while landing R1533 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8884,11 +8897,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     associated comptime expression", where the pin prints `3`: a member
     has no body to lift the call from, and the check answers `len` of a
     raw list only inside the bundled `ParameterList`.
-  - Blocker: a struct member `comptime count = len(Self.Ts)` becomes an
-    application only once `called_application` applies a function to a
-    struct-valued argument (`TypeList[Self.Ts.values]()`), which needs
-    R1528 (a struct-typed parameter). `comptime count = mylen(Foo())` fails
-    the same way.
+  - `called_application` applies a function to a struct-valued argument
+    since R1528 (a member `comptime count = mylen(Foo())` runs), so a
+    member `comptime count = len(Self.Ts)` can be the library `len`'s
+    application over `TypeList[Self.Ts.values]()` once the checker stops
+    folding `len` by name.
   - Probe: `def f[*Ts: Movable]() where len(Ts) == 2`, called as
     `f[Int, Bool]()`, prints its body in Mojito, where the pin rejects it
     for "lacking evidence" of `len[TypeList[Int, Bool]](TypeList[Int,
@@ -10534,15 +10547,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     declines every typed op), and request the variadic one as any
     non-builtin compile-time call.
   - The values agree today: the gap is structural.
-  - The declared `fill=` and `from_int=` initializers fail at compile
-    time instead: `Specializer` (`native/mono/specializer.rs`) reads the
-    constructed instance as a `TyKind::Struct` where `nominal_parts` is
-    needed ("reads an instance that is no struct `SIMD[DType.bool, 4]`"),
-    and past that the VM's CTFE fails "expects 2 argument(s), got 1".
-  - Probe: `comptime M = SIMD[DType.bool, 4](fill=True)` prints `[True,
-    True, True, True]` at the pin, `f[SIMD[DType.bool, 2](fill=True)]()`
-    prints `[True, True]`, and `comptime Y = SIMD[DType.int32,
-    2](from_int=5)` prints `[5, 5]`.
+  - A SIMD instance's constructor is no application: `Checker::selected_call`
+    declines one whose body does not fold, since `Specializer`
+    (`native/mono/specializer.rs`) binds only a `TyKind::Struct` instance
+    ("reads an instance that is no struct `SIMD[DType.bool, 4]`"), and past
+    `nominal_parts` the VM's CTFE fails "expects 2 argument(s), got 1".
+    Delete that gate once the `builtin` constructors fold.
+  - So a local `comptime M = SIMD[DType.bool, 4](fill=True)` or `comptime
+    Y = SIMD[DType.int32, 2](from_int=5)` lifts a thunk and prints as at
+    the pin, but a position with no thunk denotes nothing.
+  - Probe: `f[SIMD[DType.bool, 2](fill=True)]()` over `def f[m:
+    SIMD[DType.bool, 2]]()` is "not an associated comptime expression";
+    the pin prints `[True, True]`.
+  - Probe: `SIMD[DType.int32, inf(SIMD[DType.int32, n](0))]` over `def
+    inf[n: Int, //](x: SIMD[DType.int32, n]) -> Int` fails the same way;
+    the pin prints `[1, 1]` for `n = 2`.
   - Found while landing R1555 (2026-10-28).
   - Depends on R1592.
   - Model: Fable, Not Planned.

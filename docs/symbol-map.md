@@ -1020,8 +1020,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its `CtValue` adapter: build, `ParamContext::fold`, then `ct_transport`,
   recording member reads and type applications at their spans
   (`Recording`), with `aggregate_value` carrying a tuple or list whose
-  elements are symbolic, and the closed fieldwise construction no
-  `__init__` applies (`frozen_construction`, also a display's element). A type operand has
+  elements are symbolic, and a display's element freezing a closed
+  fieldwise construction (`frozen_construction`). A type operand has
   that one reader too: `type_operand_expression` is the builder filtered
   to a type (`None` for a value), `denoted_type` the same filter with
   upstream's `emitType` rejection ("expected a type"), which reads a type
@@ -1922,7 +1922,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `def`, a static method, or a struct's `__init__` (a construction, the
   synthesized fieldwise one included, listed under the struct's name with
   `ApplicableFunction::constructs`, its result the instance it constructs)
-  over compile-time scalar, `DType`, and type arguments is instead the application of the callable
+  over compile-time arguments of any type a parameter expression holds
+  (`parameter_value_type`: a scalar, a `DType`, a `String` slot taken as the
+  domain's `StringLiteral`, a struct, a SIMD value; a slot typed by the
+  struct's own parameters typed at the instance; a generic construction
+  spelled without brackets constructing the instance its run-time typing
+  infers, `run_time_type`) is instead the application of the callable
   itself (`Checker::called_application`, tried
   first by `lifted_application` and alone in a signature or a field type):
   `applicable_functions` (`checker/comptime_validation.rs`, run by
@@ -1943,7 +1948,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   runtime arguments its parameter types read, defaults; a type
   parameter's argument its type shape), and orders the runtime arguments
   through `ast::call::match_call_slots`
-  with `applied_default` for an omitted one, `calls_raising_application`
+  with `applied_default` for an omitted one (an initializer-list argument
+  compiled as the construction its run-time typing spelled), a SIMD
+  instance's constructor that does not fold applying nothing, `calls_raising_application`
   backs the raising-callee rejection in `eval_associated_ct`,
   `solve_applied_args` (`checker/generics.rs`, from `solve_value_args`)
   solves a value parameter through one, and
@@ -2369,9 +2376,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   construction (`Extent(2, 3)`, `G[2](n)`) or a call (`Extent.square(4)`),
   as an application `native::mono` evaluates (`VmBackend::freeze`), and a
   struct parameter's default as one (`default_argument`,
-  `checker/declarations.rs`); `aggregate_value` (`checker/constraints.rs`)
-  freezes to `CtValue::Struct` only a closed fieldwise construction no
-  `__init__` applies (R1528). `param_expr`'s display spells an `__init__`
+  `checker/declarations.rs`); only a display's element
+  (`element_value`, `checker/constraints.rs`) freezes a closed fieldwise
+  construction to `CtValue::Struct` (R1529). `param_expr`'s display spells an `__init__`
   application as its struct or instance (`symbol_ref::member_owner`, which
   `mojito_symbol::symbol::lifecycle_constructor` reads too).
 - `bind_ty_args` (`mono/unify.rs`) binds a struct's pack element by element,
