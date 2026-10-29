@@ -1197,37 +1197,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1640 The native target's CPU defaults to `x86-64`, where the
-  pin's defaults to the host CPU**
-
-  Mojito's default `TargetCpu` is `x86-64`, where the pin's `--target-cpu`
-  "defaults to the host CPU", so on this host (`skylake`) its
-  `CompilationTarget` answers `has_avx2()` `True` and `simd_bit_width()`
-  `256`.
-  - The pin's default is the host CPU's *name* with that name's table
-    features (`clang -march=skylake`'s list), not cpuid's detected set,
-    so only the name needs detecting.
-  - Lever: port LLVM 23.1's x86 `sys::getHostCPUName`
-    (`llvm/lib/TargetParser/Host.cpp`: `detectX86FamilyModel`,
-    `getAvailableFeatures`, `getIntelProcessorTypeAndSubtype`,
-    `getAMDProcessorTypeAndSubtype`, the Zhaoxin/Hygon arms) into
-    `mojito-native-core/src/target/x86_host.rs` over the safe
-    `std::arch::x86_64::__cpuid_count`.
-  - `TargetCpu::host()` is the detected name when the pin's table has it,
-    and `x86-64` otherwise. `NativeTarget::host()`, `Compiler::new`'s
-    default, and `TargetCpu::parse(None, …)` start from it.
-  - Cross-check in the pliron lane: the port's name equals
-    `LLVMGetHostCPUName()`, beside
-    `pliron_pinned_data_layout_matches_installed_clang`.
-  - Probe: `mojito compile --backend pliron --emit ll` shows
-    `"target-cpu"="skylake"` with the pin's `--print-effective-target`
-    list, and `--target-cpu x86-64` restores the baseline string.
-  - Docs: `docs/native-abi.md`, the help text, and `docs/usage.md` say
-    "Defaults to the host CPU".
-  - Found while landing R1633 (2026-10-29).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R18 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
@@ -10236,6 +10205,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `0`), and a `comptime if` decided by `has_avx512f()`.
   - The `size_of`/`align_of` bodies are R1634, and the string predicates
     are R1635.
+  - The Pliron test helpers pin the backend to the `x86-64` baseline while
+    their `Compiler::default()` elaborates for the host CPU. Once target
+    queries fold, hand the helpers' pinned target to
+    `Compiler::with_target` too, so elaboration and lowering agree.
   - Depends on R1536 (every query body is a bracketed `__mlir_attr`),
     R1630 (`_current_target()` returns `!kgen.target`), R1631
     (`CompilationTarget.has_avx2()` is a bare-name static call), R1632

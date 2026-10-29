@@ -74,8 +74,19 @@ its own explicit support decision and testing infrastructure.
   `--print-supported-cpus` and `--print-effective-target` by
   `scripts/gen-x86-cpu-table`), plus the user's `--target-features` edits.
   - A name outside the table is rejected (`unknown target CPU 'NAME'`).
-  - The default is `x86-64` (`+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87`). The
-    pin's default is the host CPU's name; that gap is R1640.
+  - The default is the host CPU, as at the pin (`TargetCpu::host`): the
+    host's CPU *name* with that name's table features, not the features
+    the host reports. Feature edits without a CPU start from it.
+  - The name comes from `native/target/x86_host.rs`, a port of the x86 arm
+    of LLVM 23.1's `sys::getHostCPUName` (`host_cpu_name`), cross-checked
+    against the installed LLVM's `LLVMGetHostCPUName` in the pliron lane.
+  - A host name outside the table (`generic`, for an unknown vendor,
+    family, or model) falls back to the `x86-64` baseline
+    (`+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87`). What the pin does on such a
+    host is unverified.
+  - `NativeTarget::new` keeps the baseline for callers whose CPU must not
+    follow the host; the Pliron test helpers pin it, as LLVM's tests pin
+    `-mcpu`.
   - The effective feature list is the pin's merge rule. An item is
     `+name`, `-name`, or a bare `name` (enabled); empty items are skipped.
     Each edited name keeps its last sign at its first position. The `+`
@@ -98,7 +109,7 @@ its own explicit support decision and testing infrastructure.
   require an output path (`BuildConfig::validate`).
 - **CLI** — `--target TRIPLE` or the pin's `--target-triple TRIPLE`
   (default: the build host; error when the host is unsupported),
-  `--target-cpu CPU` (default `x86-64`), `--target-features LIST` (edits
+  `--target-cpu CPU` (default: the host CPU), `--target-features LIST` (edits
   over the CPU's table), `--native-opt 0|release` (alias: `1`), `--emit KIND`,
   `-o PATH`, `--native-debug none|lines` (default `lines`: DWARF
   subprograms plus call-site file/line locations on objects and

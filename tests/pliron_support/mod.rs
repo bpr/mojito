@@ -15,10 +15,14 @@ use std::path::Path;
 use mojito::backend::pliron as native;
 use native::{JitValue, NativeTarget};
 
-/// The host as a native target; every Pliron test compiles for (and JITs or
-/// runs on) the host.
+/// The host triple with the `x86-64` baseline CPU; every Pliron test
+/// compiles for (and JITs or runs on) the host. The CPU is pinned, as LLVM's
+/// own tests pin `-mcpu`, so goldens do not follow the build machine.
 pub fn host_target() -> NativeTarget {
-    NativeTarget::host().expect("pliron tests require a supported host target")
+    NativeTarget::new(
+        mojito::native::target::Triple::host()
+            .expect("pliron tests require a supported host target"),
+    )
 }
 
 /// The linked `mojito-runtime` exports as an explicit JIT symbol mapping, so

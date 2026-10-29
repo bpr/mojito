@@ -90,7 +90,7 @@ leaves the scalar subset — including `print`, until the native runtime stage.
 checked native target (default: the build host;
 `x86_64-unknown-linux-gnu` is currently the only supported triple),
 `--target-cpu CPU` the target CPU (any of the pin's x86-64 CPU names;
-default `x86-64`), `--target-features LIST` edits over that CPU's features
+default: the host CPU, as at the pin), `--target-features LIST` edits over that CPU's features
 (`+avx2,-fma`; merged as the pin merges them, see `docs/native-abi.md`),
 and `--native-opt 0|release` (with `1` as a permanent alias of `release`)
 the optimization profile; all of them also apply to

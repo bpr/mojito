@@ -380,6 +380,10 @@ Before closing a language-parity milestone:
 6. Run differential conformance with a Pixi environment containing the exact
    audited build. Retain `mojo --version`, the upstream hash, and the Mojito hash
    with the results.
+7. Regenerate the native CPU table (`scripts/gen-x86-cpu-table`). When the
+   pin's LLVM major or minor version moves, re-diff
+   `crates/mojito-native-core/src/target/x86_host.rs` against that LLVM's
+   `llvm/lib/TargetParser/Host.cpp`, whose `sys::getHostCPUName` it ports.
 
 ## Historical Audit — `26cfe94f40` (2026-09-21)
 

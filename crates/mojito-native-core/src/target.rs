@@ -8,10 +8,27 @@
 //! cross-check tests verify against the installed toolchain.
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use x86_cpus::CpuModel;
 
 mod x86_cpus;
+#[cfg(target_arch = "x86_64")]
+mod x86_host;
+
+/// The build host's CPU name as LLVM's `sys::getHostCPUName` reports it,
+/// which may be `"generic"` or a name outside the pin's table. Detected once
+/// per process.
+pub fn host_cpu_name() -> &'static str {
+    static NAME: LazyLock<&'static str> = LazyLock::new(|| {
+        #[cfg(target_arch = "x86_64")]
+        let name = x86_host::host_cpu_name();
+        #[cfg(not(target_arch = "x86_64"))]
+        let name = "generic";
+        name
+    });
+    *NAME
+}
 
 /// A supported native target triple.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,17 +114,24 @@ impl TargetCpu {
         }
     }
 
+    /// The pin's default CPU: the build host's CPU name with that name's
+    /// table features, not the features the host reports. A host name
+    /// outside the pin's table (`generic`) is the `x86-64` baseline.
+    pub fn host() -> Self {
+        Self {
+            model: model(host_cpu_name()).unwrap_or(x86_cpus::X86_64),
+            edits: Vec::new(),
+        }
+    }
+
     /// Parse `--target-cpu` and `--target-features`. An absent CPU is the
-    /// default, `x86-64`; the features start from the chosen CPU's table.
-    /// A feature item is `+name`, `-name`, or a bare `name` (enabled), and
-    /// empty items are skipped.
+    /// host's ([`TargetCpu::host`]); the features start from the chosen
+    /// CPU's table. A feature item is `+name`, `-name`, or a bare `name`
+    /// (enabled), and empty items are skipped.
     pub fn parse(cpu: Option<&str>, features: Option<&str>) -> Result<Self, String> {
         let model = match cpu {
-            None => x86_cpus::X86_64,
-            Some(name) => x86_cpus::X86_CPUS
-                .binary_search_by(|model| model.name.cmp(name))
-                .map(|index| &x86_cpus::X86_CPUS[index])
-                .map_err(|_| format!("unknown target CPU '{name}'"))?,
+            None => Self::host().model,
+            Some(name) => model(name).ok_or_else(|| format!("unknown target CPU '{name}'"))?,
         };
         let mut edits: Vec<(String, bool)> = Vec::new();
         for item in features
@@ -187,7 +211,7 @@ impl TargetCpu {
 
 impl Default for TargetCpu {
     fn default() -> Self {
-        Self::baseline()
+        Self::host()
     }
 }
 
@@ -199,6 +223,8 @@ pub struct NativeTarget {
 }
 
 impl NativeTarget {
+    /// `triple` with the `x86-64` baseline CPU, for callers whose CPU must
+    /// not follow the host; [`NativeTarget::host`] carries the host's.
     pub const fn new(triple: Triple) -> Self {
         Self {
             triple,
@@ -206,9 +232,10 @@ impl NativeTarget {
         }
     }
 
-    /// The build host as a native target, when supported.
+    /// The build host as a native target, when supported: its triple and
+    /// [`TargetCpu::host`], the pin's defaults.
     pub fn host() -> Option<Self> {
-        Triple::host().map(Self::new)
+        Triple::host().map(|triple| Self::new(triple).with_cpu(TargetCpu::host()))
     }
 
     /// This target with `cpu` as its target CPU.
@@ -334,6 +361,14 @@ impl EmitKind {
     }
 }
 
+/// The pin's table row named `name`.
+fn model(name: &str) -> Option<&'static CpuModel> {
+    x86_cpus::X86_CPUS
+        .binary_search_by(|model| model.name.cmp(name))
+        .ok()
+        .map(|index| &x86_cpus::X86_CPUS[index])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,7 +431,11 @@ mod tests {
             Err("unknown target CPU 'bogus'".to_string())
         );
         assert!(TargetCpu::parse(Some("i686"), None).is_err());
-        assert_eq!(TargetCpu::parse(None, None), Ok(TargetCpu::baseline()));
+        assert_eq!(TargetCpu::parse(None, None), Ok(TargetCpu::host()));
+        assert_eq!(
+            TargetCpu::parse(None, Some("+avx512f,-avx2")),
+            TargetCpu::parse(Some(TargetCpu::host().name()), Some("+avx512f,-avx2"))
+        );
         let cpu = TargetCpu::parse(Some("skylake"), Some("+bogus,-avx2,-alsobad")).unwrap();
         assert_eq!(cpu.name(), "skylake");
         assert_eq!(

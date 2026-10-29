@@ -297,7 +297,7 @@ pub struct Compiler {
     body_fact_reuse: Option<bool>,
     /// The native target the elaborator answers layout queries for: the
     /// `--target`/`--target-cpu`/`--target-features` of a native compile or
-    /// a run, otherwise the host with the `x86-64` CPU. `None` on a host
+    /// a run, otherwise the host with the host CPU. `None` on a host
     /// with no native target, where a program that asks a layout fails.
     target: Option<crate::native::target::NativeTarget>,
     /// Import the bundled library's compiled package instead of checking
@@ -359,7 +359,7 @@ pub fn validate_module_scope(stmts: &[Stmt]) -> Result<(), TypeError> {
 impl Compiler {
     /// Construct a compiler with explicit module-link and backend policy.
     #[must_use]
-    pub const fn new(link_options: LinkOptions, backend: BackendKind) -> Self {
+    pub fn new(link_options: LinkOptions, backend: BackendKind) -> Self {
         Self {
             link_options,
             backend,
@@ -368,10 +368,7 @@ impl Compiler {
             std_package: None,
             pre_elaboration: None,
             exports: Vec::new(),
-            target: match crate::native::target::Triple::host() {
-                Some(triple) => Some(crate::native::target::NativeTarget::new(triple)),
-                None => None,
-            },
+            target: crate::native::target::NativeTarget::host(),
         }
     }
     /// Elaborate for `target` instead of the host.

@@ -636,7 +636,7 @@ fn native_opt_level(cli: &CliArgs) -> Result<mojito::backend::pliron::OptLevel, 
 }
 
 /// The checked `--target`, `--target-cpu`, and `--target-features`
-/// (default: the build host's triple, when supported, and `x86-64`).
+/// (default: the build host's triple, when supported, and the host CPU).
 fn native_target(cli: &CliArgs) -> Result<mojito::native::target::NativeTarget, String> {
     use mojito::native::target::{NativeTarget, TargetCpu, Triple};
     let target = match cli.target.as_deref() {
@@ -908,7 +908,7 @@ fn print_usage() {
          \x20 -o, --output PATH      compile or precompile output path (required for bc|obj|exe)\n\
          \x20 --native-opt LEVEL     native optimization profile: 0|release (alias: 1; default 0)\n\
          \x20 --target TRIPLE        native target triple (default: the host; alias --target-triple)\n\
-         \x20 --target-cpu CPU       native target CPU (default: x86-64)\n\
+         \x20 --target-cpu CPU       native target CPU (default: the host CPU)\n\
          \x20 --target-features LIST native target feature edits, e.g. +avx2,-fma (default: the CPU's)\n\
          \x20 --native-debug LEVEL   native debug info: none|lines (default lines)\n\
          \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\

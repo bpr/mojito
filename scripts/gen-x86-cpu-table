@@ -115,7 +115,7 @@ def render(pin: str, llvm: str, cpus: dict[str, list[str]], features: list[str])
         "    pub features: &'static [&'static str],",
         "}",
         "",
-        "/// The `x86-64` row, the default target CPU.",
+        "/// The `x86-64` row, the baseline target CPU.",
         "pub(super) const X86_64: &CpuModel = &CpuModel {",
         '    name: "x86-64",',
         f"    features: &[{', '.join(repr_str(f) for f in cpus['x86-64'])}],",

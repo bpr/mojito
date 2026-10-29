@@ -12,7 +12,7 @@ pub(super) struct CpuModel {
     pub features: &'static [&'static str],
 }
 
-/// The `x86-64` row, the default target CPU.
+/// The `x86-64` row, the baseline target CPU.
 pub(super) const X86_64: &CpuModel = &CpuModel {
     name: "x86-64",
     features: &["cmov", "cx8", "fxsr", "mmx", "sse", "sse2", "x87"],

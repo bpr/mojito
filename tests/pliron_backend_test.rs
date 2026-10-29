@@ -1105,26 +1105,28 @@ fn locations_render_in_canonical_text() {
 /// Nothing in this module executes generated code — these are the
 /// "target-only cross checks" of the ABI milestone's acceptance.
 mod native_abi_cross_checks {
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
     use std::process::Command;
 
     use expect_test::expect;
     use llvm_sys::core::{
-        LLVMArrayType2, LLVMContextCreate, LLVMContextDispose, LLVMDoubleTypeInContext,
-        LLVMFloatTypeInContext, LLVMHalfTypeInContext, LLVMInt1TypeInContext,
-        LLVMInt8TypeInContext, LLVMInt16TypeInContext, LLVMInt32TypeInContext,
-        LLVMInt64TypeInContext, LLVMPointerTypeInContext, LLVMStructTypeInContext,
+        LLVMArrayType2, LLVMContextCreate, LLVMContextDispose, LLVMDisposeMessage,
+        LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMHalfTypeInContext,
+        LLVMInt1TypeInContext, LLVMInt8TypeInContext, LLVMInt16TypeInContext,
+        LLVMInt32TypeInContext, LLVMInt64TypeInContext, LLVMPointerTypeInContext,
+        LLVMStructTypeInContext,
     };
     use llvm_sys::prelude::{LLVMContextRef, LLVMTypeRef};
     use llvm_sys::target::{
         LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMCreateTargetData, LLVMDisposeTargetData,
         LLVMOffsetOfElement, LLVMTargetDataRef,
     };
+    use llvm_sys::target_machine::LLVMGetHostCPUName;
     use mojito::Compiler;
     use mojito::ast::Dtype;
     use mojito::native::layout::{LayoutCx, StructFieldIndex, StructLayout};
     use mojito::native::rt_abi::{self, CAbiTy, RtFieldTy};
-    use mojito::native::target::{NativeTarget, Triple};
+    use mojito::native::target::{NativeTarget, TargetCpu, Triple, host_cpu_name};
     use mojito::types::{Ty, TyKind, canonical_simd_ty, simd_shape};
 
     use super::{EXE_MAIN, FIXTURE_NAME, host_target};
@@ -1433,6 +1435,24 @@ mod native_abi_cross_checks {
             line,
             format!("target datalayout = \"{}\"", triple.data_layout())
         );
+    }
+
+    /// The ported `sys::getHostCPUName` (`target/x86_host.rs`) names the
+    /// host as the installed LLVM does, and the default CPU is that name
+    /// when the pin's table has it.
+    #[test]
+    fn host_cpu_name_matches_installed_llvm() {
+        // SAFETY: `LLVMGetHostCPUName` returns an owned C string, read once
+        // and released with `LLVMDisposeMessage`.
+        let llvm = unsafe {
+            let message = LLVMGetHostCPUName();
+            let name = CStr::from_ptr(message).to_string_lossy().into_owned();
+            LLVMDisposeMessage(message);
+            name
+        };
+        assert_eq!(host_cpu_name(), llvm);
+        let expected = TargetCpu::parse(Some(&llvm), None).map_or("x86-64", |cpu| cpu.name());
+        assert_eq!(TargetCpu::host().name(), expected);
     }
 
     /// Produced executables expose the inspectable ABI version symbol and no
