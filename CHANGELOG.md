@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Span` declares upstream's `@implicit` constructor from an `Array`
+  (R1725): `k([4, 5])` and `var a = [1, 2, 3]; k(a)` over `def k(s:
+  Span[Int, _])` print `2` and `3`, `g[Span([4, 5, 6])]()` binds a
+  compile-time `Span`, and `comptime n = len(Span([1, 2, 3]))` is `3`. A
+  method call on a `ref[Self.o]` parameter (`array.unsafe_ptr()`) now
+  carries the struct's binder, and an overloaded function or method whose
+  parameter type names a value binder (`Array[Int, k]`, `Array[T, _]`) is
+  no longer missing at its call.
+
 - A compile-time call applies a callee with a `ref` parameter, passing its
   argument stored in compile-time memory as the pin's `store_to_mem`, and
   one with an origin parameter, which binds that memory's origin (R1644).

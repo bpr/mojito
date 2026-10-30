@@ -31,6 +31,7 @@ use mojito_ast::ast::{
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
+use mojito_types::param_expr::MetaTy;
 use mojito_types::types::{FuncTy, Ty, TyArg, canonical_simd_ty, default_literal};
 use sha2::{Digest, Sha256};
 
@@ -1607,7 +1608,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                     }
                     TyArg::Val(v) => {
                         s.push('$');
-                        s.push_str(&format!("V{v}"));
+                        s.push_str(&value_argument_raw(v, mode));
                     }
                     // The origin tail erases from the runtime ABI, exactly as
                     // the annotation side (`ast_raw`) erases origin arguments:
@@ -1663,7 +1664,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                 s.push('$');
                 match arg {
                     TyArg::Ty(t) => s.push_str(&ty_raw_in(t, self_ty, mode)),
-                    TyArg::Val(v) => s.push_str(&format!("V{v}")),
+                    TyArg::Val(v) => s.push_str(&value_argument_raw(v, mode)),
                     // Origins erase from the runtime ABI: every origin argument
                     // mangles to one marker so origin-differing types share a
                     // specialization and a lowering, like `TyKind::Pointer` origins.
@@ -1675,6 +1676,25 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::SelfType => "Self".to_string(),
         other => other.to_string(),
     }
+}
+
+/// A value argument of a struct or associated type: an overload key spells
+/// a bare reference to a value binder (`Array[Int, n]`, the auto-parameterized
+/// `Array[T, _]`) as the declaration's annotation does, the binder followed by
+/// its value type (`n$Int`), and any other value as `V` and its display.
+fn value_argument_raw(value: &CtValue, mode: KeyMode) -> String {
+    if mode == KeyMode::Overload
+        && let CtValue::Expr(expression) = value
+        && let Some(binder) = expression.as_decl_ref()
+        && let MetaTy::Value(ty) = expression.meta()
+    {
+        return format!(
+            "{}${}",
+            encode_identifier(&binder.name),
+            ty_raw_in(ty, None, mode)
+        );
+    }
+    format!("V{value}")
 }
 
 /// The longest argument spelling [`instance_symbol`] keeps verbatim.
@@ -3487,6 +3507,42 @@ mod tests {
         );
         assert_eq!(lifecycle_constructor("Box.__init__x"), None);
         assert_eq!(lifecycle_constructor("Box.pop"), None);
+    }
+
+    #[test]
+    fn a_value_binder_argument_keys_as_its_declaration_spells_it() {
+        use mojito_ast::ast::{Expr, ExprKind};
+        use mojito_common::token::Span;
+        use mojito_types::param_expr::{ParamContext, ParamId};
+        let binder = TypeParam {
+            name: "k".to_string(),
+            bounds: vec!["Int".to_string()],
+            value_type: None,
+            callable_bound: None,
+            origin_mutability: None,
+            infer_only: false,
+            default: None,
+            constraints: Vec::new(),
+        };
+        let annotation = Type::Named(
+            "Array".to_string(),
+            vec![
+                ParamArg::Type(Type::Int),
+                ParamArg::Value(Expr::new(
+                    ExprKind::Identifier("k".to_string()),
+                    Span::default(),
+                )),
+            ],
+        );
+        let reference =
+            ParamContext::detached().decl_ref(ParamId::new("f", 0), "k", MetaTy::value(Ty::int()));
+        let checked = Ty::new(TyKind::Struct(
+            "Array".to_string(),
+            vec![TyArg::Ty(Ty::int()), TyArg::Val(CtValue::Expr(reference))],
+        ));
+        let declared = TypeKey::from_ast_in_scope(&annotation, std::slice::from_ref(&binder));
+        assert_eq!(declared.as_str(), "Array$Int$k$Int");
+        assert_eq!(TypeKey::from_ty(&checked), declared);
     }
 
     #[test]

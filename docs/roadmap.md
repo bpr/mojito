@@ -290,6 +290,10 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `LT[L]` over `comptime L = [5, 1]` and `struct LT[l: List[Int]]`
     is rejected naming `KGENParamList[Int]`; the pin's rejection names
     `Array[Int, Int(2)]`.
+  - Probe: `f[Span(L)]()` over `comptime L = [1, 2, 3]` and `def f[c:
+    Span[Int, _]]()` is "not an associated comptime expression", where the
+    pin prints `3`; `Span(L)` selects no `Array` constructor over the raw
+    list (found while landing R1725, 2026-10-30).
   - The lever: hold the application at the annotation or the natural type,
     and read it through a display sequence, as a local display binding is
     read (`BoundDisplay`). `module_values` is serialized, so this bumps
@@ -2039,6 +2043,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     "element"]`, and an element store does not move the elements.
   - Distinct from R1155, which is `Span(list)` followed by a structural
     mutation.
+  - Probe: an element read beside a live mutable view is rejected too.
+    `var s = Span(l); s[0] = 7; print(l[0], len(s))` reports "access to
+    'l' conflicts with live reference 's'", where the pin prints `7 3`
+    (found while landing R1725, 2026-10-30).
   - Probe: `conformance/probes/list_slice_span_element_store.mojo`.
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
@@ -2095,6 +2103,14 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   fails with "reference binding to a non-place expression".
   - The pin materializes the literal and binds the parameter to the temporary.
   - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
+  - Probe: a list display converted at a `ref` parameter is not
+    materialized either. `h([1, 2, 3])` over `def h(ref a: List[Int])`,
+    and `Span([1, 2, 3]).__len__()` through `Span`'s `List` constructor
+    (which the pin selects for a display), fail the verifier ("write-back
+    parameter 0 of 'h' has no caller place"). `var s = Span([1, 2, 3])`
+    reports "no field 'size'", and `len(Span([1, 2, 3]))` says `Span[Int]`
+    is not `SizedRaising`. The pin prints `3` for each (found while
+    landing R1725, 2026-10-30).
   - It materializes through the same fallback divergence R169
     (`ref-binding-register-value`) wants narrowed, so the two answers must
     agree.
@@ -7066,8 +7082,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime s = Span(L)` over `comptime L = [1, 2, 3]`, then a
     run-time `len(s)`, is rejected at the pin ("cannot materialize
     compile-time value of type 'Span[Int, ComptimeOrigin]' to a runtime
-    value"), and `comptime n = len(s)` prints `3`. Both wait on R1725
-    first, since `L` is an `Array`.
+    value"), and `comptime n = len(s)` prints `3`. Both wait on R1728
+    first, since `L` is a raw element list rather than an `Array`.
   - A `ref` parameter's compile-time argument (`ParamOp::StoreToMem`,
     `ParamContext::store_to_mem`) is typed `Origin::Static` too, and so is
     the origin binder it binds (`f[Span(l)]()` over a `List[Int]` binder):
@@ -10982,9 +10998,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   constant: not an associated comptime expression", where the pin prints
   `17.0 [6.0, 17.0]` for `p(Float64(2))` and `p(SIMD[DType.float32, 2](1,
   2))`.
-  - A display at a `Span` slot applies its natural `Array` and fails the
-    conversion: `f[[1, 2, 3]]()` over `def f[c: Span[Int, _]]()` reports
-    "expected Span[Int], found Array[Int, 3]". The pin prints `3`.
+  - A display at a `Span` slot now converts through `Span`'s `Array`
+    constructor, but `f[[1, 2, 3]]()` over `def f[c: Span[Int, _]]()`
+    reports "unsupported compile-time application of
+    `Span.__init__$ov$Array…` binds 1 of its 2 parameters". The pin
+    prints `3`.
   - At the pin the display is its natural `Array[T, n]`, converted by
     `Span`'s `@implicit` `ref[Self.origin] array: Array[Self.T, _]`
     constructor (R1725, R1644).
@@ -12536,37 +12554,6 @@ residue found inside a task moves to the task that owns its fix.
     monomorphization") rather than in the check.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1725 `Span` has no constructor from an `Array`, so a list display
-  never converts to a `Span`**
-
-  `k([4, 5])` and `var a = [1, 2, 3]; k(a)` over `def k(s: Span[Int, _])`
-  are rejected ("expected Span[Int], found Array[Int, 3]"), where the pin
-  prints `2` and `3` through upstream's `@implicit __init__(out self,
-  ref[Self.origin, Self.address_space] array: Array[Self.T, _])`.
-  - Port it to `stdlib/std/span.mojo` without `address_space`, which the
-    bundled `Span` does not declare, with upstream's body
-    `self._data = array.unsafe_ptr()` and `self._len = array.length`.
-  - `origin_of(array)` over the `ref [Self.origin]` parameter reads as a
-    fresh `ImmOrigin`, so upstream's body is rejected ("expected
-    Pointer[T, origin#2._get_owned_interior[element]], found Pointer[T,
-    ImmOrigin(origin@…)]"). Fix that, rather than copying the `List`
-    constructor's `unsafe_origin_cast`.
-  - With the constructor declared, a bundled `Span(a)` checks but the VM
-    reports "checked constructor
-    'Span.__init__$ov$Array$T$AnyType$V$length$array' is missing from
-    MIR". The same struct runs as user code, imported or not, so only the
-    bundled package drops it.
-  - Probe: `f[Span(L)]()` over `comptime L = [1, 2, 3]` and `def f[c:
-    Span[Int, _]]()`, and `f[Span([4, 5, 6])]()`, are "not an associated
-    comptime expression", where the pin prints `2` and `3 5`.
-  - Probe: `comptime s = Span([1, 2, 3])` then `comptime n = len(s)`
-    fails the verifier ("write-back parameter 0 of
-    'Span.__init__$ov$List$T$AnyType' has no caller place"), where the pin
-    prints `3`.
-  - Found while planning R1712 (2026-10-30).
-  - Depends on R1448.
   - Model: Opus, Not Planned.
 
 - [ ] **R1126 `Array` slices into a `Span`**

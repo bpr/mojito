@@ -1,11 +1,13 @@
-# A borrowed contiguous view over a List's element storage: current Mojo's
-# `Span`. The view holds a multi-element origin-bearing pointer plus a
-# length. Constructing it from a List lends the List's place to the view (a
-# shared loan solved through the `ref [origin]` binding), so the source
+# A borrowed contiguous view over a List's or an Array's element storage:
+# current Mojo's `Span`. The view holds a multi-element origin-bearing
+# pointer plus a length. Constructing it from a List or an Array lends the
+# source's place to the view (a shared loan solved through the
+# `ref [origin]` binding), so the source
 # stays alive while any copy of the view does and structural mutation of
 # the source conflicts. Element access and the strict contiguous sub-slice
 # use current Mojo's strict bounds: violations abort.
 
+from std.collections.array import Array
 from std.collections.list import List
 
 from std.builtin.builtin_slice import ContiguousSlice
@@ -86,6 +88,12 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
             origin._get_owned_interior["element"]
         ]()
         self._size = len(list)
+
+    @inline(.always)
+    @implicit
+    def __init__(out self, ref [Self.origin] array: Array[Self.T, _]):
+        self._data = array.unsafe_ptr()
+        self._size = array.length
 
     @always_inline("builtin")
     def __len__(self) -> Int:

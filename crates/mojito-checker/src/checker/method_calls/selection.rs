@@ -23,6 +23,24 @@ impl Checker {
         else {
             return ty;
         };
+        // A `ref[Self.o]` parameter receiver reads as the enclosing struct's
+        // binder, as `Pointer(to=xs)` does: `array.unsafe_ptr()` in `Span`'s
+        // constructor is a `Pointer[T, Self.origin._get_owned_interior[...]]`.
+        if let ExprKind::Identifier(name) = &receiver.kind
+            && let Some(PointerOrigin::Param { id, mutability, .. }) =
+                self.lookup_reference_parameter_binder(name)
+        {
+            return TyKind::Pointer {
+                element: element.clone(),
+                origin: PointerOrigin::Param {
+                    id,
+                    mutability,
+                    interior: interior.clone(),
+                    subtree: *subtree,
+                },
+            }
+            .into();
+        }
         let Ok(reference) = self.reference_actual(receiver) else {
             return ty;
         };

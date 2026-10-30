@@ -1038,6 +1038,7 @@ assets/ok/slice_library_struct.mojo	main	exe-differential	sanitized
 assets/ok/slice_literal_constructor_binding.mojo	main	exe-differential	sanitized
 assets/ok/slice_none_bound.mojo	main	exe-differential	sanitized
 assets/ok/slice_string_native.mojo	main	exe-differential	sanitized
+assets/ok/span_from_array.mojo	main	exe-differential	sanitized
 assets/ok/span_generic_free_def_view.mojo	main	exe-differential	sanitized
 assets/ok/span_implicit_from_list.mojo	main	exe-differential	sanitized
 assets/ok/span_iteration.mojo	main	exe-differential	sanitized
