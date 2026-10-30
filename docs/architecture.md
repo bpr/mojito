@@ -7635,9 +7635,9 @@ Runtime helpers implement:
 - list methods
 - SIMD construction and lane access
 - builtin functions such as `print`, `len`, `range`, numeric conversions,
-  `abs`, `round`, and the `min`/`max` that a module loaded while the
+  `round`, and the `abs`/`min`/`max` that a module loaded while the
   prelude bootstraps still calls (elsewhere they are `std.math`'s library
-  overloads)
+  functions)
 
 `size_of[T]()` is deliberately not a VM-value helper. Checking records `T`, MIR
 retains it in `SizeOf`, verification requires it to have a native layout, and

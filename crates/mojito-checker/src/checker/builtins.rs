@@ -551,6 +551,9 @@ impl Checker {
     }
 
     /// Type `abs(x)`: a numeric argument, returning the same numeric type.
+    /// A call reaches this rule only where no `abs` binding exists — a
+    /// module loaded while the prelude bootstraps, or a program linked
+    /// without the prelude; elsewhere it calls `std.math.abs`.
     pub(super) fn infer_abs(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("abs", 1, args)?;
         // A numeric value, or an opaque `T: Absable` — `abs` returns the same type

@@ -1,9 +1,9 @@
 # Upstream's `std/math/math.mojo`, holding its operation traits, the
 # rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`, the `SIMD` overload
-# of `iota`, `fma`, `clamp`, and both overloads each of `max` and `min`,
-# verbatim (the buffer overload of `iota` is omitted). The prelude exports
-# `Absable`, `Powable`, `Roundable`, `max`, and `min`, as upstream's does;
-# `abs`/`round`/`divmod` are still compiler builtins (R1458).
+# of `iota`, `fma`, `clamp`, both overloads each of `max` and `min`, and
+# `abs`, verbatim (the buffer overload of `iota` is omitted). The prelude
+# exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and `min`, as
+# upstream's does; `round`/`divmod` are still compiler builtins (R1458).
 #
 # Each helper is generic over the trait that supplies its dunder. `SIMD`
 # declares `Absable`, `Ceilable`, `Floorable`, and `Truncable` in
@@ -292,3 +292,24 @@ def min[T: Copyable & Comparable & Deinitable](x: T, *ys: T) -> T:
         if y < res:
             res = y.copy()
     return res.copy()
+
+
+# ===----------------------------------------------------------------------=== #
+# abs
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def abs[T: Absable](value: T) -> T:
+    """Get the absolute value of the given object.
+
+    Parameters:
+        T: The type conforming to Absable.
+
+    Args:
+        value: The object to get the absolute value of.
+
+    Returns:
+        The absolute value of the object.
+    """
+    return value.__abs__()

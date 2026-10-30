@@ -1810,7 +1810,19 @@ impl Checker {
                 field: field.to_string(),
             });
         }
-        let obj_ty = self.infer(object)?;
+        // A type name with no member of that name is never read as a value
+        // (`Int32.size`): the pin reports the missing attribute.
+        let obj_ty = match self.infer(object) {
+            Err(TypeError::UndefinedVariable(_))
+                if let Some(subject) = self.member_type_operand(object) =>
+            {
+                return Err(TypeError::NoSuchField {
+                    object_type: subject.to_string(),
+                    field: field.to_string(),
+                });
+            }
+            inferred => inferred?,
+        };
         // Projecting a field through a reference-returning expression borrows
         // that referent for the projection; it does not first create an owned
         // copy of the whole value. Retain the handle exactly as method and

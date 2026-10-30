@@ -650,6 +650,24 @@ fn param_apply_is_structural_and_unfolded() {
         context.replace(&over_n, &bindings).expect("replacement"),
         context.apply("f", &[three], MetaTy::int())
     );
+    // Replacement reaches the declared result too: `S[n](n)` at `n = 3` is
+    // an `S[3]`.
+    let n = int_param(&context, "g", 0, "n");
+    let over = |argument: CtValue| {
+        MetaTy::value(TyKind::Struct("S".to_string(), vec![TyArg::Val(argument)]).into())
+    };
+    let construction = context.apply(
+        "S.__init__",
+        std::slice::from_ref(&n),
+        over(CtValue::Expr(n.clone())),
+    );
+    assert_eq!(
+        *context
+            .replace(&construction, &bindings)
+            .expect("replacement")
+            .meta(),
+        over(CtValue::Int(3))
+    );
     assert_eq!(context.size_of(Ty::int()).to_string(), "size_of[Int]()");
     assert_eq!(*context.size_of(Ty::int()).meta(), MetaTy::int());
 }

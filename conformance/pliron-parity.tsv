@@ -7,6 +7,7 @@
 #         ineligible (no runnable `main` shape for this gate)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron parity_exe_manifest
+assets/ok/abs_scalar_aliases.mojo	main	exe-differential	sanitized
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	main	exe-differential	sanitized
 assets/ok/access_beside_live_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/add.mojo	main	exe-differential	sanitized
@@ -203,6 +204,7 @@ assets/ok/comptime_match_forms.mojo	main	exe-differential	sanitized
 assets/ok/comptime_match_patterns.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_constant_parameter_values.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_sized_scalar_constant.mojo	main	exe-differential	sanitized
+assets/ok/comptime_self_member_applied.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_sized_scalar_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized

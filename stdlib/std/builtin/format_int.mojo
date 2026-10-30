@@ -1,19 +1,19 @@
 # Upstream's `std/builtin/format_int.mojo`, in part: `_write_int`, the
 # digit writer `SIMD.write_to` calls for an integral lane, and its digit
-# table. `bin`, `hex`, `oct`, and `_format_int` are not ported. Three lines
+# table. `bin`, `hex`, `oct`, and `_format_int` are not ported. Two lines
 # of `_write_int` are respelled, each by the same arithmetic:
 # - `floor_div` divides with `//`, where upstream's `/` (R184): the two
 #   agree on the non-negative operand it takes;
 # - `ceil_div` inlines upstream's `SIMD.__ceildiv__` body, where upstream
-#   calls it, with its `divmod` as `//` and `%` (R1623);
-# - `neg_digit_value` calls `__abs__`, the member upstream's `abs` calls,
-#   where upstream calls `abs` (R1458).
+#   calls it, with its `divmod` as `//` and `%` (R1623).
+# `abs` is imported, which upstream's prelude provides (R894).
 """Provides the `hex` and `bin` functions.
 
 These are Mojo built-ins, so you don't need to import them.
 """
 
 from std.collections import Array
+from std.math import abs
 from std.span import Span
 from std.string import StaticString, StringSlice
 from std.sys import bit_width_of
@@ -146,7 +146,7 @@ def _write_int[
     else:
 
         def neg_digit_value(value: Scalar[dtype]) -> Scalar[dtype]:
-            return (value % Scalar[dtype](-radix)).__abs__()
+            return abs(value % Scalar[dtype](-radix))
 
         def ceil_div(value: Scalar[dtype]) -> Scalar[dtype]:
             comptime if dtype.is_signed():

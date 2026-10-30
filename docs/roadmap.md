@@ -446,6 +446,11 @@ which names the upstream pass each one follows. Each is measured by the
     layout, or retype the erased clone's result to its caller's instance.
   - `MOJITO_PRE_ELABORATION=0` runs it; `print(b.v)` on the result runs.
   - The same through `type_of(b).make(b.v)`.
+  - Probe: `comptime z = S[2](5)` then `print(z)`, over a `@fieldwise_init
+    struct S[n: Int](Writable)` whose one field is `x: Int`, stops the VM
+    with "`S$mono$V$REMOVED$ARG` has no `write_to` instance", where the pin
+    prints `5`; so does `print(S[2].Z)` over `comptime Z = Self(7)`.
+    `print(z.x)` runs.
   - Found while landing R1599 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6017,29 +6022,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R66 Small SIMD surface gaps the symbolic-lane probes found on concrete
-  types**
-
-  Problem: each of these runs at the pin on a concrete scalar or vector and
-  is rejected by Mojito, so a symbolic template cannot license it either.
-  - `len(v)` on a vector (`len_result_for_type` has no `Ty::Simd` arm),
-    `abs` over a scalar alias (`is_numeric` excludes it),
-    `Scalar[dt].MAX`/`.MIN`, and `**` on a lane.
-  - Probe: `print(Int.MAX)`, `print(UInt8.MAX)`, and `T.MAX` over a module
-    `comptime T = Int` stop at "Undefined variable 'Int'" (or 'UInt8'),
-    a scalar type read as a value. The pin prints the maximum.
-  - `Float64.cast[...]()`: the canonical width-one `float64` is `Ty::Float64`
-    and has no SIMD methods.
-  - Natively only, `String(v)` of a multi-lane vector is an unsupported
-    type where `print(v)` lowers (`pliron backend: unsupported type`).
-  - On a symbolic lane only, `range(Scalar[dt](0), n)`, `to_bits()` without
-    an explicit target, and a `DType.bool` mask's `fill=` at a symbolic
-    width are reported at the template rather than deferred to the
-    instantiation.
-  - One site each.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R459 A reached struct instance instantiates every constructor
   overload, called or not**
 
@@ -8683,7 +8665,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   register, where upstream's library function reads it in place**
 
   `print`, `input`, `abort`'s `_mojito_abort`, `Error(...)`, `Int(...)`,
-  `divmod`, `abs`, and `round` are checked and lowered as builtins
+  `divmod`, and `round` are checked and lowered as builtins
   (`checker/call_inference.rs`), so no argument binds a `read` parameter
   and MIR lowers each as a plain value.
   - So a memory-only argument is a register: a copy of a `read` parameter,
@@ -8709,7 +8691,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     into a register (`nominal_string_parse.mojo`,
     `nominal_string_parse_errors.mojo`, `nominal_string_atof_rounding.mojo`,
     `list_unsafe_uninit_length.mojo`).
-  - Probe: `divmod(a, b)`, `round(x)`, and `abs(x)` over a generic `T` copy
+  - Probe: `divmod(a, b)` and `round(x)` over a generic `T` copy
     their operands (`boolable_and_divmod.mojo`,
     `numeric_operation_traits.mojo`), a struct's too since R1361
     (`math_operation_traits_library.mojo`); R1458 closes it.
@@ -8871,31 +8853,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1458 `abs`, `round`, and `divmod` are compiler builtins, and
-  `pow` is missing, where upstream's `std/math` declares library functions**
+- [ ] **R1458 `round` and `divmod` are compiler builtins, and `pow` is
+  missing, where upstream's `std/math` declares library functions**
 
   `round(2.567, 2)` is rejected ("'round' expects 1 argument(s), got 2")
   and `pow(2, 10)` is an undefined variable, where the pin prints `2.57`
   and `1024`.
-  - Upstream declares `abs[T: Absable](value: T)`, `round[T:
-    Roundable](number: T)` and its `ndigits` overload, `divmod[T:
-    DivModable]`, and `pow[T: Powable]` beside the traits, each returning
-    the requirement's result.
-  - Mojito checks the first three by name (`Checker::infer_abs`,
-    `infer_round`, `infer_divmod`), the backends run them as builtins, and
-    the elaborator rewrites a struct operand into the dunder call.
-  - Declare the four in `stdlib/std/math.mojo`, exported from the prelude,
-    and delete the builtins. The scalars already answer each requirement
-    as a method.
-  - Closes R1441's `divmod`/`round`/`abs` probe: a `read` parameter binds
-    the argument in place.
+  - Upstream declares `round[T: Roundable](number: T)` and its `ndigits`
+    overload, `divmod[T: DivModable]`, and `pow[T: Powable]` beside the
+    traits, each returning the requirement's result.
+  - Mojito checks the first two by name (`Checker::infer_round`,
+    `infer_divmod`), the backends run them as builtins, and the elaborator
+    rewrites a struct operand into the dunder call.
+  - Declare the three in `stdlib/std/math.mojo`, exported from the
+    prelude, as `abs` is since R66, and delete their builtins. The scalars
+    already answer each requirement as a method.
+  - Closes R1441's `divmod`/`round` probe: a `read` parameter binds the
+    argument in place.
   - Probe: `divmod(UInt8(7), 3)` is rejected ("'divmod' is not defined for
     UInt8 and Int"), where the pin prints `(2, 1)`: `builtin_args`
     materializes the literal to `Int` before the pair is typed, where
     upstream's `divmod[T: DivModable]` binds `T` from `UInt8`.
-  - Probe: `std/builtin/format_int.mojo`'s `neg_digit_value` calls
-    `__abs__`, where upstream's `_write_int` calls `abs`: `abs` over a
-    `Scalar[dtype]` stops with "expected a numeric value".
   - Found while landing R1361 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9754,6 +9732,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Then `infer_scalar_range`, its call in `Checker::infer_call`
     (`call_inference.rs`), and the `scalar_range_parts` shortcuts in
     `iteration.rs`, `indexing.rs`, and `builtins.rs` go.
+  - Probe: `range(Scalar[dt](0), n)` over `n: Scalar[dt]` in `def f[dt:
+    DType]` is "no overload matches the supplied arguments", where the pin
+    prints `0`, `1`, and `2` for `f[DType.int32](3)`: the rule reads only
+    a concrete lane, and `range(Int32(0), Int32(3))` runs.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -9818,7 +9800,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     checker's builtin `min`/`max` rule (`Checker::infer_min_max`), the VM's
     `builtin_min_max`, and Pliron's `lower_min_max_builtin`, where every
     other module calls `std.math`'s library overloads. `simd.mojo` imports
-    `max` and `min` from `std.math` for `clamp`.
+    `max` and `min` from `std.math` for `clamp`, and
+    `builtin/format_int.mojo` imports `abs`.
   - Probe: `simd.mojo` imports `Optional` and `StaticString`, and
     `builtin/format_int.mojo` and `builtin/_format_float.mojo` import
     `StaticString`, `StringSlice`, and `Span`, which upstream's read from
@@ -9826,10 +9809,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     package build ("not a compile-time Int constant: StaticString",
     "no overload matches" `write_string`).
   - Fix: bind the prelude's names in bootstrap modules too, then drop the
-    six `range` imports and `simd.mojo`'s `max`/`min` import, and delete
-    the `min`/`max` rule, its `call_inference.rs` arm, the VM's
-    `"min"`/`"max"` `BUILTIN_CALLEES` entries and arms, and Pliron's
-    `lower_min_max_builtin` with its `calls.rs` arm.
+    six `range` imports, `simd.mojo`'s `max`/`min` import, and
+    `format_int.mojo`'s `abs` import, and delete the `min`/`max` and `abs`
+    rules (`Checker::infer_min_max`, `infer_abs`), their
+    `call_inference.rs` arms, the VM's `"min"`/`"max"`/`"abs"`
+    `BUILTIN_CALLEES` entries and arms, and Pliron's
+    `lower_min_max_builtin` and `lower_abs_builtin` with their `calls.rs`
+    arms. `abs`'s elaborator rewrite (`mono/specializer.rs`) goes with it.
   - Found while landing R791 (2026-10-14).
   - Depends on R592 (the `max` callers only: `std.math` links after them).
   - Model: Fable, Not Planned.
@@ -10555,6 +10541,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     lanes with `result[i] = …` (R1561), and initializes `out result` with
     `result = {}`.
   - Port `__ipow__` (`simd.mojo:1748`) too; its `rhs` is `Int`.
+  - Probe: `Int32(3) ** 2` and `Int32(3) ** Int32(2)` are rejected
+    ("operator '**' is not defined for Int32 and Int"), where the pin
+    prints `9`: the rule serves only `Int`, `UInt`, `Float64`, and a
+    float lane read out of a vector.
   - Retire the `__pow__` arms of `math_operation_requirement` and the
     elaborator's `__pow__` rewrite (`mono/specializer.rs`).
   - Removes `pliron_float_pow.mojo` from R171.
@@ -10718,11 +10708,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (``#kgen.simd<"inf"> : !kgen.scalar<f32>``).
   - `max_finite` needs `~Scalar[_unsigned_integral_type_of[dtype]()](0)
     >> 1`.
-  - `Int32.MAX` also needs R66's scalar alias read as a type.
+  - Probe: `print(Int.MAX)`, `print(UInt8.MAX)`, and `T.MAX` over
+    `comptime T = Int` report "type 'Int' has no field 'MAX'": the alias
+    already reads as a type (`Int32.dtype` runs), so only the member is
+    missing.
   - Probe: `type_of(v).MAX` over a `Float32` `v` reads the member on the
     type and reports "type 'Float32' has no field 'MAX'".
+  - A `Self(...)` member reads at the application (`S[2].Z` is an `S[2]`),
+    but declaring `comptime M = Self(0)` in `SIMD` stops the bundled
+    library with R1597's "not an associated comptime expression".
   - Found while landing R1555 (2026-10-28).
-  - Depends on R66.
+  - Depends on R1597.
   - Model: Fable, Not Planned.
 
 - [ ] **R1597 A compile-time `SIMD` construction folds by the checker's
@@ -11056,6 +11052,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Move them onto the contract R1662 records, then retire
     `std._intrinsics._int_digits`/`_uint_digits`, `INT_DIGITS_SYMBOL` and
     `UINT_DIGITS_SYMBOL`, and their keep-alive in `mir/symbols.rs`.
+  - Probe: native `String(v)`, `repr(v)`, and `s.write(v)` over a
+    `SIMD[DType.int32, 4]` stop with "unsupported type `Simd { dtype:
+    Known(Int32), width: Known(4) }`", where the VM and the pin give
+    `[1, 2, 3, 4]` and `SIMD[DType.int32, 4](1, 2, 3, 4)`: only
+    `print_simd` lowers a vector's lanes, straight to stdout.
   - Probe: native `repr(SIMD[DType.bool, 2](True, False))` stops with
     "unsupported type `Simd { dtype: Known(Bool), width: Known(2) }`", and
     native `repr(Scalar[DType.bool](True))` prints `True`, where the VM and

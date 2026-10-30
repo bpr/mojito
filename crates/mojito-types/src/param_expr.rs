@@ -1887,7 +1887,10 @@ impl ParamContext {
                     .iter()
                     .map(|arg| self.replace_at(arg, bindings, depth, memo))
                     .collect::<Result<_, _>>()?;
-                self.apply(function, &args, expr.meta().clone())
+                // The callee's declared result names the binders its
+                // arguments do (`Self(7)`'s `S[n]` at `n = 2` is `S[2]`).
+                let meta = self.replace_meta(expr.meta(), bindings, depth)?;
+                self.apply(function, &args, meta)
             }
             ParamKind::BindParams { generator, args } => {
                 let args: Vec<Option<ParamExpr>> = args
@@ -1909,6 +1912,45 @@ impl ParamContext {
         };
         memo.insert(key, replaced.clone());
         Ok(replaced)
+    }
+
+    /// `meta` with its value domains' parameters replaced, as
+    /// [`crate::types::replace_parameters`] replaces a type's.
+    fn replace_meta(
+        &self,
+        meta: &MetaTy,
+        bindings: &ParamBindings,
+        depth: u32,
+    ) -> Result<MetaTy, ParamError> {
+        let each = |metas: &[MetaTy]| -> Result<Vec<MetaTy>, ParamError> {
+            metas
+                .iter()
+                .map(|meta| self.replace_meta(meta, bindings, depth))
+                .collect()
+        };
+        Ok(match meta {
+            MetaTy::Value(ty) => {
+                MetaTy::value(crate::types::replace_parameters(self, ty, bindings, depth)?)
+            }
+            MetaTy::Type => MetaTy::Type,
+            MetaTy::Tuple(elements) => MetaTy::Tuple(each(elements)?),
+            MetaTy::List(elements) => MetaTy::List(each(elements)?),
+            MetaTy::Set(elements) => MetaTy::Set(each(elements)?),
+            MetaTy::Dict(entries) => MetaTy::Dict(
+                entries
+                    .iter()
+                    .map(|(key, value)| {
+                        Ok((
+                            self.replace_meta(key, bindings, depth)?,
+                            self.replace_meta(value, bindings, depth)?,
+                        ))
+                    })
+                    .collect::<Result<_, ParamError>>()?,
+            ),
+            MetaTy::ParamList(element) => {
+                MetaTy::ParamList(Box::new(self.replace_meta(element, bindings, depth)?))
+            }
+        })
     }
 
     /// Install a bound value for a reference: its meta-type must be the

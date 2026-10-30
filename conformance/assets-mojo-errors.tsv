@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	929
+# swept-count	930
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -905,6 +905,7 @@ assets/type_error/type_argument_origin_function_alias.mojo	compile-reject	agree	
 assets/type_error/type_argument_origin_method_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'insert' call
 assets/type_error/type_argument_origin_pointer_write_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call
 assets/type_error/type_comparison_value_with_value.mojo	compile-reject	agree	error: 'Movable' does not implement the '__le__' method
+assets/type_error/type_member_unknown.mojo	compile-reject	agree	error: 'Int32' value has no attribute 'size'
 assets/type_error/type_of_all_types_spelled.mojo	compile-reject	agree	error: use of unknown declaration '__TypeOfAllTypes'
 assets/type_error/type_of_later_parameter.mojo	compile-reject	agree	error: use of unknown declaration 'x'
 assets/type_error/type_param_positional_construction.mojo	compile-reject	agree	error: cannot construct 'T' with itself, you can remove the constructor call

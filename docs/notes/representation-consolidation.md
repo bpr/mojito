@@ -44,7 +44,7 @@ command cannot use both.
      R1507, R1662, and R330.
    - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
      both backends.
-   - R1596 (after R66) and R1597 (after R1592) finish the surface.
+   - R1597 (after R1592) and R1596 (after R1597) finish the surface.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1558 --task R1596 --task R1597 -n 0

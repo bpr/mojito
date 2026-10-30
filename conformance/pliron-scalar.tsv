@@ -7,6 +7,7 @@
 #         ineligible (no zero-arg value-returning `compute` entry)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron scalar_capability_manifest
+assets/ok/abs_scalar_aliases.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/access_beside_live_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/add.mojo	-	ineligible	no-scalar-entry-shape
@@ -203,6 +204,7 @@ assets/ok/comptime_match_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_match_patterns.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_module_constant_parameter_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_module_sized_scalar_constant.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_self_member_applied.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_sized_scalar_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape

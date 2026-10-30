@@ -1225,9 +1225,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/builtins.rs` owns built-in typing/coercion rules and builtin
   free-function inference (`print`/`range`/…, `len` where the library
   overload set cannot bind: a type pack, or a program linked without the
-  prelude, and `min`/`max` (`infer_min_max`) where no `std.math` binding
-  exists: a module loaded while the prelude bootstraps, or a program
-  linked without the prelude).
+  prelude, and `abs`/`min`/`max` (`infer_abs`, `infer_min_max`) where no
+  `std.math` binding exists: a module loaded while the prelude
+  bootstraps, or a program linked without the prelude).
 
 ### MIR
 

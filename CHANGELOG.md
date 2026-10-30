@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `abs` is now upstream's `std.math.abs[T: Absable]`, exported from the
+  prelude, so `abs` over `Int32`, a vector, or a `Scalar[dtype]` runs as
+  at the pin, and `_write_int` calls it as upstream's does. A struct's
+  `Self(...)`-built `comptime` member read through an application
+  (`S[2].Z`) is now a value of that application, and an unknown member of
+  a type name (`Int32.size`) reports the missing member rather than an
+  undefined variable (R66).
+
 - `Int(x)`, `UInt(x)`, `Float64(x)`, and the sized aliases now bind
   upstream's declared `SIMD.__init__` overloads over `Intable`,
   `IntableRaising`, `Floatable`, and `FloatableRaising` (R1399), so
