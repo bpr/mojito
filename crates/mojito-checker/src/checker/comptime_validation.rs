@@ -1298,6 +1298,12 @@ impl Checker {
         })
     }
 
+    /// Whether `expr` is a call of a nested `def` that captures nothing
+    /// ([`Self::compile_time_callee`]) by name.
+    fn calls_compile_time_callee(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Call { name, .. } if self.compile_time_callee(name))
+    }
+
     /// Whether the name `name` reads is a compile-time binding: a module
     /// name, a value binder, a `comptime for` variable, or a local
     /// `comptime` constant or display.
@@ -1441,7 +1447,7 @@ impl Checker {
             | TyKind::Dtype
             | TyKind::KgenDeferred
             | TyKind::KgenTarget
-                if called.is_some() =>
+                if called.is_some() || self.calls_compile_time_callee(expr) =>
             {
                 ty
             }

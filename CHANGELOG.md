@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time call of a nested `def` that captures nothing now takes a
+  struct result as it takes a scalar one: `first[mk()]()` over `def mk()
+  -> StaticTuple[SIMDLength, 8]`, a method's `mk` reading `Self.length`,
+  and `comptime t = inner()` over a dependent `StaticTuple` result run on
+  both backends as the elaborator's application, where the first two
+  were rejected as "not an associated comptime expression" and the last
+  ran at run time (R1686). In a method of a generic struct, such a call
+  reading `Self` parameters now evaluates per instance, where `W[2]`
+  reused the value the first instance computed, scalar results included.
 - A nested `def` that captures nothing is now callable at compile time,
   as the pin's generator over the enclosing parameters: `comptime t =
   mk()`, `first[mk()]()`, and `comptime if big():` run on both backends,

@@ -135,8 +135,17 @@ pub fn unread_parameters_of<'a>(
         .copied()
         .filter(|owner| structure.is_none_or(|(spelled, _)| spelled != *owner))
         .collect();
-    if !bodies.contains(&name) {
-        bodies.push(name);
+    // A function the check lifts from a body calls that body's nested
+    // functions (`W.go$mk` from `$comptime$W.go$c0`), which read the
+    // binders they keep.
+    let lifted_from = match mojito_symbol::symbol::lifted_owner(name) {
+        Some(mojito_symbol::symbol::LiftedOwner::Numbered(owner)) => Some(owner),
+        _ => None,
+    };
+    for body in std::iter::once(name).chain(lifted_from) {
+        if !bodies.contains(&body) {
+            bodies.push(body);
+        }
     }
     let structs = StructReads::with_members(declarations, callees);
     let mut walker = Walker::new(owners, nested);

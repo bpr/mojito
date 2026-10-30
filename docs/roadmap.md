@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1693**.
+Next free ID: **R1694**.
 
 ## Ordered Work
 
@@ -4630,33 +4630,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1686 A nested `def` with a struct result is no compile-time
-  application in a parameter argument**
+- [ ] **R1693 A compile-time call of a nested `def` applies a lifted
+  thunk, where the pin applies the nested `def`'s generator**
 
-  `first[mk()]()` over a nested `def mk() -> StaticTuple[SIMDLength, 8]`
-  fails in the checker with "not a compile-time Int constant: not an
-  associated comptime expression", where the pin runs it.
-  - A module-level `mk` runs, and so does `comptime t = mk()` over the
-    nested one.
-  - `Checker::positioned_application` (`checker/constraints.rs`) finds
-    no application for the nested `def`'s call: a nested `def` is never
-    applicable (`applicable_functions`, and `selected_application`'s
-    `binding_scope == 0` filter). One with a scalar result runs, lifted
-    as a thunk that calls its generator directly.
-  - The fix: make a nested `def` that captures nothing applicable,
-    applied with the enclosing binders leading, as a generic struct's
-    static method is applied to its instance first
-    (`Specializer::demand_application`).
-  - Probe: `comptime t = inner()` over a nested `def inner() ->
-    StaticTuple[Int, 2 * length]` prints the pin's values but evaluates
-    the call at run time (`call outer$inner` plus `var.store`), since it
-    is no application (`assets/ok/nested_def_dependent_struct_result.mojo`).
-  - Probe: the same call inside a method of `struct W[length:
-    SIMDLength]` whose `mk` reads `Self.length` prints `28` for `W[4]` at
-    the pin.
-  - Probe: `SIMD.join`'s `first[2 * Int(Self.length), indices()]()`,
-    with `indices() -> StaticTuple[SIMDLength, 2 * Int(Self.length)]`.
-  - Found while planning R1671 (2026-10-30).
+  `first[mk()]()` and `comptime t = mk()` over a nested `def` that
+  captures nothing denote `$comptime$outer$c0[length]`, a function the
+  check lifts whose body calls `outer$mk`, where the pin applies
+  `outer.mk`'s generator to the enclosing parameters.
+  - Cause: a parameter expression's application names its function by
+    lowered symbol, and the checker cannot spell a nested `def`'s: MIR's
+    `analyze_node` (`mir/nested.rs`) picks `nested_lifted_name` or the
+    `$decl` form when siblings share the name.
+  - `Checker::selected_application` skips a local callee
+    (`binding_scope == 0`), and `applicable_functions` lists module
+    declarations only.
+  - Lever: list a captureless nested `def` as an `ApplicableFunction`
+    under the symbol MIR gives it, its enclosing binders leading in
+    `binder_scope` order, and bind them in
+    `Specializer::demand_application` as `nested_bindings` does.
+  - Trap: `split_method_symbol` of `W.go$mk` names `W`, so
+    `demand_application`'s owner arm would read the first argument as a
+    `W` instance.
+  - No output differs. Probe: the MIR of
+    `assets/ok/nested_def_comptime_struct_result.mojo` applies
+    `$comptime$outer$c…` functions where it should apply `outer$mk`.
+  - Found while landing R1686 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

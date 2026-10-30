@@ -2570,17 +2570,24 @@ impl<'a> Specializer<'a> {
     /// `bindings`, those of the instance (or the unrolled region copy) it is
     /// declared in: keyed by the solution of each binder of the scope it is
     /// declared in, its enclosing declarations' and its regions', but those
-    /// the body removed, from its `reduced` generator or its full one.
+    /// the body removed, from its `reduced` generator or its full one. A
+    /// body nested in a method of a generic struct is named under the
+    /// struct's instance its parameters' solutions spell, when the caller
+    /// is no method of it: a function the check lifts from the method's
+    /// body, whose own binders they are.
     pub(super) fn nested_bindings(
         &self,
         target: &str,
         bindings: &Bindings,
         reduced: bool,
     ) -> Result<(Bindings, Vec<InstanceArg>), MonoError> {
-        let bindings = Bindings {
+        let mut bindings = Bindings {
             reduced,
             ..bindings.clone()
         };
+        if bindings.self_instance.is_none() {
+            bindings.self_instance = self.nested_owner_instance(target, &bindings);
+        }
         let mut scope = self.binder_scope(target);
         let own = self
             .declarations
@@ -2612,6 +2619,28 @@ impl<'a> Specializer<'a> {
             })
             .collect::<Result<_, _>>()?;
         Ok((bindings, arguments))
+    }
+
+    /// The instance of the generic struct whose method the outermost
+    /// declaration `target` is nested in is, under `bindings`: `None` when
+    /// it is no such method or `bindings` leave a struct parameter unbound.
+    fn nested_owner_instance(&self, target: &str, bindings: &Bindings) -> Option<(String, Ty)> {
+        let mut root = target;
+        while let Some(enclosing) = self
+            .declarations
+            .get(root)
+            .and_then(|declaration| declaration.enclosing.as_deref())
+        {
+            root = enclosing;
+        }
+        let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
+        let decls = &self.structs.get(owner)?.param_decls;
+        if decls.is_empty() {
+            return None;
+        }
+        owner_instance_ty(owner, decls, bindings)
+            .ok()
+            .map(|ty| (owner.to_string(), ty))
     }
 
     /// The compiled constructor a default's conversion target names. The

@@ -592,6 +592,7 @@ assets/ok/nested_copy_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_capture_storage.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_comptime_call.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_comptime_reads_enclosing_parameter.mojo	main	exe-differential	sanitized
+assets/ok/nested_def_comptime_struct_result.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_dependent_struct_result.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_enclosing_binders.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_inline_shapes.mojo	main	exe-differential	sanitized
