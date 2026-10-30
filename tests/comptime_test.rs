@@ -1807,3 +1807,49 @@ fn declarations_resolve_whatever_their_order() {
     let source = "trait StdP:\n    comptime HookFor[n: Int]: Hooks\n\nstruct H[w: W](Hooks):\n    pass\n\nstruct T:\n    comptime plugin = P.HookFor[3]\n\nstruct P(StdP):\n    comptime HookFor[n: Int] = DefHooks[n]\n\nstruct DefHooks[n: Int](Hooks):\n    pass\n\ntrait Hooks:\n    comptime lowers: Bool = True\n\nstruct W(TrivialRegisterPassable):\n    def __init__(out self):\n        pass\n\ndef main():\n    print(H[W()].lowers, T.plugin.lowers)\n";
     assert_eq!(run(source).unwrap(), "True True\n");
 }
+
+#[test]
+fn a_comptime_member_value_converts_to_its_declared_type() {
+    // A trait's `comptime f: OptionalReg[Int] = None` default and a
+    // parameterized member's `True` at a struct with an `@implicit`
+    // constructor are their conversions, as upstream converts them; a value
+    // no constructor converts is still rejected.
+    let source = "from std.collections import OptionalReg\n\nstruct W(TrivialRegisterPassable):\n    var n: Int\n\n    @implicit\n    def __init__(out self, n: Bool):\n        self.n = 7 if n else 0\n\ntrait H:\n    comptime f: OptionalReg[Int] = None\n    comptime g[k: Int]: W = True\n    comptime h: W = True\n\nstruct D(H):\n    pass\n\ndef main():\n    comptime if D.f:\n        print(\"some\")\n    else:\n        print(\"none\")\n    print(D.g[1].n, D.h.n)\n";
+    assert_eq!(run(source).unwrap(), "none\n7 7\n");
+    let unconverted = "struct W(TrivialRegisterPassable):\n    var n: Int\n\n    @implicit\n    def __init__(out self, n: Bool):\n        self.n = 7 if n else 0\n\ntrait H:\n    comptime g[k: Int]: W = 3\n\nstruct D(H):\n    pass\n\ndef main():\n    print(D.g[1].n)\n";
+    let error = run(unconverted).unwrap_err();
+    assert!(error.contains("expected W, found 3"), "{error}");
+}
+
+#[test]
+fn a_none_default_is_a_parameter_of_a_compile_time_application() {
+    // A `NoneType = None` parameter takes the compile-time `None` value, so
+    // the call is an application in a type.
+    let source = "def nn(x: Int, *, tag: NoneType = None) -> Int:\n    return x * 2\n\ndef f[n: Int]():\n    print(SIMD[DType.int8, nn(n)](1))\n\ndef main():\n    f[2]()\n";
+    assert_eq!(run(source).unwrap(), "[1, 1, 1, 1]\n");
+}
+
+#[test]
+fn a_comptime_alias_of_a_parametric_function_type_is_a_type_argument() {
+    // `comptime _B = def[dtype: DType, width: SIMDLength, //](…) thin -> …`
+    // declares a parametric function type, closed over its own binders, so
+    // `OptionalReg[_B]` is a concrete type; a runtime value of `_B` is the
+    // pin's rejection, and a signature naming an unbound binder is not one.
+    let alias = "comptime _B = def[dtype: DType, width: SIMDLength, //](\n    SIMD[dtype, width], SIMD[dtype, width]\n) thin -> SIMD[dtype, width]\n";
+    let hook = format!(
+        "from std.collections import OptionalReg\n\n{alias}\ntrait H:\n    comptime binary_math_fn[name: StaticString, dtype: DType, width: Int]: OptionalReg[_B] = None\n\nstruct D(H):\n    pass\n\ndef main():\n    comptime if D.binary_math_fn[\"pow\", DType.float32, 4]:\n        print(\"some\")\n    else:\n        print(\"none\")\n    var o: OptionalReg[_B] = None\n    print(Bool(o))\n"
+    );
+    assert_eq!(run(&hook).unwrap(), "none\nFalse\n");
+    let runtime = format!(
+        "{alias}\ndef add[dtype: DType, width: SIMDLength, //](a: SIMD[dtype, width], b: SIMD[dtype, width]) -> SIMD[dtype, width]:\n    return a + b\n\ndef main():\n    var f: _B = add\n"
+    );
+    let error = run(&runtime).unwrap_err();
+    assert!(
+        error.contains("cannot use parametric function 'add' as a runtime closure"),
+        "{error}"
+    );
+    let unbound =
+        "comptime _U = def[d: DType](SIMD[e, 1]) thin -> None\n\ndef main():\n    print(\"ok\")\n";
+    let error = run(unbound).unwrap_err();
+    assert!(error.contains("'e' does not name a DType"), "{error}");
+}

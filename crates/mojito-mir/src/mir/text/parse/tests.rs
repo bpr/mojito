@@ -2686,6 +2686,23 @@ fn kgen_target_attribute_round_trips() {
     assert!(text.contains("KgenTarget") && text.contains("ct_kgen_target("));
 }
 
+/// Schema 1.144 spells the compile-time `NoneType` value `ct_none`.
+#[test]
+fn ct_none_round_trips() {
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::none()],
+            vec![MirInstr::Const {
+                dest: Reg(0),
+                k: Const::Value(mojito_types::ct::CtValue::None),
+            }],
+        ),
+    )]);
+    assert_reprints(&program);
+    assert!(write::program(&program).contains("ct_none"));
+}
+
 /// Schema 1.133 spells upstream's MLIR builtin `i1` type `i1`, and a
 /// `builtin.cast` between it and a `Bool`'s storage.
 #[test]

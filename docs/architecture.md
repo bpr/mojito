@@ -4232,6 +4232,17 @@ used for trait requirements and bounded method calls. `Call`, `CallIndirect`,
 optional error type for MIR verification; the VM does not rediscover an effect
 from a source declaration.
 
+A `TyKind::GenericFunc` closed over its own binders
+(`types::has_free_binders` is false) is not symbolic: it is a concrete type
+argument (`OptionalReg[G]`, a `Pointer[G]` element, an instruction's type
+operand), as upstream's generator type is, and concrete MIR may carry it
+there. No value of it has a runtime form, so the concrete verifier still
+rejects one as the type of a parameter, a result, a variable slot, or a
+register, and the checker rejects a runtime binding of one with the pin's
+"cannot use parametric function as a runtime closure". A `comptime` alias
+of a function type with its own binders lowers through
+`Checker::lower_anonymous_callable_type`, as a callable bound does.
+
 When a `TyKind::GenericFunc` appears where a concrete `TyKind::Func` is expected, the
 checker solves its type parameters from the expected parameter and result types
 and validates the resulting monomorphic signature. When both sides are generic,

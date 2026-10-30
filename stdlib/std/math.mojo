@@ -1,7 +1,9 @@
 # Upstream's `std/math/math.mojo`, holding its operation traits, the
-# rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`, the `SIMD` overload
-# of `iota`, `fma`, `clamp`, both overloads each of `max` and `min`, and
-# `abs`, verbatim (the buffer overload of `iota` is omitted). The prelude
+# rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`, the plugin-hook
+# signatures `_UnaryMathPluginHookFnType` and `_BinaryMathPluginHookFnType`,
+# the `SIMD` overload of `iota`, `fma`, `clamp`, both overloads each of
+# `max` and `min`, and `abs`, verbatim (the buffer overload of `iota` is
+# omitted). The prelude
 # exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and `min`, as
 # upstream's does; `round`/`divmod` are still compiler builtins (R1458).
 #
@@ -81,6 +83,17 @@ def trunc[T: Truncable](value: T) -> T:
 @inline(.always)
 def ceildiv[T: CeilDivable](numerator: T, denominator: T) -> T:
     return numerator.__ceildiv__(denominator)
+
+
+comptime _UnaryMathPluginHookFnType = def[dtype: DType, width: SIMDLength, //](
+    SIMD[dtype, width]
+) thin -> SIMD[dtype, width]
+"""Plugin-hook signature for `PluginHooks.unary_math_fn`."""
+
+comptime _BinaryMathPluginHookFnType = def[dtype: DType, width: SIMDLength, //](
+    SIMD[dtype, width], SIMD[dtype, width]
+) thin -> SIMD[dtype, width]
+"""Plugin-hook signature for `PluginHooks.binary_math_fn`."""
 
 
 def iota[

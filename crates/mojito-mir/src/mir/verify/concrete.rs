@@ -39,17 +39,17 @@ pub fn concrete_function_findings(
         .chain(function.ret_ty.iter().map(|ty| ("return", ty)))
         .chain(function.error_ty.iter().map(|ty| ("error", ty)));
     for (role, ty) in signature {
-        require_concrete(&head, &format!("{role} type"), ty, &mut errors);
+        require_concrete_value(&head, &format!("{role} type"), ty, &mut errors);
     }
     let mut slots: Vec<_> = function.var_tys.iter().collect();
     slots.sort_by_key(|(slot, _)| **slot);
     for (slot, ty) in slots {
-        require_concrete(&head, &format!("variable slot {slot}"), ty, &mut errors);
+        require_concrete_value(&head, &format!("variable slot {slot}"), ty, &mut errors);
     }
     let mut registers: Vec<_> = function.reg_types.iter().collect();
     registers.sort_by_key(|(register, _)| **register);
     for (register, ty) in registers {
-        require_concrete(&head, &format!("register r{register}"), ty, &mut errors);
+        require_concrete_value(&head, &format!("register r{register}"), ty, &mut errors);
     }
     concrete_blocks(name, function, declarations, &function.blocks, &mut errors);
     errors
@@ -182,18 +182,26 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
     }
 }
 
-/// Whether `ty` is a type only parametric MIR may name: one an instantiation
-/// has yet to resolve, or a generic callable, which is a compile-time carrier
-/// with no runtime ABI.
-fn is_parametric(ty: &Ty) -> bool {
-    mojito_types::types::is_symbolic(ty)
-        || mojito_types::types::mentions_open(ty, &|inner| {
-            matches!(inner.kind(), TyKind::GenericFunc(_))
-        })
+/// [`require_concrete`] for the type of a value — a parameter, a result, a
+/// variable slot, or a register — which a generic callable is not: it is a
+/// compile-time carrier with no runtime ABI, though a parametric function
+/// type closed over its own binders is a concrete type argument
+/// (`OptionalReg[G]`, a `Pointer[G]` element, an instruction's operand).
+fn require_concrete_value(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
+    if matches!(ty.kind(), TyKind::GenericFunc(_)) {
+        errors.push(format!(
+            "{head} {role} keeps symbolic type `{ty}` in elaborated MIR"
+        ));
+        return;
+    }
+    require_concrete(head, role, ty, errors);
 }
 
+/// Report `ty` where it is a type only parametric MIR may name — one an
+/// instantiation has yet to resolve
+/// ([`mojito_types::types::is_symbolic`]) — or a compile-time-only one.
 fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
-    if is_parametric(ty) {
+    if mojito_types::types::is_symbolic(ty) {
         errors.push(format!(
             "{head} {role} keeps symbolic type `{ty}` in elaborated MIR"
         ));

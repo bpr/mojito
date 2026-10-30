@@ -290,12 +290,22 @@ impl Checker {
                 if member.params.is_empty() {
                     // A call is the application of its callee over the
                     // struct's parameters, which each instance evaluates.
-                    let value = {
-                        let _lifting = self.lifting_position();
-                        self.eval_associated_ct(&member.value)?
-                    };
+                    // A value of another type converts to the declared one
+                    // (`comptime f: OptionalReg[Int] = None`).
+                    let _lifting = self.lifting_position();
+                    let mut value = self.eval_associated_ct(&member.value)?;
                     if let Some(CtMemberReq::Value(declared)) = &requirement {
                         self.check_raw_list_member(&member.name, &value, declared)?;
+                        if let Some(converted) = self
+                            .param_context
+                            .constant(value.clone())
+                            .ok()
+                            .and_then(|compiled| {
+                                self.converted_parameter_value(&member.value, &compiled, declared)
+                            })
+                        {
+                            value = converted.into_value();
+                        }
                     }
                     return Ok::<_, TypeError>((Some(value), None));
                 }
@@ -634,12 +644,18 @@ impl Checker {
         self.enclosing_type_params.extend(params.iter().cloned());
         // The body's own occurrence records what it resolved to, under the
         // member's parameters.
-        let template = match &body.kind {
-            ExprKind::TypeApply { name, args } => {
+        let template = match (&body.kind, source_ty) {
+            (ExprKind::TypeApply { name, args }, _) => {
                 self.applied_type(name, args).map(|(template, attributes)| {
                     self.record_bracket_attributes(body.source_span(), attributes);
                     template
                 })
+            }
+            // A function type with its own binders (`def[dtype: DType,
+            // width: SIMDLength, //](SIMD[dtype, width]) thin -> …`) is the
+            // parametric function type a callable bound's is.
+            (_, SourceType::Func { type_params, .. }) if !type_params.is_empty() => {
+                self.lower_anonymous_callable_type(source_ty, params)
             }
             _ => self.ty_from_anno(source_ty),
         };
@@ -665,13 +681,20 @@ impl Checker {
         self.push_param_scope(decls);
         let compiled = {
             let _lifting = self.lifting_position();
-            self.compile_dependent_ct_expr(body)
+            self.compile_dependent_ct_expr(body).map(|compiled| {
+                let converted =
+                    declared.and_then(|ty| self.converted_parameter_value(body, &compiled, ty));
+                (compiled, converted)
+            })
         };
         self.tparams.pop();
-        let compiled = compiled?;
+        let (compiled, converted) = compiled?;
         let Some(ty) = declared else {
             return Ok(compiled);
         };
+        if let Some(converted) = converted {
+            return Ok(converted);
+        }
         let mismatch = |found: String| TypeError::TypeMismatch {
             expected: ty.to_string(),
             found,
@@ -1704,6 +1727,7 @@ impl Checker {
             ExprKind::Int(n) => self.ct_param(CtValue::IntLiteral(n.clone())),
             ExprKind::Float(value) => self.ct_param(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => self.ct_param(CtValue::Bool(*b)),
+            ExprKind::None => self.ct_param(CtValue::None),
             ExprKind::Str(s) => self.ct_param(CtValue::Str(s.clone())),
             ExprKind::TypeValue(ty) => {
                 let ty = if record {

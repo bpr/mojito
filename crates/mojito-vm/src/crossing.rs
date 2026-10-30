@@ -69,6 +69,7 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::IntLiteral(value) => Ok(Value::IntLiteral(value.clone())),
         CtValue::FloatLiteral(value) => Ok(Value::FloatLiteral(value.clone())),
         CtValue::Bool(b) => Ok(Value::Bool(*b)),
+        CtValue::None => Ok(Value::None),
         CtValue::Str(s) => Ok(Value::Str(s.clone())),
         CtValue::Tuple(items)
         | CtValue::PopArray {
@@ -159,9 +160,7 @@ pub fn vm_to_ct(value: Value) -> Result<CtValue, RuntimeError> {
         }),
         Value::Dtype(dtype) => Ok(CtValue::Dtype(dtype)),
         Value::Attribute(value) => Ok(value),
-        Value::None => Err(RuntimeError::Unsupported(
-            "VM CTFE function returned None; a compile-time value is required".to_string(),
-        )),
+        Value::None => Ok(CtValue::None),
         other => Err(RuntimeError::Unsupported(format!(
             "VM CTFE returned unsupported runtime value {other}"
         ))),

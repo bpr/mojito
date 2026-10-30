@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1702**.
+Next free ID: **R1708**.
 
 ## Ordered Work
 
@@ -152,27 +152,6 @@ which names the upstream pass each one follows. Each is measured by the
     `elaborated` parameter.
   - Bump `PACKAGE_FORMAT`.
   - Done when `rg ElaboratedConstant crates` is empty.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1691 A `NoneType` value is no parameter of a compile-time
-  application**
-
-  `nn(n)` in a type, over `def nn(x: Int, *, tag: NoneType = None) ->
-  Int`, stops with "not a compile-time Int constant: not an associated
-  comptime expression", where the pin keeps the application `nn(n,
-  tag=NoneType(None))`.
-  - `ApplicableShape::applicable` (`checker/comptime_validation.rs`) gives
-    a `NoneType` parameter no `SlotType`, and `parameter_value_type`
-    refuses `TyKind::None`: no `CtValue` holds the `None` value, so no
-    parameter expression is one.
-  - Lever: a `CtValue` for `None` that `VmBackend::freeze` and `thaw` carry
-    as `Value::None`, admitted by `parameter_value_type`; upstream's
-    `NoneType(None)` construction once `NoneType` is declared (R428).
-  - Upstream's `SIMD` element-list initializer and `List`'s `var *values`
-    one both take `__list_literal__: NoneType = None`, so neither applies
-    at compile time (R1692, R1529).
-  - Found while landing R1642 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1074,6 +1053,22 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Found while landing R662 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1706 An `OptionalReg` over a parametric function type has no
+  native layout**
+
+  `var o: OptionalReg[_B] = None` over `comptime _B = def[dtype: DType,
+  width: SIMDLength, //](SIMD[dtype, width], SIMD[dtype, width]) thin ->
+  SIMD[dtype, width]` prints `False` on the VM and at the pin, and is
+  rejected natively with "type has no native layout yet".
+  - `docs/native-abi.md` gives `TyKind::GenericFunc` no representation, so
+    `Variant[NoneType, G]` has no layout.
+  - Upstream lays out a `!kgen.generator` value. A layout for one here is
+    the lever.
+  - A `comptime if` over such a value folds on the VM's compile-time
+    evaluation and already runs natively (`assets/ok/std_plugin_hooks.mojo`).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R1477 Natively, a generic vector-plus-literal fails verification
   once two dtypes instantiate it**
@@ -5898,6 +5893,54 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R808 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1704 A parametric function type spelled inline in a type does
+  not resolve**
+
+  `var o: OptionalReg[def[d: DType, w: SIMDLength, //](SIMD[d, w]) thin
+  -> SIMD[d, w]] = None` reports "'d' does not name a DType in scope",
+  where the pin prints `False` for `Bool(o)`.
+  - The same type as a `comptime` alias body (`comptime _B = def[…](…)
+    thin -> …`) or a callable parameter's bound resolves, through
+    `Checker::lower_anonymous_callable_type`.
+  - Lever: `Checker::ty_from_anno` takes `&self` and opens no scope for
+    the function type's own `def[...]` binders. `push_param_scope` and
+    `classify_params` need `&mut self`.
+  - `Checker::generator_type` has the same gap for a generator type's own
+    list (R1486).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1705 A module-level `comptime` with a declared struct type does
+  not convert its value**
+
+  `comptime g: W = True`, over `W` with an `@implicit __init__(n: Bool)`,
+  reports "field access on non-struct Bool" for `g.n`, where the pin prints
+  `7`.
+  - Probe: `comptime x: Optional[Int] = None` read in `comptime if x:`
+    stops with "keeps the parameter constant `None` in elaborated MIR",
+    where the pin prints the else arm.
+  - A struct's `comptime` member converts through
+    `Checker::converted_parameter_value`, but a module constant is folded
+    before any declaration (`fold_module_constants`, `program_constants`)
+    and keeps the unconverted value.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1707 A function is no compile-time value of a function type**
+
+  A struct's `comptime f: OptionalReg[def(Int) thin -> Int] = sq`, read as
+  `comptime (D.f.value())(5)`, stops with "not a compile-time Int constant:
+  sq", where the pin prints `25`.
+  - Probe: the same member spelled `= OptionalReg[def(Int) thin ->
+    Int](sq)`, read in `comptime if D.f:`, stops with "not an associated
+    comptime expression", where the pin prints the then arm.
+  - `CtValue` has no value for a function symbol, so neither the member
+    nor its `OptionalReg` construction is a parameter expression.
+  - A plugin that sets a `PluginHooks` math hook (`unary_math_fn`) needs
+    this. The default hooks are `None` and already read.
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R1487 A generator-typed generator parameter is not supported**
 
@@ -11436,23 +11479,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R942.
   - Model: Opus, Not Planned.
 
-- [ ] **R1699 `PluginHooks`'s `unary_math_fn`, `binary_math_fn`, and
-  `reduce_generator_fn` are undeclared**
+- [ ] **R1702 `PluginHooks.reduce_generator_fn` is undeclared**
 
-  A trait member typed `OptionalReg` over a parametric `thin` function type
-  does not check, so the bundled `stdlib/std/_plugin/_trait.mojo` omits the
-  math hooks.
-  - Probe: `comptime binary_math_fn[name: StaticString, dtype: DType,
-    width: Int]: OptionalReg[_B] = None`, over `comptime _B = def[dtype:
-    DType, width: SIMDLength, //](SIMD[dtype, width], SIMD[dtype, width])
-    thin -> SIMD[dtype, width]`, read in `comptime if
-    D.binary_math_fn["pow", DType.float32, 4]:`, stops with "not a
-    compile-time Int constant: _B", where the pin prints `none`.
-  - Port `_UnaryMathPluginHookFnType` and `_BinaryMathPluginHookFnType`
-    into the bundled `std/math.mojo`, then the three hooks and
-    `_ReduceGeneratorPluginHookFnType`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
+  The bundled `stdlib/std/_plugin/_trait.mojo` omits the hook and its type,
+  `_ReduceGeneratorPluginHookFnType`, where upstream declares both.
+  - Port both verbatim, with the imports only they use.
+  - The type's signature needs `IndexList` (R1674) and
+    `std.utils.coord.Coord` (R1703).
+  - It composes `ImplicitlyCopyable & RegisterPassable & def[…](Coord) ->
+    …` as a bound inside a function type's own binder list, and has an
+    `IndexList[_, element_type=DType.int64]` hole there.
+  - Probe: `comptime if CurrentPlugin.reduce_generator_fn:` prints the
+    else arm at the pin and reports "has no field 'reduce_generator_fn'"
+    in Mojito.
+  - Upstream reads the hook only in MAX (`algorithm/reduction.mojo`), so
+    no bundled `std` read site waits on it.
+  - Depends on R1674, R1703.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1673 `SIMD`'s `slice` is a checker intrinsic, and `insert`,
   `split`, `interleave`, and `deinterleave` are undeclared**
@@ -12979,6 +13022,17 @@ residue found inside a task moves to the task that owns its fix.
   - Header-list the rest of the 797-line file (`Hasher`, `DevicePassable`,
     the arithmetic and formatting members) with the entries that own each.
   - Depends on R1670 (`StaticTuple`).
+  - Model: Opus, Planned.
+
+- [ ] **R1703 `std.utils.coord.Coord` is not bundled**
+
+  `from std.utils.coord import Coord` fails, where upstream's
+  `std/utils/coord.mojo` declares it.
+  - Port the struct and what `_ReduceGeneratorPluginHookFnType` (R1702)
+    reaches of it.
+  - Header-list the rest of the 1977-line file with the entries that own
+    each part.
+  - Depends on R1674.
   - Model: Opus, Planned.
 
 ### Packaging, Artifacts, And Developer Tooling

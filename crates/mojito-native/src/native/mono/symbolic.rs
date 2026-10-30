@@ -182,8 +182,10 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Param { .. }
         | TyKind::Assoc { .. }
         | TyKind::Dependent(_)
-        | TyKind::SelfType
-        | TyKind::GenericFunc(_) => true,
+        | TyKind::SelfType => true,
+        // A parametric function type closed over its own binders is a
+        // concrete type argument (`OptionalReg[G]`).
+        TyKind::GenericFunc(_) => mojito_types::types::has_free_binders(ty),
         TyKind::Struct(_, args) => !ty.is_closed() && args.iter().any(arg_has_symbolic),
         TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
             v.iter().any(is_symbolic)

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.143
+mojito-mir 1.144
 ```
 
-The writer emits 1.143. The reader accepts 1.0 through 1.143; *Schema 1.0*
+The writer emits 1.144. The reader accepts 1.0 through 1.144; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -950,6 +950,10 @@ after `triple`, the name of the stdlib plugin the target selects. A reader
 takes `"default"` where an attribute omits it. The package format moves to
 `mojito-package 159`.
 
+Schema 1.144 adds the compile-time value `ct_none`, the `NoneType` value
+(a `NoneType = None` parameter default, an `OptionalReg[T] = None`
+member). The package format moves to `mojito-package 160`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1378,6 +1382,9 @@ and writes fresh storage. Nested pointers and strings are recursive values.
 compile-time memory, upstream's `#lit.store_to_mem`: the value it reads.
 A backend thaws it as a fresh compile-time memory slot holding that value;
 it has no run-time form.
+
+`ct_none` (schema 1.144) is the `NoneType` value, upstream's `None`
+parameter. A backend thaws it as the `None` value.
 
 `ct_removed_arg` (schema 1.63) is a struct argument that mentions a
 parameter its instance's generator removed, upstream's `_REMOVED_ARG`. It

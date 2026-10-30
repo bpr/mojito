@@ -1486,6 +1486,7 @@ impl Decoder {
                 Some(CtValue::Set { spelling, elements })
             }
             ValueKind::Atom(tag) if tag == "ct_removed_arg" => Some(CtValue::RemovedArg),
+            ValueKind::Atom(tag) if tag == "ct_none" => Some(CtValue::None),
             _ => {
                 self.error(value.span, "expected compile-time value");
                 None

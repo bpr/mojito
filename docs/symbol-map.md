@@ -1017,7 +1017,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   answers the different *closedness* question `ParamContext::type_shape` turns
   on: a generic callable value binds the parameters its own signature
   mentions, so `def[T](T) -> T` folds to a compile-time type constant instead
-  of staying an open shape.
+  of staying an open shape. `types::has_free_binders` is the binder-identity
+  form `is_symbolic`'s `GenericFunc` arm, `native::mono`'s `is_symbolic`,
+  and the concrete MIR verifier read: a parametric function type closed over
+  its own `def[...]` binders is a concrete type argument (`OptionalReg[G]`),
+  though `verify/concrete.rs`'s `require_concrete_value` still rejects a
+  bare one as a parameter's, result's, slot's, or register's type.
 - `checker/rebind.rs` owns `rebind[Dest](value)`: `erase_rebinds` replaces
   each well-formed call by its operand before checking and records the
   retyping in `Checker.rebind_targets`; `apply_rebind_target` (from
@@ -2032,7 +2037,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   application of the `@implicit` `__init__` the run-time conversion's
   `implicit_conversion_constructor` selects
   (`Checker::implicit_parameter_application`, called by
-  `resolve_param_arg` and `value_param_decl`'s `converted_default`), which
+  `resolve_param_arg` and `Checker::converted_parameter_value`, which
+  converts a parameter default and a `comptime` member's value), which
   `bound_bracket_attribute` makes the argument's attribute. A call of an
   `@always_inline("builtin")` callable whose body folds is that body instead
   (`ApplicableFunction::folded_body`, a `FoldedBody`, replaced over the

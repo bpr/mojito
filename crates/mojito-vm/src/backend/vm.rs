@@ -1356,6 +1356,7 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         CtValue::IntLiteral(value) => Value::IntLiteral(value),
         CtValue::FloatLiteral(value) => Value::FloatLiteral(value),
         CtValue::Bool(value) => Value::Bool(value),
+        CtValue::None => Value::None,
         CtValue::Str(value) => Value::Str(value),
         CtValue::Tuple(values) | CtValue::PopArray {
             elements: values, ..

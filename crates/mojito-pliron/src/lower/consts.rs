@@ -195,6 +195,11 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         use mojito_types::ct::CtValue;
         match value {
+            // The `NoneType` value is zero-sized, as `MirConst::None` is.
+            CtValue::None => {
+                self.erased.insert(dest.0);
+                Ok(())
+            }
             CtValue::UInt(bits) => {
                 let constant = self.parameter_scalar(ctx, value, ScalarTy::UInt, dest)?;
                 self.reg_values.insert(dest.0, constant);

@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `PluginHooks` declares upstream's `unary_math_fn` and `binary_math_fn`
+  over `std.math`'s `_UnaryMathPluginHookFnType` and
+  `_BinaryMathPluginHookFnType`, so `comptime if
+  CurrentPlugin.unary_math_fn["sqrt", DType.float32, 4]:` takes its else
+  arm on both backends, as at the pin (R1699). `reduce_generator_fn` waits
+  on `IndexList` and `Coord` (R1702).
+- A `comptime` alias of a function type with its own binders (`comptime _B
+  = def[dtype: DType, width: SIMDLength, //](…) thin -> …`) declares that
+  parametric type, which is a concrete type argument (`OptionalReg[_B]`),
+  where it was rejected. Binding a function into a runtime slot of it is
+  the pin's "cannot use parametric function as a runtime closure".
+- A `NoneType` value is a compile-time value (MIR text 1.144 `ct_none`,
+  package format 160), so a call over a `NoneType = None` parameter applies
+  in a type (R1691), and `comptime f: OptionalReg[Int] = None` reads empty.
+- A `comptime` member's value converts to its declared type through the
+  struct's `@implicit` constructor (`comptime g[k: Int]: W = True`), where
+  it was a type mismatch.
+- A trait whose member's parameter is typed by a module alias registered
+  later (`name: StaticString`) now checks, where it was "unknown trait".
+
 - The bundled library now has upstream's `std._plugin` package:
   `CurrentPlugin`, `PluginHooks` with the hooks whose types are bundled,
   `StdPlugin`, `DefaultPlugin`, `DefaultPluginHooks`, `Plugin`, and

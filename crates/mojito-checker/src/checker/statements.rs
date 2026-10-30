@@ -266,8 +266,11 @@ impl Checker {
             }
         }
         // A callable bounded by a trait or typed by an alias this module
-        // declares classifies once they have registered.
+        // declares classifies once they have registered, and so does a
+        // trait whose member's parameter is typed by one (`name:
+        // StaticString`).
         self.classify_applicable_signatures(stmts);
+        self.settle_deferred_traits(stmts, &mut deferred_traits);
         drop(phase);
         let phase = timing::span("declarations.types");
         let mut waiting_conformers = Vec::new();
@@ -502,12 +505,15 @@ impl Checker {
 
     /// Whether the trait check that failed with `error` waits for
     /// declarations of `stmts` yet to register: a struct's members or
-    /// signatures, or a trait declared after it.
+    /// signatures, a trait declared after it, or a module alias a member's
+    /// parameter is typed by (`name: StaticString`).
     fn trait_awaits_declarations(&self, stmts: &[Stmt], error: &TypeError) -> bool {
         awaits_struct_declarations(error)
             || matches!(error, TypeError::UnknownType(name)
                 if self.declared_structs.contains(name)
                     || (trait_declared(stmts, name) && !self.traits.contains_key(name)))
+            || matches!(error, TypeError::UnknownType(name) | TypeError::UnknownTrait(name)
+                if alias_declared(stmts, name) && !self.comptime_aliases.contains_key(name))
     }
 
     /// Whether the member types of `declaration`, which failed with
@@ -1383,6 +1389,19 @@ impl Checker {
                             anno,
                             super::StorageStrictness::AllowBare,
                         )?);
+                        // A parametric function type (`var f: _B = add` over
+                        // `comptime _B = def[dtype: DType, //](…) thin -> …`)
+                        // has no runtime value, as the pin reports.
+                        if matches!(expected.kind(), TyKind::GenericFunc(_)) {
+                            let function = match &value.kind {
+                                ExprKind::Identifier(function) => format!(" '{function}'"),
+                                _ => String::new(),
+                            };
+                            return Err(TypeError::Unsupported(format!(
+                                "cannot use parametric function{function} as a runtime \
+                                 closure; specialize it explicitly"
+                            )));
+                        }
                         // Current Mojo does not infer a generic function's
                         // specialization from local-storage context; only an
                         // explicit specialization (`f[...]`) materializes a
@@ -3989,6 +4008,12 @@ fn trait_declared(stmts: &[Stmt], name: &str) -> bool {
     stmts
         .iter()
         .any(|statement| matches!(&statement.kind, StmtKind::Trait { name: declared, .. } if declared == name))
+}
+
+fn alias_declared(stmts: &[Stmt], name: &str) -> bool {
+    stmts.iter().any(
+        |statement| matches!(&statement.kind, StmtKind::Comptime { name: declared, .. } if declared == name),
+    )
 }
 
 /// Whether `name` is a trait of `stmts` whose check waits in `deferred`.

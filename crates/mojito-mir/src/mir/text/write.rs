@@ -3045,6 +3045,7 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::Deferred(v) => positional("ct_deferred", &binder_ref(v)),
         CtValue::Marker(v) => positional("ct_marker", &ct_marker(v)),
         CtValue::RemovedArg => "ct_removed_arg".into(),
+        CtValue::None => "ct_none".into(),
     }
 }
 

@@ -1,12 +1,16 @@
 # Upstream's `std/_plugin/_trait.mojo`, in part: `StdPlugin`,
 # `DefaultPlugin`, `DefaultPluginHooks`, and `PluginHooks` with the hooks
-# whose types are bundled (`supports_float64`, `flushes_subnormals`,
-# `lowers_subvector_intrinsics`, `has_generic_address_space`, and
-# `_handles_debug_assert`), verbatim.
+# whose types are bundled (`unary_math_fn`, `binary_math_fn`,
+# `supports_float64`, `flushes_subnormals`, `lowers_subvector_intrinsics`,
+# `has_generic_address_space`, and `_handles_debug_assert`), verbatim. The
+# hook signatures import from `std.math`, the bundled library's one
+# `std.math` module, where upstream's package spells `std.math.math`, and
+# `StaticString` imports from `std.string`, as the bundled modules on the
+# `std.sys.info` import cycle spell it.
 # Omitted, with the imports only they use:
-# - `unary_math_fn`, `binary_math_fn`, and `reduce_generator_fn`, with
-#   `_ReduceGeneratorPluginHookFnType`: an `OptionalReg` over a parametric
-#   `thin` function type does not check (roadmap R1699);
+# - `reduce_generator_fn`, with `_ReduceGeneratorPluginHookFnType`:
+#   `IndexList` and `std.utils.coord.Coord` are not bundled (roadmap
+#   R1702);
 # - `default_atomic_ordering`: `std.atomic` is not bundled;
 # - `stack_allocation_fn`, `address_space_fn`, and `unsafe_dangling_fn`:
 #   `AddressSpace` and their hook types are not bundled;
@@ -15,9 +19,16 @@
 # - the `@staticmethod` hooks `abort_fn` and `debug_assert_emit_fn`
 #   (R1698).
 
+from std.collections import OptionalReg
+
+from std.math import (
+    _BinaryMathPluginHookFnType,
+    _UnaryMathPluginHookFnType,
+)
 from std.collections.string.string_span import (
     _get_kgen_string,
 )
+from std.string import StaticString
 
 from .selector import Plugin
 from std.sys.info import CompilationTarget
@@ -44,6 +55,52 @@ trait PluginHooks:
     # ===------------------------------------------------------------------=== #
     # Math & Algorithm Operations
     # ===------------------------------------------------------------------=== #
+
+    comptime unary_math_fn[
+        name: StaticString, dtype: DType, width: Int
+    ]: OptionalReg[_UnaryMathPluginHookFnType] = None
+    """Elementwise override for the `std.math` function called `name`.
+
+    Consulted by `exp`, `exp2`, `sqrt`, `rsqrt`, `sin`, `cos`, and `tanh`
+    for floating-point inputs, before the stdlib converts the input to another
+    `dtype`, so the hook sees the caller's `dtype`. Returning `None` for a
+    `name`, `dtype`, and `width` keeps the stdlib's own lowering for that
+    case. The hook is not called when the function is evaluated at compile
+    time, because the compile-time interpreter cannot run backend intrinsics.
+
+    Parameters:
+        name: The `std.math` function being lowered, such as `"sqrt"`.
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        x: The input SIMD vector.
+
+    Returns:
+        Elementwise `name(x)` computed on the vendor backend.
+    """
+
+    comptime binary_math_fn[
+        name: StaticString, dtype: DType, width: Int
+    ]: OptionalReg[_BinaryMathPluginHookFnType] = None
+    """Elementwise override for the two-argument function called `name`.
+
+    Consulted by `pow` when both arguments are floating point, under the same
+    rules as `unary_math_fn`: the hook sees the caller's `dtype`, `None` keeps
+    the stdlib's own lowering, and compile-time evaluation skips the hook.
+
+    Parameters:
+        name: The function being lowered, such as `"pow"`.
+        dtype: The `dtype` of the inputs and output SIMD vectors.
+        width: The width of the inputs and output SIMD vectors.
+
+    Args:
+        x: The first input SIMD vector.
+        y: The second input SIMD vector.
+
+    Returns:
+        Elementwise `name(x, y)` computed on the vendor backend.
+    """
 
     comptime supports_float64: Bool = True
     """Whether the target supports float64 arithmetic.

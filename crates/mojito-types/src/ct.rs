@@ -504,6 +504,10 @@ pub enum CtValue {
     /// An exact finite floating literal which has not yet been materialized.
     FloatLiteral(FloatLiteral),
     Bool(bool),
+    /// The `NoneType` value — upstream's `None` parameter (a
+    /// `NoneType = None` default, an `OptionalReg[T] = None` member). It
+    /// displays as `None`.
+    None,
     Str(String),
     Tuple(Vec<Self>),
     List(Vec<Self>),
@@ -1180,6 +1184,7 @@ impl CtValue {
             Self::Index(_) => crate::types::MLIR_INDEX_TYPE_SPELLING.to_string(),
             Self::Float(_) | Self::FloatLiteral(_) => "Float64".to_string(),
             Self::Bool(_) => "Bool".to_string(),
+            Self::None => "NoneType".to_string(),
             Self::Str(_) => "String".to_string(),
             Self::Dtype(_) => "DType".to_string(),
             Self::Simd { dtype, lanes } => {
@@ -1282,6 +1287,7 @@ impl CtValue {
             | (value @ Self::IntLiteral(_), TyKind::IntLiteral)
             | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral)
             | (value @ Self::Bool(_), TyKind::Bool | TyKind::I1)
+            | (value @ Self::None, TyKind::None)
             | (value @ Self::Str(_), TyKind::StringLiteral(_)) => Some(value),
             // A string literal is the nominal `String`'s compile-time form
             // (`comptime E: Dict[String, Int] = {"a": 1}`).
@@ -1454,6 +1460,7 @@ impl CtValue {
             Self::IntLiteral(value) => ExprKind::Int(value.clone()),
             Self::FloatLiteral(value) => ExprKind::Float(value.clone()),
             Self::Bool(b) => ExprKind::Bool(*b),
+            Self::None => ExprKind::None,
             Self::Str(s) => ExprKind::Str(s.clone()),
             // Upstream's spelling of an `index` constant from source:
             // `Int(n).__mlir_index__()`.
@@ -1810,6 +1817,7 @@ impl fmt::Display for CtValue {
             Self::IntLiteral(value) => write!(f, "{value}"),
             Self::FloatLiteral(value) => write!(f, "{value}"),
             Self::Bool(b) => write!(f, "{b}"),
+            Self::None => write!(f, "None"),
             Self::Str(s) => write!(f, "{s:?}"),
             Self::Dtype(dtype) => write!(f, "DType.{}", dtype.name()),
             // Upstream's rendering of a SIMD parameter value.

@@ -5066,6 +5066,7 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::IntLiteral(_)
         | CtValue::FloatLiteral(_)
         | CtValue::Bool(_)
+        | CtValue::None
         | CtValue::Str(_)
         | CtValue::Dtype(_)
         | CtValue::Trait(_)
@@ -5172,6 +5173,69 @@ pub fn replace_constraint_parameters(
             ConstraintOperand::Expr(expr) => operand(context.replace(expr, bindings)?),
         })
     })
+}
+
+/// Whether `ty` mentions anything no signature inside it binds: a binder
+/// outside a generic callable's own `def[...]` list, an inference hole, an
+/// associated projection, or `Self`.
+///
+/// A parametric function type closed over its own binders (`def[dtype:
+/// DType, //](SIMD[dtype, 1]) thin -> SIMD[dtype, 1]`) has none, so it is a
+/// concrete type argument (`OptionalReg[G]`), as upstream's
+/// `!kgen.generator` type is, though no value of it is.
+pub fn has_free_binders(ty: &Ty) -> bool {
+    struct Finder {
+        free: bool,
+        bound: Vec<ParamId>,
+        marks: Vec<usize>,
+    }
+    impl TyRewrite for Finder {
+        fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+            self.free |= matches!(
+                ty.kind(),
+                TyKind::Infer | TyKind::Assoc { .. } | TyKind::SelfType
+            );
+            None
+        }
+
+        fn param(&mut self, binder: &ParamRef) -> Option<Ty> {
+            self.free |= !self.bound.contains(&binder.id);
+            None
+        }
+
+        fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+            self.free |= expr
+                .free_parameters()
+                .iter()
+                .any(|reference| !self.bound.contains(&reference.id));
+            let mut nested = Vec::new();
+            expr.visit(&mut |node| nested.extend(node.embedded_types().into_iter().cloned()));
+            for ty in &nested {
+                rewrite_ty(ty, self)?;
+            }
+            Ok(expr.clone())
+        }
+
+        fn enter_signature(&mut self, decls: &[ParamDecl]) {
+            self.marks.push(self.bound.len());
+            self.bound
+                .extend(decls.iter().map(|decl| decl.id().clone()));
+        }
+
+        fn exit_signature(&mut self) {
+            if let Some(mark) = self.marks.pop() {
+                self.bound.truncate(mark);
+            }
+        }
+    }
+    let mut finder = Finder {
+        free: false,
+        bound: Vec::new(),
+        marks: Vec::new(),
+    };
+    // The finder never fails; the rebuilt type is discarded.
+    let _ = rewrite_ty(ty, &mut finder);
+    finder.free
 }
 
 /// The declared parameters referenced free anywhere in `ty`, by name.
@@ -5454,9 +5518,11 @@ pub fn is_symbolic(ty: &Ty) -> bool {
             TyArg::Val(value) => ct_value_is_symbolic(value),
             TyArg::Origin(_) => false,
         }),
-        TyKind::Func(_) | TyKind::GenericFunc(_) => ty
+        TyKind::Func(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(is_symbolic)),
+        // The callable's own binders are bound inside it.
+        TyKind::GenericFunc(_) => has_free_binders(ty),
         // The generator's own binders are bound inside it.
         TyKind::Generator(generator) => {
             let bound: Vec<&ParamId> = generator.params.iter().map(ParamDecl::id).collect();
@@ -5604,6 +5670,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::IntLiteral(_)
         | CtValue::FloatLiteral(_)
         | CtValue::Bool(_)
+        | CtValue::None
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
         | CtValue::Str(_)
@@ -5875,6 +5942,7 @@ fn closed_argument(argument: &TyArg) -> bool {
                 | CtValue::Index(_)
                 | CtValue::Float(_)
                 | CtValue::Bool(_)
+                | CtValue::None
                 | CtValue::Str(_)
                 | CtValue::Dtype(_)
                 | CtValue::Simd { .. }

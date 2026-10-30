@@ -2841,6 +2841,7 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
             let (digit, next) = until(b';')?;
             (Some(CtValue::Bool(digit == "1")), next)
         }
+        b'n' => (Some(CtValue::None), until(b';')?.1),
         b'f' => {
             let (hex, next) = until(b';')?;
             (
@@ -3109,6 +3110,7 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         | CtValue::IntLiteral(_)
         | CtValue::FloatLiteral(_)
         | CtValue::Bool(_)
+        | CtValue::None
         | CtValue::Str(_)
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
@@ -3187,6 +3189,7 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
             out.push_str(&format!("F{}:{rendered}", rendered.len()));
         }
         CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
+        CtValue::None => out.push_str("n;"),
         CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
         CtValue::KgenString(value) => out.push_str(&format!("k{}:{value}", value.len())),
         CtValue::MlirAttr(value) => out.push_str(&format!("a{}:{value}", value.len())),

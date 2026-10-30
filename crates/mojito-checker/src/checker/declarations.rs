@@ -1096,7 +1096,7 @@ impl Checker {
                     let _lifting = self.lifting_position();
                     let compiled = self.compile_dependent_ct_expr(expr)?;
                     Ok::<_, TypeError>(
-                        self.converted_default(expr, &compiled, &ty)
+                        self.converted_parameter_value(expr, &compiled, &ty)
                             .unwrap_or(compiled),
                     )
                 })
@@ -1117,26 +1117,6 @@ impl Checker {
                 .map(|condition| self.compile_where_clause(condition))
                 .collect::<Result<_, _>>()?,
         })
-    }
-
-    /// The default `expr` of a value parameter of struct type `ty`, compiled
-    /// to `compiled`, converted through the struct's `@implicit`
-    /// constructor as a bracket argument is
-    /// ([`Self::implicit_parameter_application`]). `None` for a default
-    /// already of its type or one no constructor converts, which its use
-    /// rejects.
-    fn converted_default(&self, expr: &Expr, compiled: &ParamExpr, ty: &Ty) -> Option<ParamExpr> {
-        let found = compiled.meta().as_value()?;
-        if coerces(found, ty) {
-            return None;
-        }
-        let source = {
-            let _position = self.comptime_position();
-            self.infer(expr).unwrap_or_else(|_| found.clone())
-        };
-        self.implicit_parameter_application(&source, ty, |slot| self.applied_argument(expr, slot))
-            .ok()
-            .flatten()
     }
 
     /// The default of a trait-valued parameter (`Tr: type_of(AnyType) =

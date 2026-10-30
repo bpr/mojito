@@ -1648,6 +1648,32 @@ impl Checker {
         Ok(self.selected_call(selected))
     }
 
+    /// The compile-time value `expr`, compiled to `compiled`, converted to
+    /// the struct type `ty` it is declared with through the struct's
+    /// `@implicit` constructor, as a bracket argument is
+    /// ([`Self::implicit_parameter_application`]): a parameter default
+    /// (`w: W = 3`) or a `comptime` member's value (`comptime f:
+    /// OptionalReg[Int] = None`). `None` for a value already of its type
+    /// or one no constructor converts, which its use rejects.
+    pub(super) fn converted_parameter_value(
+        &self,
+        expr: &Expr,
+        compiled: &ParamExpr,
+        ty: &Ty,
+    ) -> Option<ParamExpr> {
+        let found = compiled.meta().as_value()?;
+        if coerces(found, ty) {
+            return None;
+        }
+        let source = {
+            let _position = self.comptime_position();
+            self.infer(expr).unwrap_or_else(|_| found.clone())
+        };
+        self.implicit_parameter_application(&source, ty, |slot| self.applied_argument(expr, slot))
+            .ok()
+            .flatten()
+    }
+
     /// Whether `expr` calls a `raises` callable a compile-time call would
     /// otherwise apply, which the pin rejects in a type or a parameter
     /// argument.
@@ -2006,14 +2032,22 @@ impl Checker {
         }
         // Several overloads take the arguments' values (`W(3)` over
         // `__init__(IntLiteral)` and `__init__(Int)`): the call applies the
-        // one its run-time call selects, as the pin ranks them.
-        let target = self.run_time_overload(expr)?;
+        // one its run-time call selects, as the pin ranks them. Where that
+        // call is not typed (a struct's own `comptime MAX = Self(x)`), the
+        // pin's ranking prefers the one candidate without variadic
+        // arguments (`SIMD`'s splat over its element list).
         tied.push(application);
-        let mut ranked = tied
-            .into_iter()
-            .filter(|selected| selected.function.symbol == target);
-        let application = ranked.next()?;
-        ranked.next().is_none().then_some(application)
+        let mut ranked: Vec<_> = match self.run_time_overload(expr) {
+            Some(target) => tied
+                .into_iter()
+                .filter(|selected| selected.function.symbol == target)
+                .collect(),
+            None => tied
+                .into_iter()
+                .filter(|selected| selected.function.collector.is_none())
+                .collect(),
+        };
+        (ranked.len() == 1).then(|| ranked.remove(0))
     }
 
     /// The callable `expr`'s run-time call resolves to
@@ -5125,6 +5159,7 @@ fn parameter_value_type(ty: &Ty) -> bool {
         TyKind::INT
             | TyKind::UINT
             | TyKind::Bool
+            | TyKind::None
             | TyKind::FLOAT64
             | TyKind::Index
             | TyKind::I1

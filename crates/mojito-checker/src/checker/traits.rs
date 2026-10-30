@@ -1858,6 +1858,7 @@ impl Checker {
             CtValue::IntLiteral(_) => Some(Ty::int_literal()),
             CtValue::FloatLiteral(_) => Some(Ty::float_literal()),
             CtValue::Bool(_) => Some(Ty::bool()),
+            CtValue::None => Some(Ty::none()),
             // Against a `StringLiteral[v]` slot the value is the literal of
             // its text, which solves `v`; elsewhere it is still the
             // value-less compile-time string (R1657).
