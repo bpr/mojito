@@ -1762,6 +1762,11 @@ fn struct_declaration(
         .collect();
     Some(MirStructDeclaration {
         name: name.clone(),
+        module: checked
+            .struct_modules()
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
         fields: fields
             .iter()
             .map(|field| {

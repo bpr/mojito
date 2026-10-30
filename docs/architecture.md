@@ -1501,7 +1501,11 @@ return parameter attributes (`#kgen.struct_field_types`) its elaborator
 folds; `native::mono` answers it per instance from the source struct's
 fields (`eval_ct` through `ParamContext::answer_reflections`), by the one
 policy the checker applies to a closed subject (`ReflectQuery::answer`), and
-a query with no answer fails the instantiation. A field type never crosses.
+a query with no answer fails the instantiation. A type-name query
+(`name()`, `base_name()`) crosses as the application of `StringSpan`'s
+`_kgen` initializer over its `!kgen.string` answer, which mono answers from
+each struct's declaring module path (`StructDeclaration::module`) and then
+applies. A field type never crosses.
 No reflection is evaluated above the check: the elaborator keeps every
 binding that spells `reflect` for the check, and only the check and
 `native::mono` answer a query. The check answers a closed subject once the

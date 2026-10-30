@@ -2038,6 +2038,7 @@ mod tests {
         let info = StructInfo {
             decls: Vec::new(),
             source_params: Vec::new(),
+            module: String::new(),
             conforms: Vec::new(),
             callable_conformance: None,
             callable_target: None,
@@ -2058,6 +2059,7 @@ mod tests {
         };
         let declaration = StructDeclaration {
             name: "S".to_string(),
+            module: String::new(),
             fields: Vec::new(),
             mut_self_methods: HashSet::new(),
             fieldwise_init: false,

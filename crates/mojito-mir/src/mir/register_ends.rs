@@ -1097,6 +1097,7 @@ mod tests {
         declarations.functions[0].lowered_name = "S.__init__".into();
         declarations.structs.push(MirStructDeclaration {
             name: "S".into(),
+            module: String::new(),
             fields: Vec::new(),
             mut_self_methods: HashSet::new(),
             fieldwise_init: false,

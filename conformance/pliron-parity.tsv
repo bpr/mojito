@@ -911,6 +911,7 @@ assets/ok/reflection_module_and_member_handles.mojo	main	exe-differential	saniti
 assets/ok/reflection_runtime_query.mojo	main	exe-differential	sanitized
 assets/ok/reflection_symbolic_fields.mojo	main	exe-differential	sanitized
 assets/ok/reflection_template_served.mojo	main	exe-differential	sanitized
+assets/ok/reflection_type_name.mojo	main	exe-differential	sanitized
 assets/ok/register_copy_dies_after_read.mojo	main	exe-differential	sanitized
 assets/ok/replaced_field_read_through_register.mojo	main	exe-differential	sanitized
 assets/ok/repr_sized_scalars.mojo	main	exe-differential	sanitized

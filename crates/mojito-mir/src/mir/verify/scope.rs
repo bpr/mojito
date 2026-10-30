@@ -1225,6 +1225,7 @@ mod tests {
         let mut declarations = declarations("f", vec![value_decl("f", 0, "n", Ty::int())]);
         declarations.structs.push(MirStructDeclaration {
             name: "Box".into(),
+            module: String::new(),
             fields: vec![("v".into(), Ty::int())],
             mut_self_methods: HashSet::new(),
             fieldwise_init: false,
@@ -1436,6 +1437,7 @@ mod tests {
         );
         declarations.structs.push(MirStructDeclaration {
             name: "Bag".into(),
+            module: String::new(),
             fields: Vec::new(),
             mut_self_methods: HashSet::new(),
             fieldwise_init: false,

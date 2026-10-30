@@ -167,6 +167,7 @@ pub struct HandoffStores {
     declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     struct_destructors: HashMap<String, HashMap<String, bool>>,
+    struct_modules: HashMap<String, String>,
     conformances: ConformanceFacts,
     overloads: Arc<mojito_checked::package::ProgramOverloads>,
     constants: Arc<mojito_checked::package::ProgramConstants>,
@@ -189,6 +190,7 @@ impl HandoffStores {
             declaration_effects: self.declaration_effects.into_inner(),
             explicit_destroy_types: self.explicit_destroy_types,
             struct_destructors: self.struct_destructors,
+            struct_modules: self.struct_modules,
             conformances: self.conformances,
             overloads: self.overloads,
             constants: self.constants,
@@ -544,6 +546,12 @@ fn carried_result(checker: &Checker) -> HandoffStores {
             .iter()
             .filter(|(_, info)| !info.explicit_destructors.is_empty())
             .map(|(name, info)| (name.clone(), info.explicit_destructors.clone()))
+            .collect(),
+        struct_modules: checker
+            .structs
+            .own()
+            .iter()
+            .map(|(name, info)| (name.clone(), info.module.clone()))
             .collect(),
         conformances: mojito_checked::checked::ConformanceFacts::default(),
         overloads: std::sync::Arc::clone(&checker.overload_sets),

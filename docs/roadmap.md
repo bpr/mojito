@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1679**.
+Next free ID: **R1681**.
 
 ## Ordered Work
 
@@ -6176,6 +6176,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a t-string message, `t"n is {n}"`.
   - Probe: `String("n is ", n)` (`constraint failed: n is 3` at `f[3]`).
   - Probe: `"lit" + "eral"`, which runs at the pin.
+  - Probe: upstream's `_static_tuple_construction_checks` message,
+    `String("…: ", reflect[T].name())`.
   - Upstream's stdlib spells such messages at about 20 sites.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6854,6 +6856,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A `SIMD` instance's `SIMDLength` argument folds here, so the gap is the
     construction argument's, not the struct-valued slot's.
   - Found while landing R1550 (2026-10-28).
+  - Probe: `reflect[L[4]].name()` over `struct L[s: SIMDLength]`, and
+    `reflect[W[P(3, True)]].name()` over `struct W[p: P]`, stop with
+    "unsupported compile-time application `StringSpan.__init__…` reads an
+    unresolved value", where the pin prints `probe.L[4]` and
+    `probe.W[{3 : SIMD[DType.int, 1], True}]`. The construction argument
+    stays a `param_apply`, which the check's `has_free_parameters` and
+    mono's `is_symbolic` both count as symbolic, so neither answers the
+    query. `TypeNameSpeller::value` already spells a struct value as the
+    pin does once it is one.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6887,15 +6898,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1669 `reflect[T].name()` is undefined**
+- [ ] **R1680 `reflect[T].name()` spells an origin-parametric type with
+  Mojito's parameter list, not upstream's**
 
-  `print(reflect[SIMDLength].name())` reports "type 'reflect[SIMDLength]'
-  has no method 'name'", where the pin prints the type's name.
-  - Upstream's `_static_tuple_construction_checks` puts it in its
-    `comptime assert` message.
-  - Answer it beside the other queries in `checker/reflection.rs` and
-    `ReflectQuery::answer` until R324 makes `reflect` a library struct.
-  - Found while planning R330 (2026-10-29).
+  `reflect[StaticString].name()` prints `std.string.StringSpan[{}]`, where
+  the pin prints `std.collections.string.string_span.StringSpan[{}, {}]`.
+  - `#kgen.get_type_name` spells every parameter of the type, the inferred
+    `mut` and the defaulted `address_space` included, where
+    `TypeNameSpeller` (`mojito-symbol`) sees only the arguments a
+    `TyKind::Struct` carries, and Mojito's `Span` declares no
+    `address_space`.
+  - The pin's second `{}` beside an origin is not located. A variadic type
+    pack already spells as the pin's `<unprintable>, {}` (`Tuple`,
+    `Variant`).
+  - Probe: `reflect[T].name()` in `def f[T: AnyType](x: T)` over
+    `f(Span(xs))` prints `std.span.Span[SIMD[DType.int, 1], {}]`, where the
+    pin prints `std.collections.span.Span[True, {}, SIMD[DType.int, 1], {},
+    0]`.
+  - Probe: the same `f(xs.unsafe_ptr())` prints `Pointer[Int,
+    ImmStaticOrigin]`, where the pin prints
+    `std.memory.pointer.Pointer[True, {}, SIMD[DType.int, 1], {}, 0]`:
+    `Pointer` is the intrinsic `TyKind::Pointer`, which the speller leaves
+    to its `Display`.
+  - The module paths in these probes are R1679's.
+  - Found while landing R1669 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10999,6 +11025,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `param_expr.rs`), so the answers agree; the shape does not.
   - Closing it means a bundled `Reflected` over intrinsics that lower to
     `ParamKind::Reflect`, with the built-in rules deleted.
+  - Probe: `from std.reflection import reflect`, which upstream's
+    `static_tuple.mojo` and `optional.mojo` spell, fails with "cannot load
+    module 'std.reflection'": the package has no `__init__.mojo` to export
+    the handle from.
+  - `name()` and `base_name()` already answer upstream's
+    `#kgen.get_type_name` and `#kgen.get_base_type_name` and construct the
+    `StaticString` its methods do (`static_string_of`,
+    `checker/reflection.rs`).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11820,6 +11854,25 @@ I/O residues left behind the landed files, streams, paths, and tempfile stage.
 recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
+
+- [ ] **R1679 `Codepoint`, `StringSpan`, and `Span` live outside
+  upstream's modules**
+
+  `reflect[Codepoint].name()` prints `std.string.Codepoint`, where the pin
+  prints `std.collections.string.codepoint.Codepoint`: a name is qualified
+  by its declaring module, and Mojito bundles these in `std/string.mojo`
+  and `std/span.mojo`.
+  - Upstream declares `Codepoint` in
+    `std/collections/string/codepoint.mojo`, `StringSpan` in
+    `std/collections/string/string_span.mojo` (where Mojito already keeps
+    `get_static_string`), and `Span` in `std/collections/span.mojo`.
+  - Moving them updates `implicit_public_identity` (`mojito-module`) and
+    every import of the old modules.
+  - Probe: `reflect[StaticString].name()` prints `std.string.StringSpan[…]`
+    and a `Span`'s `std.span.Span[…]` (their parameter lists are R1680's).
+  - Found while landing R1669 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1605 The `Iterable` overloads of `any` and `all` are missing**
 
@@ -12699,7 +12752,8 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: `comptime t = StaticTuple[Int, 3](1, 2, 3)` then `print(t[1],
     len(t))` gives `2 3` at the pin.
   - Depends on R1667 (`!pop.array` storage), R1678 (the explicit
-    `__init__[*values]()` call over the parametric struct), R1669 (`reflect[T].name()`), R1316
+    `__init__[*values]()` call over the parametric struct), R1669 (`reflect[T].name()`), R1210
+    (the `String` message of its `comptime assert`), R1316
     (`_get_kgen_pointer`), and R1317 (`pop.array.gep`).
   - Model: Fable, Planned.
 

@@ -289,6 +289,28 @@ fn transitive_and_dotted_imports() {
 }
 
 #[test]
+fn a_declaration_is_qualified_by_the_module_path_that_links_it() {
+    use mojito::module::declaring_module_path;
+    let shapes = Some("/work/pkg/shapes.mojo");
+    assert_eq!(
+        declaring_module_path("__module$pkg$shapes$Sq", shapes),
+        "pkg.shapes"
+    );
+    // An entry module's item links bare; its file stem qualifies it.
+    assert_eq!(
+        declaring_module_path("Point", Some("/work/probe.mojo")),
+        "probe"
+    );
+    let list = Some("/install/stdlib/std/collections/list.mojo");
+    assert_eq!(declaring_module_path("List", list), "std.collections.list");
+    let ahash = Some("/install/stdlib/std/hash/_ahash.mojo");
+    assert_eq!(
+        declaring_module_path("__module$std$hash$$ahash$AHasher", ahash),
+        "std.hash._ahash"
+    );
+}
+
+#[test]
 fn bundled_stdlib_root_supports_mojo_shaped_imports() {
     let d = TempDir::new();
     let main = d.write(

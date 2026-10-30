@@ -957,7 +957,7 @@ fn answered_reflection_closes_its_enclosing_expression() {
     ];
     let mut oracle = |_: &ParamExpr, query: &ReflectQuery| {
         query
-            .answer(&pair, Some(&fields))
+            .answer(&pair, Some(&fields), &|ty, _| ty.to_string())
             .map(Some)
             .map_err(ParamError::Reflect)
     };
@@ -1192,4 +1192,19 @@ fn add_partially(context: &ParamContext) -> ParamExpr {
     context
         .bind_params(&add_generator(context), &[Some(ten), None])
         .expect("a partial binding")
+}
+
+#[test]
+fn type_name_queries_round_trip_their_spelling() {
+    for query in [
+        ReflectQuery::TypeName(TypeNameForm::Name {
+            qualified_builtins: false,
+        }),
+        ReflectQuery::TypeName(TypeNameForm::Name {
+            qualified_builtins: true,
+        }),
+        ReflectQuery::TypeName(TypeNameForm::Base),
+    ] {
+        assert_eq!(ReflectQuery::from_spelling(&query.to_string()), Some(query));
+    }
 }

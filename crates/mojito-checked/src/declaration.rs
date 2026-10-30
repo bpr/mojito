@@ -21,6 +21,10 @@ pub struct StructDeclaration {
     /// no other encoding may rely on it.
     #[serde(skip)]
     pub name: String,
+    /// The dotted path of the module that declares the struct
+    /// (`std.collections.list`, an entry module's file stem), which
+    /// qualifies its name in `reflect[T].name()`.
+    pub module: String,
     pub fields: Vec<(String, Ty)>,
     #[serde(serialize_with = "sorted_names")]
     pub mut_self_methods: HashSet<String>,

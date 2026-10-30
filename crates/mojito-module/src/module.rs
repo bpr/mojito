@@ -262,6 +262,38 @@ pub fn entry_item_name(name: &str) -> String {
     qualified(ENTRY_MODULE, name)
 }
 
+/// The dotted path of the module that declares the item linked as `linked`.
+///
+/// It is the trailing segments of the stamped `source`'s path under whose
+/// dotted name the module links the item as `linked` (`std.collections.list`
+/// for `List`, `pkg.shapes` for `__module$pkg$shapes$Sq`), else the
+/// source's file stem, which qualifies an entry module's items.
+pub fn declaring_module_path(linked: &str, source: Option<&str>) -> String {
+    let Some(source) = source else {
+        return ENTRY_MODULE.to_string();
+    };
+    let source = source.split('$').next().unwrap_or(source);
+    let mut segments: Vec<String> = Path::new(source)
+        .with_extension("")
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if segments.last().is_some_and(|last| last == "__init__") {
+        segments.pop();
+    }
+    let declared = linked
+        .strip_prefix("__module$")
+        .map_or(linked, |rest| rest.rsplit('$').next().unwrap_or(rest));
+    (1..=segments.len())
+        .map(|count| segments[segments.len() - count..].join("."))
+        .find(|module| linked_item_name(module, declared) == linked)
+        .or_else(|| segments.last().cloned())
+        .unwrap_or_else(|| ENTRY_MODULE.to_string())
+}
+
 fn rewrite_expr(
     expr: &mut Expr,
     names: &HashMap<String, String>,

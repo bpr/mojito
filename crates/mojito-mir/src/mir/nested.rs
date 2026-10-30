@@ -1125,6 +1125,7 @@ fn lower_closure_storage(
             .any(|capture| capture.kind == mojito_ast::ast::CaptureKind::Move);
     declarations.structs.push(MirStructDeclaration {
         name: name.clone(),
+        module: String::new(),
         fields: storage.fields.clone(),
         mut_self_methods: writes_self
             .then(|| method.to_string())

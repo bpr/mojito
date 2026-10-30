@@ -3355,7 +3355,10 @@ pub enum PackQuery {
 /// Each carries the meta-type of its answer: `is_struct()` a `Bool`;
 /// `field_count()` and `field_index[name]()` an `Int`; `field_types()` a type
 /// list, whose element under an index is a dependent type; `field_names()` a
-/// list of string literals; `field[name].T` a type.
+/// list of string literals; `field[name].T` a type; `name()` and
+/// `base_name()` the `!kgen.string` of upstream's `#kgen.get_type_name` and
+/// `#kgen.get_base_type_name`, which the handle's method wraps in a
+/// `StaticString`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ReflectQuery {
     IsStruct,
@@ -3364,7 +3367,23 @@ pub enum ReflectQuery {
     FieldTypes,
     FieldIndex(String),
     FieldNamed(String),
+    TypeName(TypeNameForm),
 }
+
+/// Which spelling of a type a type-name query asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum TypeNameForm {
+    /// `name[qualified_builtins=…]()`: the module-qualified name with its
+    /// parameters, the library's most common types (`SIMD`, `Bool`,
+    /// `String`, `List`) bare unless `qualified_builtins`.
+    Name { qualified_builtins: bool },
+    /// `base_name()`: the unqualified name of the type's base type.
+    Base,
+}
+
+/// How a type-name query's answerer spells a closed type: the caller's,
+/// which knows each struct's declaring module.
+pub type TypeNamer<'a> = dyn Fn(&Ty, TypeNameForm) -> String + 'a;
 
 impl ReflectQuery {
     /// The inverse of the `Display` spelling, which MIR text carries.
@@ -3382,6 +3401,13 @@ impl ReflectQuery {
             "field_count()" => Some(Self::FieldCount),
             "field_names()" => Some(Self::FieldNames),
             "field_types()" => Some(Self::FieldTypes),
+            "name()" => Some(Self::TypeName(TypeNameForm::Name {
+                qualified_builtins: false,
+            })),
+            "name[qualified_builtins=True]()" => Some(Self::TypeName(TypeNameForm::Name {
+                qualified_builtins: true,
+            })),
+            "base_name()" => Some(Self::TypeName(TypeNameForm::Base)),
             _ => bracketed("field_index[", "]()")
                 .map(Self::FieldIndex)
                 .or_else(|| bracketed("field[", "].T").map(Self::FieldNamed)),
@@ -3396,21 +3422,25 @@ impl ReflectQuery {
             Self::FieldTypes => MetaTy::type_list(),
             Self::FieldNames => MetaTy::ParamList(Box::new(MetaTy::value(Ty::string_literal()))),
             Self::FieldNamed(_) => MetaTy::Type,
+            Self::TypeName(_) => MetaTy::value(TyKind::KgenString.into()),
         }
     }
 
     /// The answer for a closed `subject`. `fields` are a struct's fields,
     /// their types at the subject's arguments; any other type passes `None`
     /// and answers `is_struct()` alone, `True` (only an MLIR primitive, which
-    /// Mojito never spells, answers `False` at the pin).
+    /// Mojito never spells, answers `False` at the pin), and the type-name
+    /// queries, which every type answers through `type_name`.
     pub fn answer(
         &self,
         subject: &Ty,
         fields: Option<&[(String, Ty)]>,
+        type_name: &TypeNamer<'_>,
     ) -> Result<CtValue, ReflectError> {
         let Some(fields) = fields else {
             return match self {
                 Self::IsStruct => Ok(CtValue::Bool(true)),
+                Self::TypeName(form) => Ok(CtValue::KgenString(type_name(subject, *form))),
                 query => Err(ReflectError::NotStruct {
                     subject: subject.to_string(),
                     query: query.to_string(),
@@ -3442,6 +3472,7 @@ impl ReflectQuery {
             Self::FieldTypes => CtValue::Tuple(fields.iter().map(field_ty).collect()),
             Self::FieldIndex(field) => CtValue::Int(position(field)? as i64),
             Self::FieldNamed(field) => field_ty(&fields[position(field)?]),
+            Self::TypeName(form) => CtValue::KgenString(type_name(subject, *form)),
         })
     }
 }
@@ -3455,6 +3486,13 @@ impl fmt::Display for ReflectQuery {
             Self::FieldTypes => write!(f, "field_types()"),
             Self::FieldIndex(name) => write!(f, "field_index[{name:?}]()"),
             Self::FieldNamed(name) => write!(f, "field[{name:?}].T"),
+            Self::TypeName(TypeNameForm::Name {
+                qualified_builtins: false,
+            }) => write!(f, "name()"),
+            Self::TypeName(TypeNameForm::Name {
+                qualified_builtins: true,
+            }) => write!(f, "name[qualified_builtins=True]()"),
+            Self::TypeName(TypeNameForm::Base) => write!(f, "base_name()"),
         }
     }
 }

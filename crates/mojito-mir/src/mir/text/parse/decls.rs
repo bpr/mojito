@@ -330,10 +330,18 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.138's declaring module path; a struct without one has
+        // none.
+        let module = self
+            .field(fields, "module")
+            .ok()
+            .and_then(|module| self.string(module))
+            .unwrap_or_default();
         self.unknown(
             fields,
             &[
                 "name",
+                "module",
                 "fields",
                 "mut_self_methods",
                 "fieldwise_init",
@@ -354,6 +362,7 @@ impl Decoder {
         );
         Some(MirStructDeclaration {
             name,
+            module,
             fields: struct_fields,
             mut_self_methods,
             fieldwise_init,

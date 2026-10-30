@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `reflect[T].name()`, `reflect[T].name[qualified_builtins=True]()`, and
+  `reflect[T].base_name()` now return the `StaticString` the pin prints, a
+  struct qualified by its declaring module (`probe.Point`,
+  `std.collections.optional.Optional[SIMD[DType.int, 1]]`) with each
+  argument spelled as the pin spells it, on both backends and over a type
+  parameter per instance, where `name()` had no method (R1669). MIR text
+  moves to 1.138 and the package format to `mojito-package 153`.
 - A construction's bracket now binds only its type's parameters, as
   upstream reads `T[ps](…)` as `T[ps].__init__(…)`: the initializer's own
   parameters are spelled after `.__init__`, over any struct, `Self`, a

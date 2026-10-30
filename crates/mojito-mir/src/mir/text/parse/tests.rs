@@ -1692,6 +1692,7 @@ fn malformed_instruction_payloads_are_diagnosed() {
 fn declaration_metadata_reprints_byte_identically() {
     let boxed = MirStructDeclaration {
         name: "Box".into(),
+        module: String::new(),
         fields: vec![("value".into(), Ty::int()), ("tag".into(), Ty::bool())],
         mut_self_methods: HashSet::from(["append".into(), "clear".into()]),
         fieldwise_init: true,
@@ -1820,6 +1821,7 @@ fn declaration_metadata_reprints_byte_identically() {
     };
     let zebra = MirStructDeclaration {
         name: "Zebra needs quoting!".into(),
+        module: String::new(),
         fields: Vec::new(),
         mut_self_methods: HashSet::new(),
         fieldwise_init: false,

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.137
+mojito-mir 1.138
 ```
 
-The writer emits 1.137. The reader accepts 1.0 through 1.137; *Schema 1.0*
+The writer emits 1.138. The reader accepts 1.0 through 1.138; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -909,6 +909,11 @@ constant `ct_pop_array { element, elements }`, upstream's typed
 index }` (`pop.array.repeat`, `pop.array.get`, `pop.array.replace`), whose
 `index` is a constant. The package format moves to `mojito-package 152`.
 
+Schema 1.138 adds a struct declaration's optional `module`, the dotted
+path of its declaring module, and the reflection queries `name()`,
+`name[qualified_builtins=True]()`, and `base_name()` to `param_reflect`.
+The package format moves to `mojito-package 153`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1080,6 +1085,11 @@ naming a function the program does not define, a key that is no
 lifecycle or type-reached member, or a second entry for a lifecycle member.
 The writer omits the field when it is empty, the reader takes an absent
 field as empty.
+
+A struct carries `module: "<dotted path>"` (schema 1.138), the module
+that declares it (`std.collections.list`, an entry module's file stem),
+which qualifies its name in `reflect[T].name()`. The writer omits the
+field when it is empty, the reader takes an absent field as empty.
 
 A struct that declares a conformance to a trait with method requirements
 carries `witness_tables: [witness_table { trait: symbol, witnesses:
@@ -1384,7 +1394,9 @@ is the element type of the raw list it bounds (`TypeList`'s `values:
 param_list(dependent_parameter(Trait))`), also a `dependent_parameter`. `param_field` is a field of a struct-typed parameter value
 that is still a parameter (schema 1.27), `param_reflect` a reflection query over a symbolic subject
 (`is_struct()`, `field_count()`, `field_names()`, `field_types()`,
-`field_index["name"]()`, `field["name"].T`), `param_type_member` a
+`field_index["name"]()`, `field["name"].T`, and, schema 1.138, the
+`!kgen.string` type names `name()`, `name[qualified_builtins=True]()`, and
+`base_name()`), `param_type_member` a
 compile-time value member of a symbolic subject type (`T.K`, schema 1.36),
 applied to `args` when the member is parameterized (`T.get[0]`; schema
 1.80, written only when non-empty), and `param_apply` a compile-time

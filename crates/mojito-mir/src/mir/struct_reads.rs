@@ -452,6 +452,7 @@ mod tests {
     fn structure(name: &str, decl: ParamDecl, fields: Vec<Ty>) -> MirStructDeclaration {
         MirStructDeclaration {
             name: name.into(),
+            module: String::new(),
             fields: fields
                 .into_iter()
                 .enumerate()

@@ -198,6 +198,7 @@ impl StructShape {
             values: declaration.associated_values.clone(),
             parameterized_values: declaration.parameterized_associated_values.clone(),
             fields: declaration.fields.clone(),
+            module: declaration.module.clone(),
         }
     }
 }

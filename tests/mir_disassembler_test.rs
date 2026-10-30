@@ -144,6 +144,7 @@ fn metadata_program() -> MirProgram {
     program.declarations = MirDeclarations {
         structs: vec![MirStructDeclaration {
             name: "Box".into(),
+            module: String::new(),
             fields: vec![("value".into(), Ty::int())],
             mut_self_methods: HashSet::from(["set".into()]),
             fieldwise_init: true,

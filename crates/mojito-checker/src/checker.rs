@@ -2505,6 +2505,9 @@ struct StructInfo {
     /// Direct applications consult it to accept, validate, and erase explicit
     /// origin arguments (`EntryIter[K, V, some_origin]`).
     source_params: Vec<mojito_ast::ast::TypeParam>,
+    /// The dotted path of the declaring module, which qualifies the
+    /// struct's name in `reflect[T].name()`.
+    module: String,
     /// Traits this struct declares conformance to (verified at definition).
     conforms: Vec<String>,
     callable_conformance: Option<Ty>,

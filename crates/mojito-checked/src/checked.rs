@@ -4365,6 +4365,8 @@ pub struct DiscoveryResult {
     /// Each struct's named destructors (`deinit self` methods), by struct,
     /// beside whether each raises; a struct declaring none has no entry.
     pub struct_destructors: HashMap<String, HashMap<String, bool>>,
+    /// Each of the program's own structs' declaring module path, by struct.
+    pub struct_modules: HashMap<String, String>,
     pub conformances: ConformanceFacts,
     /// The overload sets of every declaration the check knew: its own,
     /// and an imported package's, answered from the package's declarations.
@@ -4404,6 +4406,7 @@ pub struct CheckedProgram {
     tables: Arc<CheckedTables>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     struct_destructors: HashMap<String, HashMap<String, bool>>,
+    struct_modules: HashMap<String, String>,
     conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     overloads: Arc<crate::package::ProgramOverloads>,
@@ -4805,6 +4808,7 @@ impl CheckedProgram {
             declaration_effects,
             explicit_destroy_types,
             struct_destructors,
+            struct_modules,
             conformances,
             overloads,
             constants,
@@ -4888,6 +4892,7 @@ impl CheckedProgram {
             tables: Arc::new(tables),
             explicit_destroy_types,
             struct_destructors,
+            struct_modules,
             conformances,
             declaration_effects,
             overloads,
@@ -4969,6 +4974,7 @@ impl CheckedProgram {
             tables: Arc::new(tables),
             explicit_destroy_types: HashMap::new(),
             struct_destructors: HashMap::new(),
+            struct_modules: HashMap::new(),
             conformances: ConformanceFacts::default(),
             declaration_effects,
             overloads,
@@ -5088,6 +5094,12 @@ impl CheckedProgram {
     /// Each struct's named destructors, beside whether each raises.
     pub const fn struct_destructors(&self) -> &HashMap<String, HashMap<String, bool>> {
         &self.struct_destructors
+    }
+
+    /// Each of the program's own structs' declaring module path
+    /// (`std.collections.list`), by struct.
+    pub const fn struct_modules(&self) -> &HashMap<String, String> {
+        &self.struct_modules
     }
 
     pub const fn conformances(&self) -> &ConformanceFacts {

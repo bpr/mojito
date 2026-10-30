@@ -887,7 +887,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   with a bad selection lazily (`bind_compile_time_only_value`); `infer_reflection` types a query read as a value
   (hooked at the top of `inference.rs:infer_impl`) and records its answer
   as `SemanticAdjustment::ParamValue` (`record_reflection_value`), which MIR
-  lowers as `Const::Param`; `eval_reflection_expr` serves
+  lowers as `Const::Param`; a type-name query (`name()`,
+  `name[qualified_builtins=…]()`, `base_name()`, `ReflectQuery::TypeName`)
+  answers upstream's `#kgen.get_type_name` `!kgen.string`, spelled by
+  `mojito_symbol::symbol::reflected_type_name` over each struct's declaring
+  module path (`StructInfo::module`, from
+  `mojito_module::module::declaring_module_path`; MIR's
+  `StructDeclaration::module` through `CheckedProgram::struct_modules`, which
+  mono's `StructShape::module` reads), and `static_string_of` wraps it in the
+  application of `StringSpan`'s `_kgen` initializer the elaborator applies,
+  as upstream's method constructs its `StaticString`; `eval_reflection_expr` serves
   `constraints.rs:eval_associated_ct` and `compile_dependent_ct_expr`, and
   `reflected_type_operand` / `reflected_type_annotation` resolve `types[i]`,
   `r.field_at[i].T`, and `r.field["x"].T` behind `comptime_type_operand`,

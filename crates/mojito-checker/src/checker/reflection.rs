@@ -11,7 +11,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ParamArg;
-use mojito_types::param_expr::{ParamKind, ReflectQuery};
+use mojito_types::param_expr::{ParamKind, ReflectQuery, TypeNameForm};
 use mojito_types::types::DependentType;
 use mojito_types::types::TyKind;
 
@@ -229,12 +229,28 @@ impl Checker {
     /// have yet to resolve has no table to answer from: a struct member's
     /// query is the node too, which mono folds, as upstream's member is
     /// lazy, and any other read fails so the module constant holding it
-    /// binds in the declaration pass instead.
+    /// binds in the declaration pass instead. A type-name query is the
+    /// `StaticString` upstream's `name()` and `base_name()` construct over
+    /// the type's `!kgen.string` name.
     pub(super) fn eval_reflection(
         &self,
         subject: &Ty,
         query: ReflectQuery,
     ) -> Result<CtValue, TypeError> {
+        if let ReflectQuery::TypeName(form) = query {
+            let symbolic = matches!(
+                subject.kind(),
+                TyKind::Param { .. } | TyKind::Dependent(_) | TyKind::SelfType
+            ) || mojito_types::types::has_free_parameters(subject);
+            let name = if symbolic {
+                let shape = self.param_context.type_shape(subject.clone());
+                self.param_context.reflect_query(&shape, query)
+            } else {
+                let name = CtValue::KgenString(self.reflected_type_name(subject, form));
+                self.param_context.constant(name).map_err(param_error)?
+            };
+            return self.static_string_of(name).map(CtValue::Expr);
+        }
         let fields = match subject.kind() {
             TyKind::Struct(name, _)
                 if self
@@ -273,8 +289,55 @@ impl Checker {
             _ => None,
         };
         query
-            .answer(subject, fields.as_deref())
+            .answer(subject, fields.as_deref(), &|ty, form| {
+                self.reflected_type_name(ty, form)
+            })
             .map_err(|error| TypeError::NotComptime(error.to_string()))
+    }
+
+    /// Upstream's `#kgen.get_type_name` or `#kgen.get_base_type_name` of
+    /// the closed type `ty`, each struct qualified by its declaring module.
+    fn reflected_type_name(&self, ty: &Ty, form: TypeNameForm) -> String {
+        mojito_symbol::symbol::reflected_type_name(ty, form, &|name| {
+            self.structs.get(name).map(|info| info.module.clone())
+        })
+    }
+
+    /// `StaticString(_kgen=name)`, the application of `StringSpan`'s
+    /// `!kgen.string` initializer the elaborator applies once `name` is
+    /// closed, as upstream's `name()` and `base_name()` construct one.
+    fn static_string_of(&self, name: ParamExpr) -> Result<ParamExpr, TypeError> {
+        let owner = mojito_types::types::STDLIB_STRING_SPAN_STRUCT;
+        let initializer = self
+            .structs
+            .get(owner)
+            .and_then(|info| info.methods.get("__init__"))
+            .and_then(|overloads| {
+                overloads.iter().find(|sig| {
+                    sig.names == ["_kgen"]
+                        && matches!(sig.params.as_slice(), [param] if matches!(param.kind(), TyKind::KgenString))
+                })
+            })
+            .ok_or_else(|| {
+                TypeError::Unsupported(
+                    "reflect[T].name() needs StringSpan's '_kgen' initializer".to_string(),
+                )
+            })?;
+        let static_string = Ty::new(TyKind::Struct(
+            owner.to_string(),
+            vec![mojito_types::types::TyArg::Origin(
+                mojito_types::origin::Origin::Static,
+            )],
+        ));
+        Ok(self.param_context.apply(
+            &mojito_symbol::symbol::qualified_method_symbol(
+                owner,
+                "__init__",
+                initializer.overload.as_deref(),
+            ),
+            &[self.param_context.type_shape(static_string.clone()), name],
+            mojito_types::param_expr::MetaTy::value(static_string),
+        ))
     }
 
     /// The defining expression of a function-local `comptime` binding kept
@@ -331,6 +394,10 @@ impl Checker {
                     "field_count" => ReflectQuery::FieldCount,
                     "field_names" => ReflectQuery::FieldNames,
                     "field_types" => ReflectQuery::FieldTypes,
+                    "name" => ReflectQuery::TypeName(TypeNameForm::Name {
+                        qualified_builtins: false,
+                    }),
+                    "base_name" => ReflectQuery::TypeName(TypeNameForm::Base),
                     _ => return Err(no_such_reflection_method(&subject, method)),
                 };
                 Ok(Some((subject, query)))
@@ -353,10 +420,38 @@ impl Checker {
                         ReflectQuery::FieldIndex(reflection_field_name(param_args)?),
                     ))),
                     "field_type" => Err(removed_field_type()),
+                    "name" => Ok(Some((
+                        subject,
+                        ReflectQuery::TypeName(TypeNameForm::Name {
+                            qualified_builtins: self.qualified_builtins(param_args)?,
+                        }),
+                    ))),
                     _ => Err(no_such_reflection_method(&subject, field)),
                 }
             }
             _ => Ok(None),
+        }
+    }
+
+    /// The one keyword parameter of `name[qualified_builtins=…]()`, a
+    /// compile-time `Bool`.
+    fn qualified_builtins(&self, param_args: &[ParamArg]) -> Result<bool, TypeError> {
+        let value = match param_args {
+            [] => return Ok(false),
+            [ParamArg::Named { name, value }] if name == "qualified_builtins" => match &**value {
+                ParamArg::Value(value) => self
+                    .compile_dependent_ct_expr(value)
+                    .map_err(|_| TypeError::DynamicParameterValue)?,
+                _ => return Err(no_qualified_builtins()),
+            },
+            _ => return Err(no_qualified_builtins()),
+        };
+        match value.kind() {
+            ParamKind::Constant(CtValue::Bool(qualified)) => Ok(*qualified),
+            _ => Err(TypeError::Unsupported(
+                "reflect[T].name[qualified_builtins=…]() over a Bool that is not a constant"
+                    .to_string(),
+            )),
         }
     }
 
@@ -696,5 +791,11 @@ fn no_such_reflection_method(subject: &Ty, method: &str) -> TypeError {
 fn removed_field_type() -> TypeError {
     TypeError::NotComptime(
         "Reflected.field_type was removed; use Reflected.field[name]".to_string(),
+    )
+}
+
+fn no_qualified_builtins() -> TypeError {
+    TypeError::NotComptime(
+        "reflect[T].name[qualified_builtins=…]() takes one keyword Bool parameter".to_string(),
     )
 }

@@ -592,6 +592,9 @@ struct StructShape {
     values: Vec<(String, ParamExpr)>,
     parameterized_values: Vec<mojito_checked::declaration::ParameterizedAssociatedValue>,
     fields: Vec<(String, Ty)>,
+    /// The declaring module's dotted path, which qualifies the struct's
+    /// name in `reflect[T].name()`.
+    module: String,
 }
 
 struct Specializer<'a> {

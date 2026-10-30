@@ -4217,6 +4217,7 @@ mod tests {
         let structure =
             |name: &str, fields: Vec<Ty>, trait_name: &str, conditions| MirStructDeclaration {
                 name: name.into(),
+                module: String::new(),
                 fields: fields
                     .into_iter()
                     .enumerate()
@@ -4356,6 +4357,7 @@ mod tests {
         let structure =
             |name: &str, fields: usize, trait_name: &str, conditions| MirStructDeclaration {
                 name: name.into(),
+                module: String::new(),
                 fields: (0..fields)
                     .map(|at| (format!("f{at}"), Ty::int()))
                     .collect(),
@@ -4425,6 +4427,7 @@ mod tests {
         use mojito_checked::checked::StructConformance;
         let structure = |name: &str, trait_name: &str, conditions| MirStructDeclaration {
             name: name.into(),
+            module: String::new(),
             fields: vec![(
                 "f0".into(),
                 Ty::new(TyKind::Struct("String".into(), Vec::new())),
@@ -4503,6 +4506,7 @@ mod tests {
             let trait_name = "RegisterPassable".to_string();
             MirStructDeclaration {
                 name: name.into(),
+                module: String::new(),
                 fields: Vec::new(),
                 mut_self_methods: HashSet::new(),
                 fieldwise_init: false,

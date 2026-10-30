@@ -528,6 +528,13 @@ impl Checker {
             StructInfo {
                 decls,
                 source_params: type_params.to_vec(),
+                module: mojito_module::module::declaring_module_path(
+                    name,
+                    super::bundled_struct_source(
+                        declaration.module.as_deref(),
+                        declaration.methods,
+                    ),
+                ),
                 conforms: declaration.conforms.to_vec(),
                 callable_conformance: None,
                 callable_target: None,

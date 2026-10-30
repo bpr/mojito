@@ -66,8 +66,18 @@ fn reflection_answer(
         return Ok(None);
     }
     let unsupported = |error: MonoError| ParamError::Unsupported(error.construct);
+    let type_name = |ty: &Ty, form| {
+        mojito_symbol::symbol::reflected_type_name(ty, form, &|name| {
+            bindings
+                .structs
+                .shape(name)
+                .map(|shape| shape.module.clone())
+        })
+    };
     let answer = match subject.kind() {
-        TyKind::Struct(_, args) => {
+        // A type name spells any closed type, a struct's with its
+        // arguments as they stand.
+        TyKind::Struct(_, args) if !matches!(query, ReflectQuery::TypeName(_)) => {
             let Some(instance) = struct_instance(&subject, bindings).map_err(unsupported)? else {
                 return Ok(None);
             };
@@ -81,9 +91,9 @@ fn reflection_answer(
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(unsupported)?;
             let declared = Ty::new(TyKind::Struct(instance.template.to_string(), args.clone()));
-            query.answer(&declared, Some(&fields))
+            query.answer(&declared, Some(&fields), &type_name)
         }
-        _ => query.answer(&subject, None),
+        _ => query.answer(&subject, None, &type_name),
     };
     answer.map(Some).map_err(ParamError::Reflect)
 }

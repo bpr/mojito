@@ -1865,6 +1865,7 @@ mod held_struct_tests {
     fn program(trait_name: &str, fields: usize) -> Prog {
         let declaration = mojito_mir::mir::MirStructDeclaration {
             name: "L".into(),
+            module: String::new(),
             fields: (0..fields)
                 .map(|at| (format!("f{at}"), Ty::int()))
                 .collect(),

@@ -1558,6 +1558,7 @@ mod tests {
             declarations: MirDeclarations {
                 structs: vec![MirStructDeclaration {
                     name: "Point".to_string(),
+                    module: String::new(),
                     fields: vec![("x".to_string(), Ty::int())],
                     mut_self_methods: HashSet::default(),
                     fieldwise_init: false,

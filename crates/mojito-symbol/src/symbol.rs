@@ -2697,6 +2697,33 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
     }
 }
 
+/// Upstream's `#kgen.get_type_name` and `#kgen.get_base_type_name`: the
+/// spelling `reflect[T].name()` and `reflect[T].base_name()` answer for a
+/// closed type.
+///
+/// A name is qualified by its declaring module (`probe.Point`,
+/// `std.collections.optional.Optional[…]`), which `module_of` answers for a
+/// struct's linked name, except that `SIMD`, `Bool`, `String`, and `List`
+/// spell bare unless `qualified_builtins`. Each argument spells inside the
+/// brackets: a type in the same form, a scalar value `value : Type` (`3 :
+/// SIMD[DType.int, 1]`), a `Bool` or `DType` bare, an origin `{}`. A
+/// base name is the base type's declared name alone (`List` for
+/// `List[Int]`).
+pub fn reflected_type_name(
+    ty: &Ty,
+    form: mojito_types::param_expr::TypeNameForm,
+    module_of: &dyn Fn(&str) -> Option<String>,
+) -> String {
+    match form {
+        mojito_types::param_expr::TypeNameForm::Name { qualified_builtins } => TypeNameSpeller {
+            qualified_builtins,
+            module_of,
+        }
+        .name(ty),
+        mojito_types::param_expr::TypeNameForm::Base => reflected_base_name(ty),
+    }
+}
+
 /// The inverse of [`mangle`] for a self-delimiting value suffix.
 ///
 /// The template name and the baked values, or `None` when the symbol carries
@@ -3236,6 +3263,166 @@ impl OverloadDeclaration {
             && self.params == m.params
             && self.type_params == m.type_params
     }
+}
+
+/// Upstream's `#kgen.get_type_name` printer over one form
+/// ([`reflected_type_name`]).
+struct TypeNameSpeller<'a> {
+    qualified_builtins: bool,
+    module_of: &'a dyn Fn(&str) -> Option<String>,
+}
+
+impl TypeNameSpeller<'_> {
+    fn name(&self, ty: &Ty) -> String {
+        match ty.kind() {
+            TyKind::Simd { dtype, width } => self.simd(dtype, width),
+            TyKind::IntLiteral => self.simd(&"DType.int", &1),
+            TyKind::FloatLiteral => self.simd(&"DType.float64", &1),
+            TyKind::Bool => self.qualify("std.builtin.bool", "Bool"),
+            TyKind::None => self.qualify("std.builtin.none", "NoneType"),
+            TyKind::Dtype => self.qualify("std.builtin.dtype", "DType"),
+            TyKind::Error => self.qualify("std.builtin.error", "Error"),
+            TyKind::StringLiteral(_) => self.qualify("std.builtin.string_literal", "StringLiteral"),
+            // A variadic type pack spells as upstream's printer shows one.
+            TyKind::Variant(_) => self.applied("std.utils.variant", "Variant", &Self::pack()),
+            TyKind::Struct(..) if mojito_types::types::tuple_elements(ty).is_some() => {
+                let module = (self.module_of)(mojito_types::types::TUPLE_TYPE_NAME);
+                self.applied(&module.unwrap_or_default(), "Tuple", &Self::pack())
+            }
+            TyKind::Struct(name, arguments) => {
+                let template = mojito_types::types::struct_template(name);
+                let (template, baked) =
+                    demangle_specialization(template).unwrap_or((template, Vec::new()));
+                let mut spelled: Vec<String> =
+                    baked.iter().map(|value| self.value(value)).collect();
+                spelled.extend(arguments.iter().map(|argument| match argument {
+                    TyArg::Ty(ty) => self.name(ty),
+                    TyArg::Val(value) => self.value(value),
+                    TyArg::Origin(_) => "{}".to_string(),
+                }));
+                self.applied(
+                    &(self.module_of)(template).unwrap_or_default(),
+                    declared_struct_name(template),
+                    &spelled,
+                )
+            }
+            _ => ty.to_string(),
+        }
+    }
+
+    /// A parameter value inside a type's brackets: a scalar `value : Type`,
+    /// a `Bool` or `DType` bare, a struct value its fields (`{3 :
+    /// SIMD[DType.int, 1], True}`), a one-field struct its field alone (`4`
+    /// for a `SIMDLength`).
+    fn value(&self, value: &CtValue) -> String {
+        match value {
+            CtValue::Bool(value) => (if *value { "True" } else { "False" }).to_string(),
+            CtValue::Int(_) | CtValue::IntLiteral(_) => {
+                format!("{value} : {}", self.simd(&"DType.int", &1))
+            }
+            CtValue::UInt(lane) => format!("{lane} : {}", self.simd(&"DType.uint", &1)),
+            CtValue::Float(bits) => format!(
+                "{:?} : {}",
+                f64::from_bits(*bits),
+                self.simd(&"DType.float64", &1)
+            ),
+            CtValue::FloatLiteral(_) => format!("{value} : {}", self.simd(&"DType.float64", &1)),
+            CtValue::Simd { dtype, lanes } => {
+                let shown = value.to_string();
+                let elements = shown.split(" : ").next().unwrap_or(&shown);
+                let elements = match lanes.as_slice() {
+                    [_] => elements.trim_start_matches('[').trim_end_matches(']'),
+                    _ => elements,
+                };
+                let lane = format!("DType.{}", dtype.name());
+                format!("{elements} : {}", self.simd(&lane, &lanes.len()))
+            }
+            CtValue::Dtype(_) => self.dtype(value),
+            CtValue::Type(ty) => self.name(ty),
+            CtValue::Struct { fields, .. } => match fields.as_slice() {
+                [(_, field)] => self.value(field),
+                fields => format!(
+                    "{{{}}}",
+                    fields
+                        .iter()
+                        .map(|(_, field)| self.value(field))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            },
+            other => other.to_string(),
+        }
+    }
+
+    fn applied(&self, module: &str, base: &str, arguments: &[String]) -> String {
+        let name = self.qualify(module, base);
+        if arguments.is_empty() {
+            name
+        } else {
+            format!("{name}[{}]", arguments.join(", "))
+        }
+    }
+
+    /// `base` qualified by `module`, a library builtin bare unless the
+    /// form qualifies builtins.
+    fn qualify(&self, module: &str, base: &str) -> String {
+        let builtin = matches!(base, "SIMD" | "Bool" | "String" | "List")
+            && (module == "std" || module.starts_with("std."));
+        if builtin && !self.qualified_builtins || module.is_empty() {
+            base.to_string()
+        } else {
+            format!("{module}.{base}")
+        }
+    }
+
+    fn simd(&self, dtype: &dyn std::fmt::Display, width: &dyn std::fmt::Display) -> String {
+        format!(
+            "{}[{}, {width}]",
+            self.qualify("std.simd", "SIMD"),
+            self.dtype(dtype)
+        )
+    }
+
+    fn dtype(&self, dtype: &dyn std::fmt::Display) -> String {
+        if self.qualified_builtins {
+            format!("std.builtin.dtype.{dtype}")
+        } else {
+            dtype.to_string()
+        }
+    }
+
+    fn pack() -> Vec<String> {
+        vec!["<unprintable>".to_string(), "{}".to_string()]
+    }
+}
+
+/// `reflect[T].base_name()`'s spelling of `ty`: its base type's declared
+/// name, without module or parameters.
+fn reflected_base_name(ty: &Ty) -> String {
+    match ty.kind() {
+        TyKind::Simd { .. } | TyKind::IntLiteral | TyKind::FloatLiteral => "SIMD",
+        TyKind::Bool => "Bool",
+        TyKind::None => "NoneType",
+        TyKind::Dtype => "DType",
+        TyKind::Error => "Error",
+        TyKind::StringLiteral(_) => "StringLiteral",
+        TyKind::Variant(_) => "Variant",
+        TyKind::Struct(..) if mojito_types::types::tuple_elements(ty).is_some() => "Tuple",
+        TyKind::Struct(name, _) => {
+            let template = mojito_types::types::struct_template(name);
+            declared_struct_name(specialization_template(template).unwrap_or(template))
+        }
+        _ => return ty.to_string(),
+    }
+    .to_string()
+}
+
+/// The name a struct's declaration spells, its linked name less any module
+/// qualification (`AHasher` of `__module$std$hash$$ahash$AHasher`).
+fn declared_struct_name(linked: &str) -> &str {
+    linked
+        .strip_prefix("__module$")
+        .map_or(linked, |rest| rest.rsplit('$').next().unwrap_or(rest))
 }
 
 #[cfg(test)]

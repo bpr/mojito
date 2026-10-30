@@ -305,6 +305,11 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 ),
             ));
         }
+        // Schema 1.138 carries the declaring module's path, written only
+        // when the struct has one.
+        if !declaration.module.is_empty() {
+            entries.push(("module", quote(&declaration.module)));
+        }
         // Schema 1.65 carries the member table, written only when the
         // struct owns a lifecycle member.
         if !declaration.members.is_empty() {
