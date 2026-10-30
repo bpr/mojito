@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1708**.
+Next free ID: **R1715**.
 
 ## Ordered Work
 
@@ -3958,6 +3958,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1708 A bare `Scalar` parameter type is rejected, where upstream's
+  `Scalar` is the partial alias `SIMD[_, 1]` and auto-parameterizes**
+
+  `def f(x: Scalar) -> type_of(x)` reports "type 'Scalar' expects 1 type
+  argument(s), got 0", where the pin runs `f(Int32(3))`.
+  - Upstream declares `comptime Scalar = SIMD[_, length=1]`
+    (`simd.mojo:115`), and a bare use of a partial alias auto-parameterizes
+    the signature.
+  - `auto_parameterize.rs`'s `partial_aliases` already handles that shape
+    for a program alias, but `Scalar` is still a compiler name (R1557).
+  - Lever: until R1557 declares the alias, `Declared::of` seeds
+    `partial_aliases` with `Scalar` as `SIMD[_, length=1]` whenever the
+    program declares no `Scalar` and `SIMD` is installed.
+  - Probe: `comptime Lane[dt: DType] = SIMD[dt, 1]` with `def twice(x:
+    Lane)` reports "cannot infer type parameter 'dt' of 'Lane'", where the
+    pin prints `6 3.0` for `twice(Int32(3))` and `twice(Float64(1.5))`: a
+    bare *parametric* alias is not auto-parameterized either.
+  - Upstream's `_powi`, `_powf_scalar`, `_modf_scalar`, and `std.math`'s
+    `_frexp_bits`/`_log_*` helpers all take a bare `Scalar` (R1567,
+    R1711, R1714).
+  - Found while planning R1567 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1545 A `SIMD[dtype](...)` call with its length omitted is
   rejected, where the pin binds the length from the arguments**
 
@@ -4204,6 +4228,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `checker/rebind.rs` compares the closed types whole, origins included.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R1709 `rebind[type_of(x)](y)` is rejected**
+
+  `rebind[type_of(x)](y)` reports "rebind takes one type argument", where
+  the pin runs it; `comptime T = type_of(x)` then `rebind[T](y)` already
+  runs.
+  - `Checker::rebind_target_ty` (`checker/rebind.rs`) reads its bracket
+    argument through `assoc_body_source_type`, which does not take a
+    `type_of(...)` call.
+  - Upstream's `_pow` spells `rebind[type_of(base)](exp)` (R1567).
+  - Found while planning R1567 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R409 A violated `where` clause is quoted from its folded
   constraint, not as declared**
@@ -4544,6 +4581,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     upstream's `where dtype.is_floating_point()` as a `comptime assert`.
   - Probe: upstream's `SIMD.write_padded` declares `where
     self.dtype.is_integral()` (R1663).
+  - Probe: upstream's `_powf_scalar(base: Scalar, exponent: Scalar) ->
+    type_of(base) where base.dtype.is_floating_point()` reads the
+    predicate off a bare-`Scalar` argument's value (R1567, R1708).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1710 A closed-`False` `comptime assert` does not end a MIR path, so
+  an `out result` function whose arm ends in one fails the drop verifier**
+
+  `def f[w: SIMDLength](b: SIMD[_, w], out result: type_of(b))` holding
+  `comptime if w == 2: return b` and `else: comptime assert False, "x"`
+  stops `f(SIMD[DType.int32, 2](1, 2))` with "drop.var of slot $v1
+  ('result') that some path reaching it does not hold", where the pin
+  prints `[1, 2]`.
+  - R1576's `failing_assertion` fact ends the path in the checker
+    (`stmt_reach`, `definitely_initializes_named_result`), but HIR and MIR
+    never read it, so the failing arm falls through to the drop of an
+    unset `result`.
+  - Lever: lower the statement as a block end (`MirTerm::Unreachable`).
+  - A `-> T` function with the same arm already runs.
+  - Upstream's `_pow` ends its `else` arm this way (R1567).
+  - Found while planning R1567 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6329,6 +6388,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `DType.<name>` spelling, a binder, or a type's `dtype`, not a value's.
   - A value's `dtype` is its type's lane slot, which the checker already
     records for a runtime read (`SemanticAdjustment::DtypeConstant`).
+  - The same gap covers a value's struct parameter in any type or
+    parameter position: `SIMD[DType.int8, x.length]` and
+    `CurrentPlugin.binary_math_fn["pow", base.dtype, width]` report "not
+    a compile-time Int constant: unsupported associated comptime member
+    access", and `x.cast[x.dtype]()` reports "no overload matches".
+  - Upstream's `_pow`, `_powf_scalar`, `SIMD.__pow__`, `exp`, and `log`
+    spell all of these (R1567).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10840,28 +10906,128 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R184.
   - Model: Fable, Planned.
 
+- [ ] **R1711 `std.utils.numerics` lacks `nan`, `isnan`, `isinf`, and
+  `FPUtils`, and `std.math` lacks `copysign` and the
+  `std.math.constants` values**
+
+  `from std.utils.numerics import nan, FPUtils` fails, where upstream's
+  `_powf_scalar`, `exp`, and `log` read them.
+  - Port them verbatim: `FPUtils` with its `integral_type`,
+    `mantissa_width`, `exponent_bias`, `exponent_width`, `exponent_mask`,
+    and `max_exponent` members; `nan`, `isnan`, `isinf`; `copysign` over
+    `llvm.copysign`; and `log2e`, `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and
+    `_LN2_LO_F64`.
+  - Port `_modf_scalar`, `_modf`, and `_floor` into `std.simd` with them,
+    above `struct SIMD` in callee-first order (R127, R393).
+  - Shrink `std/utils/numerics.mojo`'s "not ported" header list.
+  - Probe: `print(nan[DType.float64](), isnan(nan[DType.float32]()),
+    FPUtils[DType.float64].mantissa_width())` against the pin.
+  - Found while planning R1567 (2026-10-30).
+  - Depends on R1708 and R333.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1712 A compile-time `Span` parameter is not bound from a list
+  literal, so `std.math.polynomial` cannot be ported**
+
+  `_horner_evaluate[[Scalar[dtype](1.0), 2.0, 3.0]](x)` over
+  `coefficients: Span[Scalar[dtype], _]` reports "not a compile-time Int
+  constant: not an associated comptime expression", where the pin prints
+  `17.0 [6.0, 17.0]` for `p(Float64(2))` and `p(SIMD[DType.float32, 2](1,
+  2))`.
+  - `len(coefficients)` and `coefficients[i]` over the parameter are not
+    compile-time expressions the checker can fold.
+  - Port `std.math.polynomial` (`polynomial_evaluate`,
+    `_horner_evaluate`) with the fix.
+  - Probe: `_exp_taylor`'s `comptime coefficients = List[...]` read
+    through `coefficients[:]` and `coefficients[:8]`, which may share
+    R508's cause.
+  - Found while planning R1567 (2026-10-30).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1713 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
+  Taylor polynomial and `_ldexp_impl`**
+
+  `from std.math import exp` fails, and upstream's `_powf_scalar` takes its
+  digits from it (R1567).
+  - Port `_Expable`, both `exp` overloads, `_exp_impl`, `_exp_taylor`,
+    `_ldexp_impl`, and `ldexp`.
+  - `_ldexp_impl`'s AVX-512 `scalef` arm is ported too: an AVX-512 host
+    takes it for `float32` at a width of 16 or more.
+  - The `is_gpu()` arm (`exp2`, PTX/AMDGCN intrinsics) is omitted under
+    R1635, as `SIMD.cast`'s GPU arms are; record it in the file header.
+  - `CurrentPlugin.unary_math_fn["exp", …]` is `None` on the default
+    plugin.
+  - Probe: `print(exp(Float64(1)), exp(SIMD[DType.float32, 4](0, 1, 2,
+    -1)))` against the pin.
+  - Found while planning R1567 (2026-10-30).
+  - Depends on R1711, R1712, R1593, R1634, R1673, R1661, and R333.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1714 `std.math` has no `log`, where upstream's is `_log_accurate`
+  for `float64` and `_log_base[27]` otherwise**
+
+  `from std.math import log` fails, and upstream's `_powf_scalar` takes its
+  digits from it (R1567).
+  - Port `log`, `_log_base`, `frexp`, `_frexp_mask1`, `_frexp_mask2`,
+    `_frexp_bits`, `_log_reduce`, `_log_combine`, `_log_kernel`,
+    `_log_accurate`, `_is_zero_bits`, `_is_subnormal_bits`, and
+    `_assert_float64_supported`.
+  - `log`'s `is_nvidia_gpu()` arm (through `log2`'s PTX intrinsic) is
+    omitted under R1635.
+  - `_log_kernel`'s `f / (2.0 + f)` needs `/` at `float32` lane precision
+    (R184).
+  - Probe: `print(log(Float64(2)), log(SIMD[DType.float32, 4](1, 2, 0.5,
+    10)), log(Float64(0)), log(Float64(-1)))` against the pin.
+  - Found while planning R1567 (2026-10-30).
+  - Depends on R1711, R1712, R1593, R1634, R1661, R333, and R184.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
   `__pow__` over `_pow`**
 
   `v ** 2` over a `float32` vector is rejected, and `Float64(2) **
-  Float64(0.5)` prints the host's `powf`, where the pin prints
-  `1.4142135623734946` through `_powf_scalar`'s `exp(log)`.
-  - Port the three `__pow__` overloads, `__rpow__`, `_pow`, `_powf`,
-    `_powf_scalar`, and `_powi`.
-  - `_pow` reads `CurrentPlugin.binary_math_fn` (R1699, R1562), stores
-    lanes with `result[i] = …` (R1561), and initializes `out result` with
-    `result = {}`.
-  - Port `__ipow__` (`simd.mojo:1748`) too; its `rhs` is `Int`.
-  - Probe: `Int32(3) ** 2` and `Int32(3) ** Int32(2)` are rejected
-    ("operator '**' is not defined for Int32 and Int"), where the pin
-    prints `9`: the rule serves only `Int`, `UInt`, `Float64`, and a
-    float lane read out of a vector.
-  - Retire the `__pow__` arms of `math_operation_requirement` and the
-    elaborator's `__pow__` rewrite (`mono/specializer.rs`).
-  - Removes `pliron_float_pow.mojo` from R171.
+  Float64(0.5)` prints the host's `powf` (`1.4142135623730951`), where the
+  pin prints `1.4142135623734946` through `_powf_scalar`'s `exp(log)`.
+  - Port the three `__pow__` overloads, `__rpow__`, `__ipow__` (`rhs:
+    Int`), `_pow`, `_powf`, `_powf_scalar`, and `_powi` verbatim, above
+    `struct SIMD` in callee-first order (R127, R393).
+  - Route `**` to `a.__pow__(b)` else `b.__rpow__(a)`, and `**=` to
+    `__ipow__`, as `+` and `+=` are routed.
+  - `FloatLiteral` has no `__pow__`: `4.0 ** 0.5` materializes both to
+    `Float64` and prints `2.000000000000565` at the pin. `IntLiteral **
+    IntLiteral` and `ParamOp::Pow` stay literal operations.
+  - Probe: `Int32(3) ** 2` and `Int32(3) ** Int32(2)` are rejected ("…
+    not defined for Int32 and Int", "… Int32 and Int32"), where the pin
+    prints `9`. The rule serves only `Int`, `UInt`, `Float64`, and a
+    `float64` lane.
+  - Probe: `Int(2) ** -1`, `Float64(2) ** -1`, and `Int(-1) ** -3` trap
+    ("'**' exponent must be a non-negative Int"), where the pin prints `0
+    0.5 -1`.
+  - Probe: `v ** SIMD[DType.int32, 2](2, -1)` over `SIMD[DType.float64,
+    2]`, and `2.0 ** v`, fail at the pin with "The SIMD types must be
+    identical or else the exponent must be a scalar."
+  - Retire the checker rule: `math_operation_requirement`'s `__pow__` arm,
+    the `FloatLiteral` exact/fractional `Pow` rule and `Pow` in `Mod | Pow
+    => common` (`checker/operators.rs`), and `builtin_fold.rs`'s `Pow` arm.
+  - Retire the lowering: the elaborator's `__pow__` rewrite
+    (`mono/specializer.rs`), `std._intrinsics._pow_int` with
+    `POW_INT_SYMBOL`, `calls_pow_int`, and `implicit_callees`'s `**` arm;
+    the VM's `integer_pow`, `runtime::pow_exponent`, and the scalar `Pow`
+    arms; Pliron's `lower_pow`, the `InfixOp::Pow` arms of
+    `lower/binops.rs`, and `TrapCategory::PowExponent`.
+  - Trap category 2 (`rt_abi::TRAP_POW_EXPONENT`) loses its emitter; add
+    its retirement to R18.
   - List `Powable` in `SIMD`'s declaration, and drop its
     `modelled_conformance` arm for `SIMD`.
-  - Depends on R1566, R1561, R1562, R1699, and R1568.
+  - Move `assets/runtime_error/pliron_trap_pow_negative.mojo` to
+    `assets/ok` (the pin prints `0`), with its manifest and
+    `assets-mojo-errors.tsv` rows.
+  - Removes `pliron_float_pow.mojo` from R171 and its
+    `assets-mojo-output-diffs.tsv` row.
+  - Plan: `R1567-simd-s-plan.md`, Part B.
+  - Depends on R184, R333, R1661, R1708, R1709, R1710, R1711, R1713, and
+    R1714.
   - Model: Fable, Planned.
 
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where

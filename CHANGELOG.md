@@ -2769,6 +2769,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `SIMD`'s `**` stays a compiler rule (R1567): upstream's `__pow__` reaches
+  `_powf_scalar`, whose `exp(log)` needs `std.math`'s `exp` and `log`
+  (R1713, R1714) over `FPUtils`, `nan`, and `polynomial_evaluate` (R1711,
+  R1712). The port also needs a bare `Scalar` parameter (R1708),
+  `rebind[type_of(x)]` (R1709), and a failing `comptime assert` that ends
+  its path (R1710).
 - On the VM, `print`, `String`, `repr`, and `Writer.write` of a `SIMD`
   value (`Int`, `UInt`, `Float64`, a sized scalar, a vector) now run its
   declared `write_to` and `write_repr_to`, as upstream's do, rather than
