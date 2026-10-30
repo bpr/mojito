@@ -541,6 +541,14 @@ impl VmBackend {
         let Some(index) = prog.index_of(&func.0) else {
             return Ok(None);
         };
+        // An initializer of a receiver held as a value returns its `out self`
+        // slot, which only the synchronous construction reads.
+        if matches!(
+            prog.constructed(&func.0, &prog.mir.functions[index].1.param_types),
+            Some(Constructed::Value(_))
+        ) {
+            return Ok(None);
+        }
         let positional: Vec<Value> = args
             .iter()
             .map(|reg| caller.registers[reg.0 as usize].clone())

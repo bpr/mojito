@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares upstream's `@staticmethod` `from_bits=` initializer
+  (R1593): `Float32(from_bits=UInt32(1065353216))` prints `1.0`,
+  `SIMD[DType.bool, 2](from_bits=SIMD[DType.uint8, 2](0, 3))` prints
+  `[False, True]`, and `type_of(x)(from_bits=bits)` runs, on the VM and
+  natively, where the keyword was rejected. A `@staticmethod`
+  `__init__(out self, …)` now parses as an initializer, another static
+  method's leading unannotated `self` is a parameter of type `Self`, and an
+  out-of-line `SIMD` initializer runs on both backends.
+
 - `std.math.polynomial` ports upstream's `polynomial_evaluate` and
   `_horner_evaluate` (R1712): a compile-time `Span` parameter binds a list
   display through `Span`'s `@implicit` `Array` constructor, its own

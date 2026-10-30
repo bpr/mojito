@@ -124,8 +124,14 @@ pub fn compile(
     let mut functions = HashMap::new();
     let mut declared = Vec::new();
     for &(name, function) in &reachable_functions {
-        let (func_op, signature) =
-            lower::declare_function(&mut context, module, name, function, &layout)?;
+        let (func_op, signature) = lower::declare_function(
+            &mut context,
+            module,
+            name,
+            function,
+            declarations.get(name),
+            &layout,
+        )?;
         functions.insert(
             name.to_string(),
             FnMeta {

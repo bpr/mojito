@@ -358,6 +358,9 @@ Rules:
   as upstream passes such a value by value: the caller's storage is a
   register's value, which other readers may share. Every other owned
   aggregate parameter binds the caller's storage.
+- An `__init__`'s `out self` receiver is a pointer to the caller's result
+  storage, a scalar one (a one-lane `SIMD`) included: the caller allocates
+  it, and reads a scalar result back after the call.
 - The synthesized executable wrapper is the plain C `main() -> i32`: it calls
   `mjrt_version`, then the mangled `__toplevel__` (when present), then the
   mangled `main`, then returns 0.

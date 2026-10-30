@@ -12,96 +12,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `var **kwargs`, and the `/`/`*` markers — all **parsed** (the checker flags the
     /// advanced ones as unsupported). Parsing is lenient about argument ordering.
     pub(super) fn parse_params(&mut self) -> Result<ParamList, ParseError> {
-        let mut params = Vec::new();
-        let mut positional_only = None;
-        let mut keyword_only = None;
-        if matches!(self.peek_token()?, Some(Token::RParen)) {
-            return Ok(ParamList {
-                params,
-                positional_only,
-                keyword_only,
-            });
-        }
-        loop {
-            match self.peek_token()? {
-                // `/` — positional-only marker (not a parameter).
-                Some(Token::Slash) => {
-                    self.next_token()?;
-                    positional_only = Some(params.len());
-                }
-                // Current Mojo requires the consuming `var **name: T` spelling
-                // for a keyword-variadic collector.
-                Some(Token::DoubleStar) => {
-                    return Err(ParseError::UnexpectedToken(
-                        self.next_token()?,
-                        "a keyword-variadic parameter must be spelled 'var **name: Type'"
-                            .to_string(),
-                    ));
-                }
-                Some(Token::Star) => {
-                    self.next_token()?;
-                    if matches!(self.peek_token()?, Some(Token::Identifier(_))) {
-                        // `*name: T` — positional variadic.
-                        let name = self.expect_identifier("Expected a name after '*'")?;
-                        params.push(self.finish_param(name, ParamKind::Variadic, None, None)?);
-                    } else {
-                        // bare `*` — keyword-only marker (not a parameter).
-                        keyword_only = Some(params.len());
-                    }
-                }
-                // Current Mojo places the ownership convention before the pack
-                // marker: `var *args: *Ts` (not `*var args`).
-                Some(Token::Var) => {
-                    self.next_token()?;
-                    if matches!(self.peek_token()?, Some(Token::DoubleStar)) {
-                        self.next_token()?;
-                        let name = self.expect_identifier("Expected a name after 'var **'")?;
-                        params.push(self.finish_param(
-                            name,
-                            ParamKind::KwVariadic,
-                            Some(ArgConvention::Var),
-                            None,
-                        )?);
-                    } else if matches!(self.peek_token()?, Some(Token::Star)) {
-                        self.next_token()?;
-                        let name = self.expect_identifier("Expected a name after 'var *'")?;
-                        params.push(self.finish_param(
-                            name,
-                            ParamKind::Variadic,
-                            Some(ArgConvention::Var),
-                            None,
-                        )?);
-                    } else {
-                        let name = self
-                            .expect_identifier("Expected a parameter name after the convention")?;
-                        params.push(self.finish_param(
-                            name,
-                            ParamKind::Regular,
-                            Some(ArgConvention::Var),
-                            None,
-                        )?);
-                    }
-                }
-                // A regular parameter, with an optional convention prefix.
-                _ => {
-                    let (convention, origin, name) = self.parse_convention_and_name()?;
-                    params.push(self.finish_param(name, ParamKind::Regular, convention, origin)?);
-                }
-            }
-            if matches!(self.peek_token()?, Some(Token::Comma)) {
-                self.next_token()?; // consume ','
-                if matches!(self.peek_token()?, Some(Token::RParen)) {
-                    break; // trailing comma
-                }
-            } else {
-                break;
-            }
-        }
-        Ok(ParamList {
-            params,
-            positional_only,
-            keyword_only,
-        })
+        self.parse_param_list(false)
     }
 
     /// The optional argument convention (`read`/`mut`/`var`/`out`) prefixing a
@@ -708,14 +619,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let type_params = self.parse_type_params()?;
 
         self.expect(&Token::LParen, "Expected '(' after the method name")?;
-        let is_static = decorators
-            .iter()
-            .any(|decorator| decorator.path.as_slice() == ["staticmethod"]);
+        // Every `__init__` is static, its `out self` the result, so
+        // `@staticmethod` on one changes nothing.
+        let is_static = name != "__init__"
+            && decorators
+                .iter()
+                .any(|decorator| decorator.path.as_slice() == ["staticmethod"]);
         // Detect the receiver. An instance method starts with `self`, optionally
         // carrying a convention (`mut self`, `out self`, `var self`, `imm self`
         // — convention words are contextual identifiers). A `@staticmethod` has
-        // no `self`, so its parameters start immediately even when the first one
-        // has a convention, notably canonical `var **kwargs`.
+        // no receiver, so its parameters start immediately even when the first
+        // one has a convention, notably canonical `var **kwargs`; a leading
+        // `self` there is an ordinary parameter.
         let first_is_self =
             matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "self");
         let first_is_convention = matches!(self.peek_token()?, Some(Token::Identifier(id)) if convention_word(id).is_some())
@@ -774,7 +689,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
             }
         } else {
-            self.parse_params()?
+            self.parse_param_list(is_static)?
         };
         self.expect(&Token::RParen, "Expected ')' after the parameters")?;
 
@@ -844,6 +759,137 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 }
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
+    /// A parameter list whose leading `self` may omit its annotation, as a
+    /// `@staticmethod`'s may: upstream types a method's first `self`
+    /// argument `Self` whether or not it is a receiver. An `out self` names
+    /// the result, so it still needs one outside an `__init__`.
+    fn parse_param_list(&mut self, self_typed_leading: bool) -> Result<ParamList, ParseError> {
+        let mut params = Vec::new();
+        let mut positional_only = None;
+        let mut keyword_only = None;
+        if matches!(self.peek_token()?, Some(Token::RParen)) {
+            return Ok(ParamList {
+                params,
+                positional_only,
+                keyword_only,
+            });
+        }
+        loop {
+            match self.peek_token()? {
+                // `/` — positional-only marker (not a parameter).
+                Some(Token::Slash) => {
+                    self.next_token()?;
+                    positional_only = Some(params.len());
+                }
+                // Current Mojo requires the consuming `var **name: T` spelling
+                // for a keyword-variadic collector.
+                Some(Token::DoubleStar) => {
+                    return Err(ParseError::UnexpectedToken(
+                        self.next_token()?,
+                        "a keyword-variadic parameter must be spelled 'var **name: Type'"
+                            .to_string(),
+                    ));
+                }
+                Some(Token::Star) => {
+                    self.next_token()?;
+                    if matches!(self.peek_token()?, Some(Token::Identifier(_))) {
+                        // `*name: T` — positional variadic.
+                        let name = self.expect_identifier("Expected a name after '*'")?;
+                        params.push(self.finish_param(name, ParamKind::Variadic, None, None)?);
+                    } else {
+                        // bare `*` — keyword-only marker (not a parameter).
+                        keyword_only = Some(params.len());
+                    }
+                }
+                // Current Mojo places the ownership convention before the pack
+                // marker: `var *args: *Ts` (not `*var args`).
+                Some(Token::Var) => {
+                    self.next_token()?;
+                    if matches!(self.peek_token()?, Some(Token::DoubleStar)) {
+                        self.next_token()?;
+                        let name = self.expect_identifier("Expected a name after 'var **'")?;
+                        params.push(self.finish_param(
+                            name,
+                            ParamKind::KwVariadic,
+                            Some(ArgConvention::Var),
+                            None,
+                        )?);
+                    } else if matches!(self.peek_token()?, Some(Token::Star)) {
+                        self.next_token()?;
+                        let name = self.expect_identifier("Expected a name after 'var *'")?;
+                        params.push(self.finish_param(
+                            name,
+                            ParamKind::Variadic,
+                            Some(ArgConvention::Var),
+                            None,
+                        )?);
+                    } else {
+                        let name = self
+                            .expect_identifier("Expected a parameter name after the convention")?;
+                        let self_typed = self_typed_leading && params.is_empty();
+                        params.push(self.finish_leading_param(
+                            name,
+                            Some(ArgConvention::Var),
+                            None,
+                            self_typed,
+                        )?);
+                    }
+                }
+                // A regular parameter, with an optional convention prefix.
+                _ => {
+                    let self_typed = self_typed_leading && params.is_empty();
+                    let (convention, origin, name) = if self_typed
+                        && matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "self")
+                    {
+                        (None, None, self.expect_identifier("Expected 'self'")?)
+                    } else {
+                        self.parse_convention_and_name()?
+                    };
+                    params.push(self.finish_leading_param(name, convention, origin, self_typed)?);
+                }
+            }
+            if matches!(self.peek_token()?, Some(Token::Comma)) {
+                self.next_token()?; // consume ','
+                if matches!(self.peek_token()?, Some(Token::RParen)) {
+                    break; // trailing comma
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(ParamList {
+            params,
+            positional_only,
+            keyword_only,
+        })
+    }
+
+    /// Finishes a regular parameter, typing an unannotated leading `self`
+    /// `Self` when `self_typed` allows it.
+    fn finish_leading_param(
+        &mut self,
+        name: String,
+        convention: Option<ArgConvention>,
+        origin: Option<mojito_ast::ast::OriginSpec>,
+        self_typed: bool,
+    ) -> Result<FnParam, ParseError> {
+        if self_typed
+            && name == "self"
+            && convention != Some(ArgConvention::Out)
+            && !matches!(self.peek_token()?, Some(Token::Colon))
+        {
+            return Ok(FnParam {
+                name,
+                ty: Type::SelfType,
+                default: None,
+                kind: ParamKind::Regular,
+                convention,
+                origin,
+            });
+        }
+        self.finish_param(name, ParamKind::Regular, convention, origin)
+    }
+
     /// The optional `: type` annotating a method's `self` receiver.
     fn parse_optional_receiver_type(&mut self) -> Result<Option<Type>, ParseError> {
         if !matches!(self.peek_token()?, Some(Token::Colon)) {

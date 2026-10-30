@@ -271,6 +271,7 @@ pub fn declare_function(
     module: ModuleOp,
     name: &str,
     func: &MirFunction,
+    declaration: Option<&mojito_mir::mir::MirFunctionDeclaration>,
     layout: &LayoutCx<'_>,
 ) -> Result<(FuncOp, FnSignature), PlironError> {
     let ret_ty = func.ret_ty.as_ref().ok_or_else(|| PlironError {
@@ -356,9 +357,24 @@ pub fn declare_function(
     if sret.is_some() || outcome.is_some() {
         param_handles.push(PointerType::get(ctx, 0).into());
     }
+    let mut ref_params = func.ref_params.clone();
+    // An `out self` receiver held as a scalar (a `SIMD`) is the caller's
+    // result storage, as an aggregate one is: its writes reach the caller.
+    let out_receiver = mojito_symbol::symbol::lifecycle_constructor(name)
+        .is_some_and(|(_, member)| member == "__init__")
+        && declaration.is_some_and(|declaration| {
+            declaration.has_receiver && declaration.receiver_convention == Some(ArgConvention::Out)
+        });
     for (index, ty) in func.param_types.iter().enumerate() {
         let lowered = lower_ty(name, ty, layout, None)?;
-        let by_reference = func.ref_params.get(index).copied().unwrap_or(false);
+        if index == 0
+            && out_receiver
+            && matches!(lowered, LowerTy::Scalar(_))
+            && let Some(receiver) = ref_params.first_mut()
+        {
+            *receiver = true;
+        }
+        let by_reference = ref_params.get(index).copied().unwrap_or(false);
         match &lowered {
             // A `mut`/`ref` parameter passes as a pointer to the caller's
             // storage regardless of kind; the callee slot aliases it.
@@ -399,7 +415,7 @@ pub fn declare_function(
                 .zip(func.deinit_params.iter().chain(std::iter::repeat(&false)))
                 .map(|(owned, deinit)| *owned || *deinit)
                 .collect(),
-            ref_params: func.ref_params.clone(),
+            ref_params,
             deinit_receiver: func.deinit_params.first().copied().unwrap_or(false),
             result_form: if func.returns_reference {
                 ResultForm::Reference

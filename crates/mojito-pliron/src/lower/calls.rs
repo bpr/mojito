@@ -96,12 +96,28 @@ impl FnLowering<'_> {
         if mojito_symbol::symbol::is_initializer_symbol(name)
             && !params.is_empty()
             && let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned()
-            && matches!(struct_ty.kind(), TyKind::Struct(..))
+            && matches!(struct_ty.kind(), TyKind::Struct(..) | TyKind::Simd { .. })
         {
-            let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
-            let LowerTy::Aggregate { layout, .. } = lowered else {
-                return Err(self.unsupported_reg(format!("constructor result `{struct_ty}`"), dest));
-            };
+            // A receiver held as a scalar (a one-lane `SIMD`) is read back
+            // from that storage.
+            let (layout, scalar) =
+                match lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))? {
+                    LowerTy::Aggregate { layout, .. } => (layout, None),
+                    LowerTy::Scalar(scalar) if by_reference.first().copied().unwrap_or(false) => {
+                        let layout = self.layout.layout_of(&struct_ty).map_err(|error| {
+                            self.unsupported_reg(
+                                format!("constructor result `{struct_ty}` ({error})"),
+                                dest,
+                            )
+                        })?;
+                        (layout, Some(scalar))
+                    }
+                    _ => {
+                        return Err(
+                            self.unsupported_reg(format!("constructor result `{struct_ty}`"), dest)
+                        );
+                    }
+                };
             let storage = self.entry_alloca(ctx, layout.size, layout.align);
             let rest = &params[1..];
             let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
@@ -152,6 +168,11 @@ impl FnLowering<'_> {
                 )?);
             }
             self.emit_bound_call(ctx, dest, name, lowered)?;
+            if let Some(scalar) = scalar {
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, storage, handle);
+                return self.define(ctx, dest, load.get_operation(), load.get_result(ctx));
+            }
             // `__init__` returns nothing; the constructed value is the
             // storage its `out self` wrote through.
             self.erased.remove(&dest.0);

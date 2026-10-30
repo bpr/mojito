@@ -600,7 +600,7 @@ struct_member: field | struct_comptime | method
 field: 'var' NAME ':' type NEWLINE
 struct_comptime: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression NEWLINE
 method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' type] where_clause* ':' block
-receiver: [convention] 'self' [':' type]    # instance method; absent ⇒ a @staticmethod (no self)
+receiver: [convention] 'self' [':' type]    # instance method or any __init__; absent ⇒ a @staticmethod (no self)
 ```
 
 An optional `params_decl` list after the name makes the struct generic
@@ -732,7 +732,11 @@ least one member; fields and methods may interleave.
   parse as such. **Receiver conventions** `imm`/`mut`/`var`/`out`/`ref self` participate
   in checking and lowering, including lifecycle `out self` and origin-bearing reference
   receivers. A `@staticmethod` (no `self`) checks and executes through the ordinary
-  function call ABI; on a parameterized struct it also dispatches through an
+  function call ABI. Every `__init__` is static, its `out self` the result, so a
+  `@staticmethod` `__init__(out self, …)` has the receiver an undecorated one has.
+  In any other `@staticmethod`, a leading `self` (with an optional convention other
+  than `out`) is an ordinary parameter whose omitted annotation is `Self`, as at the
+  pin; `out self` there, or a `self` after the first parameter, still needs one; on a parameterized struct it also dispatches through an
   explicit `Type[Args].method(...)` receiver or a bare `Type.method(...)`
   receiver with the struct's parameters inferred from the argument types (see
   the parametric-static-receiver note under **Expressions**). Unsupported

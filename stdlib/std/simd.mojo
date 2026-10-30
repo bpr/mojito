@@ -4,7 +4,7 @@
 # conversions, the cast from `SIMD[other_dtype, Self.length]`, the
 # `SIMDLength` splat, `from_int=`, the `Floatable` and `FloatableRaising`
 # conversions, `Bool`, `fill=`, `Int` from an `index`, the
-# `Scalar[Self.dtype]` splat, and the element list, and its instance
+# `Scalar[Self.dtype]` splat, the element list, and `from_bits=`, and its instance
 # `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
 # `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
@@ -27,8 +27,7 @@
 # format in the compiler rather than calling `write_to` and
 # `write_repr_to` as the VM's do (R1664). So are the
 # other initializers:
-# `mlir_value=` (R1591), `from_bits=` (R1593), and `IntLiteral` and
-# `FloatLiteral` (R1507); `py=` is not ported. Until
+# `mlir_value=` (R1591) and `IntLiteral` and `FloatLiteral` (R1507); `py=` is not ported. Until
 # then a construction takes a declared overload only where its arguments
 # select one at the pin. The element list omits upstream's
 # `assert Self.length == len(elems)`, which the pin's default `-D ASSERT`
@@ -830,6 +829,30 @@ struct SIMD[dtype: DType, length: SIMDLength](
 
         comptime for i in range(Self.length):
             self[i] = elems[i]
+
+    @staticmethod
+    def __init__[
+        int_dtype: DType, //
+    ](out self, *, from_bits: SIMD[int_dtype, Self.length]):
+        """Initializes the SIMD vector from the bits of an integral SIMD vector.
+
+        Parameters:
+            int_dtype: The integral type of the input SIMD vector.
+
+        Args:
+            from_bits: The SIMD vector to copy the bits from.
+        """
+        comptime assert (
+            int_dtype.is_integral()
+        ), "the SIMD type must be integral"
+
+        comptime if Self.dtype == DType.bool and int_dtype in (
+            DType.uint8,
+            DType.int8,
+        ):
+            self = from_bits.ne(0)._refine[Self.dtype]()
+        else:
+            self = bitcast[Self.dtype, Self.length](from_bits)
 
     # ===-------------------------------------------------------------------===#
     # Operator dunders

@@ -995,6 +995,7 @@ assets/ok/simd_floats.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floordiv_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floordiv_mod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_fma.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_from_bits_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_generic_width.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_hash_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_inferred_width_binding.mojo	-	ineligible	no-scalar-entry-shape
@@ -1065,6 +1066,7 @@ assets/ok/static_reference_result_argument.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/static_string.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_tuple.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/staticmethod_self_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_numerics_nan_classes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_plugin_hooks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape

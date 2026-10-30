@@ -4024,6 +4024,36 @@ fn parses_receiver_conventions_and_static_methods() {
 }
 
 #[test]
+fn parses_static_method_leading_self() {
+    let stmts = parse(
+        "struct S:\n    var n: Int\n    @staticmethod\n    def __init__[T: Intable, //](out self, *, from_t: T):\n        self.n = Int(from_t)\n    @staticmethod\n    def f(self, k: Int) -> Int:\n        return k\n",
+    );
+    let StmtKind::Struct { methods, .. } = &stmts[0].kind else {
+        panic!("expected a struct")
+    };
+    assert!(
+        methods[0].has_self,
+        "an initializer's `out self` is its receiver"
+    );
+    assert_eq!(methods[0].self_convention, Some(ArgConvention::Out));
+    assert_eq!(methods[0].params[0].name, "from_t");
+    assert!(!methods[1].has_self, "a static method has no receiver");
+    assert_eq!(methods[1].params[0].name, "self");
+    assert_eq!(methods[1].params[0].ty, Type::SelfType);
+    assert_eq!(methods[1].params[1].name, "k");
+}
+
+#[test]
+fn rejects_unannotated_static_out_self_and_later_self() {
+    for source in [
+        "struct S:\n    @staticmethod\n    def mk(out self, y: Int):\n        pass\n",
+        "struct S:\n    @staticmethod\n    def f(y: Int, self) -> Int:\n        return y\n",
+    ] {
+        assert!(mojito::parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn parses_dunder_method_names() {
     let stmts = parse(
         "@fieldwise_init\nstruct V:\n    var x: Int\n    def __eq__(self, o: V) -> Bool:\n        return self.x == o.x\n",

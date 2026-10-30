@@ -4711,6 +4711,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Checker::staged_simd_construction`'s vector-alias arm
     (`checker/constraints.rs`), which goes once an alias call applies its
     `SIMD` initializer.
+  - Probe: `g[Float32(from_bits=UInt32(1065353216))]()` over `def g[v:
+    Float32]()` prints `1.0` at the pin and fails with "not an associated
+    comptime expression", while `g[SIMD[DType.float32, 1](from_bits=…)]()`
+    runs; `g[Float32(UInt32(7))]()` fails with "a SIMD[DType.float32, 1]
+    lane needs a compile-time scalar" (found while landing R1593).
   - Found while landing R1641 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11180,23 +11185,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1555 (2026-10-28).
   - Depends on R240.
   - Model: Fable, Planned.
-
-- [ ] **R1593 `SIMD` has no `from_bits=` initializer**
-
-  `Float32(from_bits=UInt32(1065353216))` prints `1.0` and
-  `SIMD[DType.bool, 2](from_bits=SIMD[DType.uint8, 2](0, 3))` prints
-  `[False, True]` at the pin. Mojito rejects both ("keyword arguments are
-  not supported here").
-  - Upstream declares `@staticmethod def __init__[int_dtype: DType,
-    //](out self, *, from_bits: SIMD[int_dtype, Self.length])`
-    (`simd.mojo:991`), over the bundled `bitcast` and `ne(0)._refine`.
-  - The parser reads a `@staticmethod`'s `out self` as an unannotated
-    parameter, user structs included: `@staticmethod def __init__[T:
-    Intable, //](out self, *, from_t: T)` is "Parameters require a type
-    annotation". Grammar first, then `parse_method` (`parser/items.rs`).
-  - Found while landing R1555 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a
   lifted thunk, where upstream folds their `pop.cmp` bodies**

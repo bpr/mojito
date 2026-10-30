@@ -637,7 +637,14 @@ impl VmBackend {
                         Some(sig) => self.bind_for_call(prog, name, sig, &args, &kwargs)?.0,
                         None => args,
                     };
-                    self.call_function(prog, idx, bound)
+                    // An initializer of a receiver the VM holds as a value
+                    // (a `SIMD`) enters with that value's unwritten storage.
+                    match prog.constructed(name, &prog.mir.functions[idx].1.param_types) {
+                        Some(Constructed::Value(skeleton)) => {
+                            self.construct_entered(prog, skeleton, name, bound)
+                        }
+                        _ => self.call_function(prog, idx, bound),
+                    }
                 }
                 None => Err(RuntimeError::Unsupported(format!(
                     "vm backend does not support the built-in or callee '{name}' yet"

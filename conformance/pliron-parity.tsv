@@ -995,6 +995,7 @@ assets/ok/simd_floats.mojo	main	exe-differential	sanitized
 assets/ok/simd_floordiv_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_floordiv_mod.mojo	main	exe-differential	sanitized
 assets/ok/simd_fma.mojo	main	exe-differential	sanitized
+assets/ok/simd_from_bits_initializer.mojo	main	exe-differential	sanitized
 assets/ok/simd_generic_width.mojo	main	exe-differential	sanitized
 assets/ok/simd_hash_member.mojo	main	exe-differential	sanitized
 assets/ok/simd_inferred_width_binding.mojo	main	exe-differential	sanitized
@@ -1065,6 +1066,7 @@ assets/ok/static_reference_result_argument.mojo	main	exe-differential	sanitized
 assets/ok/static_string.mojo	main	exe-differential	sanitized
 assets/ok/static_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/static_tuple.mojo	main	exe-differential	sanitized
+assets/ok/staticmethod_self_parameter.mojo	main	exe-differential	sanitized
 assets/ok/std_numerics_nan_classes.mojo	main	exe-differential	sanitized
 assets/ok/std_plugin_hooks.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
