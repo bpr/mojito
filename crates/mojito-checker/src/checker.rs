@@ -704,6 +704,11 @@ pub struct Checker {
     /// runtime slot but denotes a compile-time value, so a nested function
     /// or lambda reads it through an implicit `imm` capture.
     value_parameter_owners: HashSet<mojito_types::origin::OwnerId>,
+    /// The bindings of nested `def` statements: each names its function's
+    /// generator over the enclosing parameters, which a compile-time
+    /// expression may call when it captures nothing
+    /// ([`Self::compile_time_callee`]).
+    nested_function_owners: HashSet<mojito_types::origin::OwnerId>,
     /// The loop and comprehension binders not declared `var`: each binds
     /// the yielded element by reference, as upstream, so it is no tracked
     /// root a `^` may move out of.
@@ -1102,6 +1107,7 @@ impl Checker {
             rebind_targets: RebindTargets::default(),
             owned_packs: HashSet::new(),
             value_parameter_owners: HashSet::new(),
+            nested_function_owners: HashSet::new(),
             reference_binders: HashSet::new(),
             owned_collectors: declaration_table::DeclarationTable::default(),
             collector_names: declaration_table::DeclarationTable::default(),

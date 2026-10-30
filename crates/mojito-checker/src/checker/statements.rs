@@ -1861,7 +1861,9 @@ impl Checker {
                 where_clauses,
                 value,
             } => {
-                if super::comptime_validation::reads_comptime_interpreter_query(value) {
+                if super::comptime_validation::reads_comptime_interpreter_query(value)
+                    || self.calls_run_time_callee(value)
+                {
                     return Err(TypeError::Unsupported(
                         "cannot use a dynamic value in comptime initializer".to_string(),
                     ));
@@ -2960,6 +2962,12 @@ impl Checker {
         if let Err(e) = self.declare_immutable(name, fn_ty.clone()) {
             self.tparams.pop();
             return Err(e);
+        }
+        if !lambda
+            && !self.function_bases.is_empty()
+            && let Some(owner) = self.lookup_owner(name)
+        {
+            self.nested_function_owners.insert(owner);
         }
         self.record_positional_collector(
             name,

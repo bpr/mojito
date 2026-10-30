@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A nested `def` that captures nothing is now callable at compile time,
+  as the pin's generator over the enclosing parameters: `comptime t =
+  mk()`, `first[mk()]()`, and `comptime if big():` run on both backends,
+  reading the enclosing function's, a `comptime for` index's, or a
+  method's `Self` parameters, where the elaborator failed on the call's
+  trait dispatch (R1685). A capturing one, or a `var` holding a function,
+  is the pin's "cannot use a dynamic value in comptime initializer". A
+  nested `def` whose result type computes over an enclosing parameter
+  (`-> StaticTuple[Int, 2 * length]`) now runs, where elaboration found
+  the parameter unresolved.
 - A compile-time call of a callable with a positional collector is now
   its application with the arguments flat, as at the pin
   (`total(n, Int(1))`), where it was rejected as "not an associated

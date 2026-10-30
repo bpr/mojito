@@ -43,6 +43,11 @@ pub(super) struct FunctionLowering<'a> {
     /// `body`.
     pub(super) returned: Option<CheckedNodeId>,
     pub(super) overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
+    /// The nested `def`s of the declaration a lifted expression is lifted
+    /// from, which it calls directly, as the pin's compile-time expression
+    /// names `outer::inner` over the enclosing parameters
+    /// ([`ComptimeThunks::callables`]). Empty for any other body.
+    pub(super) callables: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
 }
 
 pub(super) fn lower_fn_nested(
@@ -70,6 +75,7 @@ pub(super) fn lower_fn_nested(
         statements,
         returned,
         overloads,
+        callables,
     } = request;
     let starts = LoweredFrom {
         functions: out.len(),
@@ -81,7 +87,7 @@ pub(super) fn lower_fn_nested(
     let registry = scope_registry(
         checked,
         &children,
-        &HashMap::new(),
+        callables,
         &enclosing_binders,
         declarations,
         &closure_types,
@@ -129,6 +135,7 @@ pub(super) fn lower_fn_nested(
     if !enclosing_binders.lifted {
         thunks.request_applications(checked, &cfg.body);
     }
+    thunks.inherit_callables(&registry);
     thunks.lower(checked, overloads, out, declarations, invariant_errors);
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
@@ -1701,6 +1708,7 @@ fn lower_nested_node(
             .map(|effect| effect.error.clone().unwrap_or_else(Ty::error)),
     );
     thunks.request_applications(checked, &ncfg.body);
+    thunks.inherit_callables(&registry);
     thunks.lower(checked, overloads, out, declarations, invariant_errors);
     nf.n_params = ptys.len();
     for (slot, ty) in ptys.iter().enumerate() {

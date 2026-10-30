@@ -1443,7 +1443,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lifted declaration without storage names the declaration it is nested in
   (`MirFunctionDeclaration::enclosing`, set by `lower_nested_node`), and the
   nested frame declares its enclosing callable and type binders' locals
-  (`Enclosing`). `scope_registry` gives every direct declaration with a
+  (`Enclosing`). A thunk lifted from a body (`ComptimeThunks::inherit_callables`,
+  `FunctionLowering::callables`) inherits the body's nested `def`s that
+  have neither storage nor captures, so its call of one is the direct call
+  of the generator over the binders the thunk declares, as the pin's
+  compile-time expression names `outer::inner`. `scope_registry` gives every direct declaration with a
   non-empty capture list (`CheckedDef::capture_list`, `NestedNode::capture_list`),
   and every capturing lambda (`NestedNode::lambda`), its storage struct (`NestedInfo::storage`, a `ClosureStorage` that
   `closure_storage` derives, with its register passability and triviality
@@ -1516,6 +1520,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct declarations it is given; `native::mono`
   (`Specializer::instantiate_nested_bodies`, `nested_bindings`,
   `binder_scope`) instantiates a nested body under its enclosing instance,
+  a direct call's `infer_call` binding the enclosing binders from the
+  calling scope before the declared result unifies,
   and a closure over a storage's method at the storage instance it
   captures (`is_storage_bound_closure_method`, over
   `infer_receiver_call`); a call of the method binds its struct's
@@ -1964,7 +1970,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`checker/scopes.rs`), which a value parameter argument, a SIMD width
   (`simd_width`), and a local `comptime` value
   (`comptime_value_expression`) open: it names the function, applies it to
-  the binders the expression reads (`binders_read`), shares it between
+  the binders the expression reads (`binders_read`; every binder in scope
+  for a call of a nested `def` that captures nothing, which
+  `Checker::compile_time_callee` finds among `Checker::nested_function_owners`,
+  while `calls_run_time_callee` makes a call of any other local callee a
+  dynamic value, rejected by a local `comptime`), shares it between
   equal occurrences (`LiftedApplication`), and keeps the application by the
   expression (`lifted_expressions`, a body-carried store) for
   `record_lifted_applications`, which `into_carry` runs to record

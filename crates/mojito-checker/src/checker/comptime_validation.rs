@@ -1282,14 +1282,54 @@ impl Checker {
                 names.swap_remove(position);
             }
         }
-        names.iter().all(|name| {
-            self.binding_scope(name).is_none_or(|scope| scope == 0)
-                || self.is_compile_time_binding(name)
-                || self.lookup_owner(name).is_some_and(|owner| {
-                    self.value_parameter_owners.contains(&owner)
-                        || self.is_comptime_binding_owner(owner)
-                })
+        names
+            .iter()
+            .all(|name| self.reads_compile_time_binding(name))
+            && !self.calls_run_time_callee(expr)
+    }
+
+    /// Whether `expr` calls a local callee by name that is no compile-time
+    /// value: a capturing nested `def`, or a run-time binding of a function
+    /// value (`var f = mk`), whose compile-time call is the pin's
+    /// dynamic-value rejection.
+    pub(super) fn calls_run_time_callee(&self, expr: &Expr) -> bool {
+        callees_read(expr).iter().any(|callee| {
+            !(self.reads_compile_time_binding(callee) || self.compile_time_callee(callee))
         })
+    }
+
+    /// Whether the name `name` reads is a compile-time binding: a module
+    /// name, a value binder, a `comptime for` variable, or a local
+    /// `comptime` constant or display.
+    fn reads_compile_time_binding(&self, name: &str) -> bool {
+        self.binding_scope(name).is_none_or(|scope| scope == 0)
+            || self.is_compile_time_binding(name)
+            || self.lookup_owner(name).is_some_and(|owner| {
+                self.value_parameter_owners.contains(&owner)
+                    || self.is_comptime_binding_owner(owner)
+            })
+    }
+
+    /// Whether the local callee `name` is a nested `def` that captures
+    /// nothing: the pin's generator over the enclosing parameters, which a
+    /// compile-time expression calls with the binders in scope.
+    fn compile_time_callee(&self, name: &str) -> bool {
+        self.binding_scope(name).is_some_and(|scope| scope > 0)
+            && self
+                .lookup_owner(name)
+                .is_some_and(|owner| self.nested_function_owners.contains(&owner))
+            && self
+                .lookup(name)
+                .and_then(Ty::callable)
+                .is_some_and(|callable| {
+                    callable.environment.captures().is_none_or(|captures| {
+                        matches!(
+                            captures,
+                            mojito_types::origin::CaptureOriginSet::Concrete(members)
+                                if members.is_empty()
+                        )
+                    })
+                })
     }
 
     /// The bindings `expr` reads only for their type, once per read: a
@@ -2537,7 +2577,12 @@ impl Checker {
                     .is_some_and(|reference| read.contains(&reference.id))
             });
         }
-        let bindings: Vec<_> = names.iter().map(|name| self.lookup_owner(name)).collect();
+        let bindings: Vec<_> = names
+            .iter()
+            .cloned()
+            .chain(callees_read(expr))
+            .map(|name| self.lookup_owner(&name))
+            .collect();
         let owner = self.lifted_function_owner();
         let known = self
             .lifted_applications
@@ -2595,7 +2640,7 @@ impl Checker {
     /// parameter expression it names is over, and the enclosing struct's
     /// for `Self`. `None` when the binders are not known (a type-shaped
     /// argument, a local value that denotes no parameter expression), where
-    /// every binder in scope stands in.
+    /// every binder in scope stands in, as for a call of a nested `def`.
     fn binders_read(
         &self,
         expr: &Expr,
@@ -2609,7 +2654,12 @@ impl Checker {
         }
         let mut types = Types(false);
         mojito_ast::visit::walk_expr(&mut types, expr);
-        if types.0 {
+        // A nested `def` is a generator over the whole enclosing scope.
+        if types.0
+            || callees_read(expr)
+                .iter()
+                .any(|callee| self.compile_time_callee(callee))
+        {
             return None;
         }
         let mut read = HashSet::new();
@@ -5591,6 +5641,21 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
         .filter(|(identifier, _)| !names.typed.contains(identifier))
         .map(|(_, name)| name)
         .collect()
+}
+
+/// The names of the functions `expr` calls by name.
+fn callees_read(expr: &Expr) -> Vec<String> {
+    struct Callees(Vec<String>);
+    impl mojito_ast::visit::Visitor for Callees {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Call { name, .. } = &expr.kind {
+                self.0.push(name.clone());
+            }
+        }
+    }
+    let mut callees = Callees(Vec::new());
+    mojito_ast::visit::walk_expr(&mut callees, expr);
+    callees.0
 }
 
 const VARIADICS_MODULE: &str = "std.builtin.variadics";

@@ -2932,7 +2932,10 @@ impl<'a> Specializer<'a> {
                         let receiver = (mojito_symbol::symbol::is_initializer_symbol(&func.0)
                             && function.reg_types.contains_key(&dest.0))
                         .then_some(*dest);
-                        let (target, mut bindings, mut arguments) = self.infer_call(
+                        // A nested `def`'s direct call binds its enclosing
+                        // binders from this instance's, or from its region
+                        // copy's.
+                        let (target, mut bindings, arguments) = self.infer_call(
                             owner,
                             function,
                             &func.0,
@@ -2942,26 +2945,12 @@ impl<'a> Specializer<'a> {
                             kwargs,
                             param_arg_regs,
                             instantiated_args,
-                        )?;
-                        // A nested `def` is a generator over its enclosing
-                        // declaration's binders beside its own: its direct
-                        // call binds them from this instance's, or from its
-                        // region copy's.
-                        if self
-                            .declarations
-                            .get(target.as_str())
-                            .is_some_and(|declaration| declaration.enclosing.is_some())
-                        {
-                            let (inherited, inherited_arguments) = self.nested_bindings(
-                                &target,
+                            Some(
                                 region
                                     .as_ref()
                                     .map_or(&self.enclosing, |(_, bindings)| bindings),
-                                bindings.reduced,
-                            )?;
-                            inherit_bindings(&mut bindings, inherited);
-                            arguments.splice(0..0, inherited_arguments);
-                        }
+                            ),
+                        )?;
                         // The instance identity carries the spelled receiver
                         // of a static call, so the resolved call keeps none.
                         if let Some(spelled) = static_receiver.take() {
@@ -3133,6 +3122,7 @@ impl<'a> Specializer<'a> {
                             kwargs,
                             param_arg_regs,
                             instantiated_args,
+                            None,
                         )?;
                         // As at a direct call, a callable parameter bound to
                         // a capturing closure takes its environment.
@@ -3260,7 +3250,9 @@ impl<'a> Specializer<'a> {
                                 } else {
                                     instantiated_args.clone()
                                 };
-                                let (target, mut bindings, mut arguments) = self.infer_call(
+                                // A generic `def` nested in this body binds
+                                // this instance's binders beside its own.
+                                let (target, mut bindings, arguments) = self.infer_call(
                                     owner,
                                     function,
                                     &target,
@@ -3270,20 +3262,8 @@ impl<'a> Specializer<'a> {
                                     kwargs,
                                     param_arg_regs,
                                     &contract_values,
+                                    Some(region.as_ref().unwrap_or(&self.enclosing)),
                                 )?;
-                                // A generic `def` nested in this body binds
-                                // this instance's binders beside its own.
-                                if self.declarations.get(target.as_str()).is_some_and(
-                                    |declaration| declaration.enclosing.as_deref() == Some(owner),
-                                ) {
-                                    let (inherited, inherited_arguments) = self.nested_bindings(
-                                        &target,
-                                        region.as_ref().unwrap_or(&self.enclosing),
-                                        bindings.reduced,
-                                    )?;
-                                    inherit_bindings(&mut bindings, inherited);
-                                    arguments.splice(0..0, inherited_arguments);
-                                }
                                 // As at a direct call, a callable parameter
                                 // bound to a capturing closure becomes the
                                 // instance's trailing runtime parameters.
@@ -3382,6 +3362,7 @@ impl<'a> Specializer<'a> {
                             kwargs,
                             param_arg_regs,
                             &[],
+                            None,
                         )?;
                         // A `__call__` returning a reference hands the call
                         // the reference its destination register holds.
@@ -4450,23 +4431,6 @@ fn constraint_expressions(constraint: &GenericConstraint) -> Vec<ParamExpr> {
         Ok(operand.clone())
     });
     expressions.into_inner()
-}
-
-/// Bind an enclosing instance's solutions in a nested body's call-site
-/// bindings, beside the body's own binders.
-fn inherit_bindings(bindings: &mut Bindings, inherited: Bindings) {
-    for (binder, ty) in inherited.types {
-        bindings.types.entry(binder).or_insert(ty);
-    }
-    for (binder, value) in inherited.values {
-        bindings.values.entry(binder).or_insert(value);
-    }
-    for (name, callee) in inherited.callables {
-        bindings.callables.entry(name).or_insert(callee);
-    }
-    if bindings.self_instance.is_none() {
-        bindings.self_instance = inherited.self_instance;
-    }
 }
 
 /// The pass statistics of a finished elaboration: every instance minted under

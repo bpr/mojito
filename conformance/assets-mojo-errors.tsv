@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	972
+# swept-count	974
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -277,6 +277,8 @@ assets/type_error/comptime_assert_proof_is_block_scoped.mojo	compile-reject	agre
 assets/type_error/comptime_assert_proof_is_positional.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'T' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/comptime_assert_string_message.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comptime_assert_tstring_message.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/comptime_call_of_capturing_nested_def.mojo	compile-reject	agree	error: cannot use a dynamic value in comptime initializer
+assets/type_error/comptime_call_of_function_value_local.mojo	compile-reject	agree	error: cannot use a dynamic value in comptime initializer
 assets/type_error/comptime_call_raising.mojo	compile-reject	agree	error: cannot call raising function in type parameter
 assets/type_error/comptime_call_signature_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, h(Int(2))]' value to 'SIMD[.int32, 4]'
 assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'

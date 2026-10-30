@@ -9364,6 +9364,25 @@ fn comptime_assert_rejects_a_dynamic_condition_and_a_computed_message() {
 }
 
 #[test]
+fn comptime_call_of_a_nested_def_needs_one_that_captures_nothing() {
+    // A nested `def` that captures nothing is the pin's generator over the
+    // enclosing parameters, so a local `comptime` may call it.
+    ok_std(
+        "def outer[n: Int]():\n    def mk() -> Int:\n        return n * 2\n\n    comptime t = mk()\n    print(t)\n\ndef main():\n    outer[3]()\n",
+    );
+    for source in [
+        "def main():\n    var x = 3\n\n    def mk() {imm x} -> Int:\n        return x\n\n    comptime t = mk()\n    print(t)\n",
+        "def main():\n    def mk() -> Int:\n        return 7\n\n    var f = mk\n    comptime t = f()\n    print(t)\n",
+    ] {
+        let error = err_std(source).to_string();
+        assert!(
+            error.contains("cannot use a dynamic value in comptime initializer"),
+            "{source:?}: {error}"
+        );
+    }
+}
+
+#[test]
 fn comptime_assert_reads_a_values_type_parameter_but_not_its_field() {
     // `x.dtype` and `x.length` are parameters of `x`'s type, which the
     // value only types, so a compile-time test may read them.

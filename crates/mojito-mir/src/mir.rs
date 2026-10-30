@@ -2067,6 +2067,7 @@ fn lower_function(
             statements,
             returned: None,
             overloads,
+            callables: &HashMap::new(),
         },
         functions,
         declarations,
@@ -2314,6 +2315,7 @@ fn lower_struct_member<P: DeclaredParam>(
             statements: m.statements,
             returned: None,
             overloads,
+            callables: &HashMap::new(),
         },
         functions,
         declarations,
@@ -2426,6 +2428,7 @@ fn lower_default<P: DeclaredParam>(
             node,
             binders: &binders,
             ty,
+            callables: &HashMap::new(),
         },
         functions,
         declarations,
@@ -2452,6 +2455,8 @@ struct ExpressionThunk<'a> {
     node: CheckedNodeId,
     binders: &'a EnclosingBinders,
     ty: &'a Ty,
+    /// The nested `def`s the expression calls directly.
+    callables: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
 }
 
 /// Lower `<prologue>; return <node>` as the function `name`, whose
@@ -2471,6 +2476,7 @@ fn lower_expression_thunk(
         node,
         binders,
         ty,
+        callables,
     } = thunk;
     let parameter_locals = callable_parameter_locals(&binders.declarations);
     let parameter_names: Vec<String> = parameter_locals
@@ -2497,6 +2503,7 @@ fn lower_expression_thunk(
             statements: prologue,
             returned: Some(node),
             overloads,
+            callables,
         },
         functions,
         declarations,
@@ -2569,6 +2576,10 @@ struct ComptimeThunks {
     /// distinct set ([`Self::enter_scope`]): the owner's, and those under
     /// each nest of `comptime for` loops.
     scopes: Vec<EnclosingBinders>,
+    /// The owner's nested `def`s that capture nothing
+    /// ([`Self::inherit_callables`]): a thunk calls each directly, as the
+    /// generator over the binders the thunk itself declares.
+    callables: HashMap<mojito_types::origin::OwnerId, NestedInfo>,
 }
 
 /// A local `comptime` binding of a display the elaborator evaluates
@@ -2804,6 +2815,17 @@ impl ComptimeThunks {
         }
     }
 
+    /// Keep the entries of the owner's nested-callable `registry` a thunk
+    /// calls directly: a `def` with neither storage nor captures. A
+    /// capturing one has no compile-time value, which the check rejects.
+    fn inherit_callables(&mut self, registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>) {
+        self.callables = registry
+            .iter()
+            .filter(|(_, info)| info.storage.is_none() && info.captures.is_empty())
+            .map(|(binding, info)| (*binding, info.clone()))
+            .collect();
+    }
+
     /// Lower every requested thunk, each `return <expression>` at its type
     /// over the binders its request recorded, after the evaluated bindings
     /// the expression reads.
@@ -2835,6 +2857,7 @@ impl ComptimeThunks {
                     node: request.node,
                     binders: &request.binders,
                     ty: &request.ty,
+                    callables: &self.callables,
                 },
                 functions,
                 declarations,

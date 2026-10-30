@@ -157,6 +157,7 @@ impl Specializer<'_> {
                 &[],
                 &call.param_arg_regs,
                 &[],
+                None,
             )?
         } else {
             let parameters: Vec<&Ty> = call
@@ -238,6 +239,7 @@ impl Specializer<'_> {
         kwargs: &[(String, Reg)],
         param_args: &[mojito_mir::mir::MirParamArg],
         instantiated: &[TyArg],
+        scope: Option<&Bindings>,
     ) -> Result<(String, Bindings, Vec<InstanceArg>), MonoError> {
         let declaration = self.declarations.get(target).ok_or_else(|| {
             self.error(
@@ -253,6 +255,18 @@ impl Specializer<'_> {
             ..self.base_bindings()
         };
         bindings.reduced = self.reduces(target, &bindings);
+        // A nested `def` is a generator over its enclosing declaration's
+        // binders beside its own: a call in `scope` binds them first, so its
+        // declared types read them as they unify.
+        let inherited_arguments = match scope {
+            Some(scope) if declaration.enclosing.is_some() => {
+                let (inherited, arguments) =
+                    self.nested_bindings(target, scope, bindings.reduced)?;
+                inherit_bindings(&mut bindings, inherited);
+                arguments
+            }
+            _ => Vec::new(),
+        };
         let receiver_pattern_for_instance = receiver.and_then(|_| {
             self.functions
                 .get(target)
@@ -533,7 +547,8 @@ impl Specializer<'_> {
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
         }
-        let mut arguments = match receiver {
+        let mut arguments = inherited_arguments;
+        arguments.extend(match receiver {
             Some(receiver) if bindings.self_instance.is_none() => self
                 .uninstanced_owner_arguments(
                     peel_refs(reg_ty(caller, receiver, owner)?),
@@ -541,7 +556,7 @@ impl Specializer<'_> {
                     target,
                 )?,
             _ => Vec::new(),
-        };
+        });
         // The owner-restating prefix (`__init__` prepends the struct's
         // `param_decls`) is already carried by the instance's `owner`
         // identity; keep only the method's own parameters.
@@ -890,6 +905,23 @@ impl Specializer<'_> {
             Some(struct_decl) => self.own_arguments(&struct_decl.param_decls, bindings, target, 0),
             None => Ok(Vec::new()),
         }
+    }
+}
+
+/// Bind an enclosing instance's solutions in a nested body's call-site
+/// bindings, beside the body's own binders.
+fn inherit_bindings(bindings: &mut Bindings, inherited: Bindings) {
+    for (binder, ty) in inherited.types {
+        bindings.types.entry(binder).or_insert(ty);
+    }
+    for (binder, value) in inherited.values {
+        bindings.values.entry(binder).or_insert(value);
+    }
+    for (name, callee) in inherited.callables {
+        bindings.callables.entry(name).or_insert(callee);
+    }
+    if bindings.self_instance.is_none() {
+        bindings.self_instance = inherited.self_instance;
     }
 }
 

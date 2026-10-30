@@ -4630,26 +4630,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1685 A nested `def` called at compile time runs as a closure
-  value**
-
-  `comptime t = mk()` over a nested `def mk() -> Int: return 7` fails
-  compile-time evaluation with "vm backend does not support the built-in
-  or callee '__trait_dispatch.__call__$ov$'", where the pin prints `7`.
-  - The fragment calls the nested `def` through its closure value, which
-    the elaborator neither devirtualizes nor instantiates under the
-    enclosing function's binders.
-  - Probe: `first[mk()]()` over `def first[k: Int]()` fails the same way.
-  - Probe: `inner` reading the enclosing `outer[length: Int]`'s
-    `2 * length`, called as `comptime t = inner()`, fails the same way.
-  - Probe: a nested `def inner() -> StaticTuple[Int, 2 * length]` called
-    as `comptime t = inner()` fails with "monomorphizing `outer$inner`
-    return: unresolved value parameter `length`". The pin prints `1` for
-    a `fill=1` body. A bare `length` in the result runs.
-  - Found while planning R1671 (2026-10-30).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1686 A nested `def` with a struct result is no compile-time
   application in a parameter argument**
 
@@ -4659,15 +4639,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A module-level `mk` runs, and so does `comptime t = mk()` over the
     nested one.
   - `Checker::positioned_application` (`checker/constraints.rs`) finds
-    no application for the nested `def`'s call. A nested `def` with a
-    scalar result passes the check and fails later (R1685).
+    no application for the nested `def`'s call: a nested `def` is never
+    applicable (`applicable_functions`, and `selected_application`'s
+    `binding_scope == 0` filter). One with a scalar result runs, lifted
+    as a thunk that calls its generator directly.
+  - The fix: make a nested `def` that captures nothing applicable,
+    applied with the enclosing binders leading, as a generic struct's
+    static method is applied to its instance first
+    (`Specializer::demand_application`).
+  - Probe: `comptime t = inner()` over a nested `def inner() ->
+    StaticTuple[Int, 2 * length]` prints the pin's values but evaluates
+    the call at run time (`call outer$inner` plus `var.store`), since it
+    is no application (`assets/ok/nested_def_dependent_struct_result.mojo`).
   - Probe: the same call inside a method of `struct W[length:
     SIMDLength]` whose `mk` reads `Self.length` prints `28` for `W[4]` at
     the pin.
   - Probe: `SIMD.join`'s `first[2 * Int(Self.length), indices()]()`,
     with `indices() -> StaticTuple[SIMDLength, 2 * Int(Self.length)]`.
   - Found while planning R1671 (2026-10-30).
-  - Depends on R1685 (the instance then evaluates the call).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1688 A run-time call binding a struct-typed value pack from
@@ -6444,6 +6434,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     "cannot use a dynamic value in a parameter list". The `materialize`
     check (`Checker::infer_template_materialize`) rejects only an operand
     reading `__is_run_in_comptime_interpreter`.
+  - The arm's `calls_run_time_callee` gate (a call of a capturing nested
+    `def`, or of a `var` holding a function) is the narrow form of this
+    rule, which subsumes it too.
+  - Probe: a capturing nested `def mk() {imm x}` called as
+    `first[mk()]()` reports "not a compile-time Int constant: not an
+    associated comptime expression", as `first[twice(x)]()` over a
+    run-time `x` does; the pin: "cannot use a dynamic value in type
+    parameter".
+  - Probe: the same `mk` in `comptime if mk() > 2:` reports "cannot use a
+    dynamic value in 'comptime if' condition"; the pin: "cannot use a
+    dynamic value in operator argument".
   - `reads_compile_time_alone` already skips a name under a `type_of`
     operand, so gating on it keeps
     `assets/ok/type_of_value_annotation.mojo`'s
@@ -10955,6 +10956,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     as an unknown type. Only `compile_generic_constraint` knows the
     predicate.
   - Pinned by `conformance/probes/trivially_predicate_local_comptime.mojo`.
+  - Probe: a local `comptime f = seven` naming a function, then `comptime
+    t = f()`, takes the same alias route and fails the same way, where the
+    pin prints `7`. So does `comptime f = inner` over a nested `def`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
