@@ -422,6 +422,7 @@ assets/ok/init_raise_destroys_initialized_fields.mojo	-	ineligible	no-scalar-ent
 assets/ok/initializer_list_contextual.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/initializer_list_keyword_entries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/initializer_list_symbolic_type.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/inline_generic_dead_float_literal_arm.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inlined_bitcast_application_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inlined_constructor_unread_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_field.mojo	-	ineligible	no-scalar-entry-shape
@@ -976,6 +977,7 @@ assets/ok/simd_length_int_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_literal_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_math_cast_members.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_max_min_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_min_max_clamp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_mlir_storage.mojo	-	ineligible	no-scalar-entry-shape

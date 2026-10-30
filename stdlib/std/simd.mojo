@@ -10,7 +10,8 @@
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
 # comparisons `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, and
 # `__le__`, the elementwise `eq`, `ne`, `gt`, `ge`, `lt`, and `le` with
-# their `_Mask` alias, the in-place `__iadd__`, `__isub__`, `__imul__`,
+# their `_Mask` alias, the `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE`
+# members over the bundled `std.utils.numerics`, the in-place `__iadd__`, `__isub__`, `__imul__`,
 # `__ifloordiv__`, `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and
 # `__irshift__`, the reflected `__radd__`, `__rsub__`, `__rmul__`,
 # `__rfloordiv__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
@@ -21,7 +22,7 @@
 # the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`
 # and `_write_scalar`. The other
 # members are still served by the compiler (R184, R1623, R1567, R1581,
-# R1582, R1585, R1586, R1596, R330), `write_padded` is not ported (R1663),
+# R1582, R1585, R1586, R330), `write_padded` is not ported (R1663),
 # and `print`, `String`, and `repr` of a value still format in the compiler
 # rather than calling `write_to` and `write_repr_to` (R1662). So are the
 # other initializers:
@@ -97,6 +98,10 @@ from std.builtin.dtype import (
 from std.builtin.floatable import Floatable, FloatableRaising
 from std.builtin.int import Intable, IntableRaising, _FromInt
 from std.hash.hasher import Hasher
+from std.utils.numerics import max_finite as _max_finite
+from std.utils.numerics import max_or_inf as _max_or_inf
+from std.utils.numerics import min_finite as _min_finite
+from std.utils.numerics import min_or_neg_inf as _min_or_neg_inf
 
 
 # ===----------------------------------------------------------------------=== #
@@ -556,6 +561,18 @@ struct SIMD[dtype: DType, length: SIMDLength](
     # ===-------------------------------------------------------------------===#
     # Aliases
     # ===-------------------------------------------------------------------===#
+
+    comptime MAX = Self(_max_or_inf[Self.dtype]())
+    """Gets the maximum value for the SIMD value, potentially +inf."""
+
+    comptime MIN = Self(_min_or_neg_inf[Self.dtype]())
+    """Gets the minimum value for the SIMD value, potentially -inf."""
+
+    comptime MAX_FINITE = Self(_max_finite[Self.dtype]())
+    """Returns the maximum finite value of SIMD value."""
+
+    comptime MIN_FINITE = Self(_min_finite[Self.dtype]())
+    """Returns the minimum (lowest) finite value of SIMD value."""
 
     comptime _Mask = SIMD[.bool, Self.length]
 

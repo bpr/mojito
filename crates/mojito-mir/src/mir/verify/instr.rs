@@ -559,7 +559,9 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                     }
                     _ => false,
                 };
-                if !valid_source {
+                // The pin's literal conversion is a constrained `__init__`
+                // call, judged only in the instance that reaches it.
+                if !valid_source && !cx.context.judged_per_instance() {
                     errors.push(format!("{prefix}: cannot materialize {found} as {target}"));
                 }
             }
@@ -830,20 +832,14 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
 }
 
 /// Two closed types a rebind names must already agree; the elaborator
-/// judges one over a parameter per instance, one in a `comptime if` arm,
-/// which an instance may never take (an inlined `comptime if type ==
-/// NoneType: return rebind[type](None)`), and one after a `comptime
-/// assert`, which an instance may fail first (an inlined `select` over a
-/// non-`bool` mask).
+/// judges one over a parameter per instance, and one at a position judged
+/// per instance (`RegionContext::judged_per_instance`): an inlined
+/// `comptime if type == NoneType: return rebind[type](None)`, or an inlined
+/// `select` over a non-`bool` mask after its `comptime assert`.
 fn verify_rebind(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
     if let (Some(found), Some(expected)) = (cx.reg_ty(value), cx.reg_ty(dest))
         && !types_compatible(found, expected)
-        && !cx.context.asserted
-        && !cx
-            .context
-            .regions
-            .iter()
-            .any(|kind| matches!(kind, RegionKind::ComptimeIfArm(_)))
+        && !cx.context.judged_per_instance()
     {
         errors.push(format!(
             "{}: rebinds {found} to {expected}, which never agree",

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	932
+# swept-count	933
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -628,6 +628,7 @@ assets/type_error/nominal_string_positional_index.mojo	compile-reject	agree	erro
 assets/type_error/nominal_string_positional_slice_removed.mojo	compile-reject	agree	error: String does not support direct positional slicing like `s[a:b]` because Mojo strings are UTF-8 encoded, and the same range can mean different things. Use `s[byte=a:b]` to slice by raw UTF-8 byte positions, or `s[codepoint=a:b]` to slice by Unicode code points.
 assets/type_error/nominal_string_positional_slice_strided_removed.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/non_copyable_copy.mojo	compile-reject	agree	error: value of type 'Handle' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/numerics_inf_integral_dtype.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/optional_equatable_requires_element.mojo	compile-reject	agree	error: no matching method in call to '__eq__'
 assets/type_error/optional_legacy_two_arg_constructor.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/optional_or_else_consumes_receiver.mojo	compile-reject	agree	error: value of type 'Optional[Res]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'

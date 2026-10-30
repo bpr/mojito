@@ -3904,6 +3904,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (the VM `exec.rs` `MakeSimd` arm, Pliron `intable_struct_value` and
     `lib.rs`'s `MakeSimd` edge, mono `enqueue_intable_instance`, and
     `__int__` in `mir::TYPE_REACHED_MEMBERS`).
+  - The same gap binds a `_` dtype from the selected initializer's
+    refined `out self`: `SIMD[_, 1](True)` and `Scalar(True)` print `True`
+    at the pin, and `W[_, 1](True)` over `__init__(out self:
+    W[DType.bool, Self.n], value: Bool, /)` prints `bool 1 1`. Mojito
+    rejects them ("'_' does not name a DType in scope", "type 'Scalar'
+    expects 1 type argument(s), got 0", "expected DType, found a
+    non-materializable compile-time value"); bare `Scalar` also waits on
+    R1557's alias.
+  - On landing, restore upstream's `Scalar(True)` and `Scalar(False)` in
+    `stdlib/std/utils/numerics.mojo`'s `bool` arms.
   - Found while landing R186 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4628,6 +4638,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     names, excluding `_`/`...`, binders, `Int` constants, and `DType`
     members (measured 0 corpus diffs while planning R1370); R600's
     resolved-signature mangling is the full fix.
+  - Probe: `materialize[Int8.MAX]()` and `materialize[Int32.dtype]()`
+    print `127` and `int32` at the pin. Mojito parses the operand as a
+    type path (`ParamArg::Type(Assoc)`), so
+    `Checker::infer_template_materialize` reports
+    "materialize[...]() takes one compile-time value"; through
+    `comptime x = Int8.MAX` it runs.
   - Found while landing R1370 (2026-10-27).
   - Depends on R1514, for the single-operand `Index` forms.
   - Model: Opus, Not Planned.
@@ -6462,6 +6478,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     reports "expected Int, found Int" where the pin says "cannot be
     converted from 'Int' to 'IntLiteral[x.value]'"
     (`assets/type_error/int_literal_parameter_int_argument.mojo`).
+  - Probe: `var a: Float32 = 3.5e38`, and `return 3.5e38` from a
+    `Scalar[dtype]` function at `float32`, print `nan` at the pin; Mojito
+    prints `inf`. The declared `FloatLiteral` initializer is that
+    conversion.
   - Found while landing R1369 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -8129,6 +8149,13 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Following the pin needs a lowered-type identity in the elaborator,
     from `native-core`'s layouts, which judges the value and place forms
     alike.
+  - Probe: `rebind[Float32](__mlir_attr.`#kgen.simd<"inf"> :
+    !kgen.scalar<f32>`)` prints `inf` at the pin, a scalar's storage and
+    its `SIMD` lowering alike. Mojito rejects the closed rebind in the
+    checker first (`Checker::rebound_ty`, `checker/rebind.rs`: "the input
+    type does not match the result type"). The pin rejects
+    `!kgen.scalar<f32>` into `Float64` ("rebind input type
+    '!kgen.scalar<f32>' does not match result type '!kgen.scalar<f64>'").
   - Pinned by `conformance/probes/rebind_layout_identical_struct.mojo`.
   - Ledger name: `rebind-layout-identical-struct`.
   - Found while landing R314 (2026-10-08).
@@ -10717,31 +10744,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1555 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1596 `SIMD` has no `MAX`, `MIN`, `MAX_FINITE`, or `MIN_FINITE`**
-
-  `SIMD[DType.int32, 1].MAX` is "a parameterized type is not a value",
-  where the pin prints `2147483647`, and `Float32.MAX` prints `inf`.
-  - Port the four `comptime` members (`simd.mojo:638`) over upstream's
-    `std/utils/numerics.mojo` `inf`, `neg_inf`, `max_finite`,
-    `min_finite`, `max_or_inf`, and `min_or_neg_inf`, imported as
-    `_max_or_inf` and its siblings.
-  - `inf` and `neg_inf` need typed float attribute constants
-    (``#kgen.simd<"inf"> : !kgen.scalar<f32>``).
-  - `max_finite` needs `~Scalar[_unsigned_integral_type_of[dtype]()](0)
-    >> 1`.
-  - Probe: `print(Int.MAX)`, `print(UInt8.MAX)`, and `T.MAX` over
-    `comptime T = Int` report "type 'Int' has no field 'MAX'": the alias
-    already reads as a type (`Int32.dtype` runs), so only the member is
-    missing.
-  - Probe: `type_of(v).MAX` over a `Float32` `v` reads the member on the
-    type and reports "type 'Float32' has no field 'MAX'".
-  - A `Self(...)` member reads at the application (`S[2].Z` is an `S[2]`),
-    and a trial `comptime M = Self(0)` in `SIMD` loads and reads
-    `SIMD[DType.int32, 2].M` as `[0, 0]`.
-  - Found while landing R1555 (2026-10-28).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a
   lifted thunk, where upstream folds their `pop.cmp` bodies**

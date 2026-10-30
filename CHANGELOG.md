@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD`'s `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE` are now upstream's
+  `comptime` members over a partly bundled `std.utils.numerics` (`inf`,
+  `neg_inf`, `max_finite`, `min_finite`, `max_or_inf`, `min_or_neg_inf`),
+  so `Int.MAX`, `UInt8.MAX`, `Float32.MAX` (`inf`), `type_of(v).MAX`, and
+  `Scalar[dt].MAX` in a generic print as at the pin. The MIR verifier now
+  judges a literal materialization in a `comptime if` arm or after a
+  `comptime assert` per instance, as it judges a rebind, so a force-inlined
+  generic whose untaken arm returns a float literal at an integral dtype
+  runs (R1596).
+
 - A compile-time `SIMD` construction is now its declared initializer, in a
   parameter, a type, or a module constant. A builtin one (`from_int=`, the
   default, the `SIMDLength` and `Scalar[dtype]` splats) folds over the

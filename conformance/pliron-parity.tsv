@@ -422,6 +422,7 @@ assets/ok/init_raise_destroys_initialized_fields.mojo	main	exe-differential	sani
 assets/ok/initializer_list_contextual.mojo	main	exe-differential	sanitized
 assets/ok/initializer_list_keyword_entries.mojo	main	exe-differential	sanitized
 assets/ok/initializer_list_symbolic_type.mojo	main	exe-differential	sanitized
+assets/ok/inline_generic_dead_float_literal_arm.mojo	main	exe-differential	sanitized
 assets/ok/inlined_bitcast_application_argument.mojo	main	exe-differential	sanitized
 assets/ok/inlined_constructor_unread_struct_parameter.mojo	main	exe-differential	sanitized
 assets/ok/inplace_field.mojo	main	exe-differential	sanitized
@@ -976,6 +977,7 @@ assets/ok/simd_length_int_parameter.mojo	main	exe-differential	sanitized
 assets/ok/simd_length_struct.mojo	main	exe-differential	sanitized
 assets/ok/simd_literal_splat.mojo	main	exe-differential	sanitized
 assets/ok/simd_math_cast_members.mojo	main	exe-differential	sanitized
+assets/ok/simd_max_min_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_methods.mojo	main	exe-differential	sanitized
 assets/ok/simd_min_max_clamp.mojo	main	exe-differential	sanitized
 assets/ok/simd_mlir_storage.mojo	main	exe-differential	sanitized

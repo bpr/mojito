@@ -195,6 +195,17 @@ impl RegionContext {
         self.regions.last().unwrap_or(&RegionKind::Function)
     }
 
+    /// Whether the elaborator judges this position per instance: inside a
+    /// `comptime if` arm, which an instance may never take, or after a
+    /// `comptime assert`, which an instance may fail first.
+    fn judged_per_instance(&self) -> bool {
+        self.asserted
+            || self
+                .regions
+                .iter()
+                .any(|kind| matches!(kind, RegionKind::ComptimeIfArm(_)))
+    }
+
     /// The `handled` of the nearest enclosing `try` body carrying `label`:
     /// its handler's arguments, when it has a handler; `None` when no
     /// enclosing `try` body carries it.

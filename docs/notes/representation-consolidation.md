@@ -44,10 +44,11 @@ command cannot use both.
      R1507, R1662, and R330.
    - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
      both backends.
-   - R1596 finishes the surface.
+   - The limit members (`MAX`, `MIN`, `MAX_FINITE`, `MIN_FINITE`) are
+     declared over the bundled `std.utils.numerics`.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1558 --task R1596 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1558 -n 0
    ```
 
 3. **`Bool` as a library struct** (R1188's residue). R1188 made
