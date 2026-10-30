@@ -2937,6 +2937,20 @@ impl Checker {
                 self.infer_with_expected(expr, ty, true)?;
                 Ok(resolved)
             }
+            // A list display at a type that takes it, or a brace at a type
+            // with no set or dictionary display, is the construction
+            // upstream's parser emits for it (`T(a, b,
+            // __list_literal__=None)`, `T(a, b)`): the argument is that
+            // construction's value.
+            ParamDecl::Value { ty, .. }
+                if let ParamArg::Value(expr) = arg
+                    && let Some(construction) = self.display_construction(expr, ty) =>
+            {
+                let resolved = self.resolve_param_arg(decl, &ParamArg::Value(construction?))?;
+                let _position = self.comptime_position();
+                self.infer_with_expected(expr, ty, true)?;
+                Ok(resolved)
+            }
             ParamDecl::Value { name, ty, .. } => match arg {
                 ParamArg::Value(expr) => {
                     // Function values are compile-time parameters in source, but

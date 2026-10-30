@@ -3782,23 +3782,33 @@ impl Checker {
     /// sequence lists, the display's own type, and its checked construction;
     /// `None` for any other binding, which the ordinary path types. A brace
     /// annotated with any type but a set or dictionary is that type's
-    /// initializer list (`comptime t: Tuple[Int, Int] = {1, 2}`), so the
-    /// ordinary path types it too.
+    /// initializer list (`comptime t: Tuple[Int, Int] = {1, 2}`), and a list
+    /// display annotated with a type that takes it but `List` or `Array` is
+    /// that type's literal construction (`comptime v: SIMD[DType.int32, 2]
+    /// = [1, 2]`), so the ordinary path types both too.
     fn evaluated_display_binding(
         &self,
         value: &Expr,
         annotation: Option<&SourceType>,
     ) -> Option<(Ty, Ty, mojito_checked::checked::SemanticAdjustment)> {
-        if matches!(value.kind, ExprKind::BraceLit(_))
-            && let Some(annotation) = annotation
-            && self
-                .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
-                .ok()
-                .is_none_or(|ty| {
-                    mojito_types::types::set_element(&ty).is_none()
-                        && mojito_types::types::dict_elements(&ty).is_none()
-                })
-        {
+        let annotated = || {
+            annotation.and_then(|annotation| {
+                self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
+                    .ok()
+            })
+        };
+        let constructs = match value.kind {
+            ExprKind::BraceLit(_) => {
+                annotation.is_some()
+                    && annotated().is_none_or(|ty| {
+                        mojito_types::types::set_element(&ty).is_none()
+                            && mojito_types::types::dict_elements(&ty).is_none()
+                    })
+            }
+            ExprKind::ListLit(_) => annotated().is_some_and(|ty| self.list_literal_constructs(&ty)),
+            _ => false,
+        };
+        if constructs {
             return None;
         }
         let element = self.display_listed_element(value)?;

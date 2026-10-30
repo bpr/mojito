@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	991
+# swept-count	992
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -531,6 +531,7 @@ assets/type_error/len_undeclared_sized_struct.mojo	compile-reject	agree	error: n
 assets/type_error/linear_bound_message_sorts_by_module.mojo	compile-reject	agree	error: 'x' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
 assets/type_error/linear_parameter_abandoned_on_raise.mojo	compile-reject	agree	error: 't' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/list_anytype_append_requires_movable.mojo	compile-reject	agree	error: invalid call to 'append': violated constraint
+assets/type_error/list_display_literal_constructor_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no matching function in call to 'hash'
 assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/list_slice_assigned_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebuild' call

@@ -9,24 +9,58 @@ use mojito_ast::ast::KwArg;
 use mojito_types::types::TyKind;
 
 impl Checker {
-    /// Type an initializer list against the type its context expects: the
-    /// construction `expected(entries...)`, spelled under an identity derived
-    /// from the brace's and checked as any construction is, so the brace
-    /// keeps the type its context sees while the construction keeps its own
-    /// facts. The construction is recorded for the checked arena, which hands
-    /// HIR the construction in the brace's place.
+    /// Type an initializer list or a list display against the type its
+    /// context expects: the `construction` of that type
+    /// [`Self::display_construction`] spelled for it under an identity
+    /// derived from the display's, checked as any construction is, so the
+    /// display keeps the type its context sees while the construction keeps
+    /// its own facts. The construction is recorded for the checked arena,
+    /// which hands HIR the construction in the display's place.
     pub(super) fn infer_initializer_list(
         &self,
         expression: &Expr,
-        (args, kwargs): (Vec<Expr>, Vec<KwArg>),
+        construction: Expr,
         expected: &Ty,
         record: bool,
     ) -> Result<Ty, TypeError> {
-        let construction =
-            self.initializer_list_construction(expression, args, kwargs, expected)?;
         let ty = self.infer_with_expected(&construction, expected, record)?;
         self.record_spelled_construction(expression, construction, &ty);
         Ok(ty)
+    }
+
+    /// The construction of `expected` upstream's parser emits for the
+    /// display `expression` at it: a list display at a type that takes one
+    /// ([`Self::list_literal_constructs`]) is `expected(a, b,
+    /// __list_literal__=None)`, and a brace initializer list at any type
+    /// but a set or dictionary is `expected(a, kw=b)`. `None` for any other
+    /// expression.
+    pub(super) fn display_construction(
+        &self,
+        expression: &Expr,
+        expected: &Ty,
+    ) -> Option<Result<Expr, TypeError>> {
+        let (args, kwargs) = match &expression.kind {
+            ExprKind::ListLit(values) if self.list_literal_constructs(expected) => {
+                let marker = KwArg {
+                    name: "__list_literal__".to_string(),
+                    value: Expr::new(ExprKind::None, expression.span),
+                };
+                (values.clone(), vec![marker])
+            }
+            ExprKind::InitializerList { args, kwargs } => (args.clone(), kwargs.clone()),
+            ExprKind::BraceLit(entries)
+                if mojito_types::types::set_element(expected).is_none()
+                    && mojito_types::types::dict_elements(expected).is_none()
+                    && entries.iter().all(|(_, value)| value.is_none()) =>
+            {
+                (
+                    entries.iter().map(|(key, _)| key.clone()).collect(),
+                    Vec::new(),
+                )
+            }
+            _ => return None,
+        };
+        Some(self.initializer_list_construction(expression, args, kwargs, expected))
     }
 
     /// Bind the local `comptime name = value` as a type alias of `ty`: the

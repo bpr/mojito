@@ -2261,13 +2261,10 @@ impl Checker {
         }
         // A brace with a keyword entry is upstream's initializer list at any
         // expected type: the construction of that type from its entries.
-        if let ExprKind::InitializerList { args, kwargs } = &expression.kind {
-            return self.infer_initializer_list(
-                expression,
-                (args.clone(), kwargs.clone()),
-                expected,
-                record,
-            );
+        if matches!(expression.kind, ExprKind::InitializerList { .. })
+            && let Some(construction) = self.display_construction(expression, expected)
+        {
+            return self.infer_initializer_list(expression, construction?, expected, record);
         }
         // Reference-typed values normally read through to their referents in
         // expression position.  A reference-typed parameter is a storage
@@ -2468,6 +2465,14 @@ impl Checker {
             return Ok(expected.clone());
         }
 
+        // A list display at any other type whose struct declares a list
+        // literal initializer is upstream's `T(a, b, __list_literal__=None)`,
+        // and a brace at any type but a set or dictionary is its initializer
+        // list `T(a, b)`: the construction of that type through ordinary
+        // overload resolution.
+        if let Some(construction) = self.display_construction(expression, expected) {
+            return self.infer_initializer_list(expression, construction?, expected, record);
+        }
         let elements: Option<Vec<(&Expr, &Ty, &'static str)>> =
             if let (ExprKind::ListLit(values), Some(element)) =
                 (&expression.kind, list_element(expected))
@@ -2513,16 +2518,6 @@ impl Checker {
                 None
             };
 
-        // A brace display at any other expected type is upstream's
-        // initializer list: the construction of that type from its entries.
-        if let ExprKind::BraceLit(entries) = &expression.kind
-            && set_element(expected).is_none()
-            && dict_elements(expected).is_none()
-            && entries.iter().all(|(_, value)| value.is_none())
-        {
-            let args = entries.iter().map(|(key, _)| key.clone()).collect();
-            return self.infer_initializer_list(expression, (args, Vec::new()), expected, record);
-        }
         let Some(elements) = elements else {
             return self.infer(expression);
         };
@@ -2830,6 +2825,32 @@ impl Checker {
         let constructor =
             method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref());
         Some((constructor, available))
+    }
+
+    /// Whether a list display at `ty` is the construction `ty(a, b,
+    /// __list_literal__=None)` the checker spells: `ty`'s struct (`SIMD`
+    /// for a vector) declares that initializer, and `ty` is no `List` or
+    /// `Array`, whose displays are their own collection constructions.
+    pub(super) fn list_literal_constructs(&self, ty: &Ty) -> bool {
+        if list_element(ty).is_some() || array_parts(ty).is_some() {
+            return false;
+        }
+        let name = match ty.kind() {
+            TyKind::Struct(name, _) => name.as_str(),
+            TyKind::Simd { .. } => "SIMD",
+            _ => return false,
+        };
+        self.structs
+            .get(name)
+            .and_then(|info| info.methods.get("__init__"))
+            .is_some_and(|sigs| {
+                sigs.iter().any(|sig| {
+                    mojito_symbol::symbol::is_list_literal_constructor(
+                        &sig.names,
+                        sig.variadic.is_some(),
+                    )
+                })
+            })
     }
 
     /// Set span's `ConstructCollection` to build `target` by `constructor`

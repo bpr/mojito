@@ -469,10 +469,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   initializer's `return value` is typed at the receiver, and MIR's
   `initialize_receiver_returns` (`mir/nested.rs`, under
   `FunctionLowering::receiver_result`) stores it into the receiver slot. `checker/initializer_list.rs` owns the
-  initializer list: `infer_initializer_list` spells `{}` / `{a, b}` (a
+  initializer list: `display_construction` spells `{}` / `{a, b}` (a
   `BraceLit`) or `{a, kw=b}` (the parser's `ExprKind::InitializerList`) at
   the contextual type as that type's construction under an identity derived
-  from the brace's, checks it, and records
+  from the brace's, and a list display at a non-`List`, non-`Array` type
+  whose struct declares a `__list_literal__` initializer
+  (`inference.rs:list_literal_constructs`) as `T(a, b,
+  __list_literal__=None)`; `infer_initializer_list` checks it, a parameter
+  argument resolves it in the display's place (`resolve_param_arg`), and it
+  records
   `SemanticAdjustment::SpelledConstruction` (`record_spelled_construction`,
   shared with t-strings and with `infer_initializer_call`, which spells an
   explicit `T[ps].__init__[ks](…)` over a type-spelling receiver as the

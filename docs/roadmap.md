@@ -3040,32 +3040,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1666 A list display builds its literal constructor's call only
-  for `List`**
-
-  Upstream's parser emits `[a, b]` as the call `T(a, b,
-  __list_literal__=None)` of its contextual type `T`, through ordinary
-  overload resolution (`emitConstructorCall`), so any struct with a
-  `__list_literal__` initializer takes a list display.
-  - `record_display_construction` and the display typing
-    (`checker/inference.rs`) consult the literal constructor only for a
-    `List` target, so any other target meets the display's default
-    `Array` type and is rejected ("found Array[…]").
-  - Lever: take the contextual type's `is_list_literal_constructor`
-    overload for any struct, and for the bridged `SIMD`, whose declared
-    element list carries the marker.
-  - Probe: `var v: SIMD[DType.int32, 4] = [1, 2, 3, 4]` prints `[1, 2, 3,
-    4]` at the pin.
-  - Probe: `var w: SIMD[DType.float32, 2] = [1.5, 2]` prints `[1.5, 2.0]`
-    at the pin.
-  - Probe: a struct `S` whose `__init__(out self, *elems: Int,
-    __list_literal__: NoneType = None)` stores `len(elems)`, as the
-    expected type of `[1, 2, 3]`, prints `S(3)` at the pin.
-  - R1414 (the elements binding as call arguments) is related.
-  - Found while landing R1592 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1114 `not <Trait>` opts a struct out of a trait in its conformance
   list**
 
@@ -4963,6 +4937,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     expression converts the constant to the annotated type.
   - `comptime c = Int8(5)` runs, and so do annotations of `Int`, `UInt`,
     and a struct (`comptime e: E = E(7)`).
+  - Probe: `comptime v: SIMD[DType.int32, 2] = [3, 4]` (or `=
+    SIMD[DType.int32, 2](3, 4)`) then `f[v]()` in `main`, over `def f[v:
+    SIMD[DType.int32, 2]]()` returning `v.reduce_add()`, fails with "not a
+    compile-time Int constant: v", where the pin prints `7`; `f[[3, 4]]()`
+    runs (found while landing R1666, 2026-10-30).
   - Probe: `comptime c: Float32 = 1.5` then `show[c]()` for
     `def show[x: Float32]()`, in a body with or without binders (pin: `1.5`).
   - The original shape, `comptime y: Int = 5` then `f[y]()`, now runs.

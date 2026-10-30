@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A list display at any type whose struct declares a `__list_literal__`
+  initializer is that type's construction `T(a, b, __list_literal__=None)`,
+  as upstream's parser emits it (R1666): `var v: SIMD[DType.int32, 4] = [1,
+  2, 3, 4]`, `var w: SIMD[DType.float32, 2] = [1.5, 2]`, and a user struct
+  as the expected type of `[1, 2, 3]` run as at the pin, on the VM and
+  natively, as bindings, arguments, return values, list elements,
+  annotated `comptime` bindings, and parameter arguments. A brace
+  initializer list in a parameter argument (`f[{7, 8}]()`) is now its
+  construction too.
 - `SIMD` declares upstream's `_shuffle_variadic`, `_shuffle_list`, both
   variadic `shuffle` overloads, and `join` over `pop.simd.shuffle` (R1683,
   R331): `v.shuffle[7, 2, 5, 0](w)` over `[1, 2, 3, 4]` and `[5, 6, 7, 8]`
