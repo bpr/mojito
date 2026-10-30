@@ -1219,7 +1219,8 @@ pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value
 /// Call the LLVM intrinsic `intrinsic` over `operands`, giving a `result`.
 ///
 /// Lanes are computed as `mojito_types::llvm_intrinsic` computes them: an
-/// elementwise intrinsic gives its first operand's type, a reduction one
+/// elementwise intrinsic gives its first operand's type, `is.fpclass` a
+/// `bool` lane per operand lane, a reduction one
 /// lane of it, a shuffle the lanes its sources name, `llvm.stepvector` the
 /// result's lane positions, and `llvm.donothing` `None`. `result` is the
 /// type LLVM translation sees (`MirDeclarations::translated_type`): a
@@ -1302,6 +1303,19 @@ pub fn llvm_intrinsic(
         return shuffle_lanes(&parts, &sources)
             .map(|lanes| simd_value(dtype, lanes))
             .ok_or_else(mismatch);
+    }
+    if intrinsic == LlvmIntrinsic::IsFpclass {
+        let test = u32::try_from(index).map_err(|_| mismatch())?;
+        let lanes = float_lanes(&parts[0].1).ok_or_else(mismatch)?;
+        return Ok(simd_value(
+            Dtype::Bool,
+            SimdLanes::Bool(
+                lanes
+                    .iter()
+                    .map(|lane| llvm::fpclass_lane(dtype, *lane, test))
+                    .collect(),
+            ),
+        ));
     }
     let lanes = match (intrinsic, &parts[0].1) {
         (LlvmIntrinsic::VectorReduce(reduction), SimdLanes::Int(lanes)) => SimdLanes::Int(vec![

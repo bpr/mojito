@@ -1,9 +1,13 @@
-# Upstream's `std/math/math.mojo`, holding its operation traits, the
-# rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`, the plugin-hook
-# signatures `_UnaryMathPluginHookFnType` and `_BinaryMathPluginHookFnType`,
-# the `SIMD` overload of `iota`, `fma`, `clamp`, both overloads each of
-# `max` and `min`, and `abs`, verbatim (the buffer overload of `iota` is
-# omitted). The prelude
+# Upstream's `std/math/math.mojo`, the `std.math` package's module, holding
+# its operation traits, the rounding helpers `floor`/`ceil`/`trunc`/
+# `ceildiv`, the plugin-hook signatures `_UnaryMathPluginHookFnType` and
+# `_BinaryMathPluginHookFnType`, `copysign`, the `SIMD` overload of `iota`,
+# `fma`, `clamp`, both overloads each of `max` and `min`, `abs`, and the
+# libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
+# verbatim (the buffer overload of `iota` is omitted). `copysign` follows
+# `abs`, which it calls, where upstream's precedes `iota`: a module `def` is
+# visible only after its statement (R592). Upstream's `from . import pi,
+# inf, …` line is omitted, since nothing ported reads it. The prelude
 # exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and `min`, as
 # upstream's does; `round`/`divmod` are still compiler builtins (R1458).
 #
@@ -326,3 +330,57 @@ def abs[T: Absable](value: T) -> T:
         The absolute value of the object.
     """
     return value.__abs__()
+
+
+# ===----------------------------------------------------------------------=== #
+# copysign
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def copysign[
+    dtype: DType, width: SIMDLength, //
+](magnitude: SIMD[dtype, width], sign: SIMD[dtype, width]) -> SIMD[
+    dtype, width
+]:
+    """Returns a value with the magnitude of the first operand and the sign of
+    the second operand.
+
+    Constraints:
+        The type of the input must be numeric.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        magnitude: The magnitude to use.
+        sign: The sign to copy.
+
+    Returns:
+        Copies the sign from sign to magnitude.
+    """
+    comptime assert dtype.is_numeric(), "operands must be a numeric type"
+
+    comptime if dtype.is_unsigned():
+        return magnitude
+    elif dtype.is_integral():
+        var mag_abs = abs(magnitude)
+        return sign.lt(0).select(-mag_abs, mag_abs)
+    return llvm_intrinsic[
+        "llvm.copysign", SIMD[dtype, width], has_side_effect=False
+    ](magnitude, sign)
+
+
+# ===----------------------------------------------------------------------=== #
+# Pure-Mojo libm implementations
+# ===----------------------------------------------------------------------=== #
+
+comptime _SQRT2 = 1.41421356237309504880168872420969807856967187537694
+
+comptime _LN2 = 0.69314718055994530941723212145817656807550013436026
+
+# ln2 = _LN2_HI_F64 + _LN2_LO_F64, where _LN2_HI_F64 has 32 significant bits
+# (21 trailing zero bits), so k * _LN2_HI_F64 is exact for |k| < 2^21.
+comptime _LN2_HI_F64 = 6.93147180369123816490e-01
+comptime _LN2_LO_F64 = 1.90821492927058770002e-10

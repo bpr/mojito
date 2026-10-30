@@ -76,14 +76,22 @@ impl Checker {
             }
         }
         // Any other compile-time expression of type `DType`
-        // (`_uint_type_of_width[w]()`, a value's `x.dtype`) is the value it
+        // (`_uint_type_of_width[w]()`, a value's `x.dtype`, the enclosing
+        // struct's `comptime` member `Self.integral_type`) is the value it
         // folds to, or that expression while its operands are open.
-        if let mojito_ast::ast::ParamArg::Value(expr) = arg
-            && matches!(
-                expr.kind,
-                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Member { .. }
-            )
-        {
+        let spelled = match arg {
+            mojito_ast::ast::ParamArg::Type(ty @ SourceType::SelfParam(_)) => {
+                ty.expression_spelling(mojito_common::token::DUMMY_SPAN)
+            }
+            _ => None,
+        };
+        if let Some(expr) = spelled.as_ref().or(match arg {
+            mojito_ast::ast::ParamArg::Value(expr) => Some(expr),
+            _ => None,
+        }) && matches!(
+            expr.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Member { .. }
+        ) {
             let _lifting = self.lifting_position();
             let evaluated = self.eval_associated_ct(expr);
             match evaluated {

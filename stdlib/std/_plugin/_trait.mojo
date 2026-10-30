@@ -2,9 +2,7 @@
 # `DefaultPlugin`, `DefaultPluginHooks`, and `PluginHooks` with the hooks
 # whose types are bundled (`unary_math_fn`, `binary_math_fn`,
 # `supports_float64`, `flushes_subnormals`, `lowers_subvector_intrinsics`,
-# `has_generic_address_space`, and `_handles_debug_assert`), verbatim. The
-# hook signatures import from `std.math`, the bundled library's one
-# `std.math` module, where upstream's package spells `std.math.math`, and
+# `has_generic_address_space`, and `_handles_debug_assert`), verbatim.
 # `StaticString` imports from `std.string`, as the bundled modules on the
 # `std.sys.info` import cycle spell it.
 # Omitted, with the imports only they use:
@@ -21,7 +19,7 @@
 
 from std.collections import OptionalReg
 
-from std.math import (
+from std.math.math import (
     _BinaryMathPluginHookFnType,
     _UnaryMathPluginHookFnType,
 )

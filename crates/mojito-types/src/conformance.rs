@@ -302,9 +302,10 @@ pub fn modelled_conformance(
     trait_name: &str,
     element: &mut dyn FnMut(&Ty, &str) -> Conformance,
 ) -> Conformance {
-    // The `std.math` traits outside the prelude answer by their linked name.
+    // The `std.math.math` traits outside the prelude answer by their linked
+    // name.
     let declares = match trait_name
-        .strip_prefix("__module$std$math$")
+        .strip_prefix("__module$std$math$math$")
         .unwrap_or(trait_name)
     {
         "Boolable" => matches!(

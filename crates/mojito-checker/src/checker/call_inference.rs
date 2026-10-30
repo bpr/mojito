@@ -1118,7 +1118,8 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
-        if let Some(instance) = self.spelled_instances.borrow().get(&span).cloned() {
+        let spelled = self.spelled_instances.borrow().get(&span).cloned();
+        if let Some(instance) = spelled {
             return self.infer_instance_construction(&span, &instance, args, kwargs);
         }
         if name == "__RuntimeTuple"

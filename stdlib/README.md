@@ -208,10 +208,17 @@ point, as upstream's toolchain does.
   upstream's bodies. Values match the audited head on both backends.
 - `std/bit.mojo` — `rotate_bits_left[shift: Int](x: UInt64)`, the `std.bit`
   subset (a `UInt64` instance of upstream's SIMD-generic helper).
-- `std/math.mojo` — upstream's nine operation traits (`Absable`, `Powable`,
-  `Roundable`, `DivModable`, `Ceilable`, `Floorable`, `Truncable`,
-  `CeilDivable`, `CeilDivableRaising`) and the rounding helpers
-  `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait. The prelude
+- `std/math/` — upstream's `std.math` package: `__init__.mojo` re-exports
+  the ported names, `constants.mojo` holds `pi`, `e`, `tau`, and `log2e`
+  (`from std.math.constants import log2e`; the package does not re-export
+  it), and `math.mojo` holds upstream's nine operation traits (`Absable`,
+  `Powable`, `Roundable`, `DivModable`, `Ceilable`, `Floorable`,
+  `Truncable`, `CeilDivable`, `CeilDivableRaising`), the rounding helpers
+  `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait, `copysign`,
+  and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and
+  `_LN2_LO_F64`. The package also re-exports `std.utils.numerics`' `inf`,
+  `nan`, `isnan`, `isinf`, and `isfinite`, whose classifiers call
+  `llvm.is.fpclass`. The prelude
   exports `Absable`, `Powable`, and `Roundable`, as upstream's does; the rest
   must be imported (`from std.math import floor`). `abs`/`round`/`divmod` are
   still compiler builtins (R1458). Every `SIMD` declares `Absable`,

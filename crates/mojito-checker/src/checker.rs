@@ -405,11 +405,11 @@ pub(crate) fn enum_like_trait() -> String {
     mojito_module::module::linked_item_name("std.builtin.enum_like", "EnumLike")
 }
 
-/// The linked name of the bundled `std.math` trait `name` (`DivModable`),
-/// which the prelude does not export: the compiler names it by module path,
-/// never by its spelling.
+/// The linked name of the bundled `std.math.math` trait `name`
+/// (`DivModable`), which the prelude does not export: the compiler names it
+/// by module path, never by its spelling.
 pub(crate) fn math_trait(name: &str) -> String {
-    mojito_module::module::linked_item_name("std.math", name)
+    mojito_module::module::linked_item_name("std.math.math", name)
 }
 
 /// The linked name of the bundled `Hasher` trait, which the prelude does

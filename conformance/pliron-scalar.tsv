@@ -983,6 +983,7 @@ assets/ok/simd_comparison_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_conversion_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_declared_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtype_alias.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_dtype_self_comptime_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtypes_int_lanes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_element_list_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_float_div.mojo	-	ineligible	no-scalar-entry-shape
@@ -1058,6 +1059,7 @@ assets/ok/static_reference_result_argument.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/static_string.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_tuple.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/std_numerics_nan_classes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_plugin_hooks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stored_array_span_iterators.mojo	-	ineligible	no-scalar-entry-shape
@@ -1349,6 +1351,7 @@ assets/ok/type_comparison_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_member_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_names_applied_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_comptime_assert.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/type_of_construction_over_alias_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_receiver_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_signature_parameter.mojo	-	ineligible	no-scalar-entry-shape

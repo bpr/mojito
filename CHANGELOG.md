@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.math` is upstream's package (`std/math/__init__.mojo`,
+  `math.mojo`, `constants.mojo`), with `pi`, `e`, `tau`, `log2e`, and
+  `copysign` over `llvm.copysign`, and re-exports `std.utils.numerics`'
+  `nan`, `isnan`, `isinf`, and `isfinite`, whose bodies call the new
+  `llvm.is.fpclass` intrinsic on both backends and at compile time, as at
+  the pin (R1711). A typed `comptime` binding of a literal is now its
+  declared type's value when read, `Scalar[Self.member]` over a struct's
+  `comptime` member resolves, and a `type_of(x)(Alias(...))` construction
+  in a generic body no longer panics the checker.
+
 - `rebind[type_of(x)](y)` runs, as at the pin, where it reported "rebind
   takes one type argument": `rebind`'s target is read as any expression
   that denotes a type, as a type parameter's argument is (R1709).

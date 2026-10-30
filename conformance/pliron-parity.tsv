@@ -983,6 +983,7 @@ assets/ok/simd_comparison_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_conversion_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_declared_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtype_alias.mojo	main	exe-differential	sanitized
+assets/ok/simd_dtype_self_comptime_member.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtypes_int_lanes.mojo	main	exe-differential	sanitized
 assets/ok/simd_element_list_initializer.mojo	main	exe-differential	sanitized
 assets/ok/simd_float_div.mojo	main	exe-differential	sanitized
@@ -1058,6 +1059,7 @@ assets/ok/static_reference_result_argument.mojo	main	exe-differential	sanitized
 assets/ok/static_string.mojo	main	exe-differential	sanitized
 assets/ok/static_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/static_tuple.mojo	main	exe-differential	sanitized
+assets/ok/std_numerics_nan_classes.mojo	main	exe-differential	sanitized
 assets/ok/std_plugin_hooks.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/stored_array_span_iterators.mojo	main	exe-differential	sanitized
@@ -1349,6 +1351,7 @@ assets/ok/type_comparison_values.mojo	main	exe-differential	sanitized
 assets/ok/type_member_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/type_names_applied_elements.mojo	main	exe-differential	sanitized
 assets/ok/type_of_comptime_assert.mojo	main	exe-differential	sanitized
+assets/ok/type_of_construction_over_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/type_of_receiver.mojo	main	exe-differential	sanitized
 assets/ok/type_of_receiver_instance.mojo	main	exe-differential	sanitized
 assets/ok/type_of_signature_parameter.mojo	main	exe-differential	sanitized

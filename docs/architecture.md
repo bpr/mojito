@@ -7208,7 +7208,10 @@ type, with `LowerKGENToLLVM`'s "failed to convert func signature" and
 request reaches is gone by then. The index reaches the call as an
 element of the intrinsic's loaded pack, so it folds only because `sroa`
 splits a heterogeneous collector of trivial elements and `sccp` folds
-`Int64(n)`. With the pipeline off, nothing folds, and the check is skipped.
+`Int64(n)`, or `is.fpclass`'s class test `a | b` over two typed `comptime`
+bindings, each read as its declared type's constant
+(`Flatten::param_value_register_at`). With the pipeline off, nothing
+folds, and the check is skipped.
 
 An intrinsic's signature is checked on the result type LLVM translation
 sees, `MirDeclarations::translated_type` (R1547): a struct

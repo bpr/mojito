@@ -35,8 +35,23 @@ impl<'a> Flatten<'a> {
     }
 
     /// [`Self::param_value_register`] at `location`, typed `ty` when the
-    /// value has a checked type.
+    /// value has a checked type. A literal a typed binding denotes
+    /// (`comptime t: UInt32 = 0x2`) is the value of that type, as
+    /// upstream's alias is its declared type's attribute.
     pub(in crate::mir) fn param_value_register_at(
+        &mut self,
+        location: SourceSpan,
+        ty: Option<Ty>,
+        value: mojito_types::param_expr::ParamExpr,
+    ) -> Reg {
+        let literal = self.param_constant_register(location.clone(), ty.clone(), value);
+        match ty {
+            Some(ty) => self.materialize_register(literal, &ty, location),
+            None => literal,
+        }
+    }
+
+    fn param_constant_register(
         &mut self,
         location: SourceSpan,
         ty: Option<Ty>,

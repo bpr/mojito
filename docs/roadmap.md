@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1720**.
+Next free ID: **R1725**.
 
 ## Ordered Work
 
@@ -3339,7 +3339,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     precede the other's `def`.
   - Probe: `from std.math import max` in `builtin/builtin_slice.mojo` or
     `os/path/path.mojo` stops with "Undefined variable
-    '__module$std$math$max'", since `std.math` links after them.
+    '__module$std$math$math$max'", since `std.math` links after them.
+  - Probe: `std/math/math.mojo` declares `copysign` after `abs`, which it
+    calls, where upstream's precedes `iota`: declared first, it stops with
+    "Undefined variable '__module$std$math$math$abs'".
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7149,6 +7152,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1720 A `NoneType` parameter default that calls a function is
+  rejected, so `FPUtils`' `_constraint` cannot be declared**
+
+  `struct F[k: Int, *, _x: NoneType = _c()]` and `def f[d: DType, *, _k:
+  NoneType = _c[d]()]()` report "not a compile-time Int constant: not an
+  associated comptime expression", where the pin runs both.
+  - `applicable_declarations` (`checker/comptime_validation.rs`) lists only
+    a `def` with `ret: Some(_)`, and `lifted_application` admits no
+    `TyKind::None` result.
+  - `= None` and an `Int`-valued default call (`k: Int = _c[dtype]()`)
+    already work.
+  - The pin evaluates such a default lazily: `FPUtils[DType.int32]
+    .integral_type`, and a static method of `F[DType.int32]` whose
+    constraint fails, both run. The constraint fires where an instance's
+    method body is instantiated.
+  - Add `assets/ok` and `assets/type_error` fixtures for both the struct
+    and the `def` forms.
+  - Found while planning R1711 (2026-10-30).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -7500,7 +7524,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `conformance/fixtures/strided_slice_has_no_bounds.mojo`).
   - Probe: an overload failure of a library function names its linked
     symbol: `max(2, UInt8(1))` reports "invalid call to
-    '__module$std$math$max'" (`call_inference.rs` passes the linked name to
+    '__module$std$math$math$max'" (`call_inference.rs` passes the linked name to
     `TypeError::BadCall`), where the pin says "no matching function in call
     to 'max'" (`assets/type_error/max_literal_first_mismatch.mojo`).
   - The lever: diagnostics spell a type through `unqualified_type_name`,
@@ -10821,24 +10845,83 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1711 `std.utils.numerics` lacks `nan`, `isnan`, `isinf`, and
-  `FPUtils`, and `std.math` lacks `copysign` and the
-  `std.math.constants` values**
+- [ ] **R1721 `std.utils.numerics` has no `FPUtils`**
 
-  `from std.utils.numerics import nan, FPUtils` fails, where upstream's
-  `_powf_scalar`, `exp`, and `log` read them.
-  - Port them verbatim: `FPUtils` with its `integral_type`,
-    `mantissa_width`, `exponent_bias`, `exponent_width`, `exponent_mask`,
-    and `max_exponent` members; `nan`, `isnan`, `isinf`; `copysign` over
-    `llvm.copysign`; and `log2e`, `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and
-    `_LN2_LO_F64`.
-  - Port `_modf_scalar`, `_modf`, and `_floor` into `std.simd` with them,
-    above `struct SIMD` in callee-first order (R127, R393).
-  - Shrink `std/utils/numerics.mojo`'s "not ported" header list.
-  - Probe: `print(nan[DType.float64](), isnan(nan[DType.float32]()),
-    FPUtils[DType.float64].mantissa_width())` against the pin.
-  - Found while planning R1567 (2026-10-30).
-  - Depends on R1708 and R333.
+  `from std.utils.numerics import FPUtils` fails, where upstream's
+  `_floor`, `_ldexp_impl`, `frexp`, and `_is_subnormal_bits` read it.
+  - Port `_constrain_fp_type` and the whole struct verbatim
+    (`utils/numerics.mojo:33–354`), its keyword-only `_constraint:
+    NoneType = _constrain_fp_type[dtype]()` parameter included.
+  - Its `Scalar[Self.integral_type]` members already resolve (R1711).
+  - A 2026-10-30 prototype with `_constraint` dropped matched the pin on
+    every member over f64, f32, and f16, on both backends, except
+    `quiet_nan_mask`. That one is an over-wide shift, poison at the pin
+    (`defined-shift-overflow`), so the fixture does not print it.
+  - Probe: `print(FPUtils[DType.float64].mantissa_width(),
+    FPUtils[DType.float32].exponent_mask(),
+    FPUtils[DType.float64].pack(True, 1024, 0))` prints `52 -2155872256
+    -2.0` at the pin.
+  - Drop `FPUtils` from `std/utils/numerics.mojo`'s "not ported" header.
+  - Found while planning R1711 (2026-10-30).
+  - Depends on R1720.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1722 `std.simd` lacks upstream's `_modf_scalar`, `_modf`, and
+  `_floor`**
+
+  `_powf_scalar` (R1567) and `std.math.modf` read them, and none is
+  bundled.
+  - Port them verbatim above `struct SIMD`, callee first (`_floor`,
+    `_modf_scalar`, `_modf`), since R127 and R393 are open.
+  - Import `FPUtils` into `std.simd`, as upstream does.
+  - `_floor` ends in `type_of(x)(from_bits=bits)` (R1593).
+  - A 2026-10-30 prototype (with `bitcast` standing in for `from_bits=`)
+    printed the pin's `2.0 -2.0 [1.0, -1.0, 0.125, 10000000000.0]`, `3.0
+    0.25`, `-3.0 -0.25`, `[1.0, -2.0] [0.5, -0.75]`, and `5 0`.
+  - `_floor(0.25)` is `0.125` at the pin too: upstream's own bit-mask
+    arithmetic.
+  - Fixture inputs keep `shift_factor - e` under the lane width:
+    `_floor(Float32(1e-5))` is poison at the pin.
+  - Found while planning R1711 (2026-10-30).
+  - Depends on R1721 and R1593.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1723 `from . import name` in a package module is read as a
+  submodule import**
+
+  A package module's `from . import pi`, a name its package's `__init__`
+  re-exports, reports "cannot load module 'mth.pi'", where the pin binds
+  the name.
+  - Upstream's `std/math/math.mojo` imports `pi`, `inf`, `isfinite`,
+    `isinf`, `isnan`, `nan`, and `nextafter` this way. The bundled port
+    omits that line until this lands.
+  - The import cycle (`__init__` imports `.math`, and `.math` imports
+    `.`) must resolve as the pin's does (R1724).
+  - Probe: package `mth/` with `__init__` `from .constants import pi` and
+    `from .math import twice_pi`, and `math.mojo` `from . import pi`; the
+    pin prints `6.28`.
+  - Found while planning R1711 (2026-10-30).
+  - Depends on R1724.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1724 A package's re-exports are unreadable by a module on its
+  import cycle while the package loads**
+
+  Package `pkg` whose `__init__` imports `.b` before `.a`, where `b.mojo`
+  reads `from pkg import fa` and `.a` declares `fa`, reports "module
+  'pkg' has no declaration named 'fa'", where the pin prints `2`.
+  - `Linker::load_module` (`mojito-module/src/module.rs`) publishes only
+    a loading module's local declarations to a cycle peer, so a package
+    `__init__`, which holds only re-exports, publishes nothing.
+  - Upstream resolves a module's names declaratively, whatever the order
+    of its imports.
+  - Probe: `std/math/__init__.mojo` imports `std.utils.numerics` after
+    `.math`, where upstream's leads. Upstream's order fails with "module
+    'std.sys' has no declaration named 'llvm_intrinsic'": `std.sys` loads
+    from `std.builtin.dtype`, and `std.math.math`, on `std.sys`'s cycle
+    through `std._plugin`, reads it.
+  - Found while landing R1711 (2026-10-30).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1712 A compile-time `Span` parameter is not bound from a list
@@ -10876,7 +10959,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `print(exp(Float64(1)), exp(SIMD[DType.float32, 4](0, 1, 2,
     -1)))` against the pin.
   - Found while planning R1567 (2026-10-30).
-  - Depends on R1711, R1712, R1593, R1634, R1673, R1661, and R333.
+  - Depends on R1711, R1712, R1593, R1634, R1673, R1661, R333, and R1721.
   - Model: Fable, Not Planned.
 
 - [ ] **R1714 `std.math` has no `log`, where upstream's is `_log_accurate`
@@ -10895,7 +10978,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `print(log(Float64(2)), log(SIMD[DType.float32, 4](1, 2, 0.5,
     10)), log(Float64(0)), log(Float64(-1)))` against the pin.
   - Found while planning R1567 (2026-10-30).
-  - Depends on R1711, R1712, R1593, R1634, R1661, and R333.
+  - Depends on R1711, R1712, R1593, R1634, R1661, R333, R1721, and R1723.
   - Model: Fable, Not Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
@@ -10942,7 +11025,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets-mojo-output-diffs.tsv` row.
   - Plan: `R1567-simd-s-plan.md`, Part B.
   - Depends on R333, R1661, R1708, R1709, R1710, R1711, R1713, R1714,
-    and R1717.
+    R1717, and R1722.
   - Model: Fable, Planned.
 
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where

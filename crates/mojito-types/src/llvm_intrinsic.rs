@@ -27,6 +27,7 @@ pub enum LlvmIntrinsic {
     Fshr,
     Copysign,
     Sqrt,
+    IsFpclass,
     Donothing,
     VectorReduce(VectorReduction),
     VectorExtract,
@@ -69,7 +70,7 @@ pub enum OverloadSlot {
 
 impl LlvmIntrinsic {
     /// Every intrinsic in the table.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::Ctlz,
         Self::Cttz,
         Self::Ctpop,
@@ -79,6 +80,7 @@ impl LlvmIntrinsic {
         Self::Fshr,
         Self::Copysign,
         Self::Sqrt,
+        Self::IsFpclass,
         Self::Donothing,
         Self::VectorReduce(VectorReduction::And),
         Self::VectorReduce(VectorReduction::Or),
@@ -116,6 +118,7 @@ impl LlvmIntrinsic {
             Self::Fshr => "llvm.fshr",
             Self::Copysign => "llvm.copysign",
             Self::Sqrt => "llvm.sqrt",
+            Self::IsFpclass => "llvm.is.fpclass",
             Self::Donothing => "llvm.donothing",
             Self::VectorReduce(VectorReduction::And) => "llvm.vector.reduce.and",
             Self::VectorReduce(VectorReduction::Or) => "llvm.vector.reduce.or",
@@ -157,6 +160,7 @@ impl LlvmIntrinsic {
             Self::Ctlz
             | Self::Cttz
             | Self::Copysign
+            | Self::IsFpclass
             | Self::VectorExtract
             | Self::VectorInterleave2 => 2,
             Self::Fshl | Self::Fshr | Self::VectorInsert | Self::VectorSplice(_) => 3,
@@ -167,7 +171,9 @@ impl LlvmIntrinsic {
     pub const fn overloads(self) -> &'static [OverloadSlot] {
         match self {
             Self::Donothing => &[],
-            Self::VectorReduce(_) | Self::VectorDeinterleave2 => &[OverloadSlot::Operand(0)],
+            Self::VectorReduce(_) | Self::VectorDeinterleave2 | Self::IsFpclass => {
+                &[OverloadSlot::Operand(0)]
+            }
             Self::VectorExtract => &[OverloadSlot::Result, OverloadSlot::Operand(0)],
             Self::VectorInsert => &[OverloadSlot::Result, OverloadSlot::Operand(1)],
             _ => &[OverloadSlot::Result],
@@ -185,24 +191,29 @@ impl LlvmIntrinsic {
         }
     }
 
-    /// The position of the one-lane integer operand a shuffle reads as a
-    /// lane index rather than as lanes, with the bit width LLVM declares
-    /// for it: the `i64` index of `vector.extract` and `vector.insert`,
-    /// and the `i32` offset of a splice.
+    /// The position of the one-lane integer operand an intrinsic reads as
+    /// an index or a mask rather than as lanes, with the bit width LLVM
+    /// declares for it: the `i64` index of `vector.extract` and
+    /// `vector.insert`, the `i32` offset of a splice, and the `i32` class
+    /// test of `is.fpclass`.
     pub const fn index_operand(self) -> Option<(usize, u32)> {
         match self {
             Self::VectorExtract => Some((1, 64)),
             Self::VectorInsert => Some((2, 64)),
             Self::VectorSplice(_) => Some((2, 32)),
+            Self::IsFpclass => Some((1, 32)),
             _ => None,
         }
     }
 
     /// Whether the [`Self::index_operand`] is an `immarg`, which LLVM
-    /// translation requires a constant: an extract's or an insert's index,
-    /// but not a splice's offset.
+    /// translation requires a constant: an extract's or an insert's index
+    /// and an `is.fpclass` test, but not a splice's offset.
     pub const fn index_is_immediate(self) -> bool {
-        matches!(self, Self::VectorExtract | Self::VectorInsert)
+        matches!(
+            self,
+            Self::VectorExtract | Self::VectorInsert | Self::IsFpclass
+        )
     }
 
     /// Why LLVM translation rejects a call whose [`Self::index_operand`]
@@ -388,6 +399,17 @@ impl LlvmIntrinsic {
                     .then(mismatch)
                     .flatten();
             }
+            Self::IsFpclass => {
+                let classified = matches!(
+                    (operands.first().and_then(lanes), operands.get(1).and_then(lanes), lanes(result)),
+                    (Some((dtype, width)), Some((test, 1)), Some((Dtype::Bool, result_width)))
+                        if dtype.is_float()
+                            && test.is_integral()
+                            && test.bit_width() == 32
+                            && result_width == width
+                );
+                return (!classified).then(mismatch).flatten();
+            }
             _ => {}
         }
         let Some((dtype, width)) = operands.first().and_then(lanes) else {
@@ -526,6 +548,7 @@ impl LlvmIntrinsic {
             self,
             Self::Copysign
                 | Self::Sqrt
+                | Self::IsFpclass
                 | Self::VectorReduce(VectorReduction::Fmax | VectorReduction::Fmin)
         )
     }
@@ -576,6 +599,38 @@ pub fn float_lane(intrinsic: LlvmIntrinsic, dtype: Dtype, lanes: &[f64]) -> Opti
         _ => return None,
     };
     Some(dtype.round_lane(lane))
+}
+
+/// Whether a `lane` of `dtype` is in one of the classes `test` names,
+/// as `llvm.is.fpclass` reads its mask.
+///
+/// The classes are `0x1` signaling NaN, `0x2` quiet
+/// NaN, `0x4` negative infinity, `0x8` negative normal, `0x10` negative
+/// subnormal, `0x20` negative zero, and `0x40` through `0x200` their
+/// positive mirrors in reverse order. Normal and subnormal are judged at
+/// the dtype's own exponent range, and a NaN lane, which carries no
+/// payload here, is quiet.
+pub fn fpclass_lane(dtype: Dtype, lane: f64, test: u32) -> bool {
+    let negative = lane.is_sign_negative();
+    let smallest_normal = dtype
+        .float_query("max_exponent")
+        .map_or(f64::MIN_POSITIVE, |max_exponent| {
+            2f64.powi(i32::try_from(2 - max_exponent).unwrap_or(i32::MIN))
+        });
+    let class = if lane.is_nan() {
+        0x2
+    } else if lane.is_infinite() {
+        if negative { 0x4 } else { 0x200 }
+    } else if lane == 0.0 {
+        if negative { 0x20 } else { 0x40 }
+    } else if lane.abs() < smallest_normal {
+        if negative { 0x10 } else { 0x80 }
+    } else if negative {
+        0x8
+    } else {
+        0x100
+    };
+    test & class != 0
 }
 
 /// The lanes of `llvm.stepvector` over `width` lanes of `dtype`: each its
@@ -734,6 +789,50 @@ mod tests {
             LlvmIntrinsic::Donothing.signature_error(&Ty::none(), &[]),
             None
         );
+        let simd = |dtype, width| {
+            Ty::from(TyKind::Simd {
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(width),
+            })
+        };
+        let test = simd(Dtype::UInt32, 1);
+        assert_eq!(
+            LlvmIntrinsic::IsFpclass.signature_error(
+                &simd(Dtype::Bool, 4),
+                &[simd(Dtype::Float32, 4), test.clone()]
+            ),
+            None
+        );
+        assert!(
+            LlvmIntrinsic::IsFpclass
+                .signature_error(
+                    &simd(Dtype::Bool, 2),
+                    &[simd(Dtype::Float32, 4), test.clone()]
+                )
+                .is_some()
+        );
+        assert!(
+            LlvmIntrinsic::IsFpclass
+                .signature_error(&simd(Dtype::Bool, 1), &[int8.clone(), test])
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn fpclass_lanes_follow_llvm() {
+        let nan_test = 0x3;
+        let inf_test = 0x204;
+        let finite_test = 0x1F8;
+        assert!(fpclass_lane(Dtype::Float32, f64::NAN, nan_test));
+        assert!(!fpclass_lane(Dtype::Float32, 1.0, nan_test));
+        assert!(fpclass_lane(Dtype::Float64, f64::NEG_INFINITY, inf_test));
+        assert!(!fpclass_lane(Dtype::Float64, f64::INFINITY, finite_test));
+        assert!(fpclass_lane(Dtype::Float16, -0.0, 0x20));
+        assert!(!fpclass_lane(Dtype::Float16, -0.0, 0x40));
+        assert!(fpclass_lane(Dtype::Float16, 2f64.powi(-15), 0x80));
+        assert!(fpclass_lane(Dtype::Float16, 2f64.powi(-14), 0x100));
+        assert!(fpclass_lane(Dtype::Float32, -(2f64.powi(-127)), 0x10));
+        assert!(fpclass_lane(Dtype::Float64, -(2f64.powi(-127)), 0x8));
     }
 
     #[test]

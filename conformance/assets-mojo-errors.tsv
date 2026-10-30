@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	982
+# swept-count	984
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -589,6 +589,7 @@ assets/type_error/match_struct_wrong_head.mojo	compile-reject	agree	error: canno
 assets/type_error/match_tuple_arity_mismatch.mojo	compile-reject	agree	error: cannot match value of 'Tuple[Int, Int]' of 2 elements against a pattern with 3 elements
 assets/type_error/match_tuple_pattern_non_tuple.mojo	compile-reject	agree	error: expected a tuple type to match against, got 'Int'
 assets/type_error/match_var_binding_not_copyable.mojo	compile-reject	agree	error: value of type 'Big' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/math_copysign_bool_dtype.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/math_trait_without_import.mojo	compile-reject	agree	error: use of unknown declaration 'Ceilable'; did you mean to import it from 'std.math'? Add 'from std.math import Ceilable'
 assets/type_error/max_literal_first_mismatch.mojo	compile-reject	agree	error: no matching function in call to 'max'
 assets/type_error/maybe_uninit_copy_nontrivial.mojo	compile-reject	agree	error: value of type 'MaybeUninit[String]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
@@ -661,6 +662,7 @@ assets/type_error/nominal_string_positional_slice_removed.mojo	compile-reject	ag
 assets/type_error/nominal_string_positional_slice_strided_removed.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/non_copyable_copy.mojo	compile-reject	agree	error: value of type 'Handle' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/numerics_inf_integral_dtype.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/numerics_nan_integral_dtype.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/optional_equatable_requires_element.mojo	compile-reject	agree	error: no matching method in call to '__eq__'
 assets/type_error/optional_legacy_two_arg_constructor.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/optional_or_else_consumes_receiver.mojo	compile-reject	agree	error: value of type 'Optional[Res]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
