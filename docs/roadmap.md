@@ -3342,9 +3342,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A requirement needs a static shape in `TraitRequirement`, conformance
     matching against a struct's `@staticmethod`, and `T.make()` dispatch
     over a bound binder.
-  - Probe: the bundled `Array`, `Optional`, `OptionalReg`, and `Span`
-    omit upstream's `DevicePassable` conformance, a trait with
-    `@staticmethod` requirements.
+  - Probe: the bundled `Array`, `Optional`, `OptionalReg`, `Span`, and
+    `StaticTuple` omit upstream's `DevicePassable` conformance, a trait
+    with `@staticmethod` requirements; `StaticTuple` also omits
+    `_to_device_type` and the static `get_type_name`.
   - Found while landing R914 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3802,6 +3803,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     calls, with `ASSERT_MODE` from `get_defined_string`.
   - Restore the arity `assert` the bundled `SIMD.__init__(*elems)` omits
     (`stdlib/std/simd.mojo`'s header note).
+  - Restore the three `assert`s the bundled `StaticTuple` omits from
+    `__init__(*elems)`, `__getitem__`, and `__setitem__`
+    (`stdlib/std/utils/static_tuple.mojo`'s header note).
   - Grammar first.
   - Found while landing R1555 (2026-10-28).
   - Depends on nothing.
@@ -4429,9 +4433,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     and runs, as do `P(x=5).plus[2]().x` and a `comptime` of it in `main`.
   - Staging the receiver through its own constant
     (`comptime B = P(x=5)`, `comptime Q = B.plus[2]()`) runs.
-  - Probe: upstream-shaped `comptime C = StaticTuple[Int, 3](fill=5)._replace[2](8)`
-    once R1670 lands; `assets/ok/mlir_pop_array_ops.mojo` stages its
-    `FOLDED` this way (found while landing R1667, 2026-10-29).
+  - Probe: upstream-shaped `comptime C = StaticTuple[Int, 3](fill=5)._replace[2](8)`,
+    which the pin prints `8` for at `C[2]`, once R600 lets `_replace`
+    construct; `assets/ok/mlir_pop_array_ops.mojo` stages its `FOLDED`
+    this way (found while landing R1667, 2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5125,20 +5130,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     body.
   - Model: Opus, Not Planned.
 
-- [ ] **R501 A struct method cannot iterate a module `comptime` list a call
-  builds**
-
-  Problem: `comptime ML = mk(3)` at module scope, then `comptime for x in
-  ML:` in a struct's method, stops with "function instantiation in
-  parameter domain that recursively requires itself: the initializer of
-  'ML' reads 'ML'", where the pin prints `0`, `1`, `2`.
-  - The same loop in a `def` runs, and so does a literal module list, so
-    the cycle the message names is a false one.
-  - Probe: `conformance/probes/module_call_list_in_method_loop.mojo`.
-  - Found while landing R310 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R380 Two local `comptime` bindings of one display are different
   values in a type**
 
@@ -5650,6 +5641,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Path` list as a conformance and `Dict` and `Set` take as a bound. The
     bundle spells the composition out and omits it from the lists, so a
     program naming `KeyElement` finds no declaration.
+  - Probe: upstream's `std/utils/static_tuple.mojo` declares `comptime
+    _StaticTupleTraits = ImplicitlyCopyable & Deinitable &
+    RegisterPassable` and bounds `StaticTuple` and its construction check
+    with it; the bundle spells the composition out per bound.
   - Found while landing R1166 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -9141,6 +9136,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     arity fallback finds two candidates, so the instance "keeps
     compile-time argument slots". Upstream's `StaticTuple._replace` is this
     shape (found while landing R1667, 2026-10-29).
+  - Probe: the bundled `StaticTuple[Int, 2](mlir_value=b._mlir_value)`
+    fails on the VM with "keyword arguments to
+    `…__init__$ov$$pop$array$size…$kw$mlir_value` are not supported", and
+    `t._replace[0](9)` keeps compile-time argument slots; the pin prints
+    the element. `assets/ok/static_tuple.mojo` leaves both out.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11026,10 +11026,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `param_expr.rs`), so the answers agree; the shape does not.
   - Closing it means a bundled `Reflected` over intrinsics that lower to
     `ParamKind::Reflect`, with the built-in rules deleted.
-  - Probe: `from std.reflection import reflect`, which upstream's
-    `static_tuple.mojo` and `optional.mojo` spell, fails with "cannot load
-    module 'std.reflection'": the package has no `__init__.mojo` to export
-    the handle from.
+  - `std/reflection/__init__.mojo` exports the builtin from a
+    docstring-only `reflect.mojo`; the rest of upstream's root
+    (`Reflected`, `reflect_fn`, the locations) is not bundled.
   - `name()` and `base_name()` already answer upstream's
     `#kgen.get_type_name` and `#kgen.get_base_type_name` and construct the
     `StaticString` its methods do (`static_string_of`,
@@ -11207,6 +11206,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: a `!pop.array` drop that runs no code whatever its element, and
     ops that bit-copy on both backends. `StaticTuple`'s
     `_StaticTupleTraits` admits such elements.
+  - Probe: over an element binder bounded `RegisterPassable`
+    (`struct A[T: ImplicitlyCopyable & Deinitable & RegisterPassable, n:
+    Int]` repeating `fill`), `A[R, 2](R(3))` fails the elaborator's
+    per-instance rule (`Specializer::verify_array_elements`), where the pin
+    runs it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -12628,9 +12632,8 @@ residue found inside a task moves to the task that owns its fix.
   Problem: `Error("Index ", 3, " not in *args")` builds the joined message
   at the pin, while Mojito reports "'Error' expects 1 argument(s), got 3".
   - Upstream declares `Error.__init__[*Ts: Writable](out self, *args: *Ts)`.
-  - Probe: `String("some ", x)` has the same gap ("'String' expects 1
-    argument(s), got 2"); the pin prints `some 3`
-    (`conformance/probes/match_optional_enum_cases.mojo`).
+  - `String`'s declared `__init__[*Ts: Writable]` in
+    `stdlib/std/string.mojo` is the model.
   - Found while landing R421 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -12688,21 +12691,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on R1623.
   - Model: Opus, Not Planned.
 
-- [ ] **R1410 `String`'s variadic constructor is rejected**
-
-  `String("word:", name)` stops with "'String' expects 1 argument(s), got
-  2", where upstream's `String.__init__[*Ts: Writable](out self, *args:
-  *Ts)` writes every argument, as the pin's enum integration test does.
-  - Probe: `print(String("span:", 3, "..", 7))` prints `span:3..7` at the
-    pin.
-  - Probe: the `comptime assert` message `String("n is ", n)` fails `f[3]`
-    with `constraint failed: n is 3` at the pin, as does upstream's
-    `_static_tuple_construction_checks` message `String("…: ",
-    reflect[T].name())`.
-  - Found while landing `enum` (2026-10-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1411 `std.iter.map` is not ported**
 
   `from std.iter import map` fails with "module 'std.iter' has no
@@ -12751,25 +12739,6 @@ residue found inside a task moves to the task that owns its fix.
     `stdlib/std/simd.mojo` beside `write_to`.
   - Depends on R1458 and R1661.
   - Model: Opus, Not Planned.
-
-- [ ] **R1670 `StaticTuple` is not bundled**
-
-  `from std.utils import StaticTuple` fails, where upstream's
-  `std/utils/static_tuple.mojo` declares the fixed-size array over
-  `!pop.array` that `SIMD.shuffle`'s masks are.
-  - Port `_static_tuple_construction_checks`, the constructors (`()`,
-    `mlir_value=`, `fill=`, `*elems`, `__init__[*values]`), `__len__`,
-    `__getitem__`, `__setitem__`, `get`, `_unsafe_ref`, `_replace`, and
-    the comparisons, and export it from `std.utils`.
-  - Header-list the omissions (`DevicePassable`, `device_type`,
-    `_to_device_type`, `get_type_name`) with the entries that own them.
-  - Probe: `comptime t = StaticTuple[Int, 3](1, 2, 3)` then `print(t[1],
-    len(t))` gives `2 3` at the pin.
-  - Depends on R1667 (`!pop.array` storage), R1678 (the explicit
-    `__init__[*values]()` call over the parametric struct), R1669 (`reflect[T].name()`), R1210
-    (the `String` message of its `comptime assert`), R1316
-    (`_get_kgen_pointer`), and R1317 (`pop.array.gep`).
-  - Model: Fable, Planned.
 
 - [ ] **R1674 `IndexList` is not bundled**
 

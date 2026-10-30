@@ -790,6 +790,17 @@ impl Checker {
         value
     }
 
+    /// The type a store's computed value ([`Self::synthetic_store_value`])
+    /// stands for: it has no source expression, so every inference of it,
+    /// a generic setter's parameter solving among them, consumes the type
+    /// installed for it.
+    pub(super) fn synthetic_store_value_ty(&self, value: &Expr) -> Option<Ty> {
+        if !matches!(value.kind, ExprKind::None) {
+            return None;
+        }
+        self.fact(&value.source_span(), |facts| facts.ty.as_ref())
+    }
+
     /// Forget the facts the setter call recorded on the synthetic `value`
     /// ([`Self::synthetic_store_value`]): lowering binds the computed
     /// register to the setter directly, so the setter's value argument is

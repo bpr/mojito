@@ -14,6 +14,7 @@ use crate::package::{
 use mojito_ast::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
 use mojito_common::error::ParseError;
 use mojito_common::timing;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -1430,7 +1431,14 @@ impl<'p> Linker<'p> {
         namespaces: &HashMap<String, HashMap<String, String>>,
     ) -> Result<(), ModuleError> {
         match &mut statement.kind {
-            StmtKind::Def { params, body, .. } => {
+            StmtKind::Def {
+                type_params,
+                params,
+                body,
+                ..
+            } => {
+                let (bindings, namespaces) =
+                    &without_parameter_names(bindings, namespaces, type_params);
                 let local_bindings = without_local_bindings(
                     bindings,
                     params.iter().map(|param| param.name.clone()),
@@ -1449,8 +1457,16 @@ impl<'p> Linker<'p> {
                     &local_namespaces,
                 )?;
             }
-            StmtKind::Struct { methods, .. } => {
+            StmtKind::Struct {
+                type_params,
+                methods,
+                ..
+            } => {
+                let (bindings, namespaces) =
+                    &without_parameter_names(bindings, namespaces, type_params);
                 for method in methods {
+                    let (bindings, namespaces) =
+                        &without_parameter_names(bindings, namespaces, &method.type_params);
                     let local_bindings = without_local_bindings(
                         bindings,
                         method.params.iter().map(|param| param.name.clone()),
@@ -1720,6 +1736,39 @@ fn qualified(module: &str, name: &str) -> String {
     )
 }
 
+/// Each imported module path's exports, by the name it binds.
+type Namespaces = HashMap<String, HashMap<String, String>>;
+
+/// The import renames and namespaces visible under a declaration's
+/// compile-time parameters: each parameter name shadows an imported name
+/// across the declaration's signature and body, as a run-time parameter
+/// does in its body.
+fn without_parameter_names<'a>(
+    names: &'a HashMap<String, String>,
+    namespaces: &'a Namespaces,
+    type_params: &[mojito_ast::ast::TypeParam],
+) -> (Cow<'a, HashMap<String, String>>, Cow<'a, Namespaces>) {
+    let parameters = || {
+        type_params
+            .iter()
+            .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+    };
+    let shadows = parameters().any(|name| {
+        names.contains_key(&name)
+            || namespaces
+                .keys()
+                .any(|path| path == &name || path.starts_with(&format!("{name}.")))
+    });
+    if shadows {
+        (
+            Cow::Owned(without_local_bindings(names, parameters(), &[])),
+            Cow::Owned(without_local_namespaces(namespaces, parameters(), &[])),
+        )
+    } else {
+        (Cow::Borrowed(names), Cow::Borrowed(namespaces))
+    }
+}
+
 fn without_local_bindings(
     names: &HashMap<String, String>,
     params: impl IntoIterator<Item = String>,
@@ -1800,6 +1849,7 @@ const BUILTIN_MODULE_EXPORTS: &[(&str, &[&str])] = &[
             "ImmUnsafeAnyOrigin",
         ],
     ),
+    ("std/reflection/reflect.mojo", &["reflect"]),
     ("std/reflection/type_info.mojo", &["_unqualified_type_name"]),
     ("std/ffi/__init__.mojo", &["external_call"]),
     ("std/sys/info.mojo", &["size_of"]),
@@ -1842,6 +1892,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "RegisterPassable",
     "TrivialRegisterPassable",
     "Indexer",
+    "index",
     "Intable",
     "IntableRaising",
     "SIMDLength",
@@ -1997,6 +2048,12 @@ fn rewrite_stmt(
             ..
         } => {
             rename(name, names);
+            for d in decorators {
+                for a in &mut d.args {
+                    rewrite_expr(a, names, namespaces);
+                }
+            }
+            let (names, namespaces) = &without_parameter_names(names, namespaces, type_params);
             for tp in type_params {
                 rewrite_type_param(tp, names, namespaces);
             }
@@ -2014,11 +2071,6 @@ fn rewrite_stmt(
             }
             for condition in where_clauses {
                 rewrite_expr(condition, names, namespaces);
-            }
-            for d in decorators {
-                for a in &mut d.args {
-                    rewrite_expr(a, names, namespaces);
-                }
             }
             let locals =
                 without_local_bindings(names, params.iter().map(|param| param.name.clone()), body);
@@ -2043,11 +2095,12 @@ fn rewrite_stmt(
             ..
         } => {
             rename(name, names);
-            for tp in type_params {
-                rewrite_type_param(tp, names, namespaces);
-            }
             for c in conforms {
                 rename(c, names);
+            }
+            let (names, namespaces) = &without_parameter_names(names, namespaces, type_params);
+            for tp in type_params {
+                rewrite_type_param(tp, names, namespaces);
             }
             if let Some(callable) = callable_conformance {
                 rewrite_type(callable, names, namespaces);
@@ -2080,6 +2133,8 @@ fn rewrite_stmt(
                 rewrite_expr(&mut a.value, names, namespaces);
             }
             for m in methods {
+                let (names, namespaces) =
+                    &without_parameter_names(names, namespaces, &m.type_params);
                 for parameter in &mut m.type_params {
                     rewrite_type_param(parameter, names, namespaces);
                 }

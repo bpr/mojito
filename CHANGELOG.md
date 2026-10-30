@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.utils.StaticTuple`, upstream's fixed-size array over `!pop.array`,
+  is bundled from upstream's `std/utils/static_tuple.mojo`: its
+  construction checks, the default, `fill=`, `*elems`, and
+  `__init__[*values]` initializers, `len`, `Indexer` subscripts and
+  stores, `get`, and the comparisons run on both backends and at compile
+  time, with the pin's errors (R1670). Its `mlir_value=` initializer and
+  `_replace` fail at use until R600 lands. The port brought, each matching
+  the pin:
+  - `String(a, b, …, sep=, end=)`, upstream's `__init__[*Ts: Writable]`
+    (R1410);
+  - `index(idx)` in the prelude and `from std.reflection import reflect`;
+  - a `return value` in an `out self` initializer;
+  - a compile-time parameter shadowing a function of the same name
+    (`def g[abs: Int]`, `get[index: Int]`);
+  - a subscript store through a `__setitem__` generic over its index;
+  - a `pop.array` op over an element type parameter bounded
+    `RegisterPassable`, judged per instance.
+
 - ``__mlir_op.`pop.array.gep`(p, i)``, the `!kgen.pointer` to element `i`
   of the `!pop.array` that `p` addresses, now runs on both backends and at
   compile time, so upstream's `StaticTuple._unsafe_ref` shape

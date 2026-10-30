@@ -33,6 +33,9 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) raises: bool,
     pub(super) error_ty: Option<Ty>,
     pub(super) named_result: Option<&'a str>,
+    /// Whether the result is the `out self` receiver of an initializer,
+    /// which a `return value` initializes.
+    pub(super) receiver_result: bool,
     /// The body's statement nodes, which HIR lowers and nested discovery
     /// walks.
     pub(super) statements: &'a [CheckedStmtId],
@@ -63,6 +66,7 @@ pub(super) fn lower_fn_nested(
         raises,
         error_ty,
         named_result,
+        receiver_result,
         statements,
         returned,
         overloads,
@@ -148,6 +152,9 @@ pub(super) fn lower_fn_nested(
     f.error_ty = error_ty;
     if let Some(result) = named_result {
         materialize_named_result_return(&mut f, result);
+    }
+    if receiver_result {
+        initialize_receiver_returns(&mut f);
     }
     out.push((name.to_string(), f));
 
@@ -1868,6 +1875,41 @@ fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
     let mut blocks = std::mem::take(&mut function.blocks);
     materialize_named_result_exits(&mut blocks, slot, &mut function.n_regs);
     function.blocks = blocks;
+}
+
+/// Make each `return value` exit of an initializer store the value into
+/// its `out self` receiver and return nothing, as `self = value; return`
+/// does: upstream's `return` in an initializer stores into the result
+/// slot. The exits are the function's own blocks' and those of the region
+/// ops among them, never a `try` part's.
+fn initialize_receiver_returns(function: &mut MirFunction) {
+    let receiver = function
+        .var_names
+        .iter()
+        .position(|name| name == "self")
+        .expect("an initializer's receiver leads its variables") as VarId;
+    initialize_receiver_exits(&mut function.blocks, receiver);
+}
+
+fn initialize_receiver_exits(blocks: &mut [MirBlock], receiver: VarId) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            if !matches!(instruction, MirInstr::Try { .. }) {
+                for region in instruction_regions_mut(instruction) {
+                    initialize_receiver_exits(region, receiver);
+                }
+            }
+        }
+        if let MirTerm::Return(Some(value)) = block.term {
+            block.instrs.push(MirInstr::DefVar {
+                var: receiver,
+                src: value,
+                binding_ty: None,
+                in_place: false,
+            });
+            block.term = MirTerm::Return(None);
+        }
+    }
 }
 
 fn materialize_named_result_exits(blocks: &mut [MirBlock], slot: VarId, n_regs: &mut u32) {

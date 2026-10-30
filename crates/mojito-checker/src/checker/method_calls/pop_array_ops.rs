@@ -259,23 +259,25 @@ impl Checker {
     /// The element rule of the `pop.array` ops: a register-passable
     /// element, as the pin loads it into a register, which Mojito admits
     /// only trivially register-passable, since the pin's ops copy an
-    /// element's bits and never destroy one.
+    /// element's bits and never destroy one. A type parameter bounded
+    /// `RegisterPassable` is judged per instance, by the elaborator.
     fn pop_array_element(&self, name: &str, element: &Ty) -> Result<(), TypeError> {
+        use super::super::traits::RegisterPassability::{Excluded, Possible, Proven};
         if matches!(element.kind(), TyKind::Index | TyKind::I1)
             || self.is_trivial_register_passable(element)
         {
             return Ok(());
         }
-        if self.register_passability(element) == super::super::traits::RegisterPassability::Excluded
-        {
-            return Err(TypeError::BadCall {
+        match (element.kind(), self.register_passability(element)) {
+            (TyKind::Param { .. }, Proven) => Ok(()),
+            (TyKind::Param { .. }, Possible) | (_, Excluded) => Err(TypeError::BadCall {
                 func: name.to_string(),
                 reason: "cannot load non-register passable type into SSA register".to_string(),
-            });
+            }),
+            _ => Err(TypeError::Unsupported(format!(
+                "'{name}' over '{element}' is outside the subset: Mojito's '!pop.array' holds \
+                 trivially register-passable elements"
+            ))),
         }
-        Err(TypeError::Unsupported(format!(
-            "'{name}' over '{element}' is outside the subset: Mojito's '!pop.array' holds \
-             trivially register-passable elements"
-        )))
     }
 }

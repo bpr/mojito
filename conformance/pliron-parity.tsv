@@ -424,6 +424,7 @@ assets/ok/init_raise_destroys_initialized_fields.mojo	main	exe-differential	sani
 assets/ok/initializer_list_contextual.mojo	main	exe-differential	sanitized
 assets/ok/initializer_list_keyword_entries.mojo	main	exe-differential	sanitized
 assets/ok/initializer_list_symbolic_type.mojo	main	exe-differential	sanitized
+assets/ok/initializer_return_value.mojo	main	exe-differential	sanitized
 assets/ok/inline_generic_dead_float_literal_arm.mojo	main	exe-differential	sanitized
 assets/ok/inlined_bitcast_application_argument.mojo	main	exe-differential	sanitized
 assets/ok/inlined_constructor_unread_struct_parameter.mojo	main	exe-differential	sanitized
@@ -520,6 +521,7 @@ assets/ok/match_literal_cases.mojo	main	exe-differential	sanitized
 assets/ok/match_literal_clusters.mojo	main	exe-differential	sanitized
 assets/ok/match_literal_forms.mojo	main	exe-differential	sanitized
 assets/ok/match_noncopyable_subject.mojo	main	exe-differential	sanitized
+assets/ok/match_optional_enum_cases.mojo	main	exe-differential	sanitized
 assets/ok/match_or_alternatives_bind.mojo	main	exe-differential	sanitized
 assets/ok/match_or_failed_alternative_copies.mojo	main	exe-differential	sanitized
 assets/ok/match_payload_reads_beside_hidden_subject.mojo	main	exe-differential	sanitized
@@ -553,6 +555,7 @@ assets/ok/mlir_deferred_attribute.mojo	main	exe-differential	sanitized
 assets/ok/mlir_deferred_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_parameter.mojo	main	exe-differential	sanitized
+assets/ok/mlir_pop_array_generic_element.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_array_gep.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_array_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_max_min_bool_casts.mojo	main	exe-differential	sanitized
@@ -561,6 +564,7 @@ assets/ok/mlir_pop_select.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_simd_shuffle.mojo	main	exe-differential	sanitized
 assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_type_overload_identity.mojo	main	exe-differential	sanitized
+assets/ok/module_call_list_in_method_loop.mojo	main	exe-differential	sanitized
 assets/ok/module_constant_literal_bracket.mojo	main	exe-differential	sanitized
 assets/ok/module_reference_result_reads.mojo	main	exe-differential	sanitized
 assets/ok/module_type_alias_reads.mojo	main	exe-differential	sanitized
@@ -731,12 +735,14 @@ assets/ok/parameter_list_of_alias.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_raw_parameter.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_raw_values.mojo	main	exe-differential	sanitized
 assets/ok/parameter_only_overloads.mojo	main	exe-differential	sanitized
+assets/ok/parameter_shadows_function.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_concrete.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin_return.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_value_member.mojo	main	exe-differential	sanitized
+assets/ok/parametric_setitem_store.mojo	main	exe-differential	sanitized
 assets/ok/parametric_static_methods.mojo	main	exe-differential	sanitized
 assets/ok/partial_explicit_application.mojo	main	exe-differential	sanitized
 assets/ok/partial_move_mut_parameter_reinit.mojo	main	exe-differential	sanitized
@@ -1035,6 +1041,7 @@ assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/static_reference_result_argument.mojo	main	exe-differential	sanitized
 assets/ok/static_string.mojo	main	exe-differential	sanitized
 assets/ok/static_string_parameter.mojo	main	exe-differential	sanitized
+assets/ok/static_tuple.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/stored_array_span_iterators.mojo	main	exe-differential	sanitized
 assets/ok/string_capacity.mojo	main	exe-differential	sanitized
@@ -1054,6 +1061,7 @@ assets/ok/string_span_implicit_temporary.mojo	main	exe-differential	sanitized
 assets/ok/string_span_literal.mojo	main	exe-differential	sanitized
 assets/ok/string_span_methods.mojo	main	exe-differential	sanitized
 assets/ok/string_view_equality.mojo	main	exe-differential	sanitized
+assets/ok/string_writable_sequence.mojo	main	exe-differential	sanitized
 assets/ok/stropping.mojo	main	exe-differential	sanitized
 assets/ok/struct_comptime_member_names_own_struct.mojo	main	exe-differential	sanitized
 assets/ok/struct_comptime_member_read_order.mojo	main	exe-differential	sanitized

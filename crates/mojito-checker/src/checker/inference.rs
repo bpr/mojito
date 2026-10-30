@@ -453,6 +453,9 @@ impl Checker {
         if let Some(literal) = self.slice_literal_type(expr) {
             return Ok(literal);
         }
+        if let Some(ty) = self.synthetic_store_value_ty(expr) {
+            return Ok(ty);
+        }
         // A leading-dot member chain is only meaningful where an expected
         // type flows; plain inference has no context to resolve it.
         if contextual_root_span(expr).is_some() {
@@ -2170,11 +2173,7 @@ impl Checker {
         if let Some(literal) = self.slice_literal_type(expression) {
             return Ok(literal);
         }
-        // An augmented subscript's computed value has no source expression
-        // either; consume the type installed for it directly.
-        if matches!(expression.kind, ExprKind::None)
-            && let Some(ty) = self.fact(&expression.source_span(), |facts| facts.ty.as_ref())
-        {
+        if let Some(ty) = self.synthetic_store_value_ty(expression) {
             return Ok(ty);
         }
         // A leading-dot contextual member chain resolves its `$contextual`

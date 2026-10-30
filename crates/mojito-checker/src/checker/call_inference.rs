@@ -121,11 +121,11 @@ impl Checker {
                 // itself: the call routes to the `"String"` builtin (a
                 // `ResolveCallable` adjustment) and yields an owned
                 // `String`, as upstream's `String.__init__[T: Writable]`
-                // does. A single string-literal argument (or a keyword
-                // construction such as `String(copy: s)`) is the ordinary
-                // constructor path.
+                // does. A single string-literal argument, a keyword
+                // construction such as `String(copy: s)`, and a sequence of
+                // `Writable` arguments are the ordinary constructor path.
                 if mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    && !args.is_empty()
+                    && args.len() == 1
                     && kwargs.is_empty()
                     && param_args.is_empty()
                     && !(args.len() == 1

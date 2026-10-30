@@ -956,12 +956,13 @@ impl<'a> Flatten<'a> {
         let local = checked
             .binding
             .and_then(|owner| self.local_binding_var(owner, &name));
-        if local.is_none() && self.overloads.is_function(&name) {
-            return self.literal(checked, Const::Function(name));
-        }
-        // A module constant is the parameter value the check recorded.
+        // A value binder or module constant is the parameter value the
+        // check recorded, even where a function shares its name.
         if let Some(value) = recorded_param_value(&checked.adjustments) {
             return self.param_value_register(node, value);
+        }
+        if local.is_none() && self.overloads.is_function(&name) {
+            return self.literal(checked, Const::Function(name));
         }
         // In a lifted thunk, an enclosing `comptime for` index or local
         // `comptime` binding is the parameter expression it denotes.

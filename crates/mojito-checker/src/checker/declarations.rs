@@ -464,10 +464,11 @@ fn init_field_flow(
             StmtKind::Expr(expr) if marks_initialized(expr, field) => {
                 initialized = true;
             }
-            StmtKind::Return(_) => {
+            // `return value` initializes the whole `out self` with the value.
+            StmtKind::Return(value) => {
                 return InitFieldFlow {
                     normal: None,
-                    valid: valid && initialized,
+                    valid: valid && (initialized || value.is_some()),
                 };
             }
             StmtKind::Raise(_) => {
@@ -1993,7 +1994,12 @@ impl Checker {
         // method-local function may name `self`, parameters, and method locals.
         self.function_bases.push(self.scopes.len() - 1);
         let named_result = params.iter().find(|param| param.is_named_result());
-        self.named_result_context.push(named_result.is_some());
+        self.named_result_context
+            .push(match (initializing, named_result, self.lookup("self")) {
+                (true, _, Some(receiver)) => super::BodyResult::Receiver(receiver.clone()),
+                (_, Some(_), _) => super::BodyResult::Named,
+                _ => super::BodyResult::Returned,
+            });
         self.deferred_result_bodies
             .push(matches!(ret_ty.kind(), TyKind::KgenDeferred));
         count_body_inference(!self.self_decls.is_empty() || generic, || {

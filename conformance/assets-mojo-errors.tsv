@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	960
+# swept-count	967
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -621,6 +621,7 @@ assets/type_error/mlir_pop_array_repeat_element_mismatch.mojo	compile-reject	agr
 assets/type_error/mlir_pop_array_replace_array_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.replace' op failed to verify that all of {array, result} have same type
 assets/type_error/mlir_pop_array_replace_element_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.replace' op failed to verify that value type matches array element type
 assets/type_error/mlir_pop_array_replace_out_of_bounds.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.replace' op array index out of bounds: 5
+assets/type_error/mlir_pop_array_unbounded_element.mojo	compile-reject	agree	error: cannot load non-register passable type into SSA register (compiler bug, please report!)
 assets/type_error/mlir_pop_op_index_operand.mojo	compile-reject	agree	error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got 'index'
 assets/type_error/mlir_pop_op_simd_struct_operand.mojo	compile-reject	agree	error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype si32}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {2}>>'
 assets/type_error/mlir_scalar_storage_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__mlir_type.`!kgen.scalar<index>`' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -857,6 +858,12 @@ assets/type_error/span_implicit_return_escape.mojo	runs	subset	the pin runs it;M
 assets/type_error/span_strided_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/static_origin_local.mojo	compile-reject	agree	error: invalid call to 'observe_static': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/static_pointer_alloc_removed.mojo	compile-reject	agree	error: 'Pointer[Int, _]' value has no attribute 'alloc'
+assets/type_error/static_tuple_eq_not_equatable.mojo	compile-reject	agree	error: invalid call to '__eq__': violated constraint
+assets/type_error/static_tuple_get_out_of_bounds.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/static_tuple_nontrivial_element.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/static_tuple_register_passable_element.mojo	compile-reject	agree	error: 'StaticTuple' parameter 'element_type' has 'RegisterPassable & ImplicitlyCopyable & Deinitable' type, but value has type 'AnyStruct[String]'
+assets/type_error/static_tuple_replace_out_of_bounds.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/static_tuple_values_arity.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/string_grapheme_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/string_iadd_view_aliases_receiver.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'other' argument in '__iadd__' call
 assets/type_error/string_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.

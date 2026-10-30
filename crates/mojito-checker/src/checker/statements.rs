@@ -2276,6 +2276,13 @@ impl Checker {
                 let Some(expected) = ret else {
                     return Err(TypeError::ReturnOutsideFunction);
                 };
+                let receiver = match (expr, self.named_result_context.last()) {
+                    (Some(_), Some(super::BodyResult::Receiver(receiver))) => {
+                        Some(receiver.clone())
+                    }
+                    _ => None,
+                };
+                let expected = receiver.as_ref().unwrap_or(expected);
                 let found = match expr {
                     // A struct origin tail is judged against the return
                     // annotation resolved over the body's own places
@@ -2299,7 +2306,13 @@ impl Checker {
                             expected,
                         )?
                     }
-                    None if self.named_result_context.last() == Some(&true) => expected.clone(),
+                    None if matches!(
+                        self.named_result_context.last(),
+                        Some(super::BodyResult::Named)
+                    ) =>
+                    {
+                        expected.clone()
+                    }
                     None => Ty::none(),
                 };
                 // Record the return-position conversion before the escape
@@ -3285,7 +3298,11 @@ impl Checker {
                     .push(ref_return.map(|signature| (signature, owners, None)));
                 self.return_annotations
                     .push(Self::body_return_annotation(ret_anno.as_ref(), name));
-                self.named_result_context.push(named_result.is_some());
+                self.named_result_context.push(if named_result.is_some() {
+                    super::BodyResult::Named
+                } else {
+                    super::BodyResult::Returned
+                });
                 self.deferred_result_bodies
                     .push(matches!(ret_ty.kind(), TyKind::KgenDeferred));
                 if module_level {

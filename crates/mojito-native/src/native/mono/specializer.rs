@@ -69,6 +69,7 @@ impl<'a> Specializer<'a> {
             enclosing: Bindings::default(),
             unreached_failures: HashMap::new(),
             region_generators: HashMap::new(),
+            array_element_failure: None,
         }
     }
 
@@ -178,7 +179,7 @@ impl<'a> Specializer<'a> {
             entry_map.insert(entry.clone(), name);
         }
         self.drain()?;
-        Ok(entry_map)
+        self.array_element_failure.take().map_or(Ok(entry_map), Err)
     }
 
     pub(super) fn base_bindings(&self) -> Bindings {
@@ -617,12 +618,10 @@ impl<'a> Specializer<'a> {
             .insert(name.clone(), self.instances.len());
         // A destructor, a copy, and a move constructor are references of
         // each body that drops, copies, or moves its struct
-        // (`enqueue_lifecycle_members`), not members of every value's
-        // closure.
+        // (`enqueue_lifecycle_members`), and a constructor of each body that
+        // calls it, not members of every value's closure.
         if let Some((owner, method)) = mojito_symbol::symbol::split_method_symbol(&name)
-            && ["__init__", "__del__"]
-                .iter()
-                .any(|lifecycle| method.starts_with(lifecycle))
+            && method.starts_with("__del__")
         {
             self.lifecycle_instances
                 .entry(owner.to_string())

@@ -176,7 +176,7 @@ impl Specializer<'_> {
     /// `is_trivially` answers it: a struct by its row, an aggregate by its
     /// elements, the inline uninit storage by its payload, and any other type
     /// by its shape.
-    fn trivially(
+    pub(super) fn trivially(
         &self,
         kind: TrivialLifecycle,
         ty: &Ty,

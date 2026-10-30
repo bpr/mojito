@@ -1,21 +1,6 @@
-# PROBE: `.Some(x)` / `.None` / `Optional.Some(0)` / `Optional.Some(var x)` / `.Some(ref s)` cases over `Optional`, in `match`, `if case`, OR, and guarded forms.
-#
-# The pin runs it and prints:
-#   some 3 none
-#   zero some+1 5 none
-#   hi!
-#   hi!
-#   any
-#   short hi!
-#
-# Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: runs the enum case patterns (R1133) and proves their coverage, but
-# rejects `String("some ", x)` ("'String' expects 1 argument(s), got 2",
-# R429); with those calls respelled as concatenations it prints the above.
-# When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
-#
-# Run:    mojo run match_optional_enum_cases.mojo
-#         cargo run -- run conformance/probes/match_optional_enum_cases.mojo
+# `.Some(x)` / `.None` / `Optional.Some(0)` / `Optional.Some(var x)` /
+# `.Some(ref s)` cases over `Optional`, in `match`, `if case`, OR, and
+# guarded forms, building their text with `String`'s writable sequence.
 def describe(o: Optional[Int]) -> String:
     match o:
         case .Some(x):

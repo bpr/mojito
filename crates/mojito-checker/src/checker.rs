@@ -964,7 +964,8 @@ pub struct Checker {
     /// when it belongs to a compiler-generated (`$`-mangled) specialization;
     /// `None` for a reference return.
     return_annotations: Vec<Option<(mojito_ast::ast::SourceType, bool)>>,
-    named_result_context: Vec<bool>,
+    /// How each enclosing body's `return` meets its result.
+    named_result_context: Vec<BodyResult>,
     /// Whether each enclosing body returns upstream's `!kgen.deferred`, so
     /// runs only at compile time and reads untyped attributes as values.
     deferred_result_bodies: Vec<bool>,
@@ -2757,6 +2758,19 @@ fn self_struct_arguments(
                 .map(|(id, _)| TyArg::Origin(mojito_types::origin::Origin::Param(id))),
         )
         .collect()
+}
+
+/// How a body's `return` meets its result.
+#[derive(Clone)]
+enum BodyResult {
+    /// `return value` returns the value.
+    Returned,
+    /// The result is a named `out` parameter a bare `return` returns.
+    Named,
+    /// The result is the `out self` receiver of type `.0`: `return value`
+    /// initializes it, as upstream stores a returned value into the
+    /// result slot.
+    Receiver(Ty),
 }
 
 /// A generic top-level alias (`comptime Alias[params] = Type` or a Bool

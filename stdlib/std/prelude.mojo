@@ -31,7 +31,7 @@ from std.builtin.value import (
     RegisterPassable,
     TrivialRegisterPassable,
 )
-from std.builtin.int import Indexer, Intable, IntableRaising
+from std.builtin.int import Indexer, Intable, IntableRaising, index
 from std.builtin.simd_length import SIMDLength
 from std.simd import SIMD
 from std.builtin.string_literal import StringLiteral

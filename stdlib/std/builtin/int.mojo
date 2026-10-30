@@ -1,11 +1,27 @@
-# Upstream's `std/builtin/int.mojo`, holding its traits: `Int` is a compiler
-# scalar. The prelude exports `Indexer`, `Intable`, and `IntableRaising`, as
-# upstream's does.
+# Upstream's `std/builtin/int.mojo`, holding its traits and `index`: `Int`
+# is a compiler scalar. The prelude exports `Indexer`, `index`, `Intable`,
+# and `IntableRaising`, as upstream's does.
 
 
 trait Indexer:
     def __mlir_index__(self) -> __mlir_type.index:
         ...
+
+
+@inline(.nodebug)
+def index[T: Indexer](idx: T, /) -> Int:
+    """Returns the value of `__mlir_index__` for the given value.
+
+    Parameters:
+        T: A type conforming to the `Indexer` trait.
+
+    Args:
+        idx: The value.
+
+    Returns:
+        An `__mlir_type` representing the index value.
+    """
+    return Int(SIMDLength(mlir_value=idx.__mlir_index__()))
 
 
 trait Intable:

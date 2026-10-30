@@ -142,6 +142,7 @@ impl StructCatalog {
                             values: Vec::new(),
                             parameterized_values: Vec::new(),
                             fields: Vec::new(),
+                            module: String::new(),
                         },
                     )
                 })

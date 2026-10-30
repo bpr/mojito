@@ -11,11 +11,14 @@
 //! A `pop.simd.shuffle` op's mask is known in the template, but a width it
 //! is checked against may be a binder: the instance runs that part of the
 //! op's verifier, as the pin's pass manager does. So does a `pop.array.get`
-//! or `pop.array.replace` whose index or array size a binder names.
+//! or `pop.array.replace` whose index or array size a binder names, and
+//! every `pop.array` op over an element a `RegisterPassable`-bounded binder
+//! names, which Mojito's subset admits only trivially register-passable.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::LaneMask;
+use mojito_types::types::TrivialLifecycle;
 use mojito_types::types::TyKind;
 
 impl Specializer<'_> {
@@ -23,14 +26,77 @@ impl Specializer<'_> {
     /// its indices; one the bindings leave open stays for the verifier's
     /// concrete mode to name.
     pub(super) fn close_lane_masks(
-        &self,
+        &mut self,
         template: &str,
         function: &mut MirFunction,
     ) -> Result<(), MonoError> {
-        close_blocks(&mut function.blocks, &function.reg_types).map_err(|message| MonoError {
+        if self.array_element_failure.is_none()
+            && let Err(message) = self.verify_array_elements(&function.blocks, &function.reg_types)
+        {
+            self.array_element_failure = Some(self.instantiation_failure(template, message));
+        }
+        close_blocks(&mut function.blocks, &function.reg_types)
+            .map_err(|message| self.instantiation_failure(template, message))
+    }
+
+    fn instantiation_failure(&self, template: &str, message: String) -> MonoError {
+        MonoError {
             kind: MonoErrorKind::Instantiation,
             ..self.error(Some(template), message)
-        })
+        }
+    }
+
+    /// The `pop.array` element rule over an instance's closed element
+    /// types: the checker admitted a binder whose bound implies
+    /// `RegisterPassable`, and the instance's element must be trivially
+    /// copyable, movable, and destructible, as the checker requires of a
+    /// closed one, since Mojito's ops copy and its array drops run their
+    /// elements' code.
+    fn verify_array_elements(
+        &self,
+        blocks: &[MirBlock],
+        reg_types: &HashMap<u32, Ty>,
+    ) -> Result<(), String> {
+        for block in blocks {
+            for instruction in &block.instrs {
+                let site = match instruction {
+                    MirInstr::ArrayRepeat { dest, .. } => Some(("repeat", *dest)),
+                    MirInstr::ArrayGet { array, .. } => Some(("get", *array)),
+                    MirInstr::ArrayReplace { array, .. } => Some(("replace", *array)),
+                    MirInstr::ArrayGep { array, .. } => Some(("gep", *array)),
+                    _ => None,
+                };
+                let element = site.and_then(|(op, register)| {
+                    let mut ty = reg_types.get(&register.0)?;
+                    if let TyKind::KgenPointer(pointee) = ty.kind() {
+                        ty = pointee;
+                    }
+                    match ty.kind() {
+                        TyKind::PopArray { element, .. } => Some((op, element)),
+                        _ => None,
+                    }
+                });
+                if let Some((op, element)) = element {
+                    let trivial = [
+                        TrivialLifecycle::Copyable,
+                        TrivialLifecycle::Movable,
+                        TrivialLifecycle::Deinitable,
+                    ]
+                    .into_iter()
+                    .all(|kind| self.trivially(kind, element, &mut HashSet::new()) != Some(false));
+                    if !trivial {
+                        return Err(format!(
+                            "'pop.array.{op}' over '{element}' is outside the subset: Mojito's \
+                             '!pop.array' holds trivially register-passable elements"
+                        ));
+                    }
+                }
+                for region in mojito_mir::mir::instruction_regions(instruction) {
+                    self.verify_array_elements(region, reg_types)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

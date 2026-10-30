@@ -21,7 +21,8 @@ impl Checker {
     /// value without destroying it, after its storage was moved out through
     /// pointers (`Tuple.consume_elements`). Each is accepted only in the
     /// bundled modules that reach compiler-private storage or, as `SIMD`'s
-    /// element list does, initialize `out self` lane by lane. Every other
+    /// element list and `StaticTuple`'s initializers do, initialize `out
+    /// self` element by element. Every other
     /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`]),
     /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), a
     /// KGEN string read ([`Self::infer_string_op`]), a lane gather

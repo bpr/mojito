@@ -683,6 +683,11 @@ struct Specializer<'a> {
     /// the name the copy's closure value takes: the template and the copy's
     /// bindings, which a call binding the body's own parameters extends.
     region_generators: HashMap<String, (String, Bindings)>,
+    /// The first instance whose `pop.array` op holds an element Mojito's
+    /// subset rejects ([`Self::close_lane_masks`]), reported once the
+    /// worklist drains, so an instance's own `comptime assert` over the
+    /// element (`StaticTuple`'s construction check) reports first.
+    array_element_failure: Option<MonoError>,
 }
 
 mod availability;

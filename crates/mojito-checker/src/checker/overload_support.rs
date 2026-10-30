@@ -534,15 +534,18 @@ pub(super) fn is_bundled_private_storage_source(source: Option<&str>) -> bool {
 
 /// The bundled modules that spell upstream's `lit.ownership.mark_initialized`
 /// and `lit.ownership.mark_destroyed`: those reaching compiler-private storage
-/// ([`is_bundled_private_storage_source`]), and `std/simd.mojo`, whose
-/// element-list initializer declares `out self` initialized before writing
-/// it lane by lane.
+/// ([`is_bundled_private_storage_source`]), and `std/simd.mojo` and
+/// `std/utils/static_tuple.mojo`, whose initializers declare `out self`
+/// initialized before writing it element by element.
 pub(super) fn is_bundled_ownership_marker_source(source: Option<&str>) -> bool {
     is_bundled_private_storage_source(source)
         || mojito_module::module::bundled_root()
             .zip(source)
             .is_some_and(|(root, source)| {
-                Path::new(stamped_source_module(source)) == root.join("stdlib/std/simd.mojo")
+                let module = Path::new(stamped_source_module(source));
+                ["stdlib/std/simd.mojo", "stdlib/std/utils/static_tuple.mojo"]
+                    .iter()
+                    .any(|path| module == root.join(path))
             })
 }
 
