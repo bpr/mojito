@@ -152,11 +152,14 @@ required value uses. They differ, because the pin does:
 | `where n // -2 == -4`, applied at `n = 7` | **rejects**: lacking evidence |
 | `struct Holder[n: Int, m: Int = n // -2]`, `Holder[7]` | accepts, `m` is `-4` |
 | `def f[n: Int](x: Tagged[-n])`, called `f[2](Tagged[-2]())` | accepts — a negation folds |
+| `def g[n: Int](w: B[n / 2])`, called `g[7](B[3]())`; `where n / 2 > 1` at `n = 5` | accepts — `pop.div` folds |
 
 So replacement rebuilds the polynomial through the canonicalizing constructors
-and rebuilds an opaque atom **without folding it**, even once its operands are
-constants, save a negation, which folds over a constant operand
-(`ParamContext::rebuild`). A type argument and a `where` operand replace. A default, a
+and rebuilds an unfolded call — `//`, `%`, or `**`, whose `SIMD` dunders are
+not `@always_inline("builtin")` — **without folding it**, even once its
+operands are constants (`ParamOp::is_unfolded_call`). Every other atom is a
+builtin `pop` op (`-`, `/`, `&`, `|`, `^`, `<<`, `>>`), which the pin
+simplifies, so it folds over constant operands (`ParamContext::rebuild`). A type argument and a `where` operand replace. A default, a
 dependent index, the MIR verifier's dependent instantiation, and native
 monomorphization evaluate (`replace`, then `fold`).
 `assets/type_error/param_expr_{unfolded_atom,where_unfolded_atom}.mojo` and

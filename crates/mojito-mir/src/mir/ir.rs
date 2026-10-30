@@ -4669,10 +4669,20 @@ mod tests {
             ),
             Some(Const::Int(i64::MIN))
         ));
+        assert!(matches!(
+            binary(
+                InfixOp::Div,
+                Const::Int(-7),
+                Const::Int(2),
+                TyKind::INT.clone(),
+                TyKind::INT.clone()
+            ),
+            Some(Const::Int(-3))
+        ));
         for (op, a, b) in [
             (InfixOp::FloorDiv, Const::Int(7), Const::Int(0)),
             (InfixOp::Shl, Const::Int(1), Const::Int(64)),
-            (InfixOp::Div, Const::Int(1), Const::Int(2)),
+            (InfixOp::Div, Const::Int(7), Const::Int(0)),
         ] {
             assert!(binary(op, a, b, TyKind::INT.clone(), TyKind::INT.clone()).is_none());
         }

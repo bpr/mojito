@@ -65,12 +65,11 @@ pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)>
 pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> {
     match trait_name {
         // Binary-operator traits: each names the dunder its operator dispatches
-        // through. `__truediv__` returns `Float64` (mojito's `/` is always
-        // floating); the rest return `Self`.
+        // through, returning `Self`.
         "Addable" => Some("__add__(Self) -> Self"),
         "Subtractable" => Some("__sub__(Self) -> Self"),
         "Multipliable" => Some("__mul__(Self) -> Self"),
-        "Divisible" => Some("__truediv__(Self) -> Float64"),
+        "Divisible" => Some("__truediv__(Self) -> Self"),
         "FloorDivisible" => Some("__floordiv__(Self) -> Self"),
         "Modable" => Some("__mod__(Self) -> Self"),
         "ShiftLeftable" => Some("__lshift__(Self) -> Self"),

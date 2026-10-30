@@ -97,13 +97,6 @@ pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValu
         (CtValue::Float(a), CtValue::Float(b)) => {
             fold_float(op, f64::from_bits(*a), f64::from_bits(*b))
         }
-        // True division of integers is exact, whatever the operands' width.
-        (CtValue::Int(a), CtValue::IntLiteral(b)) if op == InfixOp::Div => {
-            fold_int_literal(op, &IntLiteral::from(*a), b)
-        }
-        (CtValue::IntLiteral(a), CtValue::Int(b)) if op == InfixOp::Div => {
-            fold_int_literal(op, a, &IntLiteral::from(*b))
-        }
         // A literal beside a machine operand takes the machine type.
         (CtValue::Int(a), CtValue::IntLiteral(b)) => {
             fold_int(op, *a, machine_int(b)?).map(CtValue::Int)
@@ -493,6 +486,9 @@ fn fold_int(op: InfixOp, a: i64, b: i64) -> Result<i64, ParamError> {
         InfixOp::Add => a.wrapping_add(b),
         InfixOp::Sub => a.wrapping_sub(b),
         InfixOp::Mul => a.wrapping_mul(b),
+        // `pop.div` truncates, and the overflowing `MIN / -1` wraps.
+        InfixOp::Div if b == 0 => return Err(zero_divisor(a, b)),
+        InfixOp::Div => a.wrapping_div(b),
         // `SIMD.__floordiv__`/`__mod__` mask a zero divisor to a zero lane.
         InfixOp::FloorDiv | InfixOp::Mod if b == 0 => 0,
         InfixOp::FloorDiv => {
@@ -530,8 +526,9 @@ fn fold_uint(op: InfixOp, a: u64, b: u64) -> Result<u64, ParamError> {
         InfixOp::Add => a.wrapping_add(b),
         InfixOp::Sub => a.wrapping_sub(b),
         InfixOp::Mul => a.wrapping_mul(b),
+        InfixOp::Div if b == 0 => return Err(zero_divisor(a, b)),
         InfixOp::FloorDiv | InfixOp::Mod if b == 0 => 0,
-        InfixOp::FloorDiv => a / b,
+        InfixOp::Div | InfixOp::FloorDiv => a / b,
         InfixOp::Mod => a % b,
         InfixOp::Pow => u32::try_from(b)
             .ok()
@@ -684,6 +681,12 @@ fn flatten_fields<'a>(value: &'a CtValue, leaves: &mut Vec<&'a CtValue>) {
 
 fn arithmetic(message: &str) -> ParamError {
     ParamError::Arithmetic(message.to_string())
+}
+
+/// The pin's rejection of an integer `pop.div` by zero, which it cannot
+/// simplify.
+fn zero_divisor(a: impl std::fmt::Display, b: impl std::fmt::Display) -> ParamError {
+    ParamError::Arithmetic(format!("could not simplify operator div({a}, {b})"))
 }
 
 fn unsupported(message: &str) -> ParamError {

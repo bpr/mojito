@@ -263,13 +263,14 @@ impl ParamContext {
     }
 
     /// Rebuild `op` over `operands` as the canonical constructors kept it:
-    /// an opaque atom stays unfolded even over constants, as
-    /// [`Self::replace`] keeps it, save a negation, which the pin folds
-    /// over a constant (`-n` at `n = 2` is `-2`), and a product by a
+    /// an unfolded call ([`ParamOp::is_unfolded_call`]) stays a node even
+    /// over constants, as [`Self::replace`] keeps it, and a product by a
     /// constant zero keeps a monomial holding a partial atom, as a
-    /// cancellation keeps it. Every other operator is [`Self::op`]. A node the canonical constructors
-    /// built is a fixed point, so an importer rebuilding one from its
-    /// operands keeps its identity.
+    /// cancellation keeps it. Every other operator is [`Self::op`], which
+    /// folds a builtin `pop` op over constants as the pin simplifies it
+    /// (`-n` at `n = 2` is `-2`, `n / 2` at `n = 7` is `3`). A node the
+    /// canonical constructors built is a fixed point, so an importer
+    /// rebuilding one from its operands keeps its identity.
     pub fn rebuild(&self, op: ParamOp, operands: &[ParamExpr]) -> Result<ParamExpr, ParamError> {
         if !op.accepts_arity(operands.len()) {
             return Err(ParamError::Arity {
@@ -283,8 +284,7 @@ impl ParamContext {
             .collect::<Vec<_>>();
         match op {
             ParamOp::Add | ParamOp::Mul => self.build_ring_with(op, operands, ZeroTerms::Keep),
-            ParamOp::Neg if operands[0].as_constant().is_some() => self.op(op, &operands),
-            _ if op.is_atom() => {
+            _ if op.is_unfolded_call() => {
                 let meta = op.result_meta(&operands)?;
                 Ok(self.make(meta, ParamKind::Op { op, operands }))
             }
@@ -982,10 +982,12 @@ impl ParamContext {
     }
 
     /// Simultaneous, capture-avoiding replacement, as type identity sees it.
-    /// The polynomial part re-enters the canonicalizing constructors, so
-    /// `n + 1` at `n = 3` is `4`. An opaque atom is rebuilt and *not* folded,
-    /// even once its operands are constants: the pinned Mojo keeps `n // 2`
-    /// at `n = 8` as `8 // 2`, which is not the type argument `4`
+    /// The polynomial part and a builtin `pop` atom re-enter the
+    /// canonicalizing constructors, so `n + 1` at `n = 3` is `4` and `n / 2`
+    /// at `n = 7` is `3`. An unfolded call ([`ParamOp::is_unfolded_call`])
+    /// is rebuilt and *not* folded, even once its operands are constants:
+    /// the pinned Mojo keeps `n // 2` at `n = 8` as `8 // 2`, which is not
+    /// the type argument `4`
     /// (`assets/type_error/param_expr_unfolded_atom.mojo`). [`Self::evaluate`]
     /// is the replacement a required value uses.
     pub fn replace(
@@ -2841,6 +2843,15 @@ impl ParamOp {
                 | Self::BitOr
                 | Self::BitXor
         )
+    }
+
+    /// Whether the pin keeps this operator's application unfolded over
+    /// constants: its `SIMD` dunder (`__floordiv__`, `__mod__`, `__pow__`)
+    /// is not `@always_inline("builtin")`, so a type argument or a `where`
+    /// clause holds the call. Every other atom is a builtin `pop` op, which
+    /// the pin simplifies.
+    pub const fn is_unfolded_call(self) -> bool {
+        matches!(self, Self::FloorDiv | Self::Mod | Self::Pow)
     }
 
     /// Whether evaluation can fail on well-typed operands.

@@ -197,6 +197,7 @@ assets/ok/comptime_if_struct_equality.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_symbolic_conditional_conformance.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_untaken_arm_unevaluated.mojo	main	exe-differential	sanitized
+assets/ok/comptime_int_truediv.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized
 assets/ok/comptime_layout_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_application_per_read.mojo	main	exe-differential	sanitized
@@ -1017,6 +1018,7 @@ assets/ok/simd_symbolic_width_literal_binding.mojo	main	exe-differential	sanitiz
 assets/ok/simd_to_bits.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits_default_symbolic.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits_signed.mojo	main	exe-differential	sanitized
+assets/ok/simd_truediv_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_wide_widths.mojo	main	exe-differential	sanitized
 assets/ok/simd_write_members.mojo	main	exe-differential	sanitized
 assets/ok/size_of_builtin.mojo	main	exe-differential	sanitized
@@ -1542,6 +1544,7 @@ assets/runtime_error/file_open_invalid_mode.mojo	main,__toplevel__	error-differe
 assets/runtime_error/file_open_missing.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/file_read_closed_handle.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/file_read_write_only_handle.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/int_truediv_zero_divisor.mojo	main,__toplevel__	error-differential	category=DivModZero
 assets/runtime_error/list_contiguous_slice_negative.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/list_contiguous_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/list_contiguous_slice_reversed.mojo	main,__toplevel__	error-differential	category=Abort

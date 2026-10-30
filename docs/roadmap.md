@@ -4638,6 +4638,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     implicitly convert 'Int' value to 'UInt8'" and "no matching function
     in initialization": the binding stays an `IntLiteral`, which converts
     to any lane. A module `comptime N: Int = 3` does the same.
+  - Probe: `comptime x: Int = 7; comptime y = x / 2` in `main` prints
+    `3.5`, where the pin prints `3`: the `IntLiteral` binding makes `x / 2`
+    a literal pair, which divides exactly, where an `Int`'s `/` truncates.
   - Probe: `comptime g = x // 0` over a module `comptime x: Int = 7`, then
     `print(g)`, fails with "keeps the parameter constant `7 // 0`", where
     the pin prints `0`: the literal pair's `//` by zero does not fold (R1624),
@@ -7679,6 +7682,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `lower/simd.rs`, `lower/consts.rs`) serve only these erased bounds:
     they go with them. The `binary` arms stay, since `pop` ops lower to
     them.
+  - `Divisible` declares `__truediv__(Self) -> Self`, matching `SIMD`'s,
+    and leaves with the others.
   - Found while landing R709 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8216,37 +8221,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `String`.
   - The other two are texts to match.
   - Ledger name: `string-subscript-element`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R184 `Int / Int` is true division into `Float64` in Mojito, where
-  the pin truncates back to `Int`**
-
-  Problem: `Int / Int` is true division into `Float64` in Mojito. The pin
-  truncates back to `Int` and divides only an `IntLiteral` pair into a
-  float.
-  - An `output-diff` row, not a rejection, so it is not on the burn-down.
-  - The result type of one operator changes, and every fixture and stdlib
-    body that divides integers moves with it.
-  - The template-fact derivation materializes a folded name's `i / 2` to
-    the template's `Float64` (`folded_arithmetic`).
-  - Once the template records `Int` there it refuses.
-  - But the elaborator's literal fold then divides an `IntLiteral` pair
-    into a float where the pin keeps `Int`.
-  - Ledger name: `int-true-division`.
-  - Port upstream's `SIMD.__truediv__` and `__rtruediv__` (`pop.div`) and
-    route `/` over a `SIMD` to them, as `+` is routed.
-  - The run-time half moves no corpus fixture (measured while planning
-    R1551).
-  - The compile-time half is `param_expr::fold`'s `Div` over `Int`
-    operands, which must truncate as `pop.div` does: `comptime y = x / 2`
-    over `comptime x: Int = 7` prints `3` at the pin.
-  - Port `__itruediv__` (`simd.mojo:1709`) with `__truediv__`, so `/=`
-    over a `SIMD` calls it, as R1552 routes `+=`.
-  - Pliron's `lower_true_div` and the VM's `Div` arm of `numeric_op`
-    retire.
-  - Probe: `std/builtin/format_int.mojo`'s `floor_div` divides with
-    `//`, where upstream's `_write_int` writes `value / radix`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -10866,9 +10840,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `Int(7) % 0` traps here, where upstream's `__mod__` masks a zero divisor
   and returns `0`, and `Float32(7.5) % 2.0` is rejected (R850).
   - The signed branches of `__mod__` and `__divmod__` compute `self /
-    safe_divisor` over integer lanes, which is upstream's truncating
-    `__truediv__` (R184). Today's `/` gives `3.5` or garbage there, so the
-    port waits on R184 and must not respell `/` as a raw `pop.div`.
+    safe_divisor` over integer lanes, which routes through the landed,
+    truncating `__truediv__`; the port must not respell `/` as a raw
+    `pop.div`.
   - Port `__mod__`, `__divmod__`, `__rmod__`, `__imod__` (`simd.mojo:1735`),
     and `__ceildiv__` verbatim, beside the landed `__floordiv__`, and route
     `%` in `Checker::infer_infix` as `//` is routed.
@@ -10903,7 +10877,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `__ceildiv__` body, with its `divmod` as `//` and `%`, where
     upstream's `_write_int` calls `value.__ceildiv__(radix)`.
   - Closes R850.
-  - Depends on R184.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1711 `std.utils.numerics` lacks `nan`, `isnan`, `isinf`, and
@@ -10975,12 +10949,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `_assert_float64_supported`.
   - `log`'s `is_nvidia_gpu()` arm (through `log2`'s PTX intrinsic) is
     omitted under R1635.
-  - `_log_kernel`'s `f / (2.0 + f)` needs `/` at `float32` lane precision
-    (R184).
+  - `_log_kernel`'s `f / (2.0 + f)` divides `float32` lanes through the
+    landed `__truediv__`.
   - Probe: `print(log(Float64(2)), log(SIMD[DType.float32, 4](1, 2, 0.5,
     10)), log(Float64(0)), log(Float64(-1)))` against the pin.
   - Found while planning R1567 (2026-10-30).
-  - Depends on R1711, R1712, R1593, R1634, R1661, R333, and R184.
+  - Depends on R1711, R1712, R1593, R1634, R1661, and R333.
   - Model: Fable, Not Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
@@ -11026,7 +11000,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Removes `pliron_float_pow.mojo` from R171 and its
     `assets-mojo-output-diffs.tsv` row.
   - Plan: `R1567-simd-s-plan.md`, Part B.
-  - Depends on R184, R333, R1661, R1708, R1709, R1710, R1711, R1713, and
+  - Depends on R333, R1661, R1708, R1709, R1710, R1711, R1713, and
     R1714.
   - Model: Fable, Planned.
 

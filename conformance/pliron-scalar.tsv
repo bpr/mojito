@@ -197,6 +197,7 @@ assets/ok/comptime_if_struct_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_symbolic_conditional_conformance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_untaken_arm_unevaluated.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_int_truediv.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_layout_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_local_application_per_read.mojo	-	ineligible	no-scalar-entry-shape
@@ -1017,6 +1018,7 @@ assets/ok/simd_symbolic_width_literal_binding.mojo	-	ineligible	no-scalar-entry-
 assets/ok/simd_to_bits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_to_bits_default_symbolic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_to_bits_signed.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_truediv_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_wide_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_write_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/size_of_builtin.mojo	-	ineligible	no-scalar-entry-shape
@@ -1519,6 +1521,7 @@ assets/runtime_error/file_open_invalid_mode.mojo	-	ineligible	no-scalar-entry-sh
 assets/runtime_error/file_open_missing.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/file_read_closed_handle.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/file_read_write_only_handle.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/int_truediv_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/list_contiguous_slice_negative.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/list_contiguous_slice_out_of_range.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/list_contiguous_slice_reversed.mojo	-	ineligible	no-scalar-entry-shape

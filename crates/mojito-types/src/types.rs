@@ -3521,8 +3521,8 @@ pub const fn is_scalar_simd(ty: &TyKind) -> bool {
 /// or `float64` vector, whose value both backends hold as a host scalar.
 ///
 /// Above the waist those three keep an infix operator path of their own
-/// where upstream's are ordinary `SIMD` instances: it serves their true
-/// division and `**` and materializes a literal operand. Below it, a host
+/// where upstream's are ordinary `SIMD` instances: it serves their `**`
+/// and materializes a literal operand. Below it, a host
 /// scalar's `binary` comparison defines its `Bool` directly, where any
 /// other vector's defines a lane mask.
 pub const fn has_host_scalar_value(ty: &TyKind) -> bool {

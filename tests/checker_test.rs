@@ -608,19 +608,13 @@ fn literal_arithmetic_mixes_but_concrete_types_do_not() {
 }
 
 #[test]
-fn true_division_yields_float64() {
-    // `/` returns Float64 even on integers, so `7 / 2` is 3.5 (not an Int).
+fn true_division_keeps_integers_and_divides_a_literal_pair_exactly() {
+    // `/` over `Int`s is `SIMD.__truediv__` and stays an `Int`; only a
+    // literal pair divides exactly, so `7 / 2` is the `FloatLiteral` 3.5.
     ok("var x: Float64 = 7 / 2\n");
-    let e = err("var x: Int = 7 / 2\n");
-    match e {
-        TypeError::TypeMismatch {
-            expected, found, ..
-        } => {
-            assert_eq!(expected, "Int");
-            assert_eq!(found, "Float64");
-        }
-        other => panic!("expected a type mismatch, got {other:?}"),
-    }
+    ok_std("def main():\n    var a: Int = 7\n    var x: Int = a / 2\n    a /= 2\n");
+    let e = err_std("def main():\n    var a: Int = 7\n    var x: Float64 = a / 2\n");
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2418,11 +2412,10 @@ fn rejects_mixed_dtype_operands() {
 }
 
 #[test]
-fn rejects_division_on_integer_simd() {
-    let e = err(
-        "var a: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar b: SIMD[DType.int32, 4] = a / a\n",
+fn integer_simd_division_is_the_declared_dunder() {
+    ok_std(
+        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var b: SIMD[DType.int32, 4] = a / a\n    b /= a\n",
     );
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
@@ -3195,13 +3188,10 @@ fn accepts_augmented_assignment_forms() {
 }
 
 #[test]
-fn rejects_augmented_assignment_that_changes_type() {
-    // `/` yields Float64, which does not fit an Int target.
-    let e = err("var i: Int = 10\ni /= 2\n");
-    assert!(
-        matches!(&e, TypeError::TypeMismatch { context, .. } if context == "augmented assignment"),
-        "got {e:?}"
-    );
+fn rejects_augmented_assignment_with_no_matching_inplace_dunder() {
+    // `Int.__iadd__` takes an `Int`, which a `FloatLiteral` does not become.
+    let e = err_std("def main():\n    var i: Int = 10\n    i += 2.5\n");
+    assert!(e.to_string().contains("__iadd__"), "got {e:?}");
 }
 
 #[test]

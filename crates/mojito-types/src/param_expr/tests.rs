@@ -1,4 +1,5 @@
 use super::*;
+use crate::ct::CtLane;
 use crate::origin::CallableEnvironment;
 use crate::types::TyKind;
 use crate::types::{DependentType, FuncTy, TransferEffect, TransferSet, TyArg};
@@ -612,6 +613,55 @@ fn replacement_keeps_opaque_atoms_unfolded_and_evaluation_folds_them() {
             .as_constant(),
         Some(&CtValue::Int(-8))
     );
+    // `/` is the builtin `pop.div`, which the pin simplifies under
+    // replacement: `W[n / 2]` at `n = 7` is `W[3]`.
+    let mut seven = ParamBindings::new();
+    seven.bind_name("n", literal(&context, 7));
+    let quotient = infix(&context, InfixOp::Div, &n, &literal(&context, 2));
+    assert_eq!(
+        context
+            .replace(&quotient, &seven)
+            .expect("replacement")
+            .as_constant(),
+        Some(&CtValue::Int(3))
+    );
+}
+
+/// `/` over machine integers is `pop.div`: it truncates toward zero, wraps
+/// `MIN / -1`, and cannot simplify a zero divisor. Only an `IntLiteral`
+/// pair divides exactly, into a `FloatLiteral`.
+#[test]
+fn true_division_truncates_machine_integers() {
+    let div = |left: CtValue, right: CtValue| fold::fold_infix(InfixOp::Div, &left, &right);
+    let lit = |value: i64| CtValue::IntLiteral(IntLiteral::from(value));
+    assert_eq!(div(CtValue::Int(-7), lit(2)), Ok(CtValue::Int(-3)));
+    assert_eq!(div(lit(7), CtValue::Int(-2)), Ok(CtValue::Int(-3)));
+    assert_eq!(
+        div(CtValue::Int(i64::MIN), CtValue::Int(-1)),
+        Ok(CtValue::Int(i64::MIN))
+    );
+    assert_eq!(
+        div(CtValue::UInt(7), CtValue::UInt(2)),
+        Ok(CtValue::UInt(3))
+    );
+    assert_eq!(
+        div(CtValue::Int(7), CtValue::Int(0)),
+        Err(ParamError::Arithmetic(
+            "could not simplify operator div(7, 0)".to_string()
+        ))
+    );
+    let half = mojito_common::literal::FloatLiteral::from_int(&IntLiteral::from(7_i64))
+        .div(&mojito_common::literal::FloatLiteral::from_int(
+            &IntLiteral::from(2_i64),
+        ))
+        .map(CtValue::FloatLiteral);
+    assert_eq!(div(lit(7), lit(2)).ok(), half);
+    let lanes = |values: [i128; 2]| CtValue::Simd {
+        dtype: mojito_ast::ast::Dtype::Int32,
+        lanes: values.map(CtLane::Int).to_vec(),
+    };
+    assert_eq!(div(lanes([7, -7]), lanes([2, 2])), Ok(lanes([3, -3])));
+    assert!(div(lanes([7, -7]), lanes([2, 0])).is_err());
 }
 
 /// `param_list.get` over a pack that is still a parameter is a residual

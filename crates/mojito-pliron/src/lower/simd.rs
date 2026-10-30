@@ -1569,11 +1569,12 @@ impl FnLowering<'_> {
     /// An integer `pop` op: `div`/`rem` truncate (`sdiv`/`udiv`,
     /// `srem`/`urem`) after trapping on a zero divisor lane, with the
     /// overflowing `MIN / -1` lane divided by one so it wraps as the VM's
-    /// does; `abs` wraps (`llvm.abs` with `is_int_min_poison` false) and is
+    /// does (`div` is reached through `binary div`, which `pop.div` lowers
+    /// to); `abs` wraps (`llvm.abs` with `is_int_min_poison` false) and is
     /// the identity on unsigned lanes, the rounding ops are the identity,
     /// `fma` wraps `a * b + c`, and `max`/`min` select by the lanes'
     /// signed or unsigned order.
-    fn pop_int_value(
+    pub(super) fn pop_int_value(
         &mut self,
         ctx: &mut Context,
         op: PopOp,

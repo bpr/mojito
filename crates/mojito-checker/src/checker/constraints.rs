@@ -4505,6 +4505,7 @@ impl Checker {
                 InfixOp::Add
                 | InfixOp::Sub
                 | InfixOp::Mul
+                | InfixOp::Div
                 | InfixOp::FloorDiv
                 | InfixOp::Mod
                 | InfixOp::Pow

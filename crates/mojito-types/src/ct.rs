@@ -261,8 +261,10 @@ pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
 /// One integer lane of `op` over two lanes of `dtype`, as upstream's `pop`
 /// arithmetic computes it.
 ///
-/// `None` is an operator integer lanes do not define. `+ - *` wrap, `//`
-/// and `%` floor and give a zero lane for a zero divisor, and a shift masks
+/// `None` is an operator integer lanes do not define, or `/` by a zero
+/// lane, which traps. `+ - *` wrap, `/` truncates (upstream's `pop.div`,
+/// wrapping the overflowing `MIN / -1`), `//` and `%` floor and give a
+/// zero lane for a zero divisor, and a shift masks
 /// its amount to the lane width (a logical right shift for an unsigned
 /// lane). The VM's `simd_binop` and the compile-time
 /// fold both compute lanes through this one rule.
@@ -279,6 +281,8 @@ pub fn int_lane_binop(
         // Two 64-bit lanes can overflow the i128 product; wrapping to the
         // dtype width preserves the wrapped product.
         InfixOp::Mul => a.wrapping_mul(b),
+        InfixOp::Div if b == 0 => return None,
+        InfixOp::Div => a.wrapping_div(b),
         // Upstream's integer `SIMD.__floordiv__`/`__mod__`: floor semantics,
         // and a zero divisor selects a zero lane rather than trapping.
         InfixOp::FloorDiv | InfixOp::Mod if b == 0 => 0,

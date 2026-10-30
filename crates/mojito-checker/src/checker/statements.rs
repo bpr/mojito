@@ -1784,8 +1784,7 @@ impl Checker {
                 // in-place dunder, dispatches augmented assignment to it
                 // (`x += y` → `x.__iadd__(y)`), which mutates `mut self`; Mojo
                 // does not fall back to the binary operator. Any other target
-                // (`/=` over a `SIMD` until `__itruediv__` lands, `Bool &=`)
-                // keeps the operator path below.
+                // (`Bool &=`) keeps the operator path below.
                 let inplace_operand = matches!(target.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
                     || self.bound_inplace_operator(&target, *op)
                     || op.inplace_dunder().is_some_and(|dunder| {

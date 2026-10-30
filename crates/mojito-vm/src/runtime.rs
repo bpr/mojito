@@ -1141,6 +1141,11 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
                     lanes: SimdLanes::Bool(out),
                 })
             } else {
+                if op == InfixOp::Div && ys.contains(&0) {
+                    return Err(RuntimeError::TypeError(
+                        "integer division or modulo by zero".to_string(),
+                    ));
+                }
                 let out: Vec<i128> = xs
                     .iter()
                     .zip(&ys)
@@ -2343,10 +2348,6 @@ fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Valu
 /// checker rejects mixing two *concrete* numeric types, so any kind difference
 /// here comes from a materialized literal — promotion resolves it soundly.
 fn numeric_op(op: InfixOp, a: Num, b: Num) -> Result<Value, RuntimeError> {
-    // True division always computes in f64 and yields Float64.
-    if op == InfixOp::Div {
-        return Ok(Value::Float64(a.as_f64() / b.as_f64()));
-    }
     match a.rank().max(b.rank()) {
         2 => float_op(op, a.as_f64(), b.as_f64()),
         1 => uint_op(op, a.as_u64(), b.as_u64()),
@@ -2366,6 +2367,8 @@ fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
         Add => Value::Int(x.wrapping_add(y)),
         Sub => Value::Int(x.wrapping_sub(y)),
         Mul => Value::Int(x.wrapping_mul(y)),
+        // Upstream's `pop.div`: truncating, and `MIN / -1` wraps.
+        Div => Value::Int(x.wrapping_div(nonzero(y)?)),
         FloorDiv => Value::Int(floor_div(x, nonzero(y)?)),
         Mod => Value::Int(floor_mod(x, nonzero(y)?)),
         Shl => Value::Int(x.wrapping_shl(y as u32)),
@@ -2381,7 +2384,7 @@ fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
         Ne => Value::Bool(x != y),
         // `**` runs the bundled `std._intrinsics._pow_int` body, dispatched by
         // `VmBackend::integer_pow` before an operand pair reaches here.
-        Pow | Div | MatMul | And | Or | In | NotIn | Is | IsNot => {
+        Pow | MatMul | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for integer dispatch"
             )));
@@ -2399,8 +2402,8 @@ fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
         Add => Value::UInt(x.wrapping_add(y)),
         Sub => Value::UInt(x.wrapping_sub(y)),
         Mul => Value::UInt(x.wrapping_mul(y)),
-        // Unsigned: floor division/modulo are plain `/` and `%`.
-        FloorDiv => Value::UInt(x / nonzero_u(y)?),
+        // Unsigned: true and floor division and modulo are plain `/` and `%`.
+        Div | FloorDiv => Value::UInt(x / nonzero_u(y)?),
         Mod => Value::UInt(x % nonzero_u(y)?),
         Shl => Value::UInt(x.wrapping_shl(y as u32)),
         Shr => Value::UInt(x.wrapping_shr(y as u32)),
@@ -2415,7 +2418,7 @@ fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
         Ne => Value::Bool(x != y),
         // `**` runs the bundled `std._intrinsics._pow_int` body, dispatched by
         // `VmBackend::integer_pow` before an operand pair reaches here.
-        Pow | Div | MatMul | And | Or | In | NotIn | Is | IsNot => {
+        Pow | MatMul | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for unsigned dispatch"
             )));
@@ -2436,6 +2439,7 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
         Add => Value::Float64(x + y),
         Sub => Value::Float64(x - y),
         Mul => Value::Float64(x * y),
+        Div => Value::Float64(x / y),
         FloorDiv => Value::Float64((x / y).floor()),
         Mod => Value::Float64(y.mul_add(-(x / y).floor(), x)),
         Pow => Value::Float64(x.powf(y)),
@@ -2446,7 +2450,7 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
         Eq => Value::Bool(x == y),
         // `pop.cmp ne` is the ordered predicate: a NaN is unequal to nothing.
         Ne => Value::Bool(x.partial_cmp(&y).is_some_and(std::cmp::Ordering::is_ne)),
-        Div | MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn | Is | IsNot => {
+        MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for float dispatch"
             )));

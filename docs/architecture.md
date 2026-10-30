@@ -1605,8 +1605,8 @@ pointer to storage its context uniques (`mojito_types::types`):
   a value encoding, not a type: both backends serve a lane method or lane
   subscript on it as on any one-lane vector (`runtime::simd_parts`).
   Above the waist the three keep a scalar operator path behind one
-  predicate (`types::has_host_scalar_value`) for their true division,
-  `**`, and literal materialization; below it, their `binary` comparison
+  predicate (`types::has_host_scalar_value`) for their `**` and literal
+  materialization; below it, their `binary` comparison
   defines a `Bool` directly, so `canonicalize` folds the `scalar.cast` to
   `Bool` that ends their inlined comparison dunder away, where any other
   vector's comparison keeps it.
@@ -1649,9 +1649,11 @@ second expression tree.
 - The normal form is no stronger than the pinned Mojo's: integer `+`, binary
   `-`, and `*` are a sum of products, a left shift by a constant is a
   multiplication, and unary `-`, `//`, `%`, and `**` are opaque atoms.
-- Replacement (type identity) re-folds the polynomial and leaves an opaque
-  atom unfolded; evaluation (a default, a dependent index, native
-  monomorphization) folds it. The pin draws the same line.
+- Replacement (type identity) re-folds the polynomial and every builtin
+  `pop` atom (`/`, `&`, a negation) and leaves an unfolded call (`//`, `%`,
+  `**`, whose dunders are not builtin) as written; evaluation (a default, a
+  dependent index, native monomorphization) folds it. The pin draws the
+  same line.
 - A reference is owned by its declaration (`ParamId { owner, slot }`), so
   same-spelled parameters of unrelated declarations differ and a `$` clone
   shares its template's. An overloaded module-level `def` is owned by the

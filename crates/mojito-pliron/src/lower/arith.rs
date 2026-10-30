@@ -91,69 +91,6 @@ impl FnLowering<'_> {
         self.define(ctx, dest, call.get_operation(), call.get_result(ctx))
     }
 
-    /// `/`: promote both operands to f64 (`sitofp`/`uitofp`; float operands
-    /// pass through) and divide.
-    pub(super) fn lower_true_div(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        a: Reg,
-        b: Reg,
-        operand_ty: ScalarTy,
-    ) -> Result<(), PlironError> {
-        if matches!(operand_ty, ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Dtype) {
-            return Err(self.unsupported_reg(
-                format!("operator `Div` on {} operands", operand_ty.name()),
-                dest,
-            ));
-        }
-        // Sized integer lanes have no `/` (the checker admits SIMD division
-        // on float lanes only); reject as a backstop rather than promote.
-        if let ScalarTy::Sized(dtype) = operand_ty
-            && !dtype.is_narrow_float()
-        {
-            return Err(self.unsupported_reg(
-                format!("operator `Div` on {} operands", operand_ty.name()),
-                dest,
-            ));
-        }
-        let lhs = self.operand_value(ctx, a, operand_ty)?;
-        let rhs = self.operand_value(ctx, b, operand_ty)?;
-        // `Float32 / Float32` (and `Float16`) stays a narrow lane: divide at
-        // f64 and round (`runtime::simd_binop`), unlike the scalar promotions
-        // below.
-        if let ScalarTy::Sized(dtype) = operand_ty {
-            let wide_lhs = self.widen_float_lane(ctx, lhs, dest);
-            let wide_rhs = self.widen_float_lane(ctx, rhs, dest);
-            let div = FDivOp::new_with_fast_math_flags(
-                ctx,
-                wide_lhs,
-                wide_rhs,
-                FastmathFlagsAttr::default(),
-            );
-            self.append(ctx, div.get_operation(), Some(dest));
-            let rounded = self.round_float_lane(ctx, dtype, div.get_result(ctx), dest);
-            self.reg_values.insert(dest.0, rounded);
-            return Ok(());
-        }
-        let (lhs, rhs) = match operand_ty {
-            ScalarTy::Float64 => (lhs, rhs),
-            ScalarTy::Int => (
-                self.int_to_f64(ctx, lhs, dest),
-                self.int_to_f64(ctx, rhs, dest),
-            ),
-            ScalarTy::UInt => (
-                self.uint_to_f64(ctx, lhs, dest),
-                self.uint_to_f64(ctx, rhs, dest),
-            ),
-            ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Dtype | ScalarTy::Sized(_) => {
-                unreachable!("rejected above")
-            }
-        };
-        let div = FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, FastmathFlagsAttr::default());
-        self.define(ctx, dest, div.get_operation(), div.get_result(ctx))
-    }
-
     pub(super) fn int_to_f64(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
         let f64_ty: TypeHandle = FP64Type::get(ctx).into();
         let cast = SIToFPOp::new(ctx, value, f64_ty);

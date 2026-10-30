@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares upstream's `__truediv__`, `__rtruediv__`, and
+  `__itruediv__`, so `/` over an `Int`, `UInt`, sized scalar, or vector is
+  `pop.div`: an integer `/` truncates toward zero (`7 / -2` is `-3`),
+  wraps `MIN / -1`, and traps on a zero divisor on both backends, where it
+  was true division into `Float64`, and `/=` over a `SIMD` calls
+  `__itruediv__` (R184). Only an `IntLiteral` or `FloatLiteral` pair still
+  divides exactly (`7 / 2` is `3.5`). A compile-time integer `/` truncates
+  the same way, a zero divisor is a compile-time error, and `B[n / 2]`
+  and `where n / 2 > 1` fold at the instance, as every builtin `pop` op's
+  type argument now does (`W[n & 3]`). `pop.div` and `index.divs` lower
+  to `binary div` (MIR text 1.145, package format 161), and `Divisible`'s
+  `__truediv__` returns `Self`.
+
 - `PluginHooks` declares upstream's `unary_math_fn` and `binary_math_fn`
   over `std.math`'s `_UnaryMathPluginHookFnType` and
   `_BinaryMathPluginHookFnType`, so `comptime if

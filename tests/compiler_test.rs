@@ -1662,15 +1662,14 @@ fn template_folded_arithmetic_runs_per_instance() {
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(source).expect("compile");
     assert_eq!(compiler.execute(&program).expect("execute").output, "34\n");
-    // Division folds to a `FloatLiteral` materialized to the body's
-    // `Float64`, `~` to an `IntLiteral` materialized to its `Int`, and a
-    // comparison is a `Bool`.
-    let folding = "def halves[n: Int]() -> Float64:\n    var acc = 0.0\n    comptime for i in range(n):\n        acc += i / 2\n        print(~i, i < 2)\n    return acc\n\ndef main():\n    print(halves[3]())\n";
+    // Division over the `Int` index truncates as `pop.div` does, `~` is
+    // the index's `Int`, and a comparison is a `Bool`.
+    let folding = "def halves[n: Int]() -> Int:\n    var acc = 0\n    comptime for i in range(n):\n        acc += i / 2\n        print(~i, i < 2)\n    return acc\n\ndef main():\n    print(halves[4]())\n";
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(folding).expect("compile");
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
-        "-1 True\n-2 True\n-3 False\n1.5\n"
+        "-1 True\n-2 True\n-3 False\n-4 False\n2\n"
     );
 }
 
@@ -3071,7 +3070,7 @@ fn template_method_reflected_operator_runs() {
 #[test]
 fn template_method_bounded_arithmetic_runs() {
     // `a + b` and `a / b` under arithmetic bounds: the template's result is
-    // the operand's own type (`Float64` for `/`), so the operator is a
+    // the operand's own type, so the operator is a
     // temporary where the body puts it, and each instance owes that its
     // scalar has the operation and gives the type the bound promised.
     let source = r"struct Acc[T: Addable & Copyable & Deinitable & Divisible & Movable](Movable):
@@ -3089,7 +3088,7 @@ fn template_method_bounded_arithmetic_runs() {
         var sum = self.first + self.second
         return sum^
 
-    def ratio(self) -> Float64:
+    def ratio(self) -> Self.T:
         return self.first / self.second
 
 def main():
@@ -3099,7 +3098,7 @@ def main():
     print(a.bound(), b.bound())
     print(a.ratio(), b.ratio())
 ";
-    assert_entry_output(source, "3 2.0\n3 2.0\n0.5 3.0\n");
+    assert_entry_output(source, "3 2.0\n3 2.0\n0 3.0\n");
 }
 
 #[test]

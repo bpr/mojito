@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::mlir::PopOp;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
@@ -67,13 +68,6 @@ impl FnLowering<'_> {
             return Ok(());
         }
         let operand_ty = self.binop_operand_ty(a, b)?;
-
-        // True division always computes in f64 and yields Float64
-        // (`runtime::numeric_op`), regardless of operand kind.
-        if matches!(op, InfixOp::Div) {
-            return self.lower_true_div(ctx, dest, a, b, operand_ty);
-        }
-
         let lhs = self.operand_value(ctx, a, operand_ty)?;
         let rhs = self.operand_value(ctx, b, operand_ty)?;
 
@@ -206,6 +200,7 @@ impl FnLowering<'_> {
                     }
                 }
             }
+            InfixOp::Div => self.pop_int_value(ctx, PopOp::Div, dtype, shape, &[lhs, rhs], dest)?,
             InfixOp::FloorDiv | InfixOp::Mod => {
                 self.sized_floor_divmod_value(ctx, op, lhs, rhs, dtype, shape, dest)
             }
@@ -375,6 +370,11 @@ impl FnLowering<'_> {
                 self.append(ctx, mul.get_operation(), Some(dest));
                 mul.get_result(ctx)
             }
+            InfixOp::Div => {
+                let div = FDivOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
+                self.append(ctx, div.get_operation(), Some(dest));
+                div.get_result(ctx)
+            }
             // `pop.floordiv`: the floor of the lane-rounded quotient.
             InfixOp::FloorDiv => {
                 let div = FDivOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
@@ -441,6 +441,14 @@ impl FnLowering<'_> {
                 let shr = AShrOp::new(ctx, lhs, masked);
                 self.define(ctx, dest, shr.get_operation(), shr.get_result(ctx))
             }
+            // `pop.div`: truncating, trapping on a zero divisor, and
+            // wrapping `MIN / -1`.
+            InfixOp::Div => {
+                let value =
+                    self.pop_int_value(ctx, PopOp::Div, Dtype::Int, None, &[lhs, rhs], dest)?;
+                self.reg_values.insert(dest.0, value);
+                Ok(())
+            }
             InfixOp::FloorDiv => {
                 self.emit_div_zero_guard(ctx, rhs, dest)?;
                 let rhs = self.sanitized_divisor(ctx, dest, lhs, rhs)?;
@@ -503,9 +511,9 @@ impl FnLowering<'_> {
                 let shr = LShrOp::new(ctx, lhs, masked);
                 self.define(ctx, dest, shr.get_operation(), shr.get_result(ctx))
             }
-            // UInt floor division/modulo are plain unsigned `/` and `%`
-            // (`runtime::uint_op`), behind the same zero trap.
-            InfixOp::FloorDiv => {
+            // UInt true and floor division and modulo are plain unsigned `/`
+            // and `%` (`runtime::uint_op`), behind the same zero trap.
+            InfixOp::Div | InfixOp::FloorDiv => {
                 self.emit_div_zero_guard(ctx, rhs, dest)?;
                 let div = UDivOp::new(ctx, lhs, rhs);
                 self.define(ctx, dest, div.get_operation(), div.get_result(ctx))
@@ -543,6 +551,10 @@ impl FnLowering<'_> {
             InfixOp::Mul => {
                 let mul = FMulOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
                 self.define(ctx, dest, mul.get_operation(), mul.get_result(ctx))
+            }
+            InfixOp::Div => {
+                let div = FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                self.define(ctx, dest, div.get_operation(), div.get_result(ctx))
             }
             // Float floor division/modulo have no zero trap: `(x/y).floor()`
             // and `x - y*(x/y).floor()` (`runtime::float_op`) — division by

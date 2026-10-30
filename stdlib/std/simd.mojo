@@ -6,22 +6,22 @@
 # conversions, `Bool`, `fill=`, `Int` from an `index`, the
 # `Scalar[Self.dtype]` splat, and the element list, and its instance
 # `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
-# `__sub__`, `__mul__`, `__floordiv__`, `__pos__`, `__neg__`, `__and__`,
+# `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
 # comparisons `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, and
 # `__le__`, the elementwise `eq`, `ne`, `gt`, `ge`, `lt`, and `le` with
 # their `_Mask` alias, the `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE`
 # members over the bundled `std.utils.numerics`, the in-place `__iadd__`, `__isub__`, `__imul__`,
-# `__ifloordiv__`, `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and
+# `__itruediv__`, `__ifloordiv__`, `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and
 # `__irshift__`, the reflected `__radd__`, `__rsub__`, `__rmul__`,
-# `__rfloordiv__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
+# `__rtruediv__`, `__rfloordiv__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
 # `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
 # `_to_bits_signed`, `fma`, `select`, `write_to`, and `write_repr_to`, with
 # the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`
 # and `_write_scalar`. The other
-# members are still served by the compiler (R184, R1623, R1567, R1581,
+# members are still served by the compiler (R1623, R1567, R1581,
 # R1582, R1585, R1586, R1683, R1673, R1675), `write_padded` is not ported
 # (R1663), and the native backend's `print`, `String`, and `repr` of a value still
 # format in the compiler rather than calling `write_to` and
@@ -922,6 +922,22 @@ struct SIMD[dtype: DType, length: SIMDLength](
             mlir_value=__mlir_op.`pop.mul`(self._mlir_value, rhs._mlir_value)
         )
 
+    @always_inline("builtin")
+    def __truediv__(self, rhs: Self) -> Self:
+        """Computes `self / rhs`.
+
+        Args:
+            rhs: The rhs value.
+
+        Returns:
+            A new vector whose element at position `i` is computed as
+            `self[i] / rhs[i]`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return Self(
+            mlir_value=__mlir_op.`pop.div`(self._mlir_value, rhs._mlir_value)
+        )
+
     @inline(.nodebug)
     def __floordiv__(self, rhs: Self) -> Self:
         """Returns the division of self and rhs rounded down to the nearest
@@ -1337,6 +1353,19 @@ struct SIMD[dtype: DType, length: SIMDLength](
         self = self * rhs
 
     @inline(.nodebug)
+    def __itruediv__(mut self, rhs: Self):
+        """In-place true divide operator.
+
+        The vector is mutated where each element at position `i` is computed as
+        `self[i] / rhs[i]`.
+
+        Args:
+            rhs: The rhs of the operation.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        self = self / rhs
+
+    @inline(.nodebug)
     def __ifloordiv__(mut self, rhs: Self):
         """In-place flood div operator.
 
@@ -1462,6 +1491,19 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
         return value * self
+
+    @inline(.nodebug)
+    def __rtruediv__(self, value: Self) -> Self:
+        """Returns `value / self`.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value / self`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return value / self
 
     @inline(.nodebug)
     def __rfloordiv__(self, rhs: Self) -> Self:

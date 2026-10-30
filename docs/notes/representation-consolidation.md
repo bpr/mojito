@@ -22,10 +22,10 @@ command cannot use both.
    started 10-27 landed R1389–R1397, the `SIMD` declaration, and its
    member ports (R1549–R1555, R1578–R1581, R1589, R1594, R1595). It was stopped
    on 10-28 after R1188 for the overnight gate. Its remaining work order,
-   which reruns from R1503 (R1566 landed `//`; its `%`, `divmod`, and
-   `ceildiv` half is R1623, after R184's `/`):
-   - R1503, R1561, R1562, R1671, R1673, R1675, R184, R1623, R1567, R1582:
-     initializers, the lane subscript, target queries, lane gathers, `/`, the rest of
+   which reruns from R1503 (R1566 landed `//` and R184 `/`; their `%`,
+   `divmod`, and `ceildiv` half is R1623):
+   - R1503, R1561, R1562, R1671, R1673, R1675, R1623, R1567, R1582:
+     initializers, the lane subscript, target queries, lane gathers, the rest of
      division, `**`, and `__round__`.
    - R1583, R1584, R1585, R1586: the `reduce` tree and what it needs.
    - R1662 and R1664 (`SIMD`'s display through its members, which R276

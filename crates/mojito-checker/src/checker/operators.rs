@@ -160,7 +160,7 @@ impl Checker {
         if matches!(op, In | NotIn) {
             return self.infer_membership(span, op, left, right, &lt, &rt);
         }
-        // `+`, `-`, `*`, `//`, the bitwise operators, the shifts, and the
+        // `+`, `-`, `*`, `/`, `//`, the bitwise operators, the shifts, and the
         // comparisons beside a `SIMD` operand, a scalar's included, are
         // `SIMD`'s declared dunders, `a.__add__(b)` else the reflected
         // `b.__radd__(a)`, as upstream's `emitBinOpCall` resolves them. A
@@ -176,7 +176,7 @@ impl Checker {
         if let Some(span) = &span
             && (matches!(
                 op,
-                Add | Sub | Mul | FloorDiv | BitAnd | BitOr | BitXor | Shl | Shr
+                Add | Sub | Mul | Div | FloorDiv | BitAnd | BitOr | BitXor | Shl | Shr
             ) || (comparison
                 && self.comptime_positions.get() == 0
                 && self.structs.contains_key("SIMD")))
@@ -258,7 +258,7 @@ impl Checker {
             && let Some(trait_name) = infix_operation_trait(op)
             && self.param_has_bound(&lt, trait_name)
         {
-            return Ok(if matches!(op, Div) { Ty::float64() } else { lt });
+            return Ok(lt);
         }
 
         // `common` is the unified numeric type when both operands are numeric
@@ -332,18 +332,16 @@ impl Checker {
             // `%` and `**` keep the common type until their `SIMD` dunders
             // land (R1623, R1567).
             Mod | Pow => common,
-            // Literal division stays exact until a runtime context chooses
-            // Float64; concrete operands perform fixed-width runtime division.
-            Div if common.is_some() => Some(
-                if matches!(
-                    common.as_ref().map(Ty::kind),
-                    Some(TyKind::IntLiteral | TyKind::FloatLiteral)
-                ) {
+            // A literal pair divides exactly into a `FloatLiteral`, as
+            // upstream's `IntLiteral.__truediv__` does; concrete operands
+            // keep their common type.
+            Div => common.map(|ty| {
+                if matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
                     Ty::float_literal()
                 } else {
-                    Ty::float64()
-                },
-            ),
+                    ty
+                }
+            }),
             // Ordering between numbers, or between `Bool`s (upstream's `Bool`
             // is `Comparable`).
             Lt | Gt | Le | Ge if common.is_some() || (lt == rt && lt == TyKind::Bool) => {
@@ -1414,13 +1412,13 @@ fn union_subtree_place(
     })
 }
 
-/// Type a SIMD operator that is not yet a declared dunder (`%` and `/`,
-/// R1623 and R184), or a comparison in a compile-time position,
+/// Type a SIMD operator that is not yet a declared dunder (`%`, R1623),
+/// or a comparison in a compile-time position,
 /// which is the dunder folded, a `Bool`. Both operands must be the same
 /// SIMD type, except a numeric *literal* splats to the other operand's
 /// type. Arithmetic is elementwise and keeps the operand type.
 fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
-    use InfixOp::{Div, Eq, Ge, Gt, Le, Lt, Mod, Ne};
+    use InfixOp::{Eq, Ge, Gt, Le, Lt, Mod, Ne};
     let bad = || TypeError::BadOperator {
         op: op.symbol().to_string(),
         operands: format!("{lt} and {rt}"),
@@ -1451,8 +1449,6 @@ fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
         // Remainder on integer lanes (upstream defines it on float lanes
         // too, R850).
         Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
-        // True division is defined on float lanes only.
-        Div if dtype.licenses(Dtype::is_float) => same(),
         // A comparison in a compile-time position is the dunder folded
         // ([`Checker::record_folded_comparison`]), a `Bool`.
         Eq | Ne | Lt | Gt | Le | Ge => Ok(Ty::bool()),

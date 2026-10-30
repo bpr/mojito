@@ -1148,9 +1148,12 @@ Notes:
   `-2 ** 2` is `-(2 ** 2)` and `2 ** 3 ** 2` is `2 ** (3 ** 2)`); its right operand is a
   `factor`, so `2 ** -1` is `2 ** (-1)`.
 - **Arithmetic operators and their result types** (numeric, no mixing — see Numbers):
-  `+ - * // % **` take same-type operands and return that type (`+` also concatenates
-  `String`); `/` (true division) returns `Float64` for any numeric operands
-  (`Int / Int → Float64`). Integer `//` / `%` by zero is a runtime error.
+  `+ - * / // % **` take same-type operands and return that type (`+` also concatenates
+  `String`); `/` is `SIMD.__truediv__`'s `pop.div`, so `Int / Int` truncates
+  toward zero to an `Int`, and only an `IntLiteral` or `FloatLiteral` pair
+  divides exactly into a `FloatLiteral`. Integer `/` by zero traps at run
+  time and is rejected at compile time; integer `//` / `%` by zero is a
+  runtime error.
 - **`args`** accepts positional arguments followed by keyword arguments. A final
   `**kwargs^` consumes an owned `StringDict` into a compatible collector. Callee
   signatures may use defaults, `/`, bare `*`, homogeneous `*args`, and homogeneous

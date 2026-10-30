@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.144
+mojito-mir 1.145
 ```
 
-The writer emits 1.144. The reader accepts 1.0 through 1.144; *Schema 1.0*
+The writer emits 1.145. The reader accepts 1.0 through 1.145; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -698,7 +698,7 @@ no built-in operator computes: `op` is `div` or `rem` (truncating; also
 destination's SIMD type (R1392). The other admitted `__mlir_op` `pop` and
 `index` ops lower to `binary`, `unary`, `simd.make`, and `simd.cast`. The
 checked `MlirOp` adjustment records the op, and the package format moves to
-`mojito-package 117`.
+`mojito-package 117`. Schema 1.145 moves `div` to `binary div`.
 
 Schema 1.120 adds upstream's `pop.simd` lane ops as four instructions
 (R1393): `simd.select { dest, mask, on_true, on_false }`, `simd.extract {
@@ -953,6 +953,15 @@ takes `"default"` where an attribute omits it. The package format moves to
 Schema 1.144 adds the compile-time value `ct_none`, the `NoneType` value
 (a `NoneType = None` parameter default, an `OptionalReg[T] = None`
 member). The package format moves to `mojito-package 160`.
+
+Schema 1.145 lowers `pop.div` and `index.divs` to `binary div`, as
+`pop.floordiv` lowers to `binary floordiv`, and the writer no longer emits
+the `pop` op `div`. `binary div` is upstream's `pop.div`: its operands and
+destination are one type, integer lanes truncate toward zero, wrap the
+overflowing `MIN / -1`, and trap on a zero divisor, and float lanes
+divide. An older text's `binary div` over integer operands was true
+division into a `Float64` destination and is not reinterpreted. The
+package format moves to `mojito-package 161`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1745,7 +1754,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage |
 | `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |
 | `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
-| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`; an integer division by zero traps |
+| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div` (before schema 1.145, which writes `binary div`), `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`; an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |

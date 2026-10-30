@@ -439,7 +439,7 @@ opcode %dest, %left, %right
 | `add` | `a + b` | `a.__add__(b)` |
 | `sub` | `a - b` | `a.__sub__(b)` |
 | `mul` | `a * b` | `a.__mul__(b)` |
-| `div` | `a / b` | `a.__truediv__(b)` |
+| `div` | `a / b` (`pop.div`: integer operands truncate toward zero and trap on a zero divisor) | `a.__truediv__(b)` |
 | `floor_div` | `a // b` | `a.__floordiv__(b)` |
 | `mod` | `a % b` | `a.__mod__(b)` |
 | `pow` | `a ** b` | `a.__pow__(b)` |
