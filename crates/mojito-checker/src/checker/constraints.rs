@@ -1858,6 +1858,11 @@ impl Checker {
             {
                 Ok(context.type_shape(ty))
             }
+            // A type member read through a type or a construction of one
+            // (`T.plugin`, `CompilationTarget.current().stdlib_plugin`).
+            ExprKind::Member { .. } if let Some(ty) = self.member_type_operand(expr) => {
+                Ok(context.type_shape(ty))
+            }
             // `DType.int`: a compile-time element-type value, as it appears
             // in a `dtype: DType` argument (`_StridedRange[DType.int]`).
             ExprKind::Member { object, field }
@@ -5598,6 +5603,21 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
         }
         ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(s) if s == "Self") => {
             Ok(SourceType::SelfParam(field.clone()))
+        }
+        // A member read through a compile-time construction (`S[2]().H`,
+        // `CompilationTarget.current().stdlib_plugin`): the member of the
+        // type it constructs.
+        ExprKind::Member { object, field }
+            if matches!(
+                object.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+            ) =>
+        {
+            Ok(SourceType::Assoc {
+                base: Box::new(SourceType::Value(object.clone())),
+                name: field.clone(),
+                args: Vec::new(),
+            })
         }
         // Another type's member or its application (`R.Of[Bool]`,
         // `_MLIR.KGENParamListType[Self.type]`).

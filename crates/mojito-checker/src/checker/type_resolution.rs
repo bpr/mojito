@@ -863,10 +863,14 @@ impl Checker {
         Ok(member)
     }
 
-    /// The type a member read's base names, beside the struct's name when
-    /// the base is a bare parameterized struct, read as its unbound
-    /// generator ([`Self::unbound_generator`]).
+    /// The type a member read's base names or constructs, beside the
+    /// struct's name when the base is a bare parameterized struct, read as
+    /// its unbound generator ([`Self::unbound_generator`]).
     fn member_base<'a>(&self, base: &'a SourceType) -> Result<(Ty, Option<&'a str>), TypeError> {
+        // A compile-time construction's member is its type's (`S[2]().H`).
+        if let SourceType::Value(value) = base {
+            return self.compile_time_value_type(value).map(|ty| (ty, None));
+        }
         if let SourceType::Named(name, args) = base
             && args.is_empty()
             && let Some(generator) = self.unbound_generator(name)
@@ -3830,6 +3834,14 @@ impl Checker {
                 };
                 let name = name.clone();
                 (ty, name, args, kwargs)
+            }
+            // A call of a type member (`CompilationTarget.current()`)
+            // constructs the type the member names.
+            ExprKind::MethodCall { .. } => {
+                let construction = self
+                    .type_member_construction(value)
+                    .ok_or_else(not_construction)?;
+                return self.compile_time_value_type(&construction);
             }
             _ => return Err(not_construction()),
         };

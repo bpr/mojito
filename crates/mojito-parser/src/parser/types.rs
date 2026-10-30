@@ -496,6 +496,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     Type::Bool => Some("Bool"),
                     Type::StringLiteral => Some("StringLiteral"),
                     Type::Float64 => Some("Float64"),
+                    Type::SelfType => Some("Self"),
                     _ => None,
                 };
                 if let Some(name) = name {

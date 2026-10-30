@@ -11,9 +11,10 @@ use super::*;
 
 /// Declare an infer-only binder for each parameter that an argument's struct
 /// type leaves unbound, and bind the type to the binders, on a `def` (one
-/// nested in a body too), a struct method, a trait requirement, and a
-/// struct's or a `def`'s own compile-time parameter of a struct type (`[t:
-/// T]`).
+/// nested in a body too), a struct method, a trait requirement, and the
+/// compile-time parameters of a struct type (`[t: T]`) of a struct, a
+/// `def`, an alias, and a struct's or a trait's `comptime` member, as
+/// upstream does on every parameter list.
 ///
 /// A parameter is unbound when the struct is spelled bare (`x: List`, every
 /// one of its parameters, a type pack as a pack binder), as `_` (`List[_]`,
@@ -248,13 +249,20 @@ impl MutVisitor for Declared<'_> {
                 params,
                 ..
             } => self.parameterize(type_params, params, &[], span),
+            StmtKind::Comptime { type_params, .. } => {
+                self.parameterize(type_params, &mut [], &[], span);
+            }
             StmtKind::Struct {
                 type_params,
+                associated,
                 methods,
                 ..
             } => {
                 let enclosing: Vec<String> = type_params.iter().map(|p| p.name.clone()).collect();
                 self.parameterize(type_params, &mut [], &[], span);
+                for member in associated.iter_mut() {
+                    self.parameterize(&mut member.params, &mut [], &enclosing, span);
+                }
                 for method in methods.iter_mut() {
                     self.parameterize(
                         &mut method.type_params,
@@ -264,7 +272,14 @@ impl MutVisitor for Declared<'_> {
                     );
                 }
             }
-            StmtKind::Trait { methods, .. } => {
+            StmtKind::Trait {
+                methods,
+                comptime_members,
+                ..
+            } => {
+                for member in comptime_members.iter_mut() {
+                    self.parameterize(&mut member.params, &mut [], &[], span);
+                }
                 for method in methods.iter_mut() {
                     self.parameterize(&mut method.type_params, &mut method.params, &[], span);
                 }

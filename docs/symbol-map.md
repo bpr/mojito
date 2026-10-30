@@ -1760,7 +1760,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameter an argument's struct type leaves unbound (bare, `_`, `...`, a
   bare partially bound alias), read off the program's own struct or the
   package's (`InstalledInterfaces::struct_parameters`), on a `def`, a
-  method, a trait requirement, and a struct-typed compile-time parameter.
+  method, a trait requirement, and a struct-typed compile-time parameter
+  of a `def`, a struct, a `comptime` alias, or a struct's or a trait's
+  parameterized `comptime` member.
   The check solves an infer-only value binder from a later bracket
   argument's type or its default's (`Checker::resolve_use_params`,
   `with_earlier_arguments`).
@@ -2805,6 +2807,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `symbolic::eval_ct_at` beside `size_of` through `LayoutOracle`, and in
   `Specializer::resolve_application` through `demand_current_target`.
   The library side is `stdlib/std/sys/info.mojo`'s `CompilationTarget`.
+  `ct::KgenTarget::stdlib_plugin` is the optional `stdlib_plugin` field
+  (`ct::DEFAULT_STDLIB_PLUGIN` when omitted, `KgenTarget::OPTIONAL_FIELDS`),
+  which the free `stdlib_plugin()` reads.
+- `stdlib/std/_plugin/` is upstream's stdlib plugin package, in part:
+  `_impl.mojo` (`CurrentPlugin`), `_trait.mojo` (`StdPlugin`,
+  `PluginHooks`, `DefaultPlugin`, `DefaultPluginHooks`), and
+  `selector.mojo` (`Plugin`, `_index_lt`). `CompilationTarget.stdlib_plugin`
+  in `std/sys/info.mojo` names `DefaultPlugin.HookFor[Self()]` (R1694).
+  The two modules import each other, as upstream's do, so the link hoists
+  `_plugin`'s declarations ahead of `CompilationTarget`, which the check's
+  order-independent passes (`Checker::check_program`'s
+  `settle_deferred_shells`, `settle_deferred_traits`, and
+  `types_await_declarations`) resolve. The elaborator decides a
+  `conforms_to` over a type that nests the current target
+  (`Specializer::answer_conformance_subjects`, `decided_conformance`).
 - Upstream's MLIR builtin `__mlir_type.index` is `TyKind::Index`
   (`Ty::index()`, displayed `types::MLIR_INDEX_TYPE_SPELLING`), resolved
   by `types::mlir_type_named`, which also reads

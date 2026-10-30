@@ -850,6 +850,7 @@ mod tests {
         let target = |triple: &str, features: &str| {
             CtValue::KgenTarget(Box::new(KgenTarget {
                 triple: triple.to_string(),
+                stdlib_plugin: "default".to_string(),
                 arch: "skylake".to_string(),
                 features: features.to_string(),
                 data_layout: String::new(),
@@ -869,6 +870,10 @@ mod tests {
         assert_eq!(
             fold_target_get_field(&host, &name("simd_bit_width")).ok(),
             Some(CtValue::Index(256))
+        );
+        assert_eq!(
+            fold_target_get_field(&host, &name("stdlib_plugin")).ok(),
+            Some(name("default"))
         );
         let empty = target("", "");
         assert_eq!(
@@ -894,7 +899,8 @@ mod tests {
     }
 
     /// A `#kgen.target` attribute's text reads back as the target it spells,
-    /// and one missing or repeating a field reads as nothing.
+    /// an omitted `stdlib_plugin` reading `default` as at the pin, and one
+    /// missing a required field or repeating a field reads as nothing.
     #[test]
     fn target_attribute_text_round_trips() {
         let target = KgenTarget::parse(
@@ -907,7 +913,24 @@ mod tests {
             .strip_prefix("#kgen.target<")
             .and_then(|body| body.strip_suffix('>'))
             .expect("the display is the attribute");
+        assert_eq!(target.stdlib_plugin, "default");
         assert_eq!(KgenTarget::parse(body), Some(target));
+        let cuda = KgenTarget::parse(
+            "triple = \"\", stdlib_plugin = \"cuda\", arch = \"\", features = \"\", \
+             data_layout=\"\",index_bit_width = 0,simd_bit_width = 0",
+        )
+        .expect("a spelled `stdlib_plugin` parses");
+        assert_eq!(cuda.stdlib_plugin, "cuda");
+        let text = cuda.to_string();
+        let body = text
+            .strip_prefix("#kgen.target<")
+            .and_then(|body| body.strip_suffix('>'))
+            .expect("the display is the attribute");
+        assert_eq!(KgenTarget::parse(body), Some(cuda));
+        assert_eq!(
+            KgenTarget::parse(&format!("{body}, stdlib_plugin = \"x\"")),
+            None
+        );
         assert_eq!(KgenTarget::parse("triple = \"\""), None);
         assert_eq!(KgenTarget::parse(&format!("{body}, arch = \"x\"")), None);
     }

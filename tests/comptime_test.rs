@@ -1774,3 +1774,36 @@ fn comptime_if_converts_a_bare_parameter_name_through_its_bool() {
     let src = "struct S[y: Float64]:\n    @staticmethod\n    def show():\n        comptime if Self.y:\n            print(\"S y\")\n        else:\n            print(\"S not y\")\n\ndef g[x: Scalar[DType.uint8]]():\n    comptime if x:\n        print(\"x\")\n    else:\n        print(\"not x\")\n\ndef main():\n    S[2.5].show()\n    S[0.0].show()\n    g[3]()\n    g[0]()\n";
     assert_eq!(run(src).expect("run"), "S y\nS not y\nx\nnot x\n");
 }
+
+#[test]
+fn compile_time_parameters_of_a_struct_type_are_automatically_parameterized() {
+    // Upstream's `addImplicitTypeParams` applies to every parameter list: an
+    // alias's, a struct member's, and a trait member's `[target: W]` over
+    // `W[x: Int, //]` leaves `x` to an infer-only binder, as a `def`'s does.
+    let source = "struct W[x: Int, //]:\n    def __init__(out self): pass\n\nstruct H[target: W]:\n    comptime lowers: Bool = True\n\ntrait P:\n    comptime For[target: W]: AnyType\n\nstruct D(P):\n    comptime For[target: W] = H[target]\n\ncomptime F[target: W] = H[target]\n\ndef main():\n    print(F[W[x=3]()].lowers)\n    print(D.For[W[x=4]()].lowers)\n";
+    assert_eq!(run(source).unwrap(), "True\nTrue\n");
+}
+
+#[test]
+fn a_type_member_is_read_through_a_module_alias_and_a_construction() {
+    // `CompilationTarget.current().stdlib_plugin`'s shapes: a module alias
+    // of a type member, and a type member read through a compile-time
+    // construction, which resolves against the construction's type.
+    let source = "trait Hooks:\n    comptime lowers: Bool = True\n\nstruct DefHooks[n: Int](Hooks):\n    pass\n\nstruct S[k: Int = 0](TrivialRegisterPassable):\n    def __init__(out self): pass\n    comptime H: Hooks = DefHooks[Self.k]\n    comptime current = S[7]\n\ncomptime Cur = S[2].H\ncomptime Through: Hooks = S.current().H\n\ndef main():\n    print(Cur.lowers)\n    print(S[2]().H.lowers)\n    comptime C: Hooks = S[5]().H\n    print(C.lowers, Through.lowers)\n    comptime if Cur.lowers:\n        print(\"alias\")\n";
+    assert_eq!(run(source).unwrap(), "True\nTrue\nTrue True\nalias\n");
+    let missing = "trait Hooks:\n    comptime lowers: Bool = True\n\nstruct DefHooks[n: Int](Hooks):\n    pass\n\ncomptime Cur: Hooks = DefHooks[1]\n\ndef main():\n    print(Cur.no_hook)\n";
+    let error = run(missing).unwrap_err();
+    assert!(
+        error.contains("'DefHooks[1]' has no field 'no_hook'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn declarations_resolve_whatever_their_order() {
+    // A struct parameter typed by a later struct, a trait member annotated
+    // with a later trait, and a struct member applying a later struct's
+    // parameterized member, as upstream resolves them.
+    let source = "trait StdP:\n    comptime HookFor[n: Int]: Hooks\n\nstruct H[w: W](Hooks):\n    pass\n\nstruct T:\n    comptime plugin = P.HookFor[3]\n\nstruct P(StdP):\n    comptime HookFor[n: Int] = DefHooks[n]\n\nstruct DefHooks[n: Int](Hooks):\n    pass\n\ntrait Hooks:\n    comptime lowers: Bool = True\n\nstruct W(TrivialRegisterPassable):\n    def __init__(out self):\n        pass\n\ndef main():\n    print(H[W()].lowers, T.plugin.lowers)\n";
+    assert_eq!(run(source).unwrap(), "True True\n");
+}

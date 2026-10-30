@@ -247,6 +247,13 @@ impl Checker {
         construction: Expr,
         ty: &Ty,
     ) {
+        let condition = self
+            .record_at(expression.source_span())
+            .comptime_condition
+            .clone();
+        if let Some(condition) = condition {
+            self.record_condition_through_spellings(&construction, &condition);
+        }
         self.record_at(expression.source_span()).ty = Some(ty.clone());
         self.record_at(expression.source_span()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
@@ -1059,7 +1066,9 @@ fn reads_self(expr: &Expr) -> bool {
     struct ReadsSelf(bool);
     impl mojito_ast::visit::Visitor for ReadsSelf {
         fn visit_expr(&mut self, expr: &Expr) {
-            if matches!(&expr.kind, ExprKind::Identifier(name) if name == "Self") {
+            if matches!(&expr.kind, ExprKind::Identifier(name) | ExprKind::Call { name, .. }
+                if name == "Self")
+            {
                 self.0 = true;
             }
         }

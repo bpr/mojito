@@ -133,12 +133,14 @@ impl Checker {
                     self.predeclared_structs
                         .insert(declaration.name.to_string());
                 }
-                Err(_) if super::traits::names_member_type(declaration.type_params) => {
+                Err(_) if self.shell_awaits_declarations(declaration.type_params) => {
                     deferred_shells.push(index);
                 }
                 Err(error) => return Err(error),
             }
         }
+        // A shell typed by a later struct (`struct H[w: W]` above `W`).
+        self.settle_deferred_shells(stmts, &mut deferred_shells);
         drop(phase);
         // A builtin body folds before any signature or field type calls it,
         // and over the callable's classified parameters.
@@ -240,16 +242,14 @@ impl Checker {
                 Ok(()) => {
                     self.predeclared_traits.insert(name.clone());
                 }
-                Err(error)
-                    if awaits_struct_declarations(&error)
-                        || matches!(&error, TypeError::UnknownType(name)
-                            if self.declared_structs.contains(name)) =>
-                {
+                Err(error) if self.trait_awaits_declarations(stmts, &error) => {
                     deferred_traits.push(index);
                 }
                 Err(error) => return Err(error),
             }
         }
+        // A trait naming a later one (`HookFor[...]: PluginHooks` above it).
+        self.settle_deferred_traits(stmts, &mut deferred_traits);
         // Generic comptime aliases register before struct types and method
         // signatures: a field annotation or a synthesized conditional-method
         // availability (e.g. `copy()` gated on a `Copyable where MyPred[T]`
@@ -272,6 +272,7 @@ impl Checker {
         let phase = timing::span("declarations.types");
         let mut waiting_conformers = Vec::new();
         let mut constructing_structs = Vec::new();
+        let mut typed_structs = HashSet::new();
         for (index, statement) in stmts.iter().enumerate() {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
@@ -287,8 +288,14 @@ impl Checker {
                 continue;
             }
             match self.check_struct_types(&declaration) {
-                Ok(()) => {}
-                Err(error) if self.awaits_construction(&error) => constructing_structs.push(index),
+                Ok(()) => {
+                    typed_structs.insert(declaration.name);
+                }
+                Err(error)
+                    if self.types_await_declarations(&error, &declaration, &typed_structs) =>
+                {
+                    constructing_structs.push(index);
+                }
                 Err(error) => return Err(error),
             }
             self.retry_deferred_shells(stmts, &mut deferred_shells);
@@ -445,24 +452,81 @@ impl Checker {
         Ok(true)
     }
 
-    /// Whether `value` applies a member (`TypeList.of[...]`) of a struct
-    /// this program declares that the struct has yet to register.
+    /// Whether `value` reads (`T.plugin`, `T[4].plugin`) or applies
+    /// (`TypeList.of[...]`) a member of a struct this program declares that
+    /// the struct has yet to register: the read waits for the struct's
+    /// member types, which decide whether it names a type.
     fn applies_unregistered_member(&self, value: &Expr) -> bool {
-        let (ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }) = &value.kind
-        else {
+        let (member, applied) = match &value.kind {
+            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                (&**object, true)
+            }
+            _ => (value, false),
+        };
+        let ExprKind::Member { object, field } = &member.kind else {
             return false;
         };
-        let ExprKind::Member { object, field } = &object.kind else {
-            return false;
-        };
-        let ExprKind::Identifier(base) = &object.kind else {
-            return false;
+        let base = match &object.kind {
+            ExprKind::Identifier(base) => base,
+            ExprKind::TypeApply { name, .. } if !applied => name,
+            ExprKind::Index { object, .. } if !applied => match &object.kind {
+                ExprKind::Identifier(base) => base,
+                _ => return false,
+            },
+            _ => return false,
         };
         self.declared_structs.contains(base)
-            && !self
-                .structs
-                .get(base)
-                .is_some_and(|info| info.parameterized_associated.contains_key(field))
+            && !self.structs.get(base).is_some_and(|info| {
+                info.parameterized_associated.contains_key(field)
+                    || (!applied && info.associated.contains_key(field))
+            })
+    }
+
+    /// Whether a struct shell over `params` that failed waits for other
+    /// declarations: a parameter typed by another struct's member, or by a
+    /// struct this program declares that has yet to register its shell
+    /// (`w: W`, `t: T[1]`).
+    fn shell_awaits_declarations(&self, params: &[mojito_ast::ast::TypeParam]) -> bool {
+        super::traits::names_member_type(params)
+            || params.iter().any(|param| {
+                let named = match &param.value_type {
+                    Some(SourceType::Named(name, _)) => Some(name),
+                    Some(_) => None,
+                    None => param.bounds.first().filter(|_| param.bounds.len() == 1),
+                };
+                named.is_some_and(|name| {
+                    self.declared_structs.contains(name) && !self.predeclared_structs.contains(name)
+                })
+            })
+    }
+
+    /// Whether the trait check that failed with `error` waits for
+    /// declarations of `stmts` yet to register: a struct's members or
+    /// signatures, or a trait declared after it.
+    fn trait_awaits_declarations(&self, stmts: &[Stmt], error: &TypeError) -> bool {
+        awaits_struct_declarations(error)
+            || matches!(error, TypeError::UnknownType(name)
+                if self.declared_structs.contains(name)
+                    || (trait_declared(stmts, name) && !self.traits.contains_key(name)))
+    }
+
+    /// Whether the member types of `declaration`, which failed with
+    /// `error`, wait for another struct's: a construction of one
+    /// ([`Self::awaits_construction`]), or a member reading a struct whose
+    /// member types are not among `typed` (`comptime plugin =
+    /// P.HookFor[3]` above `P`).
+    fn types_await_declarations(
+        &self,
+        error: &TypeError,
+        declaration: &StructDeclaration<'_>,
+        typed: &HashSet<&str>,
+    ) -> bool {
+        self.awaits_construction(error)
+            || declaration.associated.iter().any(|member| {
+                names_read(&member.value).iter().any(|name| {
+                    self.declared_structs.contains(name) && !typed.contains(name.as_str())
+                })
+            })
     }
 
     /// Whether `value` names a module value constant (`comptime B = A` over
@@ -494,6 +558,64 @@ impl Checker {
                 .insert(declaration.name.to_string());
             false
         });
+    }
+
+    /// [`Self::retry_deferred_shells`] until no deferred shell registers: a
+    /// shell whose parameter is typed by a struct declared after it
+    /// registers once that struct has, as upstream resolves declarations
+    /// order-independently.
+    fn settle_deferred_shells(&mut self, stmts: &[Stmt], deferred: &mut Vec<usize>) {
+        loop {
+            let waiting = deferred.len();
+            self.retry_deferred_shells(stmts, deferred);
+            if deferred.len() == waiting {
+                break;
+            }
+        }
+    }
+
+    /// Check each deferred trait whose parents and the traits its members
+    /// name have checked, until no deferred trait checks: a trait whose
+    /// member names a trait declared after it checks once that trait has.
+    fn settle_deferred_traits(&mut self, stmts: &[Stmt], deferred: &mut Vec<usize>) {
+        loop {
+            let waiting = deferred.len();
+            let mut index = 0;
+            while index < deferred.len() {
+                let statement = &stmts[deferred[index]];
+                let StmtKind::Trait {
+                    name,
+                    refines,
+                    methods,
+                    comptime_members,
+                } = &statement.kind
+                else {
+                    index += 1;
+                    continue;
+                };
+                if refines
+                    .iter()
+                    .any(|parent| trait_is_deferred(stmts, deferred, parent))
+                    || self
+                        .check_trait(
+                            name,
+                            refines,
+                            methods,
+                            comptime_members,
+                            statement.module.as_deref(),
+                        )
+                        .is_err()
+                {
+                    index += 1;
+                    continue;
+                }
+                self.predeclared_traits.insert(name.clone());
+                deferred.remove(index);
+            }
+            if deferred.len() == waiting {
+                break;
+            }
+        }
     }
 
     /// Check every deferred trait whose struct declarations have resolved,
@@ -1900,7 +2022,9 @@ impl Checker {
                             ExprKind::Identifier(_) | ExprKind::TypeValue(_)
                         )
                         || matches!(&value.kind, ExprKind::TypeApply { name, .. }
-                            if name != "__mlir_attr" || self.lookup(name).is_some()))
+                            if name != "__mlir_attr" || self.lookup(name).is_some())
+                        || (matches!(&value.kind, ExprKind::Member { .. })
+                            && self.denotes_type(value)))
                 {
                     // Top-level aliases were registered by `check_program`'s
                     // pre-pass; re-walking the same statement is not a
@@ -3858,6 +3982,13 @@ fn awaits_struct_declarations(error: &TypeError) -> bool {
     matches!(error, TypeError::NoSuchAssociatedType { .. })
         || matches!(error, TypeError::BadCall { reason, .. }
             if reason == "no '__init__' overload takes no arguments")
+}
+
+/// Whether `stmts` declares the trait `name`.
+fn trait_declared(stmts: &[Stmt], name: &str) -> bool {
+    stmts
+        .iter()
+        .any(|statement| matches!(&statement.kind, StmtKind::Trait { name: declared, .. } if declared == name))
 }
 
 /// Whether `name` is a trait of `stmts` whose check waits in `deferred`.

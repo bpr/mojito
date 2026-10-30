@@ -206,6 +206,22 @@ fn bracketed_mlir_attr_is_one_application_of_its_pieces() {
 }
 
 #[test]
+fn self_construction_is_a_bracket_value_operand() {
+    // `HookFor[Self()]`: `Self(` opens a construction, a value argument, as
+    // `Int(` does, never a type followed by a stray parenthesis.
+    let ExprKind::TypeApply { name, args } = parse_expr("H[Self(3), n=Self()]").kind else {
+        panic!("not an application");
+    };
+    assert_eq!(name, "H");
+    let constructs_self = |arg: &ParamArg| matches!(arg, ParamArg::Value(Expr { kind: ExprKind::Call { name, .. }, .. }) if name == "Self");
+    assert!(constructs_self(&args[0]), "{args:?}");
+    assert!(
+        matches!(&args[1], ParamArg::Named { name, value } if name == "n" && constructs_self(value)),
+        "{args:?}"
+    );
+}
+
+#[test]
 fn not_binds_looser_than_comparison() {
     // not a == b  ==  not (a == b)
     assert_eq!(

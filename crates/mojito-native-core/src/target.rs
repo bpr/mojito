@@ -261,6 +261,7 @@ impl NativeTarget {
         };
         KgenTarget {
             triple: self.triple.name().to_string(),
+            stdlib_plugin: mojito_types::ct::DEFAULT_STDLIB_PLUGIN.to_string(),
             arch: self.cpu.name().to_string(),
             features: self.cpu.features_string(),
             data_layout: self.triple.data_layout().to_string(),

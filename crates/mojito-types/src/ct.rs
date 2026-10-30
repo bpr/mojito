@@ -636,14 +636,22 @@ pub enum CtValue {
     RemovedArg,
 }
 
+/// The stdlib plugin a target that names none selects, upstream's
+/// `DefaultPlugin.name`.
+pub const DEFAULT_STDLIB_PLUGIN: &str = "default";
+
 /// Upstream's `#kgen.target<…>` attribute: a compilation target's fields.
 ///
 /// `#kgen.param.expr<target_get_field>` and
 /// `#kgen.param.expr<target_has_feature>` read them ([`Self::field`],
-/// [`Self::has_feature`]).
+/// [`Self::has_feature`]). The `opaque_plugin` payload only the GPU
+/// targets spell is not read.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct KgenTarget {
     pub triple: String,
+    /// The name of the stdlib plugin the target selects, `default` where
+    /// the attribute omits it.
+    pub stdlib_plugin: String,
     /// The CPU name (`skylake`, `x86-64`).
     pub arch: String,
     /// The effective feature list, each item `+name` or `-name`, joined
@@ -665,6 +673,11 @@ impl KgenTarget {
         "simd_bit_width",
     ];
 
+    /// The fields a `#kgen.target` attribute may omit, each with the value
+    /// it then reads.
+    pub const OPTIONAL_FIELDS: [(&'static str, &'static str); 1] =
+        [("stdlib_plugin", DEFAULT_STDLIB_PLUGIN)];
+
     /// The value `target_get_field` reads for `name`: a `!kgen.string`
     /// for `triple`, `arch`, and the triple's `triple_arch` and `os`
     /// components (`unknown` where the triple has none), and an `index`
@@ -680,6 +693,7 @@ impl KgenTarget {
         };
         Some(match name {
             "triple" => CtValue::KgenString(self.triple.clone()),
+            "stdlib_plugin" => CtValue::KgenString(self.stdlib_plugin.clone()),
             "arch" => CtValue::KgenString(self.arch.clone()),
             "triple_arch" => CtValue::KgenString(component(0)),
             "os" => CtValue::KgenString(component(2)),
@@ -693,7 +707,13 @@ impl KgenTarget {
     pub fn reads_field(name: &str) -> bool {
         matches!(
             name,
-            "triple" | "arch" | "triple_arch" | "os" | "index_bit_width" | "simd_bit_width"
+            "triple"
+                | "stdlib_plugin"
+                | "arch"
+                | "triple_arch"
+                | "os"
+                | "index_bit_width"
+                | "simd_bit_width"
         )
     }
 
@@ -712,10 +732,13 @@ impl KgenTarget {
     }
 
     /// Parse the body of a `#kgen.target<…>` attribute: each field once,
-    /// `name = value`, the strings quoted and the widths integers.
+    /// `name = value`, the strings quoted and the widths integers, an
+    /// optional one ([`Self::OPTIONAL_FIELDS`]) taking its default when
+    /// omitted.
     pub fn parse(body: &str) -> Option<Self> {
         let mut target = Self {
             triple: String::new(),
+            stdlib_plugin: DEFAULT_STDLIB_PLUGIN.to_string(),
             arch: String::new(),
             features: String::new(),
             data_layout: String::new(),
@@ -735,12 +758,16 @@ impl KgenTarget {
                 }
                 None => after.split_at(after.find(',').unwrap_or(after.len())),
             };
-            if !Self::FIELDS.contains(&name) || seen.contains(&name) {
+            let optional = Self::OPTIONAL_FIELDS
+                .iter()
+                .any(|(optional, _)| *optional == name);
+            if !(Self::FIELDS.contains(&name) || optional) || seen.contains(&name) {
                 return None;
             }
             seen.push(name);
             match name {
                 "triple" => target.triple = value.to_string(),
+                "stdlib_plugin" => target.stdlib_plugin = value.to_string(),
                 "arch" => target.arch = value.to_string(),
                 "features" => target.features = value.to_string(),
                 "data_layout" => target.data_layout = value.to_string(),
@@ -750,7 +777,10 @@ impl KgenTarget {
             let after = after.trim_start();
             rest = after.strip_prefix(',').unwrap_or(after).trim_start();
         }
-        (seen.len() == Self::FIELDS.len()).then_some(target)
+        Self::FIELDS
+            .iter()
+            .all(|field| seen.contains(field))
+            .then_some(target)
     }
 }
 
@@ -758,9 +788,10 @@ impl fmt::Display for KgenTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "#kgen.target<triple = {:?}, arch = {:?}, features = {:?}, data_layout = {:?}, \
-             index_bit_width = {}, simd_bit_width = {}>",
+            "#kgen.target<triple = {:?}, stdlib_plugin = {:?}, arch = {:?}, features = {:?}, \
+             data_layout = {:?}, index_bit_width = {}, simd_bit_width = {}>",
             self.triple,
+            self.stdlib_plugin,
             self.arch,
             self.features,
             self.data_layout,

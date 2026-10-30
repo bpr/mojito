@@ -8,6 +8,28 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The bundled library now has upstream's `std._plugin` package:
+  `CurrentPlugin`, `PluginHooks` with the hooks whose types are bundled,
+  `StdPlugin`, `DefaultPlugin`, `DefaultPluginHooks`, `Plugin`, and
+  `_index_lt`, beside `CompilationTarget.stdlib_plugin` and the free
+  `stdlib_plugin()`, so `CurrentPlugin.lowers_subvector_intrinsics` reads
+  `True` and selects a `comptime if` arm on both backends (R1672). A
+  `#kgen.target` takes the optional `stdlib_plugin` field (MIR text 1.143,
+  package format 159). The member names `DefaultPlugin` where upstream's
+  selects through `_first_conforming_plugin`, which agrees on every target
+  Mojito builds (R1694).
+- Declarations now resolve whatever their order: a struct parameter typed
+  by a later struct, a trait member annotated with a later trait, and a
+  struct member applying a later struct's parameterized member were
+  rejected. A struct's type member reads through a module alias
+  (`comptime Cur = T.plugin`) and through a compile-time construction
+  (`S[2]().H`), and a `comptime if` over a type alias's member
+  (`comptime if Cur.lowers:`) runs, where each was rejected. An alias's
+  or a `comptime` member's parameter of a struct type is automatically
+  parameterized as a `def`'s is, and `HookFor[Self()]` parses.
+  `conforms_to` over a type that nests the current target is decided in
+  elaboration.
+
 - A compile-time call of a nested `def` that captures nothing now takes a
   struct result as it takes a scalar one: `first[mk()]()` over `def mk()
   -> StaticTuple[SIMDLength, 8]`, a method's `mk` reading `Self.length`,

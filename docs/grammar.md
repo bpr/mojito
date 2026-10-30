@@ -530,7 +530,9 @@ the checker decides whether each denotes a type or a value. An operand is a
 `def(...)`, a `ref` type, and a `*` pack. The scalar names (`Int`, `UInt`,
 `Bool`, `StringLiteral`, `Float64`, and the sized aliases such as `UInt8`),
 `Self` and its members, and `None` still parse as a `type` there, a
-divergence (roadmap R1511, R1512).
+divergence (roadmap R1511, R1512). Followed by `(`, `Int`, `UInt`, `Bool`,
+`StringLiteral`, `Float64`, and `Self` open the construction expression they
+start (`Int(3)`, `HookFor[Self()]`), a value operand.
 
 A **spread** argument `'*' typelist_expr` supplies a whole argument list from
 a type list. Its operand is a pack (`*Ts`, or a struct's own `*Self.Ts`), or

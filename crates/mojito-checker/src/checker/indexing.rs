@@ -1822,6 +1822,22 @@ impl Checker {
                 return Ok(ty);
             }
         }
+        // A type alias or a type member with no member of that name
+        // (`CurrentPlugin.no_hook`, `T.plugin.no_hook`) is the missing member
+        // of the type it names, never a read of its spelling as a value.
+        let names_type = match &object.kind {
+            ExprKind::Identifier(alias) => {
+                self.lookup(alias).is_none() && self.comptime_aliases.contains_key(alias)
+            }
+            ExprKind::Member { .. } => true,
+            _ => false,
+        };
+        if names_type && let Some(ty) = self.member_type_operand(object) {
+            return Err(TypeError::NoSuchField {
+                object_type: ty.to_string(),
+                field: field.to_string(),
+            });
+        }
         // A type `type_of` denotes has no member of that name; it is never
         // read as a value.
         if let Some(instance) = self.type_of_receiver(object) {
@@ -2180,6 +2196,14 @@ impl Checker {
             {
                 return Some(self.compile_time_value_type(object));
             }
+            // A call of a type member (`CompilationTarget.current()`)
+            // constructs the type the member names.
+            ExprKind::MethodCall { .. } if self.type_member_construction(object).is_some() => {
+                return Some(self.compile_time_value_type(object));
+            }
+            // A type member read through a type or a construction of one
+            // (`T.plugin`, `S[2]().H`) is the member of that type.
+            ExprKind::Member { object, field } => return self.type_member_through(object, field),
             _ => return None,
         };
         if root.is_some_and(|name| name == "Self" || self.lookup(name).is_some()) {
@@ -2260,6 +2284,22 @@ pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<SimdDtype, TypeError>> {
 }
 
 impl Checker {
+    /// The type member `field` of the type `base` names or constructs
+    /// (`T.plugin`, `S[2]().H`), resolved against that type, as upstream
+    /// resolves a member against a value's type. `None` when `base` names
+    /// no type or `field` is not a type member of it.
+    fn type_member_through(&self, base: &Expr, field: &str) -> Option<Result<Ty, TypeError>> {
+        let base_ty = self.member_type_operand(base)?;
+        let TyKind::Struct(name, _) = base_ty.kind() else {
+            return None;
+        };
+        matches!(
+            self.structs.get(name)?.associated.get(field),
+            Some(CtValue::Type(_))
+        )
+        .then(|| self.associated_type_from_base(&base_ty, field, &[]))
+    }
+
     /// Record that the view-typed (`result`) subscript at `span` stays
     /// borrowed from its receiver's sources: its binding inherits the
     /// receiver's loans instead of owning fresh storage. Re-inference keeps

@@ -9,8 +9,13 @@
 # the Neon and RISC-V queries, which read `is_apple_silicon` (R1635),
 # `align_of` and the `target` parameter of `size_of` and `bit_width_of`,
 # with `simd_width_of`, `is_32bit`, and `is_64bit` (R1634), and
-# `_first_conforming_plugin`, `stdlib_plugin`, and its free function
-# (R1672).
+# `_first_conforming_plugin`, with the `TargetPluginSelector` import
+# (R1694).
+# The `stdlib_plugin` member is `DefaultPlugin.HookFor[Self()]`, where
+# upstream's is `Self._first_conforming_plugin[StdPlugin,
+# default=DefaultPlugin].HookFor[Self()]`. The two agree on every target
+# without an `opaque_plugin` payload, which is every target Mojito builds,
+# and R1694 replaces it.
 """Implements methods for querying the host target info.
 
 You can import these APIs from the `sys` package. For example:
@@ -24,6 +29,7 @@ print(CompilationTarget.is_x86())
 
 from std.collections.string.string_span import _get_kgen_string
 from std.string import StaticString
+from std._plugin import StdPlugin, DefaultPlugin, PluginHooks
 
 comptime _TargetType = __mlir_type.`!kgen.target`
 
@@ -115,6 +121,17 @@ struct CompilationTarget[_mlir_value: _TargetType = _current_target(), //](
             _get_kgen_string[name](),
             `> : i1`,
         ]
+
+    # ===----------------------------------------------------------------------=== #
+    # Plugin attribute access
+    # ===----------------------------------------------------------------------=== #
+
+    comptime stdlib_plugin: PluginHooks = DefaultPlugin.HookFor[Self()]
+    """The stdlib plugin to use for this target."""
+
+    # ===----------------------------------------------------------------------=== #
+    # Predicates
+    # ===----------------------------------------------------------------------=== #
 
     @staticmethod
     def has_sse4() -> Bool:
@@ -220,6 +237,26 @@ def simd_byte_width[
     """
     comptime CHAR_BIT = 8
     return simd_bit_width[target]() // CHAR_BIT
+
+
+@inline(.nodebug)
+def stdlib_plugin[target: _TargetType = _current_target()]() -> StaticString:
+    """Returns the stdlib plugin name for the specified target.
+
+    Parameters:
+        target: The target architecture.
+
+    Returns:
+        The stdlib plugin name for the specified target.
+    """
+    return StaticString(
+        __mlir_attr[
+            `#kgen.param.expr<target_get_field,`,
+            target,
+            `, "stdlib_plugin" : !kgen.string`,
+            `> : !kgen.string`,
+        ]
+    )
 
 
 @inline(.nodebug)

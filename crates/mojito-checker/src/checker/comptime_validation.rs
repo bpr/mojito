@@ -913,7 +913,23 @@ impl Checker {
     /// else the enclosing struct's.
     fn record_comptime_condition(&self, cond: &Expr, constraint: &GenericConstraint) {
         let bound = self.bind_constraint(constraint, &[]);
-        self.record_at(cond.source_span()).comptime_condition = Some(bound);
+        self.record_condition_through_spellings(cond, &bound);
+    }
+
+    /// Record `condition` at `cond` and at each spelling the check gave it:
+    /// a condition the check respelled (`Cur.lowers` over a type alias
+    /// `Cur`, then the alias's own member read) reaches HIR as its last
+    /// spelling, which holds the condition.
+    pub(super) fn record_condition_through_spellings(
+        &self,
+        cond: &Expr,
+        condition: &GenericConstraint,
+    ) {
+        let mut spelled = Some(cond.clone());
+        while let Some(expression) = spelled {
+            self.record_at(expression.source_span()).comptime_condition = Some(condition.clone());
+            spelled = self.spelled_construction(&expression);
+        }
     }
 
     /// Whether `operand` of a comparison is a parameter value whose builtin

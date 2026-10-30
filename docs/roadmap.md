@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1694**.
+Next free ID: **R1702**.
 
 ## Ordered Work
 
@@ -5411,6 +5411,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `var a = pick(n > 5)` where `pick` also prints, then
     `print(take(a))`: the pin rejects it with "failed to convert func
     signature", since the printing callee survives.
+  - Probe: a local `comptime t = __mlir_attr[`#kgen.target<…>` :
+    !kgen.target]` in `main`, read as `stdlib_plugin[t]()`, stops with
+    "failed to legalize operation defining %r0 of type
+    `__mlir_type.`!kgen.target``", where the pin prints the target's
+    plugin name: the binding leaves a dead `!kgen.target` constant in
+    `main`, as the deferred values above do. A module `comptime t` runs.
   - `assets/type_error/mlir_deferred_runtime_call.mojo` stays rejected, then
     by translation legality ("failed to convert call result type").
   - Update `docs/features.md`'s `__mlir_op` row, whose run-time-call and
@@ -5452,6 +5458,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     in the compile-time position.
   - Probe: a struct member's body, `comptime m = S(3).n`, fails the same
     way.
+  - Probe: a type member read the same way, `comptime Cur2 = U(4).plugin`
+    over `comptime plugin: Hooks = DefHooks[Self(3)]` in a `@fieldwise_init
+    struct U`, fails the same way, where the pin reads `Cur2.lowers` as
+    `True`.
   - Found while landing R1386 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5670,6 +5680,84 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1167 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1695 A value binder typed by a trait parameter is not inferred,
+  aliased, or read through**
+
+  `C[default]` over `struct C[Trait: type_of(AnyType), //, D: Trait]`,
+  where `default: Trait` is itself such a binder, stops with "cannot infer
+  type parameter 'Trait' of 'C'", where the pin solves `Trait` as the
+  binder's own trait parameter.
+  - Unlike R1176, the argument is a binder whose declared type is the
+    trait parameter, not a struct's metatype, so no conformance join is
+    needed.
+  - Probe: `comptime first[Trait: type_of(AnyType), *, default: Trait] =
+    default`, then `StaticString(first[StdP, default=DefP].name)`, stops
+    with "Undefined variable 'first'", where the pin prints `default`.
+  - Probe: `first[DefP].HookFor[2]` over `comptime first[default: StdP] =
+    default` reports "type 'DefP' has no field 'HookFor'".
+  - Probe: `comptime X: StdP = first[StdP, DefP]` reports "unknown type
+    'StdP'".
+  - Probe: `conforms_to(X, Self.Trait)` over such a binder, which
+    `TargetPluginSelector._find` reads (R1694).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1696 A `TypeList` member read in a struct member or a module
+  alias fails**
+
+  `comptime n = Self.L.length` over `comptime L = TypeList.of[Trait=AnyType,
+  Self.D]()` in `struct C[D: StdP]` stops with "not an associated comptime
+  expression", where the pin prints `1` for `C[DefP].n`.
+  - The same reads in a local `comptime` work.
+  - Probe: `Int(mlir_value=Self.L._raw_length)` over the same list.
+  - Probe: `Self.L.length` over `comptime L = TypeList.of[Trait=AnyType,
+    Self.D, Int]` (the application, unconstructed) reports "unsupported
+    associated comptime member access".
+  - Probe: a module `comptime T0 = L._get_type_at_index[__mlir_attr.`0 :
+    index`]` over `comptime L = TypeList.of[Trait=AnyType, DefP]`, then
+    `L.length`, reports "expected a value, found Type".
+  - `TargetPluginSelector.selected` and `_find` read `Self.Plugins`'s
+    `_raw_length` and `_get_type_at_index` this way (R1694).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1700 A conditional expression over types is rejected**
+
+  `comptime pick[b: Bool]: StdP = DefP if b else DefP` stops with "expected
+  a value, found Type", where the pin binds the selected type
+  (`StaticString(pick[True].name)` prints `default`).
+  - The checker types `a if c else b` as a value expression only, so a
+    type operand in either arm is rejected.
+  - `TargetPluginSelector.selected` is this shape (R1694).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1697 `#kgen.param.expr<add>` over `index` is outside the subset**
+
+  `find[__mlir_attr[`#kgen.param.expr<add,`, idx, `, 1 : index> : index`]]()`
+  stops with "the attribute … is outside the subset", where the pin
+  recurses through the parameter.
+  - Lever: an `mlir_bracket_attribute` arm building the existing index
+    addition `ParamOp`.
+  - Probe: a `find[idx: __mlir_type.index]` that returns `idx` once
+    `_index_lt[1, idx]()` holds and otherwise recurses on the sum, read as
+    `comptime i = find[__mlir_attr.`0 : index`]()`, which the pin prints
+    as `2`.
+  - `PluginSelector._find` and `TargetPluginSelector._find` recurse this
+    way (R1694).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1701 `__mlir_op.`llvm.intr.trap`` is outside the subset**
+
+  `__mlir_op.`llvm.intr.trap`()` in `main` stops with "is outside the
+  subset", where the pin traps at run time and fails the evaluation when
+  compile-time evaluation reaches it.
+  - Lever: map it to the abort the VM and Pliron already lower.
+  - `TargetPluginSelector._find` traps past the list's end (R1694).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1177 A struct's trait parameter does not bound a method's type
   parameter**
@@ -10717,7 +10805,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `1.4142135623734946` through `_powf_scalar`'s `exp(log)`.
   - Port the three `__pow__` overloads, `__rpow__`, `_pow`, `_powf`,
     `_powf_scalar`, and `_powi`.
-  - `_pow` reads `CurrentPlugin.binary_math_fn` (R1672, R1562), stores
+  - `_pow` reads `CurrentPlugin.binary_math_fn` (R1699, R1562), stores
     lanes with `result[i] = …` (R1561), and initializes `out result` with
     `result = {}`.
   - Port `__ipow__` (`simd.mojo:1748`) too; its `rhs` is `Int`.
@@ -10730,7 +10818,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Removes `pliron_float_pow.mojo` from R171.
   - List `Powable` in `SIMD`'s declaration, and drop its
     `modelled_conformance` arm for `SIMD`.
-  - Depends on R1566, R1561, R1562, R1672, and R1568.
+  - Depends on R1566, R1561, R1562, R1699, and R1568.
   - Model: Fable, Planned.
 
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
@@ -11310,23 +11398,61 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1672 `CurrentPlugin` is undeclared, where upstream's is
-  `CompilationTarget.current().stdlib_plugin`**
+- [ ] **R1694 `CompilationTarget.stdlib_plugin` names `DefaultPlugin`
+  directly, where upstream's selects through `_first_conforming_plugin`**
 
-  `print(CurrentPlugin.lowers_subvector_intrinsics)` prints `True` at the
-  pin, where Mojito has no `std._plugin` package.
-  - Port `std/_plugin/{__init__,_impl,selector}.mojo` and `_trait.mojo` in
-    part: `Plugin`, `StdPlugin`, `PluginHooks` with the hooks whose types
-    are bundled (`lowers_subvector_intrinsics`, `has_generic_address_space`,
-    `_handles_debug_assert`, `abort_fn`), `DefaultPlugin`, and
-    `DefaultPluginHooks`. Header-list the omitted hooks with their owners.
-  - In `std/sys/info.mojo`, port `_first_conforming_plugin` and
-    `stdlib_plugin`.
-  - Add `#kgen.get_target_plugin`, answered by the elaborator from
-    `NativeTarget` (the CPU target has no payload, so the default list),
-    with `TypeList.of` and `downcast`.
-  - Depends on nothing.
+  The bundled member is `DefaultPlugin.HookFor[Self()]`, where the pin's is
+  `Self._first_conforming_plugin[StdPlugin,
+  default=DefaultPlugin].HookFor[Self()]` over `TargetPluginSelector`.
+  - The two agree on every target without an `opaque_plugin` payload,
+    which is every target Mojito builds.
+  - Port `TargetPluginSelector` and `PluginSelector` verbatim into
+    `stdlib/std/_plugin/selector.mojo`, and `_first_conforming_plugin`,
+    the verbatim member, and the `TargetPluginSelector` import into
+    `stdlib/std/sys/info.mojo`. Both files' headers list them.
+  - The checker reads `#kgen.get_target_plugin<target, : list-type
+    default-list> : list-type` (`mlir_bracket_attribute`). The elaborator
+    answers it from the target's `opaque_plugin` payload, else the default
+    list, so on every `NativeTarget` it is the default list.
+  - `KgenTarget` (`mojito-types/src/ct.rs`) gains an optional
+    `opaque_plugin`, a MIR text and package format bump.
+  - Probe: `assets/ok/std_plugin_hooks.mojo` keeps printing the pin's
+    output.
+  - Depends on R1695, R1696, R1700, R1697, R1701, and R223 (`downcast`).
   - Model: Fable, Planned.
+
+- [ ] **R1698 `PluginHooks`'s static hooks `abort_fn` and
+  `debug_assert_emit_fn` are undeclared**
+
+  The bundled `stdlib/std/_plugin/_trait.mojo` omits both `@staticmethod`
+  requirements, so `os.abort` cannot call `CurrentPlugin.abort_fn()` as
+  upstream's `os.mojo` does.
+  - Port both verbatim, with their default bodies.
+  - Call `CurrentPlugin.abort_fn()` from the bundled `abort`, and read
+    `_handles_debug_assert` in `_debug_assert_msg` if the bundled
+    `debug_assert` has that function.
+  - Probe: `trait H:` declaring `@staticmethod def abort_fn(): pass` is a
+    parse error ("A method's first parameter must be 'self'").
+  - Depends on R942.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1699 `PluginHooks`'s `unary_math_fn`, `binary_math_fn`, and
+  `reduce_generator_fn` are undeclared**
+
+  A trait member typed `OptionalReg` over a parametric `thin` function type
+  does not check, so the bundled `stdlib/std/_plugin/_trait.mojo` omits the
+  math hooks.
+  - Probe: `comptime binary_math_fn[name: StaticString, dtype: DType,
+    width: Int]: OptionalReg[_B] = None`, over `comptime _B = def[dtype:
+    DType, width: SIMDLength, //](SIMD[dtype, width], SIMD[dtype, width])
+    thin -> SIMD[dtype, width]`, read in `comptime if
+    D.binary_math_fn["pow", DType.float32, 4]:`, stops with "not a
+    compile-time Int constant: _B", where the pin prints `none`.
+  - Port `_UnaryMathPluginHookFnType` and `_BinaryMathPluginHookFnType`
+    into the bundled `std/math.mojo`, then the three hooks and
+    `_ReduceGeneratorPluginHookFnType`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1673 `SIMD`'s `slice` is a checker intrinsic, and `insert`,
   `split`, `interleave`, and `deinterleave` are undeclared**
@@ -11343,9 +11469,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `interleave`'s width-1 arm is `return [self[0], other[0]]`.
   - Retire `infer_simd_slice`, `LaneMask::Slice`, `LaneMask::resolve`,
     `gather_parameter`, and `record_lane_gather`.
-  - Depends on R1671, R1683 (the `LaneMask` cleanup follows its), R1672
-    (`CurrentPlugin`), R1634 (`simd_width_of`), and R1666 (the list
-    display).
+  - Depends on R1671, R1683 (the `LaneMask` cleanup follows its), R1634
+    (`simd_width_of`), and R1666 (the list display).
   - Model: Opus, Not Planned.
 
 - [ ] **R1675 `SIMD`'s rotations, shifts, `reversed`, and `IndexList`
@@ -11359,8 +11484,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     overloads, `rotate_left`/`rotate_right`, `shift_left`/`shift_right`,
     and `reversed`.
   - `_dynamic_shuffle` stays out until R1635's `has_neon` lands.
-  - Depends on R1671, R1683 (`_shuffle_list`), R1672 (`CurrentPlugin`), and R1674
-    (`IndexList`).
+  - Depends on R1671, R1683 (`_shuffle_list`) and R1674 (`IndexList`).
   - Model: Opus, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
@@ -12498,6 +12622,9 @@ residue found inside a task moves to the task that owns its fix.
     `Iterable`, and `Iterator`.
   - An unconditional `Iterable` also needs R178: the bundled `Iterable`
     requires `comptime Element: Copyable & Movable`.
+  - Probe: `downcast[Self.Plugins._get_type_at_index[idx], Self.Trait]`,
+    the `#kgen.downcast<: type_of(T) +T> : _Trait` attribute, is "outside
+    the subset", which `TargetPluginSelector.selected` reads (R1694).
   - Depends on R178.
   - Model: Opus, Planned.
 

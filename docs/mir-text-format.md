@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.142
+mojito-mir 1.143
 ```
 
-The writer emits 1.142. The reader accepts 1.0 through 1.142; *Schema 1.0*
+The writer emits 1.143. The reader accepts 1.0 through 1.143; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -945,6 +945,11 @@ from their runtime parameters, with its position and element type, so a
 callable with a `*xs` collector or a pack binder is applied by a
 compile-time call; the MIR schema is unchanged.
 
+Schema 1.143 adds the `#kgen.target` field `stdlib_plugin = "…"`, written
+after `triple`, the name of the stdlib plugin the target selects. A reader
+takes `"default"` where an attribute omits it. The package format moves to
+`mojito-package 159`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1537,8 +1542,9 @@ values are `ct_mlir_attr`. It is compile-time only, as `any_trait` is.
 `KgenTarget` (schema 1.136) is upstream's `!kgen.target`, the type of a
 compilation target's attribute (`CompilationTarget._mlir_value`), whose
 values are `ct_kgen_target`, spelled as the attribute
-`#kgen.target<triple = "…", arch = "…", features = "…", data_layout = "…",
-index_bit_width = N, simd_bit_width = N>`. Like `KgenDeferred`, it has no
+`#kgen.target<triple = "…", stdlib_plugin = "…", arch = "…", features =
+"…", data_layout = "…", index_bit_width = N, simd_bit_width = N>`
+(`stdlib_plugin` since schema 1.143). Like `KgenDeferred`, it has no
 LLVM type: the VM holds one as an attribute value, and translation rejects
 one a function signature or call still carries.
 

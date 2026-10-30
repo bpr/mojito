@@ -2107,7 +2107,8 @@ impl<'a> Specializer<'a> {
                 let dest = *dest;
                 let ty = frame.reg_types.get(&dest.0).cloned();
                 let constant = match self
-                    .applied(template, value, bindings)
+                    .answer_conformance_subjects(template, value, bindings)
+                    .and_then(|()| self.applied(template, value, bindings))
                     .and_then(|value| self.param_constant(&value, bindings, ty.as_ref()))
                 {
                     // An unrolled iteration's arm may be one the instance
@@ -2310,8 +2311,12 @@ impl<'a> Specializer<'a> {
                 subject,
                 trait_name,
             } => {
-                let Ok(CtValue::Type(ty)) = eval_ct(subject, bindings) else {
-                    return None;
+                // A type shape is the type the instance substitutes, each
+                // application in it answered (`H[_current_target()]`).
+                let ty = match (subject.kind(), eval_ct(subject, bindings)) {
+                    (_, Ok(CtValue::Type(ty))) => ty,
+                    (ParamKind::TypeShape(ty), _) => substitute_ty(ty, bindings).ok()?,
+                    _ => return None,
                 };
                 self.type_conforms(&ty, trait_name, &mut HashSet::new())
             }
@@ -4222,6 +4227,27 @@ impl<'a> Specializer<'a> {
                 Ok((reg, capture.place.clone()))
             })
             .collect()
+    }
+
+    /// Answer every application nested in the type a `conforms_to` query
+    /// of `value` asks about (`conforms_to(H[_current_target()], P)`), so
+    /// the instance decides it.
+    fn answer_conformance_subjects(
+        &mut self,
+        template: &str,
+        value: &ParamExpr,
+        bindings: &Bindings,
+    ) -> Result<(), MonoError> {
+        let mut subjects = Vec::new();
+        value.visit(&mut |node| {
+            if let ParamKind::Conforms { subject, .. } = node.kind() {
+                subjects.push(subject.clone());
+            }
+        });
+        if subjects.is_empty() {
+            return Ok(());
+        }
+        self.answer_type_argument_applications(template, &subjects, bindings)
     }
 
     /// Answer every application nested in a type argument (`bitcast[uint,

@@ -2661,6 +2661,7 @@ fn kgen_target_attribute_round_trips() {
     let ty = Ty::new(TyKind::KgenTarget);
     let target = mojito_types::ct::KgenTarget {
         triple: "x86_64-unknown-linux-gnu".into(),
+        stdlib_plugin: "default".into(),
         arch: "x86-64".into(),
         features: "+sse,+sse2".into(),
         data_layout: "e-m:e".into(),
