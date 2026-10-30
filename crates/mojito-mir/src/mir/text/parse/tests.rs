@@ -3501,12 +3501,15 @@ fn structured_region_ops_and_terminators_reprint() {
         },
         MirInstr::ComptimeAssert {
             cond: Box::new(GenericConstraint::Bool(true)),
+            message: None,
         },
         MirInstr::ComptimeAssert {
-            cond: Box::new(GenericConstraint::WithMessage(
-                Box::new(GenericConstraint::Bool(false)),
-                "positive".to_string(),
-            )),
+            cond: Box::new(GenericConstraint::Bool(false)),
+            message: Some(Const::Str("positive".to_string())),
+        },
+        MirInstr::ComptimeAssert {
+            cond: Box::new(GenericConstraint::Bool(false)),
+            message: Some(Const::Param(int_parameter("$test:msg", 0, "msg"))),
         },
         MirInstr::Match {
             results: vec![Reg(3)],

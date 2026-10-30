@@ -988,12 +988,17 @@ function body only) crosses the same way, as upstream's
 condition and never judges it (`Checker::check_comptime_assert`), it rides
 the checked handoff and HIR as `CheckedStmtOp::ComptimeAssert` and
 `HirInstr::ComptimeAssert`, MIR carries it as the straight-line
-`MirInstr::ComptimeAssert` (`comptime.assert`, its message a
-`GenericConstraint::WithMessage`), and `native::mono` decides it with the
-instance's `comptime if`s — so an unrolled `comptime for` copy decides it at
-its own index — dropping one that holds and failing the instance at one
-that does not, if the instance reaches it
+`MirInstr::ComptimeAssert` (`comptime.assert`), and `native::mono` decides
+it with the instance's `comptime if`s — so an unrolled `comptime for` copy
+decides it at its own index — dropping one that holds and failing the
+instance at one that does not, if the instance reaches it
 (`failure::discharge_comptime_asserts`), as `constraint failed: MESSAGE`.
+The message is any compile-time string, as upstream's
+`emitStringExprAsDataToStr` makes it the op's string attribute: the
+checker records the parameter expression it denotes, a t-string being the
+`String` it writes (`Checker::check_assert_message`), the checked op
+carries it (`denotes`), MIR as the op's `message` constant, and the
+elaborator evaluates it only for an instance the assertion fails.
 For the rest of its block the checker knows the asserted condition, as it
 knows a `comptime if` arm's (`Checker::assume_condition`: the `conforms_to`
 atoms below, and each conjunct of the residual proposition the condition

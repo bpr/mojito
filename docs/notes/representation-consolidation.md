@@ -248,7 +248,7 @@ R1410, R1411, and R1413 under *Entries outside the gaps*.
 - **Members**, filed before R1388, to re-probe:
   - Former `Elab` arms: R1171, R1178, R1208.
   - `Self` and associated reads: R513, R436, R415.
-  - Checker arms: R1199, R332, R1220, R1210, R448.
+  - Checker arms: R1199, R332, R1220, R448.
   - Domain: R480, R893, R396, R901, R481, R1197.
   - Constructions: R1175.
   - Spelling: R388 and R398.

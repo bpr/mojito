@@ -776,7 +776,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   also runs ahead of the first body after which the initializer types,
   through `predeclare_lifted_constant`), `check_comptime_assert` types a
   `comptime assert` (its condition through `check_comptime_condition` under
-  `ComptimeTest::Assert`, which words the diagnostics), and
+  `ComptimeTest::Assert`, which words the diagnostics, and its message
+  through `check_assert_message`), and
   `conformance_arm_assumptions` collects what a condition's `conforms_to`
   atoms prove. `constraints.rs:assume_condition` opens the one assumption
   level a condition's knowledge occupies — those atoms, and the conjuncts of
@@ -2856,19 +2857,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `EnclosingBinders::loop_bindings`, read in `Flatten::identifier_read`). `verify/scope.rs`
   (`ScopeCx::constraint`) checks its binders; `verify/concrete.rs` rejects a
   survivor; the text form is `comptime.if` (schema 1.54).
-- `MirInstr::ComptimeAssert { cond }` (`mir/ir.rs`) is a `comptime assert`,
+- `MirInstr::ComptimeAssert { cond, message }` (`mir/ir.rs`) is a `comptime assert`,
   upstream's `kgen.param.assert`: `StmtKind::ComptimeAssert` (parsed by
   `Parser::parse_comptime`; `driver.rs:reject_comptime_statement_outside_function`
   and the struct/trait member parsers reject it outside a function),
   `CheckedStmtOp::ComptimeAssert`, `HirInstr::ComptimeAssert`, then
   `Flatten::lower_instr`, its condition from `Flatten::comptime_condition`
-  and its message a `GenericConstraint::WithMessage`. `native::mono`'s
-  `decide_comptime_op` decides it with the branches (dropping a
-  holding one, folding a failing one to `False`), and
+  and its message the `Const` of the parameter expression
+  `Checker::check_assert_message` recorded (`CheckedStmtOp::ComptimeAssert`'s
+  `denotes`). `native::mono`'s `decide_comptime_op` decides it with the
+  branches (dropping a holding one, folding a failing one to `False` and
+  evaluating its message, `Specializer::assertion_message`), and
   `mono/failure.rs:discharge_comptime_asserts` fails a reached instance at
   a survivor and erases the rest; `verify/scope.rs` checks its binders,
   `verify/concrete.rs` rejects a survivor; the text form is
-  `comptime.assert` (schema 1.81).
+  `comptime.assert` (schema 1.81; its `message` field, schema 1.139).
 - `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` (an untyped attribute
   crossing as the opaque `Value::Attribute`) and `CTFE_FUEL`;
   `VmBackend::{call_concrete, freeze}` run a verified fragment for the

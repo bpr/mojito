@@ -42,17 +42,41 @@ impl Specializer<'_> {
                     .map_err(|construct| self.error(Some(template), construct))?;
                 Ok(Some(0))
             }
-            MirInstr::ComptimeAssert { cond } => {
+            MirInstr::ComptimeAssert { cond, message } => {
                 if self.decide_comptime_condition(template, cond, bindings)? {
                     block.instrs.remove(index);
-                    Ok(Some(0))
-                } else {
-                    **cond = folded_false(cond);
-                    Ok(Some(1))
+                    return Ok(Some(0));
                 }
+                **cond = GenericConstraint::Bool(false);
+                if let Some(Const::Param(expression)) = message {
+                    *message = Some(Const::Str(
+                        self.assertion_message(template, expression, bindings)?,
+                    ));
+                }
+                Ok(Some(1))
             }
             _ => Ok(None),
         }
+    }
+
+    /// The text of a failed assertion's message expression at the
+    /// instance, as upstream evaluates the `kgen.param.assert` message
+    /// once its condition fails: the compile-time `String` or
+    /// `StaticString` the expression's applications compute.
+    fn assertion_message(
+        &mut self,
+        template: &str,
+        expression: &ParamExpr,
+        bindings: &Bindings,
+    ) -> Result<String, MonoError> {
+        let applied = self.applied(template, expression, bindings)?;
+        let value = symbolic::eval_reached_ct(&applied, bindings)?;
+        message_text(&value).ok_or_else(|| {
+            self.error(
+                Some(template),
+                format!("a `comptime assert` message closes to `{value}`, not a string"),
+            )
+        })
     }
 }
 
@@ -141,13 +165,18 @@ pub(super) fn splice_comptime_arm(
     Ok(())
 }
 
-/// A failed assertion's decided condition: `False`, keeping its message.
-fn folded_false(cond: &GenericConstraint) -> GenericConstraint {
-    match cond {
-        GenericConstraint::WithMessage(_, message) => GenericConstraint::WithMessage(
-            Box::new(GenericConstraint::Bool(false)),
-            message.clone(),
-        ),
-        _ => GenericConstraint::Bool(false),
+/// The text a compile-time string value holds: a `String`'s, a
+/// `!kgen.string`'s, or, as upstream's `data_to_str` reads the message's
+/// `StringSpan`, the bytes a view addresses.
+fn message_text(value: &CtValue) -> Option<String> {
+    match value {
+        CtValue::Str(text) | CtValue::KgenString(text) => Some(text.clone()),
+        view => {
+            match mojito_types::param_expr::fold::fold_data_to_str(view, &CtValue::List(Vec::new()))
+            {
+                Ok(CtValue::KgenString(text)) => Some(text),
+                _ => None,
+            }
+        }
     }
 }

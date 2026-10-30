@@ -1753,7 +1753,13 @@ fn instruction_value(instruction: &MirInstr) -> String {
             ]);
             record(tag, &fields)
         }
-        MirInstr::ComptimeAssert { cond } => record(tag, &[("condition", constraint(cond))]),
+        MirInstr::ComptimeAssert { cond, message } => record(
+            tag,
+            &[
+                ("condition", constraint(cond)),
+                ("message", option(message.as_ref().map(const_value))),
+            ],
+        ),
         MirInstr::Match {
             results,
             cases,

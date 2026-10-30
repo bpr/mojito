@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.138
+mojito-mir 1.139
 ```
 
-The writer emits 1.138. The reader accepts 1.0 through 1.138; *Schema 1.0*
+The writer emits 1.139. The reader accepts 1.0 through 1.139; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -914,6 +914,14 @@ path of its declaring module, and the reflection queries `name()`,
 `name[qualified_builtins=True]()`, and `base_name()` to `param_reflect`.
 The package format moves to `mojito-package 153`.
 
+Schema 1.139 gives `comptime.assert` its own `message`, `absent` or
+`present(<constant>)`: a `string` constant, or a `param` constant the
+elaborator evaluates to the message text for an instance the assertion
+fails, where the message had ridden as a `with_message` around the
+condition. The reader takes a record without the field as before, the
+`with_message` text its message. The package format moves to
+`mojito-package 154`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1725,7 +1733,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Match` | `match { results: [reg...], cases: [case { arguments: [reg...], body: [block...] }...], else_arguments: [reg...], else: [block...] }` — `hlcf.match`: the cases in order, each a region that tests its pattern and runs its body, leaving by `match.next` (the next case, or `else` after the last) or `match.complete` (the op's end); `else` runs when no case completed and ends in `yield` (schema 1.74); a case's `arguments` and the `else_arguments` (schema 1.84) are defined by the `match.next`s leaving the region before, and the first case takes none; the `results` (schema 1.85) are defined by each `match.complete` leaving a case and by the else region's `yield` |
 | `ComptimeIf` | `comptime.if { results: [reg...], conditions: [<constraint>...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per condition (schema 1.54) |
 | `ComptimeFor` | `comptime.for { results: [reg...], binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, operands: [reg...], arguments: [reg...], body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `eq { left: operand_expr(<has_next>), right: operand_value(ct_bool(true)) }`, whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58); the `operands` define the body's `arguments` on entry and each `comptime.for.continue` for the next iteration, each `comptime.for.break` defines the `results`, and operands and results agree in number and type, as `ComptimeForOp::verify` requires (schema 1.85) |
-| `ComptimeAssert` | `comptime.assert { condition: <constraint> }` — upstream's `kgen.param.assert`, a `comptime assert` over the function's binders, its message (if any) a `with_message` around the condition; the elaborator judges it per reached instance, failing the instance `constraint failed: MESSAGE`, and concrete MIR carries none (schema 1.81) |
+| `ComptimeAssert` | `comptime.assert { condition: <constraint>, message: absent \| present(<constant>) }` — upstream's `kgen.param.assert`, a `comptime assert` over the function's binders (schema 1.81), its message (schema 1.139) a `string` constant or the `param` constant of a compile-time `String` or `StaticString` expression, as upstream's `data_to_str` attribute; the elaborator judges it per reached instance, evaluating the message only for an instance it fails, which fails `constraint failed: MESSAGE`, and concrete MIR carries none |
 | `GetIter` / `HasNext` / `Next` | `iter.init { source: $vN, dest: $vN }` / `iter.has_next` / `iter.next` over compiler-private iterator storage (schema 1.94 withdraws `iter.try_next`, and schema 1.109 `iter.init`'s `mode` and `prepare`; see *Compatibility*) |
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic

@@ -2186,10 +2186,14 @@ pub enum CheckedStmtOp {
     },
     /// `comptime assert cond[, message]`: the condition's node carries its
     /// [`SemanticAdjustment::ComptimeCondition`], judged per instance by the
-    /// elaborator.
+    /// elaborator. `denotes` is the parameter expression the message's node
+    /// denotes, its constant or the application of the function lifted for
+    /// it, which the elaborator evaluates for an instance the assertion
+    /// fails.
     ComptimeAssert {
         cond: CheckedNodeId,
-        message: Option<String>,
+        message: Option<CheckedNodeId>,
+        denotes: Option<mojito_types::param_expr::ParamExpr>,
     },
     /// `comptime match`, upstream's `hlcf.comptime.if` over its cases: the
     /// statement anchoring the subject (`comptime $match<id> = subject`),
@@ -2326,7 +2330,9 @@ impl CheckedStmtOp {
                 .flat_map(|(condition, _)| condition.expressions())
                 .collect(),
             Self::ComptimeFor { iter, .. } | Self::For { iter, .. } => vec![*iter],
-            Self::ComptimeAssert { cond, .. } => vec![*cond],
+            Self::ComptimeAssert { cond, message, .. } => {
+                std::iter::once(*cond).chain(*message).collect()
+            }
             Self::While { cond, .. } => cond.expressions(),
             Self::Return(value) => value.iter().copied().collect(),
             Self::With { items, .. } => items.iter().map(|item| item.context).collect(),
@@ -2569,9 +2575,14 @@ impl CheckedStmtOp {
                 iter: map.expression(*iter),
                 body: block(map, body),
             },
-            Self::ComptimeAssert { cond, message } => Self::ComptimeAssert {
+            Self::ComptimeAssert {
+                cond,
+                message,
+                denotes,
+            } => Self::ComptimeAssert {
                 cond: map.expression(*cond),
-                message: message.clone(),
+                message: message.map(|message| map.expression(message)),
+                denotes: denotes.clone(),
             },
             Self::While { cond, body, orelse } => Self::While {
                 cond: cond.map_operands(map),
@@ -6353,9 +6364,12 @@ impl<'a> ArenaBuilder<'a> {
             },
             StmtKind::ComptimeAssert { cond, message } => CheckedStmtOp::ComptimeAssert {
                 cond: self.expr(cond),
-                message: message.as_ref().and_then(|message| match &message.kind {
-                    ExprKind::Str(text) => Some(text.clone()),
-                    _ => None,
+                message: message.as_ref().map(|message| self.expr(message)),
+                denotes: message.as_ref().and_then(|message| {
+                    self.facts(&message.source_span())
+                        .comptime_value
+                        .as_deref()
+                        .cloned()
                 }),
             },
             StmtKind::Scope(body) => CheckedStmtOp::Scope(self.block(body)),
@@ -6925,7 +6939,8 @@ node_facts! {
         /// The binding a declaring statement introduces.
         statement_binding: mojito_types::origin::OwnerId,
         /// The application a local `comptime` binding denotes, which each
-        /// of its reads materializes.
+        /// of its reads materializes, or the parameter expression a
+        /// `comptime assert` message denotes.
         comptime_value: Box<mojito_types::param_expr::ParamExpr>,
         /// A nested declaration's explicit captures.
         captures: Vec<CheckedCapture>,

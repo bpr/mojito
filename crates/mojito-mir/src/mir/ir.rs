@@ -2879,12 +2879,14 @@ pub enum MirInstr {
         orelse: Vec<MirBlock>,
     },
     /// `kgen.param.assert`: a compile-time assertion over parameter
-    /// expressions, its message (if any) riding as
-    /// [`GenericConstraint::WithMessage`]. The elaborator judges it per
-    /// reached instance, failing the instance when it does not hold;
-    /// concrete MIR carries none.
+    /// expressions. The elaborator judges `cond` per reached instance,
+    /// failing the instance when it does not hold with `message`, a
+    /// compile-time string ([`Const::Str`]) or the parameter expression
+    /// ([`Const::Param`]) it evaluates to one there; concrete MIR carries
+    /// none.
     ComptimeAssert {
         cond: Box<GenericConstraint>,
+        message: Option<Const>,
     },
     /// `hlcf.match`: run `cases` in order until one completes. A case
     /// region tests its pattern, binds, and runs its body: a failed test or

@@ -56,10 +56,8 @@ fn reached_assert(instructions: &[MirInstr]) -> Option<String> {
     instructions
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::ComptimeAssert { cond } => Some(match &**cond {
-                GenericConstraint::WithMessage(_, message) => {
-                    format!("constraint failed: {message}")
-                }
+            MirInstr::ComptimeAssert { message, .. } => Some(match message {
+                Some(Const::Str(message)) => format!("constraint failed: {message}"),
                 _ => "constraint failed: ".to_string(),
             }),
             instruction => mojito_mir::mir::instruction_regions(instruction)

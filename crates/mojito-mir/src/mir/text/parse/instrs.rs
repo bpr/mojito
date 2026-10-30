@@ -957,9 +957,29 @@ impl Decoder {
                 body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
             }),
-            "comptime.assert" => Some(MirInstr::ComptimeAssert {
-                cond: Box::new(self.req(value, fields, "condition", Self::constraint)?),
-            }),
+            "comptime.assert" => {
+                let cond = self.req(value, fields, "condition", Self::constraint)?;
+                // Before schema 1.139 a message rode as `with_message`
+                // around the condition.
+                Some(match self.field(fields, "message") {
+                    Ok(message) => MirInstr::ComptimeAssert {
+                        cond: Box::new(cond),
+                        message: self
+                            .option_value(Some(message))
+                            .and_then(|v| self.constant(v)),
+                    },
+                    Err(()) => match cond {
+                        GenericConstraint::WithMessage(cond, message) => MirInstr::ComptimeAssert {
+                            cond,
+                            message: Some(Const::Str(message)),
+                        },
+                        cond => MirInstr::ComptimeAssert {
+                            cond: Box::new(cond),
+                            message: None,
+                        },
+                    },
+                })
+            }
             "match" => Some(MirInstr::Match {
                 results: self.added_regs(fields, "results"),
                 cases: self.req(value, fields, "cases", |d, v| Some(d.cases(v)))?,

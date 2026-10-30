@@ -270,8 +270,11 @@ assets/type_error/comptime_assert_closed_false.mojo	compile-reject	agree	error: 
 assets/type_error/comptime_assert_dynamic_value.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime assert' expression
 assets/type_error/comptime_assert_fails_at_instance.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comptime_assert_fails_in_unrolled_iteration.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/comptime_assert_message_not_string.mojo	compile-reject	agree	error: cannot implicitly convert 'Int' to a `StringSpan`
 assets/type_error/comptime_assert_proof_is_block_scoped.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'T' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/comptime_assert_proof_is_positional.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'T' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/comptime_assert_string_message.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/comptime_assert_tstring_message.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comptime_call_raising.mojo	compile-reject	agree	error: cannot call raising function in type parameter
 assets/type_error/comptime_call_signature_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, h(Int(2))]' value to 'SIMD[.int32, 4]'
 assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'

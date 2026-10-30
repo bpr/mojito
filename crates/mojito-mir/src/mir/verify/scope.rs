@@ -448,8 +448,13 @@ impl ScopeCx<'_> {
                         self.expr_nodes(&role, "lane mask", value, &mut nested);
                     }
                 }
-                if let MirInstr::ComptimeAssert { cond } = instruction {
+                if let MirInstr::ComptimeAssert { cond, message } = instruction {
                     self.constraint(&format!("block {index} compile-time assertion"), cond);
+                    if let Some(Const::Param(value)) = message {
+                        let role = format!("block {index} compile-time assertion message");
+                        let mut nested = Vec::new();
+                        self.expr_nodes(&role, "assertion message", value, &mut nested);
+                    }
                 }
                 if let MirInstr::Const {
                     k: Const::Param(value),

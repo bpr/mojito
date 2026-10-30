@@ -192,16 +192,12 @@ impl<'a> Flatten<'a> {
                 });
             }
             HirInstr::ComptimeAssert { cond, message } => {
-                let cond = self.comptime_condition(cond);
-                let cond = match message {
-                    Some(message) => {
-                        GenericConstraint::WithMessage(Box::new(cond), message.clone())
-                    }
-                    None => cond,
-                };
-                self.emit(MirInstr::ComptimeAssert {
-                    cond: Box::new(cond),
+                let cond = Box::new(self.comptime_condition(cond));
+                let message = message.as_ref().map(|message| match message.as_constant() {
+                    Some(mojito_types::ct::CtValue::Str(text)) => Const::Str(text.clone()),
+                    _ => Const::Param(message.clone()),
                 });
+                self.emit(MirInstr::ComptimeAssert { cond, message });
             }
             HirInstr::Loop { label, body } => {
                 let body = self.hir_region(body);

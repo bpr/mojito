@@ -4073,6 +4073,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     already runs, since the functions a compile-time call applies are
     collected before any declaration (`applicable_functions`,
     `checker/comptime_validation.rs`).
+  - Probe: a body's compile-time call stops the same way: `comptime s =
+    describe(n)` or `comptime assert n > 0, describe(n)` in `def f[n:
+    Int]()` above `def describe(n: Int) -> String`, which the pin runs.
   - Found while landing a function applied in a signature (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -6161,26 +6164,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`substitute_predicate`) to carry an expression.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R1210 A `comptime assert` message other than a string literal is
-  rejected**
-
-  Problem: `comptime assert n > 5, t"n is {n}"` fails `f[3]` at the pin
-  with `constraint failed: n is 3`, while Mojito rejects the message as
-  unsupported.
-  - The pin evaluates the message per instance, as a compile-time
-    `String` over the instance's parameters.
-  - `GenericConstraint::WithMessage` carries a literal `String`, so the
-    MIR `comptime.assert` has nowhere to put a message expression the
-    elaborator would evaluate.
-  - Probe: a t-string message, `t"n is {n}"`.
-  - Probe: `String("n is ", n)` (`constraint failed: n is 3` at `f[3]`).
-  - Probe: `"lit" + "eral"`, which runs at the pin.
-  - Probe: upstream's `_static_tuple_construction_checks` message,
-    `String("…: ", reflect[T].name())`.
-  - Upstream's stdlib spells such messages at about 20 sites.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R76 `reflect[T]` of a non-struct type is rejected**
 
@@ -10430,6 +10413,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     delete the arm.
   - Probe: `print("x" + s, "ab" == s, "ab" != s)` over `s = String("ab")`
     prints `xab True False`, here and at the pin.
+  - Probe: `String("a") + t` over a `StaticString` `t` is rejected
+    ("operator '+' is not defined for String and StringSpan"), since the
+    bundled `String.__add__` takes `Self` where upstream's takes
+    `StringSlice`; the `comptime assert` message `String("bad: ") +
+    reflect[T].name()` fails the same way.
   - Depends on R1652 (a literal receiver is the struct).
   - Model: Opus, Not Planned.
 
@@ -11301,8 +11289,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     "Could not derive Writable - a member field does not implement
     Writable", where the pin's `_field_conforms_to_error` names both
     ("Could not derive Writable for Holder - member field `o: Opaque` does
-    not implement Writable"). The helper's assert message must be a
-    literal (R1210).
+    not implement Writable"). The helper, whose `StaticString` result is
+    the assert message, is not bundled.
   - Probe: a user trait whose default is upstream's body text stops at
     `r.field_ref[i](this)`; its `comptime WriterType = type_of(writer)`
     checks.
@@ -11324,8 +11312,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `std/hash/hash.mojo`).
   - `reflect[Self]` in a plain struct's method already reads the fields.
   - The bodies read each field through `r.field_ref[i](self)` (R77), and
-    assert its conformance with `_field_conforms_to_error`, whose message
-    must be a literal (R1210).
+    assert its conformance with the message `_field_conforms_to_error`
+    builds, which is not bundled.
   - The bundled traits' requirements stay `...` until both check.
   - Done when both traits declare upstream's bodies and the two synthesis
     passes are gone.
@@ -12685,6 +12673,10 @@ residue found inside a task moves to the task that owns its fix.
   *Ts)` writes every argument, as the pin's enum integration test does.
   - Probe: `print(String("span:", 3, "..", 7))` prints `span:3..7` at the
     pin.
+  - Probe: the `comptime assert` message `String("n is ", n)` fails `f[3]`
+    with `constraint failed: n is 3` at the pin, as does upstream's
+    `_static_tuple_construction_checks` message `String("…: ",
+    reflect[T].name())`.
   - Found while landing `enum` (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.

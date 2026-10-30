@@ -704,21 +704,20 @@ impl Checker {
 
     /// A `comptime assert`: its condition is checked as a `comptime if`
     /// condition is, never judged here — the elaborator judges it per
-    /// reached instance. The message is a string literal. The condition's
-    /// bound reading, when it closes, for the knowledge it introduces. A
-    /// condition over no parameter that folds to `False` is recorded as a
-    /// failing assertion, which ends every path through it.
+    /// reached instance, and its message is a compile-time string
+    /// ([`Self::check_assert_message`]). The condition's bound reading,
+    /// when it closes, for the knowledge it introduces. A condition over no
+    /// parameter that folds to `False` is recorded as a failing assertion,
+    /// which ends every path through it.
     pub(super) fn check_comptime_assert(
         &self,
         cond: &Expr,
         message: Option<&Expr>,
     ) -> Result<Option<GenericConstraint>, TypeError> {
-        if message.is_some_and(|message| !matches!(message.kind, ExprKind::Str(_))) {
-            return Err(TypeError::Unsupported(
-                "a 'comptime assert' message other than a string literal".to_string(),
-            ));
-        }
         let constraint = self.check_comptime_condition(cond, ComptimeTest::Assert)?;
+        if let Some(message) = message {
+            self.check_assert_message(message)?;
+        }
         if constraint.as_ref().is_some_and(|constraint| {
             matches!(
                 self.fold_closed_constraint(constraint.clone()),
@@ -728,6 +727,50 @@ impl Checker {
             self.record_at(cond.source_span()).failing_assertion = true;
         }
         Ok(constraint)
+    }
+
+    /// A `comptime assert` message: a compile-time expression converting
+    /// to a `StringSpan`, which upstream's `emitStringExprAsDataToStr`
+    /// makes the assertion's string attribute — a literal, or a `String`
+    /// or `StaticString` expression over the parameters in scope
+    /// (`String("n is ") + String(n)`, `"lit" + "eral"`). A template string
+    /// is first the `String` it writes, the construction
+    /// `String(t"n is {n}")` spelled in its place. Recorded on the
+    /// message's span as the parameter expression it denotes, or the
+    /// application of the function lifted for it, which the elaborator
+    /// evaluates for an instance the assertion fails.
+    fn check_assert_message(&self, message: &Expr) -> Result<(), TypeError> {
+        use mojito_types::ct::CtValue;
+        let value = if let ExprKind::Str(text) = &message.kind {
+            self.param_context
+                .constant(CtValue::Str(text.clone()))
+                .map_err(|error| TypeError::InvariantViolation(error.to_string()))?
+        } else {
+            self.reject_dynamic_condition(message, ComptimeTest::Assert)?;
+            let _position = self.comptime_position();
+            let spelled =
+                matches!(message.kind, ExprKind::TString { .. }).then(|| written_string(message));
+            let written = spelled.as_ref().unwrap_or(message);
+            let ty = self.infer(written)?;
+            if let Some(construction) = &spelled {
+                self.record_spelled_construction(message, construction.clone(), &ty);
+            }
+            let stringish = ty.is_string_literal()
+                || matches!(ty.kind(), TyKind::KgenString)
+                || matches!(ty.kind(), TyKind::Struct(name, args)
+                    if (args.is_empty() && mojito_types::types::is_stdlib_string_struct(name))
+                        || mojito_types::types::is_stdlib_string_span_struct(name));
+            if !stringish {
+                return Err(TypeError::Unsupported(format!(
+                    "cannot implicitly convert '{ty}' to a `StringSpan`"
+                )));
+            }
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(written)
+                .or_else(|error| self.lifted_application(written).ok_or(error))?
+        };
+        self.record_at(message.source_span()).comptime_value = Some(Box::new(value));
+        Ok(())
     }
 
     /// Whether the condition of a conditional expression is a parameter
@@ -5387,4 +5430,24 @@ fn typed_mlir_attribute(body: &str, ty: &str) -> Option<(CtValue, Ty)> {
         .collect::<Option<Vec<_>>>()?;
     (i64::try_from(lanes.len()).ok() == Some(width))
         .then_some((CtValue::Simd { dtype, lanes }, storage))
+}
+
+/// The construction `String(t"…")` a template-string `message` of a
+/// `comptime assert` stands for: the conversion upstream applies before the
+/// message converts to a `StringSpan`, spelled under identities derived
+/// from the message's, with the template string a copy of the message.
+fn written_string(message: &Expr) -> Expr {
+    let template =
+        super::initializer_list::spelled_node(message, 1, message.kind.clone(), message.span);
+    super::initializer_list::spelled_node(
+        message,
+        0,
+        ExprKind::Call {
+            name: mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
+            param_args: Vec::new(),
+            args: vec![template],
+            kwargs: Vec::new(),
+        },
+        message.span,
+    )
 }

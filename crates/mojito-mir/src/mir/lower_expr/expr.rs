@@ -62,7 +62,13 @@ impl<'a> Flatten<'a> {
         for adjustment in node.adjustments() {
             if let mojito_checked::checked::SemanticAdjustment::InstanceAssertion(cond) = adjustment
             {
-                self.emit(MirInstr::ComptimeAssert { cond: cond.clone() });
+                let (cond, message) = match &**cond {
+                    GenericConstraint::WithMessage(cond, message) => {
+                        (cond.clone(), Some(Const::Str(message.clone())))
+                    }
+                    _ => (cond.clone(), None),
+                };
+                self.emit(MirInstr::ComptimeAssert { cond, message });
             }
         }
         if let Some(value) = self

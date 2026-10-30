@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime assert` message may now be any compile-time string
+  expression over the parameters in scope, as at the pin: a t-string
+  (`t"n is {n}"`, the `String` it writes), a `String` or `StaticString`
+  expression (`String("n is ") + String(n)`, `"lit" + "eral"`,
+  `reflect[T].name()`, a call), evaluated only for an instance the
+  assertion fails, where every message but a literal was rejected as
+  unsupported. A message that is no string is the pin's "cannot implicitly
+  convert 'Int' to a `StringSpan`" (R1210). MIR text moves to 1.139 and
+  the package format to `mojito-package 154`.
 - `reflect[T].name()`, `reflect[T].name[qualified_builtins=True]()`, and
   `reflect[T].base_name()` now return the `StaticString` the pin prints, a
   struct qualified by its declaring module (`probe.Point`,
