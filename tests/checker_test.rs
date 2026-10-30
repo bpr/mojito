@@ -2200,38 +2200,29 @@ fn accepts_comptime_simd_width() {
 
 #[test]
 fn layout_query_simd_widths_keep_application_identity() {
-    let prefix = "struct Pair:\n    var a: Int\n    var b: Bool\n\ndef h[T: AnyType](x: SIMD[DType.float32, size_of[T]()]) -> Int:\n    return Int(x[0])\n\n";
-    ok(&format!(
+    let prefix = "from std.sys import size_of\n\nstruct Pair:\n    var a: Int\n    var b: Bool\n\ndef h[T: AnyType](x: SIMD[DType.float32, size_of[T]()]) -> Int:\n    return Int(x[0])\n\n";
+    ok_std(&format!(
         "{prefix}def main():\n    var v = SIMD[DType.float32, size_of[Pair]()](3.0)\n    var result = h[Pair](v)\n"
     ));
-    let mismatch = err(&format!(
+    let mismatch = err_std(&format!(
         "{prefix}def main():\n    var result = h[Pair](SIMD[DType.float32, 16](3.0))\n"
     ));
     assert!(
-        matches!(mismatch, TypeError::TypeMismatch { expected, found, .. }
-            if expected == "SIMD[DType.float32, size_of[Pair]()]"
-                && found == "SIMD[DType.float32, 16]")
+        matches!(&mismatch, TypeError::TypeMismatch { expected, found, .. }
+            if expected.contains("size_of") && expected.contains("[Pair]")
+                && found == "SIMD[DType.float32, 16]"),
+        "{mismatch:?}"
     );
-    assert!(matches!(
-        err("def f(x: SIMD[DType.float32, size_of[Int, Bool]()]):\n    pass\n"),
-        TypeError::WrongTypeArgCount {
-            expected: 1,
-            got: 2,
-            ..
-        }
-    ));
-    assert!(matches!(
-        err("def f(x: SIMD[DType.float32, size_of[Int](1)]):\n    pass\n"),
-        TypeError::ArityMismatch {
-            expected: 0,
-            got: 1,
-            ..
-        }
-    ));
-    assert!(matches!(
-        err("def f(x: SIMD[DType.float32, size_of[3]()]):\n    pass\n"),
-        TypeError::TypeMismatch { expected, .. } if expected == "a type"
-    ));
+    for shape in ["size_of[Int, Bool]()", "size_of[Int](1)", "size_of[3]()"] {
+        let error = err_std(&format!(
+            "from std.sys import size_of\n\ndef main():\n    print({shape})\n"
+        ));
+        assert!(
+            matches!(&error, TypeError::BadCall { reason, .. }
+                if reason == "no overload matches the supplied arguments"),
+            "{shape}: {error:?}"
+        );
+    }
 }
 
 #[test]

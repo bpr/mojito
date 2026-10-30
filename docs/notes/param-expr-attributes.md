@@ -309,8 +309,9 @@ test `param_expr_residual_is_not_false` pin this.
 - Native monomorphization closes a residual under the mono environment or
   reports the contextual unsupported boundary; lowering sees concrete types.
   Layout is asked only of a concrete type (`LayoutError::Symbolic`), and the
-  elaborator answers every layout query (`MirInstr::SizeOf`) under the
-  compilation's native target, so concrete MIR carries the constant.
+  elaborator answers every layout query (`kgen.get_sizeof`,
+  `kgen.get_alignof`) under the compilation's native target, so concrete
+  MIR carries the constant.
 - `symbol::mangle` returns `Result<String, NonConstantSpecialization>` and
   validates the whole key before writing it. `specialized_method_values`
   returns `None` for a residual value and skips only a deferred callable slot.
@@ -618,8 +619,10 @@ never folded and equal by structure: `function` is the callable symbol,
 compile-time route established for it, which concrete uses read
 (`SimdWidth::known`, `require_constant`) while type identity stays the
 application — an evaluated node and an unevaluated one are two nodes,
-built in two passes that never meet. A layout query is `Apply { function:
-"size_of", args: [type] }` of kind `Int` (`ParamContext::size_of`). A call
+built in two passes that never meet. A layout query is KGEN's `Apply { function:
+"kgen.get_sizeof" | "kgen.get_alignof", args: [type, target] }` of kind
+`index` (`ParamContext::layout_query`), which `std.sys.info`'s `size_of` and
+`align_of` bodies spell. A call
 of an `@always_inline("builtin")` callable is the exception, as at the pin
 (`foldInlineBuiltinFunction`): the check folds its body once, at the
 declaration, over binders of its own (`builtin_body_binder`), and a call
@@ -641,9 +644,9 @@ both sides of a call and rejects `SIMD[DType.float32, 8]`
 with the AST route is in `docs/roadmap.md` (R138, R139, R140).
 
 **Below the waist.** The concrete verifier rejects every form in the table
-and every layout query: the elaborator answers `MirInstr::SizeOf` from the
-substituted type under the compilation's native target
-(`native::mono::answer_layout_queries`), and `LayoutCx::layout_of` refuses a
+and every unanswered layout query: the elaborator answers
+`kgen.get_sizeof`/`kgen.get_alignof` from the substituted type under the
+compilation's native target (`native::mono::layout_query_answer`), and `LayoutCx::layout_of` refuses a
 symbolic type (`LayoutError::Symbolic`) before any per-form rule. A `def`
 with a value parameter beside its type parameters keeps its clone until the
 elaborator binds the value from the call (`Elab::template_serves_def`); every

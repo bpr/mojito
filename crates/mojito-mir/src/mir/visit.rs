@@ -218,7 +218,6 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             .iter_mut()
             .try_for_each(|capture| visitor.visit_place(&mut capture.place)),
         I::MaterializeLiteral { target: ty, .. }
-        | I::SizeOf { ty, .. }
         | I::PointerStorageTake { element: ty, .. }
         | I::PointerStorageDestroy { element: ty, .. }
         | I::UninitStorageTake { element: ty, .. }
@@ -597,9 +596,10 @@ mod tests {
         let mut place = MirPlace::root(0, Some(int()));
         place.project(Proj::Variant(VariantIndex::Known(0)), Ty::new(TyKind::Bool));
         let region = vec![MirBlock {
-            instrs: vec![MirInstr::SizeOf {
+            instrs: vec![MirInstr::MaterializeLiteral {
                 dest: Reg(5),
-                ty: int(),
+                value: Reg(0),
+                target: int(),
             }],
             term: MirTerm::TryYield(Vec::new()),
         }];

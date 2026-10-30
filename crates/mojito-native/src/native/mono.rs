@@ -39,8 +39,8 @@ use mojito_native_core::target::NativeTarget;
 use mojito_symbol::symbol::InstanceArg;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
-    CURRENT_TARGET_FUNCTION, LIST_LENGTH_FUNCTION, PackQuery, ParamBindings, ParamContext,
-    ParamExpr, ParamKind, ParamRef, SIZE_OF_FUNCTION,
+    CURRENT_TARGET_FUNCTION, LIST_LENGTH_FUNCTION, LayoutQuery, PackQuery, ParamBindings,
+    ParamContext, ParamExpr, ParamKind, ParamRef,
 };
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, erase_origins,
@@ -564,23 +564,56 @@ struct LayoutOracle {
 }
 
 impl LayoutOracle {
-    /// The size of the concrete `ty`, or the layout error naming why not.
-    fn size_of(&self, ty: &Ty) -> Result<i64, MonoError> {
-        self.catalog.fill_layout(&self.structs, ty);
-        let structs = self.structs.borrow();
-        let layout = mojito_native_core::layout::LayoutCx {
-            target: &self.target,
-            structs: &structs,
-        };
-        layout
-            .layout_of(ty)
-            .map(|layout| layout.size as i64)
-            .map_err(|error| MonoError {
-                kind: MonoErrorKind::Unsupported,
-                function: None,
-                construct: format!("size_of of `{ty}`: {error}"),
-            })
+    /// `query`'s answer for the concrete `ty` under `target`, or the layout
+    /// error naming why not.
+    fn answer(&self, query: LayoutQuery, ty: &Ty, target: &CtValue) -> Result<i64, MonoError> {
+        layout_query_answer(
+            &self.target,
+            &self.catalog,
+            &self.structs,
+            query,
+            ty,
+            target,
+        )
     }
+}
+
+/// `query`'s answer for the concrete `ty` laid out for `native` over the
+/// structs `catalog` fills into `structs`, under the `!kgen.target`
+/// `target`. A layout under any target other than `native`'s is not
+/// supported yet: the elaborator lays out for its own.
+fn layout_query_answer(
+    native: &NativeTarget,
+    catalog: &StructCatalog,
+    structs: &RefCell<StructFieldIndex>,
+    query: LayoutQuery,
+    ty: &Ty,
+    target: &CtValue,
+) -> Result<i64, MonoError> {
+    let construct = |detail: String| MonoError {
+        kind: MonoErrorKind::Unsupported,
+        function: None,
+        construct: format!("{} of `{ty}`: {detail}", query.function()),
+    };
+    if !matches!(target, CtValue::KgenTarget(target) if **target == native.kgen_target()) {
+        return Err(construct(
+            "a layout query under a target other than the compilation's is not supported yet"
+                .to_string(),
+        ));
+    }
+    catalog.fill_layout(structs, ty);
+    let structs = structs.borrow();
+    let layout = mojito_native_core::layout::LayoutCx {
+        target: native,
+        structs: &structs,
+    };
+    layout
+        .layout_of(ty)
+        .map(|layout| match query {
+            LayoutQuery::Size => layout.size as i64,
+            LayoutQuery::Align => layout.align as i64,
+        })
+        .map_err(|error| construct(error.to_string()))
 }
 
 /// A struct's own parameters, and its associated types, compile-time value

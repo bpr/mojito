@@ -303,10 +303,7 @@ impl Checker {
             }
             self.retry_deferred_shells(stmts, &mut deferred_shells);
         }
-        // A waiting alias registers once the struct types have.
-        for index in waiting_aliases {
-            self.register_module_alias(&stmts[index])?;
-        }
+        self.settle_struct_type_dependents(stmts, waiting_aliases)?;
         drop(phase);
         let phase = timing::span("declarations.signatures");
         let parked_conformers = waiting_conformers.clone();
@@ -729,6 +726,21 @@ impl Checker {
             }
             registered => registered.map(|()| false),
         }
+    }
+
+    /// Register each alias that waited for the struct types, and classify
+    /// the callables a struct's `comptime` member defaults (`t: Tgt =
+    /// Tgt.current()`), which classify once the struct's members register.
+    fn settle_struct_type_dependents(
+        &mut self,
+        stmts: &[Stmt],
+        waiting_aliases: Vec<usize>,
+    ) -> Result<(), TypeError> {
+        for index in waiting_aliases {
+            self.register_module_alias(&stmts[index])?;
+        }
+        self.classify_applicable_signatures(stmts);
+        Ok(())
     }
 
     fn register_module_alias(&mut self, statement: &Stmt) -> Result<(), TypeError> {

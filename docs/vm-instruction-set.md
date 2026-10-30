@@ -390,19 +390,6 @@ analysis this is a definition: storing into a moved variable reinitializes it.
 
 ## Scalar Computation
 
-### `layout.size_of` — Target-layout byte size
-
-```text
-layout.size_of { dest: %r0, type: Padded }
-```
-
-Produces an `Int` from the shared native ABI layout engine. The checked type is
-part of the instruction, and verification rejects types without a concrete
-runtime layout; the VM does not infer layout from a runtime value. Only a
-generator carries the query: the elaborator answers it under the compilation's
-native target (`native::mono`), so concrete MIR holds the constant; the
-instruction is a verifier finding on concrete MIR.
-
 ### `type.name` — Unqualified spelling of a parametric type
 
 ```text

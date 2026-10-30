@@ -1,16 +1,17 @@
 # Upstream's `std/sys/info.mojo`, in part: `_TargetType`,
 # `_current_target`, `_empty_target`, the `CompilationTarget` struct with
 # `current`, `_unknown`, `_has_feature`, and its x86 feature queries,
-# `simd_bit_width`, `simd_byte_width`, and `bit_width_of`, verbatim, and
-# the home of `size_of`, which stays the compiler's layout query
-# (upstream's body is a `#kgen.param.expr<get_sizeof>` attribute).
+# `is_32bit`, `is_64bit`, `simd_bit_width`, `simd_byte_width`,
+# `stdlib_plugin`, `size_of`, `align_of`, `bit_width_of`, and
+# `simd_width_of`, verbatim.
 # Omitted: `current_accelerator`, `unsupported_target_error`, the
 # string-field predicates and the free target functions over them (R1635),
-# the Neon and RISC-V queries, which read `is_apple_silicon` (R1635),
-# `align_of` and the `target` parameter of `size_of` and `bit_width_of`,
-# with `simd_width_of`, `is_32bit`, and `is_64bit` (R1634), and
+# the Neon and RISC-V queries, which read `is_apple_silicon` (R1635), and
 # `_first_conforming_plugin`, with the `TargetPluginSelector` import
 # (R1694).
+# `is_32bit` and `is_64bit` follow `simd_width_of`, where upstream's precede
+# `simd_bit_width`, since a `def` cannot yet call one declared below it
+# (R393).
 # The `stdlib_plugin` member is `DefaultPlugin.HookFor[Self()]`, where
 # upstream's is `Self._first_conforming_plugin[StdPlugin,
 # default=DefaultPlugin].HookFor[Self()]`. The two agree on every target
@@ -260,29 +261,229 @@ def stdlib_plugin[target: _TargetType = _current_target()]() -> StaticString:
 
 
 @inline(.nodebug)
+def size_of[
+    type: AnyType, target: CompilationTarget = CompilationTarget.current()
+]() -> Int:
+    """Returns the size of (in bytes) of the type.
+
+    The size includes any padding required by the type's alignment, so it is
+    always a multiple of `align_of[type]()` and always matches the stride
+    between adjacent elements of an array of the type.
+
+    Parameters:
+        type: The type in question.
+        target: The target architecture.
+
+    Returns:
+        The size of the type in bytes.
+
+    Example:
+    ```mojo
+    from std.sys.info import size_of
+    def main() raises:
+        print(
+            size_of[UInt8]() == 1,
+            size_of[UInt16]() == 2,
+            size_of[Int32]() == 4,
+            size_of[Float64]() == 8,
+            size_of[
+                SIMD[.uint8, 4]
+            ]() == 4,
+        )
+    ```
+    Note: `align_of` is in same module.
+    """
+    comptime mlir_type = __mlir_attr[
+        `#kgen.param.expr<rebind, #kgen.type<!kgen.param<`,
+        type,
+        `>> : `,
+        AnyType,
+        `> : !kgen.type`,
+    ]
+    return Int(
+        SIMDLength(
+            mlir_value=__mlir_attr[
+                `#kgen.param.expr<get_sizeof, #kgen.type<`,
+                mlir_type,
+                `> : !kgen.type,`,
+                target._mlir_value,
+                `> : index`,
+            ]
+        )
+    )
+
+
+@inline(.nodebug)
+def size_of[
+    dtype: DType, target: CompilationTarget = CompilationTarget.current()
+]() -> Int:
+    """Returns the size of (in bytes) of the dtype.
+
+    Parameters:
+        dtype: The DType in question.
+        target: The target architecture.
+
+    Returns:
+        The size of the dtype in bytes.
+    """
+    return Int(
+        mlir_value=__mlir_attr[
+            `#kgen.param.expr<get_sizeof, #kgen.type<`,
+            Scalar[dtype]._mlir_type,
+            `> : !kgen.type,`,
+            target._mlir_value,
+            `> : index`,
+        ]
+    )
+
+
+@always_inline("builtin")
+def align_of[
+    type: AnyType, target: CompilationTarget = CompilationTarget.current()
+]() -> Int:
+    """Returns the align of (in bytes) of the type.
+
+    Parameters:
+        type: The type in question.
+        target: The target architecture.
+
+    Returns:
+        The alignment of the type in bytes.
+    """
+    comptime mlir_type = __mlir_attr[
+        `#kgen.param.expr<rebind, #kgen.type<!kgen.param<`,
+        type,
+        `>> : `,
+        AnyType,
+        `> : !kgen.type`,
+    ]
+    return Int(
+        SIMDLength(
+            mlir_value=__mlir_attr[
+                `#kgen.param.expr<get_alignof, #kgen.type<`,
+                +mlir_type,
+                `> : !kgen.type,`,
+                target._mlir_value,
+                `> : index`,
+            ]
+        )
+    )
+
+
+@inline(.nodebug)
+def align_of[
+    dtype: DType, target: CompilationTarget = CompilationTarget.current()
+]() -> Int:
+    """Returns the align of (in bytes) of the dtype.
+
+    Parameters:
+        dtype: The DType in question.
+        target: The target architecture.
+
+    Returns:
+        The alignment of the dtype in bytes.
+    """
+    return Int(
+        SIMDLength(
+            mlir_value=__mlir_attr[
+                `#kgen.param.expr<get_alignof, #kgen.type<`,
+                Scalar[dtype]._mlir_type,
+                `> : !kgen.type,`,
+                target._mlir_value,
+                `> : index`,
+            ]
+        )
+    )
+
+
+@inline(.nodebug)
 def bit_width_of[
     type: RegisterPassable,
+    target: CompilationTarget = CompilationTarget.current(),
 ]() -> Int:
     """Returns the size of (in bits) of the type.
 
     Parameters:
         type: The type in question.
+        target: The target architecture.
 
     Returns:
         The size of the type in bits.
     """
     comptime CHAR_BIT = 8
-    return CHAR_BIT * size_of[type]()
+    return CHAR_BIT * size_of[type, target=target]()
 
 
 @inline(.nodebug)
-def bit_width_of[dtype: DType]() -> Int:
+def bit_width_of[
+    dtype: DType, target: CompilationTarget = CompilationTarget.current()
+]() -> Int:
     """Returns the size of (in bits) of the dtype.
 
     Parameters:
         dtype: The type in question.
+        target: The target architecture.
 
     Returns:
         The size of the dtype in bits.
     """
-    return bit_width_of[Scalar[dtype]._mlir_type]()
+    return bit_width_of[Scalar[dtype]._mlir_type, target=target]()
+
+
+@inline(.nodebug)
+def simd_width_of[
+    type: RegisterPassable,
+    target: CompilationTarget = CompilationTarget.current(),
+]() -> Int:
+    """Returns the vector size of the type on the host system.
+
+    Parameters:
+        type: The type in question.
+        target: The target architecture.
+
+    Returns:
+        The vector size of the type on the host system.
+    """
+    return simd_bit_width[target]() // bit_width_of[type, target]()
+
+
+@inline(.nodebug)
+def simd_width_of[
+    dtype: DType, target: CompilationTarget = CompilationTarget.current()
+]() -> Int:
+    """Returns the vector size of the type on the host system.
+
+    Parameters:
+        dtype: The DType in question.
+        target: The target architecture.
+
+    Returns:
+        The vector size of the dtype on the host system.
+    """
+    return simd_width_of[Scalar[dtype]._mlir_type, target]()
+
+
+@inline(.nodebug)
+def is_32bit[target: CompilationTarget = CompilationTarget.current()]() -> Bool:
+    """Returns True if the maximum integral value is 32 bit.
+
+    Parameters:
+        target: The target architecture.
+
+    Returns:
+        True if the maximum integral value is 32 bit, False otherwise.
+    """
+    return size_of[DType.int, target]() == size_of[DType.int32, target]()
+
+
+@inline(.nodebug)
+def is_64bit[target: CompilationTarget = CompilationTarget.current()]() -> Bool:
+    """Returns True if the maximum integral value is 64 bit.
+
+    Parameters:
+        target: The target architecture.
+
+    Returns:
+        True if the maximum integral value is 64 bit, False otherwise.
+    """
+    return size_of[DType.int, target]() == size_of[DType.int64, target]()

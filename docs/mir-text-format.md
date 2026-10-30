@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.147
+mojito-mir 1.148
 ```
 
-The writer emits 1.147. The reader accepts 1.0 through 1.147; *Schema 1.0*
+The writer emits 1.148. The reader accepts 1.0 through 1.148; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -976,6 +976,12 @@ immutable reference a compile-time call passes at a `ref` parameter
 `ct_store_to_mem`, so concrete MIR holds no node. The package format
 moves to `mojito-package 163`.
 
+Schema 1.148 removes the instruction `layout.size_of`: `std.sys.info`'s
+`size_of` and `align_of` are library bodies over KGEN's `get_sizeof` and
+`get_alignof`, parameter-expression applications (`kgen.get_sizeof`,
+`kgen.get_alignof`) the elaborator answers under the compilation's target.
+The package format moves to `mojito-package 164`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1763,7 +1769,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` — a `value.copy` carries `constructor: "<symbol>"` after its operands when it names the `__copyinit__` it runs, as `var.use` does (schema 1.68) |
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`: a capture is a `reference` or a lambda's storage moved in) |
-| `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
+| `Const` / `MaterializeLiteral` / `TypeName` | `const` / `literal.materialize` / `type.name` (schema 1.148 removes `layout.size_of`) |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage |
 | `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |

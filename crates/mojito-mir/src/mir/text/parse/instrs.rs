@@ -327,10 +327,6 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 k: self.req(value, fields, "value", Self::constant)?,
             }),
-            "layout.size_of" => Some(MirInstr::SizeOf {
-                dest: self.req(value, fields, "dest", Self::reg)?,
-                ty: self.req(value, fields, "type", Self::ty)?,
-            }),
             "param_list.address" => Some(MirInstr::ParamListAddress {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 values: self.req(value, fields, "values", Self::constant)?,

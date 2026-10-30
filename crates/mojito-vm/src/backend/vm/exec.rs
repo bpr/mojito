@@ -318,11 +318,6 @@ impl VmBackend {
                     "a construction of the type `{ty}`"
                 )));
             }
-            MirInstr::SizeOf { ty, .. } => {
-                return Err(parametric_instruction(&format!(
-                    "the layout query of `{ty}`"
-                )));
-            }
             MirInstr::MaterializeLiteral {
                 dest,
                 value,

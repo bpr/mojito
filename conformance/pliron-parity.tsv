@@ -77,6 +77,7 @@ assets/ok/bracket_capitalized_display_element.mojo	main	exe-differential	sanitiz
 assets/ok/bracket_capitalized_module_constant.mojo	main	exe-differential	sanitized
 assets/ok/bracket_capitalized_subscript_operator.mojo	main	exe-differential	sanitized
 assets/ok/bracket_function_application.mojo	main	exe-differential	sanitized
+assets/ok/bracketed_call_defaulted_struct_binder.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
 assets/ok/bundled_def_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/bundled_instance_loan_carrying_argument.mojo	main	exe-differential	sanitized
@@ -970,6 +971,7 @@ assets/ok/set_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/set_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/shadowed_local_callable_call.mojo	main	exe-differential	sanitized
 assets/ok/shadowing_constants.mojo	main	exe-differential	sanitized
+assets/ok/signature_application_same_module_struct_default.mojo	main	exe-differential	sanitized
 assets/ok/signature_builtin_select_application.mojo	main	exe-differential	sanitized
 assets/ok/signature_generic_application.mojo	main	exe-differential	sanitized
 assets/ok/simd_abi_crossings.mojo	main	exe-differential	sanitized
@@ -1124,6 +1126,7 @@ assets/ok/subscript_store_setter_by_element_type.mojo	main	exe-differential	sani
 assets/ok/subscript_write_back.mojo	main	exe-differential	sanitized
 assets/ok/subscript_write_back_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/symbolic_instance_construction.mojo	main	exe-differential	sanitized
+assets/ok/sys_info_layout_queries.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
 assets/ok/template_def_bound_conversion.mojo	main	exe-differential	sanitized

@@ -821,9 +821,7 @@ policy or data-model responsibilities to focused children:
 - `comptime.rs` runs elaboration and specialization;
   `comptime/rewrite.rs` owns AST substitution and value materialization, and
   the root's extracted clusters live in
-  `comptime/{elab,synth,packs,params,requests,crossing}.rs`;
-  the lane-width scan it shares with the checker lives in
-  `mojito-ast/simd_width.rs`.
+  `comptime/{elab,synth,packs,params,requests,crossing}.rs`.
 
 Child modules expose only the phase-internal operations their coordinator needs.
 The public entry points for each compiler phase remain in its root module.
@@ -1236,8 +1234,7 @@ applies a `def` to the index (`comptime w = twice(i)`), the application
 `native::mono` demands per copy. A served loop may construct a reflected
 field type (`types[i]()`, `FT()` over `comptime FT = types[i]`): the check
 records the construction of that type expression, MIR carries it as
-`MirInstr::ConstructType`, a template-only form beside `SizeOf` and
-`TypeName`, and the elaborator writes the closed type's default
+`MirInstr::ConstructType`, a template-only form beside `TypeName`, and the elaborator writes the closed type's default
 construction in each unrolled copy. A type pack crosses the waist the same way: every
 pack-keyed `def` keeps its body, as upstream's does
 (`is_specializable_declaration` never names one, so no type-pack `def` is
@@ -3752,9 +3749,9 @@ and that every expression is well-kinded for its slot
 concrete MIR, the form the VM and the native backend run: it applies the same rules and then rejects what only
 parametric MIR may carry (`verify/concrete.rs`) — a symbolic type in any
 signature, slot, register, place, instruction, or declaration; a compile-time
-parameter a declaration or a call contract still declares; a layout query
-(`SizeOf`), which the elaborator answers under the compilation's native
-target; a `ConstructTypeParam`; and a reference slot read as its handle,
+parameter a declaration or a call contract still declares; a parameter
+constant the elaborator left unanswered (a layout query among them); a
+`ConstructTypeParam`; and a reference slot read as its handle,
 a whole-root `LoadPlace` of a slot typed `ref T` (`T` not itself a
 reference) whose register is a reference, or a `UseVar` copy of such a
 slot. A copy-reference result adapter survives elaboration
@@ -3945,7 +3942,6 @@ Representative instructions:
 
 ```rust
 Const
-SizeOf
 ParamListAddress
 TypeName
 Rebind
@@ -7707,15 +7703,18 @@ Runtime helpers implement:
   prelude bootstraps still calls (elsewhere they are `std.math`'s library
   functions)
 
-`size_of[T]()` is deliberately not a VM-value helper. Checking records `T`, MIR
-retains it in `SizeOf`, verification requires it to have a native layout, and
-both the VM and native lowering ask the shared `native::layout::LayoutCx` for
-the byte count. This keeps target layout below the checked-MIR waist without
-duplicating layout policy in either backend. In a compile-time position the
-query is the parameter expression `size_of` applied to the type, which the
-elaborator answers under the target wherever it stands in an expression
-(`symbolic::eval_ct_at`, `layout_answer`): `comptime if size_of[Int]() ==
-8` and `flag[size_of[Int]() == 8]()` fold alike.
+`size_of[T]()` and `align_of[T]()` are upstream's library bodies in
+`std.sys.info`, not VM-value helpers. Their KGEN attributes
+`#kgen.param.expr<get_sizeof|get_alignof, #kgen.type<T>, target>` are
+parameter expressions, applications of `kgen.get_sizeof` and
+`kgen.get_alignof` (`ParamContext::layout_query`), which only the
+elaborator answers, from the shared `native::layout::LayoutCx` under the
+target operand once it is the compilation's (`layout_query_answer`). This
+keeps target layout below the checked-MIR waist without duplicating layout
+policy in either backend. The elaborator answers one wherever it stands in
+an expression (`symbolic::eval_ct_at`, `layout_answer`, and the demand in
+`Specializer::resolve_application`): `comptime if size_of[Int]() == 8` and
+`flag[size_of[Int]() == 8]()` fold alike.
 
 The compilation target is answered the same way. Upstream's
 `_current_target()` returns `#kgen.param.expr<current_target>`, which the

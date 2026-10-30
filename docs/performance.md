@@ -296,10 +296,6 @@ startup also clones declaration metadata into separate struct and signature
 registries while retaining the original declarations. A single indexed program
 representation could keep the metadata once.
 
-One concrete runtime case should be fixed independently: every executed
-`SizeOf` instruction rebuilds the struct-field index for the entire MIR program.
-Build that index once in `Prog`, or resolve the size during compilation.
-
 ### 8. Native layout and type lowering are uncached
 
 `LayoutCx::layout_of` recursively recomputes layouts for structs, tuples,

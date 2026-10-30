@@ -292,7 +292,6 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::MakeClosure { .. } => "MakeClosure",
         MirInstr::KeepAlive { .. } => "KeepAlive",
         MirInstr::Const { .. } => "Const",
-        MirInstr::SizeOf { .. } => "SizeOf",
         MirInstr::ParamListAddress { .. } => "ParamListAddress",
         MirInstr::StoreToMem { .. } => "StoreToMem",
         MirInstr::TypeName { .. } => "TypeName",

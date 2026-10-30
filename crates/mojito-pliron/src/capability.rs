@@ -130,11 +130,6 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values",
     ),
     (
-        "layout.size_of",
-        CapabilityStatus::Unsupported,
-        "the elaborator answers every layout query under the target; one that survives rejects",
-    ),
-    (
         "param_list.address",
         CapabilityStatus::Supported,
         "the address of the interned constant element array (`mjplist_<n>`)",

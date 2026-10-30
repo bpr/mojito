@@ -371,11 +371,6 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 "{head} constructs the type `{ty}` in elaborated MIR"
             ));
         }
-        MirInstr::SizeOf { ty, .. } => {
-            errors.push(format!(
-                "{head} keeps the layout query of `{ty}` in elaborated MIR"
-            ));
-        }
         MirInstr::Const {
             k: Const::Param(value),
             ..

@@ -173,8 +173,7 @@ pub(super) fn verify_scope(
 pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty)> {
     let mut types = Vec::new();
     match instruction {
-        MirInstr::SizeOf { ty, .. }
-        | MirInstr::MaterializeLiteral { target: ty, .. }
+        MirInstr::MaterializeLiteral { target: ty, .. }
         | MirInstr::PointerStorageTake { element: ty, .. }
         | MirInstr::PointerStorageDestroy { element: ty, .. }
         | MirInstr::UninitStorageTake { element: ty, .. }

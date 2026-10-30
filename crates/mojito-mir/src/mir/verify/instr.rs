@@ -112,7 +112,6 @@ pub(super) fn verify_instruction(
         MirInstr::MaterializeLiteral { .. }
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::ConstructType { .. }
-        | MirInstr::SizeOf { .. }
         | MirInstr::ParamListAddress { .. }
         | MirInstr::StoreToMem { .. }
         | MirInstr::TypeName { .. }
@@ -668,35 +667,6 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 errors.push(format!(
                     "{prefix}: a parameter list's address names no parameter list"
                 ));
-            }
-        }
-        MirInstr::SizeOf { dest, ty } => {
-            if let Some(found) = cx.reg_ty(*dest)
-                && found.kind() != TyKind::INT
-            {
-                errors.push(format!(
-                    "{prefix}: size_of result register has type {found}, expected Int"
-                ));
-            }
-            // A template's symbolic type has a layout only once an instance
-            // substitutes it; the concrete mode rejects the query itself.
-            if mojito_types::types::is_symbolic(ty) {
-                return;
-            }
-            // Whether a type has a layout at all is target-independent
-            // (pointer size is the one target fact, and every target has
-            // one); the elaborator answers the size under the real target.
-            let target = mojito_native_core::target::NativeTarget::new(
-                mojito_native_core::target::Triple::X86_64UnknownLinuxGnu,
-            );
-            let structs = crate::mir::struct_field_index_reaching(cx.declarations, ty);
-            if let Err(error) = (mojito_native_core::layout::LayoutCx {
-                target: &target,
-                structs: &structs,
-            })
-            .layout_of(ty)
-            {
-                errors.push(format!("{prefix}: size_of has no layout for {ty}: {error}"));
             }
         }
         MirInstr::TypeName { dest, ty } => {

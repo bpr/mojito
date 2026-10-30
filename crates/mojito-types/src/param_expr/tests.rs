@@ -713,7 +713,7 @@ fn pack_element_resolves_as_its_pack_and_index_bind() {
 }
 
 /// An application is a node by structure, never a constant, and prints as
-/// Mojo spells it: `f(3)`, `size_of[Int]()`.
+/// Mojo spells it: `f(3)`.
 #[test]
 fn param_apply_is_structural_and_unfolded() {
     let context = ParamContext::new();
@@ -777,8 +777,18 @@ fn param_apply_is_structural_and_unfolded() {
             .meta(),
         over(CtValue::Int(3))
     );
-    assert_eq!(context.size_of(Ty::int()).to_string(), "size_of[Int]()");
-    assert_eq!(*context.size_of(Ty::int()).meta(), MetaTy::int());
+    // KGEN's layout read is an `index` application over a type and a
+    // target, which only the elaborator answers.
+    let query = context.layout_query(
+        LayoutQuery::Align,
+        &context.type_shape(Ty::int()),
+        &context.current_target(),
+    );
+    assert!(matches!(
+        query.kind(),
+        ParamKind::Apply { function, args } if function == GET_ALIGNOF_FUNCTION && args.len() == 2
+    ));
+    assert_eq!(*query.meta(), MetaTy::value(TyKind::Index.into()));
 }
 
 /// A builtin construction's struct value is identified by its fields: two

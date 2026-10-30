@@ -1535,10 +1535,6 @@ impl Checker {
                 args,
                 kwargs,
             } if kwargs.is_empty() => {
-                if name == mojito_types::param_expr::SIZE_OF_FUNCTION {
-                    let ty = self.size_of_operand(param_args, args).ok()?;
-                    return Some(context.size_of(ty));
-                }
                 if !param_args.is_empty() {
                     return None;
                 }
@@ -1831,14 +1827,6 @@ impl Checker {
                     self.record_bracket_attributes(expr.source_span(), attributes);
                 }
                 self.ct_param(ty)
-            }
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == mojito_types::param_expr::SIZE_OF_FUNCTION && kwargs.is_empty() => {
-                Ok(context.size_of(self.size_of_operand(param_args, args)?))
             }
             // The length of a pack that is still a parameter, which the
             // instance's elements fix (`len(Self.Ts)`).
@@ -3084,6 +3072,33 @@ impl Checker {
                     .op(ParamOp::TargetGetField, &[target, name])
                     .map_err(param_error)
             }
+            // KGEN's `rebind` changes only the static type of a type
+            // parameter, from its trait to `!kgen.type`.
+            ("#kgen.param.expr<rebind,#kgen.type<!kgen.param<{}>>:{}>:!kgen.type", [ty, bound]) => {
+                if !matches!(
+                    self.trait_type_arg(bound),
+                    Some(Ok(bound)) if matches!(bound.kind(), TyKind::Trait(_))
+                ) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a trait".to_string(),
+                        found: format!("{bound:?}"),
+                        context: "the trait operand of '#kgen.param.expr<rebind>'".to_string(),
+                    });
+                }
+                self.bracket_type_operand(ty, recording)
+            }
+            (shape, [ty, target])
+                if let Some(query) = shape
+                    .strip_prefix("#kgen.param.expr<")
+                    .and_then(|rest| rest.strip_suffix(",#kgen.type<{}>:!kgen.type,{}>:index"))
+                    .and_then(|name| {
+                        mojito_types::param_expr::LayoutQuery::of_function(&format!("kgen.{name}"))
+                    }) =>
+            {
+                let ty = self.bracket_type_operand(ty, recording)?;
+                let target = self.bracket_target(target, recording)?;
+                Ok(context.layout_query(query, &ty, &target))
+            }
             // Whole-value identity of two parameters of one type, a
             // `Bool` (`StringLiteral._is_identical`).
             ("#kgen.param.identical<{},{}>:!kgen.scalar<bool>", [left, right]) => {
@@ -3102,8 +3117,9 @@ impl Checker {
                 "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
                  attribute, '#kgen.param_list.size', '#kgen.param_list.get', \
                  '#kgen.param.expr<data_to_str>', '#kgen.param.expr<target_has_feature>', \
-                 '#kgen.param.expr<target_get_field>' of a known field, and \
-                 '#kgen.param.identical' are read"
+                 '#kgen.param.expr<target_get_field>' of a known field, \
+                 '#kgen.param.expr<rebind>', '#kgen.param.expr<get_sizeof>', \
+                 '#kgen.param.expr<get_alignof>', and '#kgen.param.identical' are read"
             ))),
         }
     }
@@ -3145,7 +3161,26 @@ impl Checker {
         }
     }
 
-    /// The `!kgen.target` operand of a `#kgen.param.expr<target_…>` read.
+    /// The `!kgen.type` operand of a `#kgen.param.expr<rebind>` or a layout
+    /// read: a type expression (`Scalar[dtype]._mlir_type`), a type binder,
+    /// or a local `comptime` bound to one, spliced or not.
+    fn bracket_type_operand(
+        &self,
+        ty: &ParamArg,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let ty = self.bracket_operand(ty, recording)?;
+        if *ty.meta() != MetaTy::Type {
+            return Err(TypeError::TypeMismatch {
+                expected: "a type".to_string(),
+                found: ty.meta().to_string(),
+                context: "the '#kgen.type' operand of a '#kgen.param.expr' read".to_string(),
+            });
+        }
+        Ok(ty)
+    }
+
+    /// The `!kgen.target` operand of a `#kgen.param.expr` read of a target.
     fn bracket_target(
         &self,
         target: &ParamArg,
@@ -3156,7 +3191,7 @@ impl Checker {
             return Err(TypeError::TypeMismatch {
                 expected: "a '!kgen.target' value".to_string(),
                 found: target.meta().to_string(),
-                context: "the target operand of a '#kgen.param.expr<target_…>' read".to_string(),
+                context: "the target operand of a '#kgen.param.expr' read".to_string(),
             });
         }
         Ok(target)

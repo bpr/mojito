@@ -280,24 +280,6 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::ConstructType { dest, ty });
             return Some(dest);
         }
-        if let Some(mojito_checked::checked::SemanticAdjustment::SizeOf { ty }) = node
-            .adjustments
-            .iter()
-            .find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::SizeOf { .. }
-                )
-            })
-            .cloned()
-        {
-            // A symbolic type has no layout to take the size of; the
-            // elaborator substitutes the instance's type, and only the
-            // erased oracle reaches the template's own instruction.
-            let dest = self.fresh_typed(call.location(), None, Ty::int());
-            self.emit(MirInstr::SizeOf { dest, ty });
-            return Some(dest);
-        }
         if let Some(mojito_checked::checked::SemanticAdjustment::ParamListAddress { values }) = node
             .adjustments
             .iter()

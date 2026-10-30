@@ -1214,7 +1214,6 @@ impl<'a> Specializer<'a> {
         mojito_mir::mir::lower_copies_and_moves(&mut function, &|instance| {
             self.template_declaration(instance)
         });
-        self.answer_layout_queries(&key.template, &mut function)?;
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_positions
             .insert(name.clone(), self.output_functions.len());
@@ -1410,8 +1409,8 @@ impl<'a> Specializer<'a> {
         if function == CURRENT_TARGET_FUNCTION {
             return self.demand_current_target(template).map(Some);
         }
-        if function == SIZE_OF_FUNCTION {
-            let [subject] = args.as_slice() else {
+        if let Some(query) = LayoutQuery::of_function(function) {
+            let [subject, target] = args.as_slice() else {
                 return Err(self.error(
                     Some(template),
                     format!("layout query `{expr}` applies to {} arguments", args.len()),
@@ -1431,7 +1430,13 @@ impl<'a> Specializer<'a> {
                 error.function.get_or_insert_with(|| template.to_string());
                 error
             })?;
-            return self.demand_layout(template, &ty).map(Some);
+            let target = match self.resolve_application(template, target, bindings)? {
+                Some(target) => target,
+                None => eval_ct(target, bindings)?,
+            };
+            return self
+                .demand_layout(template, query, &ty, &target)
+                .map(|answer| Some(CtValue::Index(answer)));
         }
         self.demand_application(template, function, args, bindings)
             .map(Some)
@@ -1875,25 +1880,33 @@ impl<'a> Specializer<'a> {
         Ok(fragment)
     }
 
-    /// The size of the concrete `ty` under the elaboration's target: the
-    /// layout application `size_of[ty]()` a type or a condition carries.
-    fn demand_layout(&self, template: &str, ty: &Ty) -> Result<CtValue, MonoError> {
-        let Some(target) = self.target else {
+    /// `query`'s answer for the concrete `ty` under the `!kgen.target`
+    /// `target`: the layout application a type or a condition carries.
+    fn demand_layout(
+        &self,
+        template: &str,
+        query: LayoutQuery,
+        ty: &Ty,
+        target: &CtValue,
+    ) -> Result<i64, MonoError> {
+        let Some(native) = self.target else {
             return Err(self.error(
                 Some(template),
                 "layout query: no native target for this host".to_string(),
             ));
         };
-        self.struct_catalog.fill_layout(&self.layout_structs, ty);
-        let structs = self.layout_structs.borrow();
-        let layout = mojito_native_core::layout::LayoutCx {
+        layout_query_answer(
+            native,
+            &self.struct_catalog,
+            &self.layout_structs,
+            query,
+            ty,
             target,
-            structs: &structs,
-        };
-        layout
-            .layout_of(ty)
-            .map(|size| CtValue::Int(size.size as i64))
-            .map_err(|error| self.error(Some(template), format!("size_of of `{ty}`: {error}")))
+        )
+        .map_err(|mut error| {
+            error.function.get_or_insert_with(|| template.to_string());
+            error
+        })
     }
 
     /// The elaboration's native target as the `!kgen.target` KGEN's
@@ -2328,64 +2341,6 @@ impl<'a> Specializer<'a> {
             }),
             _ => None,
         }
-    }
-
-    /// Answer every layout query of the instance from its now-concrete type
-    /// under the elaboration's target: the struct instances the type names
-    /// were just discovered, so their fields lay out.
-    fn answer_layout_queries(
-        &self,
-        template: &str,
-        function: &mut MirFunction,
-    ) -> Result<(), MonoError> {
-        fn queries(blocks: &mut [MirBlock]) -> Vec<&mut MirInstr> {
-            let mut found = Vec::new();
-            for block in blocks {
-                for instruction in &mut block.instrs {
-                    if matches!(instruction, MirInstr::SizeOf { .. }) {
-                        found.push(instruction);
-                    } else {
-                        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                            found.extend(queries(region));
-                        }
-                    }
-                }
-            }
-            found
-        }
-        let queries = queries(&mut function.blocks);
-        if queries.is_empty() {
-            return Ok(());
-        }
-        let Some(target) = self.target else {
-            return Err(self.error(
-                Some(template),
-                "layout query: no native target for this host".to_string(),
-            ));
-        };
-        for query in &queries {
-            if let MirInstr::SizeOf { ty, .. } = query {
-                self.struct_catalog.fill_layout(&self.layout_structs, ty);
-            }
-        }
-        let structs = self.layout_structs.borrow();
-        let layout = mojito_native_core::layout::LayoutCx {
-            target,
-            structs: &structs,
-        };
-        for query in queries {
-            let MirInstr::SizeOf { dest, ty } = query else {
-                continue;
-            };
-            let size = layout.layout_of(ty).map_err(|error| {
-                self.error(Some(template), format!("size_of of `{ty}`: {error}"))
-            })?;
-            *query = MirInstr::Const {
-                dest: *dest,
-                k: Const::Int(size.size as i64),
-            };
-        }
-        Ok(())
     }
 
     /// A parameter defaulting to a recorded constructor over a generic struct

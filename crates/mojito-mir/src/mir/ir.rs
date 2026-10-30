@@ -809,7 +809,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         }
         MirInstr::Const { dest, .. }
         | MirInstr::ConstructType { dest, .. }
-        | MirInstr::SizeOf { dest, .. }
         | MirInstr::ParamListAddress { dest, .. }
         | MirInstr::TypeName { dest, .. }
         | MirInstr::IsRunInComptimeInterpreter { dest }
@@ -2066,14 +2065,6 @@ pub enum MirInstr {
         dest: Reg,
         ty: Ty,
     },
-    /// The byte size of one checker-resolved type: a layout query only a
-    /// generator carries. The elaborator answers it under the compilation's
-    /// native target, so elaborated MIR holds the constant and never the
-    /// query.
-    SizeOf {
-        dest: Reg,
-        ty: Ty,
-    },
     /// The static address of a parameter list's elements, laid out once for
     /// the whole program as a constant array (upstream's `global_constant`
     /// over `#pop.variadic_to_array`): `dest` is a `Pointer[E,
@@ -3131,7 +3122,6 @@ impl MirInstr {
             | Self::ScalarCast { .. }
             | Self::BuiltinCast { .. }
             | Self::PointerConvert { .. }
-            | Self::SizeOf { .. }
             | Self::TypeName { .. }
             | Self::IsRunInComptimeInterpreter { .. }
             | Self::ParamListAddress { .. }

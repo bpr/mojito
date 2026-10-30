@@ -320,9 +320,9 @@ pub(super) fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
     for block in blocks {
         for instruction in &block.instrs {
             match instruction {
-                MirInstr::SizeOf { ty, .. }
-                | MirInstr::TypeName { ty, .. }
-                | MirInstr::ConstructType { ty, .. } => out.push(ty.clone()),
+                MirInstr::TypeName { ty, .. } | MirInstr::ConstructType { ty, .. } => {
+                    out.push(ty.clone());
+                }
                 MirInstr::PointerStorageTake { element, .. }
                 | MirInstr::PointerStorageDestroy { element, .. }
                 | MirInstr::UninitStorageTake { element, .. }
@@ -440,11 +440,14 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
                         oracle.target.kgen_target(),
                     ))));
                 }
-                if function != SIZE_OF_FUNCTION || layout_failure.is_some() {
+                let Some(query) = LayoutQuery::of_function(function) else {
+                    return Ok(None);
+                };
+                if layout_failure.is_some() {
                     return Ok(None);
                 }
-                match layout_answer(oracle, args, bindings) {
-                    Ok(size) => Ok(size.map(CtValue::Int)),
+                match layout_answer(oracle, query, args, bindings) {
+                    Ok(answer) => Ok(answer.map(CtValue::Index)),
                     Err(error) => {
                         layout_failure = Some(error);
                         Ok(None)
@@ -493,14 +496,19 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
     })
 }
 
-/// The size `oracle` gives the one type the layout query's `args` name,
-/// once `bindings` close it; `None` while it is still symbolic.
+/// The answer `oracle` gives the layout query `query` over the type its
+/// `args` name, under the target they name, once `bindings` close both;
+/// `None` while either is still symbolic.
 fn layout_answer(
     oracle: &LayoutOracle,
+    query: LayoutQuery,
     args: &[ParamExpr],
     bindings: &Bindings,
 ) -> Result<Option<i64>, MonoError> {
-    let [subject] = args else {
+    let [subject, target] = args else {
+        return Ok(None);
+    };
+    let Some(target) = target.as_constant() else {
         return Ok(None);
     };
     let ty = match subject.kind() {
@@ -511,5 +519,5 @@ fn layout_answer(
     if is_symbolic(&ty) {
         return Ok(None);
     }
-    oracle.size_of(&ty).map(Some)
+    oracle.answer(query, &ty, target).map(Some)
 }

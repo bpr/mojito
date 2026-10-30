@@ -280,7 +280,7 @@ The boundary:
   above the check marks the constant (`CtMarker::Applied`) and keeps its
   name everywhere, and a body's read is a `ParamValue` fact. Nothing is
   folded early any more: `comptime D = g(A) * h(A)` is `g(2) * h(2)` in a
-  type (the R139 case), and a layout query is `Apply(size_of, T)` answered
+  type (the R139 case), and a layout query is `Apply(kgen.get_sizeof, T, target)` answered
   under the target.
 - A struct's associated `comptime` member is not a module constant; it is
   a member of the generator, evaluated under the instance's bindings as

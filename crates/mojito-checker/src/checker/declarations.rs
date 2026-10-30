@@ -3774,6 +3774,14 @@ impl Checker {
                 solve_value_args(pattern, actual, &mut value_solutions);
             }
             self.solve_value_binders_from_brackets(decls, &bound, &mut value_solutions);
+            solve_value_binders_from_defaults(
+                decls
+                    .iter()
+                    .zip(&bound)
+                    .filter(|(_, arguments)| arguments.is_empty())
+                    .map(|(decl, _)| decl),
+                &mut value_solutions,
+            );
             unify_through_callable_bounds(decls, &mut subst)?;
             self.solve_binders_from_values(decls, &mut subst, |index, declared| {
                 self.bound_value_ty(&bound[index], declared)
@@ -5109,8 +5117,8 @@ fn sibling_trait_binder(decls: &[ParamDecl], name: &str) -> Option<(ParamRef, Ve
 
 /// Solve each value binder a default's type determines (`def g[t: T =
 /// T[n=4]()]` over an infer-only `n`) into `solutions`.
-fn solve_value_binders_from_defaults(
-    decls: &[ParamDecl],
+fn solve_value_binders_from_defaults<'a>(
+    decls: impl IntoIterator<Item = &'a ParamDecl>,
     solutions: &mut HashMap<String, CtValue>,
 ) {
     for decl in decls {

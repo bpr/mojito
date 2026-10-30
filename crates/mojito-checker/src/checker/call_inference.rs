@@ -279,17 +279,6 @@ impl Checker {
             {
                 self.infer_param_list_address(span, param_args, args)
             }
-            "size_of" => {
-                let ty = self.size_of_operand(param_args, args)?;
-                self.record_bracket_attributes(
-                    span.clone(),
-                    types_attributes(param_args, std::slice::from_ref(&ty)),
-                );
-                self.record_at(span).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::SizeOf { ty },
-                ));
-                Ok(Ty::int())
-            }
             // `_unqualified_type_name[T]()` (upstream `std.reflection`):
             // the unqualified spelling of one checked type, a compile-time
             // string. Recorded for every resolution — a still-generic

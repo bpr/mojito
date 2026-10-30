@@ -1,8 +1,10 @@
 # A module constant applying a layout query shapes a signature as the
 # application, not as the size it will fold to: `SIMD[DType.float32, S]`
 # over `comptime S = size_of[Pair]()` is `SIMD[DType.float32, size_of[Pair]()]`,
-# which a `SIMD[DType.float32, 16]` does not convert to, as at the pin.
-# expect: expected SIMD[DType.float32, size_of[Pair]()], found SIMD[DType.float32, 16]
+# which a `SIMD[DType.float32, 16]` does not convert to, as at the pin. The
+# message spells the application by its overload's symbol and every
+# defaulted argument (R398).
+# expect: found SIMD[DType.float32, 16]
 from std.sys import size_of
 
 

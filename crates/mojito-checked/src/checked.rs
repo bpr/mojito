@@ -971,11 +971,6 @@ pub enum SemanticAdjustment {
         dtype: SimdDtype,
         width: SimdWidth,
     },
-    /// `size_of[T]()` resolved to one concrete checked type. MIR retains the
-    /// type so every executable backend consults the shared native layout.
-    SizeOf {
-        ty: Ty,
-    },
     /// `__param_list_address[*values]()` in the bundled `ParameterList`: the
     /// static address of the parameter list `values`' elements, which MIR
     /// keeps as `MirInstr::ParamListAddress` for the elaborator to close.

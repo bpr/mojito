@@ -952,10 +952,21 @@ impl ParamContext {
         )
     }
 
-    /// The layout query `size_of[T]()`: the application of `size_of` to one
-    /// type, answered only by the elaborator under its native target.
-    pub fn size_of(&self, ty: Ty) -> ParamExpr {
-        self.apply(SIZE_OF_FUNCTION, &[self.type_shape(ty)], MetaTy::int())
+    /// KGEN's `#kgen.param.expr<get_sizeof|get_alignof, ty, target>`: the
+    /// application of `query`'s function to the `!kgen.type` `ty` and the
+    /// `!kgen.target` `target`, an `index` only the elaborator answers,
+    /// from its layout of `ty` under `target`.
+    pub fn layout_query(
+        &self,
+        query: LayoutQuery,
+        ty: &ParamExpr,
+        target: &ParamExpr,
+    ) -> ParamExpr {
+        self.apply(
+            query.function(),
+            &[ty.clone(), target.clone()],
+            MetaTy::value(TyKind::Index.into()),
+        )
     }
 
     /// The float-format query `DType.<query>[dtype]()` (one of
@@ -2312,8 +2323,38 @@ impl ParamContext {
     }
 }
 
-/// The callable symbol of a layout query ([`ParamContext::size_of`]).
-pub const SIZE_OF_FUNCTION: &str = "size_of";
+/// The callable symbol of KGEN's `get_sizeof` ([`ParamContext::layout_query`]).
+pub const GET_SIZEOF_FUNCTION: &str = "kgen.get_sizeof";
+
+/// The callable symbol of KGEN's `get_alignof` ([`ParamContext::layout_query`]).
+pub const GET_ALIGNOF_FUNCTION: &str = "kgen.get_alignof";
+
+/// The layout KGEN's `get_sizeof` or `get_alignof` reads of a type
+/// ([`ParamContext::layout_query`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutQuery {
+    Size,
+    Align,
+}
+
+impl LayoutQuery {
+    /// The query a layout application's callable symbol names.
+    pub fn of_function(function: &str) -> Option<Self> {
+        match function {
+            GET_SIZEOF_FUNCTION => Some(Self::Size),
+            GET_ALIGNOF_FUNCTION => Some(Self::Align),
+            _ => None,
+        }
+    }
+
+    /// The callable symbol of the query's application.
+    pub const fn function(self) -> &'static str {
+        match self {
+            Self::Size => GET_SIZEOF_FUNCTION,
+            Self::Align => GET_ALIGNOF_FUNCTION,
+        }
+    }
+}
 
 /// The callable symbol of the compilation target the elaborator answers
 /// ([`ParamContext::current_target`]).
@@ -2799,9 +2840,10 @@ pub enum ParamKind {
     /// one node by structure, as the pin keeps `f(Int(7))` symbolic through
     /// the check, so a type over one never matches the folded value. A
     /// call of an `@always_inline("builtin")` callable whose body folds is
-    /// never one: the check builds it as that body's expression. A layout
-    /// query is the application of `size_of` to one type. Only the
-    /// elaborator below MIR evaluates one, on first demand.
+    /// never one: the check builds it as that body's expression. KGEN's
+    /// layout reads (`get_sizeof`, `get_alignof`) and `current_target` are
+    /// applications of their own symbols. Only the elaborator below MIR
+    /// evaluates one, on first demand.
     Apply {
         #[serde(serialize_with = "crate::symbol_ref::serialize")]
         function: String,

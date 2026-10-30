@@ -247,12 +247,6 @@ impl FnLowering<'_> {
             MirInstr::Rebind { dest, .. } => {
                 Err(self.unsupported_reg("a rebind after monomorphization".to_string(), *dest))
             }
-            // The elaborator answers every layout query; concrete
-            // verification refuses one that survives.
-            MirInstr::SizeOf { dest, ty } => Err(self.unsupported_reg(
-                format!("layout query of `{ty}` after monomorphization"),
-                *dest,
-            )),
             MirInstr::ParamListAddress { dest, values } => {
                 self.lower_param_list_address(ctx, *dest, values)
             }

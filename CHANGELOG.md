@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.sys.info` declares upstream's `size_of`, `align_of`, `bit_width_of`,
+  and `simd_width_of` (each over a type or a `DType`, with `target:
+  CompilationTarget = CompilationTarget.current()`), and `is_32bit` and
+  `is_64bit` (R1634): their bodies are KGEN's `get_sizeof` and
+  `get_alignof`, which the elaborator answers under the compilation's
+  target, so `size_of[DType.int32]()` prints `4`, `align_of[Float64]()`
+  prints `8`, and `is_64bit()` prints `True`, as at the pin. A bracketed
+  call now leaves a later defaulted `CompilationTarget` parameter to its
+  default (`f[Int]()`), and a signature applies a function whose parameter
+  defaults to a same-module struct's `comptime` member. The compiler's own
+  `size_of` and `MirInstr::SizeOf` are gone (MIR 1.148, package 164).
+
 - `SIMD` declares upstream's `@staticmethod` `from_bits=` initializer
   (R1593): `Float32(from_bits=UInt32(1065353216))` prints `1.0`,
   `SIMD[DType.bool, 2](from_bits=SIMD[DType.uint8, 2](0, 3))` prints

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1732**.
+Next free ID: **R1735**.
 
 ## Ordered Work
 
@@ -1329,6 +1329,13 @@ change that needs a new `MJRT_ABI_VERSION`.
     holds it. `struct.create` and `field.get` forward, a field place adds
     no GEP, and the layout is unchanged; only the signature classification
     moves, with the SIMD-by-value change above.
+  - A multi-lane `SIMD` lays out aligned like one lane
+    (`docs/native-abi.md` §Layout, `LayoutCx::layout_of`), where the pin
+    lays it out as LLVM's vector type: `align_of[SIMD[DType.float32,
+    4]]()` is `4` against the pin's `16`, and `size_of` of a struct `{UInt8,
+    SIMD[DType.float32, 4]}` is `20` against `32`.
+  - The fix aligns a multi-lane `SIMD` as its LLVM vector, which moves
+    every struct layout holding one.
   - A later task that needs an ABI bump joins this entry rather than
     getting its own.
   - The signature classification changes the native calling convention itself,
@@ -4186,6 +4193,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a body's compile-time call stops the same way: `comptime s =
     describe(n)` or `comptime assert n > 0, describe(n)` in `def f[n:
     Int]()` above `def describe(n: Int) -> String`, which the pin runs.
+  - Probe: `stdlib/std/sys/info.mojo` declares `is_32bit` and `is_64bit`
+    after `simd_width_of`, where upstream's precede `simd_bit_width`: above
+    `size_of`, they stop the bundled library with "Undefined variable
+    '__module$std$sys$info$size_of'".
   - Found while landing a function applied in a signature (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -6128,6 +6139,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `SIMD[.int32, twice[Int(2)]()]`.
   - Both compilers reject the program. Only the spelling differs.
   - An overloaded callee prints its symbol: `ov$ov$Int(2)` for `ov(2)`.
+  - A library application prints its overload's symbol and every
+    defaulted argument: `size_of[Pair]()` in a type is
+    `__module$std$sys$info$size_of$ov$$ct$type$target[Pair](…)`, where the
+    pin elides the defaulted `target` and prints `size_of[Pair]()`
+    (`assets/type_error/comptime_layout_constant_mismatch.mojo`).
   - A static method of a generic struct prints the instance it is called on
     as an argument: `G.w[G[2]]()` for `G[2].w()`.
   - `not (n > 9)` prints as `not 9 < n`.
@@ -7234,6 +7250,58 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while planning R1711 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1732 A layout query over a generic struct instance the program
+  never constructs has no layout**
+
+  `size_of[List[Int]]()` stops with "keeps the parameter constant
+  `kgen.get_sizeof[List[Int]](…)` in elaborated MIR", where the pin prints
+  `24`.
+  - The elaborator's layout oracle (`layout_query_answer`,
+    `native::mono`) lays out non-generic structs from
+    `StructCatalog::fill_layout` and generic instances only once the
+    elaboration has discovered them, so an instance the query alone names
+    has no fields.
+  - Upstream's `get_sizeof` lays out the instance's fields from the
+    struct's declaration at its arguments.
+  - The failure is swallowed into the verifier's message, since
+    `Specializer::param_constant` keeps a parameter constant whose
+    evaluation fails `Unsupported`.
+  - Found while landing R1634 (2026-10-30).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1733 A layout query under a target other than the compilation's is
+  rejected, where the pin lays out under that target**
+
+  `size_of[Int, CompilationTarget._unknown()]()` stops with "keeps the
+  parameter constant `kgen.get_sizeof[Int](#kgen.target<triple = "", …>)`
+  in elaborated MIR", where the pin prints `0`.
+  - `layout_query_answer` (`native::mono`) answers only a `!kgen.target`
+    equal to `NativeTarget::kgen_target`, and reports any other as
+    unsupported.
+  - Upstream's `get_sizeof` and `get_alignof` lay out under the target
+    operand's own data layout and index width.
+  - Probe: `align_of[Int, CompilationTarget._unknown()]()` and
+    `bit_width_of[Int, CompilationTarget._unknown()]()` stop the same way.
+  - Found while landing R1634 (2026-10-30).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1734 A `SIMD` width that is not a power of two is rejected, where
+  the pin admits it**
+
+  `def f(x: SIMD[DType.float32, 3]) -> Int` called as
+  `f(SIMD[DType.float32, 3](1.0))` stops with "SIMD width must be a
+  positive power of two, got 3", where the pin prints `1`.
+  - The checker's `SIMD` width rule rejects the type itself, wherever it is
+    spelled.
+  - Probe: `size_of[SIMD[DType.float32, 3]]()` stops with "no overload
+    matches the supplied arguments", where the pin prints `16` (LLVM's
+    `<3 x float>` allocation size, which R18's vector layout gives).
+  - Found while landing R1634 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
@@ -9715,7 +9783,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   A value-shaped argument binding resolves to a type or an origin is
   recorded twice: in the call's `NodeFacts::parameter_attributes` and at
   the argument (`NodeFacts::argument_attribute`).
-  - The leaf binders (`size_of[T]`, `_unqualified_type_name[T]`, the
+  - The leaf binders (`_unqualified_type_name[T]`, the
     builtin collection, tuple, pointer, and `Variant` argument types,
     `TypeList.of`) record only the first, so the two disagree there.
   - Upstream's op carries the attribute once, on the call.
@@ -10813,30 +10881,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1396 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1634 `size_of` is a compiler name and `align_of` is missing,
-  where upstream's are library bodies over `get_sizeof` and `get_alignof`**
-
-  `size_of[DType.int32]()` is rejected ("expected a type, found a value")
-  and `from std.sys.info import align_of` finds nothing, where the pin
-  prints `4` and `align_of[Float64]()` prints `8`.
-  - The checker serves `size_of` by name: `call_inference.rs` records
-    `SemanticAdjustment::SizeOf` (`MirInstr::SizeOf`), `constraints.rs`
-    builds `SIZE_OF_FUNCTION`, and `simd_width.rs` reads it, and module.rs's
-    `COMPILER_NAMES` lists it.
-  - Port both overloads of `size_of` and `align_of` with their `target`
-    parameter, as upstream's `#kgen.param.expr<get_sizeof|get_alignof, …>`
-    bodies. Mono's `layout_answer` already answers the size.
-  - Restore `target: CompilationTarget = CompilationTarget.current()` on
-    `bit_width_of` (dropped in R1550), and port `simd_width_of`,
-    `is_32bit`, and `is_64bit`.
-  - Retire `SemanticAdjustment::SizeOf` and `MirInstr::SizeOf` (VM, Pliron,
-    MIR text with a schema bump, verify, cse, the specializer).
-  - `size_of_builtin`, `comptime_if_layout_query`, and
-    `comptime_layout_constant` keep their output.
-  - Depends on R1562 (`CompilationTarget`) and R1606 (the `target`
-    parameter's bare `CompilationTarget` annotation).
-  - Model: Fable, Planned.
 
 - [ ] **R1635 `CompilationTarget`'s string-field predicates are
   undeclared**

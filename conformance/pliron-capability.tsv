@@ -18,7 +18,6 @@ instruction	ref.write	partial	typed referent registers
 instruction	closure.make	partial	two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and moved captures whose own type's user `__moveinit__` goes unnamed reject
 instruction	lifetime.keep_alive	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	const	partial	Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values
-instruction	layout.size_of	unsupported	the elaborator answers every layout query under the target; one that survives rejects
 instruction	param_list.address	supported	the address of the interned constant element array (`mjplist_<n>`)
 instruction	store_to_mem	unsupported	compile-time memory has no run-time form; only a lifted compile-time evaluation holds one
 instruction	type.name	unsupported	the elaborator spells every type name as a constant; one that survives rejects
