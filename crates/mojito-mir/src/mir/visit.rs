@@ -405,6 +405,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::ScalarCast { .. }
         | I::BuiltinCast { .. }
         | I::PointerConvert { .. }
+        | I::ArrayGep { .. }
         | I::IsRunInComptimeInterpreter { .. }
         | I::Pop { .. }
         | I::Select { .. }

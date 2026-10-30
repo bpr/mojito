@@ -300,6 +300,7 @@ impl Table<'_> {
             | MirInstr::ArrayRepeat { .. }
             | MirInstr::ArrayGet { .. }
             | MirInstr::ArrayReplace { .. }
+            | MirInstr::ArrayGep { .. }
             | MirInstr::Select { .. }
             | MirInstr::SimdSelect { .. }
             | MirInstr::SimdExtract { .. }

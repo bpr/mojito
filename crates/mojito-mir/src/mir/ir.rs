@@ -1030,17 +1030,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             handler,
             ..
         } => out.extend([dest, variant, handler]),
-        MirInstr::SimdCast { dest, value, .. }
-        | MirInstr::SimdBitcast { dest, value, .. }
-        | MirInstr::ArrayRepeat { dest, value }
-        | MirInstr::ArrayGet {
-            dest, array: value, ..
-        } => {
+        MirInstr::SimdCast { dest, value, .. } | MirInstr::SimdBitcast { dest, value, .. } => {
             out.extend([dest, value]);
         }
-        MirInstr::ArrayReplace {
-            dest, array, value, ..
-        } => out.extend([dest, array, value]),
+        MirInstr::ArrayRepeat { .. }
+        | MirInstr::ArrayGet { .. }
+        | MirInstr::ArrayReplace { .. }
+        | MirInstr::ArrayGep { .. } => out.extend(array_op_regs_mut(instruction)),
         MirInstr::SimdShuffle {
             dest, value, other, ..
         } => {
@@ -2589,6 +2585,15 @@ pub enum MirInstr {
         value: Reg,
         index: Const,
     },
+    /// The `!kgen.pointer` to element `index` (a run-time `index`
+    /// register) of the `!pop.array` the `!kgen.pointer` `array`
+    /// addresses: upstream's `pop.array.gep`, which reads nothing and
+    /// bound-checks nothing.
+    ArrayGep {
+        dest: Reg,
+        array: Reg,
+        index: Reg,
+    },
     /// Build a struct value of `dest`'s type from one register per field,
     /// in declaration order, running no constructor: upstream's
     /// `kgen.struct.create`, which `sroa` emits for a whole read of a split
@@ -3138,6 +3143,7 @@ impl MirInstr {
             | Self::ArrayRepeat { .. }
             | Self::ArrayGet { .. }
             | Self::ArrayReplace { .. }
+            | Self::ArrayGep { .. }
             | Self::SimdCast { .. }
             | Self::SimdBitcast { .. }
             | Self::SimdShuffle { .. }
@@ -4019,6 +4025,22 @@ fn select_and_lane_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             index,
         } => vec![dest, value, element, index],
         MirInstr::SimdReduce { dest, value, .. } => vec![dest, value],
+        _ => Vec::new(),
+    }
+}
+
+/// The registers of a `pop.array` op [`instruction_regs_mut`] lists, its
+/// destination first.
+fn array_op_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
+    match instruction {
+        MirInstr::ArrayRepeat { dest, value }
+        | MirInstr::ArrayGet {
+            dest, array: value, ..
+        } => vec![dest, value],
+        MirInstr::ArrayReplace {
+            dest, array, value, ..
+        } => vec![dest, array, value],
+        MirInstr::ArrayGep { dest, array, index } => vec![dest, array, index],
         _ => Vec::new(),
     }
 }

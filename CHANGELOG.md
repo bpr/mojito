@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- ``__mlir_op.`pop.array.gep`(p, i)``, the `!kgen.pointer` to element `i`
+  of the `!pop.array` that `p` addresses, now runs on both backends and at
+  compile time, so upstream's `StaticTuple._unsafe_ref` shape
+  `Pointer[origin=origin_of(self)](_mlir_value=gep)[]` reads and writes an
+  element in place, with the pin's four rejections of a malformed gep
+  (R1317). `Pointer(_mlir_value=)` now takes the keyword-only bracket
+  `[origin=o]`. MIR text moves to 1.141, adding `array.gep`, and the
+  package format to `mojito-package 156`.
 - `Pointer`'s raw MLIR values now have upstream's spellings:
   `Pointer[T, o]._mlir_type` (the `!kgen.pointer` it wraps, also
   ``__mlir_type[`!kgen.pointer<`, T, `>`]``), `Pointer[T, o]._mlir_lit_ref`

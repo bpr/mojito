@@ -397,6 +397,9 @@ impl FnLowering<'_> {
                 value,
                 index,
             } => self.lower_array_replace(ctx, *dest, *array, *value, index),
+            MirInstr::ArrayGep { dest, array, index } => {
+                self.lower_array_gep(ctx, *dest, *array, *index)
+            }
             MirInstr::MethodCall {
                 dest,
                 recv,

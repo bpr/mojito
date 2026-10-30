@@ -528,6 +528,45 @@ impl FnLowering<'_> {
         Ok(())
     }
 
+    /// `array.gep`: the address of element `index` of the `!pop.array`
+    /// `array` addresses, at the element's stride, as the pin's
+    /// `pop.array.gep` neither reads nor bound-checks it.
+    pub(super) fn lower_array_gep(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        array: Reg,
+        index: Reg,
+    ) -> Result<(), PlironError> {
+        let Some(TyKind::KgenPointer(pointee)) = self.func.reg_types.get(&array.0).map(Ty::kind)
+        else {
+            return Err(self.unsupported_reg("untyped array.gep operand".into(), dest));
+        };
+        let TyKind::PopArray { element, .. } = pointee.kind() else {
+            return Err(self.unsupported_reg("array.gep over a non-array pointee".into(), dest));
+        };
+        let stride = self
+            .layout
+            .layout_of(element)
+            .map_err(|error| self.unsupported_reg(format!("array element layout ({error})"), dest))?
+            .size;
+        let base = self.reg_value(ctx, array, ScalarTy::Ptr)?;
+        let index = self.reg_value(ctx, index, ScalarTy::Int)?;
+        let size = self.uint_constant(ctx, stride);
+        let bytes = MulOp::new_with_overflow_flag(ctx, index, size, no_overflow_flags());
+        self.append(ctx, bytes.get_operation(), Some(dest));
+        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let gep = GetElementPtrOp::new(
+            ctx,
+            base,
+            vec![GepIndex::Value(bytes.get_result(ctx))],
+            i8_ty,
+        );
+        self.append(ctx, gep.get_operation(), Some(dest));
+        self.reg_values.insert(dest.0, gep.get_result(ctx));
+        Ok(())
+    }
+
     /// The element type, element count, and element stride of the
     /// `!pop.array` register `array`.
     fn array_shape(&self, array: Reg, dest: Reg) -> Result<(Ty, u64, u64), PlironError> {

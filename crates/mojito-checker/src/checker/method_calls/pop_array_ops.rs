@@ -1,8 +1,10 @@
 //! The `pop.array` `__mlir_op` expressions: upstream's `pop.array.repeat`,
 //! `pop.array.get`, and `pop.array.replace` over a `!pop.array<n, T>`,
-//! the storage `StaticTuple` builds, reads, and rebuilds, typed as their
-//! MLIR verifiers type them, with the `_type` and `index` attributes they
-//! take.
+//! the storage `StaticTuple` builds, reads, and rebuilds, and
+//! `pop.array.gep`, the address of one element through a `!kgen.pointer`
+//! to that storage, as `VariadicList` and `StaticTuple._unsafe_ref` take
+//! it, typed as their MLIR verifiers type them, with the `_type` and
+//! `index` attributes they take.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -11,6 +13,7 @@ use mojito_checked::checked::SemanticAdjustment;
 pub(super) const POP_ARRAY_REPEAT: &str = "pop.array.repeat";
 pub(super) const POP_ARRAY_GET: &str = "pop.array.get";
 pub(super) const POP_ARRAY_REPLACE: &str = "pop.array.replace";
+pub(super) const POP_ARRAY_GEP: &str = "pop.array.gep";
 
 impl Checker {
     /// Type ``__mlir_op.`pop.array.<op>`[_type=T, index=i.__mlir_index__()](…)``
@@ -123,6 +126,89 @@ impl Checker {
             _ => SemanticAdjustment::PopArrayRepeat,
         };
         self.record_at(span.clone()).adjustment = Some(Box::new(adjustment));
+        Ok(result)
+    }
+
+    /// Type ``__mlir_op.`pop.array.gep`(p, i)`` as upstream's verifier
+    /// does, recording `SemanticAdjustment::PopArrayGep`: the
+    /// `!kgen.pointer<T>` to element `i` of the `!pop.array<n, T>` that the
+    /// `!kgen.pointer` `p` addresses. The index is a run-time `index`
+    /// operand, which the pin does not bound-check; an optional `_type`
+    /// attribute must name the result the operand infers.
+    pub(super) fn infer_pop_array_gep(
+        &self,
+        span: &SourceSpan,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } = call;
+        let invalid = |reason: String| TypeError::BadCall {
+            func: POP_ARRAY_GEP.to_string(),
+            reason,
+        };
+        if !kwargs.is_empty() {
+            return Err(invalid("op operands are positional".to_string()));
+        }
+        let mut result_type = None;
+        for argument in param_args {
+            match argument {
+                mojito_ast::ast::ParamArg::Named { name, value } if name == "_type" => {
+                    result_type = Some(self.mlir_result_type(value)?);
+                }
+                mojito_ast::ast::ParamArg::Named { name, .. } => {
+                    return Err(invalid(format!(
+                        "attribute '{name}' is not an inherent attribute of '{POP_ARRAY_GEP}'"
+                    )));
+                }
+                _ => return Err(invalid("op attributes are named".to_string())),
+            }
+        }
+        let operands = args
+            .iter()
+            .map(|argument| self.infer(argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        let element = operands.first().and_then(|pointer| match pointer.kind() {
+            TyKind::KgenPointer(array) => match array.kind() {
+                TyKind::PopArray { element, .. } => Some(element.clone()),
+                _ => None,
+            },
+            _ => None,
+        });
+        let Some(result) = element
+            .clone()
+            .map(|element| Ty::from(TyKind::KgenPointer(element)))
+            .or_else(|| result_type.clone())
+        else {
+            return Err(invalid(format!(
+                "unable to infer result type from MLIR operation '{POP_ARRAY_GEP}'"
+            )));
+        };
+        let [pointer, index] = operands.as_slice() else {
+            return Err(invalid(format!(
+                "op expected 2 operands, but found {}",
+                operands.len()
+            )));
+        };
+        if element.is_none() {
+            return Err(invalid(format!(
+                "op operand #0 must be a '!kgen.pointer' to a '!pop.array', but got '{pointer}'"
+            )));
+        }
+        if !matches!(index.kind(), TyKind::Index) {
+            return Err(invalid(format!(
+                "op operand #1 must be index, but got '{index}'"
+            )));
+        }
+        if result_type.is_some_and(|expected| expected != result) {
+            return Err(invalid(
+                "op failed to verify that pointer to array element type".to_string(),
+            ));
+        }
+        self.record_at(span.clone()).adjustment = Some(Box::new(SemanticAdjustment::PopArrayGep));
         Ok(result)
     }
 

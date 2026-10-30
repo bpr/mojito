@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 140;
+pub const VERSION_MINOR: u16 = 141;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -223,6 +223,7 @@ pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "array.repeat",
     "array.get",
     "array.replace",
+    "array.gep",
     "variant.make",
     "variant.is",
     "variant.tag",
@@ -394,6 +395,7 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::ArrayRepeat { .. } => "array.repeat",
         MirInstr::ArrayGet { .. } => "array.get",
         MirInstr::ArrayReplace { .. } => "array.replace",
+        MirInstr::ArrayGep { .. } => "array.gep",
         MirInstr::MakeVariant { .. } => "variant.make",
         MirInstr::VariantIs { .. } => "variant.is",
         MirInstr::VariantTag { .. } => "variant.tag",

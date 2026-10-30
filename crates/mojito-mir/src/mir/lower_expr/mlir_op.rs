@@ -4,8 +4,9 @@
 //! `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`,
 //! `kgen.struct.extract`, lowered to a tuple-storage element read,
 //! `pop.simd.shuffle`, lowered to a two-operand `simd.shuffle`,
-//! `pop.array.repeat`, `pop.array.get`, and `pop.array.replace`, lowered to
-//! `array.repeat`, `array.get`, and `array.replace`, and the
+//! `pop.array.repeat`, `pop.array.get`, `pop.array.replace`, and
+//! `pop.array.gep`, lowered to `array.repeat`, `array.get`,
+//! `array.replace`, and `array.gep`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
 //! and `Int`, lowered to `builtin.cast`.
 
@@ -82,13 +83,14 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::SemanticAdjustment::PopArrayRepeat
                     | mojito_checked::checked::SemanticAdjustment::PopArrayGet { .. }
                     | mojito_checked::checked::SemanticAdjustment::PopArrayReplace { .. }
+                    | mojito_checked::checked::SemanticAdjustment::PopArrayGep
             )
         })
     }
 
     /// Lower the checked `pop.array` op `call` to its `array.repeat`,
-    /// `array.get`, or `array.replace`, its destination typed by the call's
-    /// `_type`. A closed index is a value constant; a template's stays a
+    /// `array.get`, `array.replace`, or `array.gep`, its destination typed
+    /// by the call's result. A closed index is a value constant; a template's stays a
     /// parameter constant the elaborator closes.
     pub(super) fn lower_pop_array_op(
         &mut self,
@@ -122,6 +124,11 @@ impl<'a> Flatten<'a> {
                     index: constant(index),
                 }
             }
+            (SemanticAdjustment::PopArrayGep, [array, index]) => MirInstr::ArrayGep {
+                dest,
+                array: *array,
+                index: *index,
+            },
             _ => unreachable!("a checked `pop.array` op has its operands"),
         });
         dest

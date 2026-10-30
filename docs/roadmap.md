@@ -1357,6 +1357,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     stays in the frame, as it does natively.
   - Probe: `Pointer(to=x).unsafe_origin_cast[MutUntrackedOrigin]()` then
     `print(p[])` prints `None` the same way.
+  - Probe: the element pointer `pop.array.gep` takes into a struct
+    field's array, read through `Pointer[_, ImmUntrackedOrigin](
+    _mlir_value=…)[]` with no later use of the struct, stops with "use of
+    a value after it was moved", the struct slot's tombstone.
   - Found while landing R1316 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9263,24 +9267,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     slices as entries chained by Depends bullets, replacing this one.
   - Depends on R221 (`pop.pointer.bitcast`, the body of `unsafe_bitcast`).
   - Model: Fable, Not Planned.
-
-- [ ] **R1317 `pop.array.gep` and the `index` conversions are not
-  accepted**
-
-  Problem: upstream's `VariadicList` constructor addresses its array's
-  first element with ``__mlir_op.`pop.array.gep`(array_up._get_kgen_pointer(),
-  Int(0).__mlir_index__())`` and reads its size parameter with
-  `Int(mlir_value=size)`, and Mojito's `__mlir_op` admits only the two
-  ownership markers (`checker/method_calls/mlir_op.rs`).
-  - `Int(0).__mlir_index__()` and `Int(mlir_value=size)` are upstream's
-    builtin casts, which run since R1516, and the size is a parameter of
-    type `__mlir_type.index`, which binds a compile-time `index`.
-  - The gep would be a `ref.make` of the array's element place, as the
-    call's builder takes the span's pointer today
-    (`mir::variadic_list::build_variadic_list`).
-  - Found while landing R1304 (2026-10-23).
-  - Depends on R1316 (the `!kgen.pointer` operand).
-  - Model: Opus, Not Planned.
 
 - [ ] **R1314 The call builds a `VariadicList`'s span itself, where
   upstream calls the list's `@implicit` constructor from the `!pop.array`**

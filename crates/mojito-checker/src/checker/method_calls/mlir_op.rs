@@ -59,6 +59,9 @@ impl Checker {
         ) {
             return self.infer_pop_array_op(span, method, call);
         }
+        if method == super::pop_array_ops::POP_ARRAY_GEP {
+            return self.infer_pop_array_gep(span, call);
+        }
         if method == STRING_SIZE {
             return self.infer_string_op(span, method, ParamOp::StringSize, call);
         }

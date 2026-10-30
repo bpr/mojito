@@ -1346,6 +1346,40 @@ impl VmBackend {
                 *slot = regs[value.0 as usize].clone();
                 regs[dest.0 as usize] = replaced;
             }
+            // The array's elements are its storage's indices: a place handle
+            // selects one more, and a heap pointer to the array roots one.
+            MirInstr::ArrayGep { dest, array, index } => {
+                let element =
+                    usize::try_from(crate::runtime::value_as_index(&regs[index.0 as usize])?)
+                        .map_err(|_| {
+                            RuntimeError::TypeError("array.gep of a negative element".to_string())
+                        })?;
+                regs[dest.0 as usize] = match regs[array.0 as usize].clone() {
+                    Value::Ref {
+                        frame,
+                        slot,
+                        mut projection,
+                    } => {
+                        projection.push(RefProjection::Index(element));
+                        Value::Ref {
+                            frame,
+                            slot,
+                            projection,
+                        }
+                    }
+                    Value::Pointer { allocation, offset } => Value::Ref {
+                        frame: POINTER_ROOT_FRAME,
+                        slot: self.pointer_root(allocation, offset),
+                        projection: vec![RefProjection::Index(0), RefProjection::Index(element)],
+                    },
+                    other => {
+                        return Err(RuntimeError::TypeError(format!(
+                            "array.gep through {}",
+                            crate::runtime::type_name(&other)
+                        )));
+                    }
+                };
+            }
             MirInstr::MakeStruct { dest, fields } => {
                 let name = prog
                     .declared_struct(prog.mir.functions[function].1.reg_types.get(&dest.0))

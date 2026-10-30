@@ -291,6 +291,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "the `!pop.array` storage built from its element values",
     ),
     (
+        "array.gep",
+        CapabilityStatus::Supported,
+        "the element's address at its stride from the array's `ptr`; no load, no bound check",
+    ),
+    (
         "variant.make",
         CapabilityStatus::Supported,
         "tagged aggregate construction over the normative Variant layout",

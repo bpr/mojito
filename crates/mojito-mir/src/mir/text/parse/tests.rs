@@ -1261,6 +1261,11 @@ fn instruction_families_reprint_byte_identically() {
             value: Reg(2),
             index: Const::Value(mojito_types::ct::CtValue::Index(0)),
         },
+        MirInstr::ArrayGep {
+            dest: Reg(3),
+            array: Reg(2),
+            index: Reg(1),
+        },
         MirInstr::MakeVariant {
             dest: Reg(27),
             alternatives: vec![Ty::int(), Ty::none()],

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	956
+# swept-count	960
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -610,6 +610,10 @@ assets/type_error/mlir_op_select_cases_differ.mojo	compile-reject	agree	error: '
 assets/type_error/mlir_op_select_condition_not_scalar.mojo	compile-reject	agree	error: 'pop.select' op operand #0 must be !kgen.scalar<bool>, but got '!kgen.simd<2, bool>'
 assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'
 assets/type_error/mlir_pop_array_dynamic_index.mojo	compile-reject	agree	error: cannot use a dynamic value in MLIR magic
+assets/type_error/mlir_pop_array_gep_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.gep' op operand #1 must be index, but got '!lit.struct<@std::@builtin::@int_literal::@IntLiteral<:!pop.int_literal 0>>'
+assets/type_error/mlir_pop_array_gep_non_array_pointer.mojo	compile-reject	agree	error: unable to infer result type from MLIR operation 'pop.array.gep'
+assets/type_error/mlir_pop_array_gep_operand_count.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.gep' op expected 2 operands, but found 1
+assets/type_error/mlir_pop_array_gep_type_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.gep' op failed to verify that pointer to array element type
 assets/type_error/mlir_pop_array_get_element_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.get' op failed to verify that value type matches array element type
 assets/type_error/mlir_pop_array_get_out_of_bounds.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.get' op array index out of bounds: 3
 assets/type_error/mlir_pop_array_instance_get_out_of_bounds.mojo	compile-reject	agree	error: 'pop.array.get' op array index out of bounds: 4

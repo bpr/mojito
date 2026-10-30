@@ -103,6 +103,9 @@ pub(super) fn verify_instruction(
         | MirInstr::ArrayReplace { .. } => {
             verify_array_op(&cx, instruction, errors);
         }
+        MirInstr::ArrayGep { dest, array, index } => {
+            verify_array_gep(&cx, *dest, *array, *index, errors);
+        }
         MirInstr::CallLlvmIntrinsic { args, spread, .. } => {
             verify_llvm_intrinsic(&cx, args, *spread, errors);
         }
@@ -1487,6 +1490,41 @@ fn verify_array_op(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<St
     {
         errors.push(format!(
             "{prefix}: array.{op} index {index} is out of bounds of {size} elements"
+        ));
+    }
+}
+
+/// Upstream's `pop.array.gep` verifier: the operand is a `!kgen.pointer`
+/// to a `!pop.array`, the index an `index`, and the result a
+/// `!kgen.pointer` to the array's element type.
+fn verify_array_gep(cx: &InstrCx<'_>, dest: Reg, array: Reg, index: Reg, errors: &mut Vec<String>) {
+    let prefix = cx.prefix;
+    let element = cx.reg_ty(array).and_then(|pointer| match pointer.kind() {
+        TyKind::KgenPointer(array) => match array.kind() {
+            TyKind::PopArray { element, .. } => Some(element.clone()),
+            _ => None,
+        },
+        _ => None,
+    });
+    let Some(element) = element else {
+        errors.push(format!(
+            "{prefix}: array.gep over a register that is no `!kgen.pointer` to a `!pop.array`"
+        ));
+        return;
+    };
+    if let Some(found) = cx.reg_ty(index)
+        && !matches!(found.kind(), TyKind::Index)
+    {
+        errors.push(format!(
+            "{prefix}: array.gep index has type {found}, not index"
+        ));
+    }
+    if let Some(result) = cx.reg_ty(dest)
+        && !matches!(result.kind(), TyKind::KgenPointer(found) if types_compatible(found, &element))
+    {
+        errors.push(format!(
+            "{prefix}: array.gep result {result} is not a `!kgen.pointer` to its element type \
+             {element}"
         ));
     }
 }

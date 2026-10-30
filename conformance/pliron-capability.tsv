@@ -50,6 +50,7 @@ instruction	place.load	partial	layoutable, typed places
 instruction	tuple.make	supported	typed element lists; variadic call sites build packs by relocation
 instruction	struct.create	supported	the struct's storage built from its field values
 instruction	array.create	supported	the `!pop.array` storage built from its element values
+instruction	array.gep	supported	the element's address at its stride from the array's `ptr`; no load, no bound check
 instruction	variant.make	supported	tagged aggregate construction over the normative Variant layout
 instruction	variant.is	supported	checked tag comparison
 instruction	variant.get	supported	checked payload projection

@@ -327,6 +327,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::ArrayRepeat { .. } => "ArrayRepeat",
         MirInstr::ArrayGet { .. } => "ArrayGet",
         MirInstr::ArrayReplace { .. } => "ArrayReplace",
+        MirInstr::ArrayGep { .. } => "ArrayGep",
         MirInstr::MakeVariant { .. } => "MakeVariant",
         MirInstr::VariantIs { .. } => "VariantIs",
         MirInstr::VariantTag { .. } => "VariantTag",

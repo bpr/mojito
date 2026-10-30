@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.140
+mojito-mir 1.141
 ```
 
-The writer emits 1.140. The reader accepts 1.0 through 1.140; *Schema 1.0*
+The writer emits 1.141. The reader accepts 1.0 through 1.141; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -928,6 +928,11 @@ Schema 1.140 adds the types `kgen_pointer { element }` and
 which retypes an address among them and a `pointer`. The package format
 moves to `mojito-package 155`.
 
+Schema 1.141 adds the instruction `array.gep { dest, array, index }`,
+upstream's `pop.array.gep`: the `kgen_pointer` to element `index`, a
+run-time `index` register, of the `pop_array` the `kgen_pointer` `array`
+addresses. The package format moves to `mojito-package 156`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1734,6 +1739,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeTuple` | `tuple.make` — the elements of a heterogeneous collector or of a typed `Tuple[T, ...]` construction (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
 | `MakeArray` | `array.create { dest, elems: [%rA, …] }` (schema 1.97: upstream's `pop.array.create`, the `!pop.array` of `dest`'s register type built from one register per element, in order; a call builds the element pointers of its callee's `*xs: T` so, stored in its `__passed_varargs__` slot) |
 | `ArrayRepeat` / `ArrayGet` / `ArrayReplace` | `array.repeat { dest, value }` / `array.get { dest, array, index }` / `array.replace { dest, array, value, index }` (schema 1.137): upstream's `pop.array.repeat`, the `!pop.array` of `dest`'s register type holding `value` in every element, `pop.array.get`, element `index` of `array`, and `pop.array.replace`, `array` with element `index` replaced by `value`; `index` is a closed `index` constant, or a template's `param(...)` constant elaboration closes and checks against the array's size; the element is trivially register-passable, and the verifier checks the value against it and a closed index against a known size |
+| `ArrayGep` | `array.gep { dest, array, index }` (schema 1.141): upstream's `pop.array.gep`, the `kgen_pointer` to element `index` (an `index` register) of the `pop_array` the `kgen_pointer` `array` addresses; it reads nothing and checks no bound, and the verifier checks the operand, index, and result types |
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` (schema 1.71: `variant.make` and `variant.set` carry `constructor: "<symbol>"` after their operands when the payload names the constructor it runs, the `__copyinit__` through schema 1.100 and the `__moveinit__` from 1.101, which takes `value` by move; schema 1.73: `variant.set` carries `destructors: [present("<symbol>") | absent, ...]`, one entry per alternative, naming the `__deinit__` the replaced payload runs under that tag, omitted while it names none) |
 | `VariantTag` | `variant.tag { dest, variant }` (schema 1.103: the active alternative's index as an `Int`, an `enum` storage's discriminant) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |

@@ -553,6 +553,7 @@ assets/ok/mlir_deferred_attribute.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_deferred_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_pop_array_gep.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_array_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_max_min_bool_casts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_ops.mojo	-	ineligible	no-scalar-entry-shape

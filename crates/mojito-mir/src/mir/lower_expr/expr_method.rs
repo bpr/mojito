@@ -54,6 +54,9 @@ impl<'a> Flatten<'a> {
         if let Some(called) = Self::checked_llvm_intrinsic(call) {
             return self.lower_llvm_intrinsic(call, called, args);
         }
+        if let Some(op) = Self::checked_pop_array(call) {
+            return self.lower_pop_array_op(call, op, args);
+        }
         if let Some(op) = Self::checked_simd_receiver_op(call) {
             return self.lower_simd_receiver_op(call, op, object, args);
         }

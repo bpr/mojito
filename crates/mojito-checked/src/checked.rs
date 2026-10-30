@@ -1194,6 +1194,10 @@ pub enum SemanticAdjustment {
     PopArrayReplace {
         index: mojito_types::param_expr::ParamExpr,
     },
+    /// ``__mlir_op.`pop.array.gep`(p, i)``: the `!kgen.pointer` to element
+    /// `i` (a run-time `index` operand) of the `!pop.array` the
+    /// `!kgen.pointer` `p` addresses. MIR keeps it as `MirInstr::ArrayGep`.
+    PopArrayGep,
     /// A sugar written as the construction it stands for: an initializer
     /// list `{}` / `{a, b}` at the type its context expects (upstream's
     /// set-initializer literal, emitted as the construction `T(a, b)` of that

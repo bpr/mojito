@@ -1408,6 +1408,14 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("index", const_value(index)),
             ],
         ),
+        MirInstr::ArrayGep { dest, array, index } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("array", reg_value(*array)),
+                ("index", reg_value(*index)),
+            ],
+        ),
         MirInstr::MakeVariant {
             dest,
             alternatives,

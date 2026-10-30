@@ -48,6 +48,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::ArrayRepeat { dest, .. }
         | MirInstr::ArrayGet { dest, .. }
         | MirInstr::ArrayReplace { dest, .. }
+        | MirInstr::ArrayGep { dest, .. }
         | MirInstr::MakeVariant { dest, .. }
         | MirInstr::MakeSimd { dest, .. }
         | MirInstr::SimdCast { dest, .. }
@@ -144,6 +145,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             value,
         }
         | MirInstr::ArrayReplace { array, value, .. } => out.extend([*array, *value]),
+        MirInstr::ArrayGep { array, index, .. } => out.extend([*array, *index]),
         MirInstr::MaterializeLiteral { value, .. }
         | MirInstr::ScalarCast { value, .. }
         | MirInstr::BuiltinCast { value, .. }

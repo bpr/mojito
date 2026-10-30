@@ -966,6 +966,9 @@ impl Checker {
         };
         let bracket = match param_args {
             [] => None,
+            [mojito_ast::ast::ParamArg::Named { name, value }] if name == "origin" => {
+                Some((TyKind::Infer.into(), self.pointer_origin_arg(value)?))
+            }
             [_] => {
                 return Err(no_match(
                     "failed to infer parameter 'origin' of a bracket that names none".to_string(),
