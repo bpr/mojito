@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A value's struct parameter or `comptime` member is a compile-time
+  argument read through its type, as at the pin:
+  `DType.exponent_width[x.dtype]()`, `SIMD[x.dtype, x.length]`,
+  `x.cast[x.dtype]()`, and
+  `CurrentPlugin.binary_math_fn["pow", base.dtype, w]` run, where each
+  reported an invalid element type or a non-constant member (R333). A
+  run-time read through an instance (`t.n`, `self.n`, `h.w.n`) is the
+  instance's type argument too, where it had no field (R1148, R1447), and
+  the bundled `StringLiteral` reads `self.value` and `rhs.value` as
+  upstream's does. A field path stays a dynamic value in a type argument.
+
 - `SIMD` declares upstream's `__truediv__`, `__rtruediv__`, and
   `__itruediv__`, so `/` over an `Int`, `UInt`, sized scalar, or vector is
   `pop.div`: an integer `/` truncates toward zero (`7 / -2` is `-3`),

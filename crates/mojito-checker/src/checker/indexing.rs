@@ -1928,15 +1928,11 @@ impl Checker {
                     _ => value,
                 });
             }
-            // A compile-time value member read through an instance
-            // (`args.size`) is the member of the instance's type: the
-            // receiver only types the read.
-            if let Some(member) = info
-                .associated
-                .get(field)
-                .filter(|value| !matches!(value, CtValue::Type(_)))
-            {
-                let value = self.struct_member_at(info, targs, member)?;
+            // A compile-time value member or a value parameter read through
+            // an instance (`args.size`, `h.w.n`) is the member of the
+            // instance's type: the receiver only types the read.
+            if let Some(value) = self.struct_value_member(info, targs, field) {
+                let value = value?;
                 let ty = value.meta().as_value().cloned().ok_or_else(|| {
                     TypeError::InvariantViolation(format!("member '{field}' is not a value"))
                 })?;

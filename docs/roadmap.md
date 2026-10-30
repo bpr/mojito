@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1715**.
+Next free ID: **R1717**.
 
 ## Ordered Work
 
@@ -5397,27 +5397,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1148 A struct parameter read through a value is rejected**
+- [ ] **R1716 A spread of a `ParameterList` value binds only a literal
+  construction**
 
-  Problem: `pl.values` of a `comptime pl = ParameterList[vs.values]()` and
-  `s.n` of a `var s = S[3]()` fail, where the pin answers each with the
-  instance's argument (`comptime pl2 = ParameterList[pl.values]` then
-  `pl2.size` prints `2`, `print(s.n)` prints `3`).
-  - A read through a type works since R807 (`S[7].n`, `vs.values`):
-    `Checker::struct_parameter_at` (`checker/constraints.rs`) answers it.
-  - The value-receiver paths never ask it: `struct_value_field` (a
-    compile-time struct value) and the instance arm of `infer_member`
-    (`checker/indexing.rs`, a runtime value).
-  - Probe: `_ParameterListIter[*pl](0)` over that `comptime pl` (the pin
-    runs it), since `Checker::parameter_list_spread` takes only a literal
-    `ParameterList[...]()` construction, not a value whose type is one.
-  - Probe: a construction's `values` in a `comptime` body, `comptime
-    _cases = TypeList.of[Trait=AnyType, NoneType, Int]().values` in a
-    struct (also over `Self.T`), read as `TypeList[O._cases].length`, fails
-    with "unsupported associated comptime member access", and at module
-    scope with "Undefined variable 'TypeList'", where the pin prints `2`
-    for each.
-  - Found while landing R807 (2026-10-19).
+  `_ParameterListIter[*pl](0)` over `comptime pl =
+  ParameterList[vs.values]()` in `def f[*vs: Int]()` fails with "cannot
+  infer type parameter 'type'", where the pin runs it.
+  - `Checker::parameter_list_spread` (`checker/comptime_validation.rs`)
+    binds a variadic value parameter only from a spelled
+    `*ParameterList[...]()` construction, not from any compile-time value
+    whose type is a `ParameterList` application.
+  - Upstream's spread reads the operand's type: the list is the
+    application's `values` argument, wherever the value comes from.
+  - Found while landing R333 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6303,36 +6295,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1447 A struct parameter read through an instance has no field**
+- [ ] **R1715 A type pack read through a struct application or a value is
+  no pack**
 
-  Problem: `var t = T[3](); print(t.n)` over `struct T[n: Int]` reports
-  "type 'T[3]' has no field 'n'", where the pin prints `3`.
-  - `Checker::infer_member` (`checker/indexing.rs`) answers a member of an
-    instance only from the struct's fields. Upstream resolves the name
-    against the type's parameters too, so `t.n` is the instance's argument
-    and `self.n` the binder, as `Self.n` is.
-  - Probe: `self.f` in a method of `struct T[s: String, f: Float64]`, and
-    `t.s` on an instance (pin: `2.5` and `a` for `T["a", 2.5]`).
-  - Probe: a pack parameter read off an instance or its type, `len(r.Ts)`
-    over a `_RegisterPackType[SIMD[DType.int32, 4], SIMD[DType.int32, 4]]`
-    value `r`, or `len(P[Int, Bool].Ts)` over `struct P[*Ts: Movable]`,
-    fails with "no overload matches" for `len`, where the pin prints `2`
-    (found while landing R1547).
-  - Probe: `t.k` over `t: Tag[idt(n)]` in `def g[n: Int]` reports "type
-    'Tag[idt[Int](n)]' has no field 'k'", where the pin prints `1` for
-    `g[1](Tag[idt(1)]())`; `t.key()` over a method returning `Self.k` runs.
-  - The bundled `StringLiteral` members read `Self.value` and
-    `type_of(rhs).value` where upstream's spell `self.value` and
-    `rhs.value` (`std/builtin/string_literal.mojo`). Respell them when this
-    lands.
-  - A literal's `"ab".value` is the same read: today it is a compiler fold
-    (`CtValue::literal_value`, `ParamContext::field`'s literal arm), where
-    the instance's type carries the argument since R1652.
-  - The compile-time read of a compile-time value's struct parameter
-    (`target._mlir_value` over `target: CompilationTarget` in
-    `simd_bit_width`) is `Checker::value_type_argument` since R1562; the
-    run-time read can answer from the same type argument.
-  - Found while landing R1401 (2026-10-26).
+  `len(P[Int, Bool].Ts)` over `struct P[*Ts: Movable]` fails with "no
+  overload matches" for `len`, where the pin prints `2`; `len(Self.Ts)`
+  in `P`'s own method runs.
+  - `Checker::type_pack_named` (`checker/comptime_validation.rs`) knows a
+    type pack only as a binder in scope or as `Self.<pack>`.
+  - A value parameter read the same ways is the application's argument
+    (`Checker::struct_parameter_at`); a pack parameter needs the same read,
+    giving the application's `TypeList`.
+  - Probe: `len(r.Ts)` over `r: _RegisterPackType[SIMD[DType.int32, 4],
+    SIMD[DType.int32, 4]]` fails the same way.
+  - Probe: `comptime T2 = P[Int, Bool].Ts` then `len(T2)` fails with "a
+    parameterized type is not a value", where the pin prints `2`.
+  - Found while landing R333 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6379,25 +6357,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     its answer, and one over a binder is the application
     `ParamContext::dtype_float_query` builds, which the elaborator answers
     per instance.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R333 A value's `dtype` as a `DType` query argument is rejected**
-
-  Problem: `DType.exponent_width[x.dtype]()` for `x: Scalar[dt]` prints `8`
-  at `Float32` at the pin, while Mojito reports "not a valid SIMD element
-  type: DType.dtype".
-  - `dtype_from_arg` (`checker/annotations.rs`) reads only a
-    `DType.<name>` spelling, a binder, or a type's `dtype`, not a value's.
-  - A value's `dtype` is its type's lane slot, which the checker already
-    records for a runtime read (`SemanticAdjustment::DtypeConstant`).
-  - The same gap covers a value's struct parameter in any type or
-    parameter position: `SIMD[DType.int8, x.length]` and
-    `CurrentPlugin.binary_math_fn["pow", base.dtype, width]` report "not
-    a compile-time Int constant: unsupported associated comptime member
-    access", and `x.cast[x.dtype]()` reports "no overload matches".
-  - Upstream's `_pow`, `_powf_scalar`, `SIMD.__pow__`, `exp`, and `log`
-    spell all of these (R1567).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10646,6 +10605,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Pliron writes a literal's `repr` through the nominal `String`'s
     `write_repr_to` (`lower_repr_builtin`), because a literal type has no
     struct instance whose member table names one.
+  - A literal's `"ab".value` is a compiler fold (`CtValue::literal_value`,
+    `ParamContext::field`'s literal arm), where any other instance's
+    struct parameter read is its type's argument
+    (`Checker::struct_value_member`); as the declared struct, the literal
+    reads its `value` the same way.
   - This is `SIMD`'s R1557 for the literal. Done when `rg
     bridged_string_literal crates` is empty.
   - Depends on R1659.

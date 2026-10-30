@@ -12,9 +12,7 @@
 # `StringSlice(self)` (R1655) are not ported, and for that reason
 # `write_to` and `write_repr_to` read `as_string_slice()`.
 # `@__nonmaterializable(String)` is not read (R1651). The struct declares
-# only the traits whose requirements are ported here. A member reads its
-# parameter as `Self.value` and `type_of(rhs).value` where upstream's spell
-# `self.value` and `rhs.value` (R1447), and `ptr` takes
+# only the traits whose requirements are ported here. `ptr` takes
 # `pop.string.address` as the `Pointer` itself, where upstream's wraps the
 # `!kgen.pointer` it gives with `unsafe_bitcast[Byte]()` (R221).
 """Implements the StringLiteral struct.
@@ -88,7 +86,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
             This does not include the trailing null terminator in the count.
         """
         return Int(
-            SIMDLength(mlir_value=__mlir_op.`pop.string.size`(Self.value))
+            SIMDLength(mlir_value=__mlir_op.`pop.string.size`(self.value))
         )
 
     @inline(.nodebug)
@@ -100,7 +98,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         Returns:
             The pointer to the data.
         """
-        return __mlir_op.`pop.string.address`(Self.value)
+        return __mlir_op.`pop.string.address`(self.value)
 
     @doc_hidden
     @inline(.nodebug)
@@ -152,9 +150,9 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         """
         return __mlir_attr[
             `#kgen.param.identical<`,
-            Self.value,
+            self.value,
             `, `,
-            type_of(rhs).value,
+            rhs.value,
             `> : !kgen.scalar<bool>`,
         ]
 

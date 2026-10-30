@@ -21,9 +21,9 @@ impl Checker {
     }
 
     /// The dtype a SIMD element-type argument names: a `DType.<name>` member,
-    /// a `SIMD` type's `dtype` (`Float64.dtype`), a `comptime` binding of
-    /// one, or — symbolic while its declaration is a template — a `[dt:
-    /// DType]` parameter in scope, bare or as `Self.dt`.
+    /// a `SIMD` type's or value's `dtype` (`Float64.dtype`, `x.dtype`), a
+    /// `comptime` binding of one, or — symbolic while its declaration is a
+    /// template — a `[dt: DType]` parameter in scope, bare or as `Self.dt`.
     pub(super) fn dtype_from_arg(
         &self,
         arg: &mojito_ast::ast::ParamArg,
@@ -76,12 +76,12 @@ impl Checker {
             }
         }
         // Any other compile-time expression of type `DType`
-        // (`_uint_type_of_width[w]()`) is the value it folds to, or that
-        // expression while its operands are open.
+        // (`_uint_type_of_width[w]()`, a value's `x.dtype`) is the value it
+        // folds to, or that expression while its operands are open.
         if let mojito_ast::ast::ParamArg::Value(expr) = arg
             && matches!(
                 expr.kind,
-                ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Member { .. }
             )
         {
             let _lifting = self.lifting_position();

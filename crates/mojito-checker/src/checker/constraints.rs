@@ -5251,12 +5251,16 @@ impl Checker {
 
     /// The type `object` names as the subject of a member read: `Self`, a
     /// type parameter (`T`, `Self.T`), a struct application (`A`, `B[4]`),
-    /// or a bare parameterized struct's generator (`S`); `None` for an
-    /// expression that names a value.
+    /// or a bare parameterized struct's generator (`S`). A run-time binding
+    /// is its type's subject, as upstream reads a value's parameter or
+    /// `comptime` member (`x.dtype`, `x.length`) through `type_of(x)`, never
+    /// through the value; a field path (`h.w.n`) stays a dynamic value.
     fn member_subject(&self, object: &Expr) -> Option<Ty> {
         match &object.kind {
             ExprKind::Identifier(name) if name == "Self" => self.self_ty.clone(),
-            ExprKind::Identifier(name) if self.lookup(name).is_some() => None,
+            ExprKind::Identifier(name) if self.lookup(name).is_some() => {
+                self.probe(|| self.infer(object)).ok()
+            }
             ExprKind::Identifier(name) if let Some(parameter) = self.lookup_tparam(name) => {
                 Some(parameter)
             }
