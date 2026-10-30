@@ -2378,15 +2378,6 @@ fn rejects_unknown_dtype() {
 }
 
 #[test]
-fn rejects_wrong_simd_element_count() {
-    let e = err("var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2)\n");
-    assert!(
-        matches!(e, TypeError::SimdArity { width: 4, got: 2 }),
-        "got {e:?}"
-    );
-}
-
-#[test]
 fn rejects_mixed_dtype_operands() {
     let e = err(
         "var a: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar b: SIMD[DType.int64, 4] = SIMD[DType.int64, 4](1, 2, 3, 4)\nvar c: SIMD[DType.int32, 4] = a + b\n",

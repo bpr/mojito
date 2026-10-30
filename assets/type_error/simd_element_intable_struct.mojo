@@ -1,4 +1,4 @@
-# expect: SIMD element
+# expect: no constructor overload matches
 # Upstream's `Intable` constructor builds one scalar; an `Intable` struct is
 # no element of the `*elems: Scalar[Self.dtype]` overload.
 @fieldwise_init

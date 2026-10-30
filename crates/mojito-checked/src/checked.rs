@@ -957,7 +957,8 @@ pub enum SemanticAdjustment {
     Transfer(TransferVerdict),
     ExplicitDestroy,
     Iterate(IterationProtocol),
-    /// `SIMD[dt, width](elems)`, a `Scalar[dt](x)`, or a scalar alias:
+    /// A `SIMD` construction the checker's rule serves (a nullary one, a
+    /// literal splat, `SIMD[dt, _](x)`, or a scalar alias's conversion):
     /// the construction's lane dtype and width, each a known slot or the
     /// parameter expression a generator names, which the elaborator closes
     /// per instance.

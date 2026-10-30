@@ -488,9 +488,13 @@ impl VmBackend {
                     .find(|(field, _)| field == name)
                     .map(|(_, value)| value)
                     .ok_or_else(|| RuntimeError::TypeError(format!("no field '{name}'")))?,
+                // A checked program indexes a tuple past its count only
+                // through `VariadicList`'s untracked element pointer (`elems[i]`
+                // past a pack's arguments), which native code reports as a
+                // dangling dereference.
                 (RefProjection::Index(index), Value::Tuple(items)) => {
                     items.get(*index).cloned().ok_or_else(|| {
-                        RuntimeError::TypeError("reference index out of bounds".to_string())
+                        RuntimeError::TypeError("vm: dereference of dangling Pointer".to_string())
                     })?
                 }
                 (RefProjection::Index(index), Value::Pointer { allocation, offset }) => {

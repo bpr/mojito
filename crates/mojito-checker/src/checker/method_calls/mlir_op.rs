@@ -1,7 +1,8 @@
 //! The `__mlir_op` forms Mojito admits: upstream's
 //! `lit.ownership.mark_initialized` and `lit.ownership.mark_destroyed` over a
 //! place, which the bundled standard library spells before writing a value's
-//! storage through pointers and after moving it out through them,
+//! storage through pointers or lane by lane and after moving it out through
+//! them,
 //! `kgen.struct.extract` of an element of a literal struct,
 //! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the `pop` and `index` ops of `pop_ops.rs`, and the LLVM
 //! intrinsic call of `llvm_intrinsic.rs`.
@@ -17,7 +18,8 @@ impl Checker {
     /// storage through pointers (`Tuple.__init__`); the second ends its
     /// value without destroying it, after its storage was moved out through
     /// pointers (`Tuple.consume_elements`). Each is accepted only in the
-    /// bundled modules that reach compiler-private storage. Every other
+    /// bundled modules that reach compiler-private storage or, as `SIMD`'s
+    /// element list does, initialize `out self` lane by lane. Every other
     /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`]),
     /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), a
     /// KGEN string read ([`Self::infer_string_op`]), or a
@@ -67,7 +69,7 @@ impl Checker {
         };
         if !param_args.is_empty()
             || !kwargs.is_empty()
-            || !super::super::overload_support::is_bundled_private_storage_source(
+            || !super::super::overload_support::is_bundled_ownership_marker_source(
                 span.source.as_deref(),
             )
         {

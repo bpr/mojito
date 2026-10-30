@@ -1,4 +1,4 @@
-# expect: SIMD element
+# expect: no constructor overload matches
 # A `Float64` is no `Scalar[DType.float32]`: several elements are each already
 # the lane's scalar, as upstream's `*elems` overload takes them.
 def main():

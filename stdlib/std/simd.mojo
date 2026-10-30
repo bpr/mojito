@@ -3,8 +3,8 @@
 # initializers `__init__(out self)`, the `Intable` and `IntableRaising`
 # conversions, the cast from `SIMD[other_dtype, Self.length]`, the
 # `SIMDLength` splat, `from_int=`, the `Floatable` and `FloatableRaising`
-# conversions, `Bool`, `fill=`, `Int` from an `index`, and the
-# `Scalar[Self.dtype]` splat, and its instance
+# conversions, `Bool`, `fill=`, `Int` from an `index`, the
+# `Scalar[Self.dtype]` splat, and the element list, and its instance
 # `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
 # `__sub__`, `__mul__`, `__floordiv__`, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
@@ -25,10 +25,13 @@
 # and `print`, `String`, and `repr` of a value still format in the compiler
 # rather than calling `write_to` and `write_repr_to` (R1662). So are the
 # other initializers:
-# `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
-# and `IntLiteral` and `FloatLiteral` (R1507); `py=` is not ported. Until
+# `mlir_value=` (R1591), `from_bits=` (R1593), and `IntLiteral` and
+# `FloatLiteral` (R1507); `py=` is not ported. Until
 # then a construction takes a declared overload only where its arguments
-# select one at the pin. `_simd_dtype_checks` is `True`: Mojito has no
+# select one at the pin. The element list omits upstream's
+# `assert Self.length == len(elems)`, which the pin's default `-D ASSERT`
+# mode skips, so too few elements read past `elems` there as here (R1598).
+# `_simd_dtype_checks` is `True`: Mojito has no
 # sub-byte float dtype (R65), and `__hash__` omits its `float8_e8m0fnu`
 # conjunct for the same reason. The struct declares
 # only the traits whose requirements are ported here; as upstream's, its
@@ -785,6 +788,30 @@ struct SIMD[dtype: DType, length: SIMDLength](
         self._mlir_value = __mlir_op.`pop.simd.splat`[_type=Self._mlir_type](
             value._mlir_value
         )
+
+    @inline(.nodebug)
+    def __init__(
+        out self, *elems: Scalar[Self.dtype], __list_literal__: NoneType = None
+    ):
+        """Constructs a SIMD vector via a variadic list of elements.
+
+        The input values are assigned to the corresponding elements of the SIMD
+        vector.
+
+        Constraints:
+            The number of input values is equal to size of the SIMD vector.
+
+        Args:
+            elems: The variadic list of elements from which the SIMD vector is
+                   constructed.
+            __list_literal__: Tell Mojo to use this method for list literals.
+        """
+        _simd_construction_checks[Self.dtype, Self.length]()
+
+        __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(self))
+
+        comptime for i in range(Self.length):
+            self[i] = elems[i]
 
     # ===-------------------------------------------------------------------===#
     # Operator dunders

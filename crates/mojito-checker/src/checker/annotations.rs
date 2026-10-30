@@ -155,7 +155,7 @@ impl Checker {
 /// float lanes, and runtime floats adjust precision across float widths. A
 /// float source never converts to an integer lane — spell the truncation
 /// (`Int(x)`) first. `Intable` params/structs are the caller's separate,
-/// `conforms_to`-backed clause (`check_simd_args`). A symbolic lane takes
+/// `conforms_to`-backed clause (`check_simd_value`). A symbolic lane takes
 /// any integer or float source: which conversions the instantiation admits
 /// is its own check.
 pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {

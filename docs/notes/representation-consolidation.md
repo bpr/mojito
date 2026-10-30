@@ -40,11 +40,11 @@ command cannot use both.
 2. **`SIMD` as the declared struct everywhere** (the port's end).
    - R1557 makes `SIMD` and its aliases the declared struct in the
      checker, after R1556 (no `TyKind::Simd` pattern matches outside
-     `mojito-types`), R1591 (after R240), R1592, R1593, R1399,
+     `mojito-types`), R1591 (after R240), R1593, R1399,
      R1507, R1662, and R330.
    - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
      both backends.
-   - R1597 (after R1592) and R1596 (after R1597) finish the surface.
+   - R1597 and R1596 (after R1597) finish the surface.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1558 --task R1596 --task R1597 -n 0

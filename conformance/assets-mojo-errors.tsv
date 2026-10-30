@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	930
+# swept-count	932
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -168,6 +168,7 @@ assets/runtime_error/pliron_trap_pow_negative.mojo	runs	subset	the pin runs it; 
 assets/runtime_error/pointer_dangling.mojo	trap	agree	error: execution crashed
 assets/runtime_error/pointer_double_free.mojo	runs	subset	the pin runs it; Mojito rejects: double free
 assets/runtime_error/pointer_use_after_free.mojo	runs	subset	the pin runs it; Mojito rejects: use after
+assets/runtime_error/simd_element_list_too_few.mojo	trap	agree	error: execution crashed
 assets/runtime_error/span_index_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/span_slice_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	trap	agree	error: execution crashed
@@ -783,6 +784,7 @@ assets/type_error/simd_bool_mask_shift.mojo	compile-reject	agree	error: function
 assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_element_intable_struct.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_element_int_narrowing.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/simd_element_list_generic_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_element_wider_float.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_fill_non_bool_mask.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_float_bitwise_and.mojo	compile-reject	agree	error: function instantiation failed

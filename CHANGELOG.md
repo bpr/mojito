@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD[dt, n](a, b, …)`, every alias spelling of it, an initializer list
+  `{a, b}` into a `SIMD` slot, and the explicit `__list_literal__=None` now
+  bind upstream's declared `__init__(out self, *elems: Scalar[Self.dtype],
+  __list_literal__: NoneType = None)`, so a `SIMDLength` element converts
+  through its splat, elements past the width are not read, and too few
+  trap at run time as the pin's crash, its arity `assert` omitted as the
+  pin's default mode skips it. The checker's element-list rule and
+  `TypeError::SimdArity` are gone; a list display into a non-`List` struct
+  is filed as R1666 (R1592).
+
 - `abs` is now upstream's `std.math.abs[T: Absable]`, exported from the
   prelude, so `abs` over `Int32`, a vector, or a `Scalar[dtype]` runs as
   at the pin, and `_write_int` calls it as upstream's does. A struct's

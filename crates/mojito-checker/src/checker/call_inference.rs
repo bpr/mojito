@@ -469,8 +469,8 @@ impl Checker {
     /// declares, or `None` when it is the checker's rule's: its arguments
     /// select an overload not declared yet
     /// ([`Self::binds_undeclared_overload`]), or no declared one matches
-    /// and a rule serves its keywords (`mlir_value=`, `copy=`) or its
-    /// positional arguments into a width not known here (`SIMD[dt, _]`,
+    /// and a rule serves its keywords (`mlir_value=`, `copy=`) or its one
+    /// positional argument into a width not known here (`SIMD[dt, _]`,
     /// R1544); any other miss is the declared selection's error, so
     /// `Int8(x)` over a struct whose `__int__` raises but which does not
     /// declare `IntableRaising` is rejected as at the pin. `constructed` is
@@ -497,6 +497,9 @@ impl Checker {
             || self.infer_construction_of(span, name, constructed, param_args, args, kwargs);
         let rule_served = || {
             if kwargs.is_empty() {
+                if args.len() > 1 {
+                    return false;
+                }
                 let instance = match constructed {
                     Some(constructed) => Some(constructed.clone()),
                     None => self.simd_type(param_args).ok().map(|(ty, _)| ty),
@@ -719,17 +722,15 @@ impl Checker {
 
     /// Whether a `SIMD` construction's positional arguments select, at the
     /// pin, an overload `std.simd` does not declare yet, which the checker's
-    /// rule serves instead: an element list (R1592), or an `IntLiteral` or
-    /// a `FloatLiteral` (R1507). Each would otherwise reach a declared
-    /// overload through an implicit conversion the pin never takes.
+    /// rule serves instead: one `IntLiteral` or `FloatLiteral` (R1507),
+    /// which would otherwise reach a declared overload through an implicit
+    /// conversion the pin never takes.
     fn binds_undeclared_overload(&self, args: &[Expr]) -> bool {
-        match args {
-            [] => false,
-            [argument] => self
-                .probe(|| self.infer(argument))
-                .is_ok_and(|ty| matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)),
-            _ => true,
-        }
+        let [argument] = args else {
+            return false;
+        };
+        self.probe(|| self.infer(argument))
+            .is_ok_and(|ty| matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral))
     }
 
     /// Check every member of a free-function overload set against the

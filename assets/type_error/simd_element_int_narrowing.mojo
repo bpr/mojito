@@ -1,4 +1,4 @@
-# expect: SIMD element
+# expect: no constructor overload matches
 # Several arguments bind upstream's `*elems: Scalar[Self.dtype]`, so a runtime
 # `Int` element must be spelled as the lane's scalar (`UInt8(i)`).
 def main():

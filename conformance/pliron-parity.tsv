@@ -954,6 +954,7 @@ assets/ok/simd_conversion_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_declared_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtype_alias.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtypes_int_lanes.mojo	main	exe-differential	sanitized
+assets/ok/simd_element_list_initializer.mojo	main	exe-differential	sanitized
 assets/ok/simd_float_div.mojo	main	exe-differential	sanitized
 assets/ok/simd_floats.mojo	main	exe-differential	sanitized
 assets/ok/simd_floordiv_dunders.mojo	main	exe-differential	sanitized
@@ -1536,6 +1537,7 @@ assets/runtime_error/pliron_trap_pow_negative.mojo	main,__toplevel__	error-diffe
 assets/runtime_error/pointer_dangling.mojo	main,__toplevel__	error-differential	category=PointerDangling
 assets/runtime_error/pointer_double_free.mojo	main,__toplevel__	error-differential	category=PointerDoubleFree
 assets/runtime_error/pointer_use_after_free.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
+assets/runtime_error/simd_element_list_too_few.mojo	main,__toplevel__	error-differential	category=PointerDangling
 assets/runtime_error/span_index_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/span_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort

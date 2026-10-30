@@ -757,8 +757,8 @@ impl Checker {
         }
     }
 
-    /// Type `SIMD[DType.<dt>, width](args)`: `width` element arguments, or a
-    /// single argument that splats across all lanes; each must fit the dtype
+    /// Type `SIMD[DType.<dt>, width](args)` the rule serves: no argument, or
+    /// a single one that splats across all lanes or converts
     /// ([`Self::check_simd_args`]).
     pub(super) fn infer_simd_construction(
         &self,
@@ -849,43 +849,30 @@ impl Checker {
     }
 
     /// Check the arguments of a SIMD construction against upstream's
-    /// `SIMD.__init__` overloads: none (all lanes zero), exactly one, or one
-    /// per lane. A symbolic width fixes no count and a symbolic dtype gates
-    /// nothing: both are the instantiation's to check.
+    /// one-value `SIMD.__init__` overloads `std.simd` does not serve yet:
+    /// none (all lanes zero) or exactly one. A symbolic width and a symbolic
+    /// dtype gate nothing: both are the instantiation's to check.
     ///
-    /// One argument binds a one-value overload: the cast from a
-    /// `SIMD[other_dtype, Self.length]` (a scalar reaching every lane through
-    /// the implicit splat), the `IntLiteral` and `FloatLiteral` splats, and,
-    /// for a scalar only, `__init__[T: Intable]`, whose result is
-    /// `Scalar[target_dtype]`. Several bind `*elems: Scalar[Self.dtype]`, so
-    /// each element is already the lane's scalar or converts to it
-    /// implicitly ([`splats_to`]): a literal, a one-lane value of the dtype,
-    /// or a `Bool` into a mask.
+    /// One argument binds the cast from a `SIMD[other_dtype, Self.length]`
+    /// (a scalar reaching every lane through the implicit splat), the
+    /// `IntLiteral` and `FloatLiteral` splats, and, for a scalar only,
+    /// `__init__[T: Intable]`, whose result is `Scalar[target_dtype]`.
+    /// Several arguments bind the declared element list, so meeting them
+    /// here is the declared selection's miss.
     pub(super) fn check_simd_args(
         &self,
         dtype: &SimdDtype,
         width: &SimdWidth,
         args: &[Expr],
     ) -> Result<(), TypeError> {
-        if let Some(width) = width.known()
-            && args.len() != width as usize
-            && args.len() > 1
-        {
-            return Err(TypeError::SimdArity {
-                width,
-                got: args.len(),
-            });
+        match args {
+            [] => Ok(()),
+            [arg] => self.check_simd_value(dtype, width, arg),
+            _ => Err(TypeError::BadCall {
+                func: "SIMD".to_string(),
+                reason: "no constructor overload matches the supplied arguments".to_string(),
+            }),
         }
-        if let [arg] = args {
-            return self.check_simd_value(dtype, width, arg);
-        }
-        for arg in args {
-            let aty = self.infer(arg)?;
-            if !splats_to(&aty, dtype) {
-                return Err(simd_argument_error(dtype, width, &aty));
-            }
-        }
-        Ok(())
     }
 
     /// Type the built-in `Error(msg)` constructor: one `String` argument.

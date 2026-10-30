@@ -1,4 +1,4 @@
-# expect: no matching function in initialization
+# expect: no constructor overload matches
 # No `SIMD.__init__` overload binds an unbound `_` width from the number of
 # element arguments; only a single argument's own width binds it.
 def main():

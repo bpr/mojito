@@ -463,12 +463,6 @@ pub enum TypeError {
     BadDtype(String),
     /// A SIMD width was not a positive power of two.
     BadSimdWidth(String),
-    /// A SIMD construction had the wrong number of element arguments (must be the
-    /// width, or exactly one to splat).
-    SimdArity {
-        width: i64,
-        got: usize,
-    },
     /// A subscript `v[i]` was applied to a non-SIMD value.
     NotIndexable(String),
     /// A subscript of a type that declares `__setitem__` but no
@@ -1036,10 +1030,6 @@ impl fmt::Display for TypeError {
             Self::BadSimdWidth(w) => {
                 write!(f, "SIMD width must be a positive power of two, got {w}")
             }
-            Self::SimdArity { width, got } => write!(
-                f,
-                "SIMD construction expects {width} element(s) or 1 to splat, got {got}"
-            ),
             Self::NotIndexable(ty) => {
                 write!(f, "type '{ty}' cannot be indexed here")
             }

@@ -337,8 +337,8 @@ impl VmBackend {
     /// initialized whole has before pointer writes fill it, or the
     /// placeholder that skeleton holds for a field of compiler-private tuple
     /// storage ([`uninitialized_field`]), which a split struct's field slot
-    /// holds whole. `None` for a struct MIR does not declare and any other
-    /// type.
+    /// holds whole, or a known `SIMD`'s zero vector. `None` for a struct MIR
+    /// does not declare and any other type.
     pub(super) fn uninitialized_value(prog: &Prog, ty: &Ty) -> Option<Value> {
         match ty.kind() {
             // A held struct's storage is its one field's.
@@ -354,6 +354,18 @@ impl VmBackend {
                 fields: uninitialized_fields(&prog.structs.get(name)?.fields),
             }),
             TyKind::Tuple(_) | TyKind::PopArray { .. } => Some(uninitialized_field(ty)),
+            // Upstream's `undef` vector, which `SIMD`'s element list marks
+            // initialized before writing it lane by lane: the zero vector.
+            TyKind::Simd { dtype, width } => {
+                let dtype = dtype.known()?;
+                let width = usize::try_from(width.known()?).ok()?;
+                let zero = if dtype == mojito_ast::ast::Dtype::Bool {
+                    Value::Bool(false)
+                } else {
+                    Value::Int(0)
+                };
+                crate::runtime::simd_from_values(dtype, width, &[zero]).ok()
+            }
             _ => None,
         }
     }

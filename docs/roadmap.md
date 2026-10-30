@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1666**.
+Next free ID: **R1667**.
 
 ## Ordered Work
 
@@ -2909,6 +2909,32 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1666 A list display builds its literal constructor's call only
+  for `List`**
+
+  Upstream's parser emits `[a, b]` as the call `T(a, b,
+  __list_literal__=None)` of its contextual type `T`, through ordinary
+  overload resolution (`emitConstructorCall`), so any struct with a
+  `__list_literal__` initializer takes a list display.
+  - `record_display_construction` and the display typing
+    (`checker/inference.rs`) consult the literal constructor only for a
+    `List` target, so any other target meets the display's default
+    `Array` type and is rejected ("found Array[…]").
+  - Lever: take the contextual type's `is_list_literal_constructor`
+    overload for any struct, and for the bridged `SIMD`, whose declared
+    element list carries the marker.
+  - Probe: `var v: SIMD[DType.int32, 4] = [1, 2, 3, 4]` prints `[1, 2, 3,
+    4]` at the pin.
+  - Probe: `var w: SIMD[DType.float32, 2] = [1.5, 2]` prints `[1.5, 2.0]`
+    at the pin.
+  - Probe: a struct `S` whose `__init__(out self, *elems: Int,
+    __list_literal__: NoneType = None)` stores `len(elems)`, as the
+    expected type of `[1, 2, 3]`, prints `S(3)` at the pin.
+  - R1414 (the elements binding as call arguments) is related.
+  - Found while landing R1592 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1114 `not <Trait>` opts a struct out of a trait in its conformance
   list**
 
@@ -3738,8 +3764,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `print("ok")` runs.
   - Bundle the part of `std/builtin/debug_assert.mojo` the desugaring
     calls, with `ASSERT_MODE` from `get_defined_string`.
-  - Upstream's `SIMD` element-list initializer (R1592) asserts its arity
-    this way.
+  - Restore the arity `assert` the bundled `SIMD.__init__(*elems)` omits
+    (`stdlib/std/simd.mojo`'s header note).
   - Grammar first.
   - Found while landing R1555 (2026-10-28).
   - Depends on nothing.
@@ -10656,28 +10682,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1555 (2026-10-28).
   - Depends on R240.
   - Model: Fable, Planned.
-
-- [ ] **R1592 `SIMD`'s element-list initializer is a checker rule**
-
-  `check_simd_args`, `TypeError::SimdArity`, and `try_simd_call` type and
-  build `SIMD[dt, n](a, b, …)`, where upstream declares `__init__(out self,
-  *elems: Scalar[Self.dtype], __list_literal__: NoneType = None)`
-  (`simd.mojo:941`).
-  - Its `lit.ownership.mark_initialized` over `self` is rejected:
-    `std/simd.mojo` is not in
-    `overload_support::is_bundled_private_storage_source`, and
-    `origin_place` refuses a bridged `SIMD`'s `out self` even once it is.
-  - Its `assert Self.length == len(elems)` is off by default at the pin
-    (R1598). Omit it with a header note. `SIMD[DType.int32, 4](1, 2)` then
-    compiles and traps at run time, as the pin's crashes: move its fixture
-    to `runtime_error` and delete `SimdArity`.
-  - Probe: `SIMD[DType.int, 2](m, m)` over `m = SIMDLength(3)` prints `[3,
-    3]` at the pin, each element converting through the declared
-    `SIMDLength` splat. Mojito's `splats_to` has no `SIMDLength` arm.
-  - Remove the element list from `Checker::binds_undeclared_overload`.
-  - Found while landing R1555 (2026-10-28).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1593 `SIMD` has no `from_bits=` initializer**
 
