@@ -1026,6 +1026,40 @@ fn dtype_predicate_folds_on_replacement() {
     assert!(context.dtype_predicate("is_power_of_two", &dt).is_none());
 }
 
+/// `store_to_mem` over a constant is the frozen reference; over a binder
+/// it is a reference node that replacement closes, and both show as their
+/// referent, as the pin spells the call that passes them.
+#[test]
+fn store_to_mem_folds_closed_and_closes_on_replacement() {
+    let context = ParamContext::new();
+    let ab = context
+        .constant(CtValue::Str("ab".to_string()))
+        .expect("a string is a constant");
+    let frozen = context.store_to_mem(&ab).expect("a reference builds");
+    assert_eq!(
+        frozen.as_constant(),
+        Some(&CtValue::StoreToMem(Box::new(CtValue::Str(
+            "ab".to_string()
+        ))))
+    );
+    assert_eq!(frozen.to_string(), ab.to_string());
+    let n = int_param(&context, "f", 0, "n");
+    let reference = context.store_to_mem(&n).expect("a reference builds");
+    assert!(reference.as_constant().is_none());
+    assert!(matches!(
+        reference.meta().as_value().map(Ty::kind),
+        Some(TyKind::Ref(reference)) if reference.referent == Ty::int()
+    ));
+    assert_eq!(reference.to_string(), "n");
+    let mut bindings = ParamBindings::new();
+    bindings.bind_name("n", literal(&context, 3));
+    let closed = context.replace(&reference, &bindings).expect("replacement");
+    assert!(matches!(
+        closed.as_constant(),
+        Some(CtValue::StoreToMem(referent)) if referent.to_string() == "3"
+    ));
+}
+
 /// A reflection query the elaborator's oracle answers closes what sits
 /// above it; one the oracle leaves stays a node, and an answer the closed
 /// subject lacks is the instantiation's error.

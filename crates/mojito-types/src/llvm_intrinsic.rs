@@ -813,7 +813,7 @@ mod tests {
         );
         assert!(
             LlvmIntrinsic::IsFpclass
-                .signature_error(&simd(Dtype::Bool, 1), &[int8.clone(), test])
+                .signature_error(&simd(Dtype::Bool, 1), &[int8, test])
                 .is_some()
         );
     }

@@ -461,6 +461,19 @@ impl VmBackend {
                 got: args.len(),
             });
         }
+        // A `ref` parameter takes the reference the application spells
+        // (`store_to_mem`), never a value.
+        let references = &prog.mir.functions[index].1.ref_params;
+        let offset = usize::from(constructed.is_some());
+        if let Some(slot) = args.iter().enumerate().position(|(slot, value)| {
+            references.get(slot + offset).copied().unwrap_or(false)
+                && !matches!(value, CtValue::StoreToMem(_))
+        }) {
+            return Err(RuntimeError::Unsupported(format!(
+                "compile-time application of '{name}' passes a value to its reference \
+                 parameter {slot}"
+            )));
+        }
         let args = args
             .iter()
             .zip(declared)

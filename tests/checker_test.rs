@@ -9454,3 +9454,17 @@ fn pointer_write_overwrites_only_a_trivially_deinitable_pointee() {
         "{error}"
     );
 }
+
+/// A compile-time call passes a `ref` parameter its argument stored in
+/// compile-time memory, but a `mut` parameter takes no compile-time value:
+/// the pin rejects the temporary it would mutate.
+#[test]
+fn compile_time_application_takes_ref_but_not_mut_parameters() {
+    let program = |convention: &str| {
+        format!(
+            "def bc({convention} s: String) -> Int:\n    return s.byte_length()\n\nstruct H[n: Int]:\n    comptime m = bc(String(\"ab\")) + Self.n\n\ndef main():\n    print(H[1].m)\n"
+        )
+    };
+    check_with_std(&program("ref")).expect("a `ref` parameter applies");
+    check_with_std(&program("mut")).expect_err("a `mut` parameter applies no call");
+}

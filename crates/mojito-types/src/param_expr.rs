@@ -250,6 +250,7 @@ impl ParamContext {
                 self.build_target_read(op, operands)
             }
             ParamOp::DtypeToUi8 => self.build_dtype_code(operands),
+            ParamOp::StoreToMem => self.build_store_to_mem(operands),
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -969,6 +970,28 @@ impl ParamContext {
         )
     }
 
+    /// The reference a compile-time call passes at a `ref` parameter:
+    /// `operand` stored in compile-time memory ([`ParamOp::StoreToMem`]),
+    /// the frozen reference once it is constant.
+    pub fn store_to_mem(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.op(ParamOp::StoreToMem, std::slice::from_ref(operand))
+    }
+
+    /// The value a [`Self::store_to_mem`] reference holds, and any other
+    /// expression itself.
+    pub fn referent(&self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        match expr.kind() {
+            ParamKind::Op {
+                op: ParamOp::StoreToMem,
+                operands,
+            } => Ok(operands[0].clone()),
+            ParamKind::Constant(CtValue::StoreToMem(referent)) => {
+                self.constant((**referent).clone())
+            }
+            _ => Ok(expr.clone()),
+        }
+    }
+
     /// The `Bool` predicate `dtype.<method>()` (one of
     /// [`mojito_ast::ast::DTYPE_PREDICATES`]), as upstream's
     /// `@always_inline("builtin")` body folds into the parameter
@@ -1673,6 +1696,38 @@ impl ParamContext {
             MetaTy::value(crate::types::canonical_simd_ty(Dtype::UInt8, 1)),
             ParamKind::Op {
                 op: ParamOp::DtypeToUi8,
+                operands,
+            },
+        ))
+    }
+
+    /// `store_to_mem` over a value: the frozen reference once the value is
+    /// constant, and otherwise the node, an immutable reference into
+    /// compile-time memory, whose origin is the static one.
+    fn build_store_to_mem(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        if let Some(referent) = operands[0].as_constant() {
+            self.count_fold();
+            return self.constant(fold_primitive(ParamOp::StoreToMem, &[referent])?);
+        }
+        let referent =
+            operands[0]
+                .meta()
+                .as_value()
+                .cloned()
+                .ok_or_else(|| ParamError::TypeMismatch {
+                    operation: ParamOp::StoreToMem.name().to_string(),
+                    expected: "a compile-time value".to_string(),
+                    found: operands[0].meta().to_string(),
+                })?;
+        let reference = TyKind::Ref(crate::origin::RefTy {
+            referent,
+            origin: crate::origin::Origin::Static,
+            mutability: crate::origin::Mutability::Immutable,
+        });
+        Ok(self.make(
+            MetaTy::value(reference.into()),
+            ParamKind::Op {
+                op: ParamOp::StoreToMem,
                 operands,
             },
         ))
@@ -2871,6 +2926,12 @@ pub enum ParamOp {
     /// `DType._as_ui8`), whose mask bits `DType`'s builtin predicates test
     /// ([`ParamContext::dtype_predicate`]).
     DtypeToUi8,
+    /// KGEN's `store_to_mem`: a reference to its operand stored in
+    /// compile-time memory, which a compile-time call passes at a `ref`
+    /// parameter, as upstream's `apply` does (`apply(f, store_to_mem(v))`).
+    /// Over a constant it is the frozen reference
+    /// ([`CtValue::StoreToMem`]).
+    StoreToMem,
 }
 
 impl ParamOp {
@@ -2907,6 +2968,7 @@ impl ParamOp {
             Self::TargetGetField => "target_get_field",
             Self::TargetHasFeature => "target_has_feature",
             Self::DtypeToUi8 => "dtype_to_ui8",
+            Self::StoreToMem => "store_to_mem",
         }
     }
 
@@ -2951,7 +3013,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 30] = [
+    const ALL: [Self; 31] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -2982,6 +3044,7 @@ impl ParamOp {
         Self::TargetGetField,
         Self::TargetHasFeature,
         Self::DtypeToUi8,
+        Self::StoreToMem,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
@@ -2991,7 +3054,8 @@ impl ParamOp {
             | Self::CastFromBuiltin
             | Self::StringSize
             | Self::StringAddress
-            | Self::DtypeToUi8 => arity == 1,
+            | Self::DtypeToUi8
+            | Self::StoreToMem => arity == 1,
             Self::Cond => arity == 3,
             Self::Add | Self::Mul | Self::BoolAnd | Self::BoolOr | Self::BoolXor => arity >= 2,
             _ => arity == 2,
@@ -3028,7 +3092,8 @@ impl ParamOp {
             | Self::Cast
             | Self::TargetGetField
             | Self::TargetHasFeature
-            | Self::DtypeToUi8 => return None,
+            | Self::DtypeToUi8
+            | Self::StoreToMem => return None,
         })
     }
 
@@ -4259,6 +4324,7 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::TargetGetField, [target, name]) => fold::fold_target_get_field(target, name),
         (ParamOp::TargetHasFeature, [target, name]) => fold::fold_target_has_feature(target, name),
         (ParamOp::DtypeToUi8, [dtype]) => fold::fold_dtype_to_ui8(dtype),
+        (ParamOp::StoreToMem, [referent]) => Ok(CtValue::StoreToMem(Box::new((*referent).clone()))),
         (ParamOp::SimdSplat | ParamOp::Cast, [CtValue::Type(ty), value]) => {
             fold::fold_lane_op(op, ty, value)
         }
@@ -4370,7 +4436,8 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::Cast
         | ParamOp::TargetGetField
         | ParamOp::TargetHasFeature
-        | ParamOp::DtypeToUi8 => 14,
+        | ParamOp::DtypeToUi8
+        | ParamOp::StoreToMem => 14,
     }
 }
 
@@ -4405,6 +4472,7 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::TargetGetField => "target_get_field",
         ParamOp::TargetHasFeature => "target_has_feature",
         ParamOp::DtypeToUi8 => "pop.dtype.to_ui8",
+        ParamOp::StoreToMem => "store_to_mem",
     }
 }
 
@@ -4453,6 +4521,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
         ParamKind::Constant(CtValue::Bool(value)) => {
             write!(f, "{}", if *value { "True" } else { "False" })
         }
+        ParamKind::Constant(CtValue::StoreToMem(referent)) => write!(f, "{referent}"),
         ParamKind::Constant(value) => write!(f, "{value}"),
         ParamKind::DeclRef(reference) => write!(f, "{}", reference.name),
         ParamKind::IndexRef { depth, index } => write!(f, "${depth}.{index}"),
@@ -4484,6 +4553,9 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                     write_expr(f, operand, level)?;
                     write!(f, "._as_ui8()")?;
                 }
+                // A reference shows as its referent, as the pin spells the
+                // call that passes it (`bc(String("ab"))`).
+                (ParamOp::StoreToMem, [operand]) => write_expr(f, operand, parent)?,
                 // An `index` sum or product of casts shows the cast pulled
                 // outward, as the pin does: `(k + 1).__mlir_index__()`.
                 (ParamOp::Add | ParamOp::Mul, _) if let Some(pulled) = pulled_cast(expr) => {

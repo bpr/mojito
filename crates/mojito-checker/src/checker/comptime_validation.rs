@@ -2394,6 +2394,8 @@ impl Checker {
             let mut bindings = mojito_types::param_expr::ParamBindings::new();
             for (slot, argument) in arguments.iter().enumerate() {
                 let id = super::annotations::builtin_body_binder(&function.symbol, slot, "").id;
+                // A `ref` slot's body reads the referent its reference holds.
+                let argument = &self.param_context.referent(argument).ok()?;
                 // A type slot binds the type its argument's shape names, so
                 // the folded body is typed at the instance (`Int`, not `T`).
                 if let ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) =
@@ -2738,9 +2740,14 @@ impl Checker {
         let mut applied_params = Vec::with_capacity(function.params.len());
         for (argument, param) in supplied.into_iter().zip(&function.params) {
             let ty = declared_ty(&param.ty)?;
-            applied_params.push(match argument {
+            let value = match argument {
                 Some(argument) => self.applied_value(argument.into_value(), &ty)?,
                 None => self.applied_default(param.default.as_ref()?, &ty)?,
+            };
+            applied_params.push(if param.by_reference {
+                self.param_context.store_to_mem(&value).ok()?
+            } else {
+                value
             });
         }
         // The run sits at the collector's position, flat, each argument at
@@ -5356,6 +5363,10 @@ struct ApplicableParameter {
     name: String,
     ty: SlotType,
     default: Option<Expr>,
+    /// Whether it is a `ref` parameter, whose argument the application
+    /// passes stored in compile-time memory, as the pin's does
+    /// (`apply(bc, store_to_mem(s))`).
+    by_reference: bool,
 }
 
 /// An [`ApplicableFunction`]'s positional collector (`*xs: Int`, `*xs:
@@ -5456,14 +5467,16 @@ impl ApplicableShape<'_> {
         on_instance: bool,
         self_slot: SelfSlot,
     ) -> Option<ApplicableFunction> {
+        // An origin binder, and the mutability that qualifies it, is erased:
+        // the application binds compile-time memory's origin, as the pin
+        // binds `ComptimeOrigin`.
         let binders: Vec<String> = self
             .type_params
             .iter()
+            .filter(|binder| !binder.is_erased_origin_param(self.type_params))
             .map(|binder| {
-                (binder.callable_bound.is_none()
-                    && binder.origin_mutability.is_none()
-                    && !binder.is_erased_origin_param(self.type_params))
-                .then(|| binder.name.clone())
+                (binder.callable_bound.is_none() && binder.origin_mutability.is_none())
+                    .then(|| binder.name.clone())
             })
             .collect::<Option<_>>()?;
         let slot = |ty: &SourceType| match ty {
@@ -5496,6 +5509,12 @@ impl ApplicableShape<'_> {
                 None | Some(ArgConvention::Imm | ArgConvention::Var)
             )
         };
+        // A `ref` parameter takes its argument stored in compile-time memory
+        // ([`ApplicableParameter::by_reference`]); a `mut`, `out`, or
+        // `deinit` one takes no compile-time value.
+        let applicable_convention = |param: &mojito_ast::ast::FnParam| {
+            by_value(param) || param.convention == Some(ArgConvention::Ref)
+        };
         let variadic = self
             .params
             .iter()
@@ -5518,12 +5537,13 @@ impl ApplicableShape<'_> {
             .iter()
             .filter(|param| param.kind != mojito_ast::ast::ParamKind::Variadic)
             .map(|param| {
-                let passed_by_value =
-                    param.kind == mojito_ast::ast::ParamKind::Regular && by_value(param);
+                let passed = param.kind == mojito_ast::ast::ParamKind::Regular
+                    && applicable_convention(param);
                 Some(ApplicableParameter {
                     name: param.name.clone(),
-                    ty: slot(&param.ty).filter(|_| passed_by_value)?,
+                    ty: slot(&param.ty).filter(|_| passed)?,
                     default: param.default.clone(),
+                    by_reference: param.convention == Some(ArgConvention::Ref),
                 })
             })
             .collect::<Option<Vec<_>>>()?;

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time call applies a callee with a `ref` parameter, passing its
+  argument stored in compile-time memory as the pin's `store_to_mem`, and
+  one with an origin parameter, which binds that memory's origin (R1644).
+  `comptime m = bc(String("abc")) + Self.n` at struct scope, a signature's
+  `SIMD[DType.int8, bc(String("ab"))]`, a struct-valued `g[mk(String("ab"))]()`,
+  and `f[Span(l)]()` over a `List[Int]` binder run where they were "not an
+  associated comptime expression". MIR text schema 1.147 adds the
+  `store_to_mem` parameter operator.
+
 - A tuple or list display in a parameter position is its literal
   constructor's application, symbolic or closed, as at the pin (R1529):
   `g[(n, 1)]()`, `g[(1, String("a"))]()`, and `g[[n, 1]]()` over a

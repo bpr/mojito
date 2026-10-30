@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1731**.
+Next free ID: **R1732**.
 
 ## Ordered Work
 
@@ -198,32 +198,37 @@ which names the upstream pass each one follows. Each is measured by the
   - Trap: R397's `len[T: Sized]` made every `len(x)` a candidate and the
     std package check took minutes. Time a cold package build
     (`MOJITO_CACHE_DIR=$(mktemp -d)`) before and after.
+  - A `ref self` receiver is passed as upstream's `a.method()` is,
+    `store_to_mem(a)`: reuse `ParamContext::store_to_mem` and
+    `ApplicableParameter::by_reference`, which R1644 added for `ref`
+    parameters.
   - Found while landing R1528 (2026-10-29).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1644 A callee with a `ref` parameter, or with a callable or
-  origin compile-time parameter, is no compile-time application**
+- [ ] **R1731 A callee with a callable compile-time parameter, or a
+  parameter holding a function, is no compile-time application**
 
-  `ApplicableShape::applicable` (`checker/comptime_validation.rs`) admits
-  only a `read` or `var` runtime parameter (`passed_by_value`) and drops a
-  callee whose own compile-time parameters include a callable or an
-  origin, where the pin applies each.
-  - Probe: `SIMD[DType.int8, bc(String("ab"))]` over `def bc(ref s:
-    String) -> Int` is "not an associated comptime expression"; the pin
-    prints `[2, 2]`.
-  - Library case: `StringSpan.__init__(ref [Self.origin] src: String)`,
-    which also blocks a compile-time `StringSpan` built from a `String`.
-  - Library case: `Span`'s `@implicit` `List` and `Array` constructors.
-    `f[Span(L)]()` over `comptime L = [1, 2, 3]` and `def f[c: Span[Int,
-    _]]()` is "not an associated comptime expression", where the pin
-    prints `2`. `comptime s = Span([1, 2, 3])` fails the MIR verifier
-    ("write-back parameter 0 of 'Span.__init__$ov$List$T$AnyType' has no
-    caller place").
-  - The elaborator thaws the argument as a value; a `ref` slot needs it
-    addressed in compile-time memory (`store_to_comptime_memory`), as the
-    VM addresses a `ref` argument at run time.
-  - Found while landing R1528 (2026-10-29).
+  `ApplicableShape::applicable` (`checker/comptime_validation.rs`) drops a
+  callee whose own compile-time parameters include a callable
+  (`callable_bound`), because a function has no compile-time value: a thin
+  or capturing callable binder is filled with `CtValue::Deferred`
+  (`retained_specialization_param`, `comptime/params.rs`), which only the
+  VM reifies.
+  - Upstream holds a function in the parameter domain as its symbol
+    attribute (`store_to_mem(@functions_in_module::@"foo()")`,
+    `Mojo/test/mojo-parser/exprs/functions_in_module.mojo`).
+  - Probe: `g[mk[inc](4)]()` over `def mk[f: def(Int) thin -> Int](x:
+    Int) -> W` and `def g[w: W]()` is "not an associated comptime
+    expression", where the pin prints `5`. The same call in a signature
+    fails the same way; an `Int` result in a body already runs through a
+    lifted thunk (`g[ap[inc](4)]()`).
+  - Lever: a symbol-valued `CtValue` that the elaborator binds and
+    `VmBackend::thaw` turns into the VM's function value; then admit
+    `callable_bound` binders and function-typed slots.
+  - Related: R92 (a struct's callable-value parameter), R1650 (the
+    callable binder's environment erased).
+  - Found while landing R1644 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -2930,6 +2935,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     not for being a place at all.
   - Lever: require `designates_place` (or a mutable reference result) of
     every `mut` argument beside those two checks.
+  - Probe: at compile time, `g[bc(String("ab"))]()` over `def bc(mut s:
+    String) -> Int` fails the verifier in the lifted thunk ("write-back
+    parameter 0 of 'bc' has no caller place"), where the pin rejects it
+    the same way. No compile-time application takes a `mut` parameter.
   - Found while landing R1503 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6275,6 +6284,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A `Tuple[Int, String]` parameter fails the same way.
   - A struct's scalar or struct-typed value parameter reads (`Self.n`,
     `Self.e.rows`).
+  - Probe: `comptime n = len(Span(Self.l))` in `struct H[l: List[Int]]`
+    is "not an associated comptime expression", where the pin prints `3`
+    for `H[[4, 5, 6]].n`: typing the `Span` construction borrows `Self.l`
+    and fails with "Undefined variable 'Self'". The same `Span(l)` over a
+    `def` binder `l` applies.
   - Found while landing R455 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7052,8 +7066,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime s = Span(L)` over `comptime L = [1, 2, 3]`, then a
     run-time `len(s)`, is rejected at the pin ("cannot materialize
     compile-time value of type 'Span[Int, ComptimeOrigin]' to a runtime
-    value"), and `comptime n = len(s)` prints `3`. Both are "cannot infer
-    type parameter 'T' of 'Span'" here.
+    value"), and `comptime n = len(s)` prints `3`. Both wait on R1725
+    first, since `L` is an `Array`.
+  - A `ref` parameter's compile-time argument (`ParamOp::StoreToMem`,
+    `ParamContext::store_to_mem`) is typed `Origin::Static` too, and so is
+    the origin binder it binds (`f[Span(l)]()` over a `List[Int]` binder):
+    move it with `bind_comptime_memory`.
   - Found while landing R793 (2026-10-14).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -11003,7 +11021,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `def g[c: Span[Scalar[dtype], _]]()` is "not an associated comptime
     expression", where the pin prints `2`. `List([...])` is R1154, and
     `List.__getitem__(ref self, ContiguousSlice)` as an application is
-    R1643 and R1644.
+    R1643's `ref self` receiver.
   - Found while planning R1567 (2026-10-30).
   - Depends on R1711, R1712, R1593, R1634, R1673, R1661, R333, R1721,
     R1154, and R1643.
@@ -12540,6 +12558,13 @@ residue found inside a task moves to the task that owns its fix.
     'Span.__init__$ov$Array$T$AnyType$V$length$array' is missing from
     MIR". The same struct runs as user code, imported or not, so only the
     bundled package drops it.
+  - Probe: `f[Span(L)]()` over `comptime L = [1, 2, 3]` and `def f[c:
+    Span[Int, _]]()`, and `f[Span([4, 5, 6])]()`, are "not an associated
+    comptime expression", where the pin prints `2` and `3 5`.
+  - Probe: `comptime s = Span([1, 2, 3])` then `comptime n = len(s)`
+    fails the verifier ("write-back parameter 0 of
+    'Span.__init__$ov$List$T$AnyType' has no caller place"), where the pin
+    prints `3`.
   - Found while planning R1712 (2026-10-30).
   - Depends on R1448.
   - Model: Opus, Not Planned.

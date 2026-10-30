@@ -174,12 +174,13 @@ impl VmBackend {
         let materialized = match value {
             // A reference is its own handle, never coerced: the referent is
             // thawed at the type the reference reads and stored in fresh
-            // compile-time memory.
+            // compile-time memory. A `ref` parameter's slot is typed by its
+            // referent.
             CtValue::StoreToMem(referent) => {
                 let referent_ty = match target.map(Ty::kind) {
                     Some(TyKind::Ref(reference)) => Some(&reference.referent),
                     Some(TyKind::Pointer { element, .. }) => Some(element),
-                    _ => None,
+                    _ => target,
                 };
                 let referent = self.thaw(prog, referent, referent_ty)?;
                 return Ok(self.store_to_comptime_memory(referent));

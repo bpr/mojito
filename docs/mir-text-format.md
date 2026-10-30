@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.146
+mojito-mir 1.147
 ```
 
-The writer emits 1.146. The reader accepts 1.0 through 1.146; *Schema 1.0*
+The writer emits 1.147. The reader accepts 1.0 through 1.147; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -969,6 +969,13 @@ bits the folded bodies of `DType`'s builtin predicates test
 (`where dtype.is_floating_point()`). The package format moves to
 `mojito-package 162`.
 
+Schema 1.147 adds the parameter-expression operator `store_to_mem`,
+upstream's `store_to_mem`: its operand stored in compile-time memory, the
+immutable reference a compile-time call passes at a `ref` parameter
+(`apply(bc, store_to_mem(s))`). Over a constant it folds to
+`ct_store_to_mem`, so concrete MIR holds no node. The package format
+moves to `mojito-package 163`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1475,7 +1482,8 @@ running its `spelling`, so concrete MIR holds none.
 
 `op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
 `shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,
-`bool_xor`, `cond`, or `dtype_to_ui8` (schema 1.146). `meta` is `meta_value(type)`, `meta_type`,
+`bool_xor`, `cond`, `dtype_to_ui8` (schema 1.146), or `store_to_mem`
+(schema 1.147). `meta` is `meta_value(type)`, `meta_type`,
 `meta_tuple([meta...])`, `meta_list([meta...])`,
 `meta_set([meta...])`, `meta_dict([meta_entry { key, value }...])`, or
 `meta_param_list(meta)`. A pack query's `pack` is the
