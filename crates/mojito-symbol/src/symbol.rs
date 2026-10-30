@@ -66,8 +66,8 @@ pub const POW_INT_SYMBOL: &str = "__module$std$$intrinsics$_pow_int";
 
 /// The lowered symbols of `std._intrinsics._int_digits`/`_uint_digits`.
 ///
-/// They are the Mojo bodies both backends call for an integer's decimal
-/// text. Each writes the digits (with a leading `-` for a negative `Int`)
+/// They are the Mojo bodies the native backend calls for an integer's
+/// decimal text, where the VM runs `SIMD.write_to` (R1664). Each writes the digits (with a leading `-` for a negative `Int`)
 /// into a caller-owned buffer of at least 21 bytes and returns how many it
 /// wrote; there is no NUL terminator.
 pub const INT_DIGITS_SYMBOL: &str = "__module$std$$intrinsics$_int_digits";
@@ -329,6 +329,36 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
         spelling = format!("$H{}", hex_digest(&digest[..16]));
     }
     format!("{template}$mono{spelling}")
+}
+
+/// The concrete struct declaration whose member table a backend or pass
+/// reads for a value of type `ty`.
+///
+/// Upstream's witness tables hang off the struct instance a type names: a
+/// struct names its own, and a closed `SIMD` type the `SIMD` instance its
+/// dtype and width apply, so a scalar alias and its `SIMD[dt, 1]` spelling
+/// name one table. `None` for any other type, a symbolic `SIMD` included.
+/// This is the only mapping from a type to that declaration.
+pub fn member_table_name(ty: &Ty) -> Option<Cow<'_, str>> {
+    match ty.kind() {
+        TyKind::Struct(name, _) => Some(Cow::Borrowed(name)),
+        kind @ TyKind::Simd { .. } => {
+            let (dtype, width) = mojito_types::types::simd_shape(kind)?;
+            let arguments =
+                mojito_types::types::simd_struct_arguments(canonical_simd_ty(dtype, width).kind())?
+                    .into_iter()
+                    .map(|argument| match argument {
+                        TyArg::Val(value) => Some(InstanceArg::Value(value)),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+            Some(Cow::Owned(instance_symbol(
+                mojito_types::types::SIMD_TYPE_NAME,
+                &arguments,
+            )))
+        }
+        _ => None,
+    }
 }
 
 /// The generator `template` names with its unused arguments removed, the

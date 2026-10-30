@@ -640,18 +640,43 @@ impl<'a> Specializer<'a> {
 
     /// The concrete struct whose member table records an instance of
     /// `template` under `bindings`, with the key it records it under: its
-    /// owner instance, else its non-generic owner, when `template` is a
-    /// member a backend reaches from its struct's type
-    /// ([`Self::table_key`]). `None` for any other function.
+    /// owner instance, the `SIMD` instance its bound dtype and length name,
+    /// else its non-generic owner, when `template` is a member a backend
+    /// reaches from its struct's type ([`Self::table_key`]). `None` for any
+    /// other function.
     fn table_owner(&mut self, template: &str, bindings: &Bindings) -> Option<(String, String)> {
         let key = self.table_key(template)?;
-        let name = match bindings.self_instance.as_ref().map(|(_, ty)| ty.kind()) {
-            Some(TyKind::Struct(name, _)) => name.clone(),
-            _ => mojito_symbol::symbol::split_method_symbol(template)?
-                .0
-                .to_string(),
+        let name = if let Some(TyKind::Struct(name, _)) =
+            bindings.self_instance.as_ref().map(|(_, ty)| ty.kind())
+        {
+            name.clone()
+        } else {
+            let owner = mojito_symbol::symbol::split_method_symbol(template)?.0;
+            self.simd_instance_ty(owner, bindings)
+                .as_ref()
+                .and_then(mojito_symbol::symbol::member_table_name)
+                .map_or_else(|| owner.to_string(), std::borrow::Cow::into_owned)
         };
         Some((name, key))
+    }
+
+    /// The closed `SIMD` type a member of `owner` instantiates at, when
+    /// `owner` is `SIMD` and `bindings` binds its dtype and length: a
+    /// `SIMD` receiver carries its instance in its slots, not as a
+    /// `self_instance`.
+    fn simd_instance_ty(&self, owner: &str, bindings: &Bindings) -> Option<Ty> {
+        if owner != mojito_types::types::SIMD_TYPE_NAME {
+            return None;
+        }
+        let arguments = self
+            .structs
+            .get(owner)?
+            .param_decls
+            .iter()
+            .map(|decl| bindings.values.get(&decl.binder()).cloned().map(TyArg::Val))
+            .collect::<Option<Vec<_>>>()?;
+        let ty = Ty::new(TyKind::Struct(owner.to_string(), arguments));
+        mojito_types::types::simd_shape(ty.kind()).map(|_| ty)
     }
 
     /// The key a struct's member table records an instance of the method
@@ -3626,36 +3651,9 @@ impl<'a> Specializer<'a> {
                 }
                 fields => fields?,
             };
-            let mut declaration = template.clone();
-            declaration.fields = fields;
-            declaration.name.clone_from(name);
-            declaration.param_decls.clear();
-            declaration.associated_types.clear();
-            declaration.parameterized_associated_types.clear();
-            declaration.associated_values.clear();
-            declaration.parameterized_associated_values.clear();
-            declaration.members.clear();
-            declaration.witness_tables.clear();
-            // Overload-qualified `mut self` entries name the template
-            // (for example, a signature-qualified `List.pop`); respell them
-            // under the instance so
-            // lowering's receiver write-back check matches the retargeted
-            // method symbols. Bare method-name entries stay as they are.
-            declaration.mut_self_methods = declaration
-                .mut_self_methods
-                .iter()
-                .map(|entry| {
-                    if entry.contains('.') {
-                        mojito_symbol::symbol::retarget_method_symbol(entry, &declaration.name)
-                            .unwrap_or_else(|| entry.clone())
-                    } else {
-                        entry.clone()
-                    }
-                })
-                .collect();
             if let Some(existing) = self
                 .output_struct_positions
-                .get(&declaration.name)
+                .get(name)
                 .map(|&position| &self.output_structs[position])
             {
                 // Output declarations dedupe by name, but a checker-concrete
@@ -3669,25 +3667,112 @@ impl<'a> Specializer<'a> {
                 // instance. Renaming concrete applications to instance
                 // symbols is the Collections slice's canonicalization
                 // prerequisite.
-                if !fields_equivalent(&existing.fields, &declaration.fields) {
+                if !fields_equivalent(&existing.fields, &fields) {
                     return Err(self.error(
                         Some(owner),
                         format!(
-                            "struct instance `{}` has conflicting field \
-                             substitutions (instance identity collision): {:?} versus {:?}",
-                            declaration.name, existing.fields, declaration.fields
+                            "struct instance `{name}` has conflicting field \
+                             substitutions (instance identity collision): {:?} versus {fields:?}",
+                            existing.fields
                         ),
                     ));
                 }
                 continue;
             }
-            types.extend(declaration.fields.iter().map(|(_, ty)| (ty.clone(), true)));
-            declaration.conformances =
-                self.instance_conformances(&template.conformances, &bindings);
-            declaration.declared = self.instance_conformances(&template.declared, &bindings);
+            types.extend(fields.iter().map(|(_, ty)| (ty.clone(), true)));
+            let declaration = self.instance_declaration(template, name, fields, &bindings);
             self.declare_output_struct(declaration);
         }
         self.enqueue_lifecycle_members(owner, function)
+    }
+
+    /// Declare the `SIMD` instance the closed `SIMD` type `ty` names
+    /// ([`mojito_symbol::symbol::member_table_name`]), unless it is
+    /// declared: upstream's `SIMD[dt, n]` is a struct instance whose
+    /// witness tables name its members, and a backend reaching a member
+    /// from a value's type reads the instance's table. It is declared when
+    /// such a member is first demanded, and the member instances already
+    /// filed under its name join its table then.
+    pub(super) fn declare_simd_instance(&mut self, owner: &str, ty: &Ty) -> Result<(), MonoError> {
+        let Some(name) = mojito_symbol::symbol::member_table_name(ty) else {
+            return Ok(());
+        };
+        if self.output_struct_positions.contains_key(name.as_ref()) {
+            return Ok(());
+        }
+        let (Some(template), Some(arguments), Some((dtype, width))) = (
+            self.structs.get(mojito_types::types::SIMD_TYPE_NAME),
+            mojito_types::types::simd_struct_arguments(ty.kind()),
+            mojito_types::types::simd_shape(ty.kind()),
+        ) else {
+            return Ok(());
+        };
+        let mut bindings = self.base_bindings();
+        bind_ty_args(&template.param_decls, &arguments, &mut bindings).map_err(|e| {
+            self.error(
+                Some(owner),
+                format!("monomorphizing struct `{}`: {e}", template.name),
+            )
+        })?;
+        // The storage is upstream's `!pop.simd<width, dtype>`, which
+        // `Self._mlir_type` denotes.
+        let fields = template
+            .fields
+            .iter()
+            .map(|(field, field_ty)| {
+                let substituted = substitute_field(field_ty, &bindings)
+                    .ok()
+                    .filter(|substituted| !is_symbolic(substituted))
+                    .unwrap_or_else(|| mojito_types::types::kgen_simd_ty(dtype, width));
+                (field.clone(), substituted)
+            })
+            .collect();
+        let declaration = self.instance_declaration(template, &name, fields, &bindings);
+        self.declare_output_struct(declaration);
+        Ok(())
+    }
+
+    /// The concrete declaration `name` of the struct instance `template`
+    /// under `bindings` lays out as `fields`: the template's, with its
+    /// parameters, associated members, and tables cleared and its
+    /// conformances decided under `bindings`.
+    fn instance_declaration(
+        &self,
+        template: &MirStructDeclaration,
+        name: &str,
+        fields: Vec<(String, Ty)>,
+        bindings: &Bindings,
+    ) -> MirStructDeclaration {
+        let mut declaration = template.clone();
+        declaration.fields = fields;
+        declaration.name = name.to_string();
+        declaration.param_decls.clear();
+        declaration.associated_types.clear();
+        declaration.parameterized_associated_types.clear();
+        declaration.associated_values.clear();
+        declaration.parameterized_associated_values.clear();
+        declaration.members.clear();
+        declaration.witness_tables.clear();
+        // Overload-qualified `mut self` entries name the template
+        // (for example, a signature-qualified `List.pop`); respell them
+        // under the instance so
+        // lowering's receiver write-back check matches the retargeted
+        // method symbols. Bare method-name entries stay as they are.
+        declaration.mut_self_methods = declaration
+            .mut_self_methods
+            .iter()
+            .map(|entry| {
+                if entry.contains('.') {
+                    mojito_symbol::symbol::retarget_method_symbol(entry, &declaration.name)
+                        .unwrap_or_else(|| entry.clone())
+                } else {
+                    entry.clone()
+                }
+            })
+            .collect();
+        declaration.conformances = self.instance_conformances(&template.conformances, bindings);
+        declaration.declared = self.instance_conformances(&template.declared, bindings);
+        declaration
     }
 
     /// The substituted `fields` of a struct instance under `bindings`. An

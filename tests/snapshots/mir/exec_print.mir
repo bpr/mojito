@@ -12,7 +12,7 @@ artifact {
   functions: [
       fn {
         name: main,
-        registers: 3,
+        registers: 2,
         vars: 0,
         var_names: [],
         params: 0,
@@ -25,14 +25,13 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 22, end: 24, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 22, end: 24, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 16, end: 25, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 22, end: 26, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 16, end: 27, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(42) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
-              call { dest: %r2, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [] }
+              const { dest: %r0, value: string("42") },
+              call { dest: %r1, func: print, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [] }
             ],
             terminator: return { value: absent }
           }

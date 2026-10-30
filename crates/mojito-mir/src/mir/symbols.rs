@@ -19,11 +19,13 @@ use crate::mir::{
 };
 use mojito_symbol::symbol::{
     INT_DIGITS_SYMBOL, POW_INT_SYMBOL, UINT_DIGITS_SYMBOL, WRITE_FORMATTED, calls_pow_int,
+    member_table_name,
 };
 use mojito_types::symbol_ref::SYMBOL_REF;
-use mojito_types::types::{Ty, TyKind};
+use mojito_types::types::{Ty, TyKind, mentions};
 use serde::Serialize;
 use serde::ser;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::BuildHasher;
@@ -130,10 +132,30 @@ impl<'t> SymbolTable<'t> {
     /// The symbols the type `ty` names, walked once per table.
     fn type_uses(&mut self, ty: &Ty) -> &[&'t str] {
         if !self.types.contains_key(ty) {
-            let uses = self.uses(ty);
+            let mut uses = self.uses(ty);
+            uses.extend(self.member_table_uses(ty));
             self.types.insert(ty.clone(), uses);
         }
         &self.types[ty]
+    }
+
+    /// The member-table declarations the closed `SIMD` types in `ty` use
+    /// ([`member_table_name`]), which their serialized dtype and width do
+    /// not spell as a struct type spells its name.
+    fn member_table_uses(&self, ty: &Ty) -> Vec<&'t str> {
+        let simds = RefCell::new(Vec::new());
+        mentions(ty, &|nested| {
+            if matches!(nested.kind(), TyKind::Simd { .. }) {
+                simds.borrow_mut().push(nested.clone());
+            }
+            false
+        });
+        simds
+            .into_inner()
+            .iter()
+            .filter_map(member_table_name)
+            .filter_map(|name| self.lookup(&name))
+            .collect()
     }
 
     fn lookup(&self, name: &str) -> Option<&'t str> {
@@ -147,9 +169,9 @@ impl<'t> SymbolTable<'t> {
 /// The bundled bodies `instruction` calls without naming them.
 ///
 /// The elaborator and the backends reach them from the instruction alone:
-/// `**` on integers calls `_pow_int`, and the expansions that display a
-/// scalar — `print`, `String(...)`, `repr`, `os.abort`, and a
-/// `Writer.write` — call the digit bodies. `reg_types` types the
+/// `**` on integers calls `_pow_int`, and the native backend's expansions
+/// that display a scalar — `print`, `String(...)`, `repr`, `os.abort`, and
+/// a `Writer.write` — call the digit bodies (R1664). `reg_types` types the
 /// instruction's registers.
 pub fn implicit_callees<S: BuildHasher>(
     instruction: &MirInstr,

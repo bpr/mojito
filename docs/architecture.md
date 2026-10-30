@@ -2659,7 +2659,12 @@ field through the bundled `_reflection_write_field_to`, whose `comptime
 assert` checks the field's conformance where the default is instantiated. So
 every `Writable` struct has both members, and neither backend formats a
 struct's fields itself: a struct reaching display without its instance is an
-invariant violation.
+invariant violation. The VM displays a `SIMD` value (`Int`, `Float32`, a
+vector) the same way, through `SIMD.write_to`/`write_repr_to` bound to its
+builtin string writer and found from the value's dtype and width through
+its instance's member table (`symbol::member_table_name`), so it formats no
+lane itself; the native backend still formats `SIMD` text in the compiler
+(R1664).
 `String.format` supports automatic/manual fields, repr selection, escaped braces,
 and accepts format-spec syntax; the scalar width/alignment mini-language remains
 representation-level work rather than a return to deprecated `__str__` hooks.
@@ -6800,7 +6805,19 @@ point where a slot declared in a loop is uninitialized again.
   struct's type reaches, as upstream's conformance witness tables do: a
   special method or a requirement of a trait the struct declares
   (`mir::MirDeclarations::reached_from_type`, `Specializer::table_key`,
-  R1006). Those stay live through the calls that name them. A VM dispatch
+  R1006). Those stay live through the calls that name them. A `SIMD`
+  instance type has such a concrete declaration too
+  (`SIMD$mono$VDType$int32$VSIMDLength$4$`), as upstream's `SIMD[dt, n]` is
+  a struct instance whose witness tables name its members: the elaborator
+  declares it when a member is first demanded from the type
+  (`Specializer::declare_simd_instance`, display today), and files the
+  `SIMD` member instances it demanded before under its name
+  (`Specializer::table_owner`). `symbol::member_table_name` is the one
+  mapping from a type to the declaration whose table a backend reads, a
+  struct's own name or that `SIMD` instance's, and
+  `SymbolTable::type_uses` reads it too, so a register of a `SIMD` type
+  keeps its instance's declaration live as a struct type keeps its own.
+  A VM dispatch
   runs a selected instance of the receiver's own struct as named, one
   spelled off its template too, since such a generator names no owner
   instance (R1110: `a + g` runs `Grid.__radd__$REMOVED$ARG$mono`, not the

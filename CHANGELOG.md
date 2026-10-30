@@ -2567,6 +2567,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- On the VM, `print`, `String`, `repr`, and `Writer.write` of a `SIMD`
+  value (`Int`, `UInt`, `Float64`, a sized scalar, a vector) now run its
+  declared `write_to` and `write_repr_to`, as upstream's do, rather than
+  formatting its text in Rust (R1662). A displayed `SIMD` instance type
+  gets a concrete struct declaration whose member table names them, found
+  from the value's dtype and width through `symbol::member_table_name`.
+  Pliron still formats `SIMD` text in the compiler (R1664). The texts are
+  unchanged; printing a number runs Mojo bodies, so it is slower on the VM.
 - `CompilationTarget` (R1562) stays undeclared: upstream's bodies need a
   bracketed `__mlir_attr` (R1536), a compile-time call returning a
   `!kgen.target` (R1630), a bare-name static call binding its struct's

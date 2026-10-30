@@ -23,8 +23,9 @@
 # and `_write_scalar`. The other
 # members are still served by the compiler (R184, R1623, R1567, R1581,
 # R1582, R1585, R1586, R330), `write_padded` is not ported (R1663),
-# and `print`, `String`, and `repr` of a value still format in the compiler
-# rather than calling `write_to` and `write_repr_to` (R1662). So are the
+# and the native backend's `print`, `String`, and `repr` of a value still
+# format in the compiler rather than calling `write_to` and
+# `write_repr_to` as the VM's do (R1664). So are the
 # other initializers:
 # `mlir_value=` (R1591), `from_bits=` (R1593), and `IntLiteral` and
 # `FloatLiteral` (R1507); `py=` is not ported. Until

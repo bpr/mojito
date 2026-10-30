@@ -10195,7 +10195,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   StaticString("False")` and `StaticString` is undefined (R432).
   - Declare both members and `Writable`, and delete `Writable`'s `Bool`
     arm in `modelled_conformance`.
-  - `print(b)`'s builtin path stays only while `SIMD`'s does (R1662).
+  - `print(b)`'s builtin path stays only while Pliron's `SIMD` one does
+    (R1664).
   - Depends on R1608 and R432.
   - Model: Opus, Not Planned.
 
@@ -11008,29 +11009,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1662 `print`, `String`, and `repr` of a `SIMD` value format in
-  the VM, where upstream's call its `write_to` and `write_repr_to`**
-
-  The VM builds a `SIMD` value's text in Rust for `print(x)`, `String(x)`,
-  `repr(x)`, and `w.write(x)`, though `SIMD.write_to` and `write_repr_to`
-  are declared Mojo members since R276.
-  - The host text is `format_value`'s `Int`, `UInt`, and `Simd` arms,
-    `integer_digits`, `simd_lane_texts`, `simd_repr`, and `scalar_repr`'s
-    numeric arms (`crates/mojito-vm/src/backend/vm/dispatch.rs`).
-  - The elaborator demands a display instance only for a `TyKind::Struct`
-    (`enqueue_format_ty_instance`, `mono/instances.rs`), and the VM finds
-    it through the struct's member table, which a `SIMD` instance has no
-    concrete struct declaration to hold.
-  - The plan picks how a backend reaches the instance from the value's
-    type, records that contract in `docs/architecture.md`, and moves the
-    VM onto it; Pliron follows in R1664.
-  - `_write_float`'s staged leaf calls `_mojito_float_text`, never
-    `String`, so the members do not recurse into the display they serve.
-  - The texts match the pin but for R159's floats; done when
-    `format_value` has no `Int`, `UInt`, or `Simd` arm.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1664 Pliron formats a `SIMD` value's display in the lowering,
   where upstream calls its `write_to` and `write_repr_to`**
 
@@ -11040,9 +11018,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `SIMD` text inside `lower_str_writer_write` (`lower/print.rs`),
     `lower_repr_builtin`'s `SIMD` arms, and `lower_writer_write`
     (`lower/methods.rs`).
-  - Move them onto the contract R1662 records, then retire
-    `std._intrinsics._int_digits`/`_uint_digits`, `INT_DIGITS_SYMBOL` and
-    `UINT_DIGITS_SYMBOL`, and their keep-alive in `mir/symbols.rs`.
+  - Find a `SIMD` value's display instance as the VM does: in the member
+    table `symbol::member_table_name` names from its static type, which
+    the elaborator declares and fills (`declare_simd_instance`).
+  - `CallEdges::push_members` and `dispatch_edges` (`lib.rs`) push a
+    struct's display members only for a `TyKind::Struct`; they must push
+    that table's members for every `print`, `repr`, `String`, and
+    `$write_formatted` argument of a `SIMD` type, or the instances stay
+    unreachable natively.
+  - Then retire `std._intrinsics._int_digits`/`_uint_digits`,
+    `INT_DIGITS_SYMBOL` and `UINT_DIGITS_SYMBOL`, and their keep-alive in
+    `mir/symbols.rs`.
   - Probe: native `String(v)`, `repr(v)`, and `s.write(v)` over a
     `SIMD[DType.int32, 4]` stop with "unsupported type `Simd { dtype:
     Known(Int32), width: Known(4) }`", where the VM and the pin give

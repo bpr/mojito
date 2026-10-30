@@ -47,10 +47,9 @@ def _uint_digits_at(value: UInt, out: UnsafePointer[Byte], at: Int) -> Int:
 
 # The decimal text of an integer, written as bytes at `out[0 ..< returned]`
 # with no NUL terminator; `out` must hold at least 21 bytes (20 digits plus a
-# sign). Upstream writes `Int` through `Int.write_to`; Mojito's `Int` is a
-# builtin with no `write_to`, so the shared contract is this buffer instead of
-# a `Writer` — the VM fills a heap scratch buffer, the native backend its
-# per-function scratch alloca, and both read the same bytes back.
+# sign). Upstream writes `Int` through `SIMD.write_to`, as the VM does; the
+# native backend still fills its per-function scratch alloca through this
+# and reads the bytes back (R1664).
 def _int_digits(value: Int, out: UnsafePointer[Byte]) -> Int:
     if value < 0:
         out[0] = Byte(45)

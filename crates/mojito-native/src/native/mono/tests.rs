@@ -2724,6 +2724,65 @@ fn a_trait_requirement_that_reads_no_struct_parameter_is_one_table_instance() {
     assert_one_member_instance(source, "FBox", "fly", "FBox.fly$mono");
 }
 
+#[test]
+fn a_displayed_simd_value_tables_its_display_members_in_its_instance() {
+    let source = "def main():\n\
+         \x20   print(SIMD[DType.int32, 4](1, 2, 3, 4))\n\
+         \x20   print(Int8(3))\n\
+         \x20   print(repr(Float32(0.5)))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let program = &specialized.program;
+    for (dtype, width, member) in [
+        (mojito_ast::ast::Dtype::Int32, 4, "write_to"),
+        (mojito_ast::ast::Dtype::Int8, 1, "write_to"),
+        (mojito_ast::ast::Dtype::Float32, 1, "write_repr_to"),
+    ] {
+        let ty = mojito_types::types::canonical_simd_ty(dtype, width);
+        let name = mojito_symbol::symbol::member_table_name(&ty).expect("a closed SIMD names one");
+        let declaration = program
+            .declarations
+            .structure(&name)
+            .unwrap_or_else(|| panic!("`{name}` is declared"));
+        let table: Vec<&str> = declaration
+            .members_of(member)
+            .map(|entry| entry.symbol.as_str())
+            .collect();
+        let [instance] = table.as_slice() else {
+            panic!("`{name}` tables one `{member}`, got {table:?}");
+        };
+        let (_, function) = program
+            .functions
+            .iter()
+            .find(|(name, _)| name == instance)
+            .unwrap_or_else(|| panic!("`{instance}` is materialized"));
+        assert!(
+            function.param_types[1].is_string_literal(),
+            "`{instance}` writes to the builtin string writer"
+        );
+    }
+}
+
+#[test]
+fn an_undisplayed_simd_type_declares_no_instance() {
+    let source = "def main():\n\
+         \x20   var x = Int32(1) + 2\n\
+         \x20   _ = x\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    let declared: Vec<&str> = specialized
+        .program
+        .declarations
+        .structs
+        .iter()
+        .map(|declaration| declaration.name.as_str())
+        .filter(|name| name.starts_with("SIMD$mono"))
+        .collect();
+    assert_eq!(declared, Vec::<&str>::new());
+}
+
 /// `source`'s `owner[1]` and `owner[2]` share one owner-less `instance` of
 /// their `member`, which both member tables name.
 fn assert_one_member_instance(source: &str, owner: &str, member: &str, instance: &str) {

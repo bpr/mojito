@@ -647,42 +647,28 @@ impl VmBackend {
     }
 
     /// Format one value as `print`/`String`/`repr`/`Writer.write` do. A
-    /// nominal struct writes itself through its `write_to`/`write_repr_to`
-    /// instance, its own or the synthesized `Writable` default, dispatched
-    /// by runtime struct name.
+    /// nominal value writes itself through the `write_to`/`write_repr_to`
+    /// instance bound to the builtin string writer that the member table
+    /// of its type names ([`mojito_symbol::symbol::member_table_name`]): a
+    /// struct's own or synthesized `Writable` member, by its runtime name,
+    /// and a `SIMD` value's declared member, by its runtime dtype and
+    /// width, which are its type. Only the literals, `Bool`, `DType`,
+    /// strings, and the VM's internal values keep host text.
     pub(super) fn format_value(
         &mut self,
         prog: &Prog,
         value: Value,
         repr: bool,
     ) -> Result<String, RuntimeError> {
-        let Value::Struct { name, fields } = value else {
-            // Integer text is the bundled `std._intrinsics._int_digits`
-            // body — the same digits the native backend calls it for —
-            // wrapped in `repr`'s constructor spelling when asked.
-            if let Some(digits) = self.integer_digits(prog, &value)? {
-                return Ok(match (repr, &value) {
-                    (false, _) => digits,
-                    (true, Value::UInt(_)) => format!("UInt({digits})"),
-                    (true, _) => format!("Int({digits})"),
-                });
-            }
-            if let Value::Simd { dtype, lanes } = &value {
-                let cells = self.simd_lane_texts(prog, *dtype, lanes)?;
-                return Ok(match (repr, cells.as_slice()) {
-                    (true, _) => simd_repr(*dtype, &cells),
-                    (false, [lane]) => lane.clone(),
-                    (false, _) => format!("[{}]", cells.join(", ")),
-                });
-            }
+        let Some(name) = display_table(&value) else {
             if repr {
                 return Ok(scalar_repr(&value));
             }
             return Ok(value.to_string());
         };
         let method = if repr { "write_repr_to" } else { "write_to" };
-        // The display member is the struct's member-table instance whose
-        // writer monomorphization bound to the builtin string writer.
+        // The display member is the member-table instance whose writer
+        // monomorphization bound to the builtin string writer.
         let mut witnesses = prog
             .struct_member_instances(&name, method)
             .filter(|(_, symbol)| {
@@ -700,9 +686,8 @@ impl VmBackend {
             )));
         }
         if let Some((index, symbol)) = witness {
-            let receiver = Value::Struct { name, fields };
             let (_, variables) =
-                self.call_frame(prog, index, vec![receiver, Value::Str(String::new())])?;
+                self.call_frame(prog, index, vec![value, Value::Str(String::new())])?;
             return match variables.get(1) {
                 Some(Value::Str(text)) => Ok(text.clone()),
                 other => Err(RuntimeError::TypeError(format!(
@@ -714,79 +699,6 @@ impl VmBackend {
         Err(RuntimeError::TypeError(format!(
             "vm: `{name}` has no `{method}` instance to display it, though the check proved it `Writable`"
         )))
-    }
-
-    /// The decimal text of a runtime integer: the bundled
-    /// `std._intrinsics._int_digits`/`_uint_digits` bodies formatting into a
-    /// reused heap scratch buffer, which is what the native backend calls
-    /// into its own formatting alloca. `None` for a non-integer value, and
-    /// for a program whose bundled stdlib is not linked (the phase-composed
-    /// seam), where the Rust `Display` rendering stands in.
-    fn integer_digits(
-        &mut self,
-        prog: &Prog,
-        value: &Value,
-    ) -> Result<Option<String>, RuntimeError> {
-        let symbol = match value {
-            Value::Int(_) => mojito_symbol::symbol::INT_DIGITS_SYMBOL,
-            Value::UInt(_) => mojito_symbol::symbol::UINT_DIGITS_SYMBOL,
-            _ => return Ok(None),
-        };
-        let Some(index) = prog.index_of(symbol) else {
-            return Ok(None);
-        };
-        let scratch = self.digit_scratch()?;
-        let (length, _) = self.call_frame(prog, index, vec![value.clone(), scratch.clone()])?;
-        let Value::Int(length) = length else {
-            return Err(RuntimeError::TypeError(format!(
-                "`{symbol}` did not return a byte count, got {}",
-                crate::runtime::type_name(&length)
-            )));
-        };
-        let bytes = self.heap_bytes(&scratch, length)?;
-        Ok(Some(
-            std::string::String::from_utf8_lossy(&bytes).into_owned(),
-        ))
-    }
-
-    /// The text of each lane of a `SIMD` value, as upstream's
-    /// `_write_scalar` writes it: integer lanes through the bundled digit
-    /// bodies at the dtype's signedness, as native `print_simd` emits them,
-    /// and float and bool lanes through their display.
-    fn simd_lane_texts(
-        &mut self,
-        prog: &Prog,
-        dtype: mojito_ast::ast::Dtype,
-        lanes: &crate::runtime::SimdLanes,
-    ) -> Result<Vec<String>, RuntimeError> {
-        use crate::runtime::SimdLanes;
-        match lanes {
-            SimdLanes::Int(lanes) => {
-                let signed =
-                    crate::runtime::integer_dtype_bits(dtype).is_some_and(|(_, signed)| signed);
-                lanes
-                    .iter()
-                    .map(|&lane| {
-                        let scalar = if signed {
-                            Value::Int(lane as i64)
-                        } else {
-                            Value::UInt(lane as u64)
-                        };
-                        Ok(self
-                            .integer_digits(prog, &scalar)?
-                            .unwrap_or_else(|| lane.to_string()))
-                    })
-                    .collect()
-            }
-            SimdLanes::Float(lanes) => Ok(lanes
-                .iter()
-                .map(|&lane| crate::runtime::float_display(lane))
-                .collect()),
-            SimdLanes::Bool(lanes) => Ok(lanes
-                .iter()
-                .map(|&lane| if lane { "True" } else { "False" }.to_string())
-                .collect()),
-        }
     }
 
     /// Run the copy or move constructor `constructor` a copy or move names
@@ -879,24 +791,12 @@ fn with_names_of(original: &Value, value: Value) -> Value {
     }
 }
 
-/// Upstream's `SIMD.write_repr_to` over lane texts: the scalar alias at
-/// width 1 (`Int32(-5)`, `Float32(0.5)`), else `SIMD[DType.int32, 2](1, 2)`.
-fn simd_repr(dtype: mojito_ast::ast::Dtype, cells: &[String]) -> String {
-    let lanes = cells.join(", ");
-    match (cells.len(), dtype.repr_alias()) {
-        (1, Some(alias)) => format!("{alias}({lanes})"),
-        (width, _) => format!("SIMD[DType.{}, {width}]({lanes})", dtype.name()),
-    }
-}
-
-/// Upstream's `repr` text for non-struct values: `Int(7)`, `UInt(7)`,
-/// `Float64(2.5)`, a single-quoted string with backslash escapes,
-/// `Slice(start=1, end=4, step=None)`; everything else prints its text.
+/// Upstream's `repr` text for a value no member table displays: a
+/// literal as the `Int` or `Float64` it materializes to, `DType.int32`, a
+/// single-quoted string with backslash escapes; everything else prints its
+/// text.
 fn scalar_repr(value: &Value) -> String {
     match value {
-        Value::Int(n) => format!("Int({n})"),
-        Value::UInt(n) => format!("UInt({n})"),
-        Value::Float64(_) => format!("Float64({value})"),
         Value::FloatLiteral(literal) => format!(
             "Float64({})",
             Value::Float64(literal.to_f64().unwrap_or(f64::NAN))
@@ -919,6 +819,22 @@ fn scalar_repr(value: &Value) -> String {
             out
         }
         other => other.to_string(),
+    }
+}
+
+/// The member table that displays `value` ([`VmBackend::format_value`]): a
+/// struct's, by its runtime name, and a `SIMD` value's, by its dtype and
+/// width. `None` for a value with host text.
+fn display_table(value: &Value) -> Option<std::borrow::Cow<'_, str>> {
+    match value {
+        Value::Struct { name, .. } => Some(std::borrow::Cow::Borrowed(name)),
+        Value::Int(_) | Value::UInt(_) | Value::Float64(_) | Value::Simd { .. } => {
+            let (dtype, lanes) = crate::runtime::simd_parts(value)?;
+            let ty = mojito_types::types::canonical_simd_ty(dtype, lanes.width() as i64);
+            mojito_symbol::symbol::member_table_name(&ty)
+                .map(|name| std::borrow::Cow::Owned(name.into_owned()))
+        }
+        _ => None,
     }
 }
 

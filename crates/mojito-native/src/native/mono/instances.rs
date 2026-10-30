@@ -298,6 +298,11 @@ impl Specializer<'_> {
         ty: &Ty,
         method: &str,
     ) -> Result<(), MonoError> {
+        if mojito_types::types::simd_shape(ty.kind()).is_some()
+            && matches!(ty.kind(), TyKind::Simd { .. })
+        {
+            return self.enqueue_simd_format_instance(owner, ty, method);
+        }
         let TyKind::Struct(name, arguments) = ty.kind() else {
             return Ok(());
         };
@@ -398,6 +403,58 @@ impl Specializer<'_> {
             self.infer_receiver_call(owner, &target, ty, ReceiverCall::default())?;
         self.enqueue(&target, bindings, arguments)?;
         Ok(())
+    }
+
+    /// Enqueue the display member `method` of the closed `SIMD` type `ty`,
+    /// bound to the builtin string writer, and declare the `SIMD` instance
+    /// whose member table a backend finds it in from the value's type.
+    fn enqueue_simd_format_instance(
+        &mut self,
+        owner: &str,
+        ty: &Ty,
+        method: &str,
+    ) -> Result<(), MonoError> {
+        let template = mojito_types::types::SIMD_TYPE_NAME;
+        let target = mojito_symbol::symbol::resolve_method_symbol(
+            &self.functions,
+            template,
+            method,
+            None,
+            1,
+        );
+        let target = if self.functions.contains_key(target.as_str()) {
+            target
+        } else {
+            self.protocol_overload(template, method).unwrap_or(target)
+        };
+        if !self.functions.contains_key(target.as_str()) || !self.writes_protocol(&target) {
+            return Ok(());
+        }
+        let writer = Ty::string_literal();
+        let (mut bindings, mut arguments, _) = self.infer_receiver_call(
+            owner,
+            &target,
+            ty,
+            ReceiverCall {
+                parameters: &[&writer],
+                ..ReceiverCall::default()
+            },
+        )?;
+        let Some(declaration) = self.declarations.get(target.as_str()) else {
+            return Ok(());
+        };
+        // The `Some[Writer]` sugar parameter is infer-only (absent from
+        // `param_decls`); bind its spelling from the declared type.
+        for ty in &declaration.param_types {
+            if let TyKind::Param { binder, .. } = ty.kind()
+                && !bindings.types.contains_key(binder)
+            {
+                bindings.types.insert(binder.clone(), writer.clone());
+            }
+        }
+        push_sugar_arguments(declaration, &bindings, &mut arguments);
+        self.enqueue(&target, bindings, arguments)?;
+        self.declare_simd_instance(owner, ty)
     }
 
     /// Whether a display method takes the `Writable` protocol's writer; any
