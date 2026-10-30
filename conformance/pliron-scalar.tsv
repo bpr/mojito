@@ -122,6 +122,7 @@ assets/ok/comptime_application_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_application_string_float_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_applied_constant_in_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_array_materialized_frozen.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_assert_ends_out_result_path.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_assert_judged_per_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_assert_proves_conformance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_assert_proves_proposition.mojo	-	ineligible	no-scalar-entry-shape

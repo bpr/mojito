@@ -3093,6 +3093,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `mut` parameter moved before `while True: pass`, is rejected as
     uninitialized at return, where the pin prints `x` (found while landing
     R875, 2026-10-21).
+  - Probe: `conformance/probes/loop_never_breaks_returning_body.mojo`, a
+    `-> Int` body whose arm ends in `while True: pass`, is rejected as
+    "does not return a value on every path", where the pin prints `4`: the
+    checker's return analysis (`stmt_returns`) knows no `while` that never
+    breaks (found while landing R1710, 2026-10-30).
   - Found while landing R1134 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4552,25 +4557,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `_atanh_float32(x: SIMD) -> type_of(x) where
     x.dtype.is_floating_point()` read the predicate off a bare argument.
   - Found while landing R1661 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1710 A closed-`False` `comptime assert` does not end a MIR path, so
-  an `out result` function whose arm ends in one fails the drop verifier**
-
-  `def f[w: SIMDLength](b: SIMD[_, w], out result: type_of(b))` holding
-  `comptime if w == 2: return b` and `else: comptime assert False, "x"`
-  stops `f(SIMD[DType.int32, 2](1, 2))` with "drop.var of slot $v1
-  ('result') that some path reaching it does not hold", where the pin
-  prints `[1, 2]`.
-  - R1576's `failing_assertion` fact ends the path in the checker
-    (`stmt_reach`, `definitely_initializes_named_result`), but HIR and MIR
-    never read it, so the failing arm falls through to the drop of an
-    unset `result`.
-  - Lever: lower the statement as a block end (`MirTerm::Unreachable`).
-  - A `-> T` function with the same arm already runs.
-  - Upstream's `_pow` ends its `else` arm this way (R1567).
-  - Found while planning R1567 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

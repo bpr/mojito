@@ -2015,6 +2015,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime assert` whose condition folds to `False` now ends its path in
+  HIR and MIR (`hlcf.unreachable`), as the pin's constraint-failure
+  terminator does, so an `out result` function whose untaken `comptime if`
+  arm ends in one runs on both backends, where it failed the drop verifier
+  on the unset `result` (R1710).
 - A chained comparison whose middle operand one link converts and the other
   does not, as `SIMD._shuffle_list`'s `0 <= mask[i] < 2 * Self.length`
   over a `SIMDLength`, or `x < 1 < y` over a `Float64` and an `Int`, now

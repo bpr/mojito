@@ -2209,11 +2209,15 @@ pub enum CheckedStmtOp {
     /// elaborator. `denotes` is the parameter expression the message's node
     /// denotes, its constant or the application of the function lifted for
     /// it, which the elaborator evaluates for an instance the assertion
-    /// fails.
+    /// fails. `fails` is the check's verdict that the condition folds to
+    /// `False` over no parameter: no instance completes past the
+    /// assertion, which ends its path as the pin's constraint-failure
+    /// terminator does.
     ComptimeAssert {
         cond: CheckedNodeId,
         message: Option<CheckedNodeId>,
         denotes: Option<mojito_types::param_expr::ParamExpr>,
+        fails: bool,
     },
     /// `comptime match`, upstream's `hlcf.comptime.if` over its cases: the
     /// statement anchoring the subject (`comptime $match<id> = subject`),
@@ -2599,10 +2603,12 @@ impl CheckedStmtOp {
                 cond,
                 message,
                 denotes,
+                fails,
             } => Self::ComptimeAssert {
                 cond: map.expression(*cond),
                 message: message.map(|message| map.expression(message)),
                 denotes: denotes.clone(),
+                fails: *fails,
             },
             Self::While { cond, body, orelse } => Self::While {
                 cond: cond.map_operands(map),
@@ -6391,6 +6397,7 @@ impl<'a> ArenaBuilder<'a> {
                         .as_deref()
                         .cloned()
                 }),
+                fails: self.facts(&cond.source_span()).failing_assertion,
             },
             StmtKind::Scope(body) => CheckedStmtOp::Scope(self.block(body)),
             StmtKind::While { cond, body, orelse } => CheckedStmtOp::While {

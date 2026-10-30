@@ -341,6 +341,24 @@ fn a_returning_comptime_arm_does_not_yield() {
 }
 
 #[test]
+fn a_failing_comptime_assert_ends_its_arm_unreachable() {
+    let c = checked_function_cfg(
+        "def f[n: Int](out result: Int):\n    comptime if n > 0:\n        comptime assert n < 9, \"big\"\n        result = 1\n    else:\n        comptime assert False, \"x\"\n",
+        "f",
+    );
+    let [HirInstr::ComptimeIf { arms, orelse, .. }] = entry_instrs(&c, &c.root) else {
+        panic!("expected one `comptime if` op");
+    };
+    assert!(matches!(last_term(&c, &arms[0]), Terminator::ComptimeYield));
+    assert!(matches!(
+        entry_instrs(&c, orelse),
+        [HirInstr::ComptimeAssert { .. }]
+    ));
+    assert!(matches!(last_term(&c, orelse), Terminator::Unreachable));
+    assert_all_sealed(&c);
+}
+
+#[test]
 fn a_comptime_if_arm_break_is_a_comptime_break() {
     let c = linked_function_cfg(
         "def main():\n    comptime for i in range(3):\n        comptime if i == 1:\n            break\n",

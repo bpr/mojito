@@ -183,6 +183,7 @@ runs where the pin rejects (`c2`, `c4`, `c5`, `l1`, `l3`) are also
 | `rebind_assignment_without_deinitable_bound.mojo` | Is `rebind[S](x) = S(9)` accepted when `x: T` is bound by `Copyable` alone? | **differs**: the pin prints `9`, destroying the old value as an `S`; Mojito rewrites it to `x = S(9)` and rejects it at `T` ("abandoned without being explicitly destroyed"). Roadmap R515. |
 | `loop_never_breaks_mut_parameter.mojo` | Is a `mut` parameter moved before `while True: pass` uninitialized at the function's exit? | **differs**: the pin prints `x`, the loop's exit being dead; Mojito rejects ("'s' is uninitialized at return from this function"). Roadmap R1242. |
 | `abort_after_mut_parameter_move.mojo` | Is a `mut` parameter moved before `abort(...)` uninitialized at the function's exit? | **differs**: the pin prints `x`; Mojito rejects ("'s' is uninitialized at return from this function"). Roadmap R50. |
+| `loop_never_breaks_returning_body.mojo` | Does `while True: pass` end a value-returning body? | **differs**: the pin prints `4`, the loop's exit being dead; Mojito rejects ("'h' does not return a value on every path"). Roadmap R1242. |
 
 ## `finally` copies (2026-10-22, re-run at every re-pin)
 

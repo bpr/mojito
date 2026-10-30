@@ -211,7 +211,8 @@ pub enum HirInstr {
     /// `kgen.param.assert`: a compile-time assertion, its condition a
     /// compile-time expression MIR lowers as a parameter expression, and its
     /// message the parameter expression the check recorded. The elaborator
-    /// judges it per reached instance.
+    /// judges it per reached instance. One the check proved to fail ends
+    /// its block in [`Terminator::Unreachable`].
     ComptimeAssert {
         cond: HirExpr,
         message: Option<mojito_types::param_expr::ParamExpr>,
@@ -344,8 +345,9 @@ pub enum Terminator {
     /// [`HirInstr::Try`]'s raise edge, or out of the function.
     Raise(HirExpr),
     /// `hlcf.unreachable`: no execution reaches the region's end — a case
-    /// earlier ones cover, or the fall-through of a `match` whose cases
-    /// cover its subject.
+    /// earlier ones cover, the fall-through of a `match` whose cases cover
+    /// its subject, or the rest of a block after a `comptime assert` whose
+    /// condition folds to `False`.
     Unreachable,
 }
 
@@ -948,12 +950,20 @@ impl Lower {
                 self.comptime_if(id, branches, orelse.as_deref());
             }
             CheckedStmtOp::Scope(body) => self.scoped_block(body),
-            CheckedStmtOp::ComptimeAssert { cond, denotes, .. } => {
+            CheckedStmtOp::ComptimeAssert {
+                cond,
+                denotes,
+                fails,
+                ..
+            } => {
                 let cond = self.expr(*cond);
                 self.push(HirInstr::ComptimeAssert {
                     cond,
                     message: denotes.clone(),
                 });
+                if *fails {
+                    self.seal(Terminator::Unreachable);
+                }
             }
             CheckedStmtOp::ComptimeFor { var, iter, body } => {
                 self.comptime_for(var, *iter, s.binding, body);
