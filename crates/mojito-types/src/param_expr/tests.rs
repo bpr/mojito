@@ -993,6 +993,39 @@ fn dtype_float_query_answers_only_a_required_value() {
     );
 }
 
+/// A `DType` predicate over a binder is upstream's builtin body, which
+/// `replace` folds at every dtype to the predicate's own answer.
+#[test]
+fn dtype_predicate_folds_on_replacement() {
+    let context = ParamContext::new();
+    let dt = context.register(ParamId::new("f", 0), "dt", MetaTy::value(Ty::dtype()));
+    for method in mojito_ast::ast::DTYPE_PREDICATES {
+        let predicate = context
+            .dtype_predicate(method, &dt)
+            .expect("a DType predicate")
+            .expect("the predicate builds");
+        assert_eq!(*predicate.meta(), MetaTy::bool());
+        for dtype in mojito_ast::ast::Dtype::ALL {
+            let mut bindings = ParamBindings::new();
+            bindings.bind_name(
+                "dt",
+                context
+                    .constant(CtValue::Dtype(dtype))
+                    .expect("a dtype is a constant"),
+            );
+            assert_eq!(
+                context
+                    .replace(&predicate, &bindings)
+                    .expect("replacement")
+                    .as_bool(),
+                dtype.predicate(method),
+                "{method} at {dtype:?}"
+            );
+        }
+    }
+    assert!(context.dtype_predicate("is_power_of_two", &dt).is_none());
+}
+
 /// A reflection query the elaborator's oracle answers closes what sits
 /// above it; one the oracle leaves stays a node, and an answer the closed
 /// subject lacks is the instantiation's error.

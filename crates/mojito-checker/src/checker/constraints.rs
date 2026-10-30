@@ -2543,6 +2543,9 @@ impl Checker {
     /// a struct subject and a query node for a symbolic one), or a
     /// positioned application, else the shape's rejection.
     fn build_ct_rest(&self, expr: &Expr, recording: Recording) -> Result<ParamExpr, TypeError> {
+        if let Some(predicate) = self.dtype_predicate_value(expr, recording) {
+            return predicate;
+        }
         // A scalar's storage: `n._mlir_value`, `Int(mlir_value=s)`, and the
         // `__mlir_op` arithmetic over it.
         if let Some(storage) = self.scalar_storage_expression(expr, recording) {
@@ -2644,6 +2647,39 @@ impl Checker {
                 }
             }
         })
+    }
+
+    /// A `DType` predicate (`dtype.is_floating_point()`), whose builtin
+    /// body is the parameter expression
+    /// ([`ParamContext::dtype_predicate`](mojito_types::param_expr::ParamContext::dtype_predicate)).
+    /// `None` for any other expression.
+    fn dtype_predicate_value(
+        &self,
+        expr: &Expr,
+        recording: Recording,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        if !args.is_empty()
+            || !kwargs.is_empty()
+            || !mojito_ast::ast::DTYPE_PREDICATES.contains(&method.as_str())
+        {
+            return None;
+        }
+        let dtype = self
+            .build_ct(object, recording)
+            .ok()
+            .filter(|dtype| *dtype.meta() == MetaTy::value(Ty::dtype()))?;
+        self.param_context
+            .dtype_predicate(method, &dtype)
+            .map(|predicate| predicate.map_err(param_error))
     }
 
     /// An element (`r[0]`, `Self.Ts.reverse()[0]`) or the length
@@ -3779,11 +3815,24 @@ impl Checker {
                     .collect::<Result<Vec<_>, TypeError>>()?;
                 overload_support::fold_constraint_conjunction(&conjuncts)
             }
-            _ => {
-                return Err(TypeError::Unsupported(
-                    "unsupported generic where proposition".to_string(),
-                ));
-            }
+            // Any other `Bool` parameter expression (`dtype.is_floating_point()`)
+            // holds where it is `True`.
+            _ => self
+                .compile_dependent_ct_expr(expr)
+                .ok()
+                .filter(|built| *built.meta() == MetaTy::bool())
+                .map(|built| {
+                    GenericConstraint::Eq(
+                        built.as_constant().map_or_else(
+                            || ConstraintOperand::Expr(built.clone()),
+                            |value| ConstraintOperand::Value(value.clone()),
+                        ),
+                        ConstraintOperand::Value(CtValue::Bool(true)),
+                    )
+                })
+                .ok_or_else(|| {
+                    TypeError::Unsupported("unsupported generic where proposition".to_string())
+                })?,
         })
     }
 

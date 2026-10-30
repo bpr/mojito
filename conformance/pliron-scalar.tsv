@@ -1433,6 +1433,7 @@ assets/ok/vm_backed_ctfe_ternary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/walrus_place_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/waypoints.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_conformance_disjunction_assumed.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/where_dtype_predicate.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_message_satisfied.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_refined_bound_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_refined_bound_requirement_order.mojo	-	ineligible	no-scalar-entry-shape

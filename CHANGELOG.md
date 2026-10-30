@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `where` clause takes a `DType` predicate, as at the pin:
+  `def g[dtype: DType, //](x: Scalar[dtype]) -> Int where
+  dtype.is_floating_point()` runs `g(Float32(1.5))`, rejects `g(Int32(1))`
+  as a violated constraint, and is proven in a generic caller by a guarding
+  `comptime if` or the caller's own clause, where any such clause was an
+  unsupported generic where proposition (R1661). Each predicate is
+  upstream's builtin body over the dtype's `pop.dtype.to_ui8` code (MIR
+  text 1.146, package format 162), and the bundled `_write_float` declares
+  upstream's `where dtype.is_floating_point()`. Any other compile-time
+  `Bool` clause, such as a bare `where b` over a `Bool` parameter, holds
+  where it is `True` too.
+
 - A value's struct parameter or `comptime` member is a compile-time
   argument read through its type, as at the pin:
   `DType.exponent_width[x.dtype]()`, `SIMD[x.dtype, x.length]`,

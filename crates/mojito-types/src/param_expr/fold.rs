@@ -309,6 +309,19 @@ pub fn fold_target_has_feature(target: &CtValue, name: &CtValue) -> Result<CtVal
     Ok(CtValue::Bool(target.has_feature(name)))
 }
 
+/// `pop.dtype.to_ui8` over a concrete `DType`: its code, a `UInt8`.
+pub fn fold_dtype_to_ui8(dtype: &CtValue) -> Result<CtValue, ParamError> {
+    match dtype {
+        CtValue::Dtype(dtype) => Ok(CtValue::Simd {
+            dtype: Dtype::UInt8,
+            lanes: vec![CtLane::Int(i128::from(dtype.code()))],
+        }),
+        _ => Err(unsupported(
+            "'pop.dtype.to_ui8' expects a compile-time 'DType'",
+        )),
+    }
+}
+
 /// `pop.string.size` over a concrete `!kgen.string`: its byte length as an
 /// `index`.
 pub fn fold_string_size(string: &CtValue) -> Result<CtValue, ParamError> {

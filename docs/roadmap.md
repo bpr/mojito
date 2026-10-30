@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1717**.
+Next free ID: **R1719**.
 
 ## Ordered Work
 
@@ -4566,24 +4566,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1661 A `where` clause over a `DType` predicate is an unsupported
-  generic where proposition**
+- [ ] **R1717 A function's `where` clause cannot read its arguments,
+  where upstream emits the clause after them**
 
-  `def g[dtype: DType, //](x: Scalar[dtype]) -> Int where
-  dtype.is_floating_point()` stops with "unsupported generic where
-  proposition", where the pin runs `g(Float32(1.5))`.
-  - `compile_generic_constraint` (`checker/constraints.rs`) has no arm for
-    a `Bool` call, and `compile_dependent_ct_expr` builds no parameter
-    expression for `dtype.is_floating_point()` ("not an associated comptime
-    expression"); a signature has no body to lift it from.
-  - `comptime if dtype.is_floating_point()` runs, since a body lifts it.
-  - Probe: `std/builtin/_format_float.mojo`'s `_write_float` spells
-    upstream's `where dtype.is_floating_point()` as a `comptime assert`.
+  `def p[dtype: DType](base: Scalar[dtype]) -> Int where base.dtype ==
+  DType.float32` stops with "unsupported generic constraint operand", where
+  the pin runs `p(Float32(1.5))`.
+  - A `def`'s clauses compile before `in_signature_scope` declares its
+    arguments (`checker/statements.rs`), and a method's in `method_sig`
+    (`checker/declarations.rs`) outside that scope, so an argument name in
+    a clause is unbound.
+  - Upstream's `Signatures.cpp` emits a clause with the arguments in scope,
+    as `-> type_of(base)` already reads them here; `base.dtype` then reads
+    through `type_of(base)` (R333).
+  - Probe: `where base.dtype.is_floating_point()` and `where
+    self.dtype.is_integral()` stop with "unsupported generic where
+    proposition"; `where Self.dtype.is_integral()` runs.
   - Probe: upstream's `SIMD.write_padded` declares `where
     self.dtype.is_integral()` (R1663).
   - Probe: upstream's `_powf_scalar(base: Scalar, exponent: Scalar) ->
-    type_of(base) where base.dtype.is_floating_point()` reads the
-    predicate off a bare-`Scalar` argument's value (R1567, R1708).
+    type_of(base) where base.dtype.is_floating_point()` (R1567) and
+    `_atanh_float32(x: SIMD) -> type_of(x) where
+    x.dtype.is_floating_point()` read the predicate off a bare argument,
+    which also needs R1708.
+  - Found while landing R1661 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7169,6 +7175,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     to its `Display`.
   - The module paths in these probes are R1679's.
   - Found while landing R1669 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1718 A failed `where` clause's diagnostic spells the compiled
+  constraint, where the pin spells the clause as written**
+
+  `lane_kind(Int32(1))` over `where dtype.is_floating_point()` reports
+  "expected 'not [0] : SIMD[DType.uint8, 1] == dtype._as_ui8() & [64] :
+  SIMD[DType.uint8, 1] == true'", where the pin's note says "expected
+  'dtype.is_floating_point()'".
+  - `ConstraintFailure::reason` (`checker/generics.rs`) displays the
+    `GenericConstraint`, which keeps no source spelling: a `Bool` leaf
+    shows its folded parameter expression compared with `true`.
+  - Upstream's note quotes the clause's source range.
+  - Probe: the "lacking evidence" reason of
+    `assets/type_error/where_dtype_predicate_lacks_evidence.mojo` spells
+    the same folded form, where the pin's note says "needs evidence for
+    'dtype.is_floating_point()'".
+  - Found while landing R1661 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10964,8 +10989,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Removes `pliron_float_pow.mojo` from R171 and its
     `assets-mojo-output-diffs.tsv` row.
   - Plan: `R1567-simd-s-plan.md`, Part B.
-  - Depends on R333, R1661, R1708, R1709, R1710, R1711, R1713, and
-    R1714.
+  - Depends on R333, R1661, R1708, R1709, R1710, R1711, R1713, R1714,
+    and R1717.
   - Model: Fable, Planned.
 
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
@@ -13112,7 +13137,7 @@ residue found inside a task moves to the task that owns its fix.
     table and `is_32bit`, and calls `abs` over a `Scalar[dtype]`.
   - Port the helpers into `stdlib/std/string.mojo`, then the member into
     `stdlib/std/simd.mojo` beside `write_to`.
-  - Depends on R1458 and R1661.
+  - Depends on R1458, R1661, and R1717.
   - Model: Opus, Not Planned.
 
 - [ ] **R1674 `IndexList` is not bundled**

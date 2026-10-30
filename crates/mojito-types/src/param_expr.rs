@@ -26,7 +26,7 @@ pub mod fold;
 use crate::ct::CtValue;
 use crate::types::TyKind;
 use crate::types::{PackPredicateRef, TrivialLifecycle, Ty};
-use mojito_ast::ast::{InfixOp, PrefixOp};
+use mojito_ast::ast::{Dtype, InfixOp, PrefixOp};
 use mojito_common::literal::IntLiteral;
 use mojito_common::token::SourceSpan;
 use std::cmp::Ordering;
@@ -249,6 +249,7 @@ impl ParamContext {
             ParamOp::TargetGetField | ParamOp::TargetHasFeature => {
                 self.build_target_read(op, operands)
             }
+            ParamOp::DtypeToUi8 => self.build_dtype_code(operands),
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -968,6 +969,66 @@ impl ParamContext {
         )
     }
 
+    /// The `Bool` predicate `dtype.<method>()` (one of
+    /// [`mojito_ast::ast::DTYPE_PREDICATES`]), as upstream's
+    /// `@always_inline("builtin")` body folds into the parameter
+    /// expression: a `_match` tests a mask bit of the dtype's code
+    /// ([`ParamOp::DtypeToUi8`]), beside comparisons with `DType.int` and
+    /// `DType.uint`. A comparison with a dtype Mojito does not represent
+    /// (`bfloat16`, the eight-bit and narrower floats) is `False`. `None`
+    /// for any other method.
+    pub fn dtype_predicate(
+        &self,
+        method: &str,
+        dtype: &ParamExpr,
+    ) -> Option<Result<ParamExpr, ParamError>> {
+        let code = |mask: u8| {
+            self.constant(CtValue::Simd {
+                dtype: Dtype::UInt8,
+                lanes: vec![crate::ct::CtLane::Int(i128::from(mask))],
+            })
+        };
+        let matches = |mask: u8| {
+            let own = self.op(ParamOp::DtypeToUi8, std::slice::from_ref(dtype))?;
+            let masked = self.op(ParamOp::BitAnd, &[own, code(mask)?])?;
+            self.infix(InfixOp::Ne, &masked, &code(0)?)
+        };
+        let is = |other: Dtype| {
+            self.op(
+                ParamOp::Eq,
+                &[dtype.clone(), self.constant(CtValue::Dtype(other))?],
+            )
+        };
+        let or = |left, right| self.op(ParamOp::BoolOr, &[left, right]);
+        let and = |left, right| self.op(ParamOp::BoolAnd, &[left, right]);
+        let floating = || matches(mojito_ast::ast::DTYPE_FLOAT_MASK);
+        let integral = || {
+            or(
+                or(is(Dtype::Int)?, is(Dtype::UInt)?)?,
+                matches(mojito_ast::ast::DTYPE_INTEGER_MASK)?,
+            )
+        };
+        let signed = || matches(mojito_ast::ast::DTYPE_SIGNED_MASK);
+        Some(match method {
+            "is_floating_point" => floating(),
+            "is_integral" => integral(),
+            "is_signed" => (|| or(floating()?, and(integral()?, signed()?)?))(),
+            "is_unsigned" => (|| {
+                or(
+                    is(Dtype::UInt)?,
+                    and(
+                        matches(mojito_ast::ast::DTYPE_INTEGER_MASK)?,
+                        self.not(&signed()?)?,
+                    )?,
+                )
+            })(),
+            "is_numeric" => (|| or(integral()?, floating()?))(),
+            "is_float8" => Ok(self.boolean(false)),
+            "is_half_float" => is(Dtype::Float16),
+            _ => return None,
+        })
+    }
+
     /// A typed hole. Reserved: no source construct produces one, a known
     /// parameter without a binding is its reference, and a hole is a boundary
     /// error at executable facts, MIR, mangling, and the VM.
@@ -1592,6 +1653,29 @@ impl ParamContext {
             }
         };
         Ok(self.make(result, ParamKind::Op { op, operands }))
+    }
+
+    /// `pop.dtype.to_ui8` over a `DType`: its code once the dtype is
+    /// constant, and otherwise the node, a `UInt8`.
+    fn build_dtype_code(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        if let Some(dtype) = operands[0].as_constant() {
+            self.count_fold();
+            return self.constant(fold_primitive(ParamOp::DtypeToUi8, &[dtype])?);
+        }
+        if *operands[0].meta() != MetaTy::value(Ty::dtype()) {
+            return Err(ParamError::TypeMismatch {
+                operation: ParamOp::DtypeToUi8.name().to_string(),
+                expected: "DType".to_string(),
+                found: operands[0].meta().to_string(),
+            });
+        }
+        Ok(self.make(
+            MetaTy::value(crate::types::canonical_simd_ty(Dtype::UInt8, 1)),
+            ParamKind::Op {
+                op: ParamOp::DtypeToUi8,
+                operands,
+            },
+        ))
     }
 
     /// `pop.string.size` or `pop.string.address` over a `!kgen.string`:
@@ -2783,6 +2867,10 @@ pub enum ParamOp {
     /// enables the feature its second operand names, a `!kgen.string`
     /// ([`crate::ct::KgenTarget::has_feature`]).
     TargetHasFeature,
+    /// `pop.dtype.to_ui8`: a `DType`'s code, a `UInt8` (upstream's
+    /// `DType._as_ui8`), whose mask bits `DType`'s builtin predicates test
+    /// ([`ParamContext::dtype_predicate`]).
+    DtypeToUi8,
 }
 
 impl ParamOp {
@@ -2818,6 +2906,7 @@ impl ParamOp {
             Self::Cast => "cast",
             Self::TargetGetField => "target_get_field",
             Self::TargetHasFeature => "target_has_feature",
+            Self::DtypeToUi8 => "dtype_to_ui8",
         }
     }
 
@@ -2862,7 +2951,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 29] = [
+    const ALL: [Self; 30] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -2892,6 +2981,7 @@ impl ParamOp {
         Self::Cast,
         Self::TargetGetField,
         Self::TargetHasFeature,
+        Self::DtypeToUi8,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
@@ -2900,7 +2990,8 @@ impl ParamOp {
             | Self::CastToBuiltin
             | Self::CastFromBuiltin
             | Self::StringSize
-            | Self::StringAddress => arity == 1,
+            | Self::StringAddress
+            | Self::DtypeToUi8 => arity == 1,
             Self::Cond => arity == 3,
             Self::Add | Self::Mul | Self::BoolAnd | Self::BoolOr | Self::BoolXor => arity >= 2,
             _ => arity == 2,
@@ -2936,7 +3027,8 @@ impl ParamOp {
             | Self::SimdSplat
             | Self::Cast
             | Self::TargetGetField
-            | Self::TargetHasFeature => return None,
+            | Self::TargetHasFeature
+            | Self::DtypeToUi8 => return None,
         })
     }
 
@@ -4166,6 +4258,7 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::StringAddress, [string]) => fold::fold_string_address(string),
         (ParamOp::TargetGetField, [target, name]) => fold::fold_target_get_field(target, name),
         (ParamOp::TargetHasFeature, [target, name]) => fold::fold_target_has_feature(target, name),
+        (ParamOp::DtypeToUi8, [dtype]) => fold::fold_dtype_to_ui8(dtype),
         (ParamOp::SimdSplat | ParamOp::Cast, [CtValue::Type(ty), value]) => {
             fold::fold_lane_op(op, ty, value)
         }
@@ -4276,7 +4369,8 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::SimdSplat
         | ParamOp::Cast
         | ParamOp::TargetGetField
-        | ParamOp::TargetHasFeature => 14,
+        | ParamOp::TargetHasFeature
+        | ParamOp::DtypeToUi8 => 14,
     }
 }
 
@@ -4310,6 +4404,7 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::Cast => "pop.cast",
         ParamOp::TargetGetField => "target_get_field",
         ParamOp::TargetHasFeature => "target_has_feature",
+        ParamOp::DtypeToUi8 => "pop.dtype.to_ui8",
     }
 }
 
@@ -4384,6 +4479,10 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                     write!(f, "Int(mlir_value=")?;
                     write_expr(f, operand, 0)?;
                     write!(f, ")")?;
+                }
+                (ParamOp::DtypeToUi8, [operand]) => {
+                    write_expr(f, operand, level)?;
+                    write!(f, "._as_ui8()")?;
                 }
                 // An `index` sum or product of casts shows the cast pulled
                 // outward, as the pin does: `(k + 1).__mlir_index__()`.
