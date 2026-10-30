@@ -555,6 +555,7 @@ assets/ok/mlir_index_parameter.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_max_min_bool_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_select.mojo	main	exe-differential	sanitized
+assets/ok/mlir_pop_simd_shuffle.mojo	main	exe-differential	sanitized
 assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_type_overload_identity.mojo	main	exe-differential	sanitized
 assets/ok/module_constant_literal_bracket.mojo	main	exe-differential	sanitized

@@ -4,7 +4,8 @@
 //! storage through pointers or lane by lane and after moving it out through
 //! them,
 //! `kgen.struct.extract` of an element of a literal struct,
-//! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the `pop` and `index` ops of `pop_ops.rs`, and the LLVM
+//! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the
+//! `pop` and `index` ops of `pop_ops.rs` with its `pop.simd.shuffle`, and the LLVM
 //! intrinsic call of `llvm_intrinsic.rs`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -22,7 +23,8 @@ impl Checker {
     /// element list does, initialize `out self` lane by lane. Every other
     /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`]),
     /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), a
-    /// KGEN string read ([`Self::infer_string_op`]), or a
+    /// KGEN string read ([`Self::infer_string_op`]), a lane gather
+    /// ([`Self::infer_simd_shuffle_op`]), or a
     /// `pop` or `index` op ([`Self::infer_pop_op`]). The
     /// statement's checked record is `SemanticAdjustment::MarkInitialized`
     /// or `SemanticAdjustment::MarkDestroyed`.
@@ -36,6 +38,7 @@ impl Checker {
         const DESTROYED: &str = "lit.ownership.mark_destroyed";
         const LLVM_INTRINSIC: &str = "pop.call_llvm_intrinsic";
         const STRUCT_EXTRACT: &str = "kgen.struct.extract";
+        const SIMD_SHUFFLE: &str = "pop.simd.shuffle";
         const STRING_SIZE: &str = "pop.string.size";
         const STRING_ADDRESS: &str = "pop.string.address";
         if method == LLVM_INTRINSIC {
@@ -43,6 +46,9 @@ impl Checker {
         }
         if method == STRUCT_EXTRACT {
             return self.infer_kgen_struct_extract_op(span, method, call);
+        }
+        if method == SIMD_SHUFFLE {
+            return self.infer_simd_shuffle_op(span, method, call);
         }
         if method == STRING_SIZE {
             return self.infer_string_op(span, method, ParamOp::StringSize, call);

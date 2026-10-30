@@ -22,8 +22,8 @@
 # the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`
 # and `_write_scalar`. The other
 # members are still served by the compiler (R184, R1623, R1567, R1581,
-# R1582, R1585, R1586, R330), `write_padded` is not ported (R1663),
-# and the native backend's `print`, `String`, and `repr` of a value still
+# R1582, R1585, R1586, R1671, R1673, R1675), `write_padded` is not ported
+# (R1663), and the native backend's `print`, `String`, and `repr` of a value still
 # format in the compiler rather than calling `write_to` and
 # `write_repr_to` as the VM's do (R1664). So are the
 # other initializers:

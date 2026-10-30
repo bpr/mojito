@@ -750,7 +750,7 @@ mod tests {
     #[test]
     fn spellings_outside_the_subset_do_not_parse() {
         assert_eq!(
-            MlirOp::parse("pop.simd.shuffle", None),
+            MlirOp::parse("pop.int_literal_convert", None),
             Err(MlirOpError::Unknown)
         );
         assert!(matches!(

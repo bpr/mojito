@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- ``__mlir_op.`pop.simd.shuffle`[mask=…, _type=…](a, b)`` runs, as the op
+  upstream's `SIMD.shuffle` and `join` bodies reach: it gathers the lanes of
+  `a` followed by those of `b` by a ``__mlir_attr.`#pop.array<i, …> :
+  !pop.array<n, index>` `` mask (a typed attribute now read as a list of
+  `index` constants) into an `n`-lane vector, on the VM, natively, and at
+  compile time. The pin's verifier errors (an out-of-bounds element, a
+  result width or dtype that does not match, operands of two types) are
+  reported at check time, or by the instance when a width is a template's
+  parameter. Porting the `SIMD` methods over it is split into R1667–R1675
+  (R330). Package format 151.
 - `from std.sys import CompilationTarget` now finds upstream's struct, with
   `current`, `_unknown`, `_has_feature`, the `has_*` x86 feature queries,
   and the free `simd_bit_width` and `simd_byte_width`, verbatim. The new

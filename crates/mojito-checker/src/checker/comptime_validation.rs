@@ -373,8 +373,9 @@ pub(super) fn value_less_literal_value() -> TypeError {
 /// the attribute's brackets, is a constant of that type: a
 /// `` `#kgen.simd<…> : !kgen.scalar<dt>` `` (or `!kgen.simd<n, dt>`) lane
 /// constant of the storage type, held as its vector, and an
-/// `` `7 : index` `` builtin `index`. Any other typed attribute is outside
-/// the subset.
+/// `` `7 : index` `` builtin `index`, and a
+/// `` `#pop.array<i, …> : !pop.array<n, index>` `` array of `n` indices, a
+/// list of them. Any other typed attribute is outside the subset.
 pub(super) fn mlir_attribute(text: &str) -> Result<(CtValue, Ty), TypeError> {
     let mut depth = 0_usize;
     let colon = text.char_indices().find_map(|(at, c)| {
@@ -392,11 +393,15 @@ pub(super) fn mlir_attribute(text: &str) -> Result<(CtValue, Ty), TypeError> {
         ));
     };
     let (body, ty) = (text[..colon].trim(), text[colon + 1..].trim());
+    if let Some(array) = index_array_attribute(body, ty) {
+        return array;
+    }
     typed_mlir_attribute(body, ty).ok_or_else(|| {
         TypeError::Unsupported(format!(
             "the typed attribute '__mlir_attr.`{text}`' is outside the subset; only an untyped \
              '{}' attribute, a '#kgen.simd<...>' constant of a '!kgen.scalar<dtype>' or \
-             '!kgen.simd<width, dtype>' type, an integer of type 'index', and a \
+             '!kgen.simd<width, dtype>' type, an integer of type 'index', a \
+             '#pop.array<...>' of type '!pop.array<size, index>', and a \
              '#kgen.target<...>' or '#kgen.param.expr<current_target>' of type \
              '!kgen.target' are read",
             mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING
@@ -417,7 +422,10 @@ pub(super) fn mlir_attribute_expr(
         return Ok((context.current_target(), TyKind::KgenTarget.into()));
     }
     let (value, ty) = mlir_attribute(text)?;
-    let value = context.constant(value).map_err(param_error)?;
+    let value = match ty.kind() {
+        TyKind::PopArray { .. } => context.typed_constant(value, ty.clone()),
+        _ => context.constant(value).map_err(param_error)?,
+    };
     Ok((value, ty))
 }
 
@@ -5303,6 +5311,45 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
 }
 
 const VARIADICS_MODULE: &str = "std.builtin.variadics";
+
+/// The `#pop.array<i, …>` attribute of type `!pop.array<n, index>`, as
+/// [`mlir_attribute`] reads it: a list of `n` indices. `None` for a body or
+/// type of another form; an element count other than `n` is rejected as the
+/// pin's attribute parser rejects it.
+fn index_array_attribute(body: &str, ty: &str) -> Option<Result<(CtValue, Ty), TypeError>> {
+    let (size, element) = ty
+        .strip_prefix("!pop.array<")?
+        .strip_suffix('>')?
+        .split_once(',')?;
+    if element.trim() != "index" {
+        return None;
+    }
+    let size: u64 = size.trim().parse().ok()?;
+    let elements = body.strip_prefix("#pop.array<")?.strip_suffix('>')?.trim();
+    let indices = if elements.is_empty() {
+        Vec::new()
+    } else {
+        elements
+            .split(',')
+            .map(|element| element.trim().parse().ok().map(CtValue::Index))
+            .collect::<Option<Vec<_>>>()?
+    };
+    if u64::try_from(indices.len()).ok() != Some(size) {
+        return Some(Err(TypeError::BadCall {
+            func: "__mlir_attr".to_string(),
+            reason: format!(
+                "invalid MLIR attribute: array attribute type requires {size} elements but \
+                 value has {}",
+                indices.len()
+            ),
+        }));
+    }
+    let ty = TyKind::PopArray {
+        size,
+        element: Ty::index(),
+    };
+    Some(Ok((CtValue::List(indices), ty.into())))
+}
 
 /// The constant `` `body : ty` `` spells and its type, for the typed
 /// attributes the subset reads ([`mlir_attribute`]).

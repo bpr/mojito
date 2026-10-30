@@ -10,7 +10,7 @@
 # `align_of` and the `target` parameter of `size_of` and `bit_width_of`,
 # with `simd_width_of`, `is_32bit`, and `is_64bit` (R1634), and
 # `_first_conforming_plugin`, `stdlib_plugin`, and its free function
-# (R330).
+# (R1672).
 """Implements methods for querying the host target info.
 
 You can import these APIs from the `sys` package. For example:

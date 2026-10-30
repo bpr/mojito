@@ -2,13 +2,15 @@
 //! whose upstream bodies are one `pop.simd` lane op, lowered to the
 //! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`),
 //! `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`,
-//! `kgen.struct.extract`, lowered to a tuple-storage element read, and the
+//! `kgen.struct.extract`, lowered to a tuple-storage element read,
+//! `pop.simd.shuffle`, lowered to a two-operand `simd.shuffle`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
 //! and `Int`, lowered to `builtin.cast`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::mlir::{MlirLowering, MlirOp};
+use mojito_types::types::LaneMask;
 
 impl<'a> Flatten<'a> {
     /// The op the checker recorded on `call`, if it is a `pop` or `index`
@@ -53,6 +55,44 @@ impl<'a> Flatten<'a> {
                 }
                 _ => None,
             })
+    }
+
+    /// The lane mask the checker recorded on `call`, if it is a
+    /// `pop.simd.shuffle` `__mlir_op`.
+    pub(super) fn checked_pop_simd_shuffle(call: Node<'a>) -> Option<LaneMask> {
+        call.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::PopSimdShuffle { mask } => {
+                    Some(mask.clone())
+                }
+                _ => None,
+            })
+    }
+
+    /// Lower the checked `pop.simd.shuffle` `call` over its two operands to
+    /// a `simd.shuffle` gathering `mask`'s lanes of the first operand
+    /// followed by the second, its destination typed by the call's `_type`.
+    pub(super) fn lower_pop_simd_shuffle(
+        &mut self,
+        call: Node<'a>,
+        mask: LaneMask,
+        args: &[Node<'a>],
+    ) -> Reg {
+        let [value, other] = args else {
+            unreachable!("a checked `pop.simd.shuffle` has two operands")
+        };
+        let value = self.expr(*value);
+        let other = self.expr(*other);
+        let ty = call.ty().expect("a checked `__mlir_op` has a type");
+        let dest = self.fresh_typed(call.location(), None, ty);
+        self.emit(MirInstr::SimdShuffle {
+            dest,
+            value,
+            other: Some(other),
+            mask,
+        });
+        dest
     }
 
     /// Lower the checked `kgen.struct.extract` `call` of element `index` of

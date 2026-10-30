@@ -4,7 +4,9 @@
 //! and its `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between
 //! `index` and `!kgen.scalar<index>`, typed as their MLIR verifiers type
 //! them, with the `pred`, `fastmathFlags`, and `_type` attributes they
-//! take. The admitted set is `mojito_types::mlir::MlirOp`.
+//! take. The admitted set is `mojito_types::mlir::MlirOp`, beside
+//! `pop.simd.shuffle`, whose `mask` attribute is a lane list rather than a
+//! payload-free op.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -126,6 +128,123 @@ impl Checker {
         ));
         self.record_symbolic_lane_rule(span, name, op, &operands);
         Ok(result)
+    }
+
+    /// Type ``__mlir_op.`pop.simd.shuffle`[mask=m, _type=T](a, b)`` as
+    /// upstream's verifier does: `a` and `b` are `!kgen.simd` storage of
+    /// one type, `m` a compile-time `!pop.array<n, index>` of lanes below
+    /// twice their width, and `T` storage of their dtype at width `n`. A
+    /// width a template leaves open is checked by each instance
+    /// (`native::mono` closes the gather). Records
+    /// `SemanticAdjustment::PopSimdShuffle` with the mask's lanes.
+    pub(super) fn infer_simd_shuffle_op(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } = call;
+        let invalid = |reason: String| TypeError::BadCall {
+            func: name.to_string(),
+            reason,
+        };
+        if !kwargs.is_empty() {
+            return Err(invalid("op operands are positional".to_string()));
+        }
+        let (mut mask, mut result_type) = (None, None);
+        for argument in param_args {
+            let mojito_ast::ast::ParamArg::Named {
+                name: attribute,
+                value,
+            } = argument
+            else {
+                return Err(invalid("op attributes are named".to_string()));
+            };
+            match attribute.as_str() {
+                "mask" => mask = Some(value.as_ref()),
+                "_type" => result_type = Some(value.as_ref()),
+                _ => {
+                    return Err(invalid(format!(
+                        "attribute '{attribute}' is not an inherent attribute of '{name}'"
+                    )));
+                }
+            }
+        }
+        let Some(mask) = mask else {
+            return Err(invalid("op requires attribute 'mask'".to_string()));
+        };
+        let Some(result_type) = result_type else {
+            return Err(invalid(format!(
+                "unable to infer result type from MLIR operation '{name}'"
+            )));
+        };
+        let lanes = self.shuffle_mask(name, mask)?;
+        if args.len() != 2 {
+            return Err(invalid(format!(
+                "op expected 2 operands, but found {}",
+                args.len()
+            )));
+        }
+        let operands = args
+            .iter()
+            .map(|argument| self.infer(argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = self.mlir_result_type(result_type)?;
+        shuffle_result(&operands, &result, &lanes).map_err(invalid)?;
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::PopSimdShuffle {
+                mask: mojito_types::types::LaneMask::Known(lanes),
+            },
+        ));
+        Ok(result)
+    }
+
+    /// The lanes of `pop.simd.shuffle`'s `mask` attribute: a closed
+    /// compile-time `!pop.array<n, index>` (a `#pop.array` attribute, or a
+    /// constant holding one).
+    fn shuffle_mask(
+        &self,
+        name: &str,
+        mask: &mojito_ast::ast::ParamArg,
+    ) -> Result<Vec<usize>, TypeError> {
+        let not_indices = || TypeError::BadCall {
+            func: name.to_string(),
+            reason: "op expected mask to be a list of indices".to_string(),
+        };
+        let mojito_ast::ast::ParamArg::Value(expression) = mask else {
+            return Err(not_indices());
+        };
+        let built = {
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(expression)?
+        };
+        let is_index_array = matches!(
+            built.meta(),
+            MetaTy::Value(ty) if matches!(ty.kind(), TyKind::PopArray { element, .. }
+                if *element == Ty::index())
+        );
+        if !is_index_array {
+            return Err(not_indices());
+        }
+        let Some(CtValue::List(lanes)) = built.as_constant() else {
+            return Err(TypeError::Unsupported(format!(
+                "'{name}' takes its 'mask' as a closed '#pop.array' attribute; a mask computed \
+                 from parameters is outside the subset"
+            )));
+        };
+        lanes
+            .iter()
+            .map(|lane| match lane {
+                CtValue::Index(lane) => usize::try_from(*lane).ok(),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(not_indices)
     }
 
     /// A lane rule over a dtype still a parameter (`pop.mul` in `SIMD`'s
@@ -293,6 +412,49 @@ fn index_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
     } else {
         Ty::index()
     })
+}
+
+/// Check `pop.simd.shuffle` of `operands` by `mask` into `result`, as
+/// upstream's verifier does; a width still a parameter is the instance's
+/// to check.
+fn shuffle_result(operands: &[Ty], result: &Ty, mask: &[usize]) -> Result<(), String> {
+    let slots = |position: &str, ty: &Ty| {
+        storage_slots(ty).ok_or_else(|| {
+            format!(
+                "op {position} must be parameterized SIMD vector type, but got '{}'",
+                mlir_spelling(ty)
+            )
+        })
+    };
+    let (dtype, width) = slots("operand #0", &operands[0])?;
+    slots("operand #1", &operands[1])?;
+    if operands[0] != operands[1] {
+        return Err("op failed to verify that all of {lhs, rhs} have same type".to_string());
+    }
+    let (result_dtype, result_width) = slots("result #0", result)?;
+    if result_dtype != dtype {
+        return Err("op expected result dtype to match operand dtypes".to_string());
+    }
+    if result_width
+        .known()
+        .is_some_and(|lanes| usize::try_from(lanes).ok() != Some(mask.len()))
+    {
+        return Err(format!(
+            "op expected result to be a vector of {} elements",
+            mask.len()
+        ));
+    }
+    let bound = width
+        .known()
+        .and_then(|width| usize::try_from(width).ok())
+        .map(|width| 2 * width);
+    match mask
+        .iter()
+        .find(|lane| bound.is_some_and(|bound| **lane >= bound))
+    {
+        Some(lane) => Err(format!("op mask element {lane} is out of bounds")),
+        None => Ok(()),
+    }
 }
 
 /// The result of `pop.select`, as upstream's verifier types it: a

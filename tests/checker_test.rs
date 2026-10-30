@@ -8408,15 +8408,15 @@ fn pop_and_index_ops_outside_the_subset_are_rejected() {
     // rejects unless it folds (`x & x`).
     for (source, message) in [
         (
-            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.simd.shuffle`(a._mlir_value, a._mlir_value)))\n",
-            "'__mlir_op.`pop.simd.shuffle`' is outside the subset",
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.int_literal_convert`(a._mlir_value, a._mlir_value)))\n",
+            "'__mlir_op.`pop.int_literal_convert`' is outside the subset",
         ),
         (
             "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    var b = SIMD[DType.float32, 2](3, 4)\n    print(SIMD[DType.float32, 2](mlir_value=__mlir_op.`pop.simd.and`(a._mlir_value, b._mlir_value)))\n",
             "'pop.simd.and' over float lanes is outside the subset",
         ),
     ] {
-        let error = err(source);
+        let error = err_std(source);
         assert!(error.to_string().contains(message), "{error}");
     }
 }
@@ -8446,11 +8446,15 @@ fn pop_and_index_op_verifier_errors_are_rejected() {
             "Invalid attribute `fastmathFlags`",
         ),
         (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.simd.shuffle`[_type=SIMD[DType.int32, 2]._mlir_type](a._mlir_value, a._mlir_value)))\n",
+            "op requires attribute 'mask'",
+        ),
+        (
             "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    print(SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type](a._mlir_value)))\n",
             "are cast incompatible",
         ),
     ] {
-        let error = err(source);
+        let error = err_std(source);
         assert!(error.to_string().contains(message), "{error}");
     }
 }

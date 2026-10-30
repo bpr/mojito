@@ -7,6 +7,10 @@
 //! against the method's constraints and folds it to its lane indices, as the
 //! pin's `comptime assert`s run at instantiation. A violated constraint
 //! fails the instance.
+//!
+//! A `pop.simd.shuffle` op's mask is known in the template, but a width it
+//! is checked against may be a binder: the instance runs that part of the
+//! op's verifier, as the pin's pass manager does.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -22,9 +26,9 @@ impl Specializer<'_> {
         template: &str,
         function: &mut MirFunction,
     ) -> Result<(), MonoError> {
-        close_blocks(&mut function.blocks, &function.reg_types).map_err(|constraint| MonoError {
+        close_blocks(&mut function.blocks, &function.reg_types).map_err(|message| MonoError {
             kind: MonoErrorKind::Instantiation,
-            ..self.error(Some(template), format!("constraint failed: {constraint}"))
+            ..self.error(Some(template), message)
         })
     }
 }
@@ -42,10 +46,18 @@ fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result
                     };
                     match width.known().and_then(|width| mask.resolve(width)) {
                         Some(Ok(lanes)) => *mask = LaneMask::Known(lanes),
-                        Some(Err(constraint)) => return Err(constraint),
+                        Some(Err(constraint)) => {
+                            return Err(format!("constraint failed: {constraint}"));
+                        }
                         _ => {}
                     }
                 }
+                MirInstr::SimdShuffle {
+                    dest,
+                    value,
+                    other: Some(_),
+                    mask: LaneMask::Known(lanes),
+                } => verify_shuffle_op(reg_types, *dest, *value, lanes)?,
                 instruction => {
                     for region in mojito_mir::mir::instruction_regions_mut(instruction) {
                         close_blocks(region, reg_types)?;
@@ -55,4 +67,34 @@ fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result
         }
     }
     Ok(())
+}
+
+/// Upstream's `pop.simd.shuffle` verifier over an instance's widths, which
+/// the template's check could not read: the result has a lane per mask
+/// element, and every element indexes the two operands' lanes.
+fn verify_shuffle_op(
+    reg_types: &HashMap<u32, Ty>,
+    dest: Reg,
+    value: Reg,
+    lanes: &[usize],
+) -> Result<(), String> {
+    let width = |register: Reg| {
+        reg_types
+            .get(&register.0)
+            .and_then(|ty| mojito_types::types::held_simd_slots(ty.kind()))
+            .and_then(|(_, width)| width.known())
+            .and_then(|width| usize::try_from(width).ok())
+    };
+    if width(dest).is_some_and(|result| result != lanes.len()) {
+        return Err(format!(
+            "'pop.simd.shuffle' op expected result to be a vector of {} elements",
+            lanes.len()
+        ));
+    }
+    match width(value).and_then(|width| lanes.iter().find(|lane| **lane >= 2 * width)) {
+        Some(lane) => Err(format!(
+            "'pop.simd.shuffle' op mask element {lane} is out of bounds"
+        )),
+        None => Ok(()),
+    }
 }

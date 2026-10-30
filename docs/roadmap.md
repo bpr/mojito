@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1667**.
+Next free ID: **R1676**.
 
 ## Ordered Work
 
@@ -4374,6 +4374,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1668 An explicit `T.__init__(…)` call is rejected**
+
+  `P.__init__(4)` and `Q.__init__[7]()` fail with "Undefined variable 'P'",
+  where the pin calls the initializer and prints `4` and `3 7`.
+  - Upstream's `_shuffle_variadic` spells
+    `StaticTuple[SIMDLength, output_size].__init__[*mask]()`.
+  - Probe: `@fieldwise_init struct P(TrivialRegisterPassable)` with `var a:
+    Int`, then `print(P.__init__(4).a)`.
+  - Probe: `struct Q` declaring `__init__(out self)` and `__init__[k:
+    Int](out self)`, then `print(Q.__init__().a, Q.__init__[7]().a)` (pin:
+    `3 7`).
+  - Found while planning R330 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -6860,6 +6875,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1669 `reflect[T].name()` is undefined**
+
+  `print(reflect[SIMDLength].name())` reports "type 'reflect[SIMDLength]'
+  has no method 'name'", where the pin prints the type's name.
+  - Upstream's `_static_tuple_construction_checks` puts it in its
+    `comptime assert` message.
+  - Answer it beside the other queries in `checker/reflection.rs` and
+    `ReflectQuery::answer` until R324 makes `reflect` a library struct.
+  - Found while planning R330 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -9217,8 +9244,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     call's builder takes the span's pointer today
     (`mir::variadic_list::build_variadic_list`).
   - Found while landing R1304 (2026-10-23).
-  - Depends on R1316 (the `!kgen.pointer` operand) and R221 (the
-    constructor's `unsafe_bitcast` of the element pointer).
+  - Depends on R1316 (the `!kgen.pointer` operand).
   - Model: Opus, Not Planned.
 
 - [ ] **R1314 The call builds a `VariadicList`'s span itself, where
@@ -9239,7 +9265,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     constructor's gep addresses without reading.
   - Found while landing R1073 (2026-10-23); the array became a
     `!pop.array` with R1304.
-  - Depends on R1315, R1316, and R1317 (the constructor's vocabulary).
+  - Depends on R1315, R1316, R1317 (the constructor's vocabulary), and
+    R221 (its `unsafe_bitcast` of the element pointer).
   - Model: Fable, Not Planned.
 
 - [ ] **R1451 `remove-unused-params` still counts a read of a slot named
@@ -10576,7 +10603,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `1.4142135623734946` through `_powf_scalar`'s `exp(log)`.
   - Port the three `__pow__` overloads, `__rpow__`, `_pow`, `_powf`,
     `_powf_scalar`, and `_powi`.
-  - `_pow` reads `CurrentPlugin.binary_math_fn` (R330, R1562), stores
+  - `_pow` reads `CurrentPlugin.binary_math_fn` (R1672, R1562), stores
     lanes with `result[i] = …` (R1561), and initializes `out result` with
     `result = {}`.
   - Port `__ipow__` (`simd.mojo:1748`) too; its `rhs` is `Int`.
@@ -10589,7 +10616,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Removes `pliron_float_pow.mojo` from R171.
   - List `Powable` in `SIMD`'s declaration, and drop its
     `modelled_conformance` arm for `SIMD`.
-  - Depends on R1566, R1561, R1562, R330, and R1568.
+  - Depends on R1566, R1561, R1562, R1672, and R1568.
   - Model: Fable, Planned.
 
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
@@ -10639,7 +10666,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Their bodies read `comptime _T = SIMD[Self.dtype, _]` as `Self._T[n]`,
     which runs, apply a callable binder at a `SIMDLength` (R1583), spell the
     closure overload's binder as a trait composition with a function type
-    (R1584), and call `split()` (R330).
+    (R1584), and call `split()` (R1673).
   - `reduce_max` and `reduce_min` take `llvm.vector.reduce.*` only off
     x86 (`CompilationTarget.is_x86()`, R1635); the host is x86_64, so the
     tree runs.
@@ -10647,7 +10674,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     3.7, 4.9, 5.3, 6.1, 7.7, 8.3, 9.9, 10.1, 11.3, 12.7, 13.9, 14.1, 15.3,
     16.7` prints `68104130000000.0` at the pin and `68104122007552.0`
     here.
-  - Depends on R296, R1583, R1584, R330, and R1635.
+  - Depends on R296, R1583, R1584, R1673, and R1635.
   - Model: Fable, Planned.
 
 - [ ] **R1586 `reduce_and` and `reduce_or` are checker rules and
@@ -10766,8 +10793,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `infer_unbound_call` (`checker/call_inference.rs`).
   - The checker's implicit conversions into `SIMD` (`coerces`, `splats_to`)
     stand in for the `@implicit` overloads until the bridge goes.
-  - Depends on R1555, R1662, R330, R1556, R1591, R1592, R1593, R1595,
-    R1399, and R1507.
+  - Depends on R1555, R1662, R1671, R1673, R1675, R1556, R1591, R1592,
+    R1593, R1595, R1399, and R1507.
   - Model: Fable, Planned.
 
 - [ ] **R1558 MIR and the backends hold a `SIMD` value as a vector type,
@@ -10897,7 +10924,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Delete what the member entries left of them.
   - Done when `rg simd_method crates` finds nothing.
   - Depends on R1555, R1589, R1579, R1580, R1581, R1582, R1585, R1586,
-    R330, and R276, which port the last members, and R1561, which retires
+    R1671, R1673, R1675, and R276, which port the last members, and R1561, which retires
     the lane subscript.
   - Model: Opus, Not Planned.
 
@@ -11102,39 +11129,104 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R330 SIMD's lane gathers are checker intrinsics where the pin's
-  are `SIMD` methods over `pop.simd.shuffle`**
+- [ ] **R1671 `SIMD`'s `shuffle` and `join` are checker intrinsics where
+  the pin's are methods over `_shuffle_list`**
 
-  Problem: `shuffle`, `slice`, and `join` are typed by rule in
-  `simd_receivers.rs`, and their constraints are checked by
-  `LaneMask::resolve`, where the pin declares them in `std/simd.mojo` and
-  checks them with `comptime assert`.
-  - Join's template mask is the structured `LaneMask::Join`, where the
-    pin's is the compile-time result of `indices()`.
-  - The pin's `slice` lowers to `llvm.vector.extract` or an element loop,
-    not a shuffle.
-  - Port `_shuffle_variadic`, `_shuffle_list`, the variadic `shuffle`
-    overloads, `slice`, `insert`, `join`, `interleave`, `split`,
-    `deinterleave`, the rotations, the shifts, and `reversed` into the
-    declared `SIMD` (R1549), and retire `infer_simd_shuffle`/`slice`/`join`
-    and `LaneMask`'s rule use.
-  - Admit `pop.simd.shuffle` in `MlirOp`, lowering to `MirInstr::SimdShuffle`.
-  - Bundle `std/utils/static_tuple.mojo` (`StaticTuple`) and `std/_plugin`
-    (`PluginHooks`, `DefaultPlugin`, and `CurrentPlugin`, which is
-    `CompilationTarget.current().stdlib_plugin`, R1562). The bodies read
-    `CurrentPlugin.lowers_subvector_intrinsics`, `True` on the CPU plugin.
-  - The `slice`, `insert`, `interleave`, rotation, and shift bodies call
-    intrinsics that run since R1519, `deinterleave`'s since R1547, and
-    `slice` reads `__is_run_in_comptime_interpreter` (R1546).
-  - The `IndexList` overloads of `shuffle` wait on an `IndexList` entry.
-  - Probe: ``__mlir_op.`pop.simd.shuffle`[mask=tup._mlir_value,
-    _type=...](a, b)``, upstream's `_shuffle_list` body, is rejected as
-    outside the subset. Its `mask` attribute is a compile-time
-    `StaticTuple[SIMDLength, n]`'s storage, and Mojito bundles no
-    `StaticTuple`. `MirInstr::SimdShuffle` already computes the op.
+  `v.shuffle[*mask]()`, `v.shuffle[*mask](w)`, and `v.join(w)` are typed by
+  rule in `checker/method_calls/simd_receivers.rs` and closed per instance by
+  `LaneMask::resolve`, where the pin declares them in `std/simd.mojo` over
+  `pop.simd.shuffle`.
+  - Port `_shuffle_variadic`, `_shuffle_list`, both variadic `shuffle`
+    overloads, and `join` verbatim into the declared `SIMD`.
+  - `pop.simd.shuffle` takes a closed `#pop.array` mask today
+    (`infer_simd_shuffle_op`, `checker/method_calls/pop_ops.rs`).
+    `_shuffle_list` passes `mask._mlir_value` of a `StaticTuple` parameter,
+    which reports "a mask computed from parameters is outside the subset".
+  - Let the mask be a parameter expression: a `LaneMask` variant holding the
+    `ParamExpr`, closed by substitution, then checked per instance as
+    `mono/gather.rs` `verify_shuffle_op` checks a known mask.
+  - Retire `infer_simd_shuffle`, `infer_simd_join`, `LaneMask::{Shuffle,
+    Join}` with their `resolve` arms, and `SemanticAdjustment::SimdShuffle`'s
+    `joined` flag. Drop `"shuffle" | "join"` from `infer_simd_method`'s list.
+  - Respell `tests/checker_test.rs` `rejects_bad_simd_shuffle_masks` and
+    `assets/type_error/simd_shuffle_width_mismatch.mojo` to the pin's
+    "mismatch in the number of elements".
   - Closes R331 (the pin's `2 * length` bound). Shrinks R212.
-  - Depends on R1562, which bundles `CompilationTarget`.
+  - Depends on R1670 (`StaticTuple`).
+  - Model: Fable, Planned.
+
+- [ ] **R1667 `!pop.array` has no source spelling, no ops, and no
+  compile-time value of its own, where `StaticTuple`'s storage is one**
+
+  `__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]` is
+  "outside the supported subset", where upstream's `StaticTuple` stores its
+  elements in one.
+  - `TyKind::PopArray.size` is a `u64`. A struct parameter's size needs a
+    symbolic one, closed in `mono/substitute.rs` as `VariantIndex` is.
+  - Admit `pop.array.repeat`, `pop.array.get` (`index=` attribute), and
+    `pop.array.replace` on both backends.
+  - A `#pop.array` attribute's value is a `CtValue::List`, typed only by the
+    `ParamContext::typed_constant` that reads it. A table keyed by value
+    (`module_values`) recomputes the meta-type as a compile-time list.
+  - Probe: a module-level `comptime M = __mlir_attr.`#pop.array<3, 2, 1, 0>
+    : !pop.array<4, index>`` passed as `pop.simd.shuffle`'s `mask=M` reports
+    "not a compile-time Int constant: M", where the pin prints `[4, 3, 2, 1]`.
+    The same constant inside `main` runs.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1672 `CurrentPlugin` is undeclared, where upstream's is
+  `CompilationTarget.current().stdlib_plugin`**
+
+  `print(CurrentPlugin.lowers_subvector_intrinsics)` prints `True` at the
+  pin, where Mojito has no `std._plugin` package.
+  - Port `std/_plugin/{__init__,_impl,selector}.mojo` and `_trait.mojo` in
+    part: `Plugin`, `StdPlugin`, `PluginHooks` with the hooks whose types
+    are bundled (`lowers_subvector_intrinsics`, `has_generic_address_space`,
+    `_handles_debug_assert`, `abort_fn`), `DefaultPlugin`, and
+    `DefaultPluginHooks`. Header-list the omitted hooks with their owners.
+  - In `std/sys/info.mojo`, port `_first_conforming_plugin` and
+    `stdlib_plugin`.
+  - Add `#kgen.get_target_plugin`, answered by the elaborator from
+    `NativeTarget` (the CPU target has no payload, so the default list),
+    with `TypeList.of` and `downcast`.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1673 `SIMD`'s `slice` is a checker intrinsic, and `insert`,
+  `split`, `interleave`, and `deinterleave` are undeclared**
+
+  `v.slice[n, offset=o]()` is typed by `infer_simd_slice` and closed by
+  `LaneMask::Slice`, and `insert`, `split`, `interleave`, and `deinterleave`
+  report "has no method", where the pin declares all five in
+  `std/simd.mojo`.
+  - Port them verbatim. The pin's `slice` lowers to `llvm.vector.extract`
+    or an element loop, not a shuffle.
+  - The bodies' intrinsics run since R1519 (`deinterleave`'s since R1547),
+    and `slice` reads `__is_run_in_comptime_interpreter` (R1546),
+    `CurrentPlugin.lowers_subvector_intrinsics`, and `simd_width_of`.
+  - `interleave`'s width-1 arm is `return [self[0], other[0]]`.
+  - Retire `infer_simd_slice`, `LaneMask::Slice`, `LaneMask::resolve`,
+    `gather_parameter`, and `record_lane_gather`.
+  - Depends on R1671 (the `LaneMask` cleanup follows its), R1672
+    (`CurrentPlugin`), R1634 (`simd_width_of`), and R1666 (the list
+    display).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1675 `SIMD`'s rotations, shifts, `reversed`, and `IndexList`
+  `shuffle` overloads are undeclared**
+
+  `v.rotate_left[1]()`, `v.shift_right[1]()`, `v.reversed()`, and
+  `v.shuffle[mask=Index(…)]()` report "has no method", where the pin
+  declares them in `std/simd.mojo` over `_rotate_mask` and `_shift_mask`,
+  which return an `IndexList`.
+  - Port `_rotate_mask`, `_shift_mask`, both `shuffle[mask: IndexList…]`
+    overloads, `rotate_left`/`rotate_right`, `shift_left`/`shift_right`,
+    and `reversed`.
+  - `_dynamic_shuffle` stays out until R1635's `has_neon` lands.
+  - Depends on R1671 (`_shuffle_list`), R1672 (`CurrentPlugin`), and R1674
+    (`IndexList`).
+  - Model: Opus, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
   accumulator where upstream writes through a `Writer` struct**
@@ -12592,6 +12684,37 @@ residue found inside a task moves to the task that owns its fix.
     `stdlib/std/simd.mojo` beside `write_to`.
   - Depends on R1458 and R1661.
   - Model: Opus, Not Planned.
+
+- [ ] **R1670 `StaticTuple` is not bundled**
+
+  `from std.utils import StaticTuple` fails, where upstream's
+  `std/utils/static_tuple.mojo` declares the fixed-size array over
+  `!pop.array` that `SIMD.shuffle`'s masks are.
+  - Port `_static_tuple_construction_checks`, the constructors (`()`,
+    `mlir_value=`, `fill=`, `*elems`, `__init__[*values]`), `__len__`,
+    `__getitem__`, `__setitem__`, `get`, `_unsafe_ref`, `_replace`, and
+    the comparisons, and export it from `std.utils`.
+  - Header-list the omissions (`DevicePassable`, `device_type`,
+    `_to_device_type`, `get_type_name`) with the entries that own them.
+  - Probe: `comptime t = StaticTuple[Int, 3](1, 2, 3)` then `print(t[1],
+    len(t))` gives `2 3` at the pin.
+  - Depends on R1667 (`!pop.array` storage), R1668 (the explicit
+    `__init__[*values]()` call), R1669 (`reflect[T].name()`), R1316
+    (`_get_kgen_pointer`), and R1317 (`pop.array.gep`).
+  - Model: Fable, Planned.
+
+- [ ] **R1674 `IndexList` is not bundled**
+
+  `from std.utils import IndexList` fails, where upstream's
+  `std/utils/index.mojo` declares the `StaticTuple`-backed index vector that
+  `SIMD`'s rotation and shift masks are.
+  - Port the struct, its constructors, `__getitem__`/`__setitem__`,
+    `__len__`, the comparisons, `Index`, and `product`, which `SIMD`'s
+    bodies and `Index(…)` masks reach.
+  - Header-list the rest of the 797-line file (`Hasher`, `DevicePassable`,
+    the arithmetic and formatting members) with the entries that own each.
+  - Depends on R1670 (`StaticTuple`).
+  - Model: Opus, Planned.
 
 ### Packaging, Artifacts, And Developer Tooling
 

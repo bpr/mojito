@@ -24,8 +24,8 @@ command cannot use both.
    on 10-28 after R1188 for the overnight gate. Its remaining work order,
    which reruns from R1503 (R1566 landed `//`; its `%`, `divmod`, and
    `ceildiv` half is R1623, after R184's `/`):
-   - R1503, R1561, R1562, R330, R184, R1623, R1567, R1582: initializers,
-     the lane subscript, target queries, lane gathers, `/`, the rest of
+   - R1503, R1561, R1562, R1671, R1673, R1675, R184, R1623, R1567, R1582:
+     initializers, the lane subscript, target queries, lane gathers, `/`, the rest of
      division, `**`, and `__round__`.
    - R1583, R1584, R1585, R1586: the `reduce` tree and what it needs.
    - R1662 and R1664 (`SIMD`'s display through its members, which R276
@@ -41,7 +41,7 @@ command cannot use both.
    - R1557 makes `SIMD` and its aliases the declared struct in the
      checker, after R1556 (no `TyKind::Simd` pattern matches outside
      `mojito-types`), R1591 (after R240), R1593, R1399,
-     R1507, R1662, and R330.
+     R1507, R1662, R1671, R1673, and R1675.
    - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
      both backends.
    - The limit members (`MAX`, `MIN`, `MAX_FINITE`, `MIN_FINITE`) are
@@ -283,7 +283,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1398, R1399, R1557 → R1558, R1608 → R1612), R160, R276, R1192 | R1408, R331, R850, R212, R1019, R423, R1352, R851, R187, R171, R330, R1189, R427, R432 |
+| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1398, R1399, R1557 → R1558, R1608 → R1612), R160, R276, R1192 | R1408, R331, R850, R212, R1019, R423, R1352, R851, R187, R171, R1671, R1673, R1675, R1189, R427, R432 |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R275, R18, R159, R937 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R77, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |

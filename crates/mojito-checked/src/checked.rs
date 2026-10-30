@@ -1171,6 +1171,13 @@ pub enum SemanticAdjustment {
     KgenStructExtract {
         index: mojito_types::param_expr::ParamExpr,
     },
+    /// ``__mlir_op.`pop.simd.shuffle`[mask=…, _type=…](a, b)``: the lanes
+    /// of `a` followed by those of `b`, gathered by the `mask` attribute's
+    /// indices into the `_type` vector. MIR keeps it as a two-operand
+    /// `MirInstr::SimdShuffle`.
+    PopSimdShuffle {
+        mask: mojito_types::types::LaneMask,
+    },
     /// A sugar written as the construction it stands for: an initializer
     /// list `{}` / `{a, b}` at the type its context expects (upstream's
     /// set-initializer literal, emitted as the construction `T(a, b)` of that
