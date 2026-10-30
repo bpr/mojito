@@ -100,7 +100,9 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
             lanes: lanes_of(lanes)?,
         }),
         CtValue::Dtype(dtype) => Ok(Value::Dtype(*dtype)),
-        CtValue::MlirAttr(_) | CtValue::KgenString(_) => Ok(Value::Attribute(value.clone())),
+        CtValue::MlirAttr(_) | CtValue::KgenString(_) | CtValue::KgenTarget(_) => {
+            Ok(Value::Attribute(value.clone()))
+        }
         CtValue::Type(_)
         | CtValue::Trait(_)
         | CtValue::Generator(_)

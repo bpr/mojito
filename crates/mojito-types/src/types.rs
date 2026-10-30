@@ -705,6 +705,12 @@ pub enum TyKind {
     /// [`CtValue::MlirAttr`](crate::ct::CtValue::MlirAttr). It conforms to
     /// no trait and is compile-time only; no runtime register holds one.
     KgenDeferred,
+    /// Upstream's `!kgen.target`, the type of a compilation target's
+    /// attribute (`CompilationTarget._mlir_value`), displayed
+    /// ``__mlir_type.`!kgen.target` ``. Its values are
+    /// [`CtValue::KgenTarget`](crate::ct::CtValue::KgenTarget). It conforms
+    /// to no trait and has no LLVM type ([`has_no_llvm_type`]).
+    KgenTarget,
     /// Upstream's MLIR builtin `index` (`__mlir_type.index`), what
     /// `Indexer.__mlir_index__` returns, displayed `__mlir_type.index`.
     /// `pop.cast_from_builtin` and `pop.cast_to_builtin` convert it to and
@@ -1302,6 +1308,10 @@ pub const KGEN_STRING_TYPE_SPELLING: &str = "__mlir_type.`!kgen.string`";
 /// ([`TyKind::KgenDeferred`]), as the pin prints it.
 pub const KGEN_DEFERRED_TYPE_SPELLING: &str = "__mlir_type.`!kgen.deferred`";
 
+/// The spelling of upstream's `!kgen.target` type ([`TyKind::KgenTarget`]),
+/// as the pin prints it.
+pub const KGEN_TARGET_TYPE_SPELLING: &str = "__mlir_type.`!kgen.target`";
+
 /// The spelling of upstream's MLIR builtin `index` type ([`TyKind::Index`]),
 /// as the pin prints it.
 pub const MLIR_INDEX_TYPE_SPELLING: &str = "__mlir_type.index";
@@ -1331,8 +1341,8 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 /// ([`TyKind::Index`]) and `i1` ([`TyKind::I1`]), a scalar's `!kgen.scalar<dtype>` storage
 /// ([`TyKind::KgenSimd`], `!kgen.scalar<index>` for an `Int`), or the
 /// compile-time-only `!kgen.type` ([`TyKind::TypeType`]), `!kgen.string`
-/// ([`TyKind::KgenString`]), and `!kgen.deferred`
-/// ([`TyKind::KgenDeferred`]).
+/// ([`TyKind::KgenString`]), `!kgen.deferred` ([`TyKind::KgenDeferred`]),
+/// and `!kgen.target` ([`TyKind::KgenTarget`]).
 pub fn mlir_type_named(name: &str) -> Option<Ty> {
     match name {
         "index" => Some(Ty::index()),
@@ -1340,6 +1350,7 @@ pub fn mlir_type_named(name: &str) -> Option<Ty> {
         "!kgen.type" => Some(TyKind::TypeType.into()),
         "!kgen.string" => Some(TyKind::KgenString.into()),
         "!kgen.deferred" => Some(TyKind::KgenDeferred.into()),
+        "!kgen.target" => Some(TyKind::KgenTarget.into()),
         _ => name
             .strip_prefix("!kgen.scalar<")
             .and_then(|rest| rest.strip_suffix('>'))
@@ -2844,6 +2855,7 @@ impl fmt::Display for TyKind {
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
             Self::KgenDeferred => f.write_str(KGEN_DEFERRED_TYPE_SPELLING),
+            Self::KgenTarget => f.write_str(KGEN_TARGET_TYPE_SPELLING),
             Self::Index => f.write_str(MLIR_INDEX_TYPE_SPELLING),
             Self::I1 => f.write_str(MLIR_I1_TYPE_SPELLING),
             Self::KgenSimd { dtype, width } => {
@@ -3491,6 +3503,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::TypeType, TyKind::TypeType)
         | (TyKind::KgenString, TyKind::KgenString)
         | (TyKind::KgenDeferred, TyKind::KgenDeferred)
+        | (TyKind::KgenTarget, TyKind::KgenTarget)
         | (TyKind::Index, TyKind::Index)
         | (TyKind::I1, TyKind::I1) => true,
         (
@@ -3806,7 +3819,7 @@ pub const fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
 /// type converter has no type for them, so translation rejects one that
 /// survives the post-elaboration pipeline.
 pub const fn has_no_llvm_type(ty: &TyKind) -> bool {
-    matches!(ty, TyKind::KgenDeferred)
+    matches!(ty, TyKind::KgenDeferred | TyKind::KgenTarget)
 }
 
 /// Recover the monomorphic or generic callable contract carried either directly
@@ -4788,6 +4801,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::TypeType
         | TyKind::KgenString
         | TyKind::KgenDeferred
+        | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1
         | TyKind::SelfType
@@ -4894,6 +4908,7 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
         | CtValue::MlirAttr(_)
+        | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
@@ -5315,6 +5330,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::TypeType
         | TyKind::KgenString
         | TyKind::KgenDeferred
+        | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1
         | TyKind::Bool
@@ -5426,6 +5442,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
         | CtValue::MlirAttr(_)
+        | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
         | CtValue::RemovedArg => false,
     }
@@ -6155,7 +6172,8 @@ fn bridged_string_literal(kind: &TyKind) -> Option<Ty> {
 ///
 /// A text piece is a backtick-stropped argument: one no plain identifier
 /// spells, or one whose source span covers its backticks (`` `8` ``,
-/// `` `fast` ``), which the lexer drops from the name.
+/// `` `fast` ``), which the lexer drops from the name. A linked name
+/// (`__module$std$sys$info$_empty_target`) is an identifier.
 fn mlir_bracket_pieces(
     args: &[mojito_ast::ast::ParamArg],
     piece: impl Fn(&str) -> String,
@@ -6169,7 +6187,9 @@ fn mlir_bracket_pieces(
                 kind: ExprKind::Identifier(text),
                 span: (start, end),
                 ..
-            }) if !text.chars().all(|c| c == '_' || c.is_alphanumeric())
+            }) if !text
+                .chars()
+                .all(|c| c == '_' || c == '$' || c.is_alphanumeric())
                 || end.checked_sub(*start) == Some(text.len() + 2) =>
             {
                 piece(text)

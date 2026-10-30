@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `from std.sys import CompilationTarget` now finds upstream's struct, with
+  `current`, `_unknown`, `_has_feature`, the `has_*` x86 feature queries,
+  and the free `simd_bit_width` and `simd_byte_width`, verbatim. The new
+  compile-time-only `!kgen.target` type holds a `#kgen.target<…>`
+  attribute; `#kgen.param.expr<current_target>` stays symbolic through the
+  check and the elaborator answers it from its native target, so
+  `--target-cpu` and `--target-features` decide the answers
+  (`has_avx2()`, `simd_bit_width()`, a `comptime if` over
+  `has_avx512f()`), and `target_has_feature` and `target_get_field` fold
+  over a closed target. Several general gaps closed on the way: a struct
+  parameter default that calls a function (`T[n: Int = f(), //]`), a
+  struct `comptime` member applying one (`comptime cur = T[n=f()]`), a
+  construction through a type member as a parameter argument
+  (`g[T.four()]()`), a parameter default constructing a struct over a
+  call (`t: T = T[n=f()]()`), `Self.m()` inside a struct whose
+  parameters are infer-only, a call or a module constant as a bracketed
+  `__mlir_attr` operand, and a struct parameter read off a compile-time
+  parameter value (`target._mlir_value`) (R1562). MIR schema 1.136,
+  package format 150.
+
 - `SIMD`'s `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE` are now upstream's
   `comptime` members over a partly bundled `std.utils.numerics` (`inf`,
   `neg_inf`, `max_finite`, `min_finite`, `max_or_inf`, `min_or_neg_inf`),

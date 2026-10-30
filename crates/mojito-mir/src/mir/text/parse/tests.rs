@@ -2580,6 +2580,37 @@ fn kgen_deferred_attribute_round_trips() {
     assert!(text.contains("KgenDeferred") && text.contains("ct_mlir_attr(\"#pop.fmf<fast>\")"));
 }
 
+/// Schema 1.136 spells upstream's `!kgen.target` type `KgenTarget`, and a
+/// target attribute `ct_kgen_target("#kgen.target<...>")`.
+#[test]
+fn kgen_target_attribute_round_trips() {
+    let ty = Ty::new(TyKind::KgenTarget);
+    let target = mojito_types::ct::KgenTarget {
+        triple: "x86_64-unknown-linux-gnu".into(),
+        arch: "x86-64".into(),
+        features: "+sse,+sse2".into(),
+        data_layout: "e-m:e".into(),
+        index_bit_width: 64,
+        simd_bit_width: 128,
+    };
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone(), ty.clone()],
+            vec![
+                MirInstr::ConstructType { dest: Reg(0), ty },
+                MirInstr::Const {
+                    dest: Reg(1),
+                    k: Const::Value(mojito_types::ct::CtValue::KgenTarget(Box::new(target))),
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("KgenTarget") && text.contains("ct_kgen_target("));
+}
+
 /// Schema 1.133 spells upstream's MLIR builtin `i1` type `i1`, and a
 /// `builtin.cast` between it and a `Bool`'s storage.
 #[test]

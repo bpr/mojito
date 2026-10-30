@@ -46,7 +46,7 @@ fn host_target() -> NativeTarget {
 
 /// A fully fresh compilation: new `Compiler`, new backend module.
 fn compile_fresh() -> NativeModule {
-    let compiler = Compiler::default();
+    let compiler = Compiler::default().with_target(host_target());
     let compiled = compiler
         .compile_source(PROGRAM, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("fixture must compile: {error}"));

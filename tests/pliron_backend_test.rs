@@ -37,7 +37,9 @@ fn runtime_jit_symbols_cover_the_contract() {
 /// Compile `src` through the production pipeline, exporting `entries`, and
 /// hand its cached post-drop MIR to the Pliron backend with them.
 fn native_compile(src: &str, entries: &[&str]) -> NativeModule {
-    let compiler = Compiler::default().with_exports(entries.iter().copied());
+    let compiler = Compiler::default()
+        .with_target(host_target())
+        .with_exports(entries.iter().copied());
     let compiled = compiler
         .compile_source(src, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("fixture must compile: {error}"));
@@ -499,7 +501,7 @@ def main():
 
 #[test]
 fn executable_and_object_emission() {
-    let compiler = Compiler::default();
+    let compiler = Compiler::default().with_target(host_target());
     let compiled = compiler
         .compile_source(EXE_MAIN, Path::new(FIXTURE_NAME))
         .expect("fixture compiles");
@@ -554,7 +556,7 @@ fn print_fixture_exes_match_vm_output() {
         "assets/ok/callable_element_call_dispatch.mojo",
     ] {
         let src = std::fs::read_to_string(fixture).expect("fixture exists");
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_target(host_target());
         let compiled = compiler
             .compile_source(&src, Path::new(fixture))
             .unwrap_or_else(|error| panic!("{fixture}: must compile: {error}"));
@@ -666,7 +668,7 @@ fn a1_reference_field_arithmetic_matches_vm() {
         (gate, gate_src.as_str()),
         ("reference_operands.mojo", REFERENCE_OPERANDS),
     ] {
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_target(host_target());
         let compiled = compiler
             .compile_source(src, Path::new(fixture))
             .unwrap_or_else(|error| panic!("{fixture}: must compile: {error}"));
@@ -904,7 +906,9 @@ fn capability_matrix_is_current() {
 
 /// Compile a fixture expecting a backend diagnostic; return its rendering.
 fn native_error(src: &str, entries: &[&str]) -> String {
-    let compiler = Compiler::default().with_exports(entries.iter().copied());
+    let compiler = Compiler::default()
+        .with_target(host_target())
+        .with_exports(entries.iter().copied());
     let compiled = compiler
         .compile_source(src, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("fixture must reach the backend: {error}"));
@@ -967,7 +971,7 @@ fn lifecycle_event_traces_match_the_vm() {
         // element drops the VM's arena never performs).
     ] {
         let src = std::fs::read_to_string(fixture).expect("fixture exists");
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_target(host_target());
         let compiled = compiler
             .compile_source(&src, Path::new(fixture))
             .unwrap_or_else(|error| panic!("{fixture}: must compile: {error}"));
@@ -1468,7 +1472,7 @@ def main():
     print(s, 42)
 ";
         for source in [EXE_MAIN, STAGE3_MAIN] {
-            let compiler = Compiler::default();
+            let compiler = Compiler::default().with_target(host_target());
             let compiled = compiler
                 .compile_source(source, std::path::Path::new(FIXTURE_NAME))
                 .expect("fixture compiles");

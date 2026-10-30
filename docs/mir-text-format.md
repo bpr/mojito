@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.135
+mojito-mir 1.136
 ```
 
-The writer emits 1.135. The reader accepts 1.0 through 1.135; *Schema 1.0*
+The writer emits 1.136. The reader accepts 1.0 through 1.136; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -897,6 +897,10 @@ parameter, or result may hold one, and `pop` gains `string.size` and
 (an `index`) and the address of its bytes (a static `Pointer[UInt8]`). The
 package format moves to `mojito-package 148`.
 
+Schema 1.136 adds the type `KgenTarget`, upstream's `!kgen.target`, whose
+values are `ct_kgen_target("#kgen.target<…>")`, the attribute's text. The
+package format moves to `mojito-package 150`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1471,6 +1475,14 @@ backend lays out as a string literal's `{ data, len }` descriptor.
 `KgenDeferred` (schema 1.132) is upstream's `!kgen.deferred`, the type of
 an untyped MLIR attribute and of a function result returning one, whose
 values are `ct_mlir_attr`. It is compile-time only, as `any_trait` is.
+
+`KgenTarget` (schema 1.136) is upstream's `!kgen.target`, the type of a
+compilation target's attribute (`CompilationTarget._mlir_value`), whose
+values are `ct_kgen_target`, spelled as the attribute
+`#kgen.target<triple = "…", arch = "…", features = "…", data_layout = "…",
+index_bit_width = N, simd_bit_width = N>`. Like `KgenDeferred`, it has no
+LLVM type: the VM holds one as an attribute value, and translation rejects
+one a function signature or call still carries.
 
 `i1` (schema 1.133) is upstream's MLIR builtin `i1`, what
 `Bool.__mlir_i1__` returns and `pop.cast_to_builtin` gives from a `Bool`'s

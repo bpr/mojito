@@ -548,6 +548,11 @@ pub struct Checker {
     /// source-order walk removes each entry and runs only the completion phase
     /// (conformance verification and method bodies).
     predeclared_structs: HashSet<String>,
+    /// Structs whose shell registered without a parameter default that
+    /// applies a function (`_mlir_value: T = f()`), which selects only once
+    /// every function's constraints compile; `check_program` then adds it
+    /// ([`Self::complete_shell_defaults`]).
+    shells_awaiting_defaults: Vec<String>,
     /// The module constants the declaration pass bound ahead of their
     /// statements, which a body before the statement reads; the statement's
     /// own binding replaces the pre-bound one.
@@ -1053,6 +1058,7 @@ impl Checker {
             trait_members: Vec::new(),
             checking_trait_member: false,
             predeclared_structs: HashSet::new(),
+            shells_awaiting_defaults: Vec::new(),
             predeclared_constants: HashSet::new(),
             applied_module_constants: declaration_table::DeclarationSet::default(),
             projected_object: RefCell::new(None),

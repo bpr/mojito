@@ -3749,7 +3749,8 @@ op and its region terminators.
 `concrete_function_findings` per instance so that a failure names the
 instance it came from. The concrete mode also rejects a declaration that
 still carries an availability clause or a conformance condition. It admits
-a type with no LLVM type (`types::has_no_llvm_type`, `!kgen.deferred`),
+a type with no LLVM type (`types::has_no_llvm_type`, `!kgen.deferred`,
+`!kgen.target`),
 as upstream's elaborated KGEN holds attributes freely: an elaborator
 request runs a body holding one, the VM carrying the attribute as an
 opaque value, and translation legality decides what survives.
@@ -7665,6 +7666,17 @@ query is the parameter expression `size_of` applied to the type, which the
 elaborator answers under the target wherever it stands in an expression
 (`symbolic::eval_ct_at`, `layout_answer`): `comptime if size_of[Int]() ==
 8` and `flag[size_of[Int]() == 8]()` fold alike.
+
+The compilation target is answered the same way. Upstream's
+`_current_target()` returns `#kgen.param.expr<current_target>`, which the
+check keeps as the symbolic application `ParamContext::current_target`, so
+one checked program serves any `--target`, `--target-cpu`, or
+`--target-features`. The elaborator answers it with the `!kgen.target`
+attribute `NativeTarget::kgen_target` builds from its native target, and
+`target_has_feature` and `target_get_field` over it fold in the parameter
+domain (`ParamOp::TargetHasFeature`, `ParamOp::TargetGetField`). The
+attribute has no LLVM type: a function returning one runs only as an
+elaborator request, as for `!kgen.deferred`.
 
 `external_call["callee", ReturnType, num_fixed_args=n](args...)` is the one
 host boundary below the stdlib: a builtin over the closed libc callee table

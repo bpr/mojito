@@ -17,10 +17,14 @@ use mojito_types::types::TyKind;
 pub(super) const LACKING_EVIDENCE: &str = "lacking evidence to prove correctness; ";
 
 /// Whether a module constant folded to `value` is that attribute wherever
-/// a body reads it: a closed parameter argument, a string, or an untyped
-/// MLIR attribute.
+/// a body reads it: a closed parameter argument, a string, an untyped
+/// MLIR attribute, or a target attribute.
 pub(super) fn is_module_constant_attribute(value: &CtValue) -> bool {
-    value.is_folded_parameter_argument() || matches!(value, CtValue::Str(_) | CtValue::MlirAttr(_))
+    value.is_folded_parameter_argument()
+        || matches!(
+            value,
+            CtValue::Str(_) | CtValue::MlirAttr(_) | CtValue::KgenTarget(_)
+        )
 }
 
 impl Checker {
@@ -1908,6 +1912,13 @@ impl Checker {
             {
                 projection
             }
+            // A struct parameter of a struct-typed parameter value
+            // (`target._mlir_value`).
+            ExprKind::Member { object, field }
+                if let Some(argument) = self.value_type_argument(object, field) =>
+            {
+                Ok(argument)
+            }
             // A type's value member (`T.K`, `A.K`, `B[4].K`): the member read
             // the elaborator answers per instance, recorded for a bracket
             // argument MIR reads as a value.
@@ -2800,8 +2811,8 @@ impl Checker {
             "__mlir_type" => mojito_types::types::mlir_type_named(field)
                 .map(|ty| Ok(self.param_context.type_shape(ty))),
             "__mlir_attr" => Some(
-                super::comptime_validation::mlir_attribute(field)
-                    .and_then(|(value, _)| self.ct_param(value)),
+                super::comptime_validation::mlir_attribute_expr(&self.param_context, field)
+                    .map(|(value, _)| value),
             ),
             _ => None,
         }
@@ -2821,8 +2832,8 @@ impl Checker {
     ) -> Result<ParamExpr, TypeError> {
         let (text, operands) = mojito_types::types::mlir_attribute_spelling(args);
         if operands.is_empty() {
-            return super::comptime_validation::mlir_attribute(&text)
-                .and_then(|(value, _)| self.ct_param(value));
+            return super::comptime_validation::mlir_attribute_expr(&self.param_context, &text)
+                .map(|(value, _)| value);
         }
         let context = &self.param_context;
         let shape: String = text.split_whitespace().collect();
@@ -2887,6 +2898,30 @@ impl Checker {
                     .op(ParamOp::DataToStr, &[string, rest])
                     .map_err(param_error)
             }
+            ("#kgen.param.expr<target_has_feature,{},{}>:i1", [target, name]) => {
+                let target = self.bracket_target(target, recording)?;
+                let name = self.bracket_operand(name, recording)?;
+                if *name.meta() != MetaTy::value(TyKind::KgenString.into()) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a '!kgen.string' value".to_string(),
+                        found: name.meta().to_string(),
+                        context: "the feature operand of '#kgen.param.expr<target_has_feature>'"
+                            .to_string(),
+                    });
+                }
+                context
+                    .op(ParamOp::TargetHasFeature, &[target, name])
+                    .map_err(param_error)
+            }
+            (shape, [target]) if let Some(field) = target_field_read(shape) => {
+                let target = self.bracket_target(target, recording)?;
+                let name = context
+                    .constant(CtValue::KgenString(field.to_string()))
+                    .map_err(param_error)?;
+                context
+                    .op(ParamOp::TargetGetField, &[target, name])
+                    .map_err(param_error)
+            }
             // Whole-value identity of two parameters of one type, a
             // `Bool` (`StringLiteral._is_identical`).
             ("#kgen.param.identical<{},{}>:!kgen.scalar<bool>", [left, right]) => {
@@ -2904,19 +2939,24 @@ impl Checker {
             _ => Err(TypeError::Unsupported(format!(
                 "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
                  attribute, '#kgen.param_list.size', '#kgen.param_list.get', \
-                 '#kgen.param.expr<data_to_str>', and '#kgen.param.identical' are read"
+                 '#kgen.param.expr<data_to_str>', '#kgen.param.expr<target_has_feature>', \
+                 '#kgen.param.expr<target_get_field>' of a known field, and \
+                 '#kgen.param.identical' are read"
             ))),
         }
     }
 
     /// An operand of a bracketed `__mlir_attr[…]`, built as a compile-time
-    /// expression. A `+` before it (`+Self.values`) is KGEN's splice of the
-    /// operand into the attribute, not a `__pos__` call.
+    /// expression, where a call is its application
+    /// (`_get_kgen_string[name]()`). A `+` before it (`+Self.values`) is
+    /// KGEN's splice of the operand into the attribute, not a `__pos__`
+    /// call.
     fn bracket_operand(
         &self,
         operand: &ParamArg,
         recording: Recording,
     ) -> Result<ParamExpr, TypeError> {
+        let _lifting = self.lifting_position();
         match operand {
             ParamArg::Value(Expr {
                 kind: ExprKind::Prefix(PrefixOp::Pos, spliced),
@@ -2941,6 +2981,23 @@ impl Checker {
                 "a keyword operand '{name}=' of a bracketed '__mlir_attr' is not supported"
             ))),
         }
+    }
+
+    /// The `!kgen.target` operand of a `#kgen.param.expr<target_…>` read.
+    fn bracket_target(
+        &self,
+        target: &ParamArg,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let target = self.bracket_operand(target, recording)?;
+        if *target.meta() != MetaTy::value(TyKind::KgenTarget.into()) {
+            return Err(TypeError::TypeMismatch {
+                expected: "a '!kgen.target' value".to_string(),
+                found: target.meta().to_string(),
+                context: "the target operand of a '#kgen.param.expr<target_…>' read".to_string(),
+            });
+        }
+        Ok(target)
     }
 
     /// The raw parameter list a `#kgen.param_list` attribute reads, and the
@@ -3103,6 +3160,27 @@ impl Checker {
                 )
                 .map_err(param_error),
         )
+    }
+
+    /// The struct parameter `field` read off the compile-time value `object`
+    /// of a struct type (`target._mlir_value` over `target:
+    /// CompilationTarget`): the argument the value's type binds it to, as
+    /// upstream resolves the name against the type's parameters. `None`
+    /// when `object` is no such value or its struct has no such parameter.
+    fn value_type_argument(&self, object: &Expr, field: &str) -> Option<ParamExpr> {
+        let base = self.compile_dependent_ct_expr(object).ok()?;
+        let TyKind::Struct(owner, arguments) = base.meta().as_value()?.kind() else {
+            return None;
+        };
+        let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
+        let decls = &self.structs.get(owner)?.decls;
+        let index = decls.iter().position(|decl| decl.name() == field)?;
+        match arguments.get(index)? {
+            TyArg::Val(CtValue::Expr(argument)) => Some(argument.clone()),
+            TyArg::Val(value) => self.param_context.constant(value.clone()).ok(),
+            TyArg::Ty(ty) => Some(self.param_context.type_shape(ty.clone())),
+            TyArg::Origin(_) => None,
+        }
     }
 
     /// The compile-time value member `field` of the type `object` names:
@@ -5988,4 +6066,19 @@ impl mojito_ast::visit::Visitor for NamesSpelled {
             self.0.insert(name.clone());
         }
     }
+}
+
+/// The field a whitespace-free `#kgen.param.expr<target_get_field, {},
+/// "name" : !kgen.string> : T` reads, when `T` is the field's own type
+/// ([`mojito_types::ct::KgenTarget::field`]).
+fn target_field_read(shape: &str) -> Option<&str> {
+    let (field, ty) = shape
+        .strip_prefix("#kgen.param.expr<target_get_field,{},\"")?
+        .split_once("\":!kgen.string>:")?;
+    let expected = if mojito_types::ct::KgenTarget::is_index_field(field) {
+        "index"
+    } else {
+        "!kgen.string"
+    };
+    (ty == expected && mojito_types::ct::KgenTarget::reads_field(field)).then_some(field)
 }

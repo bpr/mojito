@@ -594,6 +594,10 @@ pub enum CtValue {
     /// held as its text after the backtick, whose type is
     /// [`TyKind::KgenDeferred`]. It displays as its text.
     MlirAttr(String),
+    /// A compilation target — upstream's `#kgen.target<…>` attribute, the
+    /// `_mlir_value` of a `CompilationTarget`, whose type is
+    /// [`TyKind::KgenTarget`]. It displays as the attribute.
+    KgenTarget(Box<KgenTarget>),
     /// A closed generator — upstream's `#kgen.gen<body>`, the value of a
     /// parameterized `comptime` declaration read unapplied (`Twice`,
     /// `A.get`). Its body names its own parameters and nothing else; its
@@ -621,6 +625,140 @@ pub enum CtValue {
     /// argument, so it agrees with every instance of its template that
     /// matches the kept arguments. It never reaches a runtime value.
     RemovedArg,
+}
+
+/// Upstream's `#kgen.target<…>` attribute: a compilation target's fields.
+///
+/// `#kgen.param.expr<target_get_field>` and
+/// `#kgen.param.expr<target_has_feature>` read them ([`Self::field`],
+/// [`Self::has_feature`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct KgenTarget {
+    pub triple: String,
+    /// The CPU name (`skylake`, `x86-64`).
+    pub arch: String,
+    /// The effective feature list, each item `+name` or `-name`, joined
+    /// with `,`.
+    pub features: String,
+    pub data_layout: String,
+    pub index_bit_width: i64,
+    pub simd_bit_width: i64,
+}
+
+impl KgenTarget {
+    /// The `#kgen.target` attribute's field names, in its spelling's order.
+    pub const FIELDS: [&'static str; 6] = [
+        "triple",
+        "arch",
+        "features",
+        "data_layout",
+        "index_bit_width",
+        "simd_bit_width",
+    ];
+
+    /// The value `target_get_field` reads for `name`: a `!kgen.string`
+    /// for `triple`, `arch`, and the triple's `triple_arch` and `os`
+    /// components (`unknown` where the triple has none), and an `index`
+    /// for the bit widths. `None` for any other name.
+    pub fn field(&self, name: &str) -> Option<CtValue> {
+        let component = |at: usize| {
+            self.triple
+                .split('-')
+                .nth(at)
+                .filter(|part| !part.is_empty())
+                .unwrap_or("unknown")
+                .to_string()
+        };
+        Some(match name {
+            "triple" => CtValue::KgenString(self.triple.clone()),
+            "arch" => CtValue::KgenString(self.arch.clone()),
+            "triple_arch" => CtValue::KgenString(component(0)),
+            "os" => CtValue::KgenString(component(2)),
+            "index_bit_width" => CtValue::Index(self.index_bit_width),
+            "simd_bit_width" => CtValue::Index(self.simd_bit_width),
+            _ => return None,
+        })
+    }
+
+    /// Whether `target_get_field` reads a field `name` ([`Self::field`]).
+    pub fn reads_field(name: &str) -> bool {
+        matches!(
+            name,
+            "triple" | "arch" | "triple_arch" | "os" | "index_bit_width" | "simd_bit_width"
+        )
+    }
+
+    /// Whether `target_get_field` reads `name` as an `index`, not a
+    /// `!kgen.string`.
+    pub fn is_index_field(name: &str) -> bool {
+        matches!(name, "index_bit_width" | "simd_bit_width")
+    }
+
+    /// Whether the feature list holds `+name`, as `target_has_feature`
+    /// answers: literal membership, with no implication between features.
+    pub fn has_feature(&self, name: &str) -> bool {
+        self.features
+            .split(',')
+            .any(|feature| feature.strip_prefix('+') == Some(name))
+    }
+
+    /// Parse the body of a `#kgen.target<…>` attribute: each field once,
+    /// `name = value`, the strings quoted and the widths integers.
+    pub fn parse(body: &str) -> Option<Self> {
+        let mut target = Self {
+            triple: String::new(),
+            arch: String::new(),
+            features: String::new(),
+            data_layout: String::new(),
+            index_bit_width: 0,
+            simd_bit_width: 0,
+        };
+        let mut seen = Vec::new();
+        let mut rest = body.trim();
+        while !rest.is_empty() {
+            let (name, after) = rest.split_once('=')?;
+            let name = name.trim();
+            let after = after.trim_start();
+            let (value, after) = match after.strip_prefix('"') {
+                Some(quoted) => {
+                    let end = quoted.find('"')?;
+                    (&quoted[..end], &quoted[end + 1..])
+                }
+                None => after.split_at(after.find(',').unwrap_or(after.len())),
+            };
+            if !Self::FIELDS.contains(&name) || seen.contains(&name) {
+                return None;
+            }
+            seen.push(name);
+            match name {
+                "triple" => target.triple = value.to_string(),
+                "arch" => target.arch = value.to_string(),
+                "features" => target.features = value.to_string(),
+                "data_layout" => target.data_layout = value.to_string(),
+                "index_bit_width" => target.index_bit_width = value.trim().parse().ok()?,
+                _ => target.simd_bit_width = value.trim().parse().ok()?,
+            }
+            let after = after.trim_start();
+            rest = after.strip_prefix(',').unwrap_or(after).trim_start();
+        }
+        (seen.len() == Self::FIELDS.len()).then_some(target)
+    }
+}
+
+impl fmt::Display for KgenTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "#kgen.target<triple = {:?}, arch = {:?}, features = {:?}, data_layout = {:?}, \
+             index_bit_width = {}, simd_bit_width = {}>",
+            self.triple,
+            self.arch,
+            self.features,
+            self.data_layout,
+            self.index_bit_width,
+            self.simd_bit_width
+        )
+    }
 }
 
 /// A generator's input parameters over the body applying them yields,
@@ -917,7 +1055,10 @@ impl CtValue {
     pub fn is_compile_time_only(&self) -> bool {
         self.is_metatype_valued()
             || match self {
-                Self::KgenString(_) | Self::MlirAttr(_) | Self::Generator(_) => true,
+                Self::KgenString(_)
+                | Self::MlirAttr(_)
+                | Self::KgenTarget(_)
+                | Self::Generator(_) => true,
                 Self::List(values) | Self::Tuple(values) => values
                     .iter()
                     .any(|value| matches!(value, Self::Type(_)) || value.is_compile_time_only()),
@@ -925,7 +1066,10 @@ impl CtValue {
                     crate::types::mentions(ty, &|ty| {
                         matches!(
                             ty.kind(),
-                            TyKind::KgenString | TyKind::KgenDeferred | TyKind::Generator(_)
+                            TyKind::KgenString
+                                | TyKind::KgenDeferred
+                                | TyKind::KgenTarget
+                                | TyKind::Generator(_)
                         )
                     })
                 }),
@@ -1027,6 +1171,7 @@ impl CtValue {
             | Self::Trait(_)
             | Self::KgenString(_)
             | Self::MlirAttr(_)
+            | Self::KgenTarget(_)
             | Self::Generator(_)
             | Self::Expr(_)
             | Self::Deferred(_)
@@ -1100,6 +1245,7 @@ impl CtValue {
             (value @ Self::Type(_), TyKind::Trait(_)) => Some(value),
             (value @ Self::KgenString(_), TyKind::KgenString) => Some(value),
             (value @ Self::MlirAttr(_), TyKind::KgenDeferred) => Some(value),
+            (value @ Self::KgenTarget(_), TyKind::KgenTarget) => Some(value),
             // A generator binds a generator-typed parameter whose
             // conversion the checker proved.
             (value @ Self::Generator(_), TyKind::Generator(_)) => Some(value),
@@ -1372,6 +1518,16 @@ impl CtValue {
                 }),
                 field: text.clone(),
             },
+            // The typed attribute `` __mlir_attr.`#kgen.target<…> : !kgen.target` ``.
+            Self::KgenTarget(target) => ExprKind::Member {
+                object: Box::new(Expr {
+                    kind: ExprKind::Identifier("__mlir_attr".to_string()),
+                    span,
+                    source: None,
+                    syntax_id: mojito_common::token::SyntaxId::fresh(),
+                }),
+                field: format!("{target} : !kgen.target"),
+            },
             // The explicit construction `SIMD[DType.d, w](l0, l1, ...)`.
             Self::Simd { dtype, lanes } => ExprKind::Call {
                 name: "SIMD".to_string(),
@@ -1638,6 +1794,7 @@ impl fmt::Display for CtValue {
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::KgenString(text) => write!(f, "{text:?}"),
             Self::MlirAttr(text) => f.write_str(text),
+            Self::KgenTarget(target) => write!(f, "{target}"),
             Self::Generator(generator) => {
                 f.write_str("__gen")?;
                 crate::types::write_param_decls(f, &generator.params)?;

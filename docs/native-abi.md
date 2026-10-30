@@ -98,6 +98,14 @@ its own explicit support decision and testing infrastructure.
   - `TargetCpu::has_feature` is literal `+name` membership of that list.
   - The elaborator holds the same target as the backend, so `run` on the
     VM answers a target query for the requested CPU, as `mojo run` does.
+  - The target queries read it as the `#kgen.target` attribute
+    `NativeTarget::kgen_target` builds: `triple` is `Triple::name`,
+    `arch` the CPU name, `features` the effective list joined with `,`,
+    `data_layout` `Triple::data_layout`, `index_bit_width` the pointer
+    width in bits, and `simd_bit_width` 512 under `avx512f`, else 256
+    under `avx2`, else 128. `target_get_field` derives `triple_arch` and
+    `os` from the triple's first and third components (`unknown` when
+    absent), and `target_has_feature` is `TargetCpu::has_feature`'s rule.
   - Every function a native module defines carries `"target-cpu"` and
     `"target-features"` string attributes with these values; declarations
     carry none. All functions of one module share the pair, so vector

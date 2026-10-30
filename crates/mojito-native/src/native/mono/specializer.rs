@@ -1408,6 +1408,9 @@ impl<'a> Specializer<'a> {
             let answered = self.applied(template, expr, bindings)?;
             return eval_ct(&answered, bindings).map(Some);
         }
+        if function == CURRENT_TARGET_FUNCTION {
+            return self.demand_current_target(template).map(Some);
+        }
         if function == SIZE_OF_FUNCTION {
             let [subject] = args.as_slice() else {
                 return Err(self.error(
@@ -1864,6 +1867,19 @@ impl<'a> Specializer<'a> {
             .layout_of(ty)
             .map(|size| CtValue::Int(size.size as i64))
             .map_err(|error| self.error(Some(template), format!("size_of of `{ty}`: {error}")))
+    }
+
+    /// The elaboration's native target as the `!kgen.target` KGEN's
+    /// `current_target` answers.
+    fn demand_current_target(&self, template: &str) -> Result<CtValue, MonoError> {
+        self.target
+            .map(|target| CtValue::KgenTarget(Box::new(target.kgen_target())))
+            .ok_or_else(|| {
+                self.error(
+                    Some(template),
+                    "current target: no native target for this host".to_string(),
+                )
+            })
     }
 
     /// What answers a layout application in the instance being

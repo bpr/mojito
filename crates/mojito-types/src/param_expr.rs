@@ -246,6 +246,9 @@ impl ParamContext {
             ParamOp::DataToStr => self.build_data_to_str(operands),
             ParamOp::StringSize | ParamOp::StringAddress => self.build_string_read(op, operands),
             ParamOp::SimdSplat | ParamOp::Cast => self.build_lane_op(op, operands),
+            ParamOp::TargetGetField | ParamOp::TargetHasFeature => {
+                self.build_target_read(op, operands)
+            }
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -935,6 +938,18 @@ impl ParamContext {
         )
     }
 
+    /// KGEN's `#kgen.param.expr<current_target>`: the application of
+    /// [`CURRENT_TARGET_FUNCTION`] to nothing, a `!kgen.target` the
+    /// elaborator answers with its native target, so one checked program
+    /// serves any target.
+    pub fn current_target(&self) -> ParamExpr {
+        self.apply(
+            CURRENT_TARGET_FUNCTION,
+            &[],
+            MetaTy::value(TyKind::KgenTarget.into()),
+        )
+    }
+
     /// The layout query `size_of[T]()`: the application of `size_of` to one
     /// type, answered only by the elaborator under its native target.
     pub fn size_of(&self, ty: Ty) -> ParamExpr {
@@ -1547,6 +1562,36 @@ impl ParamContext {
         ))
     }
 
+    /// KGEN's `target_get_field` or `target_has_feature` over a target and
+    /// a `!kgen.string` name: the field's value or the feature's presence
+    /// once both are constant, and otherwise the node. A field is a
+    /// `!kgen.string` or an `index` by its name, which must be constant.
+    fn build_target_read(
+        &self,
+        op: ParamOp,
+        operands: Vec<ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        if let [Some(target), Some(name)] = [operands[0].as_constant(), operands[1].as_constant()] {
+            self.count_fold();
+            return self.constant(fold_primitive(op, &[target, name])?);
+        }
+        let result = match (op, operands[1].as_constant()) {
+            (ParamOp::TargetHasFeature, _) => MetaTy::bool(),
+            (_, Some(CtValue::KgenString(name))) if crate::ct::KgenTarget::is_index_field(name) => {
+                MetaTy::value(Ty::index())
+            }
+            (_, Some(CtValue::KgenString(_))) => MetaTy::value(TyKind::KgenString.into()),
+            _ => {
+                return Err(ParamError::TypeMismatch {
+                    operation: op.name().to_string(),
+                    expected: "a constant '!kgen.string' field name".to_string(),
+                    found: operands[1].meta().to_string(),
+                });
+            }
+        };
+        Ok(self.make(result, ParamKind::Op { op, operands }))
+    }
+
     /// `pop.string.size` or `pop.string.address` over a `!kgen.string`:
     /// its byte length or the address of its bytes once the string is
     /// constant, and otherwise the node.
@@ -2122,6 +2167,10 @@ impl ParamContext {
 
 /// The callable symbol of a layout query ([`ParamContext::size_of`]).
 pub const SIZE_OF_FUNCTION: &str = "size_of";
+
+/// The callable symbol of the compilation target the elaborator answers
+/// ([`ParamContext::current_target`]).
+pub const CURRENT_TARGET_FUNCTION: &str = "kgen.current_target";
 
 /// The callable symbol of the length of a parameter list the elaborator
 /// evaluates ([`ParamContext::list_length`]).
@@ -2725,6 +2774,13 @@ pub enum ParamOp {
     /// `pop.cast`: a one-lane value converted to the scalar type its first
     /// operand names, a type shape ([`crate::ct::CtLane::cast`]).
     Cast,
+    /// KGEN's `target_get_field`: the field of a `!kgen.target` its second
+    /// operand names, a `!kgen.string` ([`crate::ct::KgenTarget::field`]).
+    TargetGetField,
+    /// KGEN's `target_has_feature`: whether a `!kgen.target`'s feature list
+    /// enables the feature its second operand names, a `!kgen.string`
+    /// ([`crate::ct::KgenTarget::has_feature`]).
+    TargetHasFeature,
 }
 
 impl ParamOp {
@@ -2758,6 +2814,8 @@ impl ParamOp {
             Self::StringAddress => "string_address",
             Self::SimdSplat => "simd_splat",
             Self::Cast => "cast",
+            Self::TargetGetField => "target_get_field",
+            Self::TargetHasFeature => "target_has_feature",
         }
     }
 
@@ -2793,7 +2851,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 27] = [
+    const ALL: [Self; 29] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -2821,6 +2879,8 @@ impl ParamOp {
         Self::StringAddress,
         Self::SimdSplat,
         Self::Cast,
+        Self::TargetGetField,
+        Self::TargetHasFeature,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
@@ -2863,7 +2923,9 @@ impl ParamOp {
             | Self::StringSize
             | Self::StringAddress
             | Self::SimdSplat
-            | Self::Cast => return None,
+            | Self::Cast
+            | Self::TargetGetField
+            | Self::TargetHasFeature => return None,
         })
     }
 
@@ -3134,6 +3196,7 @@ impl MetaTy {
             CtValue::Trait(traits) => Self::value(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Self::value(TyKind::KgenString.into()),
             CtValue::MlirAttr(_) => Self::value(TyKind::KgenDeferred.into()),
+            CtValue::KgenTarget(_) => Self::value(TyKind::KgenTarget.into()),
             CtValue::Generator(generator) => Self::value(generator.ty()),
             CtValue::Expr(expr) => expr.meta().clone(),
             // A deferred slot has no value yet, so no domain either.
@@ -4044,6 +4107,8 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::DataToStr, [string, rest]) => fold::fold_data_to_str(string, rest),
         (ParamOp::StringSize, [string]) => fold::fold_string_size(string),
         (ParamOp::StringAddress, [string]) => fold::fold_string_address(string),
+        (ParamOp::TargetGetField, [target, name]) => fold::fold_target_get_field(target, name),
+        (ParamOp::TargetHasFeature, [target, name]) => fold::fold_target_has_feature(target, name),
         (ParamOp::SimdSplat | ParamOp::Cast, [CtValue::Type(ty), value]) => {
             fold::fold_lane_op(op, ty, value)
         }
@@ -4152,7 +4217,9 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::StringSize
         | ParamOp::StringAddress
         | ParamOp::SimdSplat
-        | ParamOp::Cast => 14,
+        | ParamOp::Cast
+        | ParamOp::TargetGetField
+        | ParamOp::TargetHasFeature => 14,
     }
 }
 
@@ -4184,6 +4251,8 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::StringAddress => "pop.string.address",
         ParamOp::SimdSplat => "pop.simd.splat",
         ParamOp::Cast => "pop.cast",
+        ParamOp::TargetGetField => "target_get_field",
+        ParamOp::TargetHasFeature => "target_has_feature",
     }
 }
 

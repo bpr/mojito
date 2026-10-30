@@ -10,6 +10,8 @@
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
+use mojito_types::ct::KgenTarget;
+
 use x86_cpus::CpuModel;
 
 mod x86_cpus;
@@ -243,6 +245,29 @@ impl NativeTarget {
     pub fn with_cpu(self, cpu: TargetCpu) -> Self {
         Self { cpu, ..self }
     }
+
+    /// This target as the `#kgen.target` attribute KGEN's
+    /// `current_target` answers: the triple, the CPU's name and effective
+    /// features, the data layout, the pointer width as the index width,
+    /// and the widest vector register the features enable (512 bits under
+    /// `avx512f`, 256 under `avx2`, else 128).
+    pub fn kgen_target(&self) -> KgenTarget {
+        let simd_bit_width = if self.cpu.has_feature("avx512f") {
+            512
+        } else if self.cpu.has_feature("avx2") {
+            256
+        } else {
+            128
+        };
+        KgenTarget {
+            triple: self.triple.name().to_string(),
+            arch: self.cpu.name().to_string(),
+            features: self.cpu.features_string(),
+            data_layout: self.triple.data_layout().to_string(),
+            index_bit_width: 8 * self.triple.pointer_size() as i64,
+            simd_bit_width,
+        }
+    }
 }
 
 /// A complete, checked native build configuration.
@@ -372,6 +397,29 @@ fn model(name: &str) -> Option<&'static CpuModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The current target's attribute carries the CPU and its effective
+    /// features, and its vector width is the widest register they enable:
+    /// AVX without AVX2 stays at 128 bits, as at the pin.
+    #[test]
+    fn kgen_target_widths_follow_the_features() {
+        let width = |cpu: &str, features: &str| {
+            let cpu = TargetCpu::parse(Some(cpu), Some(features)).expect("a known CPU");
+            NativeTarget::new(Triple::X86_64UnknownLinuxGnu)
+                .with_cpu(cpu)
+                .kgen_target()
+                .simd_bit_width
+        };
+        assert_eq!(width("x86-64", ""), 128);
+        assert_eq!(width("x86-64", "+avx"), 128);
+        assert_eq!(width("x86-64", "+avx2"), 256);
+        assert_eq!(width("x86-64", "+avx512f"), 512);
+        assert_eq!(width("skylake-avx512", "-avx512f"), 256);
+        let target = NativeTarget::new(Triple::X86_64UnknownLinuxGnu).kgen_target();
+        assert_eq!(target.arch, "x86-64");
+        assert_eq!(target.index_bit_width, 64);
+        assert!(target.has_feature("sse2") && !target.has_feature("sse3"));
+    }
 
     #[test]
     fn triple_parses_its_own_name() {

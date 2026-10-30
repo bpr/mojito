@@ -396,10 +396,29 @@ pub(super) fn mlir_attribute(text: &str) -> Result<(CtValue, Ty), TypeError> {
         TypeError::Unsupported(format!(
             "the typed attribute '__mlir_attr.`{text}`' is outside the subset; only an untyped \
              '{}' attribute, a '#kgen.simd<...>' constant of a '!kgen.scalar<dtype>' or \
-             '!kgen.simd<width, dtype>' type, and an integer of type 'index' are read",
+             '!kgen.simd<width, dtype>' type, an integer of type 'index', and a \
+             '#kgen.target<...>' or '#kgen.param.expr<current_target>' of type \
+             '!kgen.target' are read",
             mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING
         ))
     })
+}
+
+/// [`mlir_attribute`] as a parameter expression, beside its type: KGEN's
+/// `#kgen.param.expr<current_target>` is the compilation target's
+/// application ([`ParamContext::current_target`]), which the elaborator
+/// answers, and any other attribute is the constant it spells.
+pub(super) fn mlir_attribute_expr(
+    context: &ParamContext,
+    text: &str,
+) -> Result<(ParamExpr, Ty), TypeError> {
+    let shape: String = text.split_whitespace().collect();
+    if shape == "#kgen.param.expr<current_target>:!kgen.target" {
+        return Ok((context.current_target(), TyKind::KgenTarget.into()));
+    }
+    let (value, ty) = mlir_attribute(text)?;
+    let value = context.constant(value).map_err(param_error)?;
+    Ok((value, ty))
 }
 
 /// The `name` of an `` __mlir_type.`name` `` spelling.
@@ -1268,6 +1287,7 @@ impl Checker {
             | TyKind::I1
             | TyKind::Dtype
             | TyKind::KgenDeferred
+            | TyKind::KgenTarget
                 if called.is_some() =>
             {
                 ty
@@ -1358,6 +1378,9 @@ impl Checker {
     /// no such callable ([`applicable_functions`]), a call that selects no
     /// one overload, or an argument that denotes no parameter expression.
     pub(super) fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
+        if let Some(construction) = self.type_member_construction(expr) {
+            return self.called_application(&construction);
+        }
         let selected = self.selected_application(expr)?;
         if self.application_constraint_failure(&selected).is_some() {
             return None;
@@ -1843,6 +1866,7 @@ impl Checker {
                     | TyKind::Simd { .. }
                     | TyKind::Struct(..)
                     | TyKind::KgenDeferred
+                    | TyKind::KgenTarget
                     | TyKind::KgenString
             )
         })?;
@@ -4868,7 +4892,8 @@ impl ApplicableShape<'_> {
                 | SourceType::Named(..) => self.ret.clone(),
                 ret if is_mlir_index_source(ret)
                     || is_mlir_source(ret, "!kgen.deferred")
-                    || is_mlir_source(ret, "!kgen.string") =>
+                    || is_mlir_source(ret, "!kgen.string")
+                    || is_mlir_source(ret, "!kgen.target") =>
                 {
                     ret.clone()
                 }
@@ -5284,6 +5309,16 @@ const VARIADICS_MODULE: &str = "std.builtin.variadics";
 fn typed_mlir_attribute(body: &str, ty: &str) -> Option<(CtValue, Ty)> {
     if ty == "index" {
         return Some((CtValue::Index(body.parse().ok()?), Ty::index()));
+    }
+    if ty == "!kgen.target" {
+        let target = body
+            .strip_prefix("#kgen.target<")?
+            .strip_suffix('>')
+            .and_then(mojito_types::ct::KgenTarget::parse)?;
+        return Some((
+            CtValue::KgenTarget(Box::new(target)),
+            TyKind::KgenTarget.into(),
+        ));
     }
     let storage = mojito_types::types::mlir_type_named(ty).or_else(|| {
         let (width, dtype) = ty

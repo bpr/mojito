@@ -499,7 +499,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `type_of` node);
   `Self(...)` in a struct's body is spelled as the construction of the
   struct over its own parameters (`self_instance_spelling`, which the
-  static call through `Self` shares). Together they own method-call inference (including the inverted write:
+  static call through `Self` shares, an infer-only one by keyword); a
+  type member's receiver is respelled by `type_member_spelling` (an
+  infer-only argument by keyword, `keyword_spelling`; a member over an
+  application with no source spelling, `T[n=f()]`, by its own spelling
+  when it reads nothing of `Self`), and `type_member_construction` hands
+  `comptime_validation::called_application` the construction a call of
+  a type member spells (`g[T.four()]()`). Together they own method-call inference (including the inverted write:
   `x.write_to(writer)` on a bounded parameter, a builtin other than a
   `SIMD` value, whose `write_to` and `write_repr_to` are `std.simd`'s
   declared members, or the
@@ -2060,7 +2066,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   them to its arguments and instance in `application_constraint_failure`,
   judged by `validate_constraint_in_environment`, and
   `violated_application_constraint` reports the failure in
-  `eval_associated_ct`. `not` and a
+  `eval_associated_ct`. No call selects an application before then, so a
+  struct shell whose parameter default calls a function (`_mlir_value:
+  _TargetType = _current_target()`) registers without that default
+  (`checker/traits.rs`, `without_applied_defaults`,
+  `Checker::shells_awaiting_defaults`), and
+  `Checker::complete_shell_defaults` reclassifies its parameters right
+  after the constraints compile. `not` and a
   conditional are compiled by `build_ct`'s arms
   (`checker/constraints.rs`). A static call through `Self` in a body is
   typed by `infer_type_receiver_call`
@@ -2729,6 +2741,25 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   folds a module one. `fastmathFlags=` takes any compile-time one
   (`Checker::fastmath_flags`, `method_calls/pop_ops.rs`), checking a closed
   attribute with `mlir::is_fastmath_attribute` and dropping it before MIR.
+- Upstream's `` __mlir_type.`!kgen.target` `` is `TyKind::KgenTarget`
+  (displayed `types::KGEN_TARGET_TYPE_SPELLING`, listed in
+  `types::has_no_llvm_type`), and its values are `CtValue::KgenTarget`
+  over `ct::KgenTarget` (MIR `ct_kgen_target`), whose `parse` reads a
+  `#kgen.target<…>` body and whose `field`/`has_feature` answer KGEN's
+  reads. `comptime_validation::typed_mlir_attribute` reads a closed
+  `#kgen.target<…> : !kgen.target` (upstream's `_empty_target`), and
+  `comptime_validation::mlir_attribute_expr` makes
+  `#kgen.param.expr<current_target>` the application
+  `ParamContext::current_target` (`param_expr::CURRENT_TARGET_FUNCTION`),
+  which the check keeps symbolic. `Checker::mlir_bracket_attribute`
+  reads `target_has_feature` and `target_get_field` (`target_field_read`,
+  `Checker::bracket_target`) as `ParamOp::TargetHasFeature`/
+  `ParamOp::TargetGetField`, folded by `fold::fold_target_has_feature`/
+  `fold_target_get_field`. The elaborator answers the application from
+  `NativeTarget::kgen_target` (`mojito-native-core/src/target.rs`): in
+  `symbolic::eval_ct_at` beside `size_of` through `LayoutOracle`, and in
+  `Specializer::resolve_application` through `demand_current_target`.
+  The library side is `stdlib/std/sys/info.mojo`'s `CompilationTarget`.
 - Upstream's MLIR builtin `__mlir_type.index` is `TyKind::Index`
   (`Ty::index()`, displayed `types::MLIR_INDEX_TYPE_SPELLING`), resolved
   by `types::mlir_type_named`, which also reads

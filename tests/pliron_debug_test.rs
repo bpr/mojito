@@ -42,7 +42,7 @@ fn native_compile(src: &str) -> NativeModule {
 }
 
 fn native_compile_labeled(src: &str, label: &str) -> NativeModule {
-    let compiler = Compiler::default();
+    let compiler = Compiler::default().with_target(host_target());
     let compiled = compiler
         .compile_source(src, Path::new(label))
         .unwrap_or_else(|error| panic!("fixture must compile: {error}"));

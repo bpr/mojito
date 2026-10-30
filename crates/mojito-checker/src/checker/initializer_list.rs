@@ -177,10 +177,31 @@ impl Checker {
         is_type_of(object).then(|| self.denoted_type(object, "the receiver 'type_of'"))
     }
 
+    /// The construction a call of a struct's `comptime` type member spells
+    /// (`T.four()` over `comptime four = T[n=4]` is `T[n=4]()`), as
+    /// [`Self::infer_type_alias_read`] types it. `None` for any other
+    /// expression.
+    pub(super) fn type_member_construction(&self, expression: &Expr) -> Option<Expr> {
+        let ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } = &expression.kind
+        else {
+            return None;
+        };
+        let (ty, value) = self.type_member_callee(object, method)?;
+        self.alias_construction(expression, &ty, &value, args, kwargs)
+            .ok()
+    }
+
     /// The struct the enclosing declaration's `Self` names, and the bracket
     /// arguments applying it to its own parameters (`Grid[Self.n]`), as
-    /// upstream binds `Self` to the struct over its own parameters. `None`
-    /// outside a struct.
+    /// upstream binds `Self` to the struct over its own parameters: an
+    /// infer-only one by keyword (`CompilationTarget[_mlir_value=
+    /// Self._mlir_value]`), since no position binds it. `None` outside a
+    /// struct.
     pub(super) fn self_instance_spelling(
         &self,
     ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
@@ -191,7 +212,16 @@ impl Checker {
             .source_params
             .iter()
             .map(|parameter| {
-                mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(parameter.name.clone()))
+                let read =
+                    mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(parameter.name.clone()));
+                if parameter.infer_only {
+                    mojito_ast::ast::ParamArg::Named {
+                        name: parameter.name.clone(),
+                        value: Box::new(read),
+                    }
+                } else {
+                    read
+                }
             })
             .collect();
         Some((owner.to_string(), param_args))
@@ -270,7 +300,43 @@ impl Checker {
             return member?.expression_spelling(object.span);
         }
         let ty = self.ty_from_anno(&spelling).ok()?;
-        mojito_types::ct::source_type(&ty, object.span)?.expression_spelling(object.span)
+        match mojito_types::ct::source_type(&ty, object.span) {
+            Some(spelled) => self
+                .keyword_spelling(spelled)
+                .expression_spelling(object.span),
+            // An argument applying a function (`T[n=f()]`) has no source
+            // spelling of its value: a member that reads nothing of `Self`
+            // is its own spelling at any receiver.
+            None => member?
+                .expression_spelling(object.span)
+                .filter(|spelled| !reads_self(spelled)),
+        }
+    }
+
+    /// `spelling` with each bracket argument of an infer-only struct
+    /// parameter (`CompilationTarget[_mlir_value=…]`) passed by keyword,
+    /// since no position binds it.
+    fn keyword_spelling(&self, spelling: SourceType) -> SourceType {
+        let SourceType::Named(name, arguments) = spelling else {
+            return spelling;
+        };
+        let Some(info) = self.structs.get(&name) else {
+            return SourceType::Named(name, arguments);
+        };
+        let arguments = arguments
+            .into_iter()
+            .zip(info.decls.iter().map(Some).chain(std::iter::repeat(None)))
+            .map(|(argument, decl)| match decl {
+                Some(decl) if mojito_ast::call::CompileTimeParam::infer_only(decl) => {
+                    mojito_ast::ast::ParamArg::Named {
+                        name: decl.name().to_string(),
+                        value: Box::new(argument),
+                    }
+                }
+                _ => argument,
+            })
+            .collect();
+        SourceType::Named(name, arguments)
     }
 
     /// The type a call of `object.member` constructs when `member` is a
@@ -885,4 +951,27 @@ fn pack_index_expression(
 /// Whether `expression` is a call of `type_of`.
 fn is_type_of(expression: &Expr) -> bool {
     matches!(&expression.kind, ExprKind::Call { name, .. } if name == "type_of")
+}
+
+/// Whether `expr` spells `Self` or a read of a `Self` parameter.
+fn reads_self(expr: &Expr) -> bool {
+    struct ReadsSelf(bool);
+    impl mojito_ast::visit::Visitor for ReadsSelf {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if matches!(&expr.kind, ExprKind::Identifier(name) if name == "Self") {
+                self.0 = true;
+            }
+        }
+
+        fn visit_type(&mut self, ty: &SourceType) {
+            if matches!(ty, SourceType::SelfParam(_) | SourceType::SelfType)
+                || matches!(ty, SourceType::Named(name, _) if name == "Self")
+            {
+                self.0 = true;
+            }
+        }
+    }
+    let mut reads = ReadsSelf(false);
+    mojito_ast::visit::walk_expr(&mut reads, expr);
+    reads.0
 }

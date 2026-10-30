@@ -70,7 +70,9 @@ fn scalar_capability_manifest_and_differential() {
                 "no-scalar-entry-shape".into(),
             );
         }
-        let compiler = Compiler::default().with_exports(["compute"]);
+        let compiler = Compiler::default()
+            .with_target(host_target())
+            .with_exports(["compute"]);
         let compiled = compiler
             .compile_source(&src, Path::new(&rel))
             .unwrap_or_else(|error| panic!("{rel}: ok fixture must compile: {error}"));
@@ -118,7 +120,7 @@ fn scalar_capability_manifest_and_differential() {
                 "no-scalar-entry-shape".into(),
             );
         }
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_target(host_target());
         let compiled = compiler
             .compile_source(&src, Path::new(&rel))
             .unwrap_or_else(|error| panic!("{rel}: trap fixture must compile: {error}"));
@@ -232,7 +234,7 @@ fn parity_exe_manifest_and_differential() {
     runnable.extend(fixture_sources("assets/extensions/ok"));
     runnable.extend(fixture_sources("assets/extensions/ownership_ok"));
     let ok_rows = parallel_map(runnable, |(rel, src)| {
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_target(host_target());
         let Ok(compiled) = compiler.compile_source(&src, Path::new(&rel)) else {
             // Historical module-scope snippets compile only through the test
             // suite's non-conforming snippet mode.
@@ -356,7 +358,7 @@ fn parity_exe_manifest_and_differential() {
     });
 
     let error_rows = parallel_map(fixture_sources("assets/runtime_error"), |(rel, src)| {
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_target(host_target());
         let Ok(compiled) = compiler.compile_source(&src, Path::new(&rel)) else {
             return (
                 rel,
@@ -490,7 +492,7 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 1502,
+            differential == 1503,
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 862"
         );
         assert!(
@@ -520,7 +522,7 @@ fn negative_ownership_fixtures_fail_before_the_backend() {
     let mut negatives = fixture_sources("assets/ownership_error");
     negatives.extend(fixture_sources("assets/extensions/ownership_error"));
     parallel_map(negatives, |(rel, src)| {
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_target(host_target());
         let error = compiler
             .compile_source(&src, Path::new(&rel))
             .err()
@@ -546,7 +548,7 @@ fn pliron_debug_zero_degradations_across_the_corpus() {
     assert!(fixtures.len() > 100, "corpus present");
 
     let report: Vec<String> = parallel_map(fixtures, |(rel, src)| {
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_target(host_target());
         let Ok(compiled) = compiler.compile_source(&src, Path::new(&rel)) else {
             return None;
         };

@@ -39,8 +39,8 @@ use mojito_native_core::target::NativeTarget;
 use mojito_symbol::symbol::InstanceArg;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
-    LIST_LENGTH_FUNCTION, PackQuery, ParamBindings, ParamContext, ParamExpr, ParamKind, ParamRef,
-    SIZE_OF_FUNCTION,
+    CURRENT_TARGET_FUNCTION, LIST_LENGTH_FUNCTION, PackQuery, ParamBindings, ParamContext,
+    ParamExpr, ParamKind, ParamRef, SIZE_OF_FUNCTION,
 };
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, erase_origins,
@@ -448,9 +448,10 @@ struct Bindings {
     /// place, typed here, which a call through the parameter passes to the
     /// body's specialization.
     callable_environments: Vec<(ParamRef, String, Vec<Ty>)>,
-    /// What answers a layout application (`size_of[T]()`) a type of the
-    /// instance carries: the target, and the struct declarations known when
-    /// the layout is asked. `None` where no layout is answered.
+    /// What answers a layout application (`size_of[T]()`) or the current
+    /// target a type of the instance carries: the target, and the struct
+    /// declarations known when the layout is asked. `None` where neither is
+    /// answered.
     layout: Option<Rc<LayoutOracle>>,
     /// What answers the application of a lowered function a type or a
     /// parameter argument of the instance carries (`SIMD[dt, L[0]]` over a

@@ -1357,7 +1357,9 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
                 .collect::<Option<Vec<_>>>()?,
         ),
         CtValue::Dtype(dtype) => Value::Dtype(dtype),
-        value @ (CtValue::MlirAttr(_) | CtValue::KgenString(_)) => Value::Attribute(value),
+        value @ (CtValue::MlirAttr(_) | CtValue::KgenString(_) | CtValue::KgenTarget(_)) => {
+            Value::Attribute(value)
+        }
         CtValue::Struct { name, fields } => Value::Struct {
             name,
             fields: fields

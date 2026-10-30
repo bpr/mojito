@@ -259,6 +259,12 @@ point, as upstream's toolchain does.
 - `std/ffi/__init__.mojo` — the `c_*` scalar aliases, the `external_call`
   builtin's import home, `CStringSlice` (declared in `std/string.mojo`, which
   loads first) and `get_errno` re-exports.
+- `std/sys/info.mojo` — upstream's `CompilationTarget` (`current`,
+  `_unknown`, `_has_feature`, the `has_*` x86 queries), `simd_bit_width`,
+  `simd_byte_width`, `bit_width_of`, and the home of the compiler's
+  `size_of`. The queries read the `!kgen.target` attribute the elaborator
+  answers `_current_target()` with; the string-field predicates are
+  roadmap R1635 and `align_of` R1634.
 - `std/sys/_libc_errno.mojo` — `ErrNo` (`String(err)` renders glibc's
   `strerror` text), `get_errno`, `set_errno`. `std/stat/` — the `S_IF*`
   mode constants and `S_ISDIR`/`S_ISREG`/`S_ISLNK`. `std/time/time.mojo` —

@@ -372,7 +372,7 @@ pub(super) fn nominal_template(name: &str) -> &str {
 fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<CtValue, MonoError> {
     let context = ParamContext::detached();
     // A layout query the instance's oracle answers under its target, and
-    // the first one it cannot.
+    // the first one it cannot. The oracle answers the current target too.
     let mut layout_failure = None;
     let replaced = context
         .replace(expr, &ct_bindings(bindings))
@@ -388,7 +388,8 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
         })
         .and_then(|answered| match &bindings.applications {
             // A type binder among the arguments is the type the instance
-            // binds it to.
+            // binds it to, and a type the type the instance substitutes,
+            // each application in it answered (`T[n=f()]()`).
             Some(applications) => context.answer_applications(&answered, &mut |function, args| {
                 let args: Option<Vec<ParamExpr>> = args
                     .iter()
@@ -398,6 +399,10 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
                             .get(binder)
                             .filter(|ty| !is_symbolic(ty))
                             .and_then(|ty| context.constant(CtValue::Type(ty.clone())).ok()),
+                        ParamKind::TypeShape(ty) if is_symbolic(ty) => substitute_ty(ty, bindings)
+                            .ok()
+                            .filter(|ty| !is_symbolic(ty))
+                            .and_then(|ty| context.constant(CtValue::Type(ty)).ok()),
                         _ => Some(arg.clone()),
                     })
                     .collect();
@@ -407,6 +412,11 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
         })
         .and_then(|answered| match &bindings.layout {
             Some(oracle) => context.answer_applications(&answered, &mut |function, args| {
+                if function == CURRENT_TARGET_FUNCTION {
+                    return Ok(Some(CtValue::KgenTarget(Box::new(
+                        oracle.target.kgen_target(),
+                    ))));
+                }
                 if function != SIZE_OF_FUNCTION || layout_failure.is_some() {
                     return Ok(None);
                 }

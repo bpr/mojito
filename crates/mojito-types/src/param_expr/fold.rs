@@ -302,6 +302,20 @@ pub fn fold_data_to_str(string: &CtValue, rest: &CtValue) -> Result<CtValue, Par
         .map_err(|_| unsupported("'data_to_str' reads bytes that are not UTF-8"))
 }
 
+/// KGEN's `target_get_field` over a concrete target and field name.
+pub fn fold_target_get_field(target: &CtValue, name: &CtValue) -> Result<CtValue, ParamError> {
+    let (target, name) = target_operands("target_get_field", target, name)?;
+    target
+        .field(name)
+        .ok_or_else(|| unsupported(&format!("'target_get_field' reads no field '{name}'")))
+}
+
+/// KGEN's `target_has_feature` over a concrete target and feature name.
+pub fn fold_target_has_feature(target: &CtValue, name: &CtValue) -> Result<CtValue, ParamError> {
+    let (target, name) = target_operands("target_has_feature", target, name)?;
+    Ok(CtValue::Bool(target.has_feature(name)))
+}
+
 /// `pop.string.size` over a concrete `!kgen.string`: its byte length as an
 /// `index`.
 pub fn fold_string_size(string: &CtValue) -> Result<CtValue, ParamError> {
@@ -676,12 +690,27 @@ fn unsupported(message: &str) -> ParamError {
     ParamError::Unsupported(message.to_string())
 }
 
+/// The target and the `!kgen.string` name a `target_*` read takes.
+fn target_operands<'a>(
+    operation: &str,
+    target: &'a CtValue,
+    name: &'a CtValue,
+) -> Result<(&'a crate::ct::KgenTarget, &'a str), ParamError> {
+    match (target, name) {
+        (CtValue::KgenTarget(target), CtValue::KgenString(name)) => Ok((target, name)),
+        _ => Err(unsupported(&format!(
+            "'{operation}' expects a '!kgen.target' and a '!kgen.string' name"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         fold_comparison, fold_data_to_str, fold_infix, fold_string_address, fold_string_size,
+        fold_target_get_field, fold_target_has_feature,
     };
-    use crate::ct::{CtLane, CtValue};
+    use crate::ct::{CtLane, CtValue, KgenTarget};
     use mojito_ast::ast::{Dtype, InfixOp};
     use mojito_common::literal::{FloatLiteral, IntLiteral};
 
@@ -810,5 +839,76 @@ mod tests {
             })
         );
         assert!(fold_string_size(&CtValue::Str("ab".to_string())).is_err());
+    }
+
+    /// `target_get_field` reads the attribute's fields and the triple's
+    /// components, `unknown` where the triple has none, as the pin does for
+    /// `_unknown`; `target_has_feature` is literal `+name` membership.
+    #[test]
+    fn target_reads_fold_over_a_closed_target() {
+        let name = |text: &str| CtValue::KgenString(text.to_string());
+        let target = |triple: &str, features: &str| {
+            CtValue::KgenTarget(Box::new(KgenTarget {
+                triple: triple.to_string(),
+                arch: "skylake".to_string(),
+                features: features.to_string(),
+                data_layout: String::new(),
+                index_bit_width: 64,
+                simd_bit_width: 256,
+            }))
+        };
+        let host = target("x86_64-unknown-linux-gnu", "+avx2,+sse4.1,-avx512f");
+        assert_eq!(
+            fold_target_get_field(&host, &name("triple_arch")).ok(),
+            Some(name("x86_64"))
+        );
+        assert_eq!(
+            fold_target_get_field(&host, &name("os")).ok(),
+            Some(name("linux"))
+        );
+        assert_eq!(
+            fold_target_get_field(&host, &name("simd_bit_width")).ok(),
+            Some(CtValue::Index(256))
+        );
+        let empty = target("", "");
+        assert_eq!(
+            fold_target_get_field(&empty, &name("os")).ok(),
+            Some(name("unknown"))
+        );
+        assert_eq!(
+            fold_target_get_field(&empty, &name("triple")).ok(),
+            Some(name(""))
+        );
+        assert_eq!(
+            fold_target_has_feature(&host, &name("sse4.1")).ok(),
+            Some(CtValue::Bool(true))
+        );
+        for absent in ["avx512f", "sse4", "avx"] {
+            assert_eq!(
+                fold_target_has_feature(&host, &name(absent)).ok(),
+                Some(CtValue::Bool(false))
+            );
+        }
+        assert!(fold_target_get_field(&host, &name("features")).is_err());
+        assert!(fold_target_has_feature(&name("x"), &name("avx")).is_err());
+    }
+
+    /// A `#kgen.target` attribute's text reads back as the target it spells,
+    /// and one missing or repeating a field reads as nothing.
+    #[test]
+    fn target_attribute_text_round_trips() {
+        let target = KgenTarget::parse(
+            "triple = \"\", arch = \"\", features = \"\", data_layout=\"\",\
+             index_bit_width = 0,simd_bit_width = 0",
+        )
+        .expect("upstream's `_empty_target` parses");
+        let text = target.to_string();
+        let body = text
+            .strip_prefix("#kgen.target<")
+            .and_then(|body| body.strip_suffix('>'))
+            .expect("the display is the attribute");
+        assert_eq!(KgenTarget::parse(body), Some(target));
+        assert_eq!(KgenTarget::parse("triple = \"\""), None);
+        assert_eq!(KgenTarget::parse(&format!("{body}, arch = \"x\"")), None);
     }
 }

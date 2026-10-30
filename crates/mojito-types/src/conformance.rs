@@ -182,6 +182,7 @@ pub fn reflects_no_conformance(ty: &Ty) -> bool {
         ty.kind(),
         TyKind::KgenString
             | TyKind::KgenDeferred
+            | TyKind::KgenTarget
             | TyKind::Index
             | TyKind::I1
             | TyKind::KgenSimd { .. }

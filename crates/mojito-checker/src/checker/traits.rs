@@ -483,7 +483,17 @@ impl Checker {
         if self.structs.contains_key(name) || self.traits.contains_key(name) {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
-        let decls = self.classify_params(name, type_params)?;
+        let decls = match self.classify_params(name, type_params) {
+            Ok(decls) => decls,
+            Err(error) => {
+                let Some(without) = without_applied_defaults(type_params) else {
+                    return Err(error);
+                };
+                let decls = self.classify_params(name, &without).map_err(|_| error)?;
+                self.shells_awaiting_defaults.push(name.to_string());
+                decls
+            }
+        };
         self.generic_parameters.borrow_mut().insert(
             mojito_checked::checked::GenericSite::Struct {
                 module: declaration.module.clone(),
@@ -545,6 +555,33 @@ impl Checker {
                 explicit_destructors,
             },
         );
+        Ok(())
+    }
+
+    /// Add to each shell registered without its applied defaults
+    /// ([`Self::check_struct_shell`]) the parameters those defaults
+    /// complete, now that a call's application selects.
+    pub(super) fn complete_shell_defaults(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        for name in std::mem::take(&mut self.shells_awaiting_defaults) {
+            let Some(declaration) = stmts
+                .iter()
+                .filter_map(struct_declaration)
+                .find(|declaration| declaration.name == name)
+            else {
+                continue;
+            };
+            let decls = self.classify_params(&name, declaration.type_params)?;
+            self.generic_parameters.borrow_mut().insert(
+                mojito_checked::checked::GenericSite::Struct {
+                    module: declaration.module.clone(),
+                    declaration: name.clone(),
+                },
+                decls.clone(),
+            );
+            if let Some(info) = self.structs.get_mut(&name) {
+                info.decls = decls;
+            }
+        }
         Ok(())
     }
 
@@ -1825,6 +1862,7 @@ impl Checker {
             CtValue::Trait(traits) => Some(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Some(TyKind::KgenString.into()),
             CtValue::MlirAttr(_) => Some(TyKind::KgenDeferred.into()),
+            CtValue::KgenTarget(_) => Some(TyKind::KgenTarget.into()),
             CtValue::Generator(generator) => Some(generator.ty()),
             CtValue::Simd { dtype, lanes } => Some(mojito_types::types::canonical_simd_ty(
                 *dtype,
@@ -3907,4 +3945,32 @@ fn user_lifecycle_defeats(info: &StructInfo, kind: mojito_types::types::TrivialL
         // trivial, as the pin reads `MaybeUninit`'s.
         TrivialLifecycle::Deinitable => info.methods.contains_key("__deinit__"),
     }
+}
+
+/// `type_params` with every default that applies a function
+/// (`_mlir_value: T = f()`) left out, or `None` when none does.
+fn without_applied_defaults(
+    type_params: &[mojito_ast::ast::TypeParam],
+) -> Option<Vec<mojito_ast::ast::TypeParam>> {
+    let applies = |param: &mojito_ast::ast::TypeParam| {
+        param.default.as_ref().is_some_and(|default| {
+            matches!(
+                default.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+            )
+        })
+    };
+    type_params.iter().any(applies).then(|| {
+        type_params
+            .iter()
+            .map(|param| mojito_ast::ast::TypeParam {
+                default: if applies(param) {
+                    None
+                } else {
+                    param.default.clone()
+                },
+                ..param.clone()
+            })
+            .collect()
+    })
 }

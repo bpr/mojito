@@ -24,6 +24,7 @@ impl Decoder {
                 "TypeType" => TyKind::TypeType.into(),
                 "KgenString" => TyKind::KgenString.into(),
                 "KgenDeferred" => TyKind::KgenDeferred.into(),
+                "KgenTarget" => TyKind::KgenTarget.into(),
                 "index" => Ty::index(),
                 "i1" => Ty::i1(),
                 "Self" => Ty::self_type(),
@@ -1276,6 +1277,12 @@ impl Decoder {
                 "ct_trait" => Some(CtValue::Trait(self.strings(inner))),
                 "ct_kgen_string" => self.string(inner).map(CtValue::KgenString),
                 "ct_mlir_attr" => self.string(inner).map(CtValue::MlirAttr),
+                "ct_kgen_target" => self
+                    .string(inner)
+                    .as_deref()
+                    .and_then(|text| text.strip_prefix("#kgen.target<")?.strip_suffix('>'))
+                    .and_then(mojito_types::ct::KgenTarget::parse)
+                    .map(|target| CtValue::KgenTarget(Box::new(target))),
                 "ct_expr" => self.param_expr(inner).map(ParamExpr::into_value),
                 "ct_deferred" => self.deferred_slot(inner),
                 "ct_marker" => self.ct_marker(inner).map(CtValue::Marker),

@@ -29,7 +29,7 @@ fn host_target() -> NativeTarget {
 /// Compile `src` once, run it on the VM, then build and run executables at
 /// both profiles; stdout must be byte-identical everywhere with exit 0.
 fn assert_vm_o0_release_agree(name: &str, src: &str) {
-    let compiler = Compiler::default();
+    let compiler = Compiler::default().with_target(host_target());
     let compiled = compiler
         .compile_source(src, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("{name}: must compile: {error}"));
@@ -71,7 +71,7 @@ fn assert_vm_o0_release_agree(name: &str, src: &str) {
 /// profiles produce the same nonzero exit code and identical stderr — a
 /// release pipeline must not change which trap fires or how it reports.
 fn assert_trap_parity(name: &str, src: &str) -> i32 {
-    let compiler = Compiler::default();
+    let compiler = Compiler::default().with_target(host_target());
     let compiled = compiler
         .compile_source(src, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("{name}: must compile: {error}"));

@@ -146,6 +146,7 @@ impl Checker {
         self.classify_applicable_signatures(stmts);
         self.fold_builtin_bodies(stmts)?;
         self.compile_application_constraints(stmts);
+        self.complete_shell_defaults(stmts)?;
         drop(phase);
         let phase = timing::span("declarations.traits");
         // A trait requirement's default folds against the module's constants,

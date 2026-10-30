@@ -1549,6 +1549,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::TypeType => mojito_types::types::TYPE_OF_ALL_TYPES.to_string(),
         TyKind::KgenString => "__KgenString".to_string(),
         TyKind::KgenDeferred => "__KgenDeferred".to_string(),
+        TyKind::KgenTarget => "__KgenTarget".to_string(),
         // A vector's storage keys as the vector it stores, marked apart.
         TyKind::KgenSimd { .. } => format!(
             "__KgenSimd${}",
@@ -2814,7 +2815,7 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
         // string or a literal spelling reads back exactly; a type or a
         // reflected type renders a `Ty`, so the walk reports where the value
         // ends and leaves rebuilding to a phase that can parse one.
-        b'y' | b'r' | b'I' | b'F' | b's' | b'k' | b'a' => {
+        b'y' | b'r' | b'I' | b'F' | b's' | b'k' | b'a' | b'K' => {
             let (digits, after) = until(b':')?;
             let length: usize = digits.parse().ok()?;
             let end = after.checked_add(length)?;
@@ -2823,6 +2824,11 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
                 b's' => Some(CtValue::Str(spelling.to_string())),
                 b'k' => Some(CtValue::KgenString(spelling.to_string())),
                 b'a' => Some(CtValue::MlirAttr(spelling.to_string())),
+                b'K' => spelling
+                    .strip_prefix("#kgen.target<")
+                    .and_then(|body| body.strip_suffix('>'))
+                    .and_then(mojito_types::ct::KgenTarget::parse)
+                    .map(|target| CtValue::KgenTarget(Box::new(target))),
                 b'I' => IntLiteral::parse_radix(spelling, 10).map(CtValue::IntLiteral),
                 b'F' => FloatLiteral::parse_exact(spelling).map(CtValue::FloatLiteral),
                 _ => None,
@@ -3061,6 +3067,7 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
         | CtValue::MlirAttr(_)
+        | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
         | CtValue::RemovedArg => true,
     }
@@ -3135,6 +3142,10 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
         CtValue::KgenString(value) => out.push_str(&format!("k{}:{value}", value.len())),
         CtValue::MlirAttr(value) => out.push_str(&format!("a{}:{value}", value.len())),
+        CtValue::KgenTarget(target) => {
+            let rendered = target.to_string();
+            out.push_str(&format!("K{}:{rendered}", rendered.len()));
+        }
         CtValue::Tuple(values) => {
             out.push_str(&format!("t{}[", values.len()));
             for value in values {

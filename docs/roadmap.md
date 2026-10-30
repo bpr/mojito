@@ -6017,6 +6017,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A literal's `"ab".value` is the same read: today it is a compiler fold
     (`CtValue::literal_value`, `ParamContext::field`'s literal arm), where
     the instance's type carries the argument since R1652.
+  - The compile-time read of a compile-time value's struct parameter
+    (`target._mlir_value` over `target: CompilationTarget` in
+    `simd_bit_width`) is `Checker::value_type_argument` since R1562; the
+    run-time read can answer from the same type argument.
   - Found while landing R1401 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6830,8 +6834,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   symbolic parameter has no receiver**
 
   `T[t].current.answer()` inside `def f[t: Int]()`, over `struct T[n:
-  Int]` with `comptime current = Self`, stops with "Undefined variable
-  'T'", where the pin prints `3` for `f[3]()`.
+  Int]` with `comptime current = Self`, stops with "type 'T[t]' has no
+  field 'current'", where the pin prints `3` for `f[3]()`.
   - The checker reads a type member through a struct as the source
     spelling of the type it resolves to (`type_member_spelling`,
     `checker/initializer_list.rs`). `ct::source_type` has no spelling for
@@ -6845,6 +6849,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     type, which lowering reads in place of its syntax, closes both.
   - Probe: `T[t].boxed.n` and `T[t].boxed(10).get()` over `comptime boxed
     = Box[Self.n + 1]`, which the pin prints as `4` and `14` for `t = 3`.
+  - Probe: a member read through a bare struct name whose infer-only
+    parameter has no default, `comptime v = T.four()` and `g[T.four()]()`
+    over `struct T[n: Int, //]` with `comptime four = T[n=4]` and `def
+    g[t: T]()`, fails with "Undefined variable 'T'" and "cannot infer type
+    parameter", where the pin prints `1`: `type_member_read` resolves the
+    receiver to an instance first, and bare `T` binds no `n`. With a
+    default (`n: Int = 2`) both run since R1562.
   - Found while landing R1632 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10460,50 +10471,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1562 `CompilationTarget` is undeclared, where upstream's
-  `std/sys/info.mojo` answers target queries from `#kgen.param.expr`
-  attributes**
-
-  `from std.sys import CompilationTarget` finds no declaration, where the
-  pin runs `CompilationTarget.has_avx2()` and `simd_bit_width()`.
-  - Mojito has no `!kgen.target` type, and folds none of the
-    `current_target`, `target_get_field`, or `target_has_feature`
-    attributes upstream's bodies read.
-  - Add `!kgen.target` as a compile-time-only type with a
-    `#kgen.target<…>` constant (upstream's `_empty_target`), listed in
-    `types::has_no_llvm_type` so the VM holds it as an attribute value and
-    translation legality rejects one that survives, as for
-    `!kgen.deferred`.
-  - Keep `current_target` a symbolic application through the check, as the
-    pin keeps `_current_target()` an `apply` expression. Mono answers it
-    from the elaborator's `NativeTarget`, beside the layout oracle's
-    `size_of`, so one checked program serves any `--target`.
-  - Fold `target_get_field` and `target_has_feature` over a closed target.
-  - At the pin `has_feature(name)` is literal `+name` membership of the
-    target's feature list (`_has_feature["bogus"]` is `True` under
-    `--target-features +bogus`), and `TargetCpu::has_feature` answers it.
-  - `simd_bit_width` is 512 under `+avx512f`, else 256 under `+avx2`,
-    else 128 (AVX without AVX2 is 128).
-  - Port `_TargetType`, `_current_target`, `_empty_target`, the
-    `CompilationTarget` struct with `current` and `_unknown`,
-    `_has_feature`, the `has_*` x86 queries, and `simd_bit_width` and
-    `simd_byte_width`, verbatim.
-  - Fixture: `_has_feature["sse2"]()`, the `_unknown` answers (`False`,
-    `0`), and a `comptime if` decided by `has_avx512f()`.
-  - The `size_of`/`align_of` bodies are R1634, and the string predicates
-    are R1635.
-  - The Pliron test helpers pin the backend to the `x86-64` baseline while
-    their `Compiler::default()` elaborates for the host CPU. Once target
-    queries fold, hand the helpers' pinned target to
-    `Compiler::with_target` too, so elaboration and lowering agree.
-  - Depends on R1536 (every query body is a bracketed `__mlir_attr`),
-    R1630 (`_current_target()` returns `!kgen.target`), R1631
-    (`CompilationTarget.has_avx2()` is a bare-name static call), R1632
-    (`comptime current = CompilationTarget[…]` names its own struct), R1640
-    (the answers are the host CPU's), and R1641 (`_has_feature` takes a
-    compile-time `StaticString`).
-  - Model: Fable, Planned.
-
 - [ ] **R1634 `size_of` is a compiler name and `align_of` is missing,
   where upstream's are library bodies over `get_sizeof` and `get_alignof`**
 
@@ -10540,8 +10507,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port `is_triple`, `_arch`, `__arch`, `_is_arch`, `__triple_arch`,
     `__triple`, `_is_triple_arch`, `_eq_triple_and_arch`, `_os`, `is_x86`,
     `is_arm`, the RISC-V, Apple, and Neon queries, `is_linux`, `is_macos`,
-    `is_cpu`, `is_accelerator`, `is_gpu`, `default_compile_options`, and
-    `unsupported_target_error`.
+    `is_cpu`, `is_accelerator`, `is_gpu`, `default_compile_options`,
+    `unsupported_target_error`, and `current_accelerator` (with `_ANY`).
   - Port the free functions over them too: `is_gpu`, `is_nvidia_gpu`,
     `is_amd_gpu`, `is_apple_gpu` and their `_is_sm_*` and `_is_amd_*`
     families, `is_little_endian`, `is_big_endian`, `Endian`, and

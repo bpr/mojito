@@ -16,8 +16,9 @@ use mojito::backend::pliron as native;
 use native::{JitValue, NativeTarget};
 
 /// The host triple with the `x86-64` baseline CPU; every Pliron test
-/// compiles for (and JITs or runs on) the host. The CPU is pinned, as LLVM's
-/// own tests pin `-mcpu`, so goldens do not follow the build machine.
+/// elaborates and compiles for (and JITs or runs on) the host. The CPU is
+/// pinned, as LLVM's own tests pin `-mcpu`, so goldens and the target
+/// queries a program folds do not follow the build machine.
 pub fn host_target() -> NativeTarget {
     NativeTarget::new(
         mojito::native::target::Triple::host()

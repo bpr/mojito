@@ -1743,8 +1743,8 @@ impl Checker {
             && base == "__mlir_attr"
             && self.lookup(base).is_none()
         {
-            let (value, ty) = super::comptime_validation::mlir_attribute(field)?;
-            let value = self.param_context.constant(value).map_err(param_error)?;
+            let (value, ty) =
+                super::comptime_validation::mlir_attribute_expr(&self.param_context, field)?;
             return self.read_attribute(span, value, ty);
         }
         if let Some(dtype) = self.dtype_constant(object, field) {
@@ -2004,7 +2004,7 @@ impl Checker {
         let value = self.compile_dependent_ct_expr(expr)?;
         let (text, operands) = mojito_types::types::mlir_attribute_spelling(args);
         let ty = if operands.is_empty() {
-            super::comptime_validation::mlir_attribute(&text)?.1
+            super::comptime_validation::mlir_attribute_expr(&self.param_context, &text)?.1
         } else {
             value
                 .meta()
