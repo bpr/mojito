@@ -1377,6 +1377,32 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::MakeArray { dest, elems } => {
             record(tag, &[("dest", reg_value(*dest)), ("elems", regs(elems))])
         }
+        MirInstr::ArrayRepeat { dest, value } => record(
+            tag,
+            &[("dest", reg_value(*dest)), ("value", reg_value(*value))],
+        ),
+        MirInstr::ArrayGet { dest, array, index } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("array", reg_value(*array)),
+                ("index", const_value(index)),
+            ],
+        ),
+        MirInstr::ArrayReplace {
+            dest,
+            array,
+            value,
+            index,
+        } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("array", reg_value(*array)),
+                ("value", reg_value(*value)),
+                ("index", const_value(index)),
+            ],
+        ),
         MirInstr::MakeVariant {
             dest,
             alternatives,
@@ -2286,7 +2312,10 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),
         TyKind::PopArray { size, element } => record(
             "pop_array",
-            &[("size", size.to_string()), ("element", ty_value(element))],
+            &[
+                ("size", array_size_slot(size)),
+                ("element", ty_value(element)),
+            ],
         ),
         TyKind::RuntimePack(values) => {
             positional("runtime_pack", &list(values.iter().map(ty_value)))
@@ -2642,6 +2671,14 @@ fn simd_width_slot(width: &mojito_types::types::SimdWidth) -> String {
     }
 }
 
+/// A known size is its count, a template's `ct_expr(...)`.
+fn array_size_slot(size: &mojito_types::types::ArraySize) -> String {
+    match size {
+        mojito_types::types::ArraySize::Known(size) => size.to_string(),
+        mojito_types::types::ArraySize::Expr(expr) => positional("ct_expr", &param_expr(expr)),
+    }
+}
+
 /// A known alternative is its position, a template's `ct_expr(...)`.
 fn variant_index(index: &mojito_types::types::VariantIndex) -> String {
     match index {
@@ -2962,6 +2999,13 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::KgenString(v) => positional("ct_kgen_string", &quote(v)),
         CtValue::MlirAttr(v) => positional("ct_mlir_attr", &quote(v)),
         CtValue::KgenTarget(target) => positional("ct_kgen_target", &quote(&target.to_string())),
+        CtValue::PopArray { element, elements } => record(
+            "ct_pop_array",
+            &[
+                ("element", ty_value(element)),
+                ("elements", list(elements.iter().map(ct_value))),
+            ],
+        ),
         CtValue::Generator(generator) => record(
             "ct_generator",
             &[

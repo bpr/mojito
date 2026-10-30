@@ -27,8 +27,7 @@
 #   `__passed_varargs__` slot, as upstream's does, but then builds the
 #   `Span` over it and the list over the span itself (`struct.create`s),
 #   standing for upstream's `@implicit` constructor from that array, so
-#   neither that constructor nor `_MLIR.POPArrayType`, its one use, is
-#   declared;
+#   that constructor, the one use of `_MLIR.POPArrayType`, is not declared;
 # - `__getitem__` returns `ref[origin_of(self)]` rather than upstream's union
 #   of the elements' and the list's origins, and binds the span's pointer
 #   before indexing it;
@@ -55,6 +54,10 @@ from std.span import Span
 
 struct _MLIR:
     comptime KGENTypeType = __mlir_type.`!kgen.type`
+
+    comptime POPArrayType[
+        size: __mlir_type.index, elt_type: AnyType
+    ] = __mlir_type[`!pop.array<`, size, `, `, elt_type, `>`]
 
     comptime KGENParamListType[elt_type: Self.KGENTypeType] = __mlir_type[
         `!kgen.param_list<`, elt_type, `>`

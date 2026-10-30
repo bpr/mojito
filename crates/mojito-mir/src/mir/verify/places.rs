@@ -386,7 +386,10 @@ pub(super) fn verify_place(
                     Some(_) => {}
                 },
                 Some(TyKind::PopArray { size, element }) => {
-                    if u64::try_from(*index).map_or(true, |index| index >= *size) {
+                    if size
+                        .known()
+                        .is_some_and(|size| u64::try_from(*index).map_or(true, |index| index >= size))
+                    {
                         errors.push(format!(
                             "{prefix} place projects array element {index} out of {size}"
                         ));

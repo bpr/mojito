@@ -1429,6 +1429,14 @@ application's values, to a concrete lane or to the caller's own symbolic
 `MakeSimd`, `SimdCast`, and `SimdBitcast` (schema 1.18): the parametric
 verifier checks its binders and kind, the concrete verifier rejects it, and
 the elaborator closes it per instance as it closes a register type. A
+`!pop.array`'s size slot (`types::ArraySize`, `Known` or an `index`-valued
+`Expr` such as `Self.size.__mlir_index__()`) follows the same rule, and so
+does the `index` attribute of `array.get` and `array.replace`, a MIR
+`Const` the elaborator closes in `answer_param_constants` and checks
+against the instance's size in `mono/gather.rs`, as the pin's pass manager
+verifies an instance. A `#pop.array` attribute is `CtValue::PopArray`, a
+compile-time value carrying its element type, so it keeps its own meta-type
+in every table a constant passes through. A
 `DType`- or lane-keyed `def`, overloaded or not, is an ordinary generic `def`
 served by its template unless its body keys a clone, its binders bound from
 the call's arguments, an argument's lane slots, or the checker's inferred

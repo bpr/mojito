@@ -44,6 +44,9 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MakeTuple { dest, .. }
         | MirInstr::MakeStruct { dest, .. }
         | MirInstr::MakeArray { dest, .. }
+        | MirInstr::ArrayRepeat { dest, .. }
+        | MirInstr::ArrayGet { dest, .. }
+        | MirInstr::ArrayReplace { dest, .. }
         | MirInstr::MakeVariant { dest, .. }
         | MirInstr::MakeSimd { dest, .. }
         | MirInstr::SimdCast { dest, .. }
@@ -129,8 +132,17 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MovePlace { place: p, .. }
         | MirInstr::LoadPlace { place: p, .. } => index_regs(p, out),
         MirInstr::ReadRef { reference, .. } => out.push(*reference),
-        MirInstr::CopyValue { value, .. } | MirInstr::Rebind { value, .. } => out.push(*value),
-        MirInstr::WriteRef { reference, value } => out.extend([*reference, *value]),
+        MirInstr::CopyValue { value, .. }
+        | MirInstr::Rebind { value, .. }
+        | MirInstr::SimdReduce { value, .. }
+        | MirInstr::MakeVariant { value, .. }
+        | MirInstr::ArrayRepeat { value, .. }
+        | MirInstr::ArrayGet { array: value, .. } => out.push(*value),
+        MirInstr::WriteRef {
+            reference: array,
+            value,
+        }
+        | MirInstr::ArrayReplace { array, value, .. } => out.extend([*array, *value]),
         MirInstr::MaterializeLiteral { value, .. }
         | MirInstr::ScalarCast { value, .. }
         | MirInstr::BuiltinCast { value, .. }
@@ -340,8 +352,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             index,
             ..
         } => out.extend([*value, *element, *index]),
-        MirInstr::SimdReduce { value, .. } => out.push(*value),
-        MirInstr::MakeVariant { value, .. } => out.push(*value),
         MirInstr::MakeClosure { captures, .. } => {
             for capture in captures {
                 index_regs(&capture.place, out);
@@ -349,29 +359,20 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         }
         MirInstr::VariantIs { variant, .. }
         | MirInstr::VariantTag { variant, .. }
-        | MirInstr::VariantGet { variant, .. } => {
-            out.push(*variant);
-        }
-        MirInstr::VariantTake { variant, .. } => out.push(*variant),
+        | MirInstr::VariantGet { variant, .. }
+        | MirInstr::VariantTake { variant, .. } => out.push(*variant),
         MirInstr::VariantDeinitWith {
             variant, handler, ..
-        } => {
-            out.push(*variant);
-            out.push(*handler);
-        }
+        } => out.extend([*variant, *handler]),
         MirInstr::VariantSetInitWith {
-            place: p, factory, ..
-        } => {
-            index_regs(p, out);
-            out.push(*factory);
+            place: p,
+            factory: value,
+            ..
         }
-        MirInstr::VariantSet {
+        | MirInstr::VariantSet {
             place: p, value, ..
-        } => {
-            index_regs(p, out);
-            out.push(*value);
         }
-        MirInstr::VariantReplace {
+        | MirInstr::VariantReplace {
             place: p, value, ..
         } => {
             index_regs(p, out);

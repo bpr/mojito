@@ -467,6 +467,9 @@ impl<'a> Flatten<'a> {
         if let Some(mask) = Self::checked_pop_simd_shuffle(call) {
             return self.lower_pop_simd_shuffle(call, mask, args);
         }
+        if let Some(op) = Self::checked_pop_array(call) {
+            return self.lower_pop_array_op(call, op, args);
+        }
         // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
         // runtime value is the receiver, unchanged, and the origin
         // parameter argument never lowers (origins erase).

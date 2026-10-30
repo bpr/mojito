@@ -618,6 +618,19 @@ impl VmBackend {
                     .collect::<Result<Vec<_>, RuntimeError>>()?;
                 Ok(CtValue::Struct { name, fields })
             }
+            // A `!pop.array` freezes as the `#pop.array` attribute of its type.
+            Value::Tuple(elements)
+                if let Some(TyKind::PopArray { element, .. }) = ty.map(Ty::kind) =>
+            {
+                elements
+                    .into_iter()
+                    .map(|value| self.freeze_value(prog, value, Some(element), active))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|elements| CtValue::PopArray {
+                        element: element.clone(),
+                        elements,
+                    })
+            }
             Value::Tuple(elements) => {
                 let types = match ty.map(Ty::kind) {
                     Some(TyKind::Tuple(types) | TyKind::RuntimePack(types)) => types.as_slice(),
@@ -1344,7 +1357,9 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         CtValue::FloatLiteral(value) => Value::FloatLiteral(value),
         CtValue::Bool(value) => Value::Bool(value),
         CtValue::Str(value) => Value::Str(value),
-        CtValue::Tuple(values) => Value::Tuple(
+        CtValue::Tuple(values) | CtValue::PopArray {
+            elements: values, ..
+        } => Value::Tuple(
             values
                 .into_iter()
                 .map(ct_value_as_runtime)

@@ -682,7 +682,10 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
         // A symbolic literal text closes the same way.
-        TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral(Some(_))
+        TyKind::Simd { .. }
+        | TyKind::KgenSimd { .. }
+        | TyKind::StringLiteral(Some(_))
+        | TyKind::PopArray { .. }
             if mojito_types::types::is_symbolic(ty) =>
         {
             mojito_types::types::replace_parameters(&context, ty, bindings, 0)

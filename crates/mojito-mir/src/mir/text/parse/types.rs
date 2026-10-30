@@ -157,7 +157,7 @@ impl Decoder {
                     TyKind::Pointer { element, origin }.into()
                 }
                 "pop_array" => {
-                    let size = self.req(value, fields, "size", Self::uint64)?;
+                    let size = self.req(value, fields, "size", Self::array_size_slot)?;
                     let element = self.req(value, fields, "element", Self::ty)?;
                     self.unknown(fields, &["size", "element"]);
                     TyKind::PopArray { size, element }.into()
@@ -663,6 +663,27 @@ impl Decoder {
 
     /// A vector's width slot: a lane count, or `ct_expr(...)` of the
     /// `SIMDLength` it holds while symbolic.
+    /// A `!pop.array` size: a count, or a template's `ct_expr(...)`.
+    pub(super) fn array_size_slot(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_types::types::ArraySize> {
+        use mojito_types::types::ArraySize;
+        match &value.kind {
+            ValueKind::Positional(tag, inner) if tag == "ct_expr" => {
+                let size = self.param_expr(inner)?;
+                match ArraySize::of(size) {
+                    Ok(size) => Some(size),
+                    Err(error) => {
+                        self.error(value.span, format!("array size: {error}"));
+                        None
+                    }
+                }
+            }
+            _ => self.uint64(value).map(ArraySize::Known),
+        }
+    }
+
     pub(super) fn simd_width_slot(
         &mut self,
         value: &Value,
@@ -1360,6 +1381,12 @@ impl Decoder {
                     }).collect::<Option<Vec<_>>>()?)
                     };
                 Some(CtValue::Pointer { memory, offset })
+            }
+            ValueKind::Record(tag, fields) if tag == "ct_pop_array" => {
+                let element = self.req(value, fields, "element", Self::ty)?;
+                let elements = self.req(value, fields, "elements", |d, v| Some(d.ct_values(v)))?;
+                self.unknown(fields, &["element", "elements"]);
+                Some(CtValue::PopArray { element, elements })
             }
             ValueKind::Record(tag, fields) if tag == "ct_struct" => {
                 let name = self.req(value, fields, "name", Self::symbol)?;

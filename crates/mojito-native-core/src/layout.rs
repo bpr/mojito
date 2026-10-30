@@ -125,6 +125,9 @@ impl LayoutCx<'_> {
             }
             // `!pop.array<n, T>`: `n` elements, each padded to its alignment.
             TyKind::PopArray { size, element } => {
+                let size = size
+                    .known()
+                    .ok_or_else(|| LayoutError::Symbolic(ty.to_string()))?;
                 let element = self.layout_of(element)?;
                 Ok(Layout::new(element.size * size, element.align))
             }

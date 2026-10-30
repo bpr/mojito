@@ -350,7 +350,7 @@ fn type_families_reprint_byte_identically() {
                 TyKind::VariadicPack(Ty::int()).into(),
                 TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
                 TyKind::PopArray {
-                    size: 2,
+                    size: mojito_types::types::ArraySize::Known(2),
                     element: TyKind::Pointer {
                         element: Ty::int(),
                         origin: PointerOrigin::Untracked { mutable: false },
@@ -1230,6 +1230,21 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::MakeArray {
             dest: Reg(26),
             elems: vec![Reg(1), Reg(2)],
+        },
+        MirInstr::ArrayRepeat {
+            dest: Reg(26),
+            value: Reg(1),
+        },
+        MirInstr::ArrayGet {
+            dest: Reg(1),
+            array: Reg(26),
+            index: Const::Value(mojito_types::ct::CtValue::Index(1)),
+        },
+        MirInstr::ArrayReplace {
+            dest: Reg(26),
+            array: Reg(26),
+            value: Reg(2),
+            index: Const::Value(mojito_types::ct::CtValue::Index(0)),
         },
         MirInstr::MakeVariant {
             dest: Reg(27),
@@ -2134,6 +2149,37 @@ fn symbolic_simd_slots_round_trip() {
         "simd { dtype: ct_expr(param_constant(ct_dtype(float64))), width: 1 }",
     ));
     assert_eq!(folded, Ty::float64());
+}
+
+#[test]
+fn pop_array_size_and_constant_round_trip() {
+    let context = ParamContext::detached();
+    let n = int_parameter("f", 0, "n");
+    let size = context.cast_to_builtin(&n).expect("an Int casts");
+    let symbolic = Ty::new(TyKind::PopArray {
+        size: mojito_types::types::ArraySize::of(size).expect("an index size"),
+        element: Ty::int(),
+    });
+    let mask = CtValue::PopArray {
+        element: Ty::index(),
+        elements: vec![CtValue::Index(1), CtValue::Index(0)],
+    };
+    let mask_ty = mask.pop_array_type().expect("a `#pop.array` is typed");
+    let mut function = function_with(vec![symbolic.clone(), mask_ty], Vec::new());
+    function.blocks[0].instrs.push(MirInstr::Const {
+        dest: Reg(1),
+        k: Const::Value(mask.clone()),
+    });
+    let program = program_with(vec![("main".into(), function)]);
+    let text = write::program(&program);
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let parsed_function = &parsed.program.functions[0].1;
+    assert_eq!(parsed_function.reg_types[&0], symbolic);
+    assert!(matches!(
+        &parsed_function.blocks[0].instrs[..],
+        [.., MirInstr::Const { k: Const::Value(value), .. }] if *value == mask
+    ));
+    assert_eq!(write::program(&parsed.program), text);
 }
 
 /// Schema 1.1 round trips every constant form and the symbolic forms, a 1.0

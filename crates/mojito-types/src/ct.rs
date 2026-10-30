@@ -598,6 +598,15 @@ pub enum CtValue {
     /// `_mlir_value` of a `CompilationTarget`, whose type is
     /// [`TyKind::KgenTarget`]. It displays as the attribute.
     KgenTarget(Box<KgenTarget>),
+    /// A POP array attribute — upstream's `#pop.array<…>`, a typed attribute
+    /// whose type is `!pop.array<n, element>` ([`TyKind::PopArray`]) with
+    /// `n` the element count: a `` __mlir_attr.`#pop.array<3, 2, 1, 0> :
+    /// !pop.array<4, index>` `` mask, or a frozen `StaticTuple`'s storage.
+    /// It displays as the attribute.
+    PopArray {
+        element: Ty,
+        elements: Vec<Self>,
+    },
     /// A closed generator — upstream's `#kgen.gen<body>`, the value of a
     /// parameterized `comptime` declaration read unapplied (`Twice`,
     /// `A.get`). Its body names its own parameters and nothing else; its
@@ -831,6 +840,18 @@ impl CtValue {
         }
     }
 
+    /// The type of a `#pop.array` attribute: `!pop.array<n, element>` with
+    /// `n` its element count. `None` for any other value.
+    pub fn pop_array_type(&self) -> Option<Ty> {
+        matches!(self, Self::PopArray { .. })
+            .then(|| {
+                crate::param_expr::MetaTy::of_value(self)
+                    .as_value()
+                    .cloned()
+            })
+            .flatten()
+    }
+
     /// The elements a compile-time collection read sees, in order: a list's
     /// or a set's elements, a dictionary's keys, and a bound value pack's
     /// elements; `None` for any other value. Compile-time indexing, `len`,
@@ -1002,6 +1023,7 @@ impl CtValue {
     pub fn is_closed_parameter_value(&self) -> bool {
         match self {
             Self::Simd { .. } => true,
+            Self::PopArray { elements, .. } => elements.iter().all(Self::is_closed_leaf),
             Self::Struct { fields, .. } => fields.iter().all(|(_, field)| field.is_closed_leaf()),
             Self::Tuple(elements) => elements.iter().all(Self::is_closed_leaf),
             _ => false,
@@ -1133,6 +1155,7 @@ impl CtValue {
                 format!("SIMD[DType.{}, {}]", dtype.name(), lanes.len())
             }
             Self::Struct { name, .. } => name.clone(),
+            Self::PopArray { .. } => self.pop_array_type()?.to_string(),
             Self::Variant { alternatives, .. } => {
                 Ty::from(crate::types::TyKind::Variant(alternatives.clone())).to_string()
             }
@@ -1246,6 +1269,11 @@ impl CtValue {
             (value @ Self::KgenString(_), TyKind::KgenString) => Some(value),
             (value @ Self::MlirAttr(_), TyKind::KgenDeferred) => Some(value),
             (value @ Self::KgenTarget(_), TyKind::KgenTarget) => Some(value),
+            (value @ Self::PopArray { .. }, TyKind::PopArray { .. })
+                if value.pop_array_type().as_ref() == Some(ty) =>
+            {
+                Some(value)
+            }
             // A generator binds a generator-typed parameter whose
             // conversion the checker proved.
             (value @ Self::Generator(_), TyKind::Generator(_)) => Some(value),
@@ -1528,6 +1556,22 @@ impl CtValue {
                 }),
                 field: format!("{target} : !kgen.target"),
             },
+            // The typed attribute `` __mlir_attr.`#pop.array<…> : !pop.array<n, index>` ``;
+            // an array of any other element is frozen data a backend writes.
+            Self::PopArray { element, elements }
+                if matches!(element.kind(), TyKind::Index)
+                    && elements.iter().all(|value| matches!(value, Self::Index(_))) =>
+            {
+                ExprKind::Member {
+                    object: Box::new(Expr {
+                        kind: ExprKind::Identifier("__mlir_attr".to_string()),
+                        span,
+                        source: None,
+                        syntax_id: mojito_common::token::SyntaxId::fresh(),
+                    }),
+                    field: format!("{self} : {}", self.pop_array_type()?),
+                }
+            }
             // The explicit construction `SIMD[DType.d, w](l0, l1, ...)`.
             Self::Simd { dtype, lanes } => ExprKind::Call {
                 name: "SIMD".to_string(),
@@ -1561,6 +1605,7 @@ impl CtValue {
             },
             // Frozen memory has no source spelling: a backend writes it.
             Self::Pointer { .. }
+            | Self::PopArray { .. }
             | Self::Variant { .. }
             | Self::StoreToMem(_)
             | Self::Type(_)
@@ -1795,6 +1840,16 @@ impl fmt::Display for CtValue {
             Self::KgenString(text) => write!(f, "{text:?}"),
             Self::MlirAttr(text) => f.write_str(text),
             Self::KgenTarget(target) => write!(f, "{target}"),
+            Self::PopArray { elements, .. } => {
+                f.write_str("#pop.array<")?;
+                for (index, element) in elements.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{element}")?;
+                }
+                f.write_str(">")
+            }
             Self::Generator(generator) => {
                 f.write_str("__gen")?;
                 crate::types::write_param_decls(f, &generator.params)?;

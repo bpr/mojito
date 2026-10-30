@@ -110,13 +110,6 @@ impl ParamContext {
         Ok(self.make(meta, ParamKind::Constant(value)))
     }
 
-    /// A closed constant of the value type `ty` its value alone does not
-    /// name: a `#pop.array` attribute's indices are a `!pop.array`, not a
-    /// compile-time list.
-    pub fn typed_constant(&self, value: CtValue, ty: Ty) -> ParamExpr {
-        self.make(MetaTy::Value(ty), ParamKind::Constant(value))
-    }
-
     /// A constant after the declaration's expected-type conversion, so the
     /// literal `3` and `Int(3)` bound to `n: Int` are one node.
     pub fn constant_as(&self, value: CtValue, ty: &Ty) -> Result<ParamExpr, ParamError> {
@@ -3204,6 +3197,13 @@ impl MetaTy {
             CtValue::KgenString(_) => Self::value(TyKind::KgenString.into()),
             CtValue::MlirAttr(_) => Self::value(TyKind::KgenDeferred.into()),
             CtValue::KgenTarget(_) => Self::value(TyKind::KgenTarget.into()),
+            CtValue::PopArray { element, elements } => Self::value(
+                TyKind::PopArray {
+                    size: crate::types::ArraySize::Known(elements.len() as u64),
+                    element: element.clone(),
+                }
+                .into(),
+            ),
             CtValue::Generator(generator) => Self::value(generator.ty()),
             CtValue::Expr(expr) => expr.meta().clone(),
             // A deferred slot has no value yet, so no domain either.

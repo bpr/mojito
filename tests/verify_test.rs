@@ -1003,7 +1003,7 @@ fn verifier_checks_constant_array_element_projections() {
             0,
             Some(
                 TyKind::PopArray {
-                    size: 2,
+                    size: mojito::types::ArraySize::Known(2),
                     element: Ty::int(),
                 }
                 .into(),

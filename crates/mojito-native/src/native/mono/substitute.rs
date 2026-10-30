@@ -14,7 +14,7 @@ use mojito_mir::mir::visit::{
 };
 use mojito_types::param_expr::ParamRef;
 use mojito_types::types::TyKind;
-use mojito_types::types::{FuncTy, VariantIndex};
+use mojito_types::types::{ArraySize, FuncTy, VariantIndex};
 use mojito_types::types::{GenericConstraint, LaneMask};
 
 /// The declarations a reflected field-name list's construction names: the
@@ -414,8 +414,16 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             ty.reusing(TyKind::Struct(concrete_name, args))
         }
         TyKind::Tuple(v) => TyKind::Tuple(sub_spread_types(v, bindings)?).into(),
+        // A symbolic size the bindings close becomes the known slot; one
+        // they do not close stays as spelled, for the concreteness check.
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: match size {
+                ArraySize::Expr(expr) => match eval_ct(expr, bindings) {
+                    Ok(CtValue::Index(known)) if known >= 0 => ArraySize::Known(known as u64),
+                    _ => size.clone(),
+                },
+                ArraySize::Known(_) => size.clone(),
+            },
             element: substitute_ty(element, bindings)?,
         }
         .into(),

@@ -3,7 +3,9 @@
 //! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`),
 //! `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`,
 //! `kgen.struct.extract`, lowered to a tuple-storage element read,
-//! `pop.simd.shuffle`, lowered to a two-operand `simd.shuffle`, and the
+//! `pop.simd.shuffle`, lowered to a two-operand `simd.shuffle`,
+//! `pop.array.repeat`, `pop.array.get`, and `pop.array.replace`, lowered to
+//! `array.repeat`, `array.get`, and `array.replace`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
 //! and `Int`, lowered to `builtin.cast`.
 
@@ -68,6 +70,61 @@ impl<'a> Flatten<'a> {
                 }
                 _ => None,
             })
+    }
+
+    /// The `pop.array` op the checker recorded on `call`, if it is one.
+    pub(super) fn checked_pop_array(
+        call: Node<'a>,
+    ) -> Option<&'a mojito_checked::checked::SemanticAdjustment> {
+        call.adjustments().iter().find(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::PopArrayRepeat
+                    | mojito_checked::checked::SemanticAdjustment::PopArrayGet { .. }
+                    | mojito_checked::checked::SemanticAdjustment::PopArrayReplace { .. }
+            )
+        })
+    }
+
+    /// Lower the checked `pop.array` op `call` to its `array.repeat`,
+    /// `array.get`, or `array.replace`, its destination typed by the call's
+    /// `_type`. A closed index is a value constant; a template's stays a
+    /// parameter constant the elaborator closes.
+    pub(super) fn lower_pop_array_op(
+        &mut self,
+        call: Node<'a>,
+        op: &mojito_checked::checked::SemanticAdjustment,
+        args: &[Node<'a>],
+    ) -> Reg {
+        use mojito_checked::checked::SemanticAdjustment;
+        let operands: Vec<Reg> = args.iter().map(|argument| self.expr(*argument)).collect();
+        let ty = call.ty().expect("a checked `__mlir_op` has a type");
+        let dest = self.fresh_typed(call.location(), None, ty);
+        let constant = |index: &ParamExpr| match index.as_constant() {
+            Some(closed) => Const::Value(closed.clone()),
+            None => Const::Param(index.clone()),
+        };
+        self.emit(match (op, operands.as_slice()) {
+            (SemanticAdjustment::PopArrayRepeat, [value]) => MirInstr::ArrayRepeat {
+                dest,
+                value: *value,
+            },
+            (SemanticAdjustment::PopArrayGet { index }, [array]) => MirInstr::ArrayGet {
+                dest,
+                array: *array,
+                index: constant(index),
+            },
+            (SemanticAdjustment::PopArrayReplace { index }, [value, array]) => {
+                MirInstr::ArrayReplace {
+                    dest,
+                    array: *array,
+                    value: *value,
+                    index: constant(index),
+                }
+            }
+            _ => unreachable!("a checked `pop.array` op has its operands"),
+        });
+        dest
     }
 
     /// Lower the checked `pop.simd.shuffle` `call` over its two operands to

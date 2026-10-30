@@ -10,7 +10,8 @@
 //!
 //! A `pop.simd.shuffle` op's mask is known in the template, but a width it
 //! is checked against may be a binder: the instance runs that part of the
-//! op's verifier, as the pin's pass manager does.
+//! op's verifier, as the pin's pass manager does. So does a `pop.array.get`
+//! or `pop.array.replace` whose index or array size a binder names.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -58,6 +59,12 @@ fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result
                     other: Some(_),
                     mask: LaneMask::Known(lanes),
                 } => verify_shuffle_op(reg_types, *dest, *value, lanes)?,
+                MirInstr::ArrayGet { array, index, .. } => {
+                    verify_array_index("get", reg_types, *array, index)?;
+                }
+                MirInstr::ArrayReplace { array, index, .. } => {
+                    verify_array_index("replace", reg_types, *array, index)?;
+                }
                 instruction => {
                     for region in mojito_mir::mir::instruction_regions_mut(instruction) {
                         close_blocks(region, reg_types)?;
@@ -67,6 +74,28 @@ fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result
         }
     }
     Ok(())
+}
+
+/// Upstream's `pop.array.get` and `pop.array.replace` bound check over an
+/// instance's index and array size, which the template's check could not
+/// read.
+fn verify_array_index(
+    op: &str,
+    reg_types: &HashMap<u32, Ty>,
+    array: Reg,
+    index: &mojito_mir::mir::Const,
+) -> Result<(), String> {
+    let Some(TyKind::PopArray { size, .. }) = reg_types.get(&array.0).map(Ty::kind) else {
+        return Ok(());
+    };
+    match (index.index_attribute(), size.known()) {
+        (Some(index), Some(size)) if u64::try_from(index).map_or(true, |index| index >= size) => {
+            Err(format!(
+                "'pop.array.{op}' op array index out of bounds: {index}"
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Upstream's `pop.simd.shuffle` verifier over an instance's widths, which

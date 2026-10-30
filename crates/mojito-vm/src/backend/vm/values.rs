@@ -905,7 +905,8 @@ fn uninitialized_field(ty: &Ty) -> Value {
         TyKind::Tuple(elements) => Value::Tuple(vec![Value::None; elements.len()]),
         TyKind::PopArray { size, .. } => Value::Tuple(vec![
             Value::None;
-            usize::try_from(*size)
+            size.known()
+                .and_then(|size| usize::try_from(size).ok())
                 .unwrap_or_default()
         ]),
         _ => Value::None,

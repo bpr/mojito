@@ -124,7 +124,9 @@ pub fn build_variadic_list(
         pointers.push(placeholder);
     }
     let array_ty: Ty = TyKind::PopArray {
-        size: u64::try_from(pointers.len()).expect("a call's argument count fits a u64"),
+        size: mojito_types::types::ArraySize::Known(
+            u64::try_from(pointers.len()).expect("a call's argument count fits a u64"),
+        ),
         element: pointer_ty.clone(),
     }
     .into();

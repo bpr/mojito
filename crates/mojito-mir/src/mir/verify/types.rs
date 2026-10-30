@@ -89,6 +89,23 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     {
         return compatible;
     }
+    // So is an array whose size is still a parameter expression.
+    if let (
+        TyKind::PopArray {
+            size: found_size,
+            element: found_element,
+        },
+        TyKind::PopArray {
+            size: expected_size,
+            element: expected_element,
+        },
+    ) = (found.kind(), expected.kind())
+    {
+        return (found_size.is_symbolic()
+            || expected_size.is_symbolic()
+            || found_size.known() == expected_size.known())
+            && types_compatible(found_element, expected_element);
+    }
     // Pointer provenance erases from the runtime ABI: `unsafe_origin_cast` retypes
     // a pointer without any runtime operation (lowering forwards the
     // receiver register), so ABI compatibility compares elements only. The
@@ -413,7 +430,15 @@ pub(super) fn instantiate_checked_type(
         )
         .into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: size
+                .try_map(|size| {
+                    let context = ParamContext::detached();
+                    let bindings = ParamBindings::from_named_values(&context, value_arguments);
+                    context
+                        .replace(size, &bindings)
+                        .and_then(|size| context.fold(&size))
+                })
+                .map_err(|error| error.to_string())?,
             element: instantiate_checked_type(
                 element,
                 type_arguments,

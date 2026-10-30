@@ -1288,6 +1288,56 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     Value::Tuple(elems.iter().map(|r| regs[r.0 as usize].clone()).collect());
             }
+            MirInstr::ArrayRepeat { dest, value } => {
+                let size = match prog.mir.functions[function]
+                    .1
+                    .reg_types
+                    .get(&dest.0)
+                    .map(Ty::kind)
+                {
+                    Some(TyKind::PopArray { size, .. }) => size
+                        .known()
+                        .and_then(|size| usize::try_from(size).ok())
+                        .ok_or_else(|| {
+                            parametric_instruction(&format!("the array size `{size}`"))
+                        })?,
+                    _ => {
+                        return Err(RuntimeError::TypeError(
+                            "array.repeat builds no `!pop.array`".to_string(),
+                        ));
+                    }
+                };
+                regs[dest.0 as usize] = Value::Tuple(vec![regs[value.0 as usize].clone(); size]);
+            }
+            MirInstr::ArrayGet { dest, array, index } => {
+                let element = array_index(index)
+                    .and_then(|index| match &regs[array.0 as usize] {
+                        Value::Tuple(elements) => elements.get(index).cloned(),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError(format!("array.get of element {index:?}"))
+                    })?;
+                regs[dest.0 as usize] = element;
+            }
+            MirInstr::ArrayReplace {
+                dest,
+                array,
+                value,
+                index,
+            } => {
+                let mut replaced = regs[array.0 as usize].clone();
+                let slot = array_index(index)
+                    .and_then(|index| match &mut replaced {
+                        Value::Tuple(elements) => elements.get_mut(index),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError(format!("array.replace of element {index:?}"))
+                    })?;
+                *slot = regs[value.0 as usize].clone();
+                regs[dest.0 as usize] = replaced;
+            }
             MirInstr::MakeStruct { dest, fields } => {
                 let name = prog
                     .declared_struct(prog.mir.functions[function].1.reg_types.get(&dest.0))
@@ -2133,4 +2183,11 @@ fn variadic_list_span_fields(value: &Value) -> Option<&[(String, Value)]> {
         }
         _ => None,
     }
+}
+
+/// The element a closed `array.get` or `array.replace` index names.
+fn array_index(index: &Const) -> Option<usize> {
+    index
+        .index_attribute()
+        .and_then(|index| usize::try_from(index).ok())
 }

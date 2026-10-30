@@ -231,7 +231,10 @@ impl Checker {
         if !is_index_array {
             return Err(not_indices());
         }
-        let Some(CtValue::List(lanes)) = built.as_constant() else {
+        let Some(CtValue::PopArray {
+            elements: lanes, ..
+        }) = built.as_constant()
+        else {
             return Err(TypeError::Unsupported(format!(
                 "'{name}' takes its 'mask' as a closed '#pop.array' attribute; a mask computed \
                  from parameters is outside the subset"

@@ -181,8 +181,8 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         TyKind::ComptimeList(v)
         | TyKind::ParamList(v)
         | TyKind::VariadicPack(v)
-        | TyKind::PopArray { element: v, .. }
         | TyKind::Pointer { element: v, .. } => is_symbolic(v),
+        TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         TyKind::Ref(v) => is_symbolic(&v.referent),
         TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
             dtype.is_symbolic() || width.is_symbolic()

@@ -2815,7 +2815,7 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
         // string or a literal spelling reads back exactly; a type or a
         // reflected type renders a `Ty`, so the walk reports where the value
         // ends and leaves rebuilding to a phase that can parse one.
-        b'y' | b'r' | b'I' | b'F' | b's' | b'k' | b'a' | b'K' => {
+        b'y' | b'r' | b'I' | b'F' | b's' | b'k' | b'a' | b'K' | b'A' => {
             let (digits, after) = until(b':')?;
             let length: usize = digits.parse().ok()?;
             let end = after.checked_add(length)?;
@@ -3046,6 +3046,10 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
             .flatten()
             .all(specialization_value_is_closed),
         CtValue::StoreToMem(referent) => specialization_value_is_closed(referent),
+        CtValue::PopArray { element, elements } => {
+            specialization_value_is_closed(&CtValue::Type(element.clone()))
+                && elements.iter().all(specialization_value_is_closed)
+        }
         CtValue::Variant { payload, .. } => payload
             .as_deref()
             .is_none_or(specialization_value_is_closed),
@@ -3145,6 +3149,11 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::KgenTarget(target) => {
             let rendered = target.to_string();
             out.push_str(&format!("K{}:{rendered}", rendered.len()));
+        }
+        // The attribute and its element type, `#pop.array<…> : T`.
+        CtValue::PopArray { element, .. } => {
+            let rendered = format!("{value} : {}", canonical_specialization_type(element));
+            out.push_str(&format!("A{}:{rendered}", rendered.len()));
         }
         CtValue::Tuple(values) => {
             out.push_str(&format!("t{}[", values.len()));

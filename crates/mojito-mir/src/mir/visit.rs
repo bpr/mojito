@@ -370,6 +370,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visitor.visit_constant(intrinsic)?;
             visitor.visit_constant(has_side_effect)
         }
+        I::ArrayGet { index, .. } | I::ArrayReplace { index, .. } => visitor.visit_constant(index),
         I::ComptimeIf { conds, .. } => conds
             .iter_mut()
             .try_for_each(|cond| visitor.visit_constraint(cond)),
@@ -388,6 +389,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         }
         | I::MakeStruct { .. }
         | I::MakeArray { .. }
+        | I::ArrayRepeat { .. }
         | I::InvalidateInteriors { .. }
         | I::ReadRef { .. }
         | I::Rebind { .. }

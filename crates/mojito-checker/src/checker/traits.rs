@@ -1863,6 +1863,7 @@ impl Checker {
             CtValue::KgenString(_) => Some(TyKind::KgenString.into()),
             CtValue::MlirAttr(_) => Some(TyKind::KgenDeferred.into()),
             CtValue::KgenTarget(_) => Some(TyKind::KgenTarget.into()),
+            CtValue::PopArray { .. } => value.pop_array_type(),
             CtValue::Generator(generator) => Some(generator.ty()),
             CtValue::Simd { dtype, lanes } => Some(mojito_types::types::canonical_simd_ty(
                 *dtype,

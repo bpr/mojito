@@ -223,11 +223,18 @@ impl FnLowering<'_> {
                 self.str_consts.insert(dest.0, text.as_bytes().to_vec());
                 Ok(())
             }
-            CtValue::Struct { .. } | CtValue::Tuple(_) | CtValue::Str(_) => {
-                // A struct value is typed by its own name; a tuple and a
-                // string by the nominal instance their register names.
+            CtValue::Struct { .. }
+            | CtValue::Tuple(_)
+            | CtValue::Str(_)
+            | CtValue::PopArray { .. } => {
+                // A struct value is typed by its own name, a `#pop.array` by
+                // its attribute type; a tuple and a string by the nominal
+                // instance their register names.
                 let ty = match value {
                     CtValue::Struct { name, .. } => TyKind::Struct(name.clone(), Vec::new()).into(),
+                    CtValue::PopArray { .. } => value.pop_array_type().ok_or_else(|| {
+                        self.unsupported_reg(format!("parameter value `{value}`"), dest)
+                    })?,
                     _ => self.func.reg_types.get(&dest.0).cloned().ok_or_else(|| {
                         self.unsupported_reg(format!("untyped parameter value `{value}`"), dest)
                     })?,
@@ -378,6 +385,11 @@ impl FnLowering<'_> {
                 CtValue::Tuple(elements),
                 TyKind::Tuple(element_tys) | TyKind::RuntimePack(element_tys),
             ) => (elements.iter().collect(), element_tys.clone()),
+            // A `#pop.array`'s elements at its element stride.
+            (CtValue::PopArray { elements, .. }, TyKind::PopArray { element, .. }) => (
+                elements.iter().collect(),
+                vec![element.clone(); elements.len()],
+            ),
             _ => {
                 let LowerTy::Scalar(scalar) =
                     lower_ty(self.name, ty, &self.layout, self.reg_span(dest))?

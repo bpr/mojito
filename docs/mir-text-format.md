@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.136
+mojito-mir 1.137
 ```
 
-The writer emits 1.136. The reader accepts 1.0 through 1.136; *Schema 1.0*
+The writer emits 1.137. The reader accepts 1.0 through 1.137; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -901,6 +901,14 @@ Schema 1.136 adds the type `KgenTarget`, upstream's `!kgen.target`, whose
 values are `ct_kgen_target("#kgen.target<…>")`, the attribute's text. The
 package format moves to `mojito-package 150`.
 
+Schema 1.137 lets a `pop_array`'s `size` be `ct_expr(<param-expr>)`, an
+`index`-valued expression a template's parameter spells, and adds the
+constant `ct_pop_array { element, elements }`, upstream's typed
+`#pop.array` attribute, and the instructions `array.repeat { dest, value }`,
+`array.get { dest, array, index }`, and `array.replace { dest, array, value,
+index }` (`pop.array.repeat`, `pop.array.get`, `pop.array.replace`), whose
+`index` is a constant. The package format moves to `mojito-package 152`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1296,6 +1304,8 @@ only the positional form.
 traits used as a value (schema 1.76), `ct_kgen_string("text")` for a
 string literal's KGEN string, its `value` parameter (schema 1.79),
 `ct_mlir_attr("text")` for an untyped `` __mlir_attr.`text` `` (schema 1.132),
+`ct_pop_array { element, elements: [value, ...] }` for a `#pop.array`
+attribute of type `!pop.array<len, element>` (schema 1.137),
 `ct_generator { params, body }` for a generator, upstream's `#kgen.gen`:
 a parameterized `comptime` declaration read unapplied, its body naming its
 own parameters and nothing else (schema 1.112),
@@ -1449,8 +1459,11 @@ the canonical concrete type on read.
 
 `pop_array { size, element }` (schema 1.97) is upstream's fixed-size array
 `!pop.array<size, element>`: `size` elements of one type, laid out at the
-element's stride. A constant element projection (`[i]`) into one must stay
-below `size`. Its one producer is `array.create`.
+element's stride. `size` is a count, or `ct_expr(<param-expr>)` for an
+`index` a template's parameter spells (schema 1.137), which elaboration
+closes. A constant element projection (`[i]`) into one must stay below
+`size`. `array.create` and `array.repeat` build one, and its constant is
+`ct_pop_array`.
 
 `param_list(type)` (schema 1.75) is upstream's raw parameter list
 `!kgen.param_list<type>`, the type of `ParameterList`'s `values` parameter. It
@@ -1682,6 +1695,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeStruct` | `struct.create { dest, fields: [%rA, …] }` (schema 1.87: upstream's `kgen.struct.create`, a struct value of `dest`'s register type built from one register per declared field, in declaration order, running no constructor; `sroa` emits it for a whole read of a split slot, and the verifier checks the result is a declared struct, the operand count, and, for a non-generic struct, each operand's type) |
 | `MakeTuple` | `tuple.make` — the elements of a heterogeneous collector or of a typed `Tuple[T, ...]` construction (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
 | `MakeArray` | `array.create { dest, elems: [%rA, …] }` (schema 1.97: upstream's `pop.array.create`, the `!pop.array` of `dest`'s register type built from one register per element, in order; a call builds the element pointers of its callee's `*xs: T` so, stored in its `__passed_varargs__` slot) |
+| `ArrayRepeat` / `ArrayGet` / `ArrayReplace` | `array.repeat { dest, value }` / `array.get { dest, array, index }` / `array.replace { dest, array, value, index }` (schema 1.137): upstream's `pop.array.repeat`, the `!pop.array` of `dest`'s register type holding `value` in every element, `pop.array.get`, element `index` of `array`, and `pop.array.replace`, `array` with element `index` replaced by `value`; `index` is a closed `index` constant, or a template's `param(...)` constant elaboration closes and checks against the array's size; the element is trivially register-passable, and the verifier checks the value against it and a closed index against a known size |
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` (schema 1.71: `variant.make` and `variant.set` carry `constructor: "<symbol>"` after their operands when the payload names the constructor it runs, the `__copyinit__` through schema 1.100 and the `__moveinit__` from 1.101, which takes `value` by move; schema 1.73: `variant.set` carries `destructors: [present("<symbol>") | absent, ...]`, one entry per alternative, naming the `__deinit__` the replaced payload runs under that tag, omitted while it names none) |
 | `VariantTag` | `variant.tag { dest, variant }` (schema 1.103: the active alternative's index as an `Int`, an `enum` storage's discriminant) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |

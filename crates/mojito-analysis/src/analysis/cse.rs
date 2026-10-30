@@ -296,6 +296,9 @@ impl Table<'_> {
             | MirInstr::SimdCast { .. }
             | MirInstr::SimdBitcast { .. }
             | MirInstr::SimdShuffle { .. }
+            | MirInstr::ArrayRepeat { .. }
+            | MirInstr::ArrayGet { .. }
+            | MirInstr::ArrayReplace { .. }
             | MirInstr::Select { .. }
             | MirInstr::SimdSelect { .. }
             | MirInstr::SimdExtract { .. }

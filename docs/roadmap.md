@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1676**.
+Next free ID: **R1678**.
 
 ## Ordered Work
 
@@ -4394,6 +4394,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R1677 A module `comptime` whose initializer calls a parametric
+  method on a temporary reads as an unstored local**
+
+  `comptime Q = P(x=5).plus[2]()` at module scope, then `print(Q.x)` in
+  `main`, prints `None`, where the pin prints `7`.
+  - The initializer is neither folded nor lifted into a
+    `$comptime$Q$module` thunk, so `main` lowers `Q.x` as a `place.load`
+    of a slot nothing stores.
+  - The same initializer over a non-parametric method (`plus2()`) lifts
+    and runs, as do `P(x=5).plus[2]().x` and a `comptime` of it in `main`.
+  - Staging the receiver through its own constant
+    (`comptime B = P(x=5)`, `comptime Q = B.plus[2]()`) runs.
+  - Probe: upstream-shaped `comptime C = StaticTuple[Int, 3](fill=5)._replace[2](8)`
+    once R1670 lands; `assets/ok/mlir_pop_array_ops.mojo` stages its
+    `FOLDED` this way (found while landing R1667, 2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1571 A compile-time operator over a `comptime` constant
   annotated with a sized integer does not wrap to its width**
@@ -9086,6 +9104,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     prints `4` for `pick(Pair[Point](Point(4)))`. The declaration spells
     the bare operand `VPoint` (`symbol::value_expr_raw`), the call
     `Point` (found while landing R1370, 2026-10-27).
+  - Probe: a struct with two keyword initializers, `fill: Int` and
+    `mlir_value: Self._mlir_type` (a `comptime` member over
+    `` __mlir_type[`!pop.array<`, …, `>`] `` or `SIMD[DType.int64, Self.n]`),
+    whose method returns `Self(mlir_value=…)`. The call names
+    `__init__$ov$SIMD$DType$int64$$n$$kw$mlir_value`, the declaration
+    `__init__$ov$$u5F$mlir$u5F$type$kw$mlir_value`, and the elaborator's
+    arity fallback finds two candidates, so the instance "keeps
+    compile-time argument slots". Upstream's `StaticTuple._replace` is this
+    shape (found while landing R1667, 2026-10-29).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -9183,28 +9210,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`mc_infer.rs`), where upstream's `VariadicPack` method loads its
     elements into a `!kgen.pack`.
   - Found while planning R743 (2026-10-23).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1315 A `!pop.array` size cannot be a parameter, so
-  `_MLIR.POPArrayType` cannot be declared**
-
-  Problem: MIR's `!pop.array` (`TyKind::PopArray`) holds a concrete size
-  only, and the checker resolves no ``__mlir_type[`!pop.array<`, size, `,
-  `, T, `>`]`` spelling, so the bundled `_MLIR` cannot declare upstream's
-  `POPArrayType[size: __mlir_type.index, elt_type: AnyType]`.
-  - Probe: adding upstream's `POPArrayType` member to `_MLIR`
-    (`stdlib/std/builtin/variadics.mojo`) is rejected with "only ...
-    '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
-    (`checker/type_resolution.rs::mlir_applied_type`).
-  - Add a `!pop.array<{},{}>` arm to `mlir_applied_type`. Its size slot is
-    `Checker::slot_value` read by `integer_slot` (`type_resolution.rs`),
-    which `!kgen.simd`'s length shares through `mlir_index_operand`; a
-    `size: __mlir_type.index` binder is read bare, not through
-    `_mlir_value`.
-  - The size needs the `Known`/`Expr` shape `SimdWidth` has, substituted
-    by the elaborator and refused symbolic by the concrete verifier.
-  - Found while landing R1304 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11155,25 +11160,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1670 (`StaticTuple`).
   - Model: Fable, Planned.
 
-- [ ] **R1667 `!pop.array` has no source spelling, no ops, and no
-  compile-time value of its own, where `StaticTuple`'s storage is one**
+- [ ] **R1676 The `pop.array` ops reject a register-passable element whose
+  copy or destruction runs code, where the pin copies its bits and never
+  destroys an array's elements**
 
-  `__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]` is
-  "outside the supported subset", where upstream's `StaticTuple` stores its
-  elements in one.
-  - `TyKind::PopArray.size` is a `u64`. A struct parameter's size needs a
-    symbolic one, closed in `mono/substitute.rs` as `VariantIndex` is.
-  - Admit `pop.array.repeat`, `pop.array.get` (`index=` attribute), and
-    `pop.array.replace` on both backends.
-  - A `#pop.array` attribute's value is a `CtValue::List`, typed only by the
-    `ParamContext::typed_constant` that reads it. A table keyed by value
-    (`module_values`) recomputes the meta-type as a compile-time list.
-  - Probe: a module-level `comptime M = __mlir_attr.`#pop.array<3, 2, 1, 0>
-    : !pop.array<4, index>`` passed as `pop.simd.shuffle`'s `mask=M` reports
-    "not a compile-time Int constant: M", where the pin prints `[4, 3, 2, 1]`.
-    The same constant inside `main` runs.
+  `pop.array.repeat` of a `RegisterPassable` struct with a `copy=`
+  initializer and a `__del__` is "outside the subset", where the pin runs it.
+  - The pin's ops copy an element's bits, running no copy initializer, and
+    a `!pop.array` never destroys its elements.
+  - Probe: `repeat` of `R(7)` into `!pop.array<2, R>`, then `get` at index 1
+    and `print(b.x)`. The pin prints `del 7` (the operand temporary), `7`,
+    and `del 7` (the result).
+  - Mojito admits only trivially register-passable elements
+    (`pop_array_element`, `checker/method_calls/pop_array_ops.rs`).
+    `mir::drop_runs_no_code_within` derives an array's drop from its
+    element, so admitting one would destroy the elements.
+  - Lever: a `!pop.array` drop that runs no code whatever its element, and
+    ops that bit-copy on both backends. `StaticTuple`'s
+    `_StaticTupleTraits` admits such elements.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1672 `CurrentPlugin` is undeclared, where upstream's is
   `CompilationTarget.current().stdlib_plugin`**

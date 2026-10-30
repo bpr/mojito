@@ -8566,6 +8566,30 @@ fn pop_select_types_as_its_verifier_does() {
 }
 
 #[test]
+fn pop_array_ops_take_trivially_register_passable_elements() {
+    // The ops load an element into a register: a non-register-passable
+    // `String` is the pin's rejection, and a register-passable element
+    // whose copy or destruction runs code is outside the subset, since the
+    // pin's ops copy its bits and never destroy one.
+    ok(
+        "def main():\n    var a = __mlir_op.`pop.array.repeat`[_type=__mlir_type[`!pop.array<2, `, Bool, `>`]](True)\n    print(__mlir_op.`pop.array.get`[_type=Bool, index=(1).__mlir_index__()](a))\n",
+    );
+    for (source, message) in [
+        (
+            "def main():\n    var a = __mlir_op.`pop.array.repeat`[_type=__mlir_type[`!pop.array<2, `, String, `>`]](String(\"hi\"))\n    print(__mlir_op.`pop.array.get`[_type=String, index=(1).__mlir_index__()](a))\n",
+            "cannot load non-register passable type into SSA register",
+        ),
+        (
+            "struct R(RegisterPassable, ImplicitlyCopyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x\n    def __del__(deinit self):\n        print(\"del\", self.x)\n\ndef main():\n    var a = __mlir_op.`pop.array.repeat`[_type=__mlir_type[`!pop.array<2, `, R, `>`]](R(7))\n    print(__mlir_op.`pop.array.get`[_type=R, index=(1).__mlir_index__()](a).x)\n",
+            "Mojito's '!pop.array' holds trivially register-passable elements",
+        ),
+    ] {
+        let error = err_std(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[test]
 fn pop_call_llvm_intrinsic_types_as_its_verifier_does() {
     // `intrin` is a `!kgen.string`, `_type` names the result, and
     // `hasSideEffects` is a `Bool`'s `__mlir_i1__()`; plain operands pass.

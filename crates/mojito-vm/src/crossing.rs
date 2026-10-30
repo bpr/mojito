@@ -70,7 +70,10 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::FloatLiteral(value) => Ok(Value::FloatLiteral(value.clone())),
         CtValue::Bool(b) => Ok(Value::Bool(*b)),
         CtValue::Str(s) => Ok(Value::Str(s.clone())),
-        CtValue::Tuple(items) => Ok(Value::Tuple(
+        CtValue::Tuple(items)
+        | CtValue::PopArray {
+            elements: items, ..
+        } => Ok(Value::Tuple(
             items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
         )),
         CtValue::List(items) => Ok(Value::ComptimeList(

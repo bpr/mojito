@@ -13,6 +13,7 @@ mod intrinsic_receivers;
 mod llvm_intrinsic;
 mod mc_infer;
 mod mlir_op;
+mod pop_array_ops;
 mod pop_ops;
 mod receiver_effects;
 mod resolution;

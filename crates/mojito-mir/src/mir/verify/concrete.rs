@@ -393,6 +393,16 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 "{head} keeps the symbolic vector slots `SIMD[{dtype}, {width}]` in elaborated MIR"
             ));
         }
+        MirInstr::ArrayGet {
+            index: Const::Param(index),
+            ..
+        }
+        | MirInstr::ArrayReplace {
+            index: Const::Param(index),
+            ..
+        } => errors.push(format!(
+            "{head} keeps the parameter array index `{index}` in elaborated MIR"
+        )),
         MirInstr::SimdShuffle { mask, .. } if mask.is_symbolic() => {
             errors.push(format!(
                 "{head} keeps the symbolic lane mask `{mask}` in elaborated MIR"

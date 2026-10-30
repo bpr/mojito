@@ -2046,6 +2046,20 @@ impl<'a> Specializer<'a> {
                         Err(_) => {}
                     }
                 }
+                // A `pop.array` op's index attribute is the instance's.
+                if let MirInstr::ArrayGet { index, .. } | MirInstr::ArrayReplace { index, .. } =
+                    &mut instruction
+                    && let Const::Param(value) = index
+                {
+                    let value = self.applied(template, value, bindings)?;
+                    match symbolic::eval_reached_ct(&value, bindings) {
+                        Ok(closed) => *index = Const::Value(closed),
+                        Err(error) if error.kind == MonoErrorKind::Instantiation => {
+                            return Err(error);
+                        }
+                        Err(_) => {}
+                    }
+                }
                 if let MirInstr::CallLlvmIntrinsic { .. } = &instruction {
                     self.close_llvm_intrinsic(
                         template,

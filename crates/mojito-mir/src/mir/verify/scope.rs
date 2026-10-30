@@ -454,6 +454,14 @@ impl ScopeCx<'_> {
                 if let MirInstr::Const {
                     k: Const::Param(value),
                     ..
+                }
+                | MirInstr::ArrayGet {
+                    index: Const::Param(value),
+                    ..
+                }
+                | MirInstr::ArrayReplace {
+                    index: Const::Param(value),
+                    ..
                 } = instruction
                 {
                     let role = format!("block {index} parameter constant");
@@ -680,8 +688,19 @@ impl ScopeCx<'_> {
             TyKind::ComptimeList(element)
             | TyKind::ParamList(element)
             | TyKind::VariadicPack(element)
-            | TyKind::PopArray { element, .. }
             | TyKind::Pointer { element, .. } => {
+                self.walk_in(role, element, nested);
+            }
+            TyKind::PopArray { size, element } => {
+                if let mojito_types::types::ArraySize::Expr(expr) = size {
+                    self.expr(
+                        role,
+                        "array size",
+                        expr,
+                        &MetaTy::value(Ty::index()),
+                        nested,
+                    );
+                }
                 self.walk_in(role, element, nested);
             }
             TyKind::Ref(reference) => self.walk_in(role, &reference.referent, nested),

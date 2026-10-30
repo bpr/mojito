@@ -374,8 +374,8 @@ pub(super) fn value_less_literal_value() -> TypeError {
 /// `` `#kgen.simd<…> : !kgen.scalar<dt>` `` (or `!kgen.simd<n, dt>`) lane
 /// constant of the storage type, held as its vector, and an
 /// `` `7 : index` `` builtin `index`, and a
-/// `` `#pop.array<i, …> : !pop.array<n, index>` `` array of `n` indices, a
-/// list of them. Any other typed attribute is outside the subset.
+/// `` `#pop.array<i, …> : !pop.array<n, index>` `` array of `n` indices,
+/// a typed [`CtValue::PopArray`]. Any other typed attribute is outside the subset.
 pub(super) fn mlir_attribute(text: &str) -> Result<(CtValue, Ty), TypeError> {
     let mut depth = 0_usize;
     let colon = text.char_indices().find_map(|(at, c)| {
@@ -422,11 +422,7 @@ pub(super) fn mlir_attribute_expr(
         return Ok((context.current_target(), TyKind::KgenTarget.into()));
     }
     let (value, ty) = mlir_attribute(text)?;
-    let value = match ty.kind() {
-        TyKind::PopArray { .. } => context.typed_constant(value, ty.clone()),
-        _ => context.constant(value).map_err(param_error)?,
-    };
-    Ok((value, ty))
+    Ok((context.constant(value).map_err(param_error)?, ty))
 }
 
 /// The `name` of an `` __mlir_type.`name` `` spelling.
@@ -5313,18 +5309,18 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
 const VARIADICS_MODULE: &str = "std.builtin.variadics";
 
 /// The `#pop.array<i, …>` attribute of type `!pop.array<n, index>`, as
-/// [`mlir_attribute`] reads it: a list of `n` indices. `None` for a body or
-/// type of another form; an element count other than `n` is rejected as the
-/// pin's attribute parser rejects it.
+/// [`mlir_attribute`] reads it: a [`CtValue::PopArray`] of `n` indices.
+/// `None` for a body or type of another form; an element count other than
+/// `n` is rejected as the pin's attribute parser rejects it.
 fn index_array_attribute(body: &str, ty: &str) -> Option<Result<(CtValue, Ty), TypeError>> {
-    let (size, element) = ty
-        .strip_prefix("!pop.array<")?
-        .strip_suffix('>')?
-        .split_once(',')?;
-    if element.trim() != "index" {
+    let ty = mojito_types::types::mlir_type_named(ty)?;
+    let TyKind::PopArray { size, element } = ty.kind() else {
+        return None;
+    };
+    if !matches!(element.kind(), TyKind::Index) {
         return None;
     }
-    let size: u64 = size.trim().parse().ok()?;
+    let size = size.known()?;
     let elements = body.strip_prefix("#pop.array<")?.strip_suffix('>')?.trim();
     let indices = if elements.is_empty() {
         Vec::new()
@@ -5344,11 +5340,11 @@ fn index_array_attribute(body: &str, ty: &str) -> Option<Result<(CtValue, Ty), T
             ),
         }));
     }
-    let ty = TyKind::PopArray {
-        size,
+    let value = CtValue::PopArray {
         element: Ty::index(),
+        elements: indices,
     };
-    Some(Ok((CtValue::List(indices), ty.into())))
+    Some(Ok((value, ty)))
 }
 
 /// The constant `` `body : ty` `` spells and its type, for the typed

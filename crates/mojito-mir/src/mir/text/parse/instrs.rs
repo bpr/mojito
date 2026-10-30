@@ -743,6 +743,21 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 elems: self.req(value, fields, "elems", |d, v| Some(d.regs(v)))?,
             }),
+            "array.repeat" => Some(MirInstr::ArrayRepeat {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+            }),
+            "array.get" => Some(MirInstr::ArrayGet {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                array: self.req(value, fields, "array", Self::reg)?,
+                index: self.req(value, fields, "index", Self::constant)?,
+            }),
+            "array.replace" => Some(MirInstr::ArrayReplace {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                array: self.req(value, fields, "array", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+                index: self.req(value, fields, "index", Self::constant)?,
+            }),
             "variant.make" => Some(MirInstr::MakeVariant {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 alternatives: self.req(value, fields, "alternatives", |d, v| Some(d.types(v)))?,

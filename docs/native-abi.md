@@ -195,7 +195,9 @@ Rules:
 - `Tuple`/`RuntimePack`/nominal structs are ordinary aggregates of their
   element/field types.
 - A `!pop.array<n, T>` (MIR's `pop_array`) is `n` elements of `T` at its
-  stride, aligned like one element.
+  stride, aligned like one element. Its size is closed before layout: a
+  parameter size is an elaboration-time value, and layout rejects one left
+  symbolic.
 - A homogeneous run-time collector is the bundled `VariadicList[T,
   is_owned]`, an ordinary struct whose one field is upstream's
   `Span[Pointer[T, origin], ImmUntrackedOrigin]`: `{ data: ptr to [len x

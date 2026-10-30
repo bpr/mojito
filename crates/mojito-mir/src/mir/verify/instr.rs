@@ -95,6 +95,11 @@ pub(super) fn verify_instruction(
             on_false,
         } => verify_select(&cx, *dest, *condition, [*on_true, *on_false], errors),
         MirInstr::Pop { dest, op, operands } => verify_pop(&cx, *dest, *op, operands, errors),
+        MirInstr::ArrayRepeat { .. }
+        | MirInstr::ArrayGet { .. }
+        | MirInstr::ArrayReplace { .. } => {
+            verify_array_op(&cx, instruction, errors);
+        }
         MirInstr::CallLlvmIntrinsic { args, spread, .. } => {
             verify_llvm_intrinsic(&cx, args, *spread, errors);
         }
@@ -1432,6 +1437,54 @@ fn verify_select(
                 "{prefix}: select {role} case has type {found}, expected {result}"
             ));
         }
+    }
+}
+
+/// Upstream's `pop.array` verifiers: the value is the array's element
+/// type, `array.replace` keeps its array's type, and a closed index is below
+/// a known size. A template's open index or size is checked by the
+/// instance that closes it.
+fn verify_array_op(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
+    let prefix = cx.prefix;
+    let (op, array, value, index) = match instruction {
+        MirInstr::ArrayRepeat { dest, value } => ("repeat", *dest, *value, None),
+        MirInstr::ArrayGet { dest, array, index } => ("get", *array, *dest, Some(index)),
+        MirInstr::ArrayReplace {
+            dest,
+            array,
+            value,
+            index,
+        } => {
+            if let (Some(result), Some(operand)) = (cx.reg_ty(*dest), cx.reg_ty(*array))
+                && !types_compatible(result, operand)
+            {
+                errors.push(format!(
+                    "{prefix}: array.replace result {result} is not its array's type {operand}"
+                ));
+            }
+            ("replace", *array, *value, Some(index))
+        }
+        _ => return,
+    };
+    let Some(TyKind::PopArray { size, element }) = cx.reg_ty(array).map(Ty::kind) else {
+        errors.push(format!("{prefix}: array.{op} over a non-array register"));
+        return;
+    };
+    if let Some(found) = cx.reg_ty(value)
+        && !types_compatible(found, element)
+    {
+        errors.push(format!(
+            "{prefix}: array.{op} value has type {found}, not the element type {element}"
+        ));
+    }
+    if let (Some(index), Some(size)) = (
+        index.and_then(crate::mir::Const::index_attribute),
+        size.known(),
+    ) && u64::try_from(index).map_or(true, |index| index >= size)
+    {
+        errors.push(format!(
+            "{prefix}: array.{op} index {index} is out of bounds of {size} elements"
+        ));
     }
 }
 

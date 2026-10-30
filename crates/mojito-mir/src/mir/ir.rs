@@ -1029,9 +1029,17 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             handler,
             ..
         } => out.extend([dest, variant, handler]),
-        MirInstr::SimdCast { dest, value, .. } | MirInstr::SimdBitcast { dest, value, .. } => {
+        MirInstr::SimdCast { dest, value, .. }
+        | MirInstr::SimdBitcast { dest, value, .. }
+        | MirInstr::ArrayRepeat { dest, value }
+        | MirInstr::ArrayGet {
+            dest, array: value, ..
+        } => {
             out.extend([dest, value]);
         }
+        MirInstr::ArrayReplace {
+            dest, array, value, ..
+        } => out.extend([dest, array, value]),
         MirInstr::SimdShuffle {
             dest, value, other, ..
         } => {
@@ -1564,6 +1572,17 @@ pub enum Const {
 }
 
 impl Const {
+    /// The element a closed `index` attribute constant names (`array.get`'s,
+    /// `array.replace`'s); `None` for a parameter constant.
+    pub const fn index_attribute(&self) -> Option<i64> {
+        match self {
+            Self::Int(index) | Self::Value(CtValue::Index(index) | CtValue::Int(index)) => {
+                Some(*index)
+            }
+            _ => None,
+        }
+    }
+
     /// The LLVM intrinsic a closed `llvm.intrinsic` name constant names,
     /// when it is one in the table.
     pub fn llvm_intrinsic(&self) -> Option<mojito_types::llvm_intrinsic::LlvmIntrinsic> {
@@ -1626,9 +1645,10 @@ impl Const {
                 Some(Self::Value(value.clone()))
             }
             CtValue::Str(value) => Some(Self::Str(value.clone())),
-            value @ (CtValue::Simd { .. } | CtValue::Struct { .. } | CtValue::Tuple(_)) => {
-                Some(Self::Value(value.clone()))
-            }
+            value @ (CtValue::Simd { .. }
+            | CtValue::Struct { .. }
+            | CtValue::Tuple(_)
+            | CtValue::PopArray { .. }) => Some(Self::Value(value.clone())),
             CtValue::MlirAttr(_) | CtValue::KgenTarget(_)
                 if slot_ty.is_none_or(|ty| mojito_types::types::has_no_llvm_type(ty.kind())) =>
             {
@@ -2538,6 +2558,28 @@ pub enum MirInstr {
         dest: Reg,
         elems: Vec<Reg>,
     },
+    /// Build `dest`'s `!pop.array` holding `value` in every element:
+    /// upstream's `pop.array.repeat`. The element count is `dest`'s type's.
+    ArrayRepeat {
+        dest: Reg,
+        value: Reg,
+    },
+    /// Element `index` of the `!pop.array` `array`: upstream's
+    /// `pop.array.get`. The index is its `index` attribute, a closed `index`
+    /// constant, or a template's parameter constant the elaborator closes.
+    ArrayGet {
+        dest: Reg,
+        array: Reg,
+        index: Const,
+    },
+    /// The `!pop.array` `array` with element `index` replaced by `value`:
+    /// upstream's `pop.array.replace`, whose `index` is [`Self::ArrayGet`]'s.
+    ArrayReplace {
+        dest: Reg,
+        array: Reg,
+        value: Reg,
+        index: Const,
+    },
     /// Build a struct value of `dest`'s type from one register per field,
     /// in declaration order, running no constructor: upstream's
     /// `kgen.struct.create`, which `sroa` emits for a whole read of a split
@@ -3081,6 +3123,9 @@ impl MirInstr {
             | Self::MakeSimd { .. }
             | Self::MakeStruct { .. }
             | Self::MakeArray { .. }
+            | Self::ArrayRepeat { .. }
+            | Self::ArrayGet { .. }
+            | Self::ArrayReplace { .. }
             | Self::SimdCast { .. }
             | Self::SimdBitcast { .. }
             | Self::SimdShuffle { .. }

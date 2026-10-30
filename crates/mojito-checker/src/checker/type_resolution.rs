@@ -1210,8 +1210,42 @@ impl Checker {
                 Ok(mojito_types::types::simd_storage(&vector).unwrap_or(vector))
             }
             ("!kgen.struct<{}isParamPack>", [elements]) => self.mlir_param_pack_struct(elements),
+            ("!pop.array<{},{}>", [size, element]) => {
+                let size = self.mlir_array_size_operand(size)?;
+                Ok(TyKind::PopArray {
+                    size,
+                    element: self.mlir_type_operand(element)?,
+                }
+                .into())
+            }
+            (text, [element]) => {
+                let size = text
+                    .strip_prefix("!pop.array<")
+                    .and_then(|rest| rest.strip_suffix(",{}>"))
+                    .and_then(|size| size.parse().ok())
+                    .ok_or_else(unsupported_mlir_type)?;
+                Ok(TyKind::PopArray {
+                    size: mojito_types::types::ArraySize::Known(size),
+                    element: self.mlir_type_operand(element)?,
+                }
+                .into())
+            }
             _ => Err(unsupported_mlir_type()),
         }
+    }
+
+    /// The `index` size operand of a `!pop.array`, an `Int`'s
+    /// `__mlir_index__()` (`Self.size.__mlir_index__()`), as upstream's
+    /// `StaticTuple` spells its storage.
+    fn mlir_array_size_operand(
+        &self,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Result<mojito_types::types::ArraySize, TypeError> {
+        let mojito_ast::ast::ParamArg::Value(size) = arg else {
+            return Err(mlir_operand_mismatch("index", "Int.__mlir_index__()"));
+        };
+        let size = self.compile_dependent_ct_expr(size)?;
+        mojito_types::types::ArraySize::of(size).map_err(param_error)
     }
 
     /// The literal struct `!kgen.struct<~Ts.values isParamPack>` of a type
@@ -1266,19 +1300,31 @@ impl Checker {
 
     /// The raw parameter list `!kgen.param_list<element>` holds.
     fn mlir_param_list_type(&self, element: &mojito_ast::ast::ParamArg) -> Result<Ty, TypeError> {
-        use mojito_ast::ast::ParamArg;
         let element = match self.trait_type_arg(element) {
             Some(element) => element?,
-            None => match element {
-                ParamArg::Type(ty) => self.ty_from_anno(ty)?,
-                ParamArg::Value(Expr {
-                    kind: ExprKind::Identifier(name),
-                    ..
-                }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))?,
-                _ => return Err(unsupported_mlir_type()),
-            },
+            None => self.mlir_type_operand(element)?,
         };
         Ok(TyKind::ParamList(element).into())
+    }
+
+    /// A type operand of an MLIR type spelling: a type (`Int`,
+    /// `Self.element_type`) or a type binder in scope.
+    fn mlir_type_operand(&self, element: &mojito_ast::ast::ParamArg) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        match element {
+            ParamArg::Type(ty) => self.ty_from_anno(ty),
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(name),
+                ..
+            }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new())),
+            ParamArg::Value(Expr {
+                kind: ExprKind::Member { object, field },
+                ..
+            }) if matches!(&object.kind, ExprKind::Identifier(base) if base == "__mlir_type") => {
+                mojito_types::types::mlir_type_named(field).ok_or_else(unsupported_mlir_type)
+            }
+            _ => Err(unsupported_mlir_type()),
+        }
     }
 
     /// An `index` operand of an MLIR type spelling, a `SIMDLength`'s
@@ -2087,7 +2133,10 @@ impl Checker {
             // A symbolic lane dtype or width closes under the use's bindings
             // and re-canonicalizes: `Scalar[dt]` at `dt = DType.float64` is
             // `Float64`.
-            TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral(Some(_))
+            TyKind::Simd { .. }
+            | TyKind::KgenSimd { .. }
+            | TyKind::StringLiteral(Some(_))
+            | TyKind::PopArray { .. }
                 if !parameters.is_empty() && mojito_types::types::is_symbolic(ty) =>
             {
                 let context = &self.param_context;
@@ -4539,8 +4588,8 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Variant(types) => types.iter().any(type_is_symbolic),
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
-        | TyKind::VariadicPack(element)
-        | TyKind::PopArray { element, .. } => type_is_symbolic(element),
+        | TyKind::VariadicPack(element) => type_is_symbolic(element),
+        TyKind::PopArray { size, element } => size.is_symbolic() || type_is_symbolic(element),
         TyKind::Pointer { element, .. } => type_is_symbolic(element),
         TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }
@@ -4633,7 +4682,9 @@ fn unsupported_mlir_type() -> TypeError {
          '__mlir_type.`!kgen.type`', '__mlir_type.`!kgen.string`', \
          '__mlir_type[`!kgen.param_list<`, T, `>`]', \
          '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]', \
-         and '__mlir_type[`!kgen.struct<`, ~Ts.values, ` isParamPack>`]' are accepted"
+         '__mlir_type[`!kgen.struct<`, ~Ts.values, ` isParamPack>`]', \
+         '__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]', and \
+         '__mlir_type.`!pop.array<n, T>`' are accepted"
             .to_string(),
     )
 }

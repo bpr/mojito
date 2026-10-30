@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `!pop.array<n, T>`, the storage upstream's `StaticTuple` keeps, is now
+  spelled with a parameter size
+  (``__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]``, which
+  each instance closes), a literal one, or the dotted
+  ``__mlir_type.`!pop.array<2, index>` ``, and `_MLIR.POPArrayType` is
+  declared. ``__mlir_op.`pop.array.repeat` ``, `pop.array.get`, and
+  `pop.array.replace` run on the VM, natively, and at compile time, with
+  the pin's verifier errors at check time or per instance. A `#pop.array`
+  attribute is a typed compile-time value of its own, so a module-level
+  `comptime` mask now reaches `pop.simd.shuffle` (R1667, R1315). MIR schema
+  1.137, package format 152.
 - ``__mlir_op.`pop.simd.shuffle`[mask=…, _type=…](a, b)`` runs, as the op
   upstream's `SIMD.shuffle` and `join` bodies reach: it gathers the lanes of
   `a` followed by those of `b` by a ``__mlir_attr.`#pop.array<i, …> :

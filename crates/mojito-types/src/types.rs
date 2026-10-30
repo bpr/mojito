@@ -276,6 +276,81 @@ impl fmt::Display for SimdWidth {
     }
 }
 
+/// The size slot of a `!pop.array<size, element>`, an `index`.
+///
+/// A struct's parameter spells it (`` `!pop.array<`, Self.n.__mlir_index__(),
+/// `, `, T, `>` ``) as upstream's `StaticTuple` does. `Expr` never holds a
+/// closed size: [`ArraySize::of`] makes one `Known`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ArraySize {
+    Known(u64),
+    Expr(ParamExpr),
+}
+
+impl ArraySize {
+    /// The slot holding the `index`-valued `size`: `Known` once it folds.
+    pub fn of(size: ParamExpr) -> Result<Self, ParamError> {
+        if !size
+            .meta()
+            .as_value()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Index))
+        {
+            return Err(ParamError::TypeMismatch {
+                operation: "'!pop.array' size".to_string(),
+                expected: MLIR_INDEX_TYPE_SPELLING.to_string(),
+                found: size.meta().to_string(),
+            });
+        }
+        match size.as_i64() {
+            Some(known) => u64::try_from(known)
+                .map(Self::Known)
+                .map_err(|_| ParamError::NotConstant(format!("a negative array size {known}"))),
+            None => Ok(Self::Expr(size)),
+        }
+    }
+
+    /// The element count a concrete use reads.
+    pub fn known(&self) -> Option<u64> {
+        match self {
+            Self::Known(size) => Some(*size),
+            Self::Expr(size) => size.as_i64().and_then(|size| u64::try_from(size).ok()),
+        }
+    }
+
+    /// Whether only an instantiation can say how many elements there are.
+    pub fn is_symbolic(&self) -> bool {
+        self.known().is_none()
+    }
+
+    /// The size as an `index`-valued parameter expression.
+    pub fn expr(&self, context: &ParamContext) -> Result<ParamExpr, ParamError> {
+        match self {
+            Self::Known(size) => context.constant(CtValue::Index(*size as i64)),
+            Self::Expr(size) => Ok(size.clone()),
+        }
+    }
+
+    /// This slot after `rewrite` rewrote its expression.
+    pub fn try_map(
+        &self,
+        rewrite: impl FnOnce(&ParamExpr) -> Result<ParamExpr, ParamError>,
+    ) -> Result<Self, ParamError> {
+        match self {
+            Self::Known(_) => Ok(self.clone()),
+            Self::Expr(size) => Self::of(rewrite(size)?),
+        }
+    }
+}
+
+impl fmt::Display for ArraySize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(size) => write!(f, "{size}"),
+            Self::Expr(size) => write!(f, "{size}"),
+        }
+    }
+}
+
 /// Upstream's `SIMDLength`, the type of a `SIMD` width slot.
 pub fn simd_length_ty() -> Ty {
     TyKind::Struct(SIMD_LENGTH_TYPE_NAME.to_string(), Vec::new()).into()
@@ -745,11 +820,13 @@ pub enum TyKind {
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
     Tuple(Vec<Ty>),
     /// Upstream's fixed-size array `!pop.array<size, element>`
-    /// (`_MLIR.POPArrayType[size, element]`): the array of element pointers
-    /// a call builds for a `*xs: T` callee's `VariadicList`, in a slot of
-    /// its own (`__passed_varargs__`).
+    /// (`_MLIR.POPArrayType[size, element]`): `StaticTuple`'s storage,
+    /// which `pop.array.repeat`, `pop.array.get`, and `pop.array.replace`
+    /// build and read, and the array of element pointers a call builds for
+    /// a `*xs: T` callee's `VariadicList`, in a slot of its own
+    /// (`__passed_varargs__`).
     PopArray {
-        size: u64,
+        size: ArraySize,
         element: Ty,
     },
     /// Internal checked ABI type for a compile-time-specialized heterogeneous
@@ -1355,8 +1432,25 @@ pub fn mlir_type_named(name: &str) -> Option<Ty> {
             .strip_prefix("!kgen.scalar<")
             .and_then(|rest| rest.strip_suffix('>'))
             .and_then(Dtype::from_kgen_mnemonic)
-            .map(|dtype| kgen_simd_ty(dtype, 1)),
+            .map(|dtype| kgen_simd_ty(dtype, 1))
+            .or_else(|| pop_array_named(name)),
     }
+}
+
+/// The `!pop.array<n, element>` of a literal size over a type
+/// [`mlir_type_named`] names.
+fn pop_array_named(name: &str) -> Option<Ty> {
+    let (size, element) = name
+        .strip_prefix("!pop.array<")?
+        .strip_suffix('>')?
+        .split_once(',')?;
+    Some(
+        TyKind::PopArray {
+            size: ArraySize::Known(size.trim().parse().ok()?),
+            element: mlir_type_named(element.trim())?,
+        }
+        .into(),
+    )
 }
 
 /// The `!kgen.simd` storage of a `dtype` vector of `width` lanes
@@ -1908,7 +2002,7 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
         TyKind::RuntimePack(list) => TyKind::RuntimePack(expand(list)).into(),
         TyKind::Variant(list) => TyKind::Variant(expand(list)).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: size.clone(),
             element: expand_pack_spread(element, pack, elements),
         }
         .into(),
@@ -2989,7 +3083,7 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
         TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: size.clone(),
             element: recur(element),
         }
         .into(),
@@ -3035,7 +3129,7 @@ pub fn erase_origins(ty: &Ty) -> Ty {
         .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: size.clone(),
             element: recur(element),
         }
         .into(),
@@ -3104,7 +3198,7 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
         }
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: size.clone(),
             element: recur(element),
         }
         .into(),
@@ -4475,7 +4569,14 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
         }
         TyKind::VariadicPack(element) => TyKind::VariadicPack(substitute(element, subst)).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: match size {
+                ArraySize::Expr(_) if !subst.is_empty() => {
+                    let context = ParamContext::detached();
+                    size.try_map(|size| context.replace(size, &type_bindings(subst)))
+                        .unwrap_or_else(|_| size.clone())
+                }
+                _ => size.clone(),
+            },
             element: substitute(element, subst),
         }
         .into(),
@@ -4705,7 +4806,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::ParamList(element) => TyKind::ParamList(rewrite_ty(element, rewrite)?).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(rewrite_ty(element, rewrite)?).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: size.try_map(|size| rewrite.expr(size))?,
             element: rewrite_ty(element, rewrite)?,
         }
         .into(),
@@ -4861,6 +4962,10 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         CtValue::Type(ty) => CtValue::Type(rewrite_ty(ty, rewrite)?),
         CtValue::Tuple(values) => CtValue::Tuple(all(values, rewrite)?),
         CtValue::List(values) => CtValue::List(all(values, rewrite)?),
+        CtValue::PopArray { element, elements } => CtValue::PopArray {
+            element: rewrite_ty(element, rewrite)?,
+            elements: all(elements, rewrite)?,
+        },
         CtValue::Set { spelling, elements } => CtValue::Set {
             spelling: spelling.clone(),
             elements: all(elements, rewrite)?,
@@ -5318,8 +5423,8 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
-        | TyKind::PopArray { element, .. }
         | TyKind::Pointer { element, .. } => is_symbolic(element),
+        TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
         TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
             dtype.is_symbolic() || width.is_symbolic()
@@ -5420,6 +5525,9 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         CtValue::Type(ty) => is_symbolic(ty),
         CtValue::Struct { fields, .. } => {
             fields.iter().any(|(_, value)| ct_value_is_symbolic(value))
+        }
+        CtValue::PopArray { element, elements } => {
+            is_symbolic(element) || elements.iter().any(ct_value_is_symbolic)
         }
         CtValue::Variant {
             alternatives,
@@ -5552,8 +5660,11 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
-        | TyKind::PopArray { element, .. }
         | TyKind::Pointer { element, .. } => mentions(element, predicate),
+        TyKind::PopArray { size, element } => {
+            matches!(size, ArraySize::Expr(expr) if expr_mentions(expr, predicate))
+                || mentions(element, predicate)
+        }
         TyKind::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
         TyKind::StringLiteral(Some(value)) => match value.as_ref() {
             CtValue::Expr(expr) => expr_mentions(expr, predicate),
@@ -5619,8 +5730,11 @@ fn decorated(ty: &Ty) -> bool {
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
-        | TyKind::PopArray { element, .. }
         | TyKind::Pointer { element, .. } => element.carries_decorations(),
+        TyKind::PopArray { size, element } => {
+            matches!(size, ArraySize::Expr(expr) if expr.carries_decorations())
+                || element.carries_decorations()
+        }
         TyKind::Ref(reference) => reference.referent.carries_decorations(),
         TyKind::Dependent(dependent) => dependent.expr().carries_decorations(),
         TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
@@ -5724,8 +5838,10 @@ fn closed_kind(kind: &TyKind) -> bool {
         }
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
-        | TyKind::VariadicPack(element)
-        | TyKind::PopArray { element, .. } => element.is_closed(),
+        | TyKind::VariadicPack(element) => element.is_closed(),
+        TyKind::PopArray { size, element } => {
+            matches!(size, ArraySize::Known(_)) && element.is_closed()
+        }
         _ => false,
     }
 }
@@ -5877,7 +5993,15 @@ fn expand_packs<S: std::hash::BuildHasher>(
         TyKind::RuntimePack(list) => TyKind::RuntimePack(expand(list)).into(),
         TyKind::Variant(list) => TyKind::Variant(expand(list)).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
-            size: *size,
+            size: match size {
+                ArraySize::Expr(_) if !values.is_empty() => {
+                    let context = ParamContext::detached();
+                    let bindings = pack_bindings(&context, subst, packs, values);
+                    size.try_map(|size| context.replace(size, &bindings))
+                        .unwrap_or_else(|_| size.clone())
+                }
+                _ => size.clone(),
+            },
             element: recurse(element),
         }
         .into(),

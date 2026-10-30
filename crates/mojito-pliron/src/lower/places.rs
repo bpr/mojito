@@ -1,8 +1,9 @@
-//! Place addressing: `place_address`, field offsets/layout, `GetField`, and
-//! tuple construction.
+//! Place addressing: `place_address`, field offsets/layout, `GetField`,
+//! tuple construction, and the `!pop.array` ops.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::Const;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
@@ -145,7 +146,9 @@ impl FnLowering<'_> {
                 Proj::ConstIndex(index) => {
                     if let TyKind::PopArray { size, element } = ty.kind() {
                         let element = element.clone();
-                        if u64::try_from(*index).map_or(true, |index| index >= *size) {
+                        if size.known().is_none_or(|size| {
+                            u64::try_from(*index).map_or(true, |index| index >= size)
+                        }) {
                             return Err(self.unsupported_reg(
                                 format!("array-element projection index {index} out of range"),
                                 dest,
@@ -463,6 +466,104 @@ impl FnLowering<'_> {
         let storage = self.collect_pack_elements(ctx, &elements, elems, dest)?;
         self.reg_values.insert(dest.0, storage);
         Ok(())
+    }
+
+    /// `array.repeat`: fresh `!pop.array` storage holding `value` at every
+    /// element's stride.
+    pub(super) fn lower_array_repeat(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: Reg,
+    ) -> Result<(), PlironError> {
+        let (element, size, stride) = self.array_shape(dest, dest)?;
+        let storage = self.array_storage(ctx, dest)?;
+        for at in 0..size {
+            let address = self.offset_address(ctx, storage, stride * at);
+            self.store_to(ctx, address, &element, value)?;
+        }
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// `array.get`: element `index` of `array`'s storage, read at its
+    /// stride, as a constant element projection reads it.
+    pub(super) fn lower_array_get(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        array: Reg,
+        index: &Const,
+    ) -> Result<(), PlironError> {
+        let (element, _, stride) = self.array_shape(array, dest)?;
+        let index = self.array_index(index, dest)?;
+        let storage = self.reg_ptr(ctx, array)?;
+        let address = self.offset_address(ctx, storage, stride * index);
+        self.load_from(ctx, address, &element, dest)
+    }
+
+    /// `array.replace`: a fresh copy of `array`'s storage with `value`
+    /// stored at element `index`.
+    pub(super) fn lower_array_replace(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        array: Reg,
+        value: Reg,
+        index: &Const,
+    ) -> Result<(), PlironError> {
+        let (element, _, stride) = self.array_shape(array, dest)?;
+        let index = self.array_index(index, dest)?;
+        let storage = self.array_storage(ctx, dest)?;
+        let ty = self.func.reg_types[&dest.0].clone();
+        let layout = self
+            .layout
+            .layout_of(&ty)
+            .map_err(|error| self.unsupported_reg(format!("array layout ({error})"), dest))?;
+        let source = self.reg_ptr(ctx, array)?;
+        self.copy_value(ctx, storage, source, &ty, layout, dest);
+        let address = self.offset_address(ctx, storage, stride * index);
+        self.store_to(ctx, address, &element, value)?;
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// The element type, element count, and element stride of the
+    /// `!pop.array` register `array`.
+    fn array_shape(&self, array: Reg, dest: Reg) -> Result<(Ty, u64, u64), PlironError> {
+        let Some(TyKind::PopArray { size, element }) =
+            self.func.reg_types.get(&array.0).map(Ty::kind)
+        else {
+            return Err(self.unsupported_reg("untyped array operand".into(), dest));
+        };
+        let size = size
+            .known()
+            .ok_or_else(|| self.unsupported_reg(format!("the array size `{size}`"), dest))?;
+        let stride = self
+            .layout
+            .layout_of(element)
+            .map_err(|error| self.unsupported_reg(format!("array element layout ({error})"), dest))?
+            .size;
+        Ok((element.clone(), size, stride))
+    }
+
+    /// Fresh storage for the `!pop.array` register `dest`, laid out as
+    /// [`Self::lower_array_create`]'s.
+    fn array_storage(&mut self, ctx: &mut Context, dest: Reg) -> Result<Value, PlironError> {
+        let ty = self.func.reg_types[&dest.0].clone();
+        let layout = self
+            .layout
+            .layout_of(&ty)
+            .map_err(|error| self.unsupported_reg(format!("array layout ({error})"), dest))?;
+        Ok(self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1)))
+    }
+
+    /// The element a closed `array.get` or `array.replace` index names.
+    fn array_index(&self, index: &Const, dest: Reg) -> Result<u64, PlironError> {
+        index
+            .index_attribute()
+            .and_then(|index| u64::try_from(index).ok())
+            .ok_or_else(|| self.unsupported_reg(format!("the array index `{index:?}`"), dest))
     }
 
     /// Relocate the registers `elems` into fresh pack storage laid out as

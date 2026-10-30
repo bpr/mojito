@@ -5,6 +5,7 @@
 //! them,
 //! `kgen.struct.extract` of an element of a literal struct,
 //! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the
+//! `pop.array` ops of `pop_array_ops.rs`, the
 //! `pop` and `index` ops of `pop_ops.rs` with its `pop.simd.shuffle`, and the LLVM
 //! intrinsic call of `llvm_intrinsic.rs`.
 
@@ -49,6 +50,14 @@ impl Checker {
         }
         if method == SIMD_SHUFFLE {
             return self.infer_simd_shuffle_op(span, method, call);
+        }
+        if matches!(
+            method,
+            super::pop_array_ops::POP_ARRAY_REPEAT
+                | super::pop_array_ops::POP_ARRAY_GET
+                | super::pop_array_ops::POP_ARRAY_REPLACE
+        ) {
+            return self.infer_pop_array_op(span, method, call);
         }
         if method == STRING_SIZE {
             return self.infer_string_op(span, method, ParamOp::StringSize, call);

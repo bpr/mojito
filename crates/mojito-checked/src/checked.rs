@@ -1178,6 +1178,22 @@ pub enum SemanticAdjustment {
     PopSimdShuffle {
         mask: mojito_types::types::LaneMask,
     },
+    /// ``__mlir_op.`pop.array.repeat`[_type=…](v)``: the `_type`
+    /// `!pop.array` holding `v` in every element. MIR keeps it as
+    /// `MirInstr::ArrayRepeat`.
+    PopArrayRepeat,
+    /// ``__mlir_op.`pop.array.get`[_type=…, index=i.__mlir_index__()](a)``:
+    /// element `index` (an `index`-valued expression) of the `!pop.array`
+    /// `a`. MIR keeps it as `MirInstr::ArrayGet`.
+    PopArrayGet {
+        index: mojito_types::param_expr::ParamExpr,
+    },
+    /// ``__mlir_op.`pop.array.replace`[_type=…, index=…](v, a)``: the
+    /// `!pop.array` `a` with element `index` replaced by `v`. MIR keeps it
+    /// as `MirInstr::ArrayReplace`.
+    PopArrayReplace {
+        index: mojito_types::param_expr::ParamExpr,
+    },
     /// A sugar written as the construction it stands for: an initializer
     /// list `{}` / `{a, b}` at the type its context expects (upstream's
     /// set-initializer literal, emitted as the construction `T(a, b)` of that
