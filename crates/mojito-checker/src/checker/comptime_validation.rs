@@ -1649,6 +1649,86 @@ impl Checker {
         Ok(self.selected_call(selected))
     }
 
+    /// The application of the literal constructor a tuple or list display
+    /// denotes in a parameter position, as upstream's parser emits it and
+    /// keeps it unfolded through the check, closed or not: `(n, 1)` is
+    /// `Tuple(n, Int(1))`, and `[n, 1]` is `List(n, Int(1),
+    /// __list_literal__=None)` at a `List[Int]` slot. A display at a slot
+    /// whose type has no such constructor, or at none, applies its natural
+    /// type's (`Array[T, n]` for a list, as its run-time typing infers it),
+    /// then converts to the slot through its `@implicit` constructor
+    /// ([`Self::implicit_parameter_application`]). Each element is applied
+    /// at its element of the constructed instance, a nested display in that
+    /// element's context. `None` for any other expression.
+    pub(super) fn display_application(
+        &self,
+        display: &Expr,
+        target: Option<&Ty>,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let (ExprKind::ListLit(elements) | ExprKind::TupleLit(elements)) = &display.kind else {
+            return None;
+        };
+        let list = matches!(display.kind, ExprKind::ListLit(_));
+        // An element whose fieldwise construction no compile-time call
+        // applies (its struct declares another `__init__`) is still its
+        // frozen struct value (R1727).
+        let element = |index: usize, ty: &Ty| {
+            let element = &elements[index];
+            self.display_application(element, Some(ty)).map_or_else(
+                || {
+                    Ok(self
+                        .applied_argument(element, ty)
+                        .or_else(|| self.applied_value(self.frozen_struct_value(element)?, ty)))
+                },
+                |applied| applied.map(Some),
+            )
+        };
+        // A display its slot's literal constructor does not take is its
+        // natural type's, which the slot's conversion then rejects.
+        match target
+            .and_then(|target| self.literal_application(list, elements.len(), target, element))
+        {
+            Some(Ok(Some(applied))) => return Some(Ok(applied)),
+            Some(Err(error)) => return Some(Err(error)),
+            Some(Ok(None)) | None => {}
+        }
+        // Its natural type, typed without a context, leaves the facts the
+        // display's own check recorded in its context.
+        let Some(natural) = self.probe(|| self.run_time_type(display)) else {
+            return Some(Err(TypeError::NotComptime(
+                "a display whose type does not infer".to_string(),
+            )));
+        };
+        let applied = self.literal_application(list, elements.len(), &natural, element);
+        Some(self.converted_display(applied, &natural, target))
+    }
+
+    /// A closed raw tuple or list value (a module display constant's) as
+    /// the application of its literal constructor at its natural type, as
+    /// the display it was given denotes it ([`Self::display_application`]),
+    /// converted to `target`. `None` for any other value.
+    pub(super) fn aggregate_application(
+        &self,
+        value: &CtValue,
+        target: &Ty,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let (list, elements) = match value {
+            CtValue::Tuple(elements) => (false, elements),
+            CtValue::List(elements) => (true, elements),
+            _ => return None,
+        };
+        let natural = self.aggregate_type(value)?;
+        let element = |index: usize, ty: &Ty| {
+            let element = &elements[index];
+            self.aggregate_application(element, ty).map_or_else(
+                || Ok(self.applied_value(element.clone(), ty)),
+                |applied| applied.map(Some),
+            )
+        };
+        let applied = self.literal_application(list, elements.len(), &natural, element);
+        Some(self.converted_display(applied, &natural, Some(target)))
+    }
+
     /// The compile-time value `expr`, compiled to `compiled`, converted to
     /// the struct type `ty` it is declared with through the struct's
     /// `@implicit` constructor, as a bracket argument is
@@ -1662,6 +1742,9 @@ impl Checker {
         compiled: &ParamExpr,
         ty: &Ty,
     ) -> Option<ParamExpr> {
+        if let Some(applied) = self.display_application(expr, Some(ty)) {
+            return applied.ok();
+        }
         let found = compiled.meta().as_value()?;
         if coerces(found, ty) {
             return None;
@@ -2101,6 +2184,164 @@ impl Checker {
         typed
     }
 
+    /// The application of the literal constructor of `ty`'s struct a list
+    /// (`list`) or tuple display of `count` elements calls, each element's
+    /// parameter expression at its element of `ty` given by `element`: a
+    /// list display's `__list_literal__` initializer, or a tuple display's
+    /// collector at a `Tuple`. Upstream's parser emits the call
+    /// positionally, so its arguments are the elements in order, then
+    /// `None` for the marker. `None` for a struct with no such constructor,
+    /// `Some(Ok(None))` for a display that does not fit `ty` (its arity, or
+    /// an element no parameter expression of its element type holds).
+    fn literal_application(
+        &self,
+        list: bool,
+        count: usize,
+        ty: &Ty,
+        element: impl Fn(usize, &Ty) -> Result<Option<ParamExpr>, TypeError>,
+    ) -> Option<Result<Option<ParamExpr>, TypeError>> {
+        let TyKind::Struct(name, instance_args) = ty.kind() else {
+            return None;
+        };
+        let symbol = if list {
+            self.literal_constructor(ty, mojito_symbol::symbol::is_list_literal_constructor)?
+                .0
+        } else {
+            mojito_types::types::tuple_elements(ty.kind())?;
+            self.collector_constructor(name)?
+        };
+        let name = template_name(name).to_string();
+        let function = self.applicable_functions.get(&name).and_then(|overloads| {
+            overloads
+                .iter()
+                .find(|function| function.constructs() && function.symbol() == symbol)
+        });
+        let (Some(function), Some(info)) = (function, self.structs.get(name.as_str())) else {
+            return Some(Err(TypeError::Unsupported(format!(
+                "a display whose literal constructor '{symbol}' no compile-time call applies"
+            ))));
+        };
+        let (Some(signature), Some(collector)) = (&function.signature, &function.collector) else {
+            return Some(Err(TypeError::Unsupported(format!(
+                "a display whose literal constructor '{symbol}' takes no positional collector"
+            ))));
+        };
+        if !signature.decls.is_empty()
+            || function
+                .params
+                .iter()
+                .any(|param| param.name != "__list_literal__")
+        {
+            return Some(Err(TypeError::Unsupported(format!(
+                "a display whose literal constructor '{symbol}' is not the literal shape"
+            ))));
+        }
+        // Each element at the collector's element, or at its own element
+        // of the struct's type pack (`*args: *Self.Ts`).
+        let declared = match &collector.element {
+            SlotType::Declared(_, Some(declared)) => {
+                substitute_variadic_at(declared, info, instance_args)
+            }
+            slot => match slot.resolved(Some(ty)) {
+                Some(slot) => slot.clone(),
+                None => return Some(Ok(None)),
+            },
+        };
+        let element_types = match declared.kind() {
+            TyKind::RuntimePack(elements) => elements.clone(),
+            _ => vec![declared; count],
+        };
+        let length = mojito_types::types::array_parts(ty.kind()).map(|(_, length)| length);
+        if element_types.len() != count
+            || length.is_some_and(|length| usize::try_from(length).ok() != Some(count))
+        {
+            return Some(Ok(None));
+        }
+        let applied = (|| {
+            let mut run = Vec::with_capacity(count);
+            for (index, element_ty) in element_types.iter().enumerate() {
+                match element(index, element_ty)? {
+                    Some(applied) => run.push(applied),
+                    None => return Ok(None),
+                }
+            }
+            let mut arguments = Vec::with_capacity(count + function.params.len());
+            for param in &function.params {
+                let Some(marker) = param
+                    .ty
+                    .resolved(Some(ty))
+                    .and_then(|marker| self.applied_value(CtValue::None, marker))
+                else {
+                    return Ok(None);
+                };
+                arguments.push(marker);
+            }
+            let run_at = collector.index.min(arguments.len());
+            arguments.splice(run_at..run_at, run);
+            let selected = Selected {
+                name: name.clone(),
+                function,
+                instance: function.on_instance.then(|| ty.clone()),
+                arguments,
+                result: None,
+            };
+            if let Some(error) = self.application_constraint_failure(&selected) {
+                return Err(error);
+            }
+            Ok(self.selected_call(selected))
+        })();
+        Some(applied)
+    }
+
+    /// A display's application at its `natural` type, converted to the
+    /// slot type `target` through its `@implicit` constructor when the two
+    /// differ ([`Self::display_application`]).
+    fn converted_display(
+        &self,
+        applied: Option<Result<Option<ParamExpr>, TypeError>>,
+        natural: &Ty,
+        target: Option<&Ty>,
+    ) -> Result<ParamExpr, TypeError> {
+        let mismatch = || TypeError::TypeMismatch {
+            expected: target.unwrap_or(natural).to_string(),
+            found: natural.to_string(),
+            context: "a display's literal constructor".to_string(),
+        };
+        let applied = applied
+            .unwrap_or_else(|| Err(mismatch()))?
+            .ok_or_else(mismatch)?;
+        match target {
+            Some(target) if target != natural => self
+                .implicit_parameter_application(natural, target, |_| Some(applied))?
+                .ok_or_else(mismatch),
+            _ => Ok(applied),
+        }
+    }
+
+    /// The natural type of a closed raw tuple or list value: a tuple of its
+    /// elements' types, or the `Array` of a list's, each literal at its
+    /// default materialization, as the display it was given types.
+    fn aggregate_type(&self, value: &CtValue) -> Option<Ty> {
+        let element = |value: &CtValue| {
+            self.aggregate_type(value).or_else(|| {
+                self.ct_value_ty(value, &Ty::none())
+                    .map(|ty| mojito_types::types::default_literal(&ty))
+            })
+        };
+        match value {
+            CtValue::Tuple(elements) => elements
+                .iter()
+                .map(element)
+                .collect::<Option<Vec<_>>>()
+                .map(mojito_types::types::tuple_type),
+            CtValue::List(elements) => Some(mojito_types::types::array_type(
+                element(elements.first()?)?,
+                elements.len() as i64,
+            )),
+            _ => None,
+        }
+    }
+
     /// The application `selected` denotes ([`Self::called_application`]):
     /// the callable applied to its arguments, or a builtin body folded over
     /// them. `None` for a result no parameter expression holds or a
@@ -2504,28 +2745,44 @@ impl Checker {
         }
         // The run sits at the collector's position, flat, each argument at
         // the collector's element, or at its own element of the type pack
-        // the collector is typed by.
+        // the collector is typed by: the callable's own pack as the call
+        // bound it, the struct's (`*args: *Self.Ts`) as the instance does.
         let mut applied_run = Vec::with_capacity(collected.len());
         if let Some(collector) = &function.collector {
             let pack = match &collector.element {
-                SlotType::Declared(_, Some(declared)) => match declared.kind() {
-                    TyKind::Param { binder, .. } if binder.name.starts_with('*') => {
-                        let position = decls.iter().position(|decl| *decl.id() == binder.id)?;
-                        match &bound.arguments[position] {
-                            TyArg::Val(CtValue::Tuple(elements)) => Some(elements),
-                            _ => return None,
-                        }
-                    }
-                    _ => None,
-                },
+                SlotType::Declared(_, Some(declared))
+                    if let TyKind::Param { binder, .. } = declared.kind()
+                        && binder.name.starts_with('*') =>
+                {
+                    let own = decls.iter().position(|decl| *decl.id() == binder.id);
+                    Some(if let Some(position) = own {
+                        let TyArg::Val(CtValue::Tuple(elements)) = &bound.arguments[position]
+                        else {
+                            return None;
+                        };
+                        elements
+                            .iter()
+                            .map(|element| match element {
+                                CtValue::Type(ty) => Some(ty.clone()),
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()?
+                    } else {
+                        let (name, instance_args) =
+                            owner.and_then(mojito_types::types::nominal_parts)?;
+                        let info = self.structs.get(template_name(name))?;
+                        let elements = substitute_variadic_at(declared, info, &instance_args);
+                        let TyKind::RuntimePack(elements) = elements.kind() else {
+                            return None;
+                        };
+                        elements.clone()
+                    })
+                }
                 _ => None,
             };
             for (index, argument) in collected.into_iter().enumerate() {
-                let ty = match pack {
-                    Some(elements) => match elements.get(index)? {
-                        CtValue::Type(ty) => ty.clone(),
-                        _ => return None,
-                    },
+                let ty = match &pack {
+                    Some(elements) => elements.get(index)?.clone(),
                     None => declared_ty(&collector.element)?,
                 };
                 applied_run.push(self.applied_value(argument.into_value(), &ty)?);
@@ -3380,8 +3637,13 @@ impl Checker {
     /// binders denotes wherever the body reads it at compile time: its
     /// parameter expression, or the application of the function lifted for
     /// an `Int` or a `Bool` that compiles to none (`comptime e = h(n)`).
-    /// `None` for a constant, or a value that denotes nothing.
+    /// `None` for a constant, a value that denotes nothing, or a display,
+    /// which is bound by the function lifted for it at its annotation
+    /// ([`Self::requested_binding`]).
     fn comptime_value_expression(&self, value: &Expr) -> Option<ParamExpr> {
+        if matches!(value.kind, ExprKind::ListLit(_) | ExprKind::TupleLit(_)) {
+            return None;
+        }
         let _lifting = self.lifting_position();
         let expression = self
             .compile_dependent_ct_expr(value)

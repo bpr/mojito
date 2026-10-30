@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A tuple or list display in a parameter position is its literal
+  constructor's application, symbolic or closed, as at the pin (R1529):
+  `g[(n, 1)]()`, `g[(1, String("a"))]()`, and `g[[n, 1]]()` over a
+  `List[Int]` parameter run where they were type mismatches, `Tag[(n + 1,
+  1)]` is `Tag[(1 + n, 1)]`, and an `Array` value parameter binds from a
+  display (R901). `Tuple(n, 1)` written out applies too, its collector
+  typed by the struct's own pack.
+
 - An implicit conversion selects an `@implicit` constructor with
   compile-time parameters of its own, solving them from the converted value
   and checking their bounds, as at the pin, so `v = String("hi")` over a

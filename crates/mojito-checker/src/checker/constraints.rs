@@ -154,8 +154,9 @@ impl Checker {
     /// for an initializer that applies any other callable, reads a
     /// declaration not yet registered, or names a type.
     pub(super) fn closed_module_constant(&self, value: &Expr) -> Option<CtValue> {
-        self.ct_value(value, Recording::Silent)
-            .ok()
+        self.frozen_display(value, Recording::Silent)
+            .and_then(Result::ok)
+            .or_else(|| self.ct_value(value, Recording::Silent).ok())
             .or_else(|| {
                 let _lifting = self.lifting_position();
                 self.compile_dependent_ct_expr(value)
@@ -1004,10 +1005,16 @@ impl Checker {
         self.ct_value(expr, Recording::Record)
     }
 
-    /// [`Self::eval_associated_ct`] of an element of a display, which the
-    /// display freezes element by element (R1529).
+    /// [`Self::eval_associated_ct`] of an element of a display a subscript
+    /// reads, which it freezes element by element (R1530).
     pub(super) fn eval_display_element(&self, element: &Expr) -> Result<CtValue, TypeError> {
         self.element_value(element, Recording::Record)
+    }
+
+    /// The frozen struct value of a closed fieldwise construction `expr`
+    /// ([`Self::frozen_construction`]). `None` for any other expression.
+    pub(super) fn frozen_struct_value(&self, expr: &Expr) -> Option<CtValue> {
+        self.frozen_construction(expr, Recording::Silent)?.ok()
     }
 
     /// Compile a compile-time expression into its typed parameter
@@ -1705,13 +1712,8 @@ impl Checker {
             })
     }
 
-    /// The value [`Self::eval_associated_ct`] transports. A tuple or list
-    /// is the aggregate of its elements' values, which may be symbolic: a
-    /// parameter expression has no aggregate node.
+    /// The value [`Self::eval_associated_ct`] transports.
     fn ct_value(&self, expr: &Expr, recording: Recording) -> Result<CtValue, TypeError> {
-        if let Some(aggregate) = self.aggregate_value(expr, recording) {
-            return aggregate;
-        }
         let built = self.build_ct(expr, recording)?;
         let folded = self.param_context.fold(&built).map_err(param_error)?;
         Ok(ct_transport(folded))
@@ -1836,14 +1838,16 @@ impl Checker {
                 staged
             }
             _ if let Some(frozen) = self.frozen_enum_case(expr) => self.ct_param(frozen?),
-            _ if let Some(aggregate) = self.aggregate_value(expr, recording) => {
-                self.ct_param(aggregate?)
-            }
+            // A tuple or list display is its literal constructor's
+            // application at its natural type.
+            _ if let Some(applied) = self.display_application(expr, None) => applied,
             // An element of a literal display (`[1, 2][i]`): `param_list.get`
-            // over the closed list.
-            ExprKind::Index { object, index } if matches!(object.kind, ExprKind::ListLit(_)) => {
+            // over the frozen list.
+            ExprKind::Index { object, index }
+                if let Some(list) = self.frozen_display(object, recording) =>
+            {
                 context
-                    .list_get(&build(object)?, &build(index)?)
+                    .list_get(&self.ct_param(list?)?, &build(index)?)
                     .map_err(param_error)
             }
             // A type application whose bracket argument parses as runtime
@@ -2779,9 +2783,12 @@ impl Checker {
         }
     }
 
-    /// A tuple's or list's value over its elements' values, which may be
-    /// symbolic. `None` for any other expression.
-    fn aggregate_value(
+    /// A list display's raw element list, or a tuple display's, each
+    /// element frozen ([`Self::element_value`]), which a subscript of the
+    /// display itself (`[1, 2][i]`, R1530) and a module display constant's
+    /// reads (`XS[1]`, `len(XS)`, `comptime for x in XS`) take element by
+    /// element. `None` for any other expression.
+    fn frozen_display(
         &self,
         expr: &Expr,
         recording: Recording,
@@ -2855,11 +2862,14 @@ impl Checker {
         }
     }
 
-    /// The value of an element of a display or of a frozen construction,
-    /// each frozen element by element (R1529): a closed
-    /// construction among them is its frozen struct value, as an aggregate
-    /// of applications has no parameter expression.
+    /// The value of an element of a frozen display
+    /// ([`Self::frozen_display`]) or of a frozen construction: a closed
+    /// construction among them is its frozen struct value, as a raw list of
+    /// applications has no parameter expression.
     fn element_value(&self, value: &Expr, recording: Recording) -> Result<CtValue, TypeError> {
+        if let Some(display) = self.frozen_display(value, recording) {
+            return display;
+        }
         self.frozen_construction(value, recording)
             .and_then(Result::ok)
             .map_or_else(|| self.ct_value(value, recording), Ok)

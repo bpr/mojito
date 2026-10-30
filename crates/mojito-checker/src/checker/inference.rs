@@ -2748,15 +2748,7 @@ impl Checker {
         } else if dict_elements(target).is_some() {
             (None, None)
         } else {
-            let collector = self
-                .structs
-                .get(name)
-                .and_then(|info| info.methods.get("__init__"))
-                .and_then(|sigs| sigs.iter().find(|sig| sig.variadic.is_some()))
-                .map(|sig| {
-                    method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
-                });
-            (collector, None)
+            (self.collector_constructor(name), None)
         };
         if record {
             self.set_collection_construction(
@@ -2768,6 +2760,19 @@ impl Checker {
             );
         }
         Ok(())
+    }
+
+    /// The lowered `__init__` of the struct `name` that takes a display's
+    /// elements as its positional collector, as a tuple display's
+    /// construction calls it (`Tuple(a, b)`).
+    pub(super) fn collector_constructor(&self, name: &str) -> Option<String> {
+        self.structs
+            .get(name)
+            .and_then(|info| info.methods.get("__init__"))
+            .and_then(|sigs| sigs.iter().find(|sig| sig.variadic.is_some()))
+            .map(|sig| {
+                method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
+            })
     }
 
     /// Record the construction comprehension `span` of `target` lowers as:
@@ -2801,7 +2806,7 @@ impl Checker {
     /// The exact lowered `__init__` overload of `target`'s struct that
     /// `is_literal` picks out by its marker keyword, with whether its `where`
     /// clause holds under `target`'s arguments.
-    fn literal_constructor(
+    pub(super) fn literal_constructor(
         &self,
         target: &Ty,
         is_literal: fn(&[String], bool) -> bool,

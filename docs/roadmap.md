@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1727**.
+Next free ID: **R1731**.
 
 ## Ordered Work
 
@@ -227,52 +227,91 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1529 A tuple or list display in a parameter position is frozen
-  element by element, not applied**
+- [ ] **R1729 A lifted compile-time initializer copies its result out of
+  a reference, so a non-`Copyable` element cannot be taken**
 
-  `aggregate_value` (`checker/constraints.rs`) reads `(n, 1)` and `[n, 1]`
-  as `CtValue` aggregates, where the pin keeps each as its literal
-  constructor's application (`Tuple(n, Int(1))`, `List(n, Int(1),
-  __list_literal__=NoneType(None))`), unfolded through the check even when
-  closed.
-  - A symbolic aggregate has no type (`ct_value_ty`), and contextual typing
-    is tried only for a closed value (`Checker::converts_to_parameter`).
-  - Probe: `g[(n, 1)]()` in `def f[n: Int]` over `def g[t: Tuple[Int,
-    Int]]()` fails with "type mismatch for value parameter 't': expected
-    Tuple[Int, Int], found (n, 1)". The pin prints `5 1` for `f[5]()`.
-  - Probe: `g[(1, String("a"))]()` over `def g[p: Tuple[Int, String]]()`
-    fails with "expected Tuple[Int, String], found (1,
-    $comptime$main$c0())". The pin prints `1 a`.
-  - Probe: `g[[n, 1]]()` over `def g[l: List[Int]]()` reading `comptime
-    len(l)` and `comptime l[0]` fails with "expected List[Int], found [n,
-    1]"; closed, `g[[5, 1]]()` fails the MIR verifier ("register type
-    Array[Int, 2], declared List[Int]"). The pin prints `2 5` for both.
-  - Probe: `var a: Tag[(n, 1)] = Tag[(n, 1)]()` and `Tag[(1 + n, 1)]`
-    against `Tag[(n + 1, 1)]` are rejected; the pin runs both.
-  - Probe: closed `Tag[(5, 1)]` against `Tag[(5, 2)]` must stay rejected, as
-    the pin rejects it naming `Tag[Tuple(Int(5), Int(2))]`.
-  - Probe: a closed construction inside a display is still frozen
-    (`Checker::element_value`, `checker/constraints.rs`), as a display of
-    applications has no parameter expression: `comptime r = [NC(1),
-    NC(2)][0]` in `assets/ok/ctfe_projection_of_temporary_in_body.mojo`.
-    Delete that freeze here.
-  - Probe: `comptime r = [mk(1), mk(2)][0]` over `def mk(n: Int) -> NC`, `NC`
-    only `Movable`, is lifted to a thunk whose return copies the element
-    out of `__getitem__`'s reference result, so it is rejected with "cannot
-    copy non-Copyable type 'NC'". The pin prints `1`.
-  - Probe: a display in a slot whose type has no `__list_literal__`
-    constructor, such as `Span[Int, _]`, applies `Array`'s literal
-    constructor, its natural type, then the slot's conversion. The library
-    case is `std.math.polynomial`'s symbolic `[Scalar[dtype](1.0), 2.0,
-    3.0]` (R1712).
-  - The lever: `build_ct` builds a display as the `Apply` of the
-    constructor `record_display_construction` selects for its contextual
-    type, as a struct construction is applied
-    (`Checker::called_application`). No new `ParamKind` node.
-    `aggregate_value` goes.
-  - Found while landing R1386 (2026-10-26).
-  - Depends on R1528, R1691 (`List`'s `__list_literal__=NoneType(None)`).
+  `comptime r = [mk(1), mk(2)][0]` over `def mk(n: Int) -> NC`, with `NC`
+  only `Movable`, is rejected with "cannot copy non-Copyable type 'NC'",
+  where the pin prints `1`.
+  - The thunk lifted for the initializer returns `__getitem__`'s reference
+    result by copy (`Checker::copy_compile_time_result`,
+    `checker/traits.rs`). The pin's compile-time materialization takes the
+    referent of the temporary it built.
+  - A run-time `return [mk(1), mk(2)][0]` is rejected at the pin too, so the
+    fix belongs to the thunk's result only, not to `return` in general.
+  - It blocks deleting the frozen display element (`Checker::element_value`)
+    in R1530: without the freeze, `comptime r = [NC(1), NC(2)][0]` in
+    `assets/ok/ctfe_projection_of_temporary_in_body.mojo` takes this route.
+  - Found while landing R1529 (2026-10-30).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1727 A `@fieldwise_init` struct that declares another `__init__`
+  has no compile-time fieldwise construction**
+
+  `one[Tag(8, "x")]()` over `def one[t: Tag]()` fails with "not an
+  associated comptime expression" when `Tag` is `@fieldwise_init` and also
+  declares `__init__(out self, *, copy: Self)`, where the pin prints `x`.
+  - `applicable_declarations` (`checker/comptime_validation.rs`) lists the
+    synthesized fieldwise `__init__` only when
+    `synthesizes_fieldwise_constructor` holds, which is false once the
+    struct declares any `__init__`. The run-time construction still calls
+    the fieldwise one.
+  - Inside a display the element falls back to its frozen struct value
+    (`Checker::frozen_struct_value`), so `tup[(1, Tag(8, "x"))]()` in
+    `assets/ok/value_parameter_materialized_per_use.mojo` runs only through
+    that freeze. Delete the fallback in `display_application` here.
+  - Probe: `tup[Tuple(1, Tag(8, "x"))]()` over `p: Tuple[Int, Tag]` fails
+    the same way; the pin prints `1`, `x`.
+  - Found while landing R1529 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1728 A module display constant is a raw element list, not its
+  literal constructor's application**
+
+  `show[L]()` over `comptime L = [1, 2, 3]` and `def show[xs: Array[Int,
+  3]]()` fails with "expected Array[Int, 3], found KGENParamList[Int]",
+  where the pin prints the elements.
+  - A module display constant holds a raw `CtValue::List` or
+    `CtValue::Tuple` (`Checker::closed_module_constant`,
+    `Checker::frozen_display`) or a lifted application typed as a raw
+    parameter list (`Checker::module_lifted_application`). At the pin it is
+    the `Array[__literal_size__=…](…)` or `Tuple(…)` application, read by
+    `__getitem_param__` and `__len__`.
+  - Its reads (`XS[1]`, `len(XS)`, `comptime for x in XS`) match the pin
+    today through the raw list. A tuple constant's whole-value use bridges
+    through `Checker::aggregate_application`.
+  - Probe: `LT[L]` over `comptime L = [5, 1]` and `struct LT[l: List[Int]]`
+    is rejected naming `KGENParamList[Int]`; the pin's rejection names
+    `Array[Int, Int(2)]`.
+  - The lever: hold the application at the annotation or the natural type,
+    and read it through a display sequence, as a local display binding is
+    read (`BoundDisplay`). `module_values` is serialized, so this bumps
+    `PACKAGE_FORMAT`.
+  - Found while landing R1529 (2026-10-30), from R901's probe.
+  - Depends on R1530 and R1643.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1730 The bundled `Array`'s list-literal constructor lacks
+  upstream's `__literal_size__` parameter**
+
+  The pin applies a list display at its natural type as
+  `Array[__literal_size__=Int(2)](Int(5), Int(1),
+  __list_literal__=NoneType(None))`, with `out self: Array[Self.T,
+  __literal_size__]`, where Mojito applies `Array[Int, 2].__init__(*values,
+  __list_literal__)` over `Self.length`.
+  - The bundled constructor (`stdlib/std/collections/array.mojo`) has no
+    compile-time parameter of its own, so a display's application names
+    the instance instead (`Array[Int, 2](5, 1, None)` in a mismatch).
+  - The lever: port upstream's signature, then bind `__literal_size__` from
+    the display's count in `record_array_literal_construction` and in
+    `Checker::literal_application`, which today requires a literal
+    constructor with no own parameters.
+  - Found while landing R1529 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1474 A predicate alias body or a struct header's condition is
   compiled without its binders in scope**
 
@@ -5228,8 +5267,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The pin identifies the two reads by structure. It still tells `L[0]`
     from `n`, which `assets/type_error/comptime_display_element_identity.mojo`
     pins for `L[0] * 2` against `L[1]`.
-  - The lever once R1529 lands: bind each local display binding as its
-    literal constructor's application, which identifies by structure.
+  - The lever: bind each local display binding as its literal
+    constructor's application (`Checker::display_application`), which
+    identifies by structure.
+  - Probe: `comptime x = (3, 4)` then `g[x]()` over `def g[t: Tuple[Int,
+    Int]]()` in `main` fails with "not a compile-time Int constant: x",
+    where the pin prints `7` for `t[0] + t[1]`. A bracket display
+    (`g[(3, 4)]()`) already binds as the application.
   - Found while landing a display binding read in a type or a parameter
     argument (2026-10-06).
   - Depends on R1529.
@@ -5256,25 +5300,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R901 An `Array` value parameter is rejected**
-
-  Problem: `def show[xs: Array[Int, 3]]()` called as `show[L]()` over
-  `comptime L = [1, 2, 3]`, or as `show[[4, 5, 6]]()`, fails with "type
-  mismatch for value parameter 'xs': expected Array[Int, 3], found a
-  non-materializable compile-time value", where the pin prints the
-  elements; `struct Box[xs: Array[Int, 2]]` as `Box[[1, 2]]` fails the
-  same way.
-  - `Checker::ct_value_ty` (`checker/traits.rs`) answers `None` for a
-    display application, and `List[T]` rather than `Array[T, n]` for a
-    `CtValue::List`.
-  - The bound value is the frozen `Array` a display's CTFE builds, which
-    `native::mono` already materializes as one `Const::Value` per read.
-  - Shrunk by R1529, which binds a closed list display as its
-    constructor's application rather than a frozen `CtValue::List`.
-  - Found while landing R789 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1208 A parameterized `comptime` value's declared type cannot read
   the member's own parameters**
@@ -7341,8 +7366,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     Withdrawing it may need upstream's `load_from_mem` reading of
     `__getitem_param__` over an application; the session that takes it
     decides.
+  - Delete the frozen display element with the arm
+    (`Checker::frozen_display`, `Checker::element_value`), including
+    `comptime_display_subscript`'s reader; `comptime r = [NC(1), NC(2)][0]`
+    then needs R1729.
   - Found while planning R1472 (2026-10-27).
-  - Depends on R1529.
+  - Depends on R1729.
   - Model: Opus, Not Planned.
 - [ ] **R1499 `@explicit_destroy` on a `trait` does not parse**
 
@@ -10935,9 +10964,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   constant: not an associated comptime expression", where the pin prints
   `17.0 [6.0, 17.0]` for `p(Float64(2))` and `p(SIMD[DType.float32, 2](1,
   2))`.
-  - The symbolic display fails at the call site (R1529). A closed one,
-    `f[[1, 2, 3]]()` over `def f[c: Span[Int, _]]()`, fails the binding:
-    "expected Span[Int], found List[Int]". The pin prints `3`.
+  - A display at a `Span` slot applies its natural `Array` and fails the
+    conversion: `f[[1, 2, 3]]()` over `def f[c: Span[Int, _]]()` reports
+    "expected Span[Int], found Array[Int, 3]". The pin prints `3`.
   - At the pin the display is its natural `Array[T, n]`, converted by
     `Span`'s `@implicit` `ref[Self.origin] array: Array[Self.T, _]`
     constructor (R1725, R1644).

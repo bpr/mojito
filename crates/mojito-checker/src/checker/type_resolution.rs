@@ -2981,14 +2981,47 @@ impl Checker {
                     // them (`h(L[0])`, `n > 2`, `pick(n)`) is the application
                     // of the function lifted for it.
                     let _lifting = self.lifting_position();
-                    let value = match self.eval_associated_ct(expr) {
-                        Ok(value) => value,
-                        Err(error) => match self
-                            .lifted_application(expr)
-                            .filter(|expression| expression.as_constant().is_none())
-                        {
-                            Some(expression) => CtValue::Expr(expression),
-                            None => return Err(error),
+                    // A tuple or list display at a struct slot is the
+                    // application of the literal constructor its slot
+                    // selects, and so is a module display constant's raw
+                    // element list, at its natural type.
+                    let applied = |applied: Result<ParamExpr, TypeError>| {
+                        applied.map_err(|error| match error {
+                            TypeError::TypeMismatch {
+                                expected, found, ..
+                            } => TypeError::TypeMismatch {
+                                expected,
+                                found,
+                                context: format!("value parameter '{name}'"),
+                            },
+                            error => error,
+                        })
+                    };
+                    let display = matches!(ty.kind(), TyKind::Struct(..))
+                        .then(|| self.display_application(expr, Some(ty)))
+                        .flatten();
+                    let value = match display {
+                        Some(display) => {
+                            return Ok(self.applied_display_argument(expr, applied(display)?));
+                        }
+                        None => match self.eval_associated_ct(expr) {
+                            Ok(value) if matches!(ty.kind(), TyKind::Struct(..)) => {
+                                match self.aggregate_application(&value, ty) {
+                                    Some(aggregate) => {
+                                        return Ok(self
+                                            .applied_display_argument(expr, applied(aggregate)?));
+                                    }
+                                    None => value,
+                                }
+                            }
+                            Ok(value) => value,
+                            Err(error) => match self
+                                .lifted_application(expr)
+                                .filter(|expression| expression.as_constant().is_none())
+                            {
+                                Some(expression) => CtValue::Expr(expression),
+                                None => return Err(error),
+                            },
                         },
                     };
                     let value = self.string_parameter_value(value, ty);
@@ -3040,8 +3073,7 @@ impl Checker {
                             TyArg::Val(lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int));
                         self.record_at(expr.source_span()).argument_attribute = Some(lanes.clone());
                         return Ok(lanes);
-                    } else if !coerces(&actual, ty) && !self.converts_to_parameter(expr, &value, ty)
-                    {
+                    } else if !coerces(&actual, ty) {
                         // A struct parameter converts its argument through
                         // the `@implicit` constructor a run-time argument's
                         // own type selects (a literal its `IntLiteral` one).
@@ -3895,15 +3927,13 @@ impl Checker {
         ))
     }
 
-    /// Whether the closed value argument `expr` types at its declared
-    /// parameter type `ty` as a run-time argument does, recording the
-    /// implicit conversions its elements need (a literal element at a
-    /// `String` is `String.__init__(StringLiteral)`).
-    fn converts_to_parameter(&self, expr: &Expr, value: &CtValue, ty: &Ty) -> bool {
-        !matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))
-            && self
-                .infer_with_expected(expr, ty, true)
-                .is_ok_and(|converted| coerces(&converted, ty))
+    /// The bracket argument `expr`, a display or a module display constant,
+    /// as its literal constructor's application: the parameter value MIR
+    /// reads, never the display's run-time value.
+    fn applied_display_argument(&self, expr: &Expr, application: ParamExpr) -> TyArg {
+        let applied = TyArg::Val(CtValue::Expr(application));
+        self.record_at(expr.source_span()).argument_attribute = Some(applied.clone());
+        applied
     }
 
     /// Resolve the argument of a trait-valued parameter whose type is
