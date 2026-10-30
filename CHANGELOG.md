@@ -1888,6 +1888,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A chained comparison whose middle operand one link converts and the other
+  does not, as `SIMD._shuffle_list`'s `0 <= mask[i] < 2 * Self.length`
+  over a `SIMDLength`, or `x < 1 < y` over a `Float64` and an `Int`, now
+  runs on both backends and in a `comptime assert`, where it failed MIR
+  verification: the middle is evaluated once and each link converts it
+  as that link's dunder binds it (R1684).
+
 - A bare name as a `comptime if` leaf (`comptime if y:` over a `Float64`
   parameter, `comptime if n == 1 and alias:` over a local `Optional`
   binding) now converts through its `Bool(x)` as at the pin (R1470): the

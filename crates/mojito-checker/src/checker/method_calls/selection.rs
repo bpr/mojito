@@ -170,84 +170,33 @@ impl Checker {
     ) -> mojito_checked::checked::CheckedCallBoundary {
         use mojito_checked::checked::{
             CheckedCallArgumentBoundary, CheckedCallArgumentSource, CheckedCallBoundary,
-            CheckedCallValueAdjustment,
         };
 
         let records = self.node_facts.borrow();
-        let argument = |source: CheckedCallArgumentSource,
-                        expression: &Expr|
-         -> CheckedCallArgumentBoundary {
-            let value_source = expression.source_span();
-            let facts = records.get(&value_source).unwrap_or(&NodeFacts::EMPTY);
-            let adjustments =
-                if matches!(facts.ty.as_ref().map(Ty::kind), Some(TyKind::Overload(_)))
-                    && let Some(target) = &facts.overload_target
-                {
-                    vec![CheckedCallValueAdjustment::ResolveCallable {
-                        target: target.clone(),
-                    }]
-                } else if let Some(target) = &facts.implicit_conversion {
-                    if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
-                        facts
-                            .implicit_conversion_type
-                            .as_ref()
-                            .map(|ty| {
-                                vec![CheckedCallValueAdjustment::SplatScalar { target: ty.clone() }]
-                            })
-                            .unwrap_or_default()
-                    } else if target == mojito_symbol::symbol::SIMD_LENGTH_CONVERSION {
-                        facts
-                            .implicit_conversion_type
-                            .as_ref()
-                            .map(|ty| {
-                                vec![CheckedCallValueAdjustment::SimdFromLength {
-                                    target: ty.clone(),
-                                }]
-                            })
-                            .unwrap_or_default()
-                    } else if mojito_symbol::symbol::is_index_normalization_symbol(target) {
-                        vec![CheckedCallValueAdjustment::IndexNormalization {
-                            target: target.clone(),
-                        }]
-                    } else {
-                        vec![CheckedCallValueAdjustment::ImplicitConversion {
-                            target: target.clone(),
-                        }]
-                    }
-                } else {
-                    facts
-                        .adjustment
-                        .as_deref()
-                        .and_then(|adjustment| match adjustment {
-                            mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(
-                                target,
-                            ) => Some(vec![CheckedCallValueAdjustment::MaterializeLiteral {
-                                target: target.clone(),
-                            }]),
-
-                            _ => None,
-                        })
-                        .unwrap_or_default()
-                };
-            let prior = before
-                .invalidations
-                .get(&value_source)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            let call_invalidations = facts
-                .interior_invalidations
-                .iter()
-                .flatten()
-                .filter(|fact| !prior.contains(fact))
-                .cloned()
-                .collect();
-            CheckedCallArgumentBoundary {
-                source,
-                value_source,
-                adjustments,
-                invalidations: call_invalidations,
-            }
-        };
+        let argument =
+            |source: CheckedCallArgumentSource, expression: &Expr| -> CheckedCallArgumentBoundary {
+                let value_source = expression.source_span();
+                let facts = records.get(&value_source).unwrap_or(&NodeFacts::EMPTY);
+                let adjustments = call_value_adjustments(facts);
+                let prior = before
+                    .invalidations
+                    .get(&value_source)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let call_invalidations = facts
+                    .interior_invalidations
+                    .iter()
+                    .flatten()
+                    .filter(|fact| !prior.contains(fact))
+                    .cloned()
+                    .collect();
+                CheckedCallArgumentBoundary {
+                    source,
+                    value_source,
+                    adjustments,
+                    invalidations: call_invalidations,
+                }
+            };
 
         let arguments = args
             .iter()
@@ -555,5 +504,56 @@ impl Checker {
             positional_overflow: overflow,
             keyword_overflow,
         })
+    }
+}
+
+/// The adaptations `facts` record at one source operand, as a call's
+/// boundary freezes them for that call alone.
+pub(in crate::checker) fn call_value_adjustments(
+    facts: &NodeFacts,
+) -> Vec<mojito_checked::checked::CheckedCallValueAdjustment> {
+    use mojito_checked::checked::CheckedCallValueAdjustment;
+    if matches!(facts.ty.as_ref().map(Ty::kind), Some(TyKind::Overload(_)))
+        && let Some(target) = &facts.overload_target
+    {
+        vec![CheckedCallValueAdjustment::ResolveCallable {
+            target: target.clone(),
+        }]
+    } else if let Some(target) = &facts.implicit_conversion {
+        if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
+            facts
+                .implicit_conversion_type
+                .as_ref()
+                .map(|ty| vec![CheckedCallValueAdjustment::SplatScalar { target: ty.clone() }])
+                .unwrap_or_default()
+        } else if target == mojito_symbol::symbol::SIMD_LENGTH_CONVERSION {
+            facts
+                .implicit_conversion_type
+                .as_ref()
+                .map(|ty| vec![CheckedCallValueAdjustment::SimdFromLength { target: ty.clone() }])
+                .unwrap_or_default()
+        } else if mojito_symbol::symbol::is_index_normalization_symbol(target) {
+            vec![CheckedCallValueAdjustment::IndexNormalization {
+                target: target.clone(),
+            }]
+        } else {
+            vec![CheckedCallValueAdjustment::ImplicitConversion {
+                target: target.clone(),
+            }]
+        }
+    } else {
+        facts
+            .adjustment
+            .as_deref()
+            .and_then(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(target) => {
+                    Some(vec![CheckedCallValueAdjustment::MaterializeLiteral {
+                        target: target.clone(),
+                    }])
+                }
+
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 }

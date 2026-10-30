@@ -565,12 +565,17 @@ impl std::fmt::Display for ComptimeSequence {
 /// It is what a lone operator records: the selected dunder's lowered symbol
 /// (`None` for a built-in comparison), and, for a struct's dunder, that
 /// method call's contract (`None` for a bound's requirement) and the
-/// compile-time arguments a generic dunder's call solved.
+/// compile-time arguments a generic dunder's call solved. A middle
+/// operand, evaluated once and unconverted, is adapted per link: its
+/// `left_adjustments` where the link reads it as its left operand, its
+/// `right_adjustments` where the link binds it as its argument.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCompareLink {
     pub target: Option<String>,
     pub call: Option<Box<CheckedCallContract>>,
     pub instantiated_args: Vec<mojito_types::types::TyArg>,
+    pub left_adjustments: Vec<CheckedCallValueAdjustment>,
+    pub right_adjustments: Vec<CheckedCallValueAdjustment>,
 }
 
 /// How a `^` transfer takes its source, as upstream's `emitTransfer`

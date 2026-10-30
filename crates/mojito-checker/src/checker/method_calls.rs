@@ -24,6 +24,7 @@ mod type_receivers;
 
 use call_contract::SelectedMethodCall;
 pub(super) use pop_ops::mlir_attribute;
+pub(in crate::checker) use selection::call_value_adjustments;
 
 /// One value-receiver method call as the receiver families see it: the call
 /// expression's span, the receiver and its inferred type, and the arguments.

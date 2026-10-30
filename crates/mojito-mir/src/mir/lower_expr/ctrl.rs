@@ -1037,6 +1037,21 @@ impl<'a> Flatten<'a> {
         ChainMiddle::Slot(variable, ty)
     }
 
+    /// `value`, a middle operand read unconverted, as one link takes it:
+    /// through `adjustments`, the adaptations that link's check froze.
+    fn chain_link_operand(
+        &mut self,
+        adjustments: &[mojito_checked::checked::CheckedCallValueAdjustment],
+        parameter_ty: Option<Ty>,
+        value: Reg,
+        site: &SourceSpan,
+    ) -> Reg {
+        if adjustments.is_empty() {
+            return value;
+        }
+        self.apply_call_value_adjustments(adjustments, parameter_ty, value, site.clone())
+    }
+
     /// Lower link `index` of chain `chain` and every link after it, the
     /// left operand read from `prev` (`first` for the first link): the
     /// comparison, and for a link before the last an `if` on it whose then
@@ -1069,6 +1084,20 @@ impl<'a> Flatten<'a> {
         let cur = self.lower_operator_operand(chain, operand);
         self.close_call_setup(None);
         let link = links.get(index);
+        let (left, argument) = match link {
+            Some(link) => {
+                let parameter_ty = link
+                    .call
+                    .as_ref()
+                    .and_then(|call| call.arguments.first())
+                    .map(|argument| argument.parameter_ty.clone());
+                let left = self.chain_link_operand(&link.left_adjustments, None, left, &sp);
+                let argument =
+                    self.chain_link_operand(&link.right_adjustments, parameter_ty, cur, &sp);
+                (left, argument)
+            }
+            None => (left, cur),
+        };
         let resolved = link.and_then(|link| link.target.clone());
         // A link records no effect of its own: a dispatched link raises
         // what the chain does.
@@ -1089,7 +1118,7 @@ impl<'a> Flatten<'a> {
                 })
             }),
         };
-        let cmp = self.emit_comparison(sp.clone(), op, left, cur, dispatch);
+        let cmp = self.emit_comparison(sp.clone(), op, left, argument, dispatch);
         if index + 1 == rest.len() {
             return cmp;
         }

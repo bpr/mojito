@@ -508,7 +508,12 @@ impl Checker {
     /// its dunder's call. The chain's record holds, per link, the dunder
     /// that link selected ([`CheckedCompareLink`]): `infer_infix` records
     /// it at the chain's own occurrence, as it would at a lone operator,
-    /// and the link takes it from there. Every operand a link's dunder
+    /// and the link takes it from there. A middle operand is evaluated once,
+    /// unconverted, and each of its two links converts it as that link's
+    /// dunder binds it, as upstream's call binding converts an argument per
+    /// call: the link takes the conversion its check recorded at the middle
+    /// (`0 <= n < w`, whose `n: SIMDLength` the first link converts to `Int`
+    /// and the second does not). Every operand a link's dunder
     /// reads is read in place, and a temporary end is its link's read
     /// temporary, destroyed once that link's dunder returns. Only the first
     /// middle operand outlives its link: right after the first link it
@@ -524,7 +529,7 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         let mut left = first;
         let mut links = Vec::with_capacity(rest.len());
-        for (op, right) in rest {
+        for (index, (op, right)) in rest.iter().enumerate() {
             let membership = matches!(op, InfixOp::In | InfixOp::NotIn);
             let site = (!membership).then(|| span.clone());
             if self.infer_infix(site, *op, left, right)? != TyKind::Bool {
@@ -533,6 +538,16 @@ impl Checker {
                     operands: "a chained comparison must compare to Bool".to_string(),
                 });
             }
+            let left_adjustments = if index > 0 {
+                self.take_middle_conversion(left)
+            } else {
+                Vec::new()
+            };
+            let right_adjustments = if index + 1 < rest.len() {
+                self.take_middle_conversion(right)
+            } else {
+                Vec::new()
+            };
             let target = self.clear_fact(&span, |facts| facts.overload_target.take());
             let call = self.clear_fact(&span, |facts| facts.selected_call.take());
             self.clear_fact(&span, |facts| facts.declared_result.take());
@@ -553,6 +568,8 @@ impl Checker {
                 target,
                 call,
                 instantiated_args,
+                left_adjustments,
+                right_adjustments,
             });
             left = right;
         }
@@ -571,6 +588,29 @@ impl Checker {
         }
         self.record_at(span).compare_links = Some(links);
         Ok(Ty::bool())
+    }
+
+    /// Take the conversion a chain link's check recorded at `middle`, a
+    /// middle operand, off its record, frozen as that link's own
+    /// adaptations ([`super::method_calls::call_value_adjustments`]).
+    fn take_middle_conversion(
+        &self,
+        middle: &Expr,
+    ) -> Vec<mojito_checked::checked::CheckedCallValueAdjustment> {
+        let mut records = self.node_facts.borrow_mut();
+        let Some(facts) = records.get_mut(&middle.source_span()) else {
+            return Vec::new();
+        };
+        let adjustments = super::method_calls::call_value_adjustments(facts);
+        if facts.implicit_conversion.take().is_some() {
+            facts.implicit_conversion_type = None;
+        } else if matches!(
+            facts.adjustment.as_deref(),
+            Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
+        ) {
+            facts.adjustment = None;
+        }
+        adjustments
     }
 
     /// Type `left op right` over a struct or a type parameter as upstream's

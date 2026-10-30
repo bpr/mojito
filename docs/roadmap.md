@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1690**.
+Next free ID: **R1691**.
 
 ## Ordered Work
 
@@ -2904,27 +2904,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: require `designates_place` (or a mutable reference result) of
     every `mut` argument beside those two checks.
   - Found while landing R1503 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1684 A chained comparison whose middle operand is a struct and
-  whose left operand converts dispatches the wrong operator**
-
-  `0 <= s < 2 * SIMDLength(2)` over `s = SIMDLength(3)` fails MIR
-  verification with "argument 0 of 'SIMD.__le__' has type SIMDLength",
-  where the pin prints `True`.
-  - Each link alone runs, and so does the `and` spelling.
-  - Site: `Checker::infer_compare_chain` (`checker/inference.rs`) and its
-    MIR lowering: the left link's `__le__` receives the unconverted
-    `SIMDLength` middle operand.
-  - Probe: the same chain in a `comptime assert` over a parameter fails
-    compile-time evaluation with "operator Le is not defined for Int and
-    None".
-  - Probe: inside `comptime for` over a `StaticTuple[SIMDLength, 2]`
-    element, `inline-parametric` fails with "binding of Int to a slot of
-    type SIMDLength".
-  - This is `SIMD._shuffle_list`'s `0 <= mask[i] < 2 * Self.length`.
-  - Found while planning R1671 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11976,6 +11955,21 @@ I/O residues left behind the landed files, streams, paths, and tempfile stage.
 recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
+
+- [ ] **R1690 `StringSpan` declares no ordering comparisons**
+
+  `StaticString("a") < StaticString("b")` fails to check with "operator
+  '<' is not defined for StringSpan and StringSpan", where the pin prints
+  `True`.
+  - Upstream's `string_span.mojo` declares `__lt__`, `__gt__`, and
+    `__le__` over a `StringSpan` and over a `String`. Mojito's `StringSpan`
+    (`stdlib/std/string.mojo`) declares only `__eq__` and `__ne__`.
+  - Porting those dunders from upstream's file is the fix.
+  - Probe: `a < s < c` over `StaticString` ends and a `String` middle,
+    which the pin prints `True` for, fails the same way.
+  - Found while landing R1684 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1679 `Codepoint`, `StringSpan`, and `Span` live outside
   upstream's modules**

@@ -96,6 +96,7 @@ assets/ok/capturing_lambda_array_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/capturing_lambda_display_inlined.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/capturing_lambda_storage.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/chained_comparison_converted_middle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison_link_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison_operand_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closure_storage_method_binders.mojo	-	ineligible	no-scalar-entry-shape

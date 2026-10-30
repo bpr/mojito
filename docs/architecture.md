@@ -2633,7 +2633,11 @@ record holds one `CheckedCompareLink` per link (the selected dunder and,
 for a struct's, that method call's contract, which the check moves off the
 chain's occurrence after each link), and MIR emits each link as that
 dunder's call, with the contract's receiver convention
-(`Flatten::emit_comparison`, `struct_operator_method`). Right after the first link, the first middle
+(`Flatten::emit_comparison`, `struct_operator_method`). A middle operand is
+evaluated once, unconverted: the conversion each link's check records at it
+moves onto that link (`left_adjustments`, `right_adjustments`), and MIR
+applies it to the link's own read (`Flatten::apply_call_value_adjustments`),
+as upstream's call binding converts an argument per call. Right after the first link, the first middle
 operand becomes an owned temporary in a hidden `$chain_middle` slot (a
 place copied, a temporary or `^` moved), which drop elaboration destroys
 after the second link or on the first link's false edge; a later middle

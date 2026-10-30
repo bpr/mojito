@@ -811,6 +811,20 @@ impl<'a> Flatten<'a> {
             .find(|argument| argument.source == source)
             .map(|argument| argument.adjustments.as_slice())
             .unwrap_or_default();
+        self.apply_call_value_adjustments(adjustments, parameter_ty, raw, site)
+    }
+
+    /// Apply `adjustments`, adaptations the checker froze for one call, to
+    /// `raw`, an already evaluated source register; a converting
+    /// constructor's result is `parameter_ty`, which an unadapted value
+    /// materializes to.
+    pub(super) fn apply_call_value_adjustments(
+        &mut self,
+        adjustments: &[mojito_checked::checked::CheckedCallValueAdjustment],
+        parameter_ty: Option<Ty>,
+        raw: Reg,
+        site: SourceSpan,
+    ) -> Reg {
         let mut value = raw;
         for adjustment in adjustments {
             value = match adjustment {
