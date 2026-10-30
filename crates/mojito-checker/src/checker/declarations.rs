@@ -2427,6 +2427,20 @@ impl Checker {
             });
     }
 
+    /// The initializer's own list an explicit `T.__init__[ks](…)` spelled
+    /// for the construction at `span`, marked bound; empty for any other
+    /// construction.
+    fn spelled_initializer_args_at(&self, span: &SourceSpan) -> Vec<mojito_ast::ast::ParamArg> {
+        self.spelled_initializer_args
+            .borrow()
+            .get(span)
+            .map(|(arguments, bound)| {
+                bound.set(true);
+                arguments.clone()
+            })
+            .unwrap_or_default()
+    }
+
     /// The exact lowered `__init__` a zero-argument construction of `target`
     /// selects, as upstream's `emitConstructorCall` resolves `C()` with no
     /// operands: among the overloads no argument binds whose `where` clause
@@ -2608,7 +2622,15 @@ impl Checker {
         self.construction_immutable_binders
             .borrow_mut()
             .insert(span.clone(), immutable_binders);
-        if !kwargs.is_empty() && args.is_empty() && kwargs.len() == 1 && kwargs[0].name == "copy" {
+        // The initializer's own list of an explicit `T.__init__[ks](…)`:
+        // the construction's bracket is always the type's.
+        let own_args = self.spelled_initializer_args_at(span);
+        if own_args.is_empty()
+            && !kwargs.is_empty()
+            && args.is_empty()
+            && kwargs.len() == 1
+            && kwargs[0].name == "copy"
+        {
             return self.infer_copy_construction(
                 span,
                 name,
@@ -2625,6 +2647,9 @@ impl Checker {
         // argument types — exactly as the fieldwise path unifies field types.
         if let Some(sigs) = info.methods.get("__init__") {
             if info.decls.is_empty() {
+                // A bracket on a struct without parameters is the pin's
+                // "unexpected parameter".
+                self.resolve_use_params(name, &[], param_args, &[], &[])?;
                 let mut matches = Vec::new();
                 // The reason the last candidate failed its origin binding, so a
                 // miss caused by an explicit-origin or pointer-permission
@@ -2652,7 +2677,7 @@ impl Checker {
                         &sig.params,
                         sig.variadic.as_ref(),
                         sig.kw_variadic.as_ref(),
-                        param_args,
+                        &own_args,
                         args,
                         kwargs,
                     )
@@ -2745,11 +2770,11 @@ impl Checker {
                 if let Some(target) = &selected.lowered_name {
                     self.record_at(span.clone()).overload_target = Some(target.clone());
                 }
+                // The own list is no bracket of the construction: its
+                // arguments reach MIR in the recorded instantiation alone.
                 self.record_bracket_attributes(
                     span.clone(),
-                    partitioned
-                        .brackets
-                        .scatter(selected.bracket_attributes.clone()),
+                    partitioned.brackets.scatter(Vec::new()),
                 );
                 self.record_construction_instantiation(
                     span,
@@ -2917,6 +2942,7 @@ impl Checker {
                 let own = self.solve_constructor_own_params(
                     name,
                     sig,
+                    (&own_args, &struct_subst),
                     struct_bound.iter().cloned().zip(arg_tys.iter().cloned()),
                 )?;
                 self.record_construction_instantiation(
@@ -3111,7 +3137,7 @@ impl Checker {
                             .collect::<Vec<_>>();
                         self.solve_refined_construction(
                             name,
-                            sig,
+                            (sig, &own_args),
                             refined,
                             param_args,
                             constructed,
@@ -3192,6 +3218,7 @@ impl Checker {
                             self.solve_constructor_own_params(
                                 name,
                                 sig,
+                                (&own_args, &bindings.types),
                                 patterns
                                     .iter()
                                     .zip(&arg_tys)
@@ -3494,6 +3521,8 @@ impl Checker {
         if !info.fieldwise_init {
             return Err(TypeError::NoConstructor(name.to_string()));
         }
+        // The synthesized constructor has no parameters of its own.
+        self.resolve_use_params(&format!("{name}.__init__"), &[], &own_args, &[], &[])?;
         // The synthesized constructor names its parameters after the fields:
         // keyword arguments bind by name, and the fieldwise tail below sees
         // the arguments in field order.
@@ -4459,6 +4488,7 @@ impl Checker {
         let own = self.solve_constructor_own_params(
             name,
             sig,
+            (&[], &TySubst::new()),
             std::iter::once((expected.clone(), arg_ty.clone())),
         )?;
         let expected = own.apply(self, &expected)?;
@@ -4607,33 +4637,38 @@ impl Checker {
     }
 
     /// An `__init__`'s own compile-time parameters (`__init__[other_dtype:
-    /// DType, //](out self, value: SIMD[other_dtype, Self.length])`), solved
-    /// from its arguments against its parameter types with the struct's
-    /// binders already substituted.
+    /// DType, //](out self, value: SIMD[other_dtype, Self.length])`), bound
+    /// from the list an explicit `T.__init__[ks](…)` spells and solved from
+    /// its arguments against its parameter types, the struct's binders
+    /// `struct_subst` solves already substituted in both (`__init__[*values:
+    /// Self.E]` of `T[Int, 3]` takes `Int` values).
     fn solve_constructor_own_params(
         &self,
         name: &str,
         sig: &MethodSig,
+        (explicit, struct_subst): (&[mojito_ast::ast::ParamArg], &TySubst),
         bound: impl Iterator<Item = (Ty, Ty)>,
     ) -> Result<OwnParameters, TypeError> {
+        let initializer = format!("{name}.__init__");
         if sig.decls.is_empty() {
-            return Ok(OwnParameters::default());
+            return self
+                .resolve_use_params(&initializer, &[], explicit, &[], &[])
+                .map(|_| OwnParameters::default());
         }
+        let decls = sig
+            .decls
+            .iter()
+            .map(|decl| substituted_value_decl(decl, struct_subst).unwrap_or_else(|| decl.clone()))
+            .collect::<Vec<_>>();
         let (patterns, actuals): (Vec<Ty>, Vec<Ty>) = bound.unzip();
         let BoundParameters {
             mut subst,
             arguments,
             ..
-        } = self.resolve_use_params(
-            &format!("{name}.__init__"),
-            &sig.decls,
-            &[],
-            &patterns,
-            &actuals,
-        )?;
-        unify_through_callable_bounds(&sig.decls, &mut subst)?;
+        } = self.resolve_use_params(&initializer, &decls, explicit, &patterns, &actuals)?;
+        unify_through_callable_bounds(&decls, &mut subst)?;
         Ok(OwnParameters {
-            values: Self::value_argument_environment(&sig.decls, &arguments),
+            values: Self::value_argument_environment(&decls, &arguments),
             subst,
             arguments,
         })
@@ -4650,7 +4685,7 @@ impl Checker {
     fn solve_refined_construction(
         &self,
         name: &str,
-        sig: &MethodSig,
+        (sig, explicit): (&MethodSig, &[mojito_ast::ast::ParamArg]),
         refined: &Ty,
         param_args: &[mojito_ast::ast::ParamArg],
         constructed: Option<&Ty>,
@@ -4724,15 +4759,18 @@ impl Checker {
             }))
             .collect();
         // A default of the initializer's own never feeds the struct: a
-        // refinement naming an own parameter no argument and no spelled
-        // instance determines leaves its struct parameter uninferred.
+        // refinement naming an own parameter no argument, no explicit own
+        // argument, and no spelled instance determines leaves its struct
+        // parameter uninferred.
+        let spelled_own = bracket_bindings(&format!("{name}.__init__"), &sig.decls, explicit)?;
         for ((decl, argument), defined) in decls.iter().zip(&refinement).zip(&defined) {
             if !defined || known.is_some() {
                 continue;
             }
-            let undetermined = sig.decls.iter().any(|own| {
+            let undetermined = sig.decls.iter().zip(&spelled_own).any(|(own, spelled)| {
                 let own = std::slice::from_ref(own);
-                mentioned_binder(argument, own).is_some()
+                spelled.is_empty()
+                    && mentioned_binder(argument, own).is_some()
                     && !own_patterns.iter().any(|(pattern, _)| {
                         mentioned_binder(&TyArg::Ty(pattern.clone()), own).is_some()
                     })
@@ -4744,7 +4782,12 @@ impl Checker {
                 });
             }
         }
-        let own = self.solve_constructor_own_params(name, sig, own_patterns.into_iter())?;
+        let own = self.solve_constructor_own_params(
+            name,
+            sig,
+            (explicit, &TySubst::new()),
+            own_patterns.into_iter(),
+        )?;
         let solved = own.apply(self, refined)?;
         let solved_refinement = mojito_types::types::nominal_parts(&solved)
             .map(|(_, arguments)| arguments.into_owned())

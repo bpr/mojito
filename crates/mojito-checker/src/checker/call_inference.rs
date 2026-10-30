@@ -512,7 +512,9 @@ impl Checker {
                 .iter()
                 .all(|keyword| matches!(keyword.name.as_str(), "mlir_value" | "copy"))
         };
-        if self.probe(construct).is_err() && rule_served() {
+        // An explicit initializer list binds only a declared initializer.
+        let explicit_own = self.spelled_initializer_args.borrow().contains_key(span);
+        if self.probe(construct).is_err() && !explicit_own && rule_served() {
             return None;
         }
         Some(construct().and_then(|ty| {

@@ -469,8 +469,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   from the brace's, checks it, and records
   `SemanticAdjustment::SpelledConstruction` (`record_spelled_construction`,
   shared with t-strings and with `infer_initializer_call`, which spells an
-  explicit `T.__init__[ks](…)` over a type-spelling receiver as the
-  construction `T(…)`), which `mojito-checked`'s arena builder answers at
+  explicit `T[ps].__init__[ks](…)` over a type-spelling receiver as the
+  construction `T[ps](…)`, its bracket the type's, and keeps `[ks]` in the
+  checker-only `spelled_initializer_args` by the spelled call; a re-spelled
+  construction (`infer_spelled`: `Self(…)` as the struct's, an alias's)
+  takes the entry over, `infer_construction_of` binds it to the selected
+  initializer's own parameters and marks it bound, and an unbound list (a
+  type parameter's construction) is rejected as unsupported), which `mojito-checked`'s arena builder answers at
   the sugar's location; the sugar's node operand is that construction, so
   HIR lowers it in the sugar's place. A contextual type with no closed
   spelling (over a type parameter, a symbolic `SIMD`, a raw list, an origin
@@ -1803,8 +1808,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   record, `Checker::record_construction_instantiation`
   (`checker/declarations.rs`), holds the struct's arguments then the
   constructor's own, value binders included, which
-  `Checker::solve_constructor_own_params` solves from the arguments against
-  the parameter types at the struct's binders (`OwnParameters`), and
+  `Checker::solve_constructor_own_params` binds from an explicit
+  `T.__init__[ks]` list and solves from the arguments against the
+  parameter types, both at the struct's binders (`OwnParameters`) — a
+  construction's own bracket is the type's alone, so the own arguments
+  reach MIR only in this record — and
   `infer_call` binds a construction's from its
   declaration's first parameter); the checker closes a method's own value
   binders, and its member reads on concrete subjects, in its result

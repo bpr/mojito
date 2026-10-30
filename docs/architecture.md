@@ -1746,6 +1746,10 @@ or lane binder (the checker closes the binder in the call's result type),
 and a body whose `comptime if` or `comptime for` reads only its own binders,
 which the elaborator keeps in the template (`comptime/elab.rs:def_body`)
 and decides per call. `native::mono` finds what such a body reaches from its MIR.
+A construction's bracket list is its type's alone, as upstream reads
+`T[ps](…)` as `T[ps].__init__(…)`: the initializer's own parameters,
+explicit (`T[ps].__init__[ks](…)`) or inferred, reach MIR only in the
+construction's recorded instantiation.
 
 A method keyed on a type pack of its own is served the same way: its
 template body keeps the pack (`comptime/elab.rs:def_body`), and the call's solved pack

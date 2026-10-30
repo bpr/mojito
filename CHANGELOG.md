@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A construction's bracket now binds only its type's parameters, as
+  upstream reads `T[ps](…)` as `T[ps].__init__(…)`: the initializer's own
+  parameters are spelled after `.__init__`, over any struct, `Self`, a
+  defaulted struct, an alias, or a generic caller (`S[2].__init__[5]()`,
+  `D[n].__init__[*mask]()`), where a parametric struct's were rejected as
+  unsupported. `Q[7]()` over a struct without parameters, and a bracket on
+  the already-bound `Self`, are rejected as at the pin, where `Q[7]()`
+  bound the initializer's own `k` (R1678).
 - An explicit initializer call, `T.__init__(…)` over a struct name, its
   application, `Self`, or a type parameter, is now the construction `T(…)`
   it spells, where it failed as an undefined variable. `Q.__init__[7]()`

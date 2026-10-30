@@ -935,6 +935,14 @@ pub struct Checker {
     /// when no source spelling names it (`It[T]`, `Scalar[dt]`, a raw list's
     /// `TypeList`): the call binds the struct's parameters against it.
     spelled_instances: RefCell<HashMap<SourceSpan, Ty>>,
+    /// The initializer's own parameter list of each explicit
+    /// `T.__init__[ks](…)` the checker spelled as the construction `T(…)`,
+    /// by the spelled call: the construction binds it to the selected
+    /// `__init__`'s own parameters, never to the struct's, as upstream binds
+    /// `T[ps].__init__[ks]`. A construction re-spelled from it (`Self(…)`
+    /// as the struct's, an alias's) takes the entry over; the shared flag
+    /// records that a construction bound it.
+    spelled_initializer_args: RefCell<HashMap<SourceSpan, SpelledInitializerArgs>>,
     /// Compile-time bindings read as the object of a field chain the checker
     /// compiled to a parameter expression (`q` of `q.a`): the chain is read,
     /// never the binding, which therefore materializes no temporary.
@@ -1147,6 +1155,7 @@ impl Checker {
             borrowed_reference_receivers: RefCell::new(FactSet::default()),
             slice_literals: RefCell::new(HashMap::new()),
             spelled_instances: RefCell::new(HashMap::new()),
+            spelled_initializer_args: RefCell::new(HashMap::new()),
             parameter_field_objects: RefCell::new(FactSet::default()),
             unconsumed_temporaries: RefCell::new(FactSet::default()),
             linear_temporaries: RefCell::new(FactMap::default()),
@@ -3070,6 +3079,13 @@ struct ViewReturnOrigin {
 /// below the constructed value at which the binding construction sits
 /// (empty for the value's own explicit application).
 type ImmutableOriginBinder = (Vec<String>, mojito_types::origin::OriginParamId);
+
+/// The initializer's own list an explicit `T.__init__[ks](…)` spells, with
+/// the flag a construction sets once it binds the list.
+type SpelledInitializerArgs = (
+    Vec<mojito_ast::ast::ParamArg>,
+    std::rc::Rc<std::cell::Cell<bool>>,
+);
 
 /// One resolved origin slot of a view-returning call's result: the slot, the
 /// concrete origin it binds at this call, and the callee's capability over

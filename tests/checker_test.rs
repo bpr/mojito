@@ -2121,6 +2121,35 @@ fn rejects_explicit_params_on_non_generic_function() {
     );
 }
 
+#[test]
+fn explicit_initializer_parameters_bind_beside_the_struct_bracket() {
+    // `S[2].__init__[5]()`: the type's bracket binds `n`, the list after
+    // `.__init__` binds the initializer's own `k`, as at the pin.
+    ok_std(
+        "struct S[n: Int]:\n    var a: Int\n    def __init__[k: Int](out self):\n        self.a = k + Self.n\n\ndef main():\n    print(S[2].__init__[5]().a)\n",
+    );
+}
+
+#[test]
+fn construction_bracket_on_a_struct_without_parameters_is_rejected() {
+    // A construction's bracket is the type's: the pin's "unexpected
+    // parameter", even where the initializer has a parameter of its own.
+    let e = err_std(
+        "struct Q:\n    var a: Int\n    def __init__[k: Int](out self):\n        self.a = k\n\ndef main():\n    print(Q[7]().a)\n",
+    );
+    assert!(
+        matches!(
+            e,
+            TypeError::WrongTypeArgCount {
+                expected: 0,
+                got: 1,
+                ..
+            }
+        ),
+        "got {e:?}"
+    );
+}
+
 // --- SIMD ---
 
 #[test]

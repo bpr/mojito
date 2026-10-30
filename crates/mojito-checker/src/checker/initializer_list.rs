@@ -84,6 +84,17 @@ impl Checker {
                 );
                 Some(self.infer_spelled(expression, construction))
             }
+            // `Self` is bound already: a bracket on it is the pin's
+            // "unexpected parameter".
+            ExprKind::Call {
+                name, param_args, ..
+            } if name == "Self" && self.lookup(name).is_none() && self.self_ty.is_some() => {
+                Some(Err(TypeError::WrongTypeArgCount {
+                    name: name.clone(),
+                    expected: 0,
+                    got: param_args.len(),
+                }))
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -543,13 +554,16 @@ impl Checker {
         Some(self.infer_spelled(expression, construction))
     }
 
-    /// Type `T.__init__[params](args)`, an explicit call of a type's
-    /// initializer, as the construction `T(args)` it is: upstream resolves
-    /// every construction through the type's `__init__` member, so both
-    /// spellings select among the same overloads. The receiver is a struct
-    /// name, its application (`S[2].__init__(x)`), `Self`, or a type
-    /// parameter, never a binding. `None` when `member` is no `__init__` or
-    /// the receiver spells no such type.
+    /// Type `T[ps].__init__[ks](args)`, an explicit call of a type's
+    /// initializer, as the construction `T[ps](args)` it is: upstream
+    /// resolves every construction through the type's `__init__` member, so
+    /// both spellings select among the same overloads. The type's bracket
+    /// `[ps]` stays the construction's; the initializer's own `[ks]` rides
+    /// beside it, by the spelled call, to the selected overload's own
+    /// parameters. The receiver is a struct name, its application
+    /// (`S[2].__init__(x)`), `Self`, or a type parameter, never a binding.
+    /// `None` when `member` is no `__init__` or the receiver spells no such
+    /// type.
     pub(super) fn infer_initializer_call(
         &self,
         expression: &Expr,
@@ -570,38 +584,46 @@ impl Checker {
         if self.lookup(name).is_some() {
             return None;
         }
-        // A type parameter's construction binds no bracket of its own.
-        let parametric = self.tparams.iter().any(|scope| scope.contains_key(name)) || {
+        if !self.tparams.iter().any(|scope| scope.contains_key(name)) {
             let owner = if name == "Self" {
                 mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?.0
             } else {
                 name
             };
-            !self.structs.get(owner)?.decls.is_empty()
-        };
-        // A construction carries one bracket list: the struct's parameters
-        // on a parametric struct, the initializer's own on any other.
-        if !param_args.is_empty() && (parametric || !struct_args.is_empty()) {
-            return Some(Err(TypeError::Unsupported(format!(
-                "explicit parameters on '{name}.__init__': a construction of the \
-                 parametric type '{name}' has no list for the initializer's own \
-                 parameters beside the type's"
-            ))));
+            self.structs.get(owner)?;
         }
         let construction = derived_construction(
             expression,
             ExprKind::Call {
                 name: name.to_string(),
-                param_args: if param_args.is_empty() {
-                    struct_args
-                } else {
-                    param_args.to_vec()
-                },
+                param_args: struct_args,
                 args: args.to_vec(),
                 kwargs: kwargs.to_vec(),
             },
         );
-        Some(self.infer_spelled(expression, construction))
+        if param_args.is_empty() {
+            return Some(self.infer_spelled(expression, construction));
+        }
+        let span = construction.source_span();
+        self.spelled_initializer_args
+            .borrow_mut()
+            .insert(span.clone(), (param_args.to_vec(), std::rc::Rc::default()));
+        let constructed = self.infer_spelled(expression, construction);
+        let bound = self
+            .spelled_initializer_args
+            .borrow()
+            .get(&span)
+            .is_some_and(|(_, bound)| bound.get());
+        Some(constructed.and_then(|ty| {
+            if bound {
+                Ok(ty)
+            } else {
+                Err(TypeError::Unsupported(format!(
+                    "explicit parameters on '{name}.__init__': only a struct's declared \
+                     initializer binds them, not a type parameter's construction (R283)"
+                )))
+            }
+        }))
     }
 
     /// The keyword spelling of `ty`, a struct over a raw parameter list
@@ -657,8 +679,19 @@ impl Checker {
     }
 
     /// Type `spelled`, the expression the checker spelled for `expression`,
-    /// and record it in `expression`'s place.
+    /// and record it in `expression`'s place. An initializer's own list
+    /// spelled for `expression` stays the re-spelled construction's.
     pub(super) fn infer_spelled(&self, expression: &Expr, spelled: Expr) -> Result<Ty, TypeError> {
+        let initializer_args = self
+            .spelled_initializer_args
+            .borrow()
+            .get(&expression.source_span())
+            .cloned();
+        if let Some(initializer_args) = initializer_args {
+            self.spelled_initializer_args
+                .borrow_mut()
+                .insert(spelled.source_span(), initializer_args);
+        }
         let ty = self.infer(&spelled)?;
         self.record_spelled_construction(expression, spelled, &ty);
         Ok(ty)

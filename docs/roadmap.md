@@ -2790,34 +2790,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1678 A construction has one bracket list for the struct's
-  parameters and the initializer's own**
-
-  Problem: `Q[7]()` over a non-parametric `Q` with `__init__[k: Int](out
-  self)` runs and binds `k`, where the pin rejects it ("unexpected
-  parameter").
-  - Cause: a construction's checked form is a call `T[args](…)` with one
-    bracket list. `infer_construction_of` in
-    `crates/mojito-checker/src/checker/declarations.rs` feeds it to the
-    struct's parameters on a parametric struct and to `__init__`'s own on
-    any other.
-  - Upstream reads `T[ps](args)` as `T[ps].__init__(args)`, so the
-    initializer's own parameters are only ever spelled after `.__init__`.
-  - An explicit `T.__init__[ks](…)` is spelled as the construction `T[ks](…)`
-    (`infer_initializer_call` in
-    `crates/mojito-checker/src/checker/initializer_list.rs`), which is why
-    it works only where the struct has no parameters of its own.
-  - Probe: `struct S[n: Int]` with `__init__[k: Int](out self)` storing `k
-    + Self.n`, then `print(S[2].__init__[5]().a)`: rejected as unsupported,
-    where the pin prints `7`. Upstream's `_shuffle_variadic` spells
-    `StaticTuple[SIMDLength, output_size].__init__[*mask]()`.
-  - Probe: `print(Q[7]().a)` prints `7`, where the pin rejects it.
-  - Check the bundled stdlib for constructions that rely on the single
-    list before rejecting `Q[7]()`.
-  - Found while landing R1668 (2026-10-29).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1625 A written-back subscript is loaded once where an augmented
   store loads it twice**
 
@@ -3764,6 +3736,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     static-method path sees the read.
   - The explicit-argument call `P.plain[Int](4)` this entry first named
     already runs (checked 2026-10-29).
+  - Probe: `var f = Q.__init__[7]` then `print(f().a)`, over `__init__[k:
+    Int](out self)`, fails with "type 'Q' has no field '__init__'", where
+    the pin prints `7`. `var g = Q.st` gives the same "no field 'st'".
   - The plan must first find which pass infers the bare type name as a value.
   - Depends on nothing.
   - Model: Opus, Planned.
@@ -4157,6 +4132,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `Self(7)` in a trait's default method reaches the same rejection
     through the `_Self` binder the default is checked over
     (`conformance/probes/trait_default_self_construction.mojo`).
+  - Probe: `T.__init__[6]()` in `def make[T: K]() -> Int`, for `trait
+    K(Deinitable)` requiring `def __init__[k: Int](out self)`, is rejected
+    as unsupported ("a type parameter's construction"), where the pin
+    prints `6` for `make[Q]()`. The explicit list rides
+    `spelled_initializer_args` (`checker/initializer_list.rs`) and only a
+    struct's `infer_construction_of` binds it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
