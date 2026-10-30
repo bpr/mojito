@@ -544,6 +544,7 @@ assets/ok/match_struct_and_initializer_patterns.mojo	-	ineligible	no-scalar-entr
 assets/ok/match_tuple_patterns.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_operation_traits_library.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/math_polynomial_evaluate.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_predicates.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_write.mojo	-	ineligible	no-scalar-entry-shape
@@ -950,6 +951,7 @@ assets/ok/scalar_conversion_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_dtype_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_mask_select.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/scalar_parameter_dependent_dtype.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_float_strided.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_sequential.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_strided.mojo	-	ineligible	no-scalar-entry-shape
@@ -1043,6 +1045,7 @@ assets/ok/span_generic_free_def_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_implicit_from_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_move_use.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/span_parameter_from_list_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_pointer_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_method_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_static_argument.mojo	-	ineligible	no-scalar-entry-shape

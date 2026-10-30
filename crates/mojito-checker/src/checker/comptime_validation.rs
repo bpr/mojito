@@ -1585,20 +1585,23 @@ impl Checker {
         };
         let name = template_name(owner).to_string();
         let overloads = self.applicable_functions.get(&name);
-        let function = match self.implicit_conversion_constructor(source, ty)? {
-            Some(conversion) => overloads
-                .and_then(|overloads| {
-                    overloads.iter().find(|function| {
-                        function.constructs() && function.symbol() == conversion.target
+        let (function, own_arguments) = match self.implicit_conversion_constructor(source, ty)? {
+            Some(conversion) => (
+                overloads
+                    .and_then(|overloads| {
+                        overloads.iter().find(|function| {
+                            function.constructs() && function.symbol() == conversion.target
+                        })
                     })
-                })
-                .ok_or_else(|| {
-                    TypeError::Unsupported(format!(
-                        "a parameter argument converted by '{}' is not supported yet: its \
-                         parameter type is not one a compile-time call applies",
-                        conversion.target
-                    ))
-                })?,
+                    .ok_or_else(|| {
+                        TypeError::Unsupported(format!(
+                            "a parameter argument converted by '{}' is not supported yet: its \
+                             parameter type is not one a compile-time call applies",
+                            conversion.target
+                        ))
+                    })?,
+                conversion.own_arguments,
+            ),
             // A builtin body folds before the struct's initializers
             // register: its `@implicit` one taking `source` converts.
             None if self
@@ -1618,23 +1621,55 @@ impl Checker {
                 }) else {
                     return Ok(None);
                 };
-                function
+                (function, Vec::new())
             }
             None => return Ok(None),
         };
-        let Some(argument) = function
-            .params
-            .first()
-            .and_then(|param| param.ty.resolved(Some(ty)))
-            .and_then(argument)
-        else {
+        let Some(param) = function.params.first() else {
             return Ok(None);
         };
+        let Some(argument) = param.ty.resolved(Some(ty)).and_then(argument) else {
+            return Ok(None);
+        };
+        // A `ref` source is passed as the compile-time memory holding it.
+        let argument = if param.by_reference {
+            self.param_context
+                .store_to_mem(&argument)
+                .map_err(|error| TypeError::NotComptime(error.to_string()))?
+        } else {
+            argument
+        };
+        // The constructor's own parameters lead, as the conversion solved
+        // them from the source (`length` of `Array[Self.T, _]`).
+        let mut arguments = match function.signature.as_ref() {
+            Some(signature) if !own_arguments.is_empty() => {
+                let subst = struct_subst(&signature.decls, &own_arguments);
+                let values = Self::value_argument_environment(&signature.decls, &own_arguments);
+                let resolve = |declared: &Ty| {
+                    let declared = mojito_types::types::nominal_parts(ty)
+                        .and_then(|(owner, args)| {
+                            let info = self.structs.get(template_name(owner))?;
+                            Some(substitute_at(declared, info, &args))
+                        })
+                        .unwrap_or_else(|| declared.clone());
+                    self.resolve_dependent_ty(&substitute(&declared, &subst), &values)
+                        .ok()
+                };
+                let Some(own) =
+                    self.own_parameter_arguments(&signature.decls, &own_arguments, resolve)
+                else {
+                    return Ok(None);
+                };
+                own
+            }
+            _ => Vec::new(),
+        };
+        arguments.push(argument);
         let selected = Selected {
             name,
             function,
             instance: function.on_instance.then(|| ty.clone()),
-            arguments: vec![argument],
+            arguments,
             result: None,
         };
         if let Some(error) = self.application_constraint_failure(&selected) {
@@ -2699,38 +2734,7 @@ impl Checker {
         }
         let mut arguments =
             Vec::with_capacity(decls.len() + function.params.len() + collected.len());
-        for (decl, argument) in decls.iter().zip(&bound.arguments) {
-            arguments.push(match (decl, argument) {
-                (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
-                    self.param_context.type_shape(ty.clone())
-                }
-                // A type pack its collector bound is its element list.
-                (ParamDecl::Type { variadic: true, .. }, TyArg::Val(list @ CtValue::Tuple(_))) => {
-                    self.param_context.constant(list.clone()).ok()?
-                }
-                // A value pack's elements are each its element's value.
-                (ParamDecl::Value { variadic: true, .. }, TyArg::Val(CtValue::Tuple(values))) => {
-                    let element = resolve(decl.value_element_ty()?)?;
-                    let values = values
-                        .iter()
-                        .map(|value| {
-                            self.applied_value(value.clone(), &element)
-                                .map(ParamExpr::into_value)
-                        })
-                        .collect::<Option<Vec<_>>>()?;
-                    self.param_context.constant(CtValue::Tuple(values)).ok()?
-                }
-                // A caller's pack forwarded whole (`[*mask]`) is that pack,
-                // which the binding checked against the element.
-                (ParamDecl::Value { variadic: true, .. }, TyArg::Val(CtValue::Expr(pack))) => {
-                    pack.clone()
-                }
-                (ParamDecl::Value { ty, .. }, TyArg::Val(value)) => {
-                    self.applied_value(value.clone(), &resolve(ty)?)?
-                }
-                _ => return None,
-            });
-        }
+        arguments.extend(self.own_parameter_arguments(&decls, &bound.arguments, resolve)?);
         let declared_ty = |slot: &SlotType| match slot {
             SlotType::Declared(_, declared) => {
                 resolve(&at_owner(declared.as_ref()?)).filter(parameter_value_type)
@@ -2810,6 +2814,58 @@ impl Checker {
         Some((arguments, result))
     }
 
+    /// The parameter expressions of a callable's own compile-time arguments
+    /// `arguments`, bound to its parameters `decls`, each value at its
+    /// parameter's type as `resolve` reads it under the bound arguments: a
+    /// type parameter is its type's shape, a pack its element list.
+    fn own_parameter_arguments(
+        &self,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+        resolve: impl Fn(&Ty) -> Option<Ty>,
+    ) -> Option<Vec<ParamExpr>> {
+        decls
+            .iter()
+            .zip(arguments)
+            .map(|(decl, argument)| {
+                Some(match (decl, argument) {
+                    (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
+                        self.param_context.type_shape(ty.clone())
+                    }
+                    // A type pack its collector bound is its element list.
+                    (
+                        ParamDecl::Type { variadic: true, .. },
+                        TyArg::Val(list @ CtValue::Tuple(_)),
+                    ) => self.param_context.constant(list.clone()).ok()?,
+                    // A value pack's elements are each its element's value.
+                    (
+                        ParamDecl::Value { variadic: true, .. },
+                        TyArg::Val(CtValue::Tuple(values)),
+                    ) => {
+                        let element = resolve(decl.value_element_ty()?)?;
+                        let values = values
+                            .iter()
+                            .map(|value| {
+                                self.applied_value(value.clone(), &element)
+                                    .map(ParamExpr::into_value)
+                            })
+                            .collect::<Option<Vec<_>>>()?;
+                        self.param_context.constant(CtValue::Tuple(values)).ok()?
+                    }
+                    // A caller's pack forwarded whole (`[*mask]`) is that
+                    // pack, which the binding checked against the element.
+                    (ParamDecl::Value { variadic: true, .. }, TyArg::Val(CtValue::Expr(pack))) => {
+                        pack.clone()
+                    }
+                    (ParamDecl::Value { ty, .. }, TyArg::Val(value)) => {
+                        self.applied_value(value.clone(), &resolve(ty)?)?
+                    }
+                    _ => return None,
+                })
+            })
+            .collect()
+    }
+
     /// The parameter expression of a call argument for a parameter of type
     /// `ty`.
     pub(super) fn applied_argument(&self, argument: &Expr, ty: &Ty) -> Option<ParamExpr> {
@@ -2851,6 +2907,9 @@ impl Checker {
         };
         if let Some(argument) = argument.filter(|argument| argument.meta().as_value() == Some(ty)) {
             return Some(argument);
+        }
+        if let Some(splat) = self.symbolic_literal_splat(&value, ty) {
+            return splat.ok();
         }
         let source = self.ct_value_ty(&value, ty).filter(|source| source != ty)?;
         self.implicit_parameter_application(&source, ty, |slot| self.applied_value(value, slot))

@@ -1279,7 +1279,10 @@ impl Checker {
         match args {
             [argument] => match self.ct_value(argument, recording) {
                 Ok(literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))) => {
-                    Some(self.literal_splat(dtype, width, literal))
+                    Some(self.literal_splat(
+                        &mojito_types::types::canonical_simd_ty(dtype, width),
+                        literal,
+                    ))
                 }
                 value if name != "SIMD" => Some(vector(value.map(|value| vec![value]))),
                 _ => None,
@@ -1293,27 +1296,90 @@ impl Checker {
         }
     }
 
-    /// `pop.simd.splat` of the `pop.cast` of `literal` at `SIMD[dtype,
-    /// width]`, upstream's `IntLiteral`/`FloatLiteral` initializer's body.
-    fn literal_splat(
-        &self,
-        dtype: Dtype,
-        width: i64,
-        literal: CtValue,
-    ) -> Result<ParamExpr, TypeError> {
+    /// `pop.simd.splat` of the `pop.cast` of `literal` at the vector type
+    /// `vector`, closed or symbolic (`SIMD[dtype, 1]`), upstream's
+    /// `IntLiteral`/`FloatLiteral` initializer's body.
+    fn literal_splat(&self, vector: &Ty, literal: CtValue) -> Result<ParamExpr, TypeError> {
         let context = &self.param_context;
-        let scalar = context.type_shape(mojito_types::types::canonical_simd_ty(dtype, 1));
-        let vector = context.type_shape(mojito_types::types::canonical_simd_ty(dtype, width));
+        let lane_needs_scalar =
+            || TypeError::NotComptime(format!("a {vector} lane needs a compile-time scalar"));
+        let TyKind::Simd { dtype, .. } = vector.kind() else {
+            return Err(lane_needs_scalar());
+        };
+        let scalar = mojito_types::types::simd_ty_from_slots(dtype.clone(), SimdWidth::Known(1))
+            .map_err(param_error)?;
         let literal = self.ct_param(literal)?;
         context
-            .op(ParamOp::Cast, &[scalar, literal])
-            .and_then(|cast| context.op(ParamOp::SimdSplat, &[vector, cast]))
-            .map_err(|_| {
-                TypeError::NotComptime(format!(
-                    "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
-                    dtype.name()
-                ))
+            .op(ParamOp::Cast, &[context.type_shape(scalar), literal])
+            .and_then(|cast| {
+                context.op(
+                    ParamOp::SimdSplat,
+                    &[context.type_shape(vector.clone()), cast],
+                )
             })
+            .map_err(|_| lane_needs_scalar())
+    }
+
+    /// The closed literal `value` at the vector `ty` whose dtype is still
+    /// symbolic (`2.0` at `Scalar[dtype]`), which no closed value
+    /// materializes: its literal initializer's splat
+    /// ([`Self::literal_splat`]). `None` for any other value or type.
+    pub(super) fn symbolic_literal_splat(
+        &self,
+        value: &CtValue,
+        ty: &Ty,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let TyKind::Simd { dtype, .. } = ty.kind() else {
+            return None;
+        };
+        let literal = match value {
+            CtValue::IntLiteral(_) => TyKind::IntLiteral,
+            CtValue::FloatLiteral(_) => TyKind::FloatLiteral,
+            _ => return None,
+        };
+        (dtype.known().is_none() && mojito_types::types::splats_to(&literal, dtype))
+            .then(|| self.literal_splat(ty, value.clone()))
+    }
+
+    /// The vector one exact literal constructs when its dtype is still
+    /// symbolic (`SIMD[dtype, 1](1.0)`, `Scalar[dtype](2)`), or a
+    /// parametric vector alias spells it (`Scalar[DType.float32](1.5)`):
+    /// upstream's literal initializer, staged as a closed vector's is
+    /// ([`Self::staged_simd_construction`]). `None` for any other call.
+    fn literal_vector_construction(
+        &self,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        recording: Recording,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let [argument] = args else {
+            return None;
+        };
+        let literal = |expr: &Expr| matches!(expr.kind, ExprKind::Int(_) | ExprKind::Float(_));
+        if !(literal(argument)
+            || matches!(&argument.kind, ExprKind::Prefix(_, operand) if literal(operand)))
+            || param_args.is_empty()
+            || (name != "SIMD" && self.applicable_functions.contains_key(name))
+        {
+            return None;
+        }
+        let vector = match name {
+            "SIMD" => self.simd_type(param_args).ok()?.0,
+            _ => match self.ty_value_from_name(name, param_args).ok()?? {
+                CtValue::Type(ty) => ty,
+                _ => return None,
+            },
+        };
+        if !matches!(vector.kind(), TyKind::Simd { .. }) {
+            return None;
+        }
+        match self.ct_value(argument, recording) {
+            Ok(literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))) => {
+                Some(self.literal_splat(&vector, literal))
+            }
+            _ => None,
+        }
     }
 
     /// The application a local `comptime NAME = f(…)` binding denotes, which
@@ -1834,6 +1900,17 @@ impl Checker {
                 && let Some((dtype, width)) = self.simd_constructor_shape(name, param_args)
                 && let Some(staged) =
                     self.staged_simd_construction(name, (dtype, width), args, recording) =>
+            {
+                staged
+            }
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && let Some(staged) =
+                    self.literal_vector_construction(name, param_args, args, recording) =>
             {
                 staged
             }

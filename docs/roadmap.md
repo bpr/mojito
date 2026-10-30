@@ -294,6 +294,10 @@ which names the upstream pass each one follows. Each is measured by the
     Span[Int, _]]()` is "not an associated comptime expression", where the
     pin prints `3`; `Span(L)` selects no `Array` constructor over the raw
     list (found while landing R1725, 2026-10-30).
+  - Probe: `f[M]()` over a module `comptime M = [4, 5, 6]` and the same
+    `f` is "expected Span[Int], found KGENParamList[Int]", where the pin
+    converts the `Array` and prints the elements (found while landing
+    R1712, 2026-10-30).
   - The lever: hold the application at the annotation or the natural type,
     and read it through a display sequence, as a local display binding is
     read (`BoundDisplay`). `module_values` is serialized, so this bumps
@@ -3861,6 +3865,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     "Undefined variable 'Self'", where the pin constructs the vectors.
     Upstream's `_b64encode.mojo` (`OFFSETS`) and `SIMD.reduce` construct
     this way.
+  - Probe: a static method called through an alias application,
+    `Y[5].get()` over `comptime Y = D[DType.int8, _]` and `V[7].get()`
+    over `comptime V[k: Int] = W[k]`, fails with "Undefined variable", where
+    the pin prints `5` and `7`; `comptime Z = W[5]` then `Z.get()` runs
+    (moved from R481, 2026-10-30).
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -5093,27 +5102,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R481 A value binder typed by a lane type fails elaboration**
-
-  Problem: `s[dt: DType, v: Scalar[dt]]() -> Scalar[dt]` called as
-  `s[DType.int16, 5]()` fails elaboration with "keeps the parameter
-  constant `v` in elaborated MIR after monomorphization", where the pin
-  prints `6`.
-  - The check binds the earlier `dt` into `v`'s type since R1671, so a
-    struct-typed slot (`mask: StaticTuple[Int, n]`) runs. A `Scalar[dt]`
-    value stays a parameter constant the instance does not close.
-  - Probe: a struct application, `D[DType.int8, 5]` over `struct D[dt:
-    DType, v: Scalar[dt]]`, fails the same way in `D.get`, and so does
-    `Y[5]` over `comptime Y = D[DType.int8, _]`; the pin prints `5` for
-    both.
-  - Probe: a bare `Scalar` binder, `def h[v: Scalar]() -> Int` returning
-    `Int(v)`, is parameterized as `[$dtype_v: DType, //, v: SIMD[$dtype_v,
-    1]]` and fails the same way for `h[Int8(21)]()`, where the pin prints
-    `21`.
-  - Found while landing R477 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R940 An `@inline` level that is not a spelled member is rejected**
 
   Problem: `comptime L = InlineLevel.never` then `@inline(L)` is rejected
@@ -5299,6 +5287,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     Int]]()` in `main` fails with "not a compile-time Int constant: x",
     where the pin prints `7` for `t[0] + t[1]`. A bracket display
     (`g[(3, 4)]()`) already binds as the application.
+  - Probe: `comptime L = [1, 2, 3]` then `f[L]()` in `main`, over `def
+    f[c: Span[Int, _]]()` whose body is `comptime for i in range(len(c)):
+    print(c[i])`, fails with "not a compile-time Int constant: L", where
+    the pin prints `1 2 3`; `f[[1, 2, 3]]()` runs (found while landing
+    R1712, 2026-10-30).
   - Found while landing a display binding read in a type or a parameter
     argument (2026-10-06).
   - Depends on R1529.
@@ -6752,7 +6745,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Checker::binds_undeclared_overload` (`checker/call_inference.rs`)
     and from `Checker::staged_simd_construction` (`checker/constraints.rs`),
     whose `literal_splat` builds the `pop.simd.splat` of the `pop.cast`
-    those bodies fold to,
+    those bodies fold to, as `Checker::literal_vector_construction`
+    (`Scalar[dtype](1.0)`) and `Checker::symbolic_literal_splat` (`2.0` at
+    a `Scalar[dtype]` parameter) build it at a symbolic dtype,
     and with both the `IntLiteral`/`FloatLiteral` arms of
     `Checker::infer_conversion` (`checker/builtins.rs`) and the `"Int"`,
     `"UInt"`, and `"Float64"` arms of `infer_unbound_call`, which serve
@@ -10989,35 +10984,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1711 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1712 A compile-time `Span` parameter is not bound from a list
-  display, so `std.math.polynomial` cannot be ported**
-
-  `_horner_evaluate[[Scalar[dtype](1.0), 2.0, 3.0]](x)` over
-  `coefficients: Span[Scalar[dtype], _]` reports "not a compile-time Int
-  constant: not an associated comptime expression", where the pin prints
-  `17.0 [6.0, 17.0]` for `p(Float64(2))` and `p(SIMD[DType.float32, 2](1,
-  2))`.
-  - A display at a `Span` slot now converts through `Span`'s `Array`
-    constructor, but `f[[1, 2, 3]]()` over `def f[c: Span[Int, _]]()`
-    reports "unsupported compile-time application of
-    `Span.__init__$ov$Array…` binds 1 of its 2 parameters". The pin
-    prints `3`.
-  - At the pin the display is its natural `Array[T, n]`, converted by
-    `Span`'s `@implicit` `ref[Self.origin] array: Array[Self.T, _]`
-    constructor (R1725, R1644).
-  - The body's reads (`len(c)`, `c[i]`, `comptime for`) already lift and
-    run for a struct-valued parameter on both backends.
-  - Left here once the prerequisites land: bind the parameter's unbound
-    origin to compile-time memory, carry the constructor's own `length`
-    binder in the application, and freeze and thaw a `Span` whose `_data`
-    points into compile-time memory.
-  - Port `std.math.polynomial` (`polynomial_evaluate`,
-    `_horner_evaluate`, the latter placed first under R393).
-  - Plan: `R1712-a-compile-time-span-parameter-is-plan.md`, Part B.
-  - Found while planning R1567 (2026-10-30).
-  - Depends on R1448, R1529, R1644, and R1725.
-  - Model: Fable, Planned.
 
 - [ ] **R1713 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
   Taylor polynomial and `_ldexp_impl`**

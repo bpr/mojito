@@ -224,13 +224,21 @@ fn common_string_literal(a: &Ty, b: &Ty) -> Option<Ty> {
 }
 
 /// The common element of a display's two elements ([`common_elem`]), where a
-/// string literal beside the nominal `String` joins it, and two aggregates
-/// that differ only in which elements are still literals join their
-/// materialized form (`[(1, 2), (3, n)]` is a list of `Tuple[Int, Int]`).
+/// string literal beside the nominal `String` joins it, a numeric literal
+/// joins a `SIMD` its implicit constructor converts it to, a symbolic one
+/// included (`[Scalar[dtype](1.0), 2.0]`), and two aggregates that differ
+/// only in which elements are still literals join their materialized form
+/// (`[(1, 2), (3, n)]` is a list of `Tuple[Int, Int]`).
 pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
     match (a.kind(), b.kind()) {
         (TyKind::StringLiteral(_), _) if is_nominal_string(b) => Some(b.clone()),
         (_, TyKind::StringLiteral(_)) if is_nominal_string(a) => Some(a.clone()),
+        (TyKind::IntLiteral | TyKind::FloatLiteral, TyKind::Simd { .. }) if coerces(a, b) => {
+            Some(b.clone())
+        }
+        (TyKind::Simd { .. }, TyKind::IntLiteral | TyKind::FloatLiteral) if coerces(b, a) => {
+            Some(a.clone())
+        }
         (TyKind::Struct(..), TyKind::Struct(..)) if a != b => {
             let materialized = mojito_types::types::default_literal(a);
             (materialized == mojito_types::types::default_literal(b)).then_some(materialized)

@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.math.polynomial` ports upstream's `polynomial_evaluate` and
+  `_horner_evaluate` (R1712): a compile-time `Span` parameter binds a list
+  display through `Span`'s `@implicit` `Array` constructor, its own
+  `length` solved from the display and its argument in compile-time
+  memory, so `f[[1, 2, 3]]()` over `def f[c: Span[Int, _]]()` and
+  `polynomial_evaluate[[Scalar[dtype](1.0), 2.0, 3.0]](x)` in a generic
+  run as at the pin. A literal or a `SIMD[dtype, 1]`/`Scalar[dtype]`
+  construction at a symbolic dtype applies in a parameter position, a
+  numeric literal joins a `SIMD` display element, and a value parameter
+  typed by an earlier one (`c: Scalar[dtype]`) no longer stays unbound in
+  its instance (R481).
+
 - `Span` declares upstream's `@implicit` constructor from an `Array`
   (R1725): `k([4, 5])` and `var a = [1, 2, 3]; k(a)` over `def k(s:
   Span[Int, _])` print `2` and `3`, `g[Span([4, 5, 6])]()` binds a

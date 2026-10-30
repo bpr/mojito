@@ -3120,6 +3120,11 @@ impl Checker {
                     if matches!(value, CtValue::Expr(_)) {
                         return Ok(TyArg::Val(value));
                     }
+                    // A literal at a vector whose dtype is still symbolic
+                    // (`Scalar[dtype]`) is its literal initializer's splat.
+                    if let Some(splat) = self.symbolic_literal_splat(&value, ty) {
+                        return Ok(TyArg::Val(CtValue::Expr(splat?)));
+                    }
                     let rendered = value.to_string();
                     let value =
                         value

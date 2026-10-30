@@ -7,7 +7,9 @@
 # verbatim (the buffer overload of `iota` is omitted). `copysign` follows
 # `abs`, which it calls, where upstream's precedes `iota`: a module `def` is
 # visible only after its statement (R592). Upstream's `from . import pi,
-# inf, …` line is omitted, since nothing ported reads it. The prelude
+# inf, …` line is omitted, since nothing ported reads it, while its
+# `from .polynomial import polynomial_evaluate` is kept for the ports that
+# will (`exp`, `erf`, and the other polynomial approximations). The prelude
 # exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and `min`, as
 # upstream's does; `round`/`divmod` are still compiler builtins (R1458).
 #
@@ -19,6 +21,8 @@
 # intrinsically.
 
 from std.sys import llvm_intrinsic
+
+from .polynomial import polynomial_evaluate
 
 
 trait Ceilable:

@@ -2176,7 +2176,13 @@ impl ParamContext {
         bindings: &ParamBindings,
         depth: u32,
     ) -> Result<ParamExpr, ParamError> {
-        let declared = reference.meta().substitute(bindings.types());
+        // A reference typed by an earlier value binder (`c: Scalar[dtype]`)
+        // is typed at that binder's value.
+        let declared = self.replace_meta(
+            &reference.meta().substitute(bindings.types()),
+            bindings,
+            depth,
+        )?;
         // A reference typed by a type binder no binding here solves
         // (`v: T`) takes the value as typed: its declaration's application
         // solved the binder from it.

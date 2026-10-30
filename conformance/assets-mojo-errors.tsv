@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	986
+# swept-count	987
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -871,6 +871,7 @@ assets/type_error/size_of_requires_one_type.mojo	compile-reject	agree	error: no 
 assets/type_error/slice_literal_ambiguous.mojo	compile-reject	agree	error: ambiguous call to '__getitem__'
 assets/type_error/slice_two_argument_none.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/span_implicit_return_escape.mojo	runs	subset	the pin runs it;Mojito rejects: escapes storage
+assets/type_error/span_parameter_display_element_mismatch.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'mut'
 assets/type_error/span_strided_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/static_origin_local.mojo	compile-reject	agree	error: invalid call to 'observe_static': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/static_pointer_alloc_removed.mojo	compile-reject	agree	error: 'Pointer[Int, _]' value has no attribute 'alloc'

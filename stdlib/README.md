@@ -216,7 +216,10 @@ point, as upstream's toolchain does.
   `Truncable`, `CeilDivable`, `CeilDivableRaising`), the rounding helpers
   `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait, `copysign`,
   and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and
-  `_LN2_LO_F64`. The package also re-exports `std.utils.numerics`' `inf`,
+  `_LN2_LO_F64`. `polynomial.mojo` holds `polynomial_evaluate` and
+  `_horner_evaluate` over compile-time `Span` coefficients
+  (`from std.math.polynomial import polynomial_evaluate`; the package does
+  not re-export it). The package also re-exports `std.utils.numerics`' `inf`,
   `nan`, `isnan`, `isinf`, and `isfinite`, whose classifiers call
   `llvm.is.fpclass`. The prelude
   exports `Absable`, `Powable`, and `Roundable`, as upstream's does; the rest
