@@ -403,6 +403,17 @@ fn type_families_reprint_byte_identically() {
                     origin: PointerOrigin::UnsafeAny { mutable: true },
                 }
                 .into(),
+                TyKind::KgenPointer(Ty::int()).into(),
+                TyKind::LitRef {
+                    element: Ty::int(),
+                    origin: PointerOrigin::Param {
+                        id: OriginParamId(0),
+                        mutability: Mutability::Immutable,
+                        interior: Vec::new(),
+                        subtree: false,
+                    },
+                }
+                .into(),
                 TyKind::Ref(RefTy {
                     referent: TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]).into(),
                     origin: Origin::Untracked { mutable: true },
@@ -943,6 +954,10 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::ReadRef {
             dest: Reg(3),
             reference: Reg(2),
+        },
+        MirInstr::PointerConvert {
+            dest: Reg(3),
+            value: Reg(2),
         },
         MirInstr::CopyValue {
             dest: Reg(4),

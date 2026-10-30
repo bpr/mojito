@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 139;
+pub const VERSION_MINOR: u16 = 140;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -192,6 +192,7 @@ pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "type.construct_expr",
     "literal.materialize",
     "scalar.cast",
+    "pointer.convert",
     "pop",
     "llvm.intrinsic",
     "is_run_in_comptime_interpreter",
@@ -310,6 +311,8 @@ pub const TYPE_SPELLINGS: &[&str] = &[
     "variadic_pack",
     "variant",
     "pointer",
+    "kgen_pointer",
+    "lit_ref",
     "ref",
 ];
 
@@ -361,6 +364,7 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::MaterializeLiteral { .. } => "literal.materialize",
         MirInstr::ScalarCast { .. } => "scalar.cast",
         MirInstr::BuiltinCast { .. } => "builtin.cast",
+        MirInstr::PointerConvert { .. } => "pointer.convert",
         MirInstr::Pop { .. } => "pop",
         MirInstr::CallLlvmIntrinsic { .. } => "llvm.intrinsic",
         MirInstr::IsRunInComptimeInterpreter { .. } => "is_run_in_comptime_interpreter",
@@ -537,6 +541,8 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
         TyKind::VariadicPack(_) => "variadic_pack",
         TyKind::Variant(_) => "variant",
         TyKind::Pointer { .. } => "pointer",
+        TyKind::KgenPointer(_) => "kgen_pointer",
+        TyKind::LitRef { .. } => "lit_ref",
         TyKind::Ref(_) => "ref",
     }
 }

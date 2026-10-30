@@ -1196,8 +1196,10 @@ impl Checker {
     /// KGEN reads it: the text pieces joined, each operand a `{}` hole.
     /// `!kgen.param_list<T>` is upstream's `_MLIR.KGENParamListType[T]`
     /// body, the raw parameter list of `T`, and `!kgen.simd<length, dtype>`
-    /// the vector storage `SIMD._mlir_value` holds ([`TyKind::KgenSimd`]).
-    /// Every other spelling is outside the subset.
+    /// the vector storage `SIMD._mlir_value` holds ([`TyKind::KgenSimd`]),
+    /// and `!kgen.pointer<T>` the default-address-space address a `Pointer`
+    /// wraps ([`TyKind::KgenPointer`]). Every other spelling is outside the
+    /// subset.
     fn mlir_applied_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
         let (text, operands) = mojito_types::types::mlir_type_spelling(args);
         match (text.as_str(), operands.as_slice()) {
@@ -1210,6 +1212,9 @@ impl Checker {
                 Ok(mojito_types::types::simd_storage(&vector).unwrap_or(vector))
             }
             ("!kgen.struct<{}isParamPack>", [elements]) => self.mlir_param_pack_struct(elements),
+            ("!kgen.pointer<{}>", [element]) => {
+                Ok(TyKind::KgenPointer(self.mlir_type_operand(element)?).into())
+            }
             ("!pop.array<{},{}>", [size, element]) => {
                 let size = self.mlir_array_size_operand(size)?;
                 Ok(TyKind::PopArray {
@@ -2369,6 +2374,19 @@ impl Checker {
             // A vector's `!kgen.simd` storage type, its `_mlir_value`'s.
             TyKind::Simd { .. } if name == "_mlir_type" && args.is_empty() => {
                 Ok(mojito_types::types::simd_storage(base).unwrap_or_else(|| base.clone()))
+            }
+            // A pointer's raw MLIR types: the `!kgen.pointer` it wraps and
+            // the `!lit.ref` it is built from, as upstream's `Pointer`
+            // declares them.
+            TyKind::Pointer { element, .. } if name == "_mlir_type" && args.is_empty() => {
+                Ok(TyKind::KgenPointer(element.clone()).into())
+            }
+            TyKind::Pointer { element, origin } if name == "_mlir_lit_ref" && args.is_empty() => {
+                Ok(TyKind::LitRef {
+                    element: element.clone(),
+                    origin: origin.clone(),
+                }
+                .into())
             }
             // A member alias `SIMD` declares, over the vector's parameters.
             TyKind::Simd { .. }
@@ -4590,7 +4608,9 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element) => type_is_symbolic(element),
         TyKind::PopArray { size, element } => size.is_symbolic() || type_is_symbolic(element),
-        TyKind::Pointer { element, .. } => type_is_symbolic(element),
+        TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer(element)
+        | TyKind::LitRef { element, .. } => type_is_symbolic(element),
         TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }
 }
@@ -4683,6 +4703,7 @@ fn unsupported_mlir_type() -> TypeError {
          '__mlir_type[`!kgen.param_list<`, T, `>`]', \
          '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]', \
          '__mlir_type[`!kgen.struct<`, ~Ts.values, ` isParamPack>`]', \
+         '__mlir_type[`!kgen.pointer<`, T, `>`]', \
          '__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]', and \
          '__mlir_type.`!pop.array<n, T>`' are accepted"
             .to_string(),

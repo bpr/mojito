@@ -249,6 +249,17 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether this retypes an address among a `Pointer`, a `!kgen.pointer`,
+    /// and a `!lit.ref` (`p._mlir_value`, `p._get_kgen_pointer()`).
+    pub(super) fn is_pointer_convert(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::PointerConvert { .. }
+            )
+        })
+    }
+
     /// Whether this is `b._mlir_value` on a `Bool`, a read of `b` splat to
     /// its storage.
     pub(super) fn is_bool_storage(self) -> bool {
@@ -654,7 +665,8 @@ impl<'a> Node<'a> {
             })
             && !matches!(
                 self.checked.ty.as_ref().map(Ty::kind),
-                Some(TyKind::Pointer { origin, .. }) if origin.subtree()
+                Some(TyKind::Pointer { origin, .. } | TyKind::LitRef { origin, .. })
+                    if origin.subtree()
             )
     }
 
@@ -1290,14 +1302,18 @@ impl<'a> Flatten<'a> {
                     )
                 }) {
                     let source = node
-                        .kwargs()
-                        .first()
-                        .expect("checked pointer construction has a 'to=' argument")
-                        .1;
-                    if let Some(TyKind::Pointer {
-                        origin: mojito_types::origin::PointerOrigin::Place { place, .. },
-                        ..
-                    }) = node.checked.ty.as_ref().map(Ty::kind)
+                        .place_address_operand()
+                        .expect("checked pointer construction has a place argument");
+                    if let Some(
+                        TyKind::Pointer {
+                            origin: mojito_types::origin::PointerOrigin::Place { place, .. },
+                            ..
+                        }
+                        | TyKind::LitRef {
+                            origin: mojito_types::origin::PointerOrigin::Place { place, .. },
+                            ..
+                        },
+                    ) = node.checked.ty.as_ref().map(Ty::kind)
                         && matches!(
                             place.path.last(),
                             Some(mojito_types::origin::OriginSeg::Subtree)
@@ -1318,6 +1334,19 @@ impl<'a> Flatten<'a> {
                         shared: true,
                         setup: false,
                     }];
+                }
+                // `Pointer[T, o](_mlir_value=)` loans the place its origin
+                // names, as `Pointer(to=place)` does.
+                if let Some(mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                    origin: Some(mojito_types::origin::PointerOrigin::Place { place, mutable }),
+                    ..
+                }) = node.adjustments().iter().find(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::PointerConvert { .. }
+                    )
+                }) {
+                    return self.pointer_place_loan(place, *mutable, None, true);
                 }
                 // A free-function call returning a ref-field struct (a
                 // borrowing view) lends its borrowed sources to the result,
@@ -1624,6 +1653,7 @@ fn carries_references(ty: &Ty) -> bool {
     match ty.kind() {
         TyKind::Ref(reference) => carries_references(&reference.referent),
         TyKind::Pointer { .. }
+        | TyKind::LitRef { .. }
         | TyKind::Func(_)
         | TyKind::GenericFunc(_)
         | TyKind::Overload(_)

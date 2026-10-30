@@ -360,7 +360,7 @@ pub(in crate::checker) fn field_carries_origin_param(
     use mojito_types::origin::{Origin, PointerOrigin};
     match ty.kind() {
         TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(k) if k == id),
-        TyKind::Pointer { origin, .. } => {
+        TyKind::Pointer { origin, .. } | TyKind::LitRef { origin, .. } => {
             matches!(origin, PointerOrigin::Param { id: k, .. } if *k == id)
         }
         _ => false,
@@ -379,7 +379,7 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
 ) -> Ty {
     use mojito_types::origin::PointerOrigin;
     match ty.kind() {
-        TyKind::Pointer { element, origin } => {
+        TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
             let element = substitute_pointer_origin_params(element, bindings);
             let origin = match origin {
                 PointerOrigin::Param {
@@ -401,7 +401,11 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
                 }
                 other => other.clone(),
             };
-            TyKind::Pointer { element, origin }.into()
+            if matches!(ty.kind(), TyKind::LitRef { .. }) {
+                TyKind::LitRef { element, origin }.into()
+            } else {
+                TyKind::Pointer { element, origin }.into()
+            }
         }
         TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
@@ -460,6 +464,11 @@ pub(in crate::checker) fn substitute_struct_origin_tails(
                 .collect(),
         )),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recur(element),
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),
         }

@@ -18,7 +18,7 @@
 # parameter as `Self.value` and `type_of(rhs).value` where upstream's spell
 # `self.value` and `rhs.value` (R1447), and `ptr` takes
 # `pop.string.address` as the `Pointer` itself, where upstream's wraps the
-# `!kgen.pointer` it gives (R1316).
+# `!kgen.pointer` it gives with `unsafe_bitcast[Byte]()` (R221).
 """Implements the StringLiteral struct.
 
 These are Mojo built-ins, so you don't need to import them.

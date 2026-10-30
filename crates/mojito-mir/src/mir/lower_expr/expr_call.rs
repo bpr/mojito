@@ -166,6 +166,15 @@ impl<'a> Flatten<'a> {
         self.direct_call(call, name, args, kwargs)
     }
 
+    /// `operand`'s address retyped to `call`'s checked type, a `Pointer`, a
+    /// `!kgen.pointer`, or a `!lit.ref` (`pointer.convert`).
+    pub(super) fn pointer_convert(&mut self, call: Node<'a>, operand: Node<'a>) -> Reg {
+        let value = self.expr(operand);
+        let dest = self.fresh(call.location(), None);
+        self.emit(MirInstr::PointerConvert { dest, value });
+        dest
+    }
+
     /// A call the check recorded as a construction or an intrinsic by an
     /// adjustment on its node (a copy, a scalar cast, a scalar zero, a type parameter's or
     /// a pack element's construction, a size, a type name, a pointer to a
@@ -331,14 +340,19 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
             )
         }) {
-            let value = kwargs
-                .first()
-                .expect("checked pointer construction has a 'to=' argument")
-                .1;
+            let value = call
+                .place_address_operand()
+                .expect("checked pointer construction has a place argument");
             let place = self.place(value);
             let dest = self.fresh(call.location(), Some(place.root));
             self.emit(MirInstr::MakeRef { dest, place });
             return Some(dest);
+        }
+        // `Pointer[T, o](_mlir_value=)` retypes its operand's address.
+        if call.is_pointer_convert()
+            && let Some((_, operand)) = kwargs.first()
+        {
+            return Some(self.pointer_convert(call, *operand));
         }
         // Compiler-private inline uninit-storage construction:
         // uninitialized, or holding a moved initial payload.

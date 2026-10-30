@@ -407,6 +407,10 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
             }),
+            "pointer.convert" => Some(MirInstr::PointerConvert {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+            }),
             "pop" => Some(MirInstr::Pop {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 op: self.req(value, fields, "op", Self::pop_op)?,

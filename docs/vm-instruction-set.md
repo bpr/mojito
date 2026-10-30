@@ -97,6 +97,7 @@ accessed; the compact notation omits this analysis-only field.
 | `literal.materialize` | `MaterializeLiteral` | Convert an exact numeric literal once to its checked runtime scalar type |
 | `scalar.cast` | `ScalarCast` | `Int(x)`, `UInt(x)`, `Float64(x)`, or `Bool(x)` of a scalar operand |
 | `builtin.cast` | `BuiltinCast` | Retype an `index` as its `Int` storage, or an `i1` as its `Scalar[DType.bool]` storage, or back |
+| `pointer.convert` | `PointerConvert` | Retype an address among a `Pointer`, its `!kgen.pointer`, and a `!lit.ref` |
 
 ### Calls
 
@@ -270,6 +271,20 @@ casts from, so the register keeps its bits; they hold an `i1` as a `Bool`,
 which the VM converts to and from the one-lane `bool` vector its storage is
 held as, and which is one `i1` natively. The verifier requires one of the
 two registers to be the builtin and the other its storage's held type.
+
+### `pointer.convert` — Pointer Conversion
+
+```text
+pointer.convert %dest, %value
+```
+
+Retypes an address among a `Pointer`, the `!kgen.pointer` it wraps, and the
+`!lit.ref` it is built from: upstream's `struct.create` and `struct.extract`
+of a `Pointer`'s `_mlir_value` field, and `lit.ref.to_pointer`. The VM copies
+the value, a place handle or an allocation address alike, and a variable of
+any of the three types holds a handle as the handle itself. Natively all
+three are one `ptr`. The verifier requires both registers to be among the
+three types, over compatible elements.
 
 ### `var.copy` — Copy Variable
 

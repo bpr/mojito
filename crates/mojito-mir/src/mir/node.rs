@@ -131,6 +131,16 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// The place whose address a `Pointer(to=place)` or
+    /// `__get_mvalue_as_litref(place)` takes: its `to=` keyword or its one
+    /// positional argument.
+    pub(super) fn place_address_operand(self) -> Option<Self> {
+        self.kwargs()
+            .first()
+            .map(|(_, value)| *value)
+            .or_else(|| self.args().first().copied())
+    }
+
     /// The compile-time arguments of a call or invocation.
     pub(super) fn param_args(self) -> &'a [CheckedParamArg] {
         match self.op() {

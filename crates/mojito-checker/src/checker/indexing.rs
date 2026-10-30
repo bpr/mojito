@@ -140,6 +140,15 @@ impl Checker {
             ExprKind::Member { object, field } => {
                 // The object must itself be a writable place (a struct value).
                 self.check_place(object)?;
+                if field == mojito_types::ct::MLIR_VALUE_FIELD
+                    && matches!((self.infer(object)?).kind(), TyKind::Pointer { .. })
+                {
+                    return Err(TypeError::Unsupported(
+                        "a write to a Pointer's '_mlir_value' field is not supported: the \
+                         Pointer is a compiler built-in whose origin its address cannot change"
+                            .to_string(),
+                    ));
+                }
                 // Reuse the field-typing logic (validates the field exists).
                 self.infer_member(place.source_span(), object, field)
             }
@@ -1845,6 +1854,19 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::SimdStorage,
             ));
             return Ok(storage);
+        }
+        // `p._mlir_value` is upstream's `!kgen.pointer` field of a `Pointer`.
+        if field == mojito_types::ct::MLIR_VALUE_FIELD
+            && let TyKind::Pointer { element, .. } = obj_ty.kind()
+        {
+            self.record_pointer_adjustment(
+                span,
+                mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                    origin: None,
+                    materialized: None,
+                },
+            );
+            return Ok(TyKind::KgenPointer(element.clone()).into());
         }
         // `b._mlir_value` is upstream's `!kgen.scalar<bool>` storage field of
         // a `Bool`.

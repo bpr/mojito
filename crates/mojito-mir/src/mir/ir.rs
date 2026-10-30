@@ -817,7 +817,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::Next { dest, .. } => out.push(dest),
         MirInstr::MaterializeLiteral { dest, value, .. }
         | MirInstr::ScalarCast { dest, value, .. }
-        | MirInstr::BuiltinCast { dest, value } => out.extend([dest, value]),
+        | MirInstr::BuiltinCast { dest, value }
+        | MirInstr::PointerConvert { dest, value } => out.extend([dest, value]),
         MirInstr::StoreToMem { dest, src } => out.extend([dest, src]),
         MirInstr::UseVar { dest, .. } => out.push(dest),
         MirInstr::DefVar { src, .. } => out.push(src),
@@ -2134,6 +2135,14 @@ pub enum MirInstr {
         dest: Reg,
         value: Reg,
     },
+    /// An address retyped among a `Pointer`, the `!kgen.pointer` it wraps,
+    /// and the `!lit.ref` it is built from, with its bits unchanged: what
+    /// upstream's one-field `Pointer` computes with `struct.create` and
+    /// `struct.extract` over `_mlir_value`, and `lit.ref.to_pointer`.
+    PointerConvert {
+        dest: Reg,
+        value: Reg,
+    },
     /// An upstream `pop` lane op no built-in operator computes, over
     /// `operands` of the destination's type: `pop.div` and `pop.rem`
     /// (truncating; `index.divs`), `pop.abs` (wrapping), `pop.round` (half
@@ -3114,6 +3123,7 @@ impl MirInstr {
             | Self::MaterializeLiteral { .. }
             | Self::ScalarCast { .. }
             | Self::BuiltinCast { .. }
+            | Self::PointerConvert { .. }
             | Self::SizeOf { .. }
             | Self::TypeName { .. }
             | Self::IsRunInComptimeInterpreter { .. }

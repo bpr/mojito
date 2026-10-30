@@ -1644,6 +1644,12 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::Pointer { element, .. } => {
             format!("UnsafePointer${}", ty_raw_in(element, self_ty, mode))
         }
+        TyKind::KgenPointer(element) => {
+            format!("KgenPointer${}", ty_raw_in(element, self_ty, mode))
+        }
+        TyKind::LitRef { element, .. } => {
+            format!("LitRef${}", ty_raw_in(element, self_ty, mode))
+        }
         // Application arguments participate in the mangled identity (so
         // `IteratorType[a]` and `IteratorType[b]` are distinct), except origins,
         // which erase from the runtime ABI like `TyKind::Pointer` origins above.
@@ -2602,6 +2608,17 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         // clone binder (`Elab::clone_binding`): one clone serves every place
         // of the shape, as an erased struct origin tail does.
         TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: respell(element),
+            origin: origin.clone_bindable_place().map_or_else(
+                || origin.clone(),
+                |projection| {
+                    projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
+                },
+            ),
+        }
+        .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(respell(element)).into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: respell(element),
             origin: origin.clone_bindable_place().map_or_else(
                 || origin.clone(),

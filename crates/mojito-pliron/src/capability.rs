@@ -169,6 +169,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         CapabilityStatus::Partial,
         "numeric, Bool, width-1 SIMD, and literal operands, VM-exact; Int of a pointer is its address; a pointer to any other target rejects",
     ),
+    (
+        "pointer.convert",
+        CapabilityStatus::Supported,
+        "a `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one `ptr`; the copy is the identity",
+    ),
     ("var.use", CapabilityStatus::Supported, "copy/move/borrow"),
     (
         "var.declare",
@@ -546,6 +551,16 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "pointer",
         CapabilityStatus::Supported,
         "one opaque pointer; element layouts checked at use sites",
+    ),
+    (
+        "kgen_pointer",
+        CapabilityStatus::Supported,
+        "one opaque pointer, the address a `Pointer` wraps",
+    ),
+    (
+        "lit_ref",
+        CapabilityStatus::Supported,
+        "one opaque pointer, the address a `Pointer` is built from",
     ),
     (
         "ref",

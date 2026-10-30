@@ -180,8 +180,9 @@ pub(super) fn verify_subscript_instruction(
     }
 }
 
-/// Runtime frame/slot capabilities are represented either by a source-level
-/// `ref T` or by an origin-bearing `UnsafePointer[T, origin]`. Raw/static/
+/// Runtime frame/slot capabilities are represented by a source-level
+/// `ref T`, an origin-bearing `UnsafePointer[T, origin]`, or the `!lit.ref`
+/// a `Pointer` is built from. Raw/static/
 /// untracked pointer values use allocation arithmetic and are not valid
 /// operands for `ReadRef`/`WriteRef`.
 pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
@@ -190,7 +191,7 @@ pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
             target: &reference.referent,
             permission: ReferencePermission::from_mutability(reference.mutability),
         }),
-        TyKind::Pointer { element, origin } => {
+        TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
             let permission = match origin {
                 PointerOrigin::Place { mutable, .. } => {
                     if *mutable {

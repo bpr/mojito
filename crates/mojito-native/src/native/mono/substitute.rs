@@ -447,6 +447,14 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             origin: origin.clone(),
         }
         .into(),
+        TyKind::KgenPointer(element) => {
+            TyKind::KgenPointer(substitute_ty(element, bindings)?).into()
+        }
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: substitute_ty(element, bindings)?,
+            origin: origin.clone(),
+        }
+        .into(),
         TyKind::Ref(value) => {
             let mut value = value.clone();
             value.referent = substitute_ty(&value.referent, bindings)?;
@@ -703,9 +711,10 @@ fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
     fn names_outside_structs(ty: &Ty, removed: &[ParamRef]) -> bool {
         match ty.kind() {
             TyKind::Struct(..) => false,
-            TyKind::Pointer { element, .. } | TyKind::PopArray { element, .. } => {
-                names_outside_structs(element, removed)
-            }
+            TyKind::Pointer { element, .. }
+            | TyKind::KgenPointer(element)
+            | TyKind::LitRef { element, .. }
+            | TyKind::PopArray { element, .. } => names_outside_structs(element, removed),
             TyKind::Ref(reference) => names_outside_structs(&reference.referent, removed),
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
                 elements

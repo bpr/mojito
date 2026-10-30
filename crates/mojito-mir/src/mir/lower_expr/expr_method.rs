@@ -692,6 +692,10 @@ impl<'a> Flatten<'a> {
                 }
             }
         }
+        // `p._get_kgen_pointer()` retypes the receiver's address.
+        if call.is_pointer_convert() {
+            return Some(self.pointer_convert(call, object));
+        }
         // `pointer.unsafe_offset(i)` is provenance-preserving element
         // arithmetic: the ordinary pointer `+` operation.
         if node.adjustments.iter().any(|adjustment| {

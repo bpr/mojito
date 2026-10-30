@@ -1987,6 +1987,7 @@ impl<'a> Flatten<'a> {
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
                     || e.is_bool_storage()
+                    || e.is_pointer_convert()
                 {
                     return None;
                 }
@@ -2032,6 +2033,7 @@ impl<'a> Flatten<'a> {
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
                     || e.is_bool_storage()
+                    || e.is_pointer_convert()
                 {
                     return None;
                 }
@@ -2075,6 +2077,7 @@ impl<'a> Flatten<'a> {
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
                     || e.is_bool_storage()
+                    || e.is_pointer_convert()
                 {
                     return None;
                 }

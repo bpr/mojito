@@ -88,6 +88,9 @@ pub(super) fn verify_instruction(
             target,
         } => verify_scalar_cast(&cx, *dest, *value, *target, errors),
         MirInstr::BuiltinCast { dest, value } => verify_builtin_cast(&cx, *dest, *value, errors),
+        MirInstr::PointerConvert { dest, value } => {
+            verify_pointer_convert(&cx, *dest, *value, errors);
+        }
         MirInstr::Select {
             dest,
             condition,
@@ -1484,6 +1487,36 @@ fn verify_array_op(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<St
     {
         errors.push(format!(
             "{prefix}: array.{op} index {index} is out of bounds of {size} elements"
+        ));
+    }
+}
+
+/// A `pointer.convert` retypes an address among a `Pointer`, a
+/// `!kgen.pointer`, and a `!lit.ref` of one element; origins erase at the
+/// waist, as they do for a `Pointer`.
+fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
+    let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
+        return;
+    };
+    let element = |ty: &Ty| match ty.kind() {
+        TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer(element)
+        | TyKind::LitRef { element, .. } => Some(element.clone()),
+        _ => None,
+    };
+    let (Some(to_element), Some(from_element)) = (element(&held_ty(to)), element(&held_ty(from)))
+    else {
+        errors.push(format!(
+            "{}: pointer conversion from {from} to {to} is not among `Pointer`, \
+             `!kgen.pointer`, and `!lit.ref`",
+            cx.prefix
+        ));
+        return;
+    };
+    if !super::types::types_compatible(&from_element, &to_element) {
+        errors.push(format!(
+            "{}: pointer conversion from {from} to {to} changes the element type",
+            cx.prefix
         ));
     }
 }

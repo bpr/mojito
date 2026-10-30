@@ -910,6 +910,9 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        if kwargs.len() == 1 && kwargs[0].name == "_mlir_value" && args.is_empty() {
+            return self.infer_pointer_from_mlir_value(span, param_args, &kwargs[0].value);
+        }
         if !param_args.is_empty() {
             return Err(TypeError::Unsupported(
                 "Pointer(to=...) infers its element type; explicit type \
@@ -923,7 +926,117 @@ impl Checker {
                 reason: "expected exactly one 'to=' keyword argument".to_string(),
             });
         }
-        let value = &kwargs[0].value;
+        let (element, origin) = self.infer_place_address(span, &kwargs[0].value)?;
+        Ok(TyKind::Pointer { element, origin }.into())
+    }
+
+    /// Type upstream's `__get_mvalue_as_litref(place)`: the `!lit.ref` of a
+    /// place, whose origin is the place, as `Pointer(to=place)` takes it.
+    pub(super) fn infer_mvalue_as_litref(
+        &self,
+        span: SourceSpan,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        let ([value], [], []) = (args, kwargs, param_args) else {
+            return Err(TypeError::BadCall {
+                func: "__get_mvalue_as_litref".to_string(),
+                reason: "expected exactly one place argument".to_string(),
+            });
+        };
+        let (element, origin) = self.infer_place_address(span, value)?;
+        Ok(TyKind::LitRef { element, origin }.into())
+    }
+
+    /// Type upstream's `Pointer[T, o](_mlir_value=)` overloads: a
+    /// `Pointer` built from the `!kgen.pointer` it wraps, whose origin the
+    /// bracket must supply, or from a `!lit.ref`, whose element and origin
+    /// it takes. A bracket's `_` element binds from the operand, and a
+    /// bracket that disagrees with a `!lit.ref` matches neither overload.
+    fn infer_pointer_from_mlir_value(
+        &self,
+        span: SourceSpan,
+        param_args: &[mojito_ast::ast::ParamArg],
+        value: &Expr,
+    ) -> Result<Ty, TypeError> {
+        let no_match = |reason: String| TypeError::BadCall {
+            func: "Pointer".to_string(),
+            reason: format!("no matching function in initialization: {reason}"),
+        };
+        let bracket = match param_args {
+            [] => None,
+            [_] => {
+                return Err(no_match(
+                    "failed to infer parameter 'origin' of a bracket that names none".to_string(),
+                ));
+            }
+            _ => {
+                let (ty, _) = self.pointer_type("Pointer", param_args)?;
+                let TyKind::Pointer { element, origin } = ty.kind() else {
+                    return Err(no_match(format!("'{ty}' is not a Pointer")));
+                };
+                Some((element.clone(), origin.clone()))
+            }
+        };
+        let operand = self.infer(value)?;
+        let (element, origin) = match (operand.kind(), bracket) {
+            (TyKind::LitRef { element, origin }, None) => (element.clone(), origin.clone()),
+            (TyKind::LitRef { element, origin }, Some((expected, expected_origin))) => {
+                if (*expected != TyKind::Infer && expected != *element)
+                    || !origin.coerces_to(&expected_origin)
+                {
+                    return Err(no_match(format!(
+                        "a '{operand}' does not convert to '{}'",
+                        TyKind::LitRef {
+                            element: expected,
+                            origin: expected_origin,
+                        }
+                    )));
+                }
+                (element.clone(), origin.clone())
+            }
+            (TyKind::KgenPointer(_), None) => {
+                return Err(no_match(
+                    "failed to infer parameter 'mut': a '!kgen.pointer' carries no origin"
+                        .to_string(),
+                ));
+            }
+            (TyKind::KgenPointer(element), Some((expected, origin))) => {
+                if *expected != TyKind::Infer && expected != *element {
+                    return Err(no_match(format!(
+                        "a '{operand}' does not convert to '{}'",
+                        TyKind::KgenPointer(expected)
+                    )));
+                }
+                (element.clone(), origin)
+            }
+            _ => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "a '!kgen.pointer' or a '!lit.ref'".to_string(),
+                    found: operand.to_string(),
+                    context: "argument '_mlir_value' to 'Pointer'".to_string(),
+                });
+            }
+        };
+        self.record_pointer_adjustment(
+            span,
+            SemanticAdjustment::PointerConvert {
+                origin: Some(origin.clone()),
+                materialized: None,
+            },
+        );
+        Ok(TyKind::Pointer { element, origin }.into())
+    }
+
+    /// The element and origin of the address of `value`, a place, as
+    /// `Pointer(to=)` and `__get_mvalue_as_litref` take it, recording the
+    /// `PointerToPlace` adjustment at `span`.
+    fn infer_place_address(
+        &self,
+        span: SourceSpan,
+        value: &Expr,
+    ) -> Result<(Ty, mojito_types::origin::PointerOrigin), TypeError> {
         // A `ref[Self.o]` parameter names the enclosing struct's origin binder:
         // its pointer carries that binder exactly as a `Pointer[T, Self.o]`
         // field declares it (upstream's iterator storage `self.src =
@@ -941,11 +1054,7 @@ impl Checker {
                     materialized: None,
                 },
             );
-            return Ok(TyKind::Pointer {
-                element: reference.referent,
-                origin,
-            }
-            .into());
+            return Ok((reference.referent, origin));
         }
         if let ExprKind::Identifier(name) = &value.kind
             && (matches!(self.lookup(name).map(Ty::kind), Some(TyKind::Ref(_)))
@@ -999,11 +1108,7 @@ impl Checker {
                     materialized: None,
                 },
             );
-            return Ok(TyKind::Pointer {
-                element: reference.referent,
-                origin,
-            }
-            .into());
+            return Ok((reference.referent, origin));
         }
         // A call, or a subscript's accessor call, is a place only through
         // the reference its inference records (`w.get()` returning
@@ -1035,11 +1140,10 @@ impl Checker {
                 materialized: None,
             },
         );
-        Ok(TyKind::Pointer {
+        Ok((
             element,
-            origin: mojito_types::origin::PointerOrigin::Place { place, mutable },
-        }
-        .into())
+            mojito_types::origin::PointerOrigin::Place { place, mutable },
+        ))
     }
 
     /// The width an unbound `SIMD[dtype, _]` construction binds from its

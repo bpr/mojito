@@ -849,6 +849,21 @@ pub enum TyKind {
         element: Ty,
         origin: crate::origin::PointerOrigin,
     },
+    /// Upstream's raw address `!kgen.pointer<T>` (`Pointer[T, o]._mlir_type`),
+    /// the one field a `Pointer` wraps, displayed
+    /// ``__mlir_type.`!kgen.pointer<T>` ``. It carries no origin, so it lends
+    /// nothing, and it has no members. Both backends hold it as they hold the
+    /// `Pointer` it came from.
+    KgenPointer(Ty),
+    /// Upstream's reference value `!lit.ref<T, origin>`
+    /// (`Pointer[T, o]._mlir_lit_ref`), what `__get_mvalue_as_litref(place)`
+    /// gives and `Pointer(_mlir_value=)` takes, displayed `ref[origin] T`.
+    /// Its origin is part of its type, and it is not its referent: no read
+    /// goes through it. Both backends hold it as they hold a `Pointer`.
+    LitRef {
+        element: Ty,
+        origin: crate::origin::PointerOrigin,
+    },
     /// A reference value. Origins and permissions are checked statically; its
     /// runtime representation is introduced only after loan checking exists.
     Ref(crate::origin::RefTy),
@@ -2011,6 +2026,14 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
             origin: origin.clone(),
         }
         .into(),
+        TyKind::KgenPointer(element) => {
+            TyKind::KgenPointer(expand_pack_spread(element, pack, elements)).into()
+        }
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: expand_pack_spread(element, pack, elements),
+            origin: origin.clone(),
+        }
+        .into(),
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = expand_pack_spread(&reference.referent, pack, elements);
@@ -2888,58 +2911,15 @@ impl fmt::Display for TyKind {
             Self::Simd { dtype, width } => write!(f, "SIMD[{dtype}, {width}]"),
             Self::Error => write!(f, "Error"),
             Self::Pointer { element, origin } => {
-                write!(f, "Pointer[{element}")?;
-                match origin {
-                    crate::origin::PointerOrigin::Place {
-                        place,
-                        mutable: false,
-                    } => {
-                        write!(f, ", ImmOrigin(origin@{})", place.root.0)?;
-                    }
-                    crate::origin::PointerOrigin::Place { place, .. } => {
-                        write!(f, ", origin@{}", place.root.0)?;
-                    }
-                    crate::origin::PointerOrigin::Param {
-                        id,
-                        mutability,
-                        interior,
-                        subtree,
-                    } => {
-                        let immutable = *mutability == crate::origin::Mutability::Immutable;
-                        write!(
-                            f,
-                            ", {}origin#{}",
-                            if immutable { "ImmOrigin(" } else { "" },
-                            id.0
-                        )?;
-                        for tag in interior {
-                            write!(f, "._get_owned_interior[{tag}]")?;
-                        }
-                        if *subtree {
-                            write!(f, "._subtree")?;
-                        }
-                        if immutable {
-                            write!(f, ")")?;
-                        }
-                    }
-                    crate::origin::PointerOrigin::SelfPlace { .. } => {
-                        write!(f, ", origin_of(self)")?;
-                    }
-                    crate::origin::PointerOrigin::Static => write!(f, ", ImmStaticOrigin")?,
-                    crate::origin::PointerOrigin::Untracked { mutable: true } => {
-                        write!(f, ", MutUntrackedOrigin")?;
-                    }
-                    crate::origin::PointerOrigin::Untracked { mutable: false } => {
-                        write!(f, ", ImmUntrackedOrigin")?;
-                    }
-                    crate::origin::PointerOrigin::UnsafeAny { mutable: true } => {
-                        write!(f, ", MutUnsafeAnyOrigin")?;
-                    }
-                    crate::origin::PointerOrigin::UnsafeAny { mutable: false } => {
-                        write!(f, ", ImmUnsafeAnyOrigin")?;
-                    }
-                }
+                write!(f, "Pointer[{element}, ")?;
+                fmt_pointer_origin(f, origin)?;
                 write!(f, "]")
+            }
+            Self::KgenPointer(element) => write!(f, "__mlir_type.`!kgen.pointer<{element}>`"),
+            Self::LitRef { element, origin } => {
+                write!(f, "ref[")?;
+                fmt_pointer_origin(f, origin)?;
+                write!(f, "] {element}")
             }
             Self::Ref(reference) => write!(f, "ref {}", reference.referent),
             Self::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
@@ -3092,6 +3072,12 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
             origin: origin.clone(),
         }
         .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: recur(element),
+            origin: origin.clone(),
+        }
+        .into(),
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recur(&reference.referent);
@@ -3123,6 +3109,12 @@ pub fn erase_origins(ty: &Ty) -> Ty {
                 .collect(),
         )),
         TyKind::Pointer { element, .. } => TyKind::Pointer {
+            element: recur(element),
+            origin: crate::origin::PointerOrigin::Static,
+        }
+        .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
+        TyKind::LitRef { element, .. } => TyKind::LitRef {
             element: recur(element),
             origin: crate::origin::PointerOrigin::Static,
         }
@@ -3182,6 +3174,12 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
         }
         .into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recur(element),
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),
         }
@@ -3610,6 +3608,17 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 origin: bo,
             },
         ) => coerces(a, b) && ao.coerces_to(bo),
+        (TyKind::KgenPointer(a), TyKind::KgenPointer(b)) => coerces(a, b),
+        (
+            TyKind::LitRef {
+                element: a,
+                origin: ao,
+            },
+            TyKind::LitRef {
+                element: b,
+                origin: bo,
+            },
+        ) => coerces(a, b) && ao.coerces_to(bo),
         (TyKind::Func(from), TyKind::Func(to)) => {
             let FuncTy {
                 environment: from_environment,
@@ -3885,6 +3894,8 @@ pub const fn copy_is_identity(ty: &TyKind) -> bool {
             | TyKind::FloatLiteral
             | TyKind::None
             | TyKind::Pointer { .. }
+            | TyKind::KgenPointer(_)
+            | TyKind::LitRef { .. }
             | TyKind::Simd {
                 width: SimdWidth::Known(1),
                 ..
@@ -4592,6 +4603,12 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             origin: origin.clone(),
         }
         .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(substitute(element, subst)).into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: substitute(element, subst),
+            origin: origin.clone(),
+        }
+        .into(),
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = substitute(&reference.referent, subst);
@@ -4815,6 +4832,12 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::Variant(alternatives) => TyKind::Variant(list(alternatives, rewrite)?).into(),
         TyKind::Overload(candidates) => TyKind::Overload(all(candidates, rewrite)?).into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: rewrite_ty(element, rewrite)?,
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(rewrite_ty(element, rewrite)?).into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: rewrite_ty(element, rewrite)?,
             origin: origin.clone(),
         }
@@ -5423,7 +5446,9 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
-        | TyKind::Pointer { element, .. } => is_symbolic(element),
+        | TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer(element)
+        | TyKind::LitRef { element, .. } => is_symbolic(element),
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
         TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
@@ -5660,7 +5685,9 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
-        | TyKind::Pointer { element, .. } => mentions(element, predicate),
+        | TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer(element)
+        | TyKind::LitRef { element, .. } => mentions(element, predicate),
         TyKind::PopArray { size, element } => {
             matches!(size, ArraySize::Expr(expr) if expr_mentions(expr, predicate))
                 || mentions(element, predicate)
@@ -5730,7 +5757,9 @@ fn decorated(ty: &Ty) -> bool {
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
-        | TyKind::Pointer { element, .. } => element.carries_decorations(),
+        | TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer(element)
+        | TyKind::LitRef { element, .. } => element.carries_decorations(),
         TyKind::PopArray { size, element } => {
             matches!(size, ArraySize::Expr(expr) if expr.carries_decorations())
                 || element.carries_decorations()
@@ -6006,6 +6035,12 @@ fn expand_packs<S: std::hash::BuildHasher>(
         }
         .into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recurse(element),
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(recurse(element)).into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: recurse(element),
             origin: origin.clone(),
         }
@@ -6325,6 +6360,65 @@ fn mlir_bracket_pieces(
         })
         .collect();
     (text, operands)
+}
+
+/// A pointer origin as a `Pointer` or a `!lit.ref` displays it.
+fn fmt_pointer_origin(
+    f: &mut fmt::Formatter<'_>,
+    origin: &crate::origin::PointerOrigin,
+) -> fmt::Result {
+    use crate::origin::{Mutability, PointerOrigin};
+    match origin {
+        PointerOrigin::Place {
+            place,
+            mutable: false,
+        } => {
+            write!(f, "ImmOrigin(origin@{})", place.root.0)?;
+        }
+        PointerOrigin::Place { place, .. } => {
+            write!(f, "origin@{}", place.root.0)?;
+        }
+        PointerOrigin::Param {
+            id,
+            mutability,
+            interior,
+            subtree,
+        } => {
+            let immutable = *mutability == Mutability::Immutable;
+            write!(
+                f,
+                "{}origin#{}",
+                if immutable { "ImmOrigin(" } else { "" },
+                id.0
+            )?;
+            for tag in interior {
+                write!(f, "._get_owned_interior[{tag}]")?;
+            }
+            if *subtree {
+                write!(f, "._subtree")?;
+            }
+            if immutable {
+                write!(f, ")")?;
+            }
+        }
+        PointerOrigin::SelfPlace { .. } => {
+            write!(f, "origin_of(self)")?;
+        }
+        PointerOrigin::Static => write!(f, "ImmStaticOrigin")?,
+        PointerOrigin::Untracked { mutable: true } => {
+            write!(f, "MutUntrackedOrigin")?;
+        }
+        PointerOrigin::Untracked { mutable: false } => {
+            write!(f, "ImmUntrackedOrigin")?;
+        }
+        PointerOrigin::UnsafeAny { mutable: true } => {
+            write!(f, "MutUnsafeAnyOrigin")?;
+        }
+        PointerOrigin::UnsafeAny { mutable: false } => {
+            write!(f, "ImmUnsafeAnyOrigin")?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

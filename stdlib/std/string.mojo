@@ -1482,7 +1482,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
 
     # Upstream's `!kgen.string` initializer, which takes the address
     # `pop.string.address` gives as the `Pointer` itself, where upstream's
-    # wraps the `!kgen.pointer` it gives (R1316).
+    # wraps the `!kgen.pointer` it gives with `unsafe_bitcast[Byte]()` (R221).
     @doc_hidden
     @inline(.always)
     def __init__(out self: StaticString, _kgen: __mlir_type.`!kgen.string`):

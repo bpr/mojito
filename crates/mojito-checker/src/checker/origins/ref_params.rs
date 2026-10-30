@@ -166,7 +166,7 @@ impl Checker {
             }
             match ty.kind() {
                 TyKind::Ref(reference) => out.push(CaptureOrigin::read(reference.origin.clone())),
-                TyKind::Pointer { element, origin } => {
+                TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
                     if let Some(origin) = origin.as_origin() {
                         out.push(CaptureOrigin::read(origin));
                     }
@@ -270,7 +270,7 @@ impl Checker {
             }
             match ty.kind() {
                 TyKind::Ref(_) => true,
-                TyKind::Pointer { element, origin } => {
+                TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
                     (pointer_loans && origin.as_origin().is_some())
                         || contains(checker, element, pointer_loans, seen)
                 }
@@ -399,7 +399,7 @@ impl Checker {
                 let found = self.lookup(name);
                 match found.map(Ty::kind) {
                     Some(TyKind::Ref(reference)) => vec![reference.origin.clone()],
-                    Some(TyKind::Pointer { origin, .. }) => origin
+                    Some(TyKind::Pointer { origin, .. } | TyKind::LitRef { origin, .. }) => origin
                         .as_origin()
                         .map(|origin| vec![origin])
                         .unwrap_or_default(),
@@ -468,10 +468,16 @@ impl Checker {
                             mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
                         )
                     })
-                    && let Some(argument) = kwargs.first()
-                    && let Ok(place) = self.origin_place(&argument.value)
+                    && let Some(argument) = kwargs
+                        .first()
+                        .map(|argument| &argument.value)
+                        .or_else(|| args.first())
+                    && let Ok(place) = self.origin_place(argument)
                 {
                     return vec![Origin::Place(place)];
+                }
+                if let Some(origins) = self.pointer_convert_origins(expression) {
+                    return origins;
                 }
                 let mut result = Vec::new();
                 if let Some(info) = self.structs.get(name) {
@@ -603,6 +609,9 @@ impl Checker {
                         .map(|origin| vec![origin])
                         .unwrap_or_default();
                 }
+                if let Some(origins) = self.pointer_convert_origins(expression) {
+                    return origins;
+                }
                 // A method whose selected contract returns an origin-bearing
                 // pointer (`xs.unsafe_ptr()`) carries that rebased origin.
                 if let Some(contract) = self
@@ -704,5 +713,31 @@ impl Checker {
             .into_iter()
             .map(|origin| super::project_origin(origin, &path))
             .collect()
+    }
+
+    /// The origins a `PointerConvert` result carries: a built pointer's
+    /// origin, and none for a `!kgen.pointer`. `None` for any other
+    /// expression.
+    fn pointer_convert_origins(
+        &self,
+        expression: &Expr,
+    ) -> Option<Vec<mojito_types::origin::Origin>> {
+        match self
+            .node_facts
+            .borrow()
+            .get(&expression.source_span())
+            .and_then(|facts| facts.adjustment.as_deref())
+        {
+            Some(mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                origin, ..
+            }) => Some(
+                origin
+                    .as_ref()
+                    .and_then(mojito_types::origin::PointerOrigin::as_origin)
+                    .into_iter()
+                    .collect(),
+            ),
+            _ => None,
+        }
     }
 }

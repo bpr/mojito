@@ -436,6 +436,14 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             TyKind::Pointer { element: a, .. } => unify(p, a, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
+        TyKind::KgenPointer(p) => match actual.kind() {
+            TyKind::KgenPointer(a) => unify(p, a, bindings),
+            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+        },
+        TyKind::LitRef { element: p, .. } => match actual.kind() {
+            TyKind::LitRef { element: a, .. } => unify(p, a, bindings),
+            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+        },
         TyKind::Ref(p) => match actual.kind() {
             TyKind::Ref(a) if p.mutability == a.mutability => {
                 unify(&p.referent, &a.referent, bindings)

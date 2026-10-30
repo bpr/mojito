@@ -106,6 +106,12 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
             || found_size.known() == expected_size.known())
             && types_compatible(found_element, expected_element);
     }
+    // A `!kgen.pointer` is its element's address.
+    if let (TyKind::KgenPointer(found_element), TyKind::KgenPointer(expected_element)) =
+        (found.kind(), expected.kind())
+    {
+        return types_compatible(found_element, expected_element);
+    }
     // Pointer provenance erases from the runtime ABI: `unsafe_origin_cast` retypes
     // a pointer without any runtime operation (lowering forwards the
     // receiver register), so ABI compatibility compares elements only. The
@@ -116,6 +122,16 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
             ..
         },
         TyKind::Pointer {
+            element: expected_element,
+            ..
+        },
+    )
+    | (
+        TyKind::LitRef {
+            element: found_element,
+            ..
+        },
+        TyKind::LitRef {
             element: expected_element,
             ..
         },
@@ -294,7 +310,9 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
         TyKind::RuntimePack(_) => true,
         TyKind::ComptimeList(inner)
         | TyKind::PopArray { element: inner, .. }
-        | TyKind::Pointer { element: inner, .. } => contains_runtime_pack(inner),
+        | TyKind::Pointer { element: inner, .. }
+        | TyKind::KgenPointer(inner)
+        | TyKind::LitRef { element: inner, .. } => contains_runtime_pack(inner),
         TyKind::Tuple(elements) | TyKind::Variant(elements) | TyKind::Overload(elements) => {
             elements.iter().any(contains_runtime_pack)
         }
@@ -473,6 +491,23 @@ pub(super) fn instantiate_checked_type(
             origin: origin.clone(),
         }
         .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(instantiate_checked_type(
+            element,
+            type_arguments,
+            value_arguments,
+            bound_values,
+        )?)
+        .into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: instantiate_checked_type(
+                element,
+                type_arguments,
+                value_arguments,
+                bound_values,
+            )?,
+            origin: origin.clone(),
+        }
+        .into(),
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = instantiate_checked_type(
@@ -616,7 +651,9 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         | TyKind::ParamList(inner)
         | TyKind::VariadicPack(inner)
         | TyKind::PopArray { element: inner, .. }
-        | TyKind::Pointer { element: inner, .. } => contains_type_param(inner),
+        | TyKind::Pointer { element: inner, .. }
+        | TyKind::KgenPointer(inner)
+        | TyKind::LitRef { element: inner, .. } => contains_type_param(inner),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(contains_type_param)
         }

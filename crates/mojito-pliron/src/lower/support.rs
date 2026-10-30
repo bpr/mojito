@@ -301,6 +301,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::MaterializeLiteral { .. } => "MaterializeLiteral",
         MirInstr::ScalarCast { .. } => "ScalarCast",
         MirInstr::BuiltinCast { .. } => "BuiltinCast",
+        MirInstr::PointerConvert { .. } => "PointerConvert",
         MirInstr::Pop { .. } => "Pop",
         MirInstr::IsRunInComptimeInterpreter { .. } => "IsRunInComptimeInterpreter",
         MirInstr::CallLlvmIntrinsic { .. } => "CallLlvmIntrinsic",

@@ -155,7 +155,10 @@ pub fn lower_ty(
         TyKind::FloatLiteral => Ok(LowerTy::Scalar(ScalarTy::Float64)),
         // Origins and ownership facts erase after validation; a pointer is
         // one opaque target pointer regardless of its element type.
-        TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
+        TyKind::Pointer { .. }
+        | TyKind::KgenPointer(_)
+        | TyKind::LitRef { .. }
+        | TyKind::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
         TyKind::None => Ok(LowerTy::ZeroSized),
         // The built-in error value is `MjError { message: MjString }` storage;
         // its message buffer frees invisibly on drop (no user destructor).

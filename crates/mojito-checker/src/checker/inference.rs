@@ -790,6 +790,16 @@ impl Checker {
                     element: expected_element,
                     origin: expected_origin,
                 },
+            )
+            | (
+                TyKind::LitRef {
+                    element: actual_element,
+                    origin: actual_origin,
+                },
+                TyKind::LitRef {
+                    element: expected_element,
+                    origin: expected_origin,
+                },
             ) => {
                 coerces(actual_element, expected_element)
                     && match (actual_origin, expected_origin) {

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.139
+mojito-mir 1.140
 ```
 
-The writer emits 1.139. The reader accepts 1.0 through 1.139; *Schema 1.0*
+The writer emits 1.140. The reader accepts 1.0 through 1.140; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -922,6 +922,12 @@ condition. The reader takes a record without the field as before, the
 `with_message` text its message. The package format moves to
 `mojito-package 154`.
 
+Schema 1.140 adds the types `kgen_pointer { element }` and
+`lit_ref { element, origin }`, upstream's `!kgen.pointer<T>` and
+`!lit.ref<T, origin>`, and the instruction `pointer.convert { dest, value }`,
+which retypes an address among them and a `pointer`. The package format
+moves to `mojito-package 155`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1466,6 +1472,8 @@ kgen_simd { dtype, width }
 comptime_list(type) param_list(type) tuple([type...]) runtime_pack([type...])
 pop_array { size, element } variadic_pack(type) variant([type...])
 pointer { element, origin }
+kgen_pointer { element }
+lit_ref { element, origin }
 ref { referent, origin, mutability }
 ```
 
@@ -1529,6 +1537,15 @@ It is a type apart from the `simd` it stores, but both backends hold it as
 that vector, and the verifier compares the two as one held representation:
 `_mlir_value` reads the vector's register, and `mlir_value=` constructs the
 vector from its storage.
+
+`kgen_pointer { element }` (schema 1.140) is upstream's raw address
+`!kgen.pointer<T>` in the default address space, the field a `Pointer`
+wraps (`Pointer[T, o]._mlir_type`), and `lit_ref { element, origin }`
+(schema 1.140) upstream's reference value `!lit.ref<T, origin>`
+(`Pointer[T, o]._mlir_lit_ref`), with a `pointer`'s origin vocabulary.
+Both backends hold either as a `pointer`. The verifier compares two of a
+kind by element, erasing origins as it does for a `pointer`, and takes a
+`lit_ref` as a reference capability, as `ref.make` builds one.
 
 `index` (schema 1.123) is upstream's MLIR builtin `__mlir_type.index`, what
 `Indexer.__mlir_index__` returns and an `index` op computes over. Both
@@ -1696,6 +1713,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage |
+| `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |
 | `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
 | `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`; an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |

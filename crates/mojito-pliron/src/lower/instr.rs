@@ -277,6 +277,11 @@ impl FnLowering<'_> {
             MirInstr::BuiltinCast { dest, value } => {
                 self.lower_copy_value(ctx, *dest, *value, None)
             }
+            // A `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one
+            // `ptr`.
+            MirInstr::PointerConvert { dest, value } => {
+                self.lower_copy_value(ctx, *dest, *value, None)
+            }
             MirInstr::Pop { dest, op, operands } => self.lower_pop(ctx, *dest, *op, operands),
             // The compiled program never runs in the comptime interpreter.
             MirInstr::IsRunInComptimeInterpreter { dest } => {

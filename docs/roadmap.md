@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1681**.
+Next free ID: **R1683**.
 
 ## Ordered Work
 
@@ -1343,6 +1343,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R1682 A local read through an untracked pointer after its last use
+  reads `None` on the VM**
+
+  `var k = Pointer(to=x)._get_kgen_pointer()` then
+  `print(Pointer[_, ImmUntrackedOrigin](_mlir_value=k)[])`, with no later
+  use of `x`, prints `None` on the VM, where the pin and `--backend pliron`
+  print `5`.
+  - An untracked pointer and a `!kgen.pointer` lend nothing, so `x`'s
+    `drop.var` lands before the read, and the VM's `drop.var` clears the
+    frame slot the pointer's handle designates.
+  - The pin destroys a trivial `Int` at its last use too, but its storage
+    stays in the frame, as it does natively.
+  - Probe: `Pointer(to=x).unsafe_origin_cast[MutUntrackedOrigin]()` then
+    `print(p[])` prints `None` the same way.
+  - Found while landing R1316 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1603 A conditional's register-passable result that needs
   destroying is dropped before its use**
 
@@ -2376,6 +2394,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The element binds, but the origin parameter stays an unsolved slot.
   - The same signature with a concrete element (`Pointer[Int, o]`) runs.
   - The parameter order does not matter.
+  - Probe: `def h[T: AnyType, o: ImmOrigin](r: Pointer[T, o]._mlir_lit_ref)`
+    called with `__get_mvalue_as_litref(x)` fails the same way, and R1314's
+    `VariadicList.__init__[size, container_origin]` needs both inferred.
   - Found while fixing a call-result pointer's dereference (2026-10-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9216,25 +9237,31 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1316 `!lit.ref` and `!kgen.pointer` values have no spelling**
+- [ ] **R1681 `Pointer` is the compiler's `TyKind::Pointer`, where upstream
+  declares `struct Pointer` in `std/memory/pointer.mojo` over a
+  `!kgen.pointer` field**
 
-  Problem: upstream's `VariadicList` constructor takes its array as a
-  `Pointer[...]._mlir_lit_ref` (`!lit.ref<T, origin>`), turns it into a
-  `Pointer` with `Pointer(_mlir_value=value)`, and reads its address with
-  `_get_kgen_pointer()` (`!kgen.pointer<T>`), and Mojito accepts none of
-  the three.
-  - Probe: `def f[o: ImmOrigin](r: Pointer[Int, o]._mlir_lit_ref)` is
-    rejected.
-  - `Pointer` is a compiler built-in here (`TyKind::Pointer`), so each is a
-    built-in member, as `unsafe_origin_cast` is
-    (`checker/method_calls/builtin_types.rs`).
-  - `pop.string.address` is typed `Pointer[Byte, ImmStaticOrigin]` and
-    admitted only in `std/builtin/string_literal.mojo`, where upstream's
-    gives the `!kgen.pointer` that `StringLiteral.ptr` wraps with
-    `Pointer[_, ImmStaticOrigin](_mlir_value=…).unsafe_bitcast[Byte]()`.
-    Respell `ptr` as upstream's when the spelling lands.
-  - Found while landing R1304 (2026-10-23).
-  - Depends on nothing.
+  Its members are checker rules here (`unsafe_origin_cast`, `unsafe_mut_cast`,
+  `_get_kgen_pointer`, the `_mlir_value` read, and both
+  `Pointer[T, o](_mlir_value=)` constructions in
+  `checker/method_calls/builtin_types.rs` and `checker/operators.rs`), where
+  upstream's are Mojo bodies over its one field.
+  - Probe: `p._mlir_value = k` is rejected as unsupported; the pin writes the
+    field.
+  - Probe: ``__mlir_op.`lit.ref.to_pointer`(r)`` and
+    ``__mlir_op.`lit.ref.from_pointer`[_type=…](k)`` are not accepted.
+  - Probe: the bracket spelling
+    ``__mlir_type[`!lit.ref<`, T, `, `, o._mlir_origin, `, `, as, `>`]``
+    needs `Origin._mlir_origin`; only `Pointer[T, o]._mlir_lit_ref` reaches
+    the type.
+  - Address spaces wait on it: `Pointer` and `!kgen.pointer<T>` hold only
+    the default one.
+  - A `ref` binding's `TyKind::Ref` and a `!lit.ref` value
+    (`TyKind::LitRef`) are two types, where upstream's are one.
+  - R1679's display probe is part of it.
+  - The port spans sessions: this entry's session plans it and files the
+    slices as entries chained by Depends bullets, replacing this one.
+  - Depends on R221 (`pop.pointer.bitcast`, the body of `unsafe_bitcast`).
   - Model: Fable, Not Planned.
 
 - [ ] **R1317 `pop.array.gep` and the `index` conversions are not
@@ -12314,11 +12341,20 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R221 `Pointer.unsafe_bitcast[U]()` leaves its result at the old
-  element type**
+- [ ] **R221 `Pointer.unsafe_bitcast[U]()` is not accepted**
 
-  Problem: `Pointer.unsafe_bitcast[U]()` is not typed: an origin-cast-style
-  forwarding leaves the MIR register at the old element type.
+  `p.unsafe_bitcast[Int8]()` over a `Pointer[UInt8, o]` is rejected with
+  "compile-time parameter arguments are not supported here", where the pin
+  retypes the pointer to `Pointer[Int8, o]`.
+  - Upstream's body is `pop.pointer.bitcast` over the `!kgen.pointer`.
+    `pointer.convert` is the precedent for a retype that keeps the bits,
+    but a new element type needs the VM's typed memory to reinterpret the
+    pointee or refuse.
+  - Then retype `pop.string.address` to the pin's
+    `!kgen.pointer<scalar<si8>>` (`TyKind::KgenPointer` of `Int8`), respell
+    `StringLiteral.ptr` and `StaticString(_kgen)` as upstream's
+    `Pointer[_, ImmStaticOrigin](_mlir_value=…).unsafe_bitcast[Byte]()`,
+    and drop `is_bundled_kgen_string_source`'s address gate.
   - Probe: upstream's `VariadicList` constructor ends with
     `.unsafe_bitcast[Self._EltPointerType]()` over the array's first
     element (R1317).

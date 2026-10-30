@@ -48,7 +48,9 @@ pub(super) fn functions_equivalent(a: &MirFunction, b: &MirFunction) -> bool {
 
 pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
     match (a.kind(), b.kind()) {
-        (TyKind::Pointer { .. }, TyKind::Pointer { .. }) => true,
+        (TyKind::Pointer { .. }, TyKind::Pointer { .. })
+        | (TyKind::KgenPointer(_), TyKind::KgenPointer(_))
+        | (TyKind::LitRef { .. }, TyKind::LitRef { .. }) => true,
         // A reference is one target word whatever its origin.
         (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability && ty_equivalent(&a.referent, &b.referent)
@@ -143,7 +145,9 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
         (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability && ty_equal_modulo_origins(&a.referent, &b.referent)
         }
-        (TyKind::Pointer { element: a, .. }, TyKind::Pointer { element: b, .. }) => {
+        (TyKind::Pointer { element: a, .. }, TyKind::Pointer { element: b, .. })
+        | (TyKind::KgenPointer(a), TyKind::KgenPointer(b))
+        | (TyKind::LitRef { element: a, .. }, TyKind::LitRef { element: b, .. }) => {
             ty_equal_modulo_origins(a, b)
         }
         (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args)) => {
@@ -268,6 +272,8 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::ComptimeList(_)
         | TyKind::VariadicPack(_)
         | TyKind::Pointer { .. }
+        | TyKind::KgenPointer(_)
+        | TyKind::LitRef { .. }
         | TyKind::Ref(_) => true,
         TyKind::Struct(..) => !ty.is_closed(),
         _ => false,
@@ -321,7 +327,9 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::PopArray { element, .. } => {
             erase_callable_environments(element);
         }
-        TyKind::Pointer { element, .. } => erase_callable_environments(element),
+        TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer(element)
+        | TyKind::LitRef { element, .. } => erase_callable_environments(element),
         TyKind::Ref(reference) => erase_callable_environments(&mut reference.referent),
         _ => {}
     });

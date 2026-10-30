@@ -142,6 +142,7 @@ impl Checker {
             "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
                 self.infer_pointer_to(span, param_args, args, kwargs)
             }
+            "__get_mvalue_as_litref" => self.infer_mvalue_as_litref(span, param_args, args, kwargs),
             // Compiler-private tagged-union storage:
             // `__VariantStorage[T0, ...](value^)` selects the alternative
             // by the payload's type; `(init_with=factory)` by the

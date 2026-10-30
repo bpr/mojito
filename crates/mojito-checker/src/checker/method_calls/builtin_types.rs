@@ -131,6 +131,18 @@ impl Checker {
                 }
                 .into())
             }
+            // The `!kgen.pointer` the pointer wraps, its `_mlir_value`.
+            "_get_kgen_pointer" => {
+                no_arguments(method, args)?;
+                self.record_pointer_adjustment(
+                    span.clone(),
+                    mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                        origin: None,
+                        materialized: None,
+                    },
+                );
+                Ok(TyKind::KgenPointer(elem.clone()).into())
+            }
             // `Intable.__int__()`: the address, upstream's
             // `pop.pointer_to_index`.
             "__int__" => {

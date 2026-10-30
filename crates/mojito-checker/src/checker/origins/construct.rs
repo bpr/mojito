@@ -285,17 +285,33 @@ impl Checker {
         let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
         for (index, actual) in bound {
             let (
-                Some(TyKind::Pointer {
-                    origin:
-                        PointerOrigin::Param {
-                            id,
-                            mutability,
-                            interior,
-                            subtree,
-                        },
-                    ..
-                }),
+                Some(
+                    TyKind::Pointer {
+                        origin:
+                            PointerOrigin::Param {
+                                id,
+                                mutability,
+                                interior,
+                                subtree,
+                            },
+                        ..
+                    }
+                    | TyKind::LitRef {
+                        origin:
+                            PointerOrigin::Param {
+                                id,
+                                mutability,
+                                interior,
+                                subtree,
+                            },
+                        ..
+                    },
+                ),
                 TyKind::Pointer {
+                    origin: actual_origin,
+                    ..
+                }
+                | TyKind::LitRef {
                     origin: actual_origin,
                     ..
                 },
@@ -528,6 +544,10 @@ pub(in crate::checker) fn names_origin_binder(parameter: &Ty) -> bool {
         TyKind::Pointer {
             origin: PointerOrigin::Param { .. },
             ..
+        }
+        | TyKind::LitRef {
+            origin: PointerOrigin::Param { .. },
+            ..
         } => true,
         TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(_)),
         TyKind::Struct(_, arguments) => arguments
@@ -580,6 +600,16 @@ fn bind_callable_tail_pattern(
                 origin: declared,
             },
             TyKind::Pointer {
+                element,
+                origin: provenance,
+            },
+        )
+        | (
+            TyKind::LitRef {
+                element: pattern_element,
+                origin: declared,
+            },
+            TyKind::LitRef {
                 element,
                 origin: provenance,
             },

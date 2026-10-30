@@ -156,6 +156,17 @@ impl Decoder {
                     self.unknown(fields, &["element", "origin"]);
                     TyKind::Pointer { element, origin }.into()
                 }
+                "kgen_pointer" => {
+                    let element = self.req(value, fields, "element", Self::ty)?;
+                    self.unknown(fields, &["element"]);
+                    TyKind::KgenPointer(element).into()
+                }
+                "lit_ref" => {
+                    let element = self.req(value, fields, "element", Self::ty)?;
+                    let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
+                    self.unknown(fields, &["element", "origin"]);
+                    TyKind::LitRef { element, origin }.into()
+                }
                 "pop_array" => {
                     let size = self.req(value, fields, "size", Self::array_size_slot)?;
                     let element = self.req(value, fields, "element", Self::ty)?;

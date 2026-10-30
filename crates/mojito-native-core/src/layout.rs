@@ -132,7 +132,10 @@ impl LayoutCx<'_> {
                 Ok(Layout::new(element.size * size, element.align))
             }
             TyKind::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
-            TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(self.pointer()),
+            TyKind::Pointer { .. }
+            | TyKind::KgenPointer(_)
+            | TyKind::LitRef { .. }
+            | TyKind::Ref(_) => Ok(self.pointer()),
             // A retained callable is the two-word `{ invoke: ptr, env: ptr }`
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.

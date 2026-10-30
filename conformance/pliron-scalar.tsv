@@ -841,6 +841,7 @@ assets/ok/pointer_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_returned.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_wrapper_iterator_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_immutable_conversion.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_mlir_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_cast_reads_pointee.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_cast_upgrade_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_constructors.mojo	-	ineligible	no-scalar-entry-shape

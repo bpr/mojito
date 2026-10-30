@@ -898,7 +898,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("target", ty_value(target)),
             ],
         ),
-        MirInstr::BuiltinCast { dest, value } => record(
+        MirInstr::BuiltinCast { dest, value } | MirInstr::PointerConvert { dest, value } => record(
             tag,
             &[("dest", reg_value(*dest)), ("value", reg_value(*value))],
         ),
@@ -2335,6 +2335,14 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::Variant(values) => positional("variant", &list(values.iter().map(ty_value))),
         TyKind::Pointer { element, origin } => record(
             "pointer",
+            &[
+                ("element", ty_value(element)),
+                ("origin", pointer_origin(origin)),
+            ],
+        ),
+        TyKind::KgenPointer(element) => record("kgen_pointer", &[("element", ty_value(element))]),
+        TyKind::LitRef { element, origin } => record(
+            "lit_ref",
             &[
                 ("element", ty_value(element)),
                 ("origin", pointer_origin(origin)),

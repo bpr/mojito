@@ -512,6 +512,7 @@ impl Checker {
                         mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
                             | mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
                             | mojito_checked::checked::SemanticAdjustment::PointerOriginCast { .. }
+                            | mojito_checked::checked::SemanticAdjustment::PointerConvert { .. }
                     )
                 )
             })
@@ -580,6 +581,9 @@ impl Checker {
                 | mojito_checked::checked::SemanticAdjustment::PointerOffset { materialized }
                 | mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
                     materialized, ..
+                }
+                | mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                    materialized, ..
                 },
             ) => {
                 if let Some(owner) = materialized {
@@ -607,7 +611,7 @@ impl Checker {
     }
 
     /// Record a pointer-valued adjustment (`PointerToPlace`, `PointerOffset`,
-    /// `PointerOriginCast`) at `span`, keeping the hidden holder an earlier
+    /// `PointerOriginCast`, `PointerConvert`) at `span`, keeping the hidden holder an earlier
     /// inference of the span materialized for a dereference of it.
     pub(in crate::checker) fn record_pointer_adjustment(
         &self,
@@ -620,7 +624,8 @@ impl Checker {
             mojito_checked::checked::materialized_borrow_owner(std::slice::from_ref(established))
         }) && let SemanticAdjustment::PointerToPlace { materialized, .. }
         | SemanticAdjustment::PointerOffset { materialized }
-        | SemanticAdjustment::PointerOriginCast { materialized, .. } = &mut adjustment
+        | SemanticAdjustment::PointerOriginCast { materialized, .. }
+        | SemanticAdjustment::PointerConvert { materialized, .. } = &mut adjustment
         {
             *materialized = Some(owner);
         }

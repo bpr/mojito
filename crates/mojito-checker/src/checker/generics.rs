@@ -149,6 +149,18 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             }
             Ok(())
         }
+        // So do its raw `!kgen.pointer` and `!lit.ref`.
+        TyKind::KgenPointer(pattern_element) => match actual.kind() {
+            TyKind::KgenPointer(element) => unify(pattern_element, element, subst),
+            _ => Ok(()),
+        },
+        TyKind::LitRef {
+            element: pattern_element,
+            ..
+        } => match actual.kind() {
+            TyKind::LitRef { element, .. } => unify(pattern_element, element, subst),
+            _ => Ok(()),
+        },
         // A non-parameter pattern contributes no solution; coercion is checked
         // separately by the caller.
         _ => Ok(()),
@@ -540,6 +552,14 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             origin: origin.clone(),
         }
         .into(),
+        TyKind::KgenPointer(element) => {
+            TyKind::KgenPointer(substitute_self(element, replacement)).into()
+        }
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: substitute_self(element, replacement),
+            origin: origin.clone(),
+        }
+        .into(),
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
             base: substitute_self(base, replacement),
             name: name.clone(),
@@ -650,6 +670,12 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         }
         .into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recur(element),
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),
         }
@@ -1681,7 +1707,7 @@ fn bind_pointer_origin_tails(
     use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
     let recur = |ty: &Ty| bind_pointer_origin_tails(ty, tails);
     match ty.kind() {
-        TyKind::Pointer { element, origin } => {
+        TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
             let bound = match origin {
                 PointerOrigin::Param {
                     id,
@@ -1706,11 +1732,12 @@ fn bind_pointer_origin_tails(
                 },
                 _ => None,
             };
-            TyKind::Pointer {
-                element: recur(element),
-                origin: bound.unwrap_or_else(|| origin.clone()),
+            let (element, origin) = (recur(element), bound.unwrap_or_else(|| origin.clone()));
+            if matches!(ty.kind(), TyKind::LitRef { .. }) {
+                TyKind::LitRef { element, origin }.into()
+            } else {
+                TyKind::Pointer { element, origin }.into()
             }
-            .into()
         }
         TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),

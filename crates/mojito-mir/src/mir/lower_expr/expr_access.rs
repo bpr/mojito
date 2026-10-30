@@ -86,6 +86,9 @@ impl<'a> Flatten<'a> {
         if e.is_bool_storage() {
             return self.bool_storage(object, e.location());
         }
+        if e.is_pointer_convert() {
+            return self.pointer_convert(e, object);
+        }
         // `v.length` on a SIMD value is its `SIMDLength` parameter, after
         // a value receiver (`f().length`) runs.
         if let Some(length) = e.simd_length() {

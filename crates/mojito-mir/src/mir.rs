@@ -622,7 +622,10 @@ impl MirDeclarations {
             return true;
         }
         match ty.kind() {
-            TyKind::Pointer { .. } | TyKind::Ref(_) => true,
+            TyKind::Pointer { .. }
+            | TyKind::KgenPointer(_)
+            | TyKind::LitRef { .. }
+            | TyKind::Ref(_) => true,
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => items
                 .iter()
                 .all(|item| self.drop_runs_no_code_within(item, visiting)),

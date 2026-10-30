@@ -349,6 +349,11 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     crate::runtime::builtin_convert(*target, regs[value.0 as usize].clone())?;
             }
+            // A `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one
+            // address.
+            MirInstr::PointerConvert { dest, value } => {
+                regs[dest.0 as usize] = regs[value.0 as usize].clone();
+            }
             // An `index` and its `Int` storage are one value; an `i1` is
             // held as a `Bool`, and its `!kgen.scalar<bool>` storage as the
             // one-lane `bool` vector.
@@ -466,13 +471,16 @@ impl VmBackend {
                 } else if let Value::Ref { .. } = &vars[slot]
                     && !matches!(
                         (prog.mir.functions[function].1.var_tys.get(var)).map(Ty::kind),
-                        Some(TyKind::Pointer { .. })
+                        Some(
+                            TyKind::Pointer { .. } | TyKind::KgenPointer(_) | TyKind::LitRef { .. }
+                        )
                     )
                 {
                     // A pointer-typed variable holding a place handle (a
-                    // `Pointer(to=x)` local or a bound pointer parameter) is
-                    // the handle itself; only reference bindings read through
-                    // their stored handle.
+                    // `Pointer(to=x)` local, a bound pointer parameter, or
+                    // its `!kgen.pointer` or `!lit.ref`) is the handle
+                    // itself; only reference bindings read through their
+                    // stored handle.
                     self.read_reference(&vars[slot], frame_id, vars)?
                 } else {
                     match mode {

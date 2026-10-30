@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Pointer`'s raw MLIR values now have upstream's spellings:
+  `Pointer[T, o]._mlir_type` (the `!kgen.pointer` it wraps, also
+  ``__mlir_type[`!kgen.pointer<`, T, `>`]``), `Pointer[T, o]._mlir_lit_ref`
+  (a `!lit.ref`), `p._get_kgen_pointer()`, the `p._mlir_value` read, both
+  `Pointer[T, o](_mlir_value=)` overloads, and
+  `__get_mvalue_as_litref(place)`, on both backends, with the pin's
+  rejections of an origin-less `Pointer(_mlir_value=k)`, a mismatched
+  element or origin, a subscript of a `!kgen.pointer`, and a read through a
+  `!lit.ref` (R1316). A write to `p._mlir_value` is rejected as unsupported
+  (R1681). MIR text moves to 1.140, adding `pointer.convert`, and the
+  package format to `mojito-package 155`.
 - A `comptime assert` message may now be any compile-time string
   expression over the parameters in scope, as at the pin: a t-string
   (`t"n is {n}"`, the `String` it writes), a `String` or `StaticString`

@@ -1244,6 +1244,16 @@ pub enum SemanticAdjustment {
         /// A materialized dereference holder, as on `PointerToPlace`.
         materialized: Option<mojito_types::origin::OwnerId>,
     },
+    /// An address retyped among a `Pointer`, the `!kgen.pointer` it wraps,
+    /// and a `!lit.ref`: `p._get_kgen_pointer()`, `p._mlir_value`, and
+    /// `Pointer[T, o](_mlir_value=)`. The runtime value is unchanged;
+    /// `origin` is a built pointer's, which it lends as an origin cast's
+    /// does, and `None` for a `!kgen.pointer`, which carries none.
+    PointerConvert {
+        origin: Option<mojito_types::origin::PointerOrigin>,
+        /// A materialized dereference holder, as on `PointerToPlace`.
+        materialized: Option<mojito_types::origin::OwnerId>,
+    },
     /// Construct compiler-private inline uninit storage (`__UninitStorage[T]()`
     /// or `__UninitStorage[T](value^)`). Only bundled standard-library sources
     /// may acquire this adjustment.
@@ -6849,6 +6859,10 @@ pub fn materialized_borrow_owner(
             materialized: Some(owner),
         }
         | SemanticAdjustment::PointerOriginCast {
+            materialized: Some(owner),
+            ..
+        }
+        | SemanticAdjustment::PointerConvert {
             materialized: Some(owner),
             ..
         } => Some(*owner),
