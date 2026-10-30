@@ -1727,16 +1727,23 @@ impl Checker {
 
     /// The callable `expr`'s run-time call resolves to
     /// (its `overload_target` fact), typing it first where the check
-    /// has not.
+    /// has not. `None` while that typing is under way, as
+    /// [`Self::run_time_type`]'s.
     fn run_time_overload(&self, expr: &Expr) -> Option<String> {
+        let span = expr.source_span();
         let recorded = || {
             self.node_facts
                 .borrow()
-                .get(&expr.source_span())
+                .get(&span)
                 .and_then(|facts| facts.overload_target.clone())
         };
         recorded().or_else(|| {
-            self.run_time_typing(expr).ok()?;
+            if !self.instance_inferences.borrow_mut().insert(span.clone()) {
+                return None;
+            }
+            let typed = self.run_time_typing(expr);
+            self.instance_inferences.borrow_mut().remove(&span);
+            typed.ok()?;
             recorded()
         })
     }

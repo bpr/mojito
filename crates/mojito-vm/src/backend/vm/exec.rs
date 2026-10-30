@@ -1589,8 +1589,9 @@ impl VmBackend {
                     .iter()
                     .map(|r| prog.boxed(regs[r.0 as usize].clone(), reg_types.get(&r.0)))
                     .collect();
-                // An `Intable`-bounded element arrives erased as its concrete
-                // struct; normalize it through `__int__` before lane build.
+                // An `Intable` element of a `SIMD[dt, _](x)` construction
+                // (R1544) arrives as its concrete struct; normalize it
+                // through `__int__` before lane build.
                 for val in &mut vals {
                     if let Value::Struct { name, .. } = val {
                         let index = prog.struct_member(name, "__int__", 0).ok_or_else(|| {

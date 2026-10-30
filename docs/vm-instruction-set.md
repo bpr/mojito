@@ -253,8 +253,7 @@ scalar.cast %dest, %value, Int|UInt|Float64|Bool
 Converts a numeric scalar or literal, a `Bool`, or a width-one SIMD value to
 the named scalar (`runtime::builtin_convert`): an integer wraps or rounds to
 `Float64`, a float truncates toward zero, saturating, a `bool` is 0/1, and a
-`Bool` target is a non-zero test, so `NaN` is `True`. `Int` of a pointer is
-its address. It is upstream's inlined `SIMD.__init__` (`pop.cast`) or
+`Bool` target is a non-zero test, so `NaN` is `True`. It is upstream's inlined `SIMD.__init__` (`pop.cast`) or
 `Bool.__init__` (a compare). The verifier rejects any other operand type and
 a destination not of the target type.
 

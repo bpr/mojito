@@ -2574,9 +2574,9 @@ impl<'a> Specializer<'a> {
                 // (`call_dunder`); rewrite them into ordinary method calls so
                 // the shared resolver and the `MethodCall` arm below
                 // monomorphize the dunder instance like any other method.
-                // A conversion over a scalar operand is its `scalar.cast`;
-                // other non-struct operands pass through for the backend's
-                // scalar interception.
+                // `Bool(x)` over a scalar operand is its `scalar.cast`; other
+                // non-struct operands pass through for the backend's scalar
+                // interception.
                 if let MirInstr::Call {
                     dest,
                     func,
@@ -2590,10 +2590,8 @@ impl<'a> Specializer<'a> {
                         "abs" => Some("__abs__"),
                         "round" => Some("__round__"),
                         "divmod" => Some("__divmod__"),
-                        // A conversion over a nominal receiver is upstream's
-                        // `__init__[T: Intable]` body, the dunder's call.
-                        "Int" => Some("__int__"),
-                        "Float64" => Some("__float__"),
+                        // `Bool(x)` over a nominal receiver is upstream's
+                        // `__init__[T: Boolable]` body, the dunder's call.
                         "Bool" => Some("__bool__"),
                         _ => None,
                     };
@@ -2602,13 +2600,14 @@ impl<'a> Specializer<'a> {
                         .first()
                         .and_then(|arg| function.reg_types.get(&arg.0))
                         .map(peel_refs);
-                    // A vector is no scalar cast's source: its conversion is
-                    // `SIMD`'s declared dunder, whose instance asserts. A
+                    // A vector is no scalar cast's source: its `Bool(x)` is
+                    // `SIMD`'s declared `__bool__`, whose instance asserts. A
                     // string literal's is `StringLiteral`'s.
+                    let bool_cast = mojito_types::ct::ScalarConversion::Bool;
                     let vector = |operand: &Ty| {
                         matches!(operand.kind(), TyKind::Simd { .. })
-                            && mojito_types::ct::ScalarConversion::named(func.0.as_str())
-                                .is_some_and(|target| !target.casts_from(operand))
+                            && func.0 == bool_cast.name()
+                            && !bool_cast.casts_from(operand)
                     };
                     if let Some(method) = dunder
                         && builtin
@@ -2632,21 +2631,20 @@ impl<'a> Specializer<'a> {
                     } else if builtin
                         && raises.is_none()
                         && kwargs.is_empty()
+                        && func.0 == bool_cast.name()
                         && let [value] = args.as_slice()
-                        && let Some(target) =
-                            mojito_types::ct::ScalarConversion::named(func.0.as_str())
                         && function
                             .reg_types
                             .get(&value.0)
-                            .is_some_and(|ty| target.casts_from(ty))
+                            .is_some_and(|ty| bool_cast.casts_from(ty))
                     {
-                        // A conversion a template spelled over a type
-                        // parameter is, at a scalar instance, the cast the
-                        // check records where the operand is spelled scalar.
+                        // `Bool(x)` a template spelled over a type parameter
+                        // is, at a scalar instance, the cast the check
+                        // records where the operand is spelled scalar.
                         *instruction = MirInstr::ScalarCast {
                             dest: *dest,
                             value: *value,
-                            target,
+                            target: bool_cast,
                         };
                     }
                 }

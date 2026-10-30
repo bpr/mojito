@@ -66,8 +66,8 @@ pub const LIFECYCLE_MEMBERS: [&str; 3] = ["__deinit__", "__copyinit__", "__movei
 /// A concrete struct declaration's member table records them beside its
 /// lifecycle members: display (`write_to`, `write_repr_to`, a writer's
 /// `write_string`), the hash leaf (`__hash__`, a hasher's
-/// `_update_with_simd`), the `__int__` a scalar construction converts
-/// through, and the `__call__` a `Variant` handler dispatches. Upstream
+/// `_update_with_simd`), the `__int__` a `SIMD[dt, _](x)` construction
+/// converts through (R1544), and the `__call__` a `Variant` handler dispatches. Upstream
 /// reaches none of them so: each is a call in its library code, which
 /// `RemoveUnusedParams` rewrites, so each keeps its unused arguments until
 /// its reach becomes such a call.

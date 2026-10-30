@@ -1984,9 +1984,9 @@ that literal's materialization, as upstream's builtin-inline
 `SIMD.__init__(IntLiteral)` is `pop.int_literal_convert`: `infer_conversion`
 records `SemanticAdjustment::ConvertedArgument` on the call and
 `MaterializeLiteral` on its argument, and MIR lowers the call as its argument.
-`Int(w)` of a `SIMDLength` is upstream's `SIMD.__init__(SIMDLength)` the
-same way, its argument carrying `SimdFromLength`.
-The nullary `UInt()` is the literal `0` materialized the same way.
+Every other argument, and the nullary `UInt()`, binds `SIMD`'s declared
+`__init__` overloads (the `Intable`, `Floatable`, `SIMDLength`, and default
+initializers), as any `SIMD` construction does.
 
 A runtime scalar meets a multi-lane vector of its dtype through upstream's
 implicit `SIMD.__init__(Scalar[dtype])`, which the builtin `SIMD` cannot
@@ -5492,9 +5492,10 @@ current Mojo:
   the list's call-result slot, which dies after the call, `take([M(1)])`
   takes it, and `_ = [M(1)]` discards it. An `in` test's container is its
   `__contains__` receiver, lowered by `lower_method_receiver`, so
-  `"b" in strs()` destroys the list after the test. A scalar conversion
-  (`Bool(x)`, `Int(x)`, `Float64(x)`) reads its argument as a read
-  parameter does: `infer_conversion` marks a temporary argument
+  `"b" in strs()` destroys the list after the test. A `Bool(x)`
+  conversion reads its argument as a read parameter does, as `Int(x)` and
+  `Float64(x)` do through their declared `SIMD` initializers'
+  read parameter: `infer_conversion` marks a temporary argument
   `ReadTemporaryArgument`, so `Bool(make())` destroys `make()`'s result
   after the conversion, from a slot, not a register, and it reads a named
   `x: T` bounded by the conversion's trait where it lies

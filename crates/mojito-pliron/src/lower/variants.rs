@@ -17,8 +17,9 @@ pub(super) struct VariantStoreMembers<'m> {
 }
 
 impl FnLowering<'_> {
-    /// The `scalar.cast` of `arg` to `conversion` (`Int(x)` / `UInt(x)` /
-    /// `Float64(x)` / `Bool(x)`), mirroring `runtime::builtin_convert`:
+    /// The `scalar.cast` of `arg` to `conversion` (`Bool(x)`, a literal's
+    /// conversion, and a `Bool` or literal receiver's `__bool__`,
+    /// `__int__`, and `__float__`), mirroring `runtime::builtin_convert`:
     /// float-to-integer saturates (NaN becomes 0), integer reinterpretations
     /// are bit-exact, and `Bool` is `__bool__`'s ordered non-zero test
     /// (`fcmp one` — `Bool(NaN)` is `False`).
@@ -130,13 +131,6 @@ impl FnLowering<'_> {
             (ScalarTy::Bool, ScalarTy::Int | ScalarTy::UInt) => {
                 let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
                 let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
-                self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx))
-            }
-            // `Int(pointer)`: the address (the VM's synthetic provenance
-            // address; 0 for null on both backends).
-            (ScalarTy::Ptr, ScalarTy::Int | ScalarTy::UInt) => {
-                let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-                let cast = PtrToIntOp::new(ctx, value, i64_ty);
                 self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx))
             }
             (ScalarTy::Bool, ScalarTy::Float64) => {

@@ -1,8 +1,10 @@
 # Upstream's `std/simd.mojo`, in part: the `SIMD` struct, its storage, the
 # `_simd_dtype_checks` and `_simd_construction_checks` helpers, the
-# initializers `__init__(out self)`, the cast from `SIMD[other_dtype,
-# Self.length]`, the `SIMDLength` splat, `from_int=`, `Bool`, `fill=`, `Int`
-# from an `index`, and the `Scalar[Self.dtype]` splat, and its instance
+# initializers `__init__(out self)`, the `Intable` and `IntableRaising`
+# conversions, the cast from `SIMD[other_dtype, Self.length]`, the
+# `SIMDLength` splat, `from_int=`, the `Floatable` and `FloatableRaising`
+# conversions, `Bool`, `fill=`, `Int` from an `index`, and the
+# `Scalar[Self.dtype]` splat, and its instance
 # `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
 # `__sub__`, `__mul__`, `__floordiv__`, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
@@ -24,8 +26,7 @@
 # rather than calling `write_to` and `write_repr_to` (R1662). So are the
 # other initializers:
 # `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
-# `IntLiteral` and `FloatLiteral` (R1507), and the `Intable`, `IntableRaising`, `Floatable`,
-# and `FloatableRaising` conversions (R1399); `py=` is not ported. Until
+# and `IntLiteral` and `FloatLiteral` (R1507); `py=` is not ported. Until
 # then a construction takes a declared overload only where its arguments
 # select one at the pin. `_simd_dtype_checks` is `True`: Mojito has no
 # sub-byte float dtype (R65), and `__hash__` omits its `float8_e8m0fnu`
@@ -90,7 +91,8 @@ from std.builtin.dtype import (
     _uint_type_of_width,
     _unsigned_integral_type_of,
 )
-from std.builtin.int import _FromInt
+from std.builtin.floatable import Floatable, FloatableRaising
+from std.builtin.int import Intable, IntableRaising, _FromInt
 from std.hash.hasher import Hasher
 
 
@@ -569,6 +571,54 @@ struct SIMD[dtype: DType, length: SIMDLength](
         comptime res = SIMD[Self.dtype, Self.length](0)
         self = res
 
+    # The target dtype is a defaulted parameter rather than `Self.dtype` so that
+    # this overload stays out of the way of the `Floatable` constructor below:
+    # spelled with `Self.dtype`, `Float64(x)` for an `Intable` and `Floatable`
+    # `x` becomes ambiguous.
+    @inline(.nodebug)
+    def __init__[
+        T: Intable, target_dtype: DType = DType.int
+    ](out self: Scalar[target_dtype], value: T):
+        """Initialize an integer scalar from an intable value.
+
+        Parameters:
+            T: The Intable type.
+            target_dtype: The dtype of the scalar to construct.
+
+        Args:
+            value: The value to initialize from.
+
+        Constraints:
+            The target dtype must be integral.
+
+        Example:
+
+        ```mojo
+        var x = 42
+        var p = Pointer(to=x)
+        print(UInt(p))  # the address of `x`
+        ```
+        """
+        comptime assert (
+            target_dtype.is_integral()
+        ), "constructing from an `Intable` value requires an integral dtype"
+        self = Scalar[target_dtype](value.__int__())
+
+    @inline(.nodebug)
+    def __init__[T: IntableRaising](out self: Int, value: T) raises:
+        """Initialize from a raising intable value.
+
+        Parameters:
+            T: The IntableRaising type.
+
+        Args:
+            value: The value to initialize from.
+
+        Raises:
+            Any errors from the conversion to Int.
+        """
+        self = value.__int__()
+
     @inline(.nodebug)
     def __init__[
         other_dtype: DType, //
@@ -646,6 +696,35 @@ struct SIMD[dtype: DType, length: SIMDLength](
     def __init__(out self, *, from_int: Int):
         _simd_construction_checks[Self.dtype, Self.length]()
         self = Self(from_int)
+
+    @inline(.always)
+    def __init__[T: Floatable, //](out self: Float64, value: T, /):
+        """Initialize a Float64 from a type conforming to Floatable.
+
+        Parameters:
+            T: The Floatable type.
+
+        Args:
+            value: The object to get the float point representation of.
+        """
+        self = value.__float__()
+
+    @inline(.always)
+    def __init__[
+        T: FloatableRaising, //
+    ](out self: Float64, value: T, /) raises:
+        """Initialize a Float64 from a type conforming to FloatableRaising.
+
+        Parameters:
+            T: The FloatableRaising type.
+
+        Args:
+            value: The object to get the float point representation of.
+
+        Raises:
+            If the type does not have a float point representation.
+        """
+        self = value.__float__()
 
     @inline(.nodebug)
     @implicit

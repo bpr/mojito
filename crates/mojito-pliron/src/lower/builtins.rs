@@ -458,8 +458,9 @@ impl FnLowering<'_> {
 
     /// Pointer-receiver method intrinsics — the VM's `Value::Pointer` method
     /// dispatch: `free`/`unsafe_free` release through the runtime's size-less
-    /// free, and `copy` is the pointer itself, as a register copy is.
-    /// Everything else stays unsupported.
+    /// free, `copy` is the pointer itself, as a register copy is, and
+    /// `__int__` is the address (0 for null on both backends). Everything
+    /// else stays unsupported.
     pub(super) fn lower_pointer_method(
         &mut self,
         ctx: &mut Context,
@@ -483,6 +484,12 @@ impl FnLowering<'_> {
                 Ok(())
             }
             "copy" if args.is_empty() => self.lower_copy_value(ctx, dest, recv, None),
+            "__int__" if args.is_empty() => {
+                let ptr = self.reg_value(ctx, recv, ScalarTy::Ptr)?;
+                let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+                let cast = PtrToIntOp::new(ctx, ptr, i64_ty);
+                self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx))
+            }
             other => Err(self.unsupported_reg(format!("Pointer method `{other}`"), dest)),
         }
     }

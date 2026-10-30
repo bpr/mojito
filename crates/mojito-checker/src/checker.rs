@@ -635,9 +635,10 @@ pub struct Checker {
     /// compiles to no parameter expression is lifted as a function
     /// ([`Self::lifted_application`]).
     lifting_positions: std::rc::Rc<std::cell::Cell<usize>>,
-    /// The constructions whose instance the check is inferring from their
-    /// run-time typing ([`Self::run_time_type`]), which applies none of
-    /// them again meanwhile.
+    /// The calls whose instance or overload the check is inferring from
+    /// their run-time typing ([`Self::run_time_type`],
+    /// [`Self::run_time_overload`]), which applies none of them again
+    /// meanwhile.
     instance_inferences: RefCell<HashSet<SourceSpan>>,
     /// The module functions and static methods a compile-time call applies
     /// by name, every overload under the name a call spells

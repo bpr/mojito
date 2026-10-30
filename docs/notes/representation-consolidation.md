@@ -87,7 +87,7 @@ command cannot use both.
    - The members a backend still reaches from a value's type
      (`mir::TYPE_REACHED_MEMBERS`): display (R1287, R422); the `DType`,
      `Bool`, and `StringLiteral` hash leaves (R160, R1608, R1192); a
-     scalar construction's `__int__` (R1399); and a `Variant` handler's
+     `SIMD[dt, _](x)` construction's `__int__` (R1544); and a `Variant` handler's
      `__call__` (R1444, R1466).
    - A struct callee's `def(...)` contract still composes its `__call__`
      (R1466).

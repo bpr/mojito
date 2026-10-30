@@ -1,4 +1,4 @@
-# expect: SIMD element
+# expect: no constructor overload matches
 # Upstream's `__init__[T: Intable, target_dtype]` returns
 # `Scalar[target_dtype]`, so an `Intable` struct never splats across lanes.
 @fieldwise_init

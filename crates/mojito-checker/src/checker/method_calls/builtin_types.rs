@@ -123,19 +123,19 @@ impl Checker {
             // `Copyable.copy()`: the same pointer, lowered as an origin cast
             // to the receiver's own origin.
             "copy" => {
-                if !args.is_empty() {
-                    return Err(TypeError::ArityMismatch {
-                        name: "copy".to_string(),
-                        expected: 0,
-                        got: args.len(),
-                    });
-                }
+                no_arguments("copy", args)?;
                 self.record_pointer_origin_cast(span, origin);
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: origin.clone(),
                 }
                 .into())
+            }
+            // `Intable.__int__()`: the address, upstream's
+            // `pop.pointer_to_index`.
+            "__int__" => {
+                no_arguments(method, args)?;
+                Ok(Ty::int())
             }
             "unsafe_offset" => {
                 if origin.as_origin().is_some() && !origin.multi_element() {
@@ -292,13 +292,7 @@ impl Checker {
                          destructible element; '{elem}' is owned by its checked storage"
                     )));
                 }
-                if !args.is_empty() {
-                    return Err(TypeError::ArityMismatch {
-                        name: method.to_string(),
-                        expected: 0,
-                        got: args.len(),
-                    });
-                }
+                no_arguments(method, args)?;
                 if method == "unsafe_deinit_pointee" && !self.is_deinitable(elem) {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
@@ -330,13 +324,7 @@ impl Checker {
                          it does not own an allocation"
                     )));
                 }
-                if !args.is_empty() {
-                    return Err(TypeError::ArityMismatch {
-                        name: method.to_string(),
-                        expected: 0,
-                        got: args.len(),
-                    });
-                }
+                no_arguments(method, args)?;
                 Ok(Ty::none())
             }
             _ => Err(TypeError::NoSuchMethod {
@@ -688,4 +676,16 @@ impl Checker {
             reason: format!("'{elem}' is not trivially deinitable; use 'unsafe_write'"),
         })
     }
+}
+
+/// Reject any argument to the nullary `Pointer` method `method`.
+fn no_arguments(method: &str, args: &[Expr]) -> Result<(), TypeError> {
+    if args.is_empty() {
+        return Ok(());
+    }
+    Err(TypeError::ArityMismatch {
+        name: method.to_string(),
+        expected: 0,
+        got: args.len(),
+    })
 }

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	925
+# swept-count	929
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -235,6 +235,7 @@ assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' 
 assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer
 assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_conversion_undeclared_boolable.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/bool_conversion_undeclared_raising.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_dtype_rejected.mojo	compile-reject	agree	error: 'Bool' value has no attribute 'dtype'
 assets/type_error/bool_mask_conversion_wide.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/borrowed_loop_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
@@ -398,6 +399,7 @@ assets/type_error/external_call_string_argument.mojo	compile-reject	agree	error:
 assets/type_error/external_call_unknown_callee.mojo	runs	subset	the pin runs it; Mojito rejects: is not in Mojito's libc allowlist
 assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field 'a' has non-'Deinitable' type 'T'
 assets/type_error/fieldwise_unknown_keyword.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/float32_from_intable.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/float_literal_to_int.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/for_discard_target_read.mojo	compile-reject	agree	error: cannot read from discard pattern '_'
 assets/type_error/for_sequence_target_not_raising.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
@@ -477,6 +479,7 @@ assets/type_error/inplace_subscript_missing.mojo	compile-reject	agree	error: 'On
 assets/type_error/inplace_subscript_raises_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/input_outside_raising_context.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/instantiated_generic_abandoned_binding.mojo	compile-reject	agree	error: 'y' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
+assets/type_error/int_conversion_undeclared_raising.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/int_literal_local_not_concrete.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[3]' value to 'IntLiteral[_]'
 assets/type_error/int_literal_parameter_int_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Int' to 'IntLiteral[x.value]', it depends on an unresolved parameter 'x.value'
 assets/type_error/int_literal_receiver_len.mojo	compile-reject	agree	error: 'IntLiteral[5]' value has no attribute '__len__'
@@ -785,6 +788,7 @@ assets/type_error/simd_fill_non_bool_mask.mojo	compile-reject	agree	error: no ma
 assets/type_error/simd_float_bitwise_and.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_float_is_power_of_two.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_fma_bool_lanes.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_from_bool_dtype_bool.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: SIMD vector length must be a power of two between 1 and 2^15, found '!kgen.simd<3, si32>'
 assets/type_error/simd_inferred_width_bool.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_inferred_width_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int64, 4]' value to 'SIMD[.int32, _]'

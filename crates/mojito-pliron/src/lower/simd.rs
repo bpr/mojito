@@ -122,7 +122,8 @@ impl FnLowering<'_> {
     }
 
     /// Invoke a concrete nominal `__int__` selected by the checker for a
-    /// scalar constructor operand. Returns `None` for non-struct operands.
+    /// `SIMD[dt, _](x)` constructor operand (R1544). Returns `None` for
+    /// non-struct operands.
     pub(super) fn intable_struct_value(
         &mut self,
         ctx: &mut Context,

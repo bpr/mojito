@@ -393,6 +393,8 @@ impl Checker {
             "input" => self.infer_input(span, args),
             "len" => self.infer_len(args),
             "range" => self.infer_range(args),
+            // An `IntLiteral` or `FloatLiteral` argument (R1507); every
+            // other argument binds `SIMD`'s declared overloads above.
             "Int" => self.infer_conversion(&span, Ty::int(), args),
             "UInt" => self.infer_conversion(&span, Ty::uint(), args),
             "Float64" => self.infer_conversion(&span, Ty::float64(), args),
@@ -467,10 +469,13 @@ impl Checker {
     /// declares, or `None` when it is the checker's rule's: its arguments
     /// select an overload not declared yet
     /// ([`Self::binds_undeclared_overload`]), or no declared one matches
-    /// and a rule serves its keywords (`mlir_value=`, `copy=`); any other
-    /// miss is the declared selection's error. `constructed` is the
-    /// instance an alias (`Int32`, `Scalar[dt]`, a vector alias, `Self` in
-    /// `SIMD`'s body) names without brackets.
+    /// and a rule serves its keywords (`mlir_value=`, `copy=`) or its
+    /// positional arguments into a width not known here (`SIMD[dt, _]`,
+    /// R1544); any other miss is the declared selection's error, so
+    /// `Int8(x)` over a struct whose `__int__` raises but which does not
+    /// declare `IntableRaising` is rejected as at the pin. `constructed` is
+    /// the instance an alias (`Int`, `Int32`, `Scalar[dt]`, a vector alias,
+    /// `Self` in `SIMD`'s body) names without brackets.
     fn declared_simd_construction(
         &self,
         span: &SourceSpan,
@@ -480,25 +485,31 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Result<Ty, TypeError>> {
         let name = mojito_types::types::SIMD_TYPE_NAME;
-        let instance = match constructed {
-            Some(constructed) => Some(constructed.clone()),
-            None => self.simd_type(param_args).ok().map(|(ty, _)| ty),
-        };
         if !self
             .structs
             .get(name)
             .is_some_and(|info| info.methods.contains_key("__init__"))
-            || self.binds_undeclared_overload(instance.as_ref(), args)
+            || self.binds_undeclared_overload(args)
         {
             return None;
         }
         let construct =
             || self.infer_construction_of(span, name, constructed, param_args, args, kwargs);
-        if self.probe(construct).is_err()
-            && kwargs
+        let rule_served = || {
+            if kwargs.is_empty() {
+                let instance = match constructed {
+                    Some(constructed) => Some(constructed.clone()),
+                    None => self.simd_type(param_args).ok().map(|(ty, _)| ty),
+                };
+                return instance
+                    .and_then(|instance| simd_slots(&instance))
+                    .is_none_or(|(_, width)| width.known().is_none());
+            }
+            kwargs
                 .iter()
                 .all(|keyword| matches!(keyword.name.as_str(), "mlir_value" | "copy"))
-        {
+        };
+        if self.probe(construct).is_err() && rule_served() {
             return None;
         }
         Some(construct().and_then(|ty| {
@@ -666,12 +677,6 @@ impl Checker {
             (mojito_types::types::SIMD_TYPE_NAME, _) => {
                 self.declared_simd_construction(span, None, param_args, args, kwargs)
             }
-            // `Int(mlir_value=i)`: a keyword-only construction of a name
-            // whose positional conversions stay R1399's.
-            ("Int" | "UInt" | "Float64", []) if args.is_empty() && !kwargs.is_empty() => {
-                let instance = scalar_type_name(name)?;
-                self.declared_simd_construction(span, Some(&instance), &[], args, kwargs)
-            }
             (_, []) => {
                 let alias = self.simd_alias_instance(name)?;
                 self.declared_simd_construction(span, Some(&alias), &[], args, kwargs)
@@ -695,11 +700,10 @@ impl Checker {
     }
 
     /// The `SIMD` instance a bracketless alias names: a scalar alias
-    /// (`Int32`), a vector alias, or `Self` in `SIMD`'s own body. `Int`,
-    /// `UInt`, and `Float64` keep their conversions (R1399).
+    /// (`Int`, `Int32`), a vector alias, or `Self` in `SIMD`'s own body.
     fn simd_alias_instance(&self, name: &str) -> Option<Ty> {
         match name {
-            "Int" | "UInt" | "Float64" => None,
+            "Int" | "UInt" | "Float64" => scalar_type_name(name),
             "Self" if self.lookup(name).is_none() => self
                 .self_ty
                 .clone()
@@ -715,30 +719,15 @@ impl Checker {
 
     /// Whether a `SIMD` construction's positional arguments select, at the
     /// pin, an overload `std.simd` does not declare yet, which the checker's
-    /// rule serves instead: an element list (R1592), an `IntLiteral` or a
-    /// `FloatLiteral` (R1507), or an `Intable` value (R1399). Each would
-    /// otherwise reach a declared overload through an implicit conversion
-    /// the pin never takes. A `Bool` binds `Intable`'s `Scalar[...]`
-    /// refinement into a width-one `instance` of a dtype not known to be
-    /// `bool`; into a known-`bool` or a wider instance it selects the
-    /// declared `Bool` overload, directly or through the cast.
-    fn binds_undeclared_overload(&self, instance: Option<&Ty>, args: &[Expr]) -> bool {
-        let selects_bool = || {
-            instance
-                .and_then(|instance| simd_slots(instance))
-                .is_some_and(|(dtype, width)| {
-                    dtype.known() == Some(Dtype::Bool)
-                        || width.known().is_some_and(|width| width > 1)
-                })
-        };
+    /// rule serves instead: an element list (R1592), or an `IntLiteral` or
+    /// a `FloatLiteral` (R1507). Each would otherwise reach a declared
+    /// overload through an implicit conversion the pin never takes.
+    fn binds_undeclared_overload(&self, args: &[Expr]) -> bool {
         match args {
             [] => false,
-            [argument] => self.probe(|| self.infer(argument)).is_ok_and(|ty| {
-                let declared = matches!(ty.kind(), TyKind::Simd { .. })
-                    || mojito_types::types::is_simd_length(&ty)
-                    || (ty == Ty::bool() && selects_bool());
-                !declared
-            }),
+            [argument] => self
+                .probe(|| self.infer(argument))
+                .is_ok_and(|ty| matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)),
             _ => true,
         }
     }

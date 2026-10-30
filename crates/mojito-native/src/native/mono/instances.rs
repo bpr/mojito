@@ -368,8 +368,8 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Enqueue a nominal `__int__` reached implicitly by scalar/SIMD
-    /// construction. The checker records the concrete operand type on the
+    /// Enqueue a nominal `__int__` reached implicitly by a `SIMD[dt, _](x)`
+    /// construction (R1544). The checker records the concrete operand type on the
     /// element register, while MIR deliberately keeps construction as
     /// `MakeSimd` rather than synthesizing a method call.
     pub(super) fn enqueue_intable_instance(

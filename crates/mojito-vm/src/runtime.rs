@@ -830,20 +830,15 @@ pub const fn pointer_address(allocation: u64, offset: i64) -> i64 {
     ((allocation as i64) << 32).wrapping_add(offset)
 }
 
-/// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`, the `scalar.cast` to
-/// `target`.
+/// The `scalar.cast` to `target`: `Bool(x)`, a literal's conversion, and
+/// the `__bool__`, `__int__`, and `__float__` of a `Bool` or a literal
+/// receiver.
 ///
 /// Convert one numeric-or-`Bool` value (`Float64`→integer truncates toward
 /// zero, `Bool` is 0/1, `Bool(x)` is truthiness — a nonzero value is `True`),
 /// following Mojo.
 pub fn builtin_convert(target: ScalarConversion, v: Value) -> Result<Value, RuntimeError> {
     match &v {
-        // `Int(pointer)`: a synthetic address (provenance-unique, 0 for the
-        // null/dangling pointer) — the libc-facing stdlib tests optional
-        // results with `Int(ptr) == 0`, and never prints an address.
-        Value::Pointer { allocation, offset } if target == ScalarConversion::Int => {
-            return Ok(Value::Int(pointer_address(*allocation, *offset)));
-        }
         Value::IntLiteral(value) => {
             return Ok(match target {
                 ScalarConversion::Int => Value::Int(

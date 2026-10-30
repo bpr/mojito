@@ -62,19 +62,6 @@ pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)>
     }
 }
 
-/// The conversion dunder and the bound an opaque argument needs for the
-/// conversion built-in `target` (`Int(x)` reads `__int__` and needs
-/// `Intable`, `Float64(x)` `__float__` and `Floatable`, `Bool(x)`
-/// `__bool__` and `Boolable`).
-pub(super) fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'static str)> {
-    match target.kind() {
-        TyKind::INT => Some(("__int__", "Intable")),
-        TyKind::FLOAT64 => Some(("__float__", "Floatable")),
-        TyKind::Bool => Some(("__bool__", "Boolable")),
-        _ => None,
-    }
-}
-
 pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> {
     match trait_name {
         // Binary-operator traits: each names the dunder its operator dispatches
@@ -871,21 +858,21 @@ impl Checker {
         Ok(true)
     }
 
-    /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:
-    /// exactly one argument of a numeric or `Bool` type, producing `target`,
-    /// recorded as the `ScalarCast` upstream's inlined `pop.cast` is. An
-    /// opaque type parameter is also accepted when its bound promises the
-    /// conversion — `Int(x)` on `T: Intable`, `Float64(x)` on `T: Floatable`,
-    /// `Bool(x)` on `T: Boolable` (`__int__`/`__float__`/`__bool__` run after
-    /// type erasure).
+    /// Type the conversions `std.simd` does not declare yet: `Bool(x)`
+    /// (R1609), and `Int(x)`, `UInt(x)`, and `Float64(x)` over an
+    /// `IntLiteral` or a `FloatLiteral` (R1507), the only arguments
+    /// [`Self::binds_undeclared_overload`] leaves to this rule. `Bool(x)`
+    /// takes exactly one argument of a numeric or `Bool` type, recorded as
+    /// the `ScalarCast` upstream's inlined `pop.cast` is, or a value whose
+    /// `Boolable` bound or declared `__bool__` promises the conversion.
     pub(super) fn infer_conversion(
         &self,
         span: &SourceSpan,
         target: Ty,
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
-        // The scalar built-ins are `Defaultable`: the nullary form is zero.
-        if args.is_empty() {
+        // `Bool` is `Defaultable`: the nullary form is `False`.
+        if args.is_empty() && target == Ty::bool() {
             return Ok(target);
         }
         if args.len() != 1 {
@@ -897,9 +884,6 @@ impl Checker {
         }
         let arg_ty = self.infer(&args[0])?;
         let arg_ty = self.opaque_element(&arg_ty).unwrap_or(arg_ty);
-        if self.simd_length_construction(span, &target, &args[0], &arg_ty)? {
-            return Ok(target);
-        }
         // A literal argument is converted where the call is built, as
         // upstream's builtin-inline `SIMD.__init__(IntLiteral)` is
         // `pop.int_literal_convert`.
@@ -923,58 +907,41 @@ impl Checker {
         if *arg_ty == TyKind::FloatLiteral && matches!(target.kind(), TyKind::INT | TyKind::UINT) {
             return Err(float_literal_conversion_error(&target));
         }
-        // A scalar operand is cast; `Int(pointer)` is the address conversion
-        // (upstream `Pointer.__int__`), a null pointer converting to 0, which
-        // is how the libc-facing stdlib tests an optional result.
-        let cast = mojito_types::ct::ScalarConversion::to(&target)
-            .filter(|conversion| conversion.casts_from(&arg_ty));
-        if let Some(cast) = cast {
+        let mismatch = || TypeError::TypeMismatch {
+            expected: "a numeric or Bool value".to_string(),
+            found: arg_ty.to_string(),
+            context: format!("argument to '{target}'"),
+        };
+        if target != Ty::bool() {
+            return Err(mismatch());
+        }
+        if mojito_types::ct::ScalarConversion::Bool.casts_from(&arg_ty) {
             self.record_at(span.clone()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::ScalarCast(cast),
+                mojito_checked::checked::SemanticAdjustment::ScalarCast(
+                    mojito_types::ct::ScalarConversion::Bool,
+                ),
             ));
             return Ok(target);
         }
-        // A concrete value routes through its conversion dunder
-        // (`Int(x)` → `x.__int__() -> Int`, `Float64`/`Bool` likewise); the
-        // same protocol an opaque `T: Intable/Floatable/Boolable` uses.
-        let conversion = conversion_protocol(&target);
-        if let Some((dunder, bound)) = conversion
-            && let Some(result) = self.struct_dunder(&arg_ty, dunder, &[])
-        {
-            require_dunder_ret(result?, &target, dunder)?;
-            // Upstream's overload is `__init__[T: Boolable]` (or `Intable`,
-            // `Floatable`), so the struct must declare the trait; a raising
-            // dunder answers to the `*Raising` sibling, not modelled here.
-            let raises = self
-                .struct_dunder_signature_for(&arg_ty, dunder, &[])
-                .is_some_and(|(_, sig, _)| sig.raises);
-            if !raises && !self.conforms_to(&arg_ty, bound) {
+        // A concrete value routes through its `__bool__`, the same protocol
+        // an opaque `T: Boolable` uses; upstream's overload is
+        // `__init__[T: Boolable]`, so the struct must declare the trait.
+        if let Some(result) = self.struct_dunder(&arg_ty, "__bool__", &[]) {
+            require_dunder_ret(result?, &target, "__bool__")?;
+            if !self.conforms_to(&arg_ty, "Boolable") {
                 return Err(TypeError::TraitNotSatisfied {
                     param: "T".to_string(),
                     ty: arg_ty.to_string(),
-                    trait_name: bound.to_string(),
+                    trait_name: "Boolable".to_string(),
                     reason: None,
                 });
             }
             self.borrow_nominal_place_argument(&args[0], &arg_ty);
             self.record_read_temporary_argument(&args[0]);
-            // A raising conversion dunder (`String.__int__() raises`) makes
-            // the conversion a raising call.
-            if let Some((_, sig, _)) = self.struct_dunder_signature_for(&arg_ty, dunder, &[])
-                && sig.raises
-            {
-                let error = sig.error.clone().unwrap_or_else(Ty::error);
-                self.record_call_effect(span.clone(), error.clone());
-                self.require_error(format!("call to raising conversion '{target}'"), error)?;
-            }
             return Ok(target);
         }
-        if !conversion.is_some_and(|(_, bound)| self.param_has_bound(&arg_ty, bound)) {
-            return Err(TypeError::TypeMismatch {
-                expected: "a numeric or Bool value".to_string(),
-                found: arg_ty.to_string(),
-                context: format!("argument to '{target}'"),
-            });
+        if !self.param_has_bound(&arg_ty, "Boolable") {
+            return Err(mismatch());
         }
         self.borrow_parameter_place_argument(&args[0], &arg_ty);
         self.record_read_temporary_argument(&args[0]);

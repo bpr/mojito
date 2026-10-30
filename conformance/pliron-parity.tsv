@@ -224,6 +224,7 @@ assets/ok/conforms_to_trivial_register_passable_undeclared.mojo	main	exe-differe
 assets/ok/conforms_to_undeclared_compiler_trait.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_user_and_unasked_traits.mojo	main	exe-differential	sanitized
 assets/ok/construction_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
+assets/ok/constructor_overload_shortest_signature.mojo	main	exe-differential	sanitized
 assets/ok/constructor_read_temporary_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/constructor_reads_no_struct_parameter.mojo	main	exe-differential	sanitized
 assets/ok/container_hashable.mojo	main	exe-differential	sanitized
@@ -911,6 +912,7 @@ assets/ok/reversed_list.mojo	main	exe-differential	sanitized
 assets/ok/runtime_pack_dunder_len.mojo	main	exe-differential	sanitized
 assets/ok/same_arity_generic_method_overloads.mojo	main	exe-differential	sanitized
 assets/ok/same_spelled_type_params.mojo	main	exe-differential	sanitized
+assets/ok/scalar_conversion_overloads.mojo	main	exe-differential	sanitized
 assets/ok/scalar_default_construction.mojo	main	exe-differential	sanitized
 assets/ok/scalar_dtype_construction.mojo	main	exe-differential	sanitized
 assets/ok/scalar_mask_select.mojo	main	exe-differential	sanitized

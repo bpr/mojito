@@ -310,7 +310,7 @@ pub fn modelled_conformance(
         ),
         "Intable" => matches!(
             ty.kind(),
-            TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
+            TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::Pointer { .. }
         ),
         "Floatable" => matches!(ty.kind(), TyKind::Bool | TyKind::FloatLiteral),
         "Indexer" => *ty == TyKind::IntLiteral,

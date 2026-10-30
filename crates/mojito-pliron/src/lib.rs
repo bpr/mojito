@@ -1222,9 +1222,9 @@ impl<'p> CallEdges<'p, '_> {
             } => {
                 self.push_named(function);
             }
-            // Scalar/SIMD construction over a concrete Intable struct
-            // invokes its checker-selected `__int__` in the lowered
-            // expansion, so retain that implicit edge.
+            // A `SIMD[dt, _](x)` construction over a concrete Intable
+            // struct (R1544) invokes its checker-selected `__int__` in the
+            // lowered expansion, so retain that implicit edge.
             MirInstr::MakeSimd { elems, .. } => {
                 for elem in elems {
                     if let Some(TyKind::Struct(name, _)) =

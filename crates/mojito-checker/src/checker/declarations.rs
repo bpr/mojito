@@ -2472,7 +2472,7 @@ impl Checker {
                 let rank = overload_rank(
                     0,
                     sig.variadic.is_some(),
-                    0,
+                    baked_decl_count(&sig.decls),
                     !decls_are_concrete(&sig.decls),
                 );
                 (rank, sig)
@@ -3290,12 +3290,15 @@ impl Checker {
                         continue;
                     }
                     if ok {
-                        // Rank matches the non-generic path: a variadic candidate
-                        // loses to a fixed-arity one at equal conversion cost, so a
-                        // zero-argument call prefers the empty ctor over `*values`.
-                        // The implicit copies a place costs a `var` parameter count
-                        // here too, so `C[Int](s)` ranks as `C(s)` does; this path
-                        // has no trivially-register-passable classification, so the
+                        // An initializer's own compile-time parameters rank it
+                        // exactly as a free function's do: at equal conversion
+                        // cost the shorter parameter signature wins, so
+                        // `Int8(Float64(3.9))` selects the `[other_dtype]` cast
+                        // over `[T: Intable, target_dtype]`, and a variadic
+                        // candidate loses to a fixed-arity one. The implicit
+                        // copies a place costs a `var` parameter count here too,
+                        // so `C[Int](s)` ranks as `C(s)` does; this path has no
+                        // trivially-register-passable classification, so the
                         // binding's variadic tie-breaks stay out of it.
                         let mut binding = ArgumentBinding::new(None);
                         for (expression, _, convention) in &bound {
@@ -3304,7 +3307,7 @@ impl Checker {
                         let rank = overload_rank(
                             score,
                             sig.variadic.is_some(),
-                            0,
+                            baked_decl_count(&sig.decls),
                             !decls_are_concrete(&sig.decls),
                         ) + binding.rank();
                         matches.push(GenericConstructorMatch {

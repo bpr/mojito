@@ -473,12 +473,17 @@ impl VmBackend {
                     RuntimeError::Unsupported(format!("vm: DType has no method '{method}'"))
                 }),
             // `Pointer` methods: `free()` releases the allocation (a no-op in
-            // the arena model — the arena never reclaims).
+            // the arena model — the arena never reclaims), and `__int__()` is
+            // the synthetic address.
             Value::Pointer { allocation, offset } => match method {
                 "free" | "unsafe_free" => {
                     self.heap_free(*allocation, *offset)?;
                     Ok(Value::None)
                 }
+                "__int__" if args.is_empty() => Ok(Value::Int(crate::runtime::pointer_address(
+                    *allocation,
+                    *offset,
+                ))),
                 _ => Err(RuntimeError::Unsupported(format!(
                     "vm: Pointer has no method '{method}'"
                 ))),

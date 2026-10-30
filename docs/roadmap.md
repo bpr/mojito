@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1665**.
+Next free ID: **R1666**.
 
 ## Ordered Work
 
@@ -2621,6 +2621,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1665 A `Pointer` formed over a place has no address on the VM**
+
+  `Int(Pointer(to=x)) != 0` prints `True` at the pin and natively; the VM
+  fails with "vm: SIMD[DType.int, 1] has no method '__int__'".
+  - Cause: the VM holds a place-formed pointer as a `Value::Ref` (frame,
+    slot, projection), which has no integer form beside
+    `runtime::pointer_address`'s for an allocation's `Value::Pointer`.
+  - The method dispatch (`VmBackend::method_call`, `vm/invoke.rs`) also
+    chases a `Ref` receiver to its referent, so `Pointer.__int__` reaches
+    the pointee instead of the pointer.
+  - Fix: give a `Ref` a provenance-unique synthetic address, and dispatch
+    a `Pointer`-typed receiver's own methods before chasing it.
+  - Probe: `p.__int__()`, `Int(p)`, `UInt(p)`, and `def addr[T:
+    Intable](v: T) -> Int: return Int(v)` over `var p = Pointer(to=x)`.
+  - Found while landing R1399 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1213 A method's pointer result over a field of `self` is rejected
   at every call**
 
@@ -3835,6 +3853,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `__init__[other: DType, //](out self, x: SIMD[other, Self.n], /)`, is
     rejected at the pin too ("depends on an unresolved parameter 'n'"), so
     find what lets `SIMD`'s `_` bind before changing the general rule.
+  - Probe: `SIMD[DType.int, _](True)` prints `1` at the pin, through
+    `__init__[T: Intable]`; Mojito rejects it ("expected a DType.int
+    element, found Bool"). `SIMD[DType.int, _](I())` over an `Intable`
+    `I` already prints the pin's `9`, by the rule.
+  - Once a `_` width binds the declared overloads, delete the rule they
+    leave: `declared_simd_construction`'s positional fallback for an
+    unknown width, `check_simd_value`'s `Intable` clause and
+    `argument_simd_width`'s `Bool`/`Param`/`Struct` arm
+    (`checker/operators.rs`), and the `simd.make` `__int__` machinery
+    (the VM `exec.rs` `MakeSimd` arm, Pliron `intable_struct_value` and
+    `lib.rs`'s `MakeSimd` edge, mono `enqueue_intable_instance`, and
+    `__int__` in `mir::TYPE_REACHED_MEMBERS`).
   - Found while landing R186 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3872,6 +3902,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `Int32(0) or v` and `Int32(2) or v` over a 4-lane `int32`
     vector print `[1, 0, 3, 4] [2, 2, 2, 2]` at the pin, splatting the
     tested scalar; Mojito rejects both the same way.
+  - Probe: `"" or "a"`, `"b" and "c"`, and `"" or s` over a `String` print
+    `a`, `c`, and `s`'s text at the pin: each string literal is its own
+    `StringLiteral[value]` type, so the left operand converts too.
   - Found while landing R97 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6389,7 +6422,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `#pop<float_literal_convert>`, and `FloatLiteral` is not even a
     parameter type yet ("unknown type 'FloatLiteral'").
   - Porting either removes its literal from
-    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`).
+    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`),
+    and with both the `IntLiteral`/`FloatLiteral` arms of
+    `Checker::infer_conversion` (`checker/builtins.rs`) and the `"Int"`,
+    `"UInt"`, and `"Float64"` arms of `infer_unbound_call`, which serve
+    only a literal argument now.
   - Probe: `min(3, 2.5)` is rejected at overload resolution ("no overload
     matches"). The pin binds `std.math`'s `SIMD` overload at `Int` and fails
     the instance on the `FloatLiteral` initializer's assert ("the SIMD type
@@ -10027,7 +10064,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `decide_type_conforms`, and the VM's `declared_owner`.
   - Delete the rules the bodies replace: `mc_infer.rs`'s `TyKind::Bool`
     early returns, `mlir_conversion`'s `__mlir_bool__`/`__mlir_i1__` arms,
-    the VM `invoke.rs` and Pliron `methods.rs` conversion arms on a `Bool`,
+    the VM `invoke.rs` and Pliron `methods.rs` conversion arms on a `Bool`
+    (`runtime::builtin_convert` and `lower_convert` keep their `Int`,
+    `UInt`, and `Float64` targets for a literal receiver's dunders, R1507),
     `modelled_conformance`'s `Bool` arms for the declared traits, and the
     `Bool` hash leaf (`builtin_hashable_ty`, both `hash_leaf_ty`s, the VM
     `__hash__` arm, `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
@@ -10060,7 +10099,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Bool` into `self`'s place, the store half of `BoolStorage`, which the
     checker rejects outside an initializer today.
   - Delete the two `"Bool"` arms of `infer_unbound_call` and the `Bool`
-    arm of the conversion rule in `builtins.rs`.
+    arms of `Checker::infer_conversion` (`builtins.rs`), which `Int`,
+    `UInt`, and `Float64` leave only for a literal (R1507), and narrow the
+    elaborator's `Bool` rewrite in `Specializer::rewrite_blocks`.
   - The `@implicit` stand-ins in `Checker::record_implicit_conversion`
     (`i1` and `Scalar[DType.bool]` to `Bool`) stay until R1612.
   - Probe: `Bool(Foo(3))` over a user `Boolable`, `Bool(3)`, `Bool(0.0)`,
@@ -10904,62 +10945,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     R330, and R276, which port the last members, and R1561, which retires
     the lane subscript.
   - Model: Opus, Not Planned.
-
-- [ ] **R1399 `Int(x)`, `UInt(x)`, and `Float64(x)` are checker built-ins,
-  where upstream's are `SIMD.__init__` overloads**
-
-  `checker/builtins.rs` types the conversions by rule, and the VM's
-  `builtin_convert` and Pliron's `lower_convert` run them, where upstream
-  declares `__init__[T: Intable]`, `__init__[T: IntableRaising](out self:
-  Int, ...) raises`, `__init__[T: Floatable](out self: Float64, ...)`, and
-  `__init__[T: FloatableRaising](out self: Float64, ...) raises`.
-  - Port the overloads, including the refined `out self` they use, and
-    delete the scalar arms of all three sites.
-  - Porting `Intable` removes a non-`SIMD` argument from
-    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`), so
-    a sized alias over an `Intable` value takes the declared overload too.
-  - That includes its `Bool` clause: a lone `Bool` into a one-lane
-    instance whose dtype is not known to be `bool` stays the rule's, where
-    the pin selects `__init__[T: Intable]`.
-  - Probe: `def h[dt: DType](b: Bool) -> SIMD[dt, 1]: return SIMD[dt,
-    1](b)` gives `1` at `DType.int8` and fails "constructing from an
-    `Intable` value requires an integral dtype" at `DType.bool` at the pin;
-    Mojito rejects both ("expected a dt element, found Bool").
-  - Probe: `UInt8(True)` and `SIMD[DType.int, _](True)` print `1` at the
-    pin, through `__init__[T: Intable]` (`Bool` is `Intable`). Mojito's
-    rule (`check_simd_value`) takes only a struct or a parameter as
-    `Intable`. The `scalar.cast`
-    instruction (R857) becomes their `pop.cast`.
-  - Probe (from R857): a conversion over a struct or a bounded type
-    parameter is still a bare-name `call` of `Int`, `Float64`, or `Bool` in
-    parametric MIR, as is MIR's `bool_conversion` of a `Boolable` struct
-    condition. The elaborator's `Specializer::rewrite_blocks` resolves it by
-    name to the dunder's `call.method` or a `scalar.cast`, where upstream's
-    `__init__[T: Intable]` body is `value.__int__()`.
-  - Probe: `Int(StringSpan("12"))`, which the checker's rule converts
-    through `StringSpan.__int__`.
-  - Probe: a struct whose `__int__` or `__float__` raises converts through
-    `Int(x)` or `Float64(x)` without declaring `IntableRaising` or
-    `FloatableRaising` (bundled in `std.builtin.int` and
-    `std.builtin.floatable`): the checker's conversion exempts a raising
-    dunder from the declared-bound test.
-  - Probe: `Bool("abc")` and `"abc".__bool__()` are rejected ("expected a
-    numeric or Bool value"), where the pin prints `True`: the built-in
-    `Bool(x)` takes only a numeric or `Bool` operand, and a scalar's
-    `__bool__`, `__int__`, and `__float__` are checker rules
-    (`method_calls/mc_infer.rs`) over the numeric scalars, where upstream's
-    `Bool.__init__[T: Boolable]` calls `StringLiteral.__bool__`.
-  - Probe: `if "":` and `"" or s` over a `String` are rejected ("expected
-    Bool, found StringLiteral"), where the pin tests the literal through
-    its `__bool__`: `Checker::condition_truthiness` admits a numeric scalar
-    or a struct declaring `__bool__`, and `StringLiteral` is neither here.
-  - Probe (from R1109): `Int64(C[4](1))` runs `C.__int__` from its type
-    through `simd.make` (`mir::TYPE_REACHED_MEMBERS`), so an `__int__`
-    ignoring `self` keeps one instance per `n`, where `Int(C[n](1))`
-    already calls it.
-  - Depends on R1555, which declares the other `__init__` overloads, and
-    R1594 (the refined `out self`).
-  - Model: Fable, Not Planned.
 
 - [ ] **R1407 An `enum`'s `__Enum` members are generated on each enum,
   where upstream's are `__Enum`'s trait defaults**

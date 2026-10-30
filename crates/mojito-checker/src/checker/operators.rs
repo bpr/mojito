@@ -1060,7 +1060,8 @@ impl Checker {
     /// Self.length]` argument gives its own width (a literal materializes to
     /// a scalar), and an `Intable` one binds `__init__[T: Intable]`, a scalar
     /// whose `comptime assert` wants an integral dtype. No overload binds
-    /// `_` from an element count.
+    /// `_` from an element count. Each is this rule's until a `_` width
+    /// binds the declared overloads (R1544).
     fn argument_simd_width(
         &self,
         dtype: &SimdDtype,
@@ -1101,7 +1102,8 @@ impl Checker {
     /// Check the one argument of a SIMD construction: the cast from another
     /// dtype ([`converts_to_lane`], a scalar splatting across the width), or
     /// a scalar's construction from an `Intable` value through its
-    /// `__int__`.
+    /// `__int__`. Only `SIMD[dt, _](x)` reaches the `Intable` clause: every
+    /// spelled width binds the declared `__init__[T: Intable]` (R1544).
     fn check_simd_value(
         &self,
         dtype: &SimdDtype,

@@ -391,9 +391,9 @@ impl ScalarConversion {
     }
 
     /// Whether a value of type `ty` converts by this conversion as a cast:
-    /// a numeric scalar or literal, a `Bool`, a width-one SIMD value, to
-    /// `Int` a pointer (its address), and to `Bool` the MLIR builtin `i1`
-    /// (upstream's `@implicit Bool.__init__(value: __mlir_type.i1)`).
+    /// a numeric scalar or literal, a `Bool`, a width-one SIMD value, and
+    /// to `Bool` the MLIR builtin `i1` (upstream's `@implicit
+    /// Bool.__init__(value: __mlir_type.i1)`).
     pub fn casts_from(self, ty: &Ty) -> bool {
         matches!(
             ty.kind(),
@@ -404,7 +404,6 @@ impl ScalarConversion {
                 | TyKind::FloatLiteral
                 | TyKind::Bool
         ) || crate::types::is_scalar_simd(ty.kind())
-            || (self == Self::Int && matches!(ty.kind(), TyKind::Pointer { .. }))
             || (self == Self::Bool && *ty.kind() == TyKind::I1)
     }
 }

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Int(x)`, `UInt(x)`, `Float64(x)`, and the sized aliases now bind
+  upstream's declared `SIMD.__init__` overloads over `Intable`,
+  `IntableRaising`, `Floatable`, and `FloatableRaising` (R1399), so
+  `UInt(x)` over an `Intable` struct or a pointer, `UInt8(True)`, and
+  `SIMD[dt, 1](b)` over a `Bool` run as at the pin, `Float32(x)` over an
+  `Intable` value fails the overload's integral-dtype assert, and
+  `UInt(-1.5)` is the cast's value (`pliron_convert_uint` now prints the
+  pin's 29). A pointer is `Intable` through `__int__`. Initializer
+  overloads now rank by parameter-signature length as functions do.
+  `Int(x)` and `Bool(x)` over a struct whose dunder raises but which
+  declares no raising trait are now rejected, as at the pin.
 - `SIMD.write_to` and `write_repr_to` are now upstream's Mojo members
   (R276), writing through upstream's `_write_scalar` and
   `_scalar_repr_alias` and the newly bundled
