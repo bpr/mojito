@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1725**.
+Next free ID: **R1727**.
 
 ## Ordered Work
 
@@ -214,6 +214,12 @@ which names the upstream pass each one follows. Each is measured by the
     prints `[2, 2]`.
   - Library case: `StringSpan.__init__(ref [Self.origin] src: String)`,
     which also blocks a compile-time `StringSpan` built from a `String`.
+  - Library case: `Span`'s `@implicit` `List` and `Array` constructors.
+    `f[Span(L)]()` over `comptime L = [1, 2, 3]` and `def f[c: Span[Int,
+    _]]()` is "not an associated comptime expression", where the pin
+    prints `2`. `comptime s = Span([1, 2, 3])` fails the MIR verifier
+    ("write-back parameter 0 of 'Span.__init__$ov$List$T$AnyType' has no
+    caller place").
   - The elaborator thaws the argument as a value; a `ref` slot needs it
     addressed in compile-time memory (`store_to_comptime_memory`), as the
     VM addresses a `ref` argument at run time.
@@ -254,15 +260,19 @@ which names the upstream pass each one follows. Each is measured by the
     only `Movable`, is lifted to a thunk whose return copies the element
     out of `__getitem__`'s reference result, so it is rejected with "cannot
     copy non-Copyable type 'NC'". The pin prints `1`.
+  - Probe: a display in a slot whose type has no `__list_literal__`
+    constructor, such as `Span[Int, _]`, applies `Array`'s literal
+    constructor, its natural type, then the slot's conversion. The library
+    case is `std.math.polynomial`'s symbolic `[Scalar[dtype](1.0), 2.0,
+    3.0]` (R1712).
   - The lever: `build_ct` builds a display as the `Apply` of the
     constructor `record_display_construction` selects for its contextual
     type, as a struct construction is applied
     (`Checker::called_application`). No new `ParamKind` node.
     `aggregate_value` goes.
-  - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 3.
   - Found while landing R1386 (2026-10-26).
   - Depends on R1528, R1691 (`List`'s `__list_literal__=NoneType(None)`).
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 - [ ] **R1474 A predicate alias body or a struct header's condition is
   compiled without its binders in scope**
 
@@ -3615,6 +3625,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     whose binders are already fixed (a method's `Wrapper[Self.T]`, or a
     closed type).
   - Pinned by `conformance/probes/inferred_binder_through_conversion.mojo`.
+  - Probe: in a parameter slot, `f[[Float64(1.0), 2.0, 3.0]]()` over `def
+    f[dtype: DType, //, c: Span[Scalar[dtype], _]]()` prints `3` at the
+    pin, and run-time `h([Float32(1.0), 2.0])` over `def h[dtype: DType](s:
+    Span[Scalar[dtype], _])` prints `2`; both are "cannot infer type
+    parameter 'dtype'" here. The pin binds `dtype` from the converted
+    parameter before the run-time argument:
+    `polynomial_evaluate[[Float32(1.0)]](Float64(2))` is rejected at `x`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -4602,6 +4619,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `print(g)`, fails with "keeps the parameter constant `7 // 0`", where
     the pin prints `0`: the literal pair's `//` by zero does not fold (R1624),
     where an `Int`'s folds to `0`.
+  - Probe: `comptime M: List[Int] = [1, 2, 3]` is typed `Array[Int,
+    Int(3)]`, so `M[:2]` is "invalid call to '__getitem__'" and `var x:
+    Int = M` names `Array`, where the pin builds the `List` (`comptime a =
+    M[:2]` then `len(a), a[1]` prints `2 2`). The annotation is not the
+    display's contextual type, as it is for `var x: List[Int] = [...]`
+    (`Checker::record_display_construction`).
   - Cause, module: `Checker::fold_module_constants`
     (`checker/constraints.rs`) folds the initializer to an `IntLiteral`
     before any struct registers, ignoring the annotation, and the later
@@ -7026,6 +7049,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The fix is an `Origin::Comptime { mutable }` variant the checker gives a
     borrow of a compile-time value, and the pin's diagnostic for a type
     that holds one.
+  - Probe: `comptime s = Span(L)` over `comptime L = [1, 2, 3]`, then a
+    run-time `len(s)`, is rejected at the pin ("cannot materialize
+    compile-time value of type 'Span[Int, ComptimeOrigin]' to a runtime
+    value"), and `comptime n = len(s)` prints `3`. Both are "cannot infer
+    type parameter 'T' of 'Span'" here.
   - Found while landing R793 (2026-10-14).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -10925,23 +10953,31 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Model: Fable, Not Planned.
 
 - [ ] **R1712 A compile-time `Span` parameter is not bound from a list
-  literal, so `std.math.polynomial` cannot be ported**
+  display, so `std.math.polynomial` cannot be ported**
 
   `_horner_evaluate[[Scalar[dtype](1.0), 2.0, 3.0]](x)` over
   `coefficients: Span[Scalar[dtype], _]` reports "not a compile-time Int
   constant: not an associated comptime expression", where the pin prints
   `17.0 [6.0, 17.0]` for `p(Float64(2))` and `p(SIMD[DType.float32, 2](1,
   2))`.
-  - `len(coefficients)` and `coefficients[i]` over the parameter are not
-    compile-time expressions the checker can fold.
+  - The symbolic display fails at the call site (R1529). A closed one,
+    `f[[1, 2, 3]]()` over `def f[c: Span[Int, _]]()`, fails the binding:
+    "expected Span[Int], found List[Int]". The pin prints `3`.
+  - At the pin the display is its natural `Array[T, n]`, converted by
+    `Span`'s `@implicit` `ref[Self.origin] array: Array[Self.T, _]`
+    constructor (R1725, R1644, R1448).
+  - The body's reads (`len(c)`, `c[i]`, `comptime for`) already lift and
+    run for a struct-valued parameter on both backends.
+  - Left here once the prerequisites land: bind the parameter's unbound
+    origin to compile-time memory, carry the constructor's own `length`
+    binder in the application, and freeze and thaw a `Span` whose `_data`
+    points into compile-time memory.
   - Port `std.math.polynomial` (`polynomial_evaluate`,
-    `_horner_evaluate`) with the fix.
-  - Probe: `_exp_taylor`'s `comptime coefficients = List[...]` read
-    through `coefficients[:]` and `coefficients[:8]`, which may share
-    R508's cause.
+    `_horner_evaluate`, the latter placed first under R393).
+  - Plan: `R1712-a-compile-time-span-parameter-is-plan.md`, Part B.
   - Found while planning R1567 (2026-10-30).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Depends on R1448, R1529, R1644, and R1725.
+  - Model: Fable, Planned.
 
 - [ ] **R1713 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
   Taylor polynomial and `_ldexp_impl`**
@@ -10958,8 +10994,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     plugin.
   - Probe: `print(exp(Float64(1)), exp(SIMD[DType.float32, 4](0, 1, 2,
     -1)))` against the pin.
+  - Probe: `_exp_taylor`'s `coefficients[:]` and `coefficients[:8]` in a
+    parameter position: `g[coefficients[:2]]()` over a compile-time `List`
+    and `def g[c: Span[Scalar[dtype], _]]()` is "not an associated comptime
+    expression", where the pin prints `2`. `List([...])` is R1154, and
+    `List.__getitem__(ref self, ContiguousSlice)` as an application is
+    R1643 and R1644.
   - Found while planning R1567 (2026-10-30).
-  - Depends on R1711, R1712, R1593, R1634, R1673, R1661, R333, and R1721.
+  - Depends on R1711, R1712, R1593, R1634, R1673, R1661, R333, R1721,
+    R1154, and R1643.
   - Model: Fable, Not Planned.
 
 - [ ] **R1714 `std.math` has no `log`, where upstream's is `_log_accurate`
@@ -12467,6 +12510,30 @@ residue found inside a task moves to the task that owns its fix.
     monomorphization") rather than in the check.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1725 `Span` has no constructor from an `Array`, so a list display
+  never converts to a `Span`**
+
+  `k([4, 5])` and `var a = [1, 2, 3]; k(a)` over `def k(s: Span[Int, _])`
+  are rejected ("expected Span[Int], found Array[Int, 3]"), where the pin
+  prints `2` and `3` through upstream's `@implicit __init__(out self,
+  ref[Self.origin, Self.address_space] array: Array[Self.T, _])`.
+  - Port it to `stdlib/std/span.mojo` without `address_space`, which the
+    bundled `Span` does not declare, with upstream's body
+    `self._data = array.unsafe_ptr()` and `self._len = array.length`.
+  - `origin_of(array)` over the `ref [Self.origin]` parameter reads as a
+    fresh `ImmOrigin`, so upstream's body is rejected ("expected
+    Pointer[T, origin#2._get_owned_interior[element]], found Pointer[T,
+    ImmOrigin(origin@…)]"). Fix that, rather than copying the `List`
+    constructor's `unsafe_origin_cast`.
+  - With the constructor declared, a bundled `Span(a)` checks but the VM
+    reports "checked constructor
+    'Span.__init__$ov$Array$T$AnyType$V$length$array' is missing from
+    MIR". The same struct runs as user code, imported or not, so only the
+    bundled package drops it.
+  - Found while planning R1712 (2026-10-30).
+  - Depends on R1448.
   - Model: Opus, Not Planned.
 
 - [ ] **R1126 `Array` slices into a `Span`**

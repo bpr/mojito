@@ -2835,6 +2835,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `std.math.polynomial` stays unported (R1712): its `coefficients:
+  Span[Scalar[dtype], _]` parameter binds a list display, which at the pin
+  is an `Array` converted by `Span`'s `@implicit` `ref` constructor from
+  `Array`. That needs the bundled `Span`'s `Array` constructor (R1725), a
+  conversion through a constructor with its own binders (R1448), a display
+  applied in a parameter position (R1529), and a `ref` compile-time
+  application (R1644).
 - `SIMD`'s `**` stays a compiler rule (R1567): upstream's `__pow__` reaches
   `_powf_scalar`, whose `exp(log)` needs `std.math`'s `exp` and `log`
   (R1713, R1714) over `FPUtils`, `nan`, and `polynomial_evaluate` (R1711,
