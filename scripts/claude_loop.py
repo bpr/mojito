@@ -6,10 +6,22 @@ the work, deletes the entry, and the loop commits what it left. Every task is a
 new `claude -p` process, so no context carries over from one task to the next.
 `--plan` asks for a plan file instead, leaving the entry and the code alone.
 
+A session that cannot land its entry until other work does splits it: it
+files that work (or finds the open entries that own it) and names it in the
+entry's Depends bullet. The loop commits what the session left, runs the new
+prerequisites, and then gives the entry to a fresh session, up to
+`MAX_SPLITS` times per entry in one run. Under `--only`, which runs no
+prerequisites, a split leaves the entry unfinished.
+
 The loop never stops on a bad task. A session that fails, or that leaves its
-entry on the roadmap, is reported and committed as it stands, and the next task
-starts; the exit status is 1 if any task went that way, and an entry that waits
-on one of those is skipped for the rest of the run. A session a usage limit
+entry on the roadmap without splitting it, is committed as it stands, and the
+next task starts; an entry that waits on one of those is skipped for the rest
+of the run. Such a task could not be completed in this run, so the run exits 1
+and prints, and writes to `target/claude-loop/<stamp>-unfinished.txt`, what is
+needed to deal with each one: why it is unfinished, the commits holding its
+work, its session and log, the end of the session's last message, the run's
+entries it held back, and the command that reruns the loop. Chain runs with
+`&&` so the next one waits for the entries this one could not finish. A session a usage limit
 cuts off is not a bad task: the loop waits for the limit to reset and resumes
 that session with its context, and if the reset is more than six hours away it
 stops, leaving the session's work uncommitted and printing how to resume it.
@@ -80,6 +92,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -95,6 +108,8 @@ COMMIT_MSG = ROOT / "commit_msg.txt"
 TICK = 5
 QUICK_FAIL = 60
 QUICK_FAIL_LIMIT = 3
+MAX_SPLITS = 3
+SUMMARY_LINES = 15
 LIMIT_MAX_WAIT = 6 * 3600
 LIMIT_SLACK = 90
 BUILD_FAILED = "<the build>"
@@ -126,41 +141,82 @@ import roadmap  # noqa: E402
 Task = roadmap.Entry
 
 
-def pending(args, done: set[str], troubled: set[str],
+@dataclass
+class Unfinished:
+    """A task this run could not complete, with what dealing with it needs."""
+    task: Task
+    reasons: list[str]
+    session_id: str | None
+    log: Path | None
+    summary: str
+    commits: list[str]
+
+
+def pending(args, done: set[str], troubled: dict[str, Unfinished],
             fixed: set[str] | None = None) -> list[Task]:
     """The run's remaining tasks in work order, read afresh from the roadmap.
 
-    Keeps to `fixed`, the `--start`/`--until` range taken at launch, when there
-    is one, and leaves out what this run already took on and every entry that
-    waits, directly or not, on a task that left work behind.
+    Leaves out what this run already finished or gave up on and every entry
+    that waits, directly or not, on a task that left work behind.
     """
     rm = roadmap.parse()
+    blocked = held_back(rm, troubled)
+    return [t for t in run_order(args, rm, fixed) if t.id not in done and t.id not in blocked]
+
+
+def run_order(args, rm: roadmap.Roadmap, fixed: set[str] | None) -> list[Task]:
+    """The open entries this run is for, in work order, kept to `fixed`, the
+    `--start`/`--until` range, when there is one."""
     if args.only:
         order = [e for e in rm.open() if e.id in args.only]
     elif args.task:
         order = rm.work_order([e for e in rm.open() if e.id in args.task])
     else:
         order = rm.work_order(rm.track_roots(args.track))
-    blocked = set(troubled)
-    for t in rm.work_order():
-        if any(d.id in blocked for d in rm.prerequisites(t)):
-            blocked.add(t.id)
-    return [t for t in order
-            if t.id not in done | blocked and (fixed is None or t.id in fixed)]
+    return [t for t in order if fixed is None or t.id in fixed]
+
+
+def held_back(rm: roadmap.Roadmap, troubled) -> dict[str, set[str]]:
+    """Each troubled task, and each open entry that waits on one directly or
+    not, mapped to the troubled tasks it waits on."""
+    causes: dict[str, set[str]] = {t: {t} for t in troubled}
+    for e in rm.work_order():
+        waits = set().union(*(causes.get(d.id, set()) for d in rm.prerequisites(e)))
+        if waits:
+            causes[e.id] = causes.get(e.id, set()) | waits
+    return causes
 
 
 def on_roadmap(task: Task) -> bool:
     return any(e.id == task.id and not e.checked for e in roadmap.parse().entries)
 
 
-def build_prompt(task: Task, mode: str, has_plan: bool | None = None) -> str:
+def open_prerequisites(task: Task) -> set[str]:
+    """The IDs of the task's open prerequisites as the roadmap now has them."""
+    rm = roadmap.parse()
+    entry = rm.by_id().get(task.id)
+    return {d.id for d in rm.prerequisites(entry)} if entry else set()
+
+
+def build_prompt(task: Task, mode: str, has_plan: bool | None = None,
+                 waited_on: list[str] | None = None) -> str:
     """The session prompt; `has_plan` overrides looking for the plan file, so a
-    dry run's execute prompt after a plan pass reads as the real one will."""
+    dry run's execute prompt after a plan pass reads as the real one will.
+    `waited_on` names the prerequisites earlier sessions in this run split the
+    entry into."""
+    retry = (
+        "An earlier session in this run did not land this entry: it made the "
+        f"entry wait on {', '.join(waited_on)}, which have since landed. Check "
+        "what of the entry is still open against the code, and carry that "
+        "out.\n\n"
+        if waited_on else ""
+    )
     header = (
         f"Roadmap task {task.id} from docs/roadmap.md (track `{task.track}`): "
         f"\"{task.title}\".\n\n"
         "The entry as it stands:\n\n"
         f"{task.body}\n\n"
+        f"{retry}"
         "Read AGENTS.md first and follow it exactly: the in-session testing "
         "rule (cargo build plus `cargo run -- run` on the touched fixtures; no "
         "suite binaries, corpus filters, scripts/check, or manifest "
@@ -248,7 +304,11 @@ def build_prompt(task: Task, mode: str, has_plan: bool | None = None) -> str:
         f"the {task.id} entry anyway and file what remains as new entries, "
         "each one session's work, chained by Depends bullets: never rewrite "
         "it as one larger entry that no session can close. If none of it can "
-        "land, rewrite the entry to state why. Before finishing: cargo fmt --all, git diff --check, "
+        "land until other work does, file that work as new entries (or find "
+        "the open entries that own it) and add their IDs to the "
+        f"{task.id} entry's Depends bullet: the loop runs them next and then "
+        "hands the entry to a fresh session. If none of it can land at all, "
+        "rewrite the entry to state why. Before finishing: cargo fmt --all, git diff --check, "
         "a clean cargo build, and a clean `cargo clippy --workspace --exclude "
         "mojito-pliron --lib -- -D warnings`. Do not commit: the loop commits "
         "this task's work on its own, with commit_msg.txt as the message.\n"
@@ -283,6 +343,9 @@ class Outcome:
     session_id: str | None
     limit_reset: float | None
     """When a usage limit cut the session off, the epoch second it resets."""
+    log: Path | None = None
+    summary: str = ""
+    """The session's last message."""
 
 
 def run_claude(args, task: Task, model: str, label: str, prompt: str,
@@ -349,7 +412,7 @@ def run_claude(args, task: Task, model: str, label: str, prompt: str,
     suffix = "" if ok else "  USAGE LIMIT" if limited else "  FAILED"
     show_progress(task, label, time.monotonic() - began, suffix)
     print(flush=True)
-    return Outcome(ok, result.get("session_id"), reset)
+    return Outcome(ok, result.get("session_id"), reset, log_path, result.get("result") or "")
 
 
 def resume_through_limits(args, task: Task, model: str, label: str,
@@ -457,6 +520,8 @@ class Smoke:
         self.args = args
         self.failing: set[str] = set()
         self.enabled = True
+        self.added: set[str] = set()
+        self.log: Path | None = None
 
     def start(self) -> None:
         failing, report, seconds = self.run()
@@ -481,6 +546,7 @@ class Smoke:
             log = LOG_DIR / f"{dt.datetime.now():%Y%m%d-%H%M%S}-{task.id}-smoke.log"
             log.write_text(report)
             added = failing - self.failing
+            self.added, self.log = added, log
             if not added:
                 print(f"claude_loop: smoke after {task.id} passed ({seconds:.0f}s)",
                       file=sys.stderr, flush=True)
@@ -604,7 +670,7 @@ def main() -> int:
     args.start, args.until = (rm.find(i).id if i else None for i in (args.start, args.until))
 
     done: set[str] = set()
-    troubled: set[str] = set()
+    troubled: dict[str, Unfinished] = {}
     tasks = pending(args, done, troubled)
     if args.list:
         for t in tasks:
@@ -639,6 +705,8 @@ def main() -> int:
 
     ran = 0
     quick = 0
+    splits: dict[str, int] = {}
+    waited: dict[str, list[str]] = {}
     stopped_by_limit: tuple[Task, Outcome] | None = None
     while tasks := pending(args, done, troubled, fixed):
         current = tasks[0]
@@ -647,8 +715,14 @@ def main() -> int:
             print(f"claude_loop: {stale.name} was written for an earlier title of "
                   f"{current.id}; not handing it to the session as its plan",
                   file=sys.stderr)
+        head = git("rev-parse", "HEAD").strip()
+        before = open_prerequisites(current)
+        reasons: list[str] = []
+        split: list[str] = []
+        outcome: Outcome | None = None
         for mode in modes:
-            prompt = build_prompt(current, mode, True if "plan" in modes else None)
+            prompt = build_prompt(current, mode, True if "plan" in modes else None,
+                                  waited.get(current.id))
             model = model_for(args, current)
 
             if args.dry_run:
@@ -665,45 +739,78 @@ def main() -> int:
                 stopped_by_limit = (current, outcome)
                 break
             ok = outcome.ok
-            smoked = True
-            quick = quick + 1 if not ok and time.time() - began < QUICK_FAIL else 0
+            fast = time.time() - began < QUICK_FAIL
+            quick = quick + 1 if not ok and fast else 0
+            if not ok:
+                reasons.append(f"the {mode} session failed"
+                               + (f" inside {QUICK_FAIL}s" if fast else "")
+                               + "; the end of its log says why")
             if mode == "plan":
-                landed = plan_written(current, began)
-                if ok and not landed:
-                    print(f"claude_loop: session for {current.id} wrote no "
-                          f"{plan_path(current).name}", file=sys.stderr)
+                if ok and not plan_written(current, began):
+                    reasons.append(f"the plan session wrote no {plan_path(current).name}, "
+                                   "so the entry was not carried out")
             else:
                 landed = not on_roadmap(current)
-                if committing:
-                    commit_task(current, untracked_before, msg_before, ok and landed)
                 if ok and not landed:
-                    print(f"claude_loop: entry {current.id} is still on the roadmap",
-                          file=sys.stderr)
+                    split = sorted(open_prerequisites(current) - before, key=lambda i: int(i[1:]))
+                if committing:
+                    commit_task(current, untracked_before, msg_before,
+                                ok and (landed or bool(split)))
+                if ok and not landed and not split:
+                    reasons.append(f"the session left {current.id} on the roadmap without "
+                                   "naming new work in its Depends bullet: land it, split it "
+                                   "into entries it depends on, or rewrite it as not doable")
                 if smoke and not smoke.after(args, current, model, label, outcome, committing):
-                    print(f"claude_loop: {current.id} left the smoke check failing",
-                          file=sys.stderr)
-                    smoked = False
-            if not ok:
-                print(f"claude_loop: session for {current.id} failed", file=sys.stderr)
-            if not (ok and landed and smoked):
-                troubled.add(current.id)
+                    reasons.append(f"`scripts/smoke` fails on {', '.join(sorted(smoke.added))}, "
+                                   f"which passed before the task, after {args.smoke_fix} "
+                                   f"repair session(s); see {smoke.log.relative_to(ROOT)}")
+            if reasons:
                 break
 
         if stopped_by_limit:
             break
-        done.add(current.id)
         ran += 1
+        if split and not reasons:
+            ids = ", ".join(split)
+            if args.only:
+                reasons.append(f"the session made it wait on {ids}, which --only does not "
+                               f"run: rerun with --task {current.id}, or name them with "
+                               "--only too")
+            elif splits.get(current.id, 0) >= MAX_SPLITS:
+                reasons.append(f"it was split {MAX_SPLITS} times in this run and now waits "
+                               f"on {ids} as well: read its sessions' logs before running "
+                               "it again")
+        if reasons:
+            troubled[current.id] = Unfinished(
+                current, reasons, outcome and outcome.session_id, outcome and outcome.log,
+                outcome.summary if outcome else "",
+                git("rev-list", "--abbrev-commit", f"{head}..HEAD").split())
+            for reason in reasons:
+                print(f"claude_loop: {current.id} is unfinished: {reason}", file=sys.stderr)
+            done.add(current.id)
+        elif split:
+            splits[current.id] = splits.get(current.id, 0) + 1
+            waited.setdefault(current.id, []).extend(split)
+            if fixed is not None:
+                rm = roadmap.parse()
+                fixed |= {e.id for e in rm.work_order([rm.find(i) for i in split])}
+            print(f"claude_loop: {current.id} now waits on {', '.join(split)}; "
+                  "it runs again once they land", file=sys.stderr)
+        else:
+            done.add(current.id)
         if quick >= QUICK_FAIL_LIMIT:
             print(f"claude_loop: {quick} sessions in a row failed inside "
                   f"{QUICK_FAIL}s, which is the environment rather than the "
                   "tasks; stopping with the rest of the run untouched",
                   file=sys.stderr)
             break
-        if current.id == until or (args.count and ran >= args.count):
+        if (current.id == until and current.id in done) or (args.count and ran >= args.count):
             break
         if until and not args.dry_run and not any(t.id == until for t in roadmap.parse().open()):
             break
 
+    if troubled:
+        report_unfinished(args, troubled, fixed, ran)
     if stopped_by_limit:
         task, outcome = stopped_by_limit
         reset = dt.datetime.fromtimestamp(outcome.limit_reset).strftime("%Y-%m-%d %H:%M")
@@ -713,13 +820,44 @@ def main() -> int:
               "commits the tree on its own first and starts the task afresh.",
               file=sys.stderr)
         return 1
-    if troubled:
-        print(f"claude_loop: {ran} tasks ran, {len(troubled)} left work behind:",
-              file=sys.stderr)
-        for ident in sorted(troubled, key=lambda i: int(i[1:])):
-            print(f"  {ident}", file=sys.stderr)
     return 1 if troubled else 0
 
+
+def report_unfinished(args, troubled: dict[str, Unfinished], fixed: set[str] | None,
+                      ran: int) -> None:
+    """Print, and write beside the session logs, what dealing with each task
+    this run could not complete needs."""
+    rm = roadmap.parse()
+    causes = held_back(rm, troubled)
+    order = run_order(args, rm, fixed)
+    named = {*args.task, *args.only, *([args.until] if args.until else [])}
+    lines = [f"claude_loop: {ran} task(s) ran; {len(troubled)} could not be completed "
+             "in this run."]
+    for u in sorted(troubled.values(), key=lambda u: int(u.task.id[1:])):
+        lines += ["", f"{u.task.id} {u.task.title}"]
+        lines += [f"  why: {reason}" for reason in u.reasons]
+        if u.commits:
+            lines.append(f"  work: committed as {', '.join(u.commits)}")
+        else:
+            lines.append("  work: nothing committed"
+                         + (" (--no-commit left it in the tree)" if args.no_commit else ""))
+        if u.session_id:
+            lines.append(f"  session: claude --resume {u.session_id}")
+        if u.log:
+            lines.append(f"  log: {u.log.relative_to(ROOT)}")
+        held = [t.id + (" (named by this run)" if t.id in named else "") for t in order
+                if t.id != u.task.id and u.task.id in causes.get(t.id, set())]
+        if held:
+            lines.append(f"  holds back: {', '.join(held)}")
+        if summary := u.summary.strip().splitlines()[-SUMMARY_LINES:]:
+            lines.append("  the session's last message ends:")
+            lines += [f"    {line}" for line in summary]
+    lines += ["", f"Once each is dealt with, rerun: {shlex.join(sys.argv)}"]
+    text = "\n".join(lines)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    path = LOG_DIR / f"{dt.datetime.now():%Y%m%d-%H%M%S}-unfinished.txt"
+    path.write_text(text + "\n")
+    print(f"{text}\n\nThis report is also at {path.relative_to(ROOT)}.", file=sys.stderr)
 
 if __name__ == "__main__":
     sys.exit(main())
