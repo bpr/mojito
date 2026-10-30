@@ -3060,15 +3060,15 @@ impl Checker {
                                 to: ty.to_string(),
                             });
                         }
-                    } else if is_simd_length(&actual) && matches!(ty.kind(), TyKind::INT) {
-                        // A `SIMDLength` binds an `Int` as its lane count:
-                        // upstream's builtin `SIMD.__init__(SIMDLength)`
-                        // folded.
-                        let lanes = mojito_types::types::simd_length_image(
-                            &self.param_context,
-                            &self.param_context.constant(value).map_err(param_error)?,
-                        )
-                        .map_err(param_error)?;
+                    } else if let Some(lanes) = self.simd_length_lanes(
+                        &actual,
+                        ty,
+                        &self
+                            .param_context
+                            .constant(value.clone())
+                            .map_err(param_error)?,
+                    ) {
+                        let lanes = lanes?;
                         let lanes =
                             TyArg::Val(lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int));
                         self.record_at(expr.source_span()).argument_attribute = Some(lanes.clone());

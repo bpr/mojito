@@ -9,8 +9,8 @@
 use super::*;
 use mojito_ast::ast::{ParamArg, SourceType};
 use mojito_types::conformance::Conformance;
-use mojito_types::types::TyKind;
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
+use mojito_types::types::{TyKind, is_simd_length};
 
 /// The bundled `ParameterList`'s linked name, its implicit public identity.
 pub(super) const PARAMETER_LIST: &str = "ParameterList";
@@ -1784,6 +1784,9 @@ impl Checker {
         if coerces(found, ty) {
             return None;
         }
+        if let Some(lanes) = self.simd_length_lanes(found, ty, compiled) {
+            return lanes.ok();
+        }
         let source = {
             let _position = self.comptime_position();
             self.infer(expr).unwrap_or_else(|_| found.clone())
@@ -1791,6 +1794,22 @@ impl Checker {
         self.implicit_parameter_application(&source, ty, |slot| self.applied_argument(expr, slot))
             .ok()
             .flatten()
+    }
+
+    /// The lane count a compile-time `SIMDLength` `value` of type `found`
+    /// binds in an `Int` slot `ty`, as upstream's builtin
+    /// `SIMD.__init__(SIMDLength)` folded: an explicit bracket argument and
+    /// a parameter default (`output_size: Int = Self.length`) alike. `None`
+    /// for any other pair of types.
+    pub(super) fn simd_length_lanes(
+        &self,
+        found: &Ty,
+        ty: &Ty,
+        value: &ParamExpr,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        (is_simd_length(found) && matches!(ty.kind(), TyKind::INT)).then(|| {
+            mojito_types::types::simd_length_image(&self.param_context, value).map_err(param_error)
+        })
     }
 
     /// Whether `expr` calls a `raises` callable a compile-time call would

@@ -385,6 +385,7 @@ impl Checker {
                 }
             })?;
             self.record_bracket_attributes(span.clone(), selected.bracket_attributes.clone());
+            self.type_runtime_param_args(param_args)?;
             if parameterized_syntax {
                 self.record_at(span.clone()).parameterized_method_call =
                     Some(selected.param_decls.clone());

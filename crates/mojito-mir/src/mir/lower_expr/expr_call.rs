@@ -482,21 +482,20 @@ impl<'a> Flatten<'a> {
             .adjustments
             .iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask, joined } => {
-                    Some((mask.clone(), *joined))
+                mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask } => {
+                    Some(mask.clone())
                 }
                 _ => None,
             });
-        if let Some((mask, joined)) = simd_shuffle
+        if let Some(mask) = simd_shuffle
             && let Some(object) = callee.member_object()
         {
             let value = self.expr(object);
-            let other = joined.then(|| self.expr(args[0]));
             let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::SimdShuffle {
                 dest,
                 value,
-                other,
+                other: None,
                 mask,
             });
             return dest;

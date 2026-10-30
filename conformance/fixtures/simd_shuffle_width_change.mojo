@@ -1,5 +1,6 @@
-# A `shuffle` mask has one index per receiver lane, so it cannot narrow or
-# widen the vector; both compilers reject a two-index mask on four lanes.
+# A `shuffle` mask has one index per receiver lane because `shuffle` returns
+# `Self`, so it cannot narrow or widen the vector; both compilers reject a
+# two-index mask on four lanes.
 # Narrowing is `slice[width, offset=]()` and widening is `join`
 # (`assets/ok/simd_shuffle.mojo`).
 def main():

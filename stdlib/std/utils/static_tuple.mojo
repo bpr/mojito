@@ -11,6 +11,8 @@
 #   `std.builtin.device_passable` and `std.builtin.rebind` imports: a static
 #   trait requirement is rejected (R942) and `downcast` is not bundled
 #   (R223).
+# - `String` and `index` are imported, which upstream's prelude provides,
+#   since a module `std.simd` imports sees no prelude names (R894).
 """Implements StaticTuple, a statically-sized uniform container.
 
 You can import these APIs from the `utils` package. For example:
@@ -20,7 +22,9 @@ from std.utils import StaticTuple
 ```
 """
 
+from std.builtin.int import index
 from std.reflection import reflect
+from std.string import String
 from std.traits import (
     IsTriviallyCopyable,
     IsTriviallyDeinitable,

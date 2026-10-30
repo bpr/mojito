@@ -2447,22 +2447,9 @@ fn accepts_simd_shuffle_masks() {
 }
 
 #[test]
-fn rejects_bad_simd_shuffle_masks() {
-    // A lane index beyond the receiver's width.
-    assert!(matches!(
-        err(
-            "def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bad = v.shuffle[2, 0]()\n"
-        ),
-        TypeError::TypeMismatch { .. }
-    ));
-    // A mask has one index per receiver lane; `slice` and `join` change the
-    // width instead.
-    assert!(matches!(
-        err(
-            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.shuffle[0, 1]()\n"
-        ),
-        TypeError::TypeMismatch { .. }
-    ));
+fn rejects_bad_simd_slices_and_lane_method_calls() {
+    // `SIMD`'s initializers are the bundled library's.
+    let err = |source: &str| check_with_std(source).expect_err("expected a type error");
     // A slice's width must be a valid SIMD width and fit from its offset.
     assert!(matches!(
         err(
@@ -2476,19 +2463,22 @@ fn rejects_bad_simd_shuffle_masks() {
         ),
         TypeError::TypeMismatch { .. }
     ));
-    // A join takes a vector of the receiver's own type.
-    assert!(matches!(
-        err(
-            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.join(SIMD[DType.int32, 2](1, 2))\n"
-        ),
-        TypeError::TypeMismatch { .. }
-    ));
-    // Lane indices are compile-time values.
+    // The declared `join` takes a vector of the receiver's own type. A
+    // shuffle mask's count and range are `_shuffle_list`'s instance
+    // constraints (`assets/type_error/simd_shuffle_width_mismatch.mojo`,
+    // `assets/type_error/simd_shuffle_index_out_of_range.mojo`).
+    assert!(err(
+        "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.join(SIMD[DType.int32, 2](1, 2))\n"
+    )
+    .to_string()
+    .contains("invalid call to 'join'"));
+    // Lane indices are compile-time values: no `shuffle` overload binds a
+    // run-time one.
     assert!(err(
         "def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var i = 1\n    var bad = v.shuffle[i]()\n"
     )
     .to_string()
-    .contains("compile-time"));
+    .contains("invalid call to 'shuffle'"));
 }
 
 #[test]

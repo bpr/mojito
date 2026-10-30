@@ -2986,6 +2986,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime t = StaticTuple[SIMDLength, Self.n](fill=1)` in a
     method of `struct Lanes[n: SIMDLength]`, then `len(t)`, prints `4` at
     the pin. Mojito reports "no constructor overload matches".
+  - Probe: `comptime n: Int = w` over `w: SIMDLength` in a `def` reports
+    "type mismatch for comptime 'n': expected Int, found SIMDLength",
+    where the pin prints `4`. A parameter default and an explicit argument
+    convert through `Checker::simd_length_lanes`, which both these sites
+    should call.
   - Found while planning R1671 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4224,21 +4229,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R399 A method given a caller's parameter as its own value
-  parameter leaves an untyped register**
-
-  Problem: `return g.plain[b]()` in `def user[a: Int, b: Int](g: G[a]) ->
-  Int`, for `def plain[m: Int](self) -> Int` in `struct G[k: Int]`, fails
-  with "invalid checked program: fn 'user': register r1 has no checked
-  type", where the pin runs it.
-  - A literal argument (`g.plain[4]()`) in the same `def` runs.
-  - The same call on a concrete receiver in `main` (`g.plain[3]()`) runs.
-  - The bracket argument is lowered as a read of the binder `b`, and that
-    read has no checked type on this path.
-  - Found while landing the callee shapes a signature applies (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R283 Constructing a type parameter through a user trait's
   `__init__` requirement is unsupported**
 
@@ -5163,25 +5153,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     float twin of the probe.
   - Found while landing R887 (2026-10-14).
   - Depends on R482.
-  - Model: Opus, Not Planned.
-
-- [ ] **R483 A method's explicit value parameter supplied from the caller's
-  own binder fails MIR typing**
-
-  Problem: `s.m[n](a)` or `S.st[n](a)` inside `def by_value[n: Int](a:
-  Float64)`, against `def m[n: Int](self, a: Float64) -> Int`, fails with
-  "register r4 has no checked type (UseVar …)", where the pin prints the
-  method's result.
-  - The same argument as a literal (`s.m[5](a)`) runs, and so does a free
-    `def`'s `k[n](a)` from the same body.
-  - MIR emits the binder as a runtime register, but the checker records no
-    type for the argument expression on the method path.
-  - Probe: a local `comptime u = pick[d]()` passed the same way,
-    `v.cast[u]()` in `def f[d: DType, w: SIMDLength](v: SIMD[d, w])`,
-    fails with "register r1 has no checked type (UseVar …)"; the pin runs
-    it.
-  - Found while landing R478 (2026-10-07).
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R289 An explicit type argument before an inferred pack binds the
@@ -11643,37 +11614,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1683 `SIMD`'s `shuffle` and `join` are checker intrinsics where
-  the pin's are methods over `_shuffle_list`**
-
-  `v.shuffle[*mask]()` and `v.join(w)` are typed by rule in
-  `checker/method_calls/simd_receivers.rs` and closed per instance by
-  `LaneMask::resolve`, and `v.shuffle[*mask](w)` reports "has no field
-  'shuffle'", where the pin declares all three in `std/simd.mojo` over
-  `pop.simd.shuffle`.
-  - Port `_shuffle_variadic`, `_shuffle_list`, both variadic `shuffle`
-    overloads, and `join` verbatim into the declared `SIMD`. A
-    `pop.simd.shuffle` mask computed from parameters runs since R1671.
-  - `static_tuple.mojo` needs explicit `String` and `index` imports once
-    `std.simd` imports it, since a module `std.simd` imports sees no
-    prelude names (R894).
-  - Retire `infer_simd_shuffle`, `infer_simd_join`, `LaneMask::{Shuffle,
-    Join}` with their arms, `SemanticAdjustment::SimdShuffle`'s `joined`
-    flag, and `"shuffle" | "join"` in `infer_simd_method`'s list. Bump the
-    MIR text schema for the dropped `lane_shuffle` and `lane_join`.
-  - Respell `tests/checker_test.rs` `rejects_bad_simd_shuffle_masks` and
-    `assets/type_error/simd_shuffle_width_mismatch.mojo` to the pin's
-    instantiation failure "mismatch in the number of elements". The pin's
-    out-of-range text is "invalid index in the shuffle operation".
-  - Probe: `SIMD[DType.int32, 4](1, 2, 3, 4).shuffle[7, 2, 5, 0](w)` over
-    `w = [5, 6, 7, 8]` prints `[8, 3, 6, 1]` at the pin.
-  - Closes R331 (the pin's `2 * length` bound).
-  - The plan is `R1671-simd-s-shuffle-and-join-are-plan.md`, Part 2.
-  - Depends on R1684 (`_shuffle_list`'s chained assert), R1642
-    (`_shuffle_variadic`'s `comptime tup` as a parameter), R1685 and
-    R1686 (`join`'s nested `indices()`).
-  - Model: Opus, Planned.
-
 - [ ] **R1676 The `pop.array` ops reject a register-passable element whose
   copy or destruction runs code, where the pin copies its bits and never
   destroys an array's elements**
@@ -13124,21 +13064,6 @@ residue found inside a task moves to the task that owns its fix.
   runtime services.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R331 A one-operand `shuffle` rejects a lane index at or above the
-  receiver's width, which the pin accepts**
-
-  Problem: `SIMD[DType.int32, 2](5, 6).shuffle[3, 0]()` fails to check
-  with "expected a lane index below 2", where the pin prints `[6, 5]`.
-  - The pin's one-operand `shuffle` gathers from the receiver joined with
-    itself and asserts only `0 <= mask[i] < 2 * Self.length`.
-  - The checker's rule is in `infer_simd_shuffle`, and an instance's in
-    `LaneMask::resolve`; both should take the pin's bound and fold an
-    index `i >= w` to `i - w`.
-  - `tests/checker_test.rs`'s `rejects_bad_simd_shuffle_masks` pins the
-    current rejection.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R427 `ord` is undefined**
 

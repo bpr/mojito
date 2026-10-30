@@ -739,25 +739,15 @@ impl Decoder {
     }
 
     /// A lane gather's mask: a known index list, or a template's
-    /// `lane_shuffle`/`lane_slice`/`lane_join` form.
+    /// `lane_slice` form, or a `pop.simd.shuffle` op's `lane_attribute`.
     pub(super) fn lane_mask(&mut self, value: &Value) -> Option<mojito_types::types::LaneMask> {
         use mojito_types::types::LaneMask;
         match &value.kind {
             ValueKind::Record(tag, fields) => match tag.as_str() {
-                "lane_shuffle" => self
-                    .req(value, fields, "lanes", |d, v| {
-                        d.list(v)
-                            .ok()?
-                            .iter()
-                            .map(|lane| d.param_expr(lane))
-                            .collect::<Option<Vec<_>>>()
-                    })
-                    .map(LaneMask::Shuffle),
                 "lane_slice" => Some(LaneMask::Slice {
                     start: self.req(value, fields, "offset", Self::param_expr)?,
                     count: self.req(value, fields, "width", Self::simd_width_slot)?,
                 }),
-                "lane_join" => Some(LaneMask::Join),
                 "lane_attribute" => self
                     .req(value, fields, "value", Self::param_expr)
                     .map(LaneMask::Attribute),

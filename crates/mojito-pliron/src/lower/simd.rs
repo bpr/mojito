@@ -294,9 +294,10 @@ impl FnLowering<'_> {
 
     /// A compile-time lane gather over one vector, or over a joined pair
     /// (`other`, whose lanes the mask indexes past `value`'s, as
-    /// `shufflevector`'s second operand): a one-lane mask extracts the
-    /// scalar, a wider mask is one `shufflevector` (the checker bounds every
-    /// index).
+    /// `shufflevector`'s second operand): a one-lane result is a scalar
+    /// register, extracted from whichever operand holds the lane, and a
+    /// wider mask is one `shufflevector` (`_shuffle_list`'s assert bounds
+    /// every index).
     pub(super) fn lower_simd_shuffle(
         &mut self,
         ctx: &mut Context,
@@ -319,9 +320,13 @@ impl FnLowering<'_> {
             Some(other) => self.simd_operand_vector(ctx, other, dtype, width as usize, dest)?,
             None => source,
         };
-        if mask.len() == 1 && other.is_none() {
-            let position = self.int_constant(ctx, mask[0] as i64);
-            let extract = ExtractElementOp::new(ctx, source, position);
+        if let [index] = mask {
+            let (operand, lane) = match index.checked_sub(width as usize) {
+                Some(lane) => (second, lane),
+                None => (source, *index),
+            };
+            let position = self.int_constant(ctx, lane as i64);
+            let extract = ExtractElementOp::new(ctx, operand, position);
             return self.define(ctx, dest, extract.get_operation(), extract.get_result(ctx));
         }
         let shuffle = ShuffleVectorOp::new(

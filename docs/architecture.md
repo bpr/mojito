@@ -1428,8 +1428,9 @@ upstream defers `constrained[...]`), an integer or float literal splats into
 it where a concrete scalar does not (`types::splats_to`), and a lane fact the
 checker records for lowering (a construction's dimensions, `SimdLength`,
 `DtypeConstant`, a cast adjustment) carries the slots
-themselves, known or symbolic; a shuffle, slice, or join is recorded only at
-a known width, since its mask is the width's. Applying a `DType`-keyed struct
+themselves, known or symbolic; a slice's mask is known where the width and
+its arguments are, and otherwise keeps the method's form, which each
+instance closes. Applying a `DType`-keyed struct
 in a validated body closes its `Scalar[Self.dt]` members under the
 application's values, to a concrete lane or to the caller's own symbolic
 `dt`. A symbolic slot crosses the MIR waist as a register type and in
@@ -1447,7 +1448,9 @@ in every table a constant passes through. A `pop.simd.shuffle` mask is judged
 by its attribute's type, as the pin's verifier is: a closed type must be
 `!pop.array<n, index>`, and an open one (`StaticTuple[SIMDLength, n]`'s
 storage) crosses MIR as `LaneMask::Attribute`, which each instance closes,
-lowers to its lanes, and verifies in `mono/gather.rs`. A
+lowers to its lanes, and verifies in `mono/gather.rs`. `SIMD`'s `shuffle`
+and `join` are declared methods that reach `pop.simd.shuffle` through
+`_shuffle_list`, its mask such a `StaticTuple` parameter. A
 `DType`- or lane-keyed `def`, overloaded or not, is an ordinary generic `def`
 served by its template unless its body keys a clone, its binders bound from
 the call's arguments, an argument's lane slots, or the checker's inferred

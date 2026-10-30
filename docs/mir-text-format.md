@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.148
+mojito-mir 1.149
 ```
 
-The writer emits 1.148. The reader accepts 1.0 through 1.148; *Schema 1.0*
+The writer emits 1.149. The reader accepts 1.0 through 1.149; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -982,6 +982,11 @@ Schema 1.148 removes the instruction `layout.size_of`: `std.sys.info`'s
 `kgen.get_alignof`) the elaborator answers under the compilation's target.
 The package format moves to `mojito-package 164`.
 
+Schema 1.149 removes the lane masks `lane_shuffle` and `lane_join`:
+`SIMD`'s `shuffle` and `join` are library bodies over `_shuffle_list`,
+whose `pop.simd.shuffle` mask is a `lane_attribute`. The package format
+moves to `mojito-package 165`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1797,7 +1802,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` (schema 1.71: `variant.make` and `variant.set` carry `constructor: "<symbol>"` after their operands when the payload names the constructor it runs, the `__copyinit__` through schema 1.100 and the `__moveinit__` from 1.101, which takes `value` by move; schema 1.73: `variant.set` carries `destructors: [present("<symbol>") | absent, ...]`, one entry per alternative, naming the `__deinit__` the replaced payload runs under that tag, omitted while it names none) |
 | `VariantTag` | `variant.tag { dest, variant }` (schema 1.103: the active alternative's index as an `Int`, an `enum` storage's discriminant) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |
-| `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bitcast` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, `lane_join {}`, or a `pop.simd.shuffle`'s `lane_attribute { value: <param_expr> }` (schema 1.142), which elaboration closes (schema 1.26) |
+| `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bitcast` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_slice { offset: <param_expr>, width: <width> }` or a `pop.simd.shuffle`'s `lane_attribute { value: <param_expr> }` (schema 1.142), which elaboration closes (schema 1.26; schema 1.149 removes `lane_shuffle` and `lane_join`) |
 | `Select` | `select { dest, condition, on_true, on_false }` (schema 1.125): upstream's `pop.select`, `on_true` where the one-lane `bool` `condition` is set, else `on_false`; both cases are of `dest`'s trivially register-passable type |
 | `SimdSelect` / `SimdExtract` / `SimdInsert` / `SimdReduce` | `simd.select { dest, mask, on_true, on_false }` / `simd.extract { dest, value, index }` / `simd.insert { dest, value, element, index }` / `simd.reduce { dest, value, op }` (schema 1.120): upstream's `pop.simd.select`, `extractelement`, `insertelement`, and `reduce_and`/`reduce_or` (`op` is `and` or `or`); a lane is a width-one vector of the vector's dtype, and an index outside the lanes traps |
 | `CallLlvmIntrinsic` | `llvm.intrinsic { dest, intrinsic, has_side_effect, args: [%rA, …], spread: option<N> }` (schema 1.121): upstream's `pop.call_llvm_intrinsic`; `intrinsic` is a `!kgen.string` constant and `has_side_effect` a `Bool` constant, each a `value(...)` or, in a template, a `param(...)`; `spread` names a heterogeneous collector operand the elaborator replaces by its elements; the call is pure when `has_side_effect` is `false` |

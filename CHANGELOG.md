@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares upstream's `_shuffle_variadic`, `_shuffle_list`, both
+  variadic `shuffle` overloads, and `join` over `pop.simd.shuffle` (R1683,
+  R331): `v.shuffle[7, 2, 5, 0](w)` over `[1, 2, 3, 4]` and `[5, 6, 7, 8]`
+  prints `[8, 3, 6, 1]`, and a one-operand mask index may reach twice the
+  width (`SIMD[DType.int32, 2](5, 6).shuffle[3, 0]()` prints `[6, 5]`), as
+  at the pin, on the VM and natively. A wrong mask count or an index past
+  twice the width now fails its instance with the pin's "mismatch in the
+  number of elements" or "invalid index in the shuffle operation". A
+  `SIMDLength` parameter default now binds an `Int` slot as its lane
+  count, a method's bracket argument naming a `comptime` binding,
+  struct-valued or applied (`v.cast[u]()` over `comptime u = pick[d]()`,
+  R483), binds its value as a free function's does, and a one-lane
+  two-operand `pop.simd.shuffle` lowers natively. The compiler's
+  `shuffle` and `join` rules and the `lane_shuffle` and `lane_join` masks
+  are gone (MIR 1.149, package 165).
+
 - `std.sys.info` declares upstream's `size_of`, `align_of`, `bit_width_of`,
   and `simd_width_of` (each over a type or a `DType`, with `target:
   CompilationTarget = CompilationTarget.current()`), and `is_32bit` and

@@ -53,9 +53,7 @@ impl Checker {
         if !matches!(
             method,
             "copy"
-                | "shuffle"
                 | "slice"
-                | "join"
                 | "reduce_add"
                 | "reduce_mul"
                 | "reduce_min"
@@ -83,18 +81,10 @@ impl Checker {
                 }
                 Ok(obj_ty.clone())
             }
-            "shuffle" if !param_args.is_empty() && args.is_empty() => {
-                self.infer_simd_shuffle(site, dtype, width)
-            }
             // `v.slice[output_width, offset=o]()`: `output_width`
             // consecutive lanes starting at lane `o` (default 0).
             "slice" if !param_args.is_empty() && args.is_empty() => {
                 self.infer_simd_slice(site, dtype, &width)
-            }
-            // `v.join(w)`: the receiver's lanes then `w`'s, at twice the
-            // width; `w` has the receiver's own type.
-            "join" if args.len() == 1 && param_args.is_empty() => {
-                self.infer_simd_join(site, dtype, &width)
             }
             "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max"
                 if dtype.licenses(|d| d != Dtype::Bool) && args.is_empty() =>
@@ -125,55 +115,6 @@ impl Checker {
                 method: method.to_string(),
             }),
         }
-    }
-
-    /// `v.shuffle[i, j, …]()`: one compile-time lane index per receiver lane.
-    /// A receiver width or an index over a template's binders keeps the
-    /// mask's form, whose count and range the instance checks.
-    fn infer_simd_shuffle(
-        &self,
-        site: MethodCallSite<'_>,
-        dtype: SimdDtype,
-        width: SimdWidth,
-    ) -> Result<Ty, TypeError> {
-        let MethodCallSite { span, call, .. } = site;
-        let MethodCallArguments { param_args, .. } = call;
-        // Compile-time lane indices, one per receiver lane:
-        // upstream spells a narrowing gather `slice` and a
-        // widening one `join`.
-        let mut lanes = Vec::with_capacity(param_args.len());
-        for argument in param_args {
-            let mojito_ast::ast::ParamArg::Value(index) = argument else {
-                return Err(TypeError::TypeMismatch {
-                    expected: "a compile-time lane index".to_string(),
-                    found: "a type argument".to_string(),
-                    context: "SIMD.shuffle".to_string(),
-                });
-            };
-            let lane = self.gather_parameter(index)?;
-            if let Some(known) = lane.as_i64()
-                && (known < 0 || width.known().is_some_and(|width| known >= width))
-            {
-                return Err(TypeError::TypeMismatch {
-                    expected: format!("a lane index below {width}"),
-                    found: known.to_string(),
-                    context: "SIMD.shuffle".to_string(),
-                });
-            }
-            lanes.push(lane);
-        }
-        if let Some(known) = width.known()
-            && lanes.len() as i64 != known
-        {
-            return Err(TypeError::TypeMismatch {
-                expected: format!("{width} lane indices, one per receiver lane"),
-                found: format!("{} indices", lanes.len()),
-                context: "SIMD.shuffle".to_string(),
-            });
-        }
-        let mask = LaneMask::Shuffle(lanes);
-        self.record_lane_gather(span, &mask, &width, false);
-        simd_of(dtype, width)
     }
 
     /// `v.slice[output_width, offset=o]()`: `output_width` consecutive lanes
@@ -239,51 +180,8 @@ impl Checker {
             start: offset,
             count: output_width.clone(),
         };
-        self.record_lane_gather(span, &mask, width, false);
+        self.record_lane_gather(span, &mask, width);
         simd_of(dtype, output_width)
-    }
-
-    /// `v.join(w)`: the receiver's lanes then `w`'s, at twice the width.
-    fn infer_simd_join(
-        &self,
-        site: MethodCallSite<'_>,
-        dtype: SimdDtype,
-        width: &SimdWidth,
-    ) -> Result<Ty, TypeError> {
-        let MethodCallSite {
-            span, call, obj_ty, ..
-        } = site;
-        let MethodCallArguments { args, .. } = call;
-        let other = self.infer(&args[0])?;
-        if other != *obj_ty {
-            return Err(TypeError::TypeMismatch {
-                expected: obj_ty.to_string(),
-                found: other.to_string(),
-                context: "SIMD.join".to_string(),
-            });
-        }
-        self.record_lane_gather(span, &LaneMask::Join, width, true);
-        let joined = match width {
-            SimdWidth::Known(width) => {
-                let joined = width * 2;
-                if joined > 1 << 15 {
-                    return Err(TypeError::BadSimdWidth(joined.to_string()));
-                }
-                SimdWidth::Known(joined)
-            }
-            // Upstream's `SIMD[Self.dtype, 2 * Int(Self.length)]`.
-            SimdWidth::Expr(_) => {
-                let context = &self.param_context;
-                let two = context.constant(CtValue::Int(2)).map_err(param_error)?;
-                let lanes = width.lanes(context).map_err(param_error)?;
-                self.width_of_lanes(
-                    &context
-                        .infix(InfixOp::Mul, &lanes, &two)
-                        .map_err(param_error)?,
-                )?
-            }
-        };
-        simd_of(dtype, joined)
     }
 
     /// The width slot of the symbolic lane count `lanes`, an `Int`
@@ -320,20 +218,14 @@ impl Checker {
     /// Record a gather's mask: known where the receiver width and the
     /// gather's arguments are, else the template's form for the instance to
     /// close.
-    fn record_lane_gather(
-        &self,
-        span: &SourceSpan,
-        mask: &LaneMask,
-        width: &SimdWidth,
-        joined: bool,
-    ) {
+    fn record_lane_gather(&self, span: &SourceSpan, mask: &LaneMask, width: &SimdWidth) {
         let mask = width
             .known()
             .and_then(|width| mask.resolve(width))
             .and_then(Result::ok)
             .map_or_else(|| mask.clone(), LaneMask::Known);
         self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask, joined },
+            mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask },
         ));
     }
 

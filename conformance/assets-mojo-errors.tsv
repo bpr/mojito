@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	990
+# swept-count	991
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -852,6 +852,7 @@ assets/type_error/simd_length_not_writable.mojo	compile-reject	agree	error: inva
 assets/type_error/simd_mlir_index_float.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_scalar_splat_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Int32' value to 'SIMD[.int64, 4]'
 assets/type_error/simd_select_non_bool_mask.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_shuffle_index_out_of_range.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_shuffle_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'
 assets/type_error/simd_star_destructure.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from slice literal to 'Int'

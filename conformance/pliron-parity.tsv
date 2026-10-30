@@ -558,6 +558,7 @@ assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_named_result.mojo	main	exe-differential	sanitized
 assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized
 assets/ok/method_simd_pattern_beside_bare.mojo	main	exe-differential	sanitized
+assets/ok/method_struct_comptime_parameter_argument.mojo	main	exe-differential	sanitized
 assets/ok/method_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/method_unused_receiver.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
@@ -575,6 +576,7 @@ assets/ok/mlir_pop_max_min_bool_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_select.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_simd_shuffle.mojo	main	exe-differential	sanitized
+assets/ok/mlir_pop_simd_shuffle_one_lane.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_simd_shuffle_parameter_mask.mojo	main	exe-differential	sanitized
 assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_type_overload_identity.mojo	main	exe-differential	sanitized
@@ -1010,6 +1012,7 @@ assets/ok/simd_lane_dynamic.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_dynamic_widths.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_write.mojo	main	exe-differential	sanitized
 assets/ok/simd_length_int_parameter.mojo	main	exe-differential	sanitized
+assets/ok/simd_length_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/simd_length_struct.mojo	main	exe-differential	sanitized
 assets/ok/simd_literal_splat.mojo	main	exe-differential	sanitized
 assets/ok/simd_math_cast_members.mojo	main	exe-differential	sanitized
@@ -1024,6 +1027,8 @@ assets/ok/simd_reductions_int.mojo	main	exe-differential	sanitized
 assets/ok/simd_scalar_splat.mojo	main	exe-differential	sanitized
 assets/ok/simd_shifts_masked.mojo	main	exe-differential	sanitized
 assets/ok/simd_shuffle.mojo	main	exe-differential	sanitized
+assets/ok/simd_shuffle_double_width_index.mojo	main	exe-differential	sanitized
+assets/ok/simd_shuffle_two_operand.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_surface.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_width_hooks.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_width_literal_binding.mojo	main	exe-differential	sanitized

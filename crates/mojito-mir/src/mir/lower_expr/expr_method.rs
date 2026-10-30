@@ -220,30 +220,6 @@ impl<'a> Flatten<'a> {
         kwargs: &[(&'a str, Node<'a>)],
     ) -> Option<Reg> {
         let node = call.checked;
-        // `v.join(w)`: the checker resolved a two-operand lane gather.
-        let simd_join = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask, joined: true } => {
-                    Some(mask.clone())
-                }
-                _ => None,
-            });
-        if let Some(mask) = simd_join
-            && let [argument] = args
-        {
-            let value = self.expr(object);
-            let other = Some(self.expr(*argument));
-            let dest = self.fresh(call.location(), None);
-            self.emit(MirInstr::SimdShuffle {
-                dest,
-                value,
-                other,
-                mask,
-            });
-            return Some(dest);
-        }
         if let Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param }) =
             node.adjustments
                 .iter()

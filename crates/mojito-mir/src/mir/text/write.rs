@@ -2717,10 +2717,6 @@ fn lane_mask(mask: &mojito_types::types::LaneMask) -> String {
     use mojito_types::types::LaneMask;
     match mask {
         LaneMask::Known(lanes) => list(lanes.iter().map(usize::to_string)),
-        LaneMask::Shuffle(lanes) => record(
-            "lane_shuffle",
-            &[("lanes", list(lanes.iter().map(param_expr)))],
-        ),
         LaneMask::Slice { start, count } => record(
             "lane_slice",
             &[
@@ -2728,7 +2724,6 @@ fn lane_mask(mask: &mojito_types::types::LaneMask) -> String {
                 ("width", simd_width_slot(count)),
             ],
         ),
-        LaneMask::Join => record("lane_join", &[]),
         LaneMask::Attribute(value) => record("lane_attribute", &[("value", param_expr(value))]),
     }
 }

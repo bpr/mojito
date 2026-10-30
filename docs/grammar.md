@@ -1496,9 +1496,11 @@ argument, never as a value).
   - `v.reduce_add()` / `reduce_mul` / `reduce_min` / `reduce_max` collapse numeric
     lanes to the width-1 scalar (integer `add`/`mul` wrap per step; `DType.int`
     results are the native `Int`); `mask.reduce_and()` / `reduce_or` yield `Bool`.
-  - `v.shuffle[*mask]()` gathers lanes by compile-time indices, each within the
-    receiver's width; the result takes the mask's (power-of-two) width. (The
-    two-vector shuffle and `rotate_*`/`join`/`interleave` are deferred.)
+  - `v.shuffle[*mask]()` and `v.shuffle[*mask](w)` gather lanes by
+    compile-time indices, one per receiver lane, each below twice the width,
+    from the receiver's lanes followed by `w`'s (or its own again); `v.join(w)`
+    appends `w` at twice the width. All three are upstream's declared
+    methods. (`rotate_*`/`interleave` are deferred.)
 - **Lane read**: `v[i]` (`i` an `Int`) returns lane `i` as the width-1 scalar
   `SIMD[DType.<dt>, 1]`.
 - **Lane write**: `v[i] = e` sets lane `i` (see **assignment**); `e` is a same-dtype

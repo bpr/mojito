@@ -558,6 +558,7 @@ assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_named_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_result_pointer_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_simd_pattern_beside_bare.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/method_struct_comptime_parameter_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_unused_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
@@ -575,6 +576,7 @@ assets/ok/mlir_pop_max_min_bool_casts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_select.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_simd_shuffle.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_pop_simd_shuffle_one_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_simd_shuffle_parameter_mask.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_simd_lane_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_type_overload_identity.mojo	-	ineligible	no-scalar-entry-shape
@@ -1010,6 +1012,7 @@ assets/ok/simd_lane_dynamic.mojo	compute	differential	ret=Int
 assets/ok/simd_lane_dynamic_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_int_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_length_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_literal_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_math_cast_members.mojo	-	ineligible	no-scalar-entry-shape
@@ -1024,6 +1027,8 @@ assets/ok/simd_reductions_int.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_scalar_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_shifts_masked.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_shuffle.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_shuffle_double_width_index.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_shuffle_two_operand.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_symbolic_surface.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_symbolic_width_hooks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_symbolic_width_literal_binding.mojo	-	ineligible	no-scalar-entry-shape

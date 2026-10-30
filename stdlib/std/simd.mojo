@@ -18,11 +18,14 @@
 # `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
-# `_to_bits_signed`, `fma`, `select`, `write_to`, and `write_repr_to`, with
+# `_to_bits_signed`, `fma`, `_shuffle_variadic`, `_shuffle_list`, the two
+# variadic `shuffle` overloads, `join`, `select`, `write_to`, and
+# `write_repr_to`, with
 # the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`
 # and `_write_scalar`. The other
-# members are still served by the compiler (R1623, R1567, R1581,
-# R1582, R1585, R1586, R1683, R1673, R1675), `write_padded` is not ported
+# members are still served by the compiler or undeclared (R1623, R1567,
+# R1581, R1582, R1585, R1586, R1673, R1675; the two `IndexList` `shuffle`
+# overloads are R1675's), `write_padded` is not ported
 # (R1663), and the native backend's `print`, `String`, and `repr` of a value still
 # format in the compiler rather than calling `write_to` and
 # `write_repr_to` as the VM's do (R1664). So are the
@@ -90,6 +93,7 @@ from std.collections.optional import Optional
 from std.string import StaticString
 from std.builtin.enum_like import EnumLike
 from std.memory import bitcast
+from std.utils import StaticTuple
 from std.builtin.dtype import (
     _integral_type_of,
     _uint_type_of_width,
@@ -2011,6 +2015,117 @@ struct SIMD[dtype: DType, length: SIMDLength](
                 accumulator._mlir_value,
             )
         )
+
+    @inline(.nodebug)
+    def _shuffle_variadic[
+        *mask: SIMDLength, output_size: Int = Self.length
+    ](self, other: Self) -> SIMD[Self.dtype, output_size]:
+        """Shuffles (also called blend) the values of the current vector with
+        the `other` value using the specified mask (permutation). The mask
+        values must be within `2 * len(self)`.
+
+        Parameters:
+            mask: The permutation to use in the shuffle.
+            output_size: The size of the output vector.
+
+        Args:
+            other: The other vector to shuffle with.
+
+        Returns:
+            A new vector with the same length as the mask where the value at
+            position `i` is `(self + other)[permutation[i]]`.
+        """
+
+        comptime assert (
+            output_size == mask.size
+        ), "size of the mask must match the output SIMD size"
+
+        # FIXME: Support parameters on initializers better, removing __init__.
+        comptime tup = StaticTuple[SIMDLength, output_size].__init__[*mask]()
+        return self._shuffle_list[output_size, tup](other)
+
+    @inline(.nodebug)
+    def _shuffle_list[
+        output_size: SIMDLength, mask: StaticTuple[SIMDLength, output_size]
+    ](self, other: Self) -> SIMD[Self.dtype, output_size]:
+        """Shuffles (also called blend) the values of the current vector with
+        the `other` value using the specified mask (permutation). The mask
+        values must be within `2 * len(self)`.
+
+        Parameters:
+            output_size: The output SIMD size.
+            mask: The permutation to use in the shuffle.
+
+        Args:
+            other: The other vector to shuffle with.
+
+        Returns:
+            A new vector with the same length as the mask where the value at
+            position `i` is `(self + other)[permutation[i]]`.
+        """
+
+        comptime for i in range(output_size):
+            comptime assert (
+                0 <= mask[i] < 2 * Self.length
+            ), "invalid index in the shuffle operation"
+
+        var res = __mlir_op.`pop.simd.shuffle`[
+            mask=mask._mlir_value,
+            _type=SIMD[Self.dtype, output_size]._mlir_type,
+        ](self._mlir_value, other._mlir_value)
+        return SIMD[Self.dtype, output_size](mlir_value=res)
+
+    @inline(.nodebug)
+    def shuffle[*mask: SIMDLength](self) -> Self:
+        """Shuffles (also called blend) the values of the current vector with
+        the `other` value using the specified mask (permutation). The mask
+        values must be within `2 * len(self)`.
+
+        Parameters:
+            mask: The permutation to use in the shuffle.
+
+        Returns:
+            A new vector with the same length as the mask where the value at
+            position `i` is `(self)[permutation[i]]`.
+        """
+        return self._shuffle_variadic[*mask](self)
+
+    @inline(.nodebug)
+    def shuffle[*mask: SIMDLength](self, other: Self) -> Self:
+        """Shuffles (also called blend) the values of the current vector with
+        the `other` value using the specified mask (permutation). The mask
+        values must be within `2 * len(self)`.
+
+        Parameters:
+            mask: The permutation to use in the shuffle.
+
+        Args:
+            other: The other vector to shuffle with.
+
+        Returns:
+            A new vector with the same length as the mask where the value at
+            position `i` is `(self + other)[permutation[i]]`.
+        """
+        return self._shuffle_variadic[*mask](other)
+
+    @inline(.nodebug)
+    def join(self, other: Self) -> SIMD[Self.dtype, 2 * Int(Self.length)]:
+        """Concatenates the two vectors together.
+
+        Args:
+            other: The other SIMD vector.
+
+        Returns:
+            A new vector `self_0, self_1, ..., self_n, other_0, ..., other_n`.
+        """
+
+        def indices() -> StaticTuple[SIMDLength, 2 * Int(Self.length)]:
+            var res = StaticTuple[SIMDLength, 2 * Int(Self.length)](0)
+            for i in range(len(res)):
+                res[i] = i
+            return res
+
+        return self._shuffle_list[2 * Self.length, indices()](other)
 
     # ===------------------------------------------------------------------=== #
     # select

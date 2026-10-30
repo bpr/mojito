@@ -1,6 +1,7 @@
-# expect: function instantiation of `swap` failed: constraint failed: mismatch in the number of elements
+# expect: constraint failed: mismatch in the number of elements
 # A template-served shuffle's mask has one index per lane of the instance's
-# receiver; the instance whose width the mask misses fails, as at the pin.
+# receiver; the instance whose width the mask misses fails, as at the pin,
+# in the mask's `StaticTuple` initializer, the innermost failing instance.
 def swap[dt: DType, w: Int](v: SIMD[dt, w]) -> SIMD[dt, w]:
     return v.shuffle[1, 0]()
 

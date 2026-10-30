@@ -1022,16 +1022,12 @@ pub enum SemanticAdjustment {
         /// one span carries one adjustment.
         materialized: Option<mojito_types::origin::OwnerId>,
     },
-    /// `v.shuffle[*mask]()`, `v.slice[width, offset=o]()`, and `v.join(w)` —
-    /// lane gathers by a compile-time mask; the result takes the mask's
-    /// (power-of-two) width. A shuffle's mask has one index per receiver
-    /// lane. A `joined` gather indexes the receiver's lanes followed by the
-    /// argument's. The mask is known where the receiver width and the
-    /// gather's arguments are; a template's keeps its method's form, which
-    /// each instance closes.
+    /// `v.slice[width, offset=o]()`: a lane gather by a compile-time mask,
+    /// the result taking the mask's (power-of-two) width. The mask is known
+    /// where the receiver width and the gather's arguments are; a
+    /// template's keeps the method's form, which each instance closes.
     SimdShuffle {
         mask: mojito_types::types::LaneMask,
-        joined: bool,
     },
     /// Construct the selected alternative of a checked `Variant` type.
     ConstructVariant {
