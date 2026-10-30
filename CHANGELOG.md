@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An implicit conversion selects an `@implicit` constructor with
+  compile-time parameters of its own, solving them from the converted value
+  and checking their bounds, as at the pin, so `v = String("hi")` over a
+  `Variant[Int, String]` converts where it reported "type mismatch for
+  assignment to 'v'" (R1448). At equal cost a converting constructor without
+  parameters of its own beats a generic one.
+
 - `std.math` is upstream's package (`std/math/__init__.mojo`,
   `math.mojo`, `constants.mojo`), with `pi`, `e`, `tau`, `log2e`, and
   `copysign` over `llvm.copysign`, and re-exports `std.utils.numerics`'

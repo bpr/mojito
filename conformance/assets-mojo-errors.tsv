@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	984
+# swept-count	985
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -450,6 +450,7 @@ assets/type_error/imm_origin_binder_pointer_write.mojo	compile-reject	agree	erro
 assets/type_error/imm_origin_mut_binder.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/imm_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/immutable_mutation.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/implicit_conversion_own_parameter_bound.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 's' cannot be converted from 'Opaque' to 'Shown'
 assets/type_error/implicit_conversion_raising_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/implicit_copy_append_element.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/implicit_copy_conditional_arm.mojo	compile-reject	agree	error: value of type 'M' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'

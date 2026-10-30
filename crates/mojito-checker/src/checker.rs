@@ -1792,6 +1792,7 @@ impl Checker {
                 source_borrow: None,
                 consumes_source: false,
                 error: None,
+                own_arguments: Vec::new(),
             }));
         }
         // And upstream's `@implicit SIMD.__init__(SIMDLength)` by this one.
@@ -1801,6 +1802,7 @@ impl Checker {
                 source_borrow: None,
                 consumes_source: false,
                 error: None,
+                own_arguments: Vec::new(),
             }));
         }
         let TyKind::Struct(name, args) = to.kind() else {
@@ -1818,40 +1820,57 @@ impl Checker {
         let Some(constructors) = info.methods.get("__init__") else {
             return Ok(None);
         };
+        // A constructor's own parameters (`__init__[T: Movable](out self,
+        // var value: T)`) are solved from the source, as a construction
+        // solves them from its argument.
         let matches = constructors
             .iter()
             .filter(|sig| {
                 sig.implicit
                     && sig.params.len() == 1
-                    && coerces(from, &substitute(&sig.params[0], &subst))
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
                             declarations::refinement_admits(refined, &instance, &sig.decls, to)
                         })
                     })
             })
+            .filter_map(|sig| {
+                let (parameter, own_arguments) =
+                    self.conversion_constructor_parameter(name, sig, &subst, from)?;
+                coerces(from, &parameter).then_some((sig, parameter, own_arguments))
+            })
             .collect::<Vec<_>>();
         // Several converting constructors may accept the source; one whose
         // parameter is exactly the source type wins, and failing that one
         // whose parameter is the literal's default type, as in current Mojo
         // (a literal selects an `IntLiteral` constructor over an `Int` one).
-        let exactly = |source: &Ty| {
+        // Within each tier a constructor without parameters of its own beats
+        // a generic one, as an equal-cost overload with fewer parameters
+        // does.
+        let exactly = |source: Option<&Ty>| {
             matches
                 .iter()
-                .filter(|sig| substitute(&sig.params[0], &subst) == *source)
-                .copied()
+                .filter(|(_, parameter, _)| source.is_none_or(|source| parameter == source))
+                .cloned()
                 .collect::<Vec<_>>()
         };
-        let matches = [
-            exactly(from),
-            exactly(&mojito_types::types::default_literal(from)),
-        ]
-        .into_iter()
-        .find(|exact| exact.len() == 1)
-        .unwrap_or(matches);
+        let default_literal = mojito_types::types::default_literal(from);
+        let tiers = [Some(from), Some(&default_literal), None].map(exactly);
+        let matches = tiers
+            .iter()
+            .flat_map(|tier| {
+                let concrete = tier
+                    .iter()
+                    .filter(|(_, _, own_arguments)| own_arguments.is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                [concrete, tier.clone()]
+            })
+            .find(|tier| tier.len() == 1)
+            .unwrap_or(matches);
         match matches.as_slice() {
             [] => Ok(None),
-            [sig] => {
+            [(sig, _, own_arguments)] => {
                 let target = constructor_symbol(
                     name,
                     "__init__",
@@ -1881,6 +1900,7 @@ impl Checker {
                     source_borrow,
                     consumes_source,
                     error,
+                    own_arguments: own_arguments.clone(),
                 }))
             }
             _ => Err(TypeError::BadCall {
@@ -1901,16 +1921,10 @@ impl Checker {
         from: &Ty,
         to: &Ty,
     ) -> Result<bool, TypeError> {
-        let Some(SelectedConversion {
-            target,
-            source_borrow,
-            error,
-            ..
-        }) = self.implicit_conversion_constructor(from, to)?
-        else {
+        let Some(selected) = self.implicit_conversion_constructor(from, to)? else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, target, to, source_borrow, error)?;
+        self.record_selected_conversion(expression, selected, to)?;
         Ok(true)
     }
 
@@ -1925,11 +1939,16 @@ impl Checker {
     fn record_selected_conversion(
         &self,
         expression: &Expr,
-        target: String,
+        selected: SelectedConversion,
         to: &Ty,
-        source_borrow: Option<bool>,
-        error: Option<Ty>,
     ) -> Result<(), TypeError> {
+        let SelectedConversion {
+            target,
+            source_borrow,
+            error,
+            own_arguments,
+            ..
+        } = selected;
         let span = expression.source_span();
         if let Some(error) = error {
             self.record_at(span.clone()).conversion_raises = Some(error.clone());
@@ -1947,16 +1966,22 @@ impl Checker {
             }
         }
         // A constructor restates its struct's parameters, so the conversion
-        // passes the converted-to type's binder prefix as any construction
-        // does.
+        // passes the converted-to type's binder prefix, then the
+        // constructor's own arguments, as any construction does.
         if let TyKind::Struct(name, arguments) = to.kind()
             && mojito_symbol::symbol::lifecycle_constructor(&target)
                 .is_some_and(|(_, method)| method == "__init__")
             && let Some(info) = self.structs.get(name)
-            && !info.decls.is_empty()
         {
-            self.record_at(span.clone()).conversion_instantiation =
-                Some(arguments[..info.decls.len().min(arguments.len())].to_vec());
+            let arguments = comptime_validation::positional_pack_arguments(&info.decls, arguments);
+            let instantiation = arguments[..info.decls.len().min(arguments.len())]
+                .iter()
+                .cloned()
+                .chain(own_arguments)
+                .collect::<Vec<_>>();
+            if !instantiation.is_empty() {
+                self.record_at(span.clone()).conversion_instantiation = Some(instantiation);
+            }
         }
         self.record_at(span.clone()).implicit_conversion_type = Some(to.clone());
         self.record_at(span).implicit_conversion = Some(target);
@@ -2008,7 +2033,14 @@ impl Checker {
         // Upstream's `@implicit Bool.__init__(value: Scalar[DType.bool])`:
         // a scalar comparison stands where a `Bool` is wanted.
         if *to == TyKind::Bool && scalar_simd_dtype(from) == Some(Dtype::Bool) {
-            self.record_selected_conversion(expression, "Bool".to_string(), to, None, None)?;
+            let selected = SelectedConversion {
+                target: "Bool".to_string(),
+                source_borrow: None,
+                consumes_source: false,
+                error: None,
+                own_arguments: Vec::new(),
+            };
+            self.record_selected_conversion(expression, selected, to)?;
             return Ok(true);
         }
         // Upstream's `@implicit Bool.__init__(value: __mlir_type.i1)`, which
@@ -2016,16 +2048,10 @@ impl Checker {
         if *to == TyKind::Bool && *from == TyKind::I1 {
             return Ok(true);
         }
-        let Some(SelectedConversion {
-            target,
-            source_borrow,
-            error,
-            ..
-        }) = self.implicit_conversion_constructor(from, to)?
-        else {
+        let Some(selected) = self.implicit_conversion_constructor(from, to)? else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, target, to, source_borrow, error)?;
+        self.record_selected_conversion(expression, selected, to)?;
         Ok(true)
     }
 
@@ -2818,6 +2844,9 @@ struct SelectedConversion {
     consumes_source: bool,
     /// The error type the constructor raises, if it raises.
     error: Option<Ty>,
+    /// The constructor's own compile-time arguments, solved from the
+    /// source, in declaration order.
+    own_arguments: Vec<TyArg>,
 }
 
 /// The lowered body of a [`ComptimeAlias`]: a symbolic type template, a

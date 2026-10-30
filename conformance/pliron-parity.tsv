@@ -422,6 +422,7 @@ assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_bound_on_declaration.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_exact_source.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_in_application.mojo	main	exe-differential	sanitized
+assets/ok/implicit_conversion_own_parameters.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_raising.mojo	main	exe-differential	sanitized
 assets/ok/implicit_copy_last_use_forwards.mojo	main	exe-differential	sanitized
 assets/ok/implicit_value_parameter_conversion.mojo	main	exe-differential	sanitized

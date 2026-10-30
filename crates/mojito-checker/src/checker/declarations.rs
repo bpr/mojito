@@ -2555,6 +2555,32 @@ impl Checker {
         }
     }
 
+    /// The parameter type of `sig`, a single-parameter converting
+    /// constructor of `name`, at the struct's arguments `struct_subst`
+    /// solves and its own parameters solved from `source`, the converted
+    /// value's type (`__init__[T: Movable](out self, var value: T)` takes a
+    /// `String` at `T = String`), with those own arguments in declaration
+    /// order. `None` when its own parameters cannot be solved from `source`
+    /// or `source` misses one of their bounds.
+    pub(super) fn conversion_constructor_parameter(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        struct_subst: &TySubst,
+        source: &Ty,
+    ) -> Option<(Ty, Vec<TyArg>)> {
+        let pattern = substitute(sig.params.first()?, struct_subst);
+        let own = self
+            .solve_constructor_own_params(
+                name,
+                sig,
+                (&[], struct_subst),
+                std::iter::once((pattern.clone(), source.clone())),
+            )
+            .ok()?;
+        Some((own.apply(self, &pattern).ok()?, own.arguments))
+    }
+
     pub(super) fn infer_construction(
         &self,
         span: &SourceSpan,

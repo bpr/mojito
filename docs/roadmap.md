@@ -3589,31 +3589,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1448 An implicit conversion never selects a constructor with
-  parameters of its own**
-
-  Problem: an `@implicit` constructor that declares its own parameters,
-  such as `Variant`'s `__init__[T: Movable](out self, var value: T)`, is
-  never chosen for an implicit conversion, so `v = String("hi")` over a
-  `Variant[Int, String]` is rejected with "type mismatch for assignment to
-  'v'", where the pin converts and prints `hi`.
-  - Cause: `implicit_conversion_constructor` (`mojito-checker/checker.rs`)
-    keeps a constructor only when the source `coerces` to its parameter
-    type, after substituting the struct's binders alone. A parameter typed
-    by the constructor's own binder (`T`) never matches, so the
-    constructor's binders are never inferred from the source.
-  - The selected conversion records the struct's binders
-    (`conversion_instantiation`) and nothing for the constructor's own, so
-    lowering needs those too.
-  - Probe: `var v: Variant[Int, String] = String("hi")` and `v =
-    String("hi")` print `hi` at the pin.
-  - Probe: a struct `W` with `@implicit def __init__[T: Writable](out self,
-    s: T)` beside `def __init__(out self, x: Int)`: `w = String("hey")`
-    runs the generic constructor at the pin and is rejected here.
-  - Found while landing R1405 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R52 A binder is not inferred through a converting argument**
 
   Problem: `boxed(value)` for `def boxed[U: Copyable & Deinitable](box:
@@ -10965,7 +10940,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     "expected Span[Int], found List[Int]". The pin prints `3`.
   - At the pin the display is its natural `Array[T, n]`, converted by
     `Span`'s `@implicit` `ref[Self.origin] array: Array[Self.T, _]`
-    constructor (R1725, R1644, R1448).
+    constructor (R1725, R1644).
   - The body's reads (`len(c)`, `c[i]`, `comptime for`) already lift and
     run for a struct-valued parameter on both backends.
   - Left here once the prerequisites land: bind the parameter's unbound
@@ -11376,6 +11351,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     hides it. `__toplevel__` takes no call-graph pass.
   - `runtime_scalar_conversions_wrap_bit_accurately` in
     `tests/evaluator_test.rs` runs in `main` until this lands.
+  - Probe: every `pre_elaboration::` corpus test over a `Variant` fixture
+    (`variant_duplicate_alternatives`,
+    `implicit_conversion_own_parameters`) fails with the pipeline off, in
+    the CTFE of `_get_type_index`, with this message.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
