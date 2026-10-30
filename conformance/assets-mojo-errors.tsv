@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	980
+# swept-count	981
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -237,6 +237,7 @@ assets/type_error/associated_value_in_type_position.mojo	compile-reject	agree	er
 assets/type_error/bad_operator.mojo	compile-reject	agree	error: no matching method in call to '__add__'
 assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' argument must be passed as 'deinit'
 assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer
+assets/type_error/bare_scalar_argument_type_mismatch.mojo	compile-reject	agree	error: invalid call to 'add': value passed to 'y' cannot be converted from 'Float64' to 'Int32'
 assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_conversion_undeclared_boolable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_conversion_undeclared_raising.mojo	compile-reject	agree	error: no matching function in initialization

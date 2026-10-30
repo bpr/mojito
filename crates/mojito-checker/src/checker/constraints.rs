@@ -1066,6 +1066,16 @@ impl Checker {
                 "'type_of' of a type is not supported yet".to_string(),
             ));
         }
+        // A signature declares no value binder as a variable, so its
+        // binder's type is read off the parameter.
+        if let ExprKind::Identifier(name) = &operand.kind
+            && self.lookup(name).is_none()
+            && let Some(ty) = self
+                .value_parameter_in_scope(name)
+                .and_then(|value| value.meta().value_ty())
+        {
+            return Ok(ty);
+        }
         let depth = self.annotation_depth.replace(0);
         let typed = self.probe(|| {
             self.infer(operand)

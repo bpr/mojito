@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1719**.
+Next free ID: **R1720**.
 
 ## Ordered Work
 
@@ -3958,30 +3958,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1708 A bare `Scalar` parameter type is rejected, where upstream's
-  `Scalar` is the partial alias `SIMD[_, 1]` and auto-parameterizes**
-
-  `def f(x: Scalar) -> type_of(x)` reports "type 'Scalar' expects 1 type
-  argument(s), got 0", where the pin runs `f(Int32(3))`.
-  - Upstream declares `comptime Scalar = SIMD[_, length=1]`
-    (`simd.mojo:115`), and a bare use of a partial alias auto-parameterizes
-    the signature.
-  - `auto_parameterize.rs`'s `partial_aliases` already handles that shape
-    for a program alias, but `Scalar` is still a compiler name (R1557).
-  - Lever: until R1557 declares the alias, `Declared::of` seeds
-    `partial_aliases` with `Scalar` as `SIMD[_, length=1]` whenever the
-    program declares no `Scalar` and `SIMD` is installed.
-  - Probe: `comptime Lane[dt: DType] = SIMD[dt, 1]` with `def twice(x:
-    Lane)` reports "cannot infer type parameter 'dt' of 'Lane'", where the
-    pin prints `6 3.0` for `twice(Int32(3))` and `twice(Float64(1.5))`: a
-    bare *parametric* alias is not auto-parameterized either.
-  - Upstream's `_powi`, `_powf_scalar`, `_modf_scalar`, and `std.math`'s
-    `_frexp_bits`/`_log_*` helpers all take a bare `Scalar` (R1567,
-    R1711, R1714).
-  - Found while planning R1567 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1545 A `SIMD[dtype](...)` call with its length omitted is
   rejected, where the pin binds the length from the arguments**
 
@@ -4587,8 +4563,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: upstream's `_powf_scalar(base: Scalar, exponent: Scalar) ->
     type_of(base) where base.dtype.is_floating_point()` (R1567) and
     `_atanh_float32(x: SIMD) -> type_of(x) where
-    x.dtype.is_floating_point()` read the predicate off a bare argument,
-    which also needs R1708.
+    x.dtype.is_floating_point()` read the predicate off a bare argument.
   - Found while landing R1661 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5093,6 +5068,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     DType, v: Scalar[dt]]`, fails the same way in `D.get`, and so does
     `Y[5]` over `comptime Y = D[DType.int8, _]`; the pin prints `5` for
     both.
+  - Probe: a bare `Scalar` binder, `def h[v: Scalar]() -> Int` returning
+    `Int(v)`, is parameterized as `[$dtype_v: DType, //, v: SIMD[$dtype_v,
+    1]]` and fails the same way for `h[Int8(21)]()`, where the pin prints
+    `21`.
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11167,6 +11146,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `infer_unbound_call` (`checker/call_inference.rs`).
   - The checker's implicit conversions into `SIMD` (`coerces`, `splats_to`)
     stand in for the `@implicit` overloads until the bridge goes.
+  - `comptime Scalar = SIMD[_, length=1]` is spelled by
+    `auto_parameterize.rs`'s `Declared::partial_alias` while `Scalar` is a
+    compiler name. Delete it once the prelude declares the alias.
+  - Probe: the bridge reads `SIMD`'s bracket by position (`simd_dims`), so
+    `def f[dt: DType, //](x: SIMD[dt, length=1])` and `comptime Sc =
+    SIMD[_, length=1]` stop with "SIMD width must be a positive power of
+    two, got a named argument", where the pin prints `6` for `f(Int32(3))`.
+  - Probe: a program's own `struct Scalar` with `def f(x: Scalar)` stops
+    with "type 'Scalar' expects 1 type argument(s), got 0", where the pin
+    prints `8` for `f(Scalar(4))`.
   - Depends on R1555, R1662, R1671, R1683, R1673, R1675, R1556, R1591, R1592,
     R1593, R1595, R1399, and R1507.
   - Model: Fable, Planned.

@@ -5,6 +5,7 @@
 
 use mojito_ast::ast::{FnParam, ParamArg};
 use mojito_ast::visit::MutVisitor;
+use mojito_common::literal::IntLiteral;
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -19,12 +20,14 @@ use super::*;
 /// A parameter is unbound when the struct is spelled bare (`x: List`, every
 /// one of its parameters, a type pack as a pack binder), as `_` (`List[_]`,
 /// `Pair[n=_]`), or under `...` (`Pair[Int, ...]`, each remaining
-/// positional one). A module alias over a
-/// partially bound struct (`comptime I32 = SIMD[DType.int32, _]`) spelled
-/// bare stands for its struct with its holes. The struct is the program's
-/// own or the `installed` package's, whose declared parameters give each
-/// binder its type, with the struct's earlier parameters read as their
-/// arguments. The binders follow the declaration's own infer-only
+/// positional one). A module alias over a partially bound struct
+/// (`comptime I32 = SIMD[DType.int32, _]`, and the prelude's `Scalar`)
+/// spelled bare stands for its struct with its holes. A module alias with
+/// compile-time parameters spelled bare (`comptime Lane[dt: DType] =
+/// SIMD[dt, 1]`, `x: Lane`) leaves each one unbound, as a bare struct does.
+/// The struct is the program's own or the `installed` package's, whose
+/// declared parameters give each binder its type, with the struct's earlier
+/// parameters read as their arguments. The binders follow the declaration's own infer-only
 /// parameters, in argument order, as upstream inserts them; the argument
 /// solves each at each call, so the elaborator instantiates the declaration
 /// per argument type. `$` keeps the binders unspellable in source.
@@ -41,6 +44,9 @@ pub(super) fn parameterize_unbound_arguments(
 struct Declared<'a> {
     /// Each of the program's own structs, with its parameters as declared.
     structs: HashMap<String, Vec<TypeParam>>,
+    /// Each module alias with compile-time parameters, with its parameters
+    /// as declared.
+    parametric_aliases: HashMap<String, Vec<TypeParam>>,
     /// Every other name the program declares, which hides a package struct.
     others: HashSet<String>,
     /// Each module alias whose body applies a struct with a hole, as the
@@ -53,6 +59,7 @@ impl<'a> Declared<'a> {
     fn of(program: &[Stmt], installed: Option<&'a InstalledInterfaces>) -> Self {
         let mut declared = Self {
             structs: HashMap::new(),
+            parametric_aliases: HashMap::new(),
             others: HashSet::new(),
             partial_aliases: HashMap::new(),
             installed,
@@ -81,6 +88,11 @@ impl<'a> Declared<'a> {
                             .partial_aliases
                             .insert(name.clone(), (applied.clone(), args.clone()));
                     }
+                    if !type_params.is_empty() {
+                        declared
+                            .parametric_aliases
+                            .insert(name.clone(), type_params.clone());
+                    }
                     declared.others.insert(name.clone());
                 }
                 StmtKind::Trait { name, .. } | StmtKind::Def { name, .. } => {
@@ -102,6 +114,33 @@ impl<'a> Declared<'a> {
             return None;
         }
         self.installed?.struct_parameters(name)
+    }
+
+    /// The struct and arguments the partial alias `name` applies: a module
+    /// alias's, or, unless the program declares its own `Scalar`, the
+    /// prelude's `comptime Scalar = SIMD[_, length=1]`, spelled here while
+    /// `Scalar` is a compiler name.
+    fn partial_alias(&self, name: &str, span: Span) -> Option<(String, Vec<ParamArg>)> {
+        if let Some(alias) = self.partial_aliases.get(name) {
+            return Some(alias.clone());
+        }
+        (name == "Scalar"
+            && !self.others.contains(name)
+            && !self.structs.contains_key(name)
+            && self.parameters("SIMD").is_some())
+        .then(|| {
+            let length = Expr::new(ExprKind::Int(IntLiteral::from(1_u64)), span);
+            (
+                "SIMD".to_string(),
+                vec![
+                    identifier("_", span),
+                    ParamArg::Named {
+                        name: "length".to_string(),
+                        value: Box::new(ParamArg::Value(length)),
+                    },
+                ],
+            )
+        })
     }
 
     /// Parameterize one declaration's compile-time parameters
@@ -170,11 +209,17 @@ impl<'a> Declared<'a> {
         if in_scope.contains(name) {
             return None;
         }
-        let (name, args) = match self.partial_aliases.get(name) {
-            Some((applied, alias_args)) if args.is_empty() => (applied, alias_args),
-            _ => (name, args),
+        let alias = args
+            .is_empty()
+            .then(|| self.partial_alias(name, span))
+            .flatten();
+        let (name, args) = alias
+            .as_ref()
+            .map_or((name, args), |(applied, alias_args)| (applied, alias_args));
+        let declared = match self.parametric_aliases.get(name) {
+            Some(parameters) if args.is_empty() => parameters,
+            _ => self.parameters(name)?,
         };
-        let declared = self.parameters(name)?;
         // A pack takes every remaining positional argument, so only a bare
         // struct leaves it unbound.
         if !args.is_empty()

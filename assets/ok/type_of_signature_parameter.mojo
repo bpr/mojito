@@ -3,7 +3,8 @@
 # scope: a later parameter's type, a result, and a method's result over
 # `self`. A `_` in a `SIMD` parameter's type is an infer-only binder the
 # argument solves, so `type_of(x)` is the vector type the call binds, as in
-# the signatures of upstream's `std/math` `max` and `min`.
+# the signatures of upstream's `std/math` `max` and `min`. A value
+# parameter's `type_of` is its declared type.
 
 
 def add(x: Int, y: type_of(x)) -> type_of(x):
@@ -45,6 +46,14 @@ def simd_min[
     return x.lt(y).select(x, y)
 
 
+def twice[n: Int](extra: type_of(n)) -> type_of(n):
+    return n * 2 + extra
+
+
+def flipped[b: Bool]() -> type_of(b):
+    return not b
+
+
 def main():
     print(add(1, 2))
     print(first("a", "b", "c"))
@@ -57,3 +66,4 @@ def main():
     var b = SIMD[DType.int32, 4](4, 2, 6, 0)
     print(simd_max(a, b))
     print(simd_min(a, b))
+    print(twice[4](1), flipped[True]())

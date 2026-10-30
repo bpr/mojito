@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bare `Scalar` argument type is upstream's partial alias `SIMD[_,
+  length=1]` and parameterizes its declaration over the dtype, so `def
+  f(x: Scalar) -> type_of(x)` runs `f(Int32(3))` and `f(Float64(1.5))` on
+  both backends, as on a method or a trait requirement, where it reported
+  "type 'Scalar' expects 1 type argument(s), got 0" (R1708). A bare module
+  alias with compile-time parameters (`comptime Lane[dt: DType] = SIMD[dt,
+  1]`, `x: Lane`) parameterizes over each of them, a defaulted one too, as
+  a bare struct does, where it could not infer them. A compile-time value
+  parameter's `type_of` in a signature is its declared type (`def
+  twice[n: Int](extra: type_of(n)) -> type_of(n)`), where the name was
+  undefined.
+
 - A `where` clause takes a `DType` predicate, as at the pin:
   `def g[dtype: DType, //](x: Scalar[dtype]) -> Int where
   dtype.is_floating_point()` runs `g(Float32(1.5))`, rejects `g(Int32(1))`
