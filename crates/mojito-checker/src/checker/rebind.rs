@@ -246,20 +246,15 @@ impl Checker {
     }
 
     fn rebind_target_ty(&self, target: &ParamArg) -> Result<Ty, TypeError> {
-        let unsupported = || {
-            TypeError::Unsupported(
+        match target {
+            ParamArg::Type(annotation) => self.ty_from_anno(annotation),
+            // `Dest` is a type parameter, so a value argument (`List[T]`,
+            // `type_of(x)`) is the type its expression denotes.
+            ParamArg::Value(expr) => self.denoted_type(expr, "rebind's type parameter 'dest_type'"),
+            ParamArg::Named { .. } => Err(TypeError::Unsupported(
                 "rebind takes one type argument (`rebind[Dest](value)`)".to_string(),
-            )
-        };
-        let annotation = match target {
-            ParamArg::Type(annotation) => annotation.clone(),
-            // A bare or subscripted type name parses as a value argument.
-            ParamArg::Value(expr) => {
-                super::constraints::assoc_body_source_type(expr).map_err(|_| unsupported())?
-            }
-            ParamArg::Named { .. } => return Err(unsupported()),
-        };
-        self.ty_from_anno(&annotation)
+            )),
+        }
     }
 }
 

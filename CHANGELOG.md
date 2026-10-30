@@ -8,6 +8,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `rebind[type_of(x)](y)` runs, as at the pin, where it reported "rebind
+  takes one type argument": `rebind`'s target is read as any expression
+  that denotes a type, as a type parameter's argument is (R1709).
 - A bare `Scalar` argument type is upstream's partial alias `SIMD[_,
   length=1]` and parameterizes its declaration over the dtype, so `def
   f(x: Scalar) -> type_of(x)` runs `f(Int32(3))` and `f(Float64(1.5))` on

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	981
+# swept-count	982
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -772,6 +772,7 @@ assets/type_error/rebind_register_passable_assignment.mojo	compile-reject	agree	
 assets/type_error/rebind_register_passable_bound_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/rebind_register_passable_bound_inplace_destination.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/rebind_register_passable_inplace_destination.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/rebind_type_of_target_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/rebound_view_origin_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'P[origin_of(ys)]' value to 'P[origin_of(xs)]'
 assets/type_error/receiver_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'sink' argument in 'stash' call
 assets/type_error/ref_argument_aliases_pack_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'b' argument and passed immutably to 'rest' argument in 'r' call

@@ -4205,19 +4205,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1709 `rebind[type_of(x)](y)` is rejected**
-
-  `rebind[type_of(x)](y)` reports "rebind takes one type argument", where
-  the pin runs it; `comptime T = type_of(x)` then `rebind[T](y)` already
-  runs.
-  - `Checker::rebind_target_ty` (`checker/rebind.rs`) reads its bracket
-    argument through `assoc_body_source_type`, which does not take a
-    `type_of(...)` call.
-  - Upstream's `_pow` spells `rebind[type_of(base)](exp)` (R1567).
-  - Found while planning R1567 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R409 A violated `where` clause is quoted from its folded
   constraint, not as declared**
 
