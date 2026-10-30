@@ -496,7 +496,9 @@ impl fmt::Display for VariantIndex {
 /// A gather whose receiver width, or whose own compile-time arguments, name
 /// a template's binders keeps its method's form, which the instantiation
 /// closes and checks against the method's constraints, as the pin's
-/// `comptime assert`s do. Concrete MIR holds only `Known`.
+/// `comptime assert`s do. A `pop.simd.shuffle` op's mask a template
+/// computes from its parameters is an `Attribute`, which each instance
+/// closes and the op's verifier judges. Concrete MIR holds only `Known`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum LaneMask {
     Known(Vec<usize>),
@@ -510,6 +512,10 @@ pub enum LaneMask {
     },
     /// `v.join(w)`: every lane of the receiver, then of the argument.
     Join,
+    /// A `pop.simd.shuffle` mask a template computes from its parameters
+    /// (`_shuffle_list`'s `mask._mlir_value`), a `!pop.array` attribute
+    /// each instance closes ([`Self::attribute_lanes`]).
+    Attribute(ParamExpr),
 }
 
 impl LaneMask {
@@ -524,11 +530,36 @@ impl LaneMask {
         !matches!(self, Self::Known(_))
     }
 
+    /// The lanes of the closed `pop.simd.shuffle` mask attribute `value`: a
+    /// `#pop.array` of `index` elements, each a single-field struct lowered
+    /// to its field down to an `index` (a `StaticTuple[SIMDLength, n]`'s
+    /// storage), as the pin lowers a struct attribute before its verifier
+    /// reads the mask. `None` when an element lowers to no `index` (an
+    /// `Int`, `!pop.scalar<index>` at the pin).
+    pub fn attribute_lanes(value: &CtValue) -> Option<Vec<usize>> {
+        fn lane(mut element: &CtValue) -> Option<usize> {
+            loop {
+                match element {
+                    CtValue::Index(lane) => return usize::try_from(*lane).ok(),
+                    CtValue::Struct { fields, .. } if fields.len() == 1 => {
+                        element = &fields[0].1;
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        let CtValue::PopArray { elements, .. } = value else {
+            return None;
+        };
+        elements.iter().map(lane).collect()
+    }
+
     /// The parameter expressions the mask reads.
     pub fn expressions(&self) -> Vec<&ParamExpr> {
         match self {
             Self::Known(_) | Self::Join => Vec::new(),
             Self::Shuffle(lanes) => lanes.iter().collect(),
+            Self::Attribute(value) => vec![value],
             Self::Slice { start, count } => {
                 let count = match count {
                     SimdWidth::Expr(expr) => Some(expr),
@@ -550,6 +581,7 @@ impl LaneMask {
             Self::Shuffle(lanes) => {
                 Self::Shuffle(lanes.iter().map(&mut *f).collect::<Result<_, _>>()?)
             }
+            Self::Attribute(value) => Self::Attribute(f(value)?),
             Self::Slice { start, count } => Self::Slice {
                 start: f(start)?,
                 count: match count {
@@ -564,8 +596,8 @@ impl LaneMask {
         })
     }
 
-    /// The mask with each expression `close` answers replaced by its
-    /// constant; one it leaves open stays as written.
+    /// The mask with each lane expression `close` answers replaced by its
+    /// constant; one it leaves open, and an attribute, stays as written.
     #[must_use]
     pub fn close_with(&self, close: &impl Fn(&ParamExpr) -> Option<i64>) -> Self {
         let context = ParamContext::detached();
@@ -583,7 +615,7 @@ impl LaneMask {
             SimdWidth::Known(_) => width.clone(),
         };
         match self {
-            Self::Known(_) | Self::Join => self.clone(),
+            Self::Known(_) | Self::Join | Self::Attribute(_) => self.clone(),
             Self::Shuffle(lanes) => Self::Shuffle(lanes.iter().map(expr).collect()),
             Self::Slice { start, count } => Self::Slice {
                 start: expr(start),
@@ -594,11 +626,13 @@ impl LaneMask {
 
     /// The lane indices of a gather over a `width`-lane receiver, checked
     /// against its method's constraints, worded as the pin's: `None` while
-    /// an expression is open.
+    /// an expression is open, and for an attribute, which the op's verifier
+    /// judges.
     pub fn resolve(&self, width: i64) -> Option<Result<Vec<usize>, String>> {
         let range = |start: i64, count: i64| (start..start + count).map(|lane| lane as usize);
         let lanes = match self {
             Self::Known(mask) => return Some(Ok(mask.clone())),
+            Self::Attribute(_) => return None,
             Self::Shuffle(lanes) => {
                 let lanes = lanes
                     .iter()
@@ -643,6 +677,7 @@ impl fmt::Display for LaneMask {
             }
             Self::Slice { start, count } => write!(f, "slice[{count}, offset={start}]"),
             Self::Join => write!(f, "join"),
+            Self::Attribute(value) => write!(f, "attribute({value})"),
         }
     }
 }

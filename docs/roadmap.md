@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1683**.
+Next free ID: **R1690**.
 
 ## Ordered Work
 
@@ -180,6 +180,16 @@ which names the upstream pass each one follows. Each is measured by the
     the std package fail with "not an associated comptime expression", so
     `_from` is not ported; `StringLiteral._from["xyz"]()` prints `xyz` at
     the pin. In a body the same call already runs, lifted as a thunk.
+  - Probe: `gather[mask=StaticTuple[SIMDLength, 2](1, 0)](v)` over `def
+    gather[n: SIMDLength, mask: StaticTuple[SIMDLength, n]]` is "not an
+    associated comptime expression": `StaticTuple`'s `*elems` initializer
+    is no application. The `fill=` spelling and a `comptime` binding run
+    (found while landing R1671, 2026-10-30).
+  - Probe: `comptime tup = StaticTuple[SIMDLength, 2].__init__[*mask]()`
+    then `first[tup]()`, in `def via[*mask: SIMDLength]`, fails with "not a
+    compile-time Int constant: tup", and so does `__init__[3, 0]()` with
+    literal elements. Reading `tup` locally runs. The pin prints `3` for
+    `via[3, 0]()`. This is `SIMD._shuffle_variadic`'s shape (R1683).
   - Checker: `ApplicableFunction` records the collector's index and its
     element `SlotType`, or the `*Ts` binder typing it. `Checker::applied_arguments`
     matches with `CallVariadics { positional: true, .. }`, applies each
@@ -2897,6 +2907,47 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1684 A chained comparison whose middle operand is a struct and
+  whose left operand converts dispatches the wrong operator**
+
+  `0 <= s < 2 * SIMDLength(2)` over `s = SIMDLength(3)` fails MIR
+  verification with "argument 0 of 'SIMD.__le__' has type SIMDLength",
+  where the pin prints `True`.
+  - Each link alone runs, and so does the `and` spelling.
+  - Site: `Checker::infer_compare_chain` (`checker/inference.rs`) and its
+    MIR lowering: the left link's `__le__` receives the unconverted
+    `SIMDLength` middle operand.
+  - Probe: the same chain in a `comptime assert` over a parameter fails
+    compile-time evaluation with "operator Le is not defined for Int and
+    None".
+  - Probe: inside `comptime for` over a `StaticTuple[SIMDLength, 2]`
+    element, `inline-parametric` fails with "binding of Int to a slot of
+    type SIMDLength".
+  - This is `SIMD._shuffle_list`'s `0 <= mask[i] < 2 * Self.length`.
+  - Found while planning R1671 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1687 `Self.n` of type `SIMDLength` does not convert into an
+  `Int` parameter slot**
+
+  `StaticTuple[SIMDLength, Self.n]` in a method of `struct
+  Lanes[dt: DType, n: SIMDLength]` fails with "type mismatch for value
+  parameter 'size': expected Int, found SIMDLength", where the pin
+  converts it and runs.
+  - A `def` binder `n: SIMDLength` in the same slot converts.
+  - The `ParamArg::Type(SourceType::SelfParam)` arm of `resolve_param_arg`
+    (`checker/type_resolution.rs`) lacks the `SIMDLength` to `Int` image
+    its `ParamArg::Value` arm has.
+  - Probe: a `gather[mask: StaticTuple[SIMDLength, Self.n]]` method over
+    `pop.simd.shuffle` prints `[4, 3, 2, 1]` at the pin.
+  - Probe: `comptime t = StaticTuple[SIMDLength, Self.n](fill=1)` in a
+    method of `struct Lanes[n: SIMDLength]`, then `len(t)`, prints `4` at
+    the pin. Mojito reports "no constructor overload matches".
+  - Found while planning R1671 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1504 A slice or multi-index store through a getter's mutable
   reference is rejected**
 
@@ -4617,6 +4668,64 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1685 A nested `def` called at compile time runs as a closure
+  value**
+
+  `comptime t = mk()` over a nested `def mk() -> Int: return 7` fails
+  compile-time evaluation with "vm backend does not support the built-in
+  or callee '__trait_dispatch.__call__$ov$'", where the pin prints `7`.
+  - The fragment calls the nested `def` through its closure value, which
+    the elaborator neither devirtualizes nor instantiates under the
+    enclosing function's binders.
+  - Probe: `first[mk()]()` over `def first[k: Int]()` fails the same way.
+  - Probe: `inner` reading the enclosing `outer[length: Int]`'s
+    `2 * length`, called as `comptime t = inner()`, fails the same way.
+  - Probe: a nested `def inner() -> StaticTuple[Int, 2 * length]` called
+    as `comptime t = inner()` fails with "monomorphizing `outer$inner`
+    return: unresolved value parameter `length`". The pin prints `1` for
+    a `fill=1` body. A bare `length` in the result runs.
+  - Found while planning R1671 (2026-10-30).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1686 A nested `def` with a struct result is no compile-time
+  application in a parameter argument**
+
+  `first[mk()]()` over a nested `def mk() -> StaticTuple[SIMDLength, 8]`
+  fails in the checker with "not a compile-time Int constant: not an
+  associated comptime expression", where the pin runs it.
+  - A module-level `mk` runs, and so does `comptime t = mk()` over the
+    nested one.
+  - `Checker::positioned_application` (`checker/constraints.rs`) finds
+    no application for the nested `def`'s call. A nested `def` with a
+    scalar result passes the check and fails later (R1685).
+  - Probe: the same call inside a method of `struct W[length:
+    SIMDLength]` whose `mk` reads `Self.length` prints `28` for `W[4]` at
+    the pin.
+  - Probe: `SIMD.join`'s `first[2 * Int(Self.length), indices()]()`,
+    with `indices() -> StaticTuple[SIMDLength, 2 * Int(Self.length)]`.
+  - Found while planning R1671 (2026-10-30).
+  - Depends on R1685 (the instance then evaluates the call).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1688 A run-time call binding a struct-typed value pack from
+  literals fails elaboration**
+
+  `var u = StaticTuple[SIMDLength, 4].__init__[7, 2, 5, 0]()` fails
+  elaboration with "cannot resolve parameter `*values`", where the pin
+  prints `7` for `Int(u[0])`.
+  - The `Int` element form runs, and so does the `SIMDLength` pack
+    forwarded from a binder (`__init__[*mask]` in `def tup[*mask:
+    SIMDLength]`).
+  - The literals convert to `SIMDLength` through its `@implicit`
+    initializer, and the call's pack keeps those applications, which the
+    instance does not fold to values.
+  - Probe: `comptime u = StaticTuple[SIMDLength, 4].__init__[7, 2, 5,
+    0]()` fails the same way.
+  - Found while planning R1671 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1513 Compile-time consumers read a bracket application only as
   `TypeApply`**
 
@@ -4952,16 +5061,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R481 A value binder typed by a lane type is rejected**
+- [ ] **R481 A value binder typed by a lane type fails elaboration**
 
   Problem: `s[dt: DType, v: Scalar[dt]]() -> Scalar[dt]` called as
-  `s[DType.int16, 5]()` is rejected with "type mismatch for value parameter
-  'v': expected Scalar[dt], found 5", where the pin prints `6`.
-  - The argument is checked against the declared type before the earlier
-    binder `dt` is substituted into it.
+  `s[DType.int16, 5]()` fails elaboration with "keeps the parameter
+  constant `v` in elaborated MIR after monomorphization", where the pin
+  prints `6`.
+  - The check binds the earlier `dt` into `v`'s type since R1671, so a
+    struct-typed slot (`mask: StaticTuple[Int, n]`) runs. A `Scalar[dt]`
+    value stays a parameter constant the instance does not close.
   - Probe: a struct application, `D[DType.int8, 5]` over `struct D[dt:
-    DType, v: Scalar[dt]]`, fails the same way, and so does `Y[5]` over
-    `comptime Y = D[DType.int8, _]`; the pin prints `5` for both.
+    DType, v: Scalar[dt]]`, fails the same way in `D.get`, and so does
+    `Y[5]` over `comptime Y = D[DType.int8, _]`; the pin prints `5` for
+    both.
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10819,7 +10931,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `infer_unbound_call` (`checker/call_inference.rs`).
   - The checker's implicit conversions into `SIMD` (`coerces`, `splats_to`)
     stand in for the `@implicit` overloads until the bridge goes.
-  - Depends on R1555, R1662, R1671, R1673, R1675, R1556, R1591, R1592,
+  - Depends on R1555, R1662, R1671, R1683, R1673, R1675, R1556, R1591, R1592,
     R1593, R1595, R1399, and R1507.
   - Model: Fable, Planned.
 
@@ -10950,7 +11062,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Delete what the member entries left of them.
   - Done when `rg simd_method crates` finds nothing.
   - Depends on R1555, R1589, R1579, R1580, R1581, R1582, R1585, R1586,
-    R1671, R1673, R1675, and R276, which port the last members, and R1561, which retires
+    R1671, R1683, R1673, R1675, and R276, which port the last members, and R1561, which retires
     the lane subscript.
   - Model: Opus, Not Planned.
 
@@ -11162,31 +11274,36 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1671 `SIMD`'s `shuffle` and `join` are checker intrinsics where
+- [ ] **R1683 `SIMD`'s `shuffle` and `join` are checker intrinsics where
   the pin's are methods over `_shuffle_list`**
 
-  `v.shuffle[*mask]()`, `v.shuffle[*mask](w)`, and `v.join(w)` are typed by
-  rule in `checker/method_calls/simd_receivers.rs` and closed per instance by
-  `LaneMask::resolve`, where the pin declares them in `std/simd.mojo` over
+  `v.shuffle[*mask]()` and `v.join(w)` are typed by rule in
+  `checker/method_calls/simd_receivers.rs` and closed per instance by
+  `LaneMask::resolve`, and `v.shuffle[*mask](w)` reports "has no field
+  'shuffle'", where the pin declares all three in `std/simd.mojo` over
   `pop.simd.shuffle`.
   - Port `_shuffle_variadic`, `_shuffle_list`, both variadic `shuffle`
-    overloads, and `join` verbatim into the declared `SIMD`.
-  - `pop.simd.shuffle` takes a closed `#pop.array` mask today
-    (`infer_simd_shuffle_op`, `checker/method_calls/pop_ops.rs`).
-    `_shuffle_list` passes `mask._mlir_value` of a `StaticTuple` parameter,
-    which reports "a mask computed from parameters is outside the subset".
-  - Let the mask be a parameter expression: a `LaneMask` variant holding the
-    `ParamExpr`, closed by substitution, then checked per instance as
-    `mono/gather.rs` `verify_shuffle_op` checks a known mask.
+    overloads, and `join` verbatim into the declared `SIMD`. A
+    `pop.simd.shuffle` mask computed from parameters runs since R1671.
+  - `static_tuple.mojo` needs explicit `String` and `index` imports once
+    `std.simd` imports it, since a module `std.simd` imports sees no
+    prelude names (R894).
   - Retire `infer_simd_shuffle`, `infer_simd_join`, `LaneMask::{Shuffle,
-    Join}` with their `resolve` arms, and `SemanticAdjustment::SimdShuffle`'s
-    `joined` flag. Drop `"shuffle" | "join"` from `infer_simd_method`'s list.
+    Join}` with their arms, `SemanticAdjustment::SimdShuffle`'s `joined`
+    flag, and `"shuffle" | "join"` in `infer_simd_method`'s list. Bump the
+    MIR text schema for the dropped `lane_shuffle` and `lane_join`.
   - Respell `tests/checker_test.rs` `rejects_bad_simd_shuffle_masks` and
     `assets/type_error/simd_shuffle_width_mismatch.mojo` to the pin's
-    "mismatch in the number of elements".
-  - Closes R331 (the pin's `2 * length` bound). Shrinks R212.
-  - Depends on R1670 (`StaticTuple`).
-  - Model: Fable, Planned.
+    instantiation failure "mismatch in the number of elements". The pin's
+    out-of-range text is "invalid index in the shuffle operation".
+  - Probe: `SIMD[DType.int32, 4](1, 2, 3, 4).shuffle[7, 2, 5, 0](w)` over
+    `w = [5, 6, 7, 8]` prints `[8, 3, 6, 1]` at the pin.
+  - Closes R331 (the pin's `2 * length` bound).
+  - The plan is `R1671-simd-s-shuffle-and-join-are-plan.md`, Part 2.
+  - Depends on R1684 (`_shuffle_list`'s chained assert), R1642
+    (`_shuffle_variadic`'s `comptime tup` as a parameter), R1685 and
+    R1686 (`join`'s nested `indices()`).
+  - Model: Opus, Planned.
 
 - [ ] **R1676 The `pop.array` ops reject a register-passable element whose
   copy or destruction runs code, where the pin copies its bits and never
@@ -11247,7 +11364,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `interleave`'s width-1 arm is `return [self[0], other[0]]`.
   - Retire `infer_simd_slice`, `LaneMask::Slice`, `LaneMask::resolve`,
     `gather_parameter`, and `record_lane_gather`.
-  - Depends on R1671 (the `LaneMask` cleanup follows its), R1672
+  - Depends on R1671, R1683 (the `LaneMask` cleanup follows its), R1672
     (`CurrentPlugin`), R1634 (`simd_width_of`), and R1666 (the list
     display).
   - Model: Opus, Not Planned.
@@ -11263,7 +11380,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     overloads, `rotate_left`/`rotate_right`, `shift_left`/`shift_right`,
     and `reversed`.
   - `_dynamic_shuffle` stays out until R1635's `has_neon` lands.
-  - Depends on R1671 (`_shuffle_list`), R1672 (`CurrentPlugin`), and R1674
+  - Depends on R1671, R1683 (`_shuffle_list`), R1672 (`CurrentPlugin`), and R1674
     (`IndexList`).
   - Model: Opus, Not Planned.
 
@@ -12282,16 +12399,6 @@ residue found inside a task moves to the task that owns its fix.
     does.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R212 A struct's own value parameter as a SIMD width in a signature
-  is rejected as a type**
-
-  Problem: `def zeros(self) -> SIMD[DType.int64, Self.length]` reports `SIMD
-  width must be a positive power of two, got a type`, where upstream binds
-  the parameter.
-  - Cause: the width slot needs a concrete comptime `Int`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R214 An annotated `Optional[T]` local initialized from a bare
   struct construction fails MIR verification**

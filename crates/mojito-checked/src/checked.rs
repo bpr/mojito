@@ -1173,7 +1173,8 @@ pub enum SemanticAdjustment {
     },
     /// ``__mlir_op.`pop.simd.shuffle`[mask=…, _type=…](a, b)``: the lanes
     /// of `a` followed by those of `b`, gathered by the `mask` attribute's
-    /// indices into the `_type` vector. MIR keeps it as a two-operand
+    /// indices into the `_type` vector: known, or a template's attribute
+    /// expression its instance closes. MIR keeps it as a two-operand
     /// `MirInstr::SimdShuffle`.
     PopSimdShuffle {
         mask: mojito_types::types::LaneMask,

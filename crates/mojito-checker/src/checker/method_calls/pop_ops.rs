@@ -134,9 +134,11 @@ impl Checker {
     /// upstream's verifier does: `a` and `b` are `!kgen.simd` storage of
     /// one type, `m` a compile-time `!pop.array<n, index>` of lanes below
     /// twice their width, and `T` storage of their dtype at width `n`. A
-    /// width a template leaves open is checked by each instance
-    /// (`native::mono` closes the gather). Records
-    /// `SemanticAdjustment::PopSimdShuffle` with the mask's lanes.
+    /// width a template leaves open, and a mask it computes from its
+    /// parameters, are checked by each instance (`native::mono` closes the
+    /// gather). Records `SemanticAdjustment::PopSimdShuffle` with the
+    /// mask: known, or a template's attribute expression its instance
+    /// closes.
     pub(super) fn infer_simd_shuffle_op(
         &self,
         span: &SourceSpan,
@@ -183,7 +185,7 @@ impl Checker {
                 "unable to infer result type from MLIR operation '{name}'"
             )));
         };
-        let lanes = self.shuffle_mask(name, mask)?;
+        let (mask, count) = self.shuffle_mask(name, mask)?;
         if args.len() != 2 {
             return Err(invalid(format!(
                 "op expected 2 operands, but found {}",
@@ -195,23 +197,26 @@ impl Checker {
             .map(|argument| self.infer(argument))
             .collect::<Result<Vec<_>, _>>()?;
         let result = self.mlir_result_type(result_type)?;
-        shuffle_result(&operands, &result, &lanes).map_err(invalid)?;
+        shuffle_result(&operands, &result, mask.known().unwrap_or_default(), count)
+            .map_err(invalid)?;
         self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::PopSimdShuffle {
-                mask: mojito_types::types::LaneMask::Known(lanes),
-            },
+            mojito_checked::checked::SemanticAdjustment::PopSimdShuffle { mask },
         ));
         Ok(result)
     }
 
-    /// The lanes of `pop.simd.shuffle`'s `mask` attribute: a closed
-    /// compile-time `!pop.array<n, index>` (a `#pop.array` attribute, or a
-    /// constant holding one).
+    /// `pop.simd.shuffle`'s `mask` attribute and its element count, when
+    /// its type names one. The verifier reads the attribute's type, as the
+    /// pin's does: a closed type is a compile-time `!pop.array<n, index>`
+    /// (a `#pop.array` attribute, or a constant holding one), and an open
+    /// one (`StaticTuple[SIMDLength, n]`'s storage) the instance lowers. A
+    /// constant's lanes are the mask; any other attribute is a template's,
+    /// which each instance closes and verifies.
     fn shuffle_mask(
         &self,
         name: &str,
         mask: &mojito_ast::ast::ParamArg,
-    ) -> Result<Vec<usize>, TypeError> {
+    ) -> Result<(mojito_types::types::LaneMask, Option<usize>), TypeError> {
         let not_indices = || TypeError::BadCall {
             func: name.to_string(),
             reason: "op expected mask to be a list of indices".to_string(),
@@ -223,31 +228,21 @@ impl Checker {
             let _lifting = self.lifting_position();
             self.compile_dependent_ct_expr(expression)?
         };
-        let is_index_array = matches!(
-            built.meta(),
-            MetaTy::Value(ty) if matches!(ty.kind(), TyKind::PopArray { element, .. }
-                if *element == Ty::index())
-        );
-        if !is_index_array {
+        let Some(TyKind::PopArray { size, element }) = built.meta().as_value().map(Ty::kind) else {
+            return Err(not_indices());
+        };
+        let count = size.known().and_then(|size| usize::try_from(size).ok());
+        if count.is_some() && !mojito_types::types::is_symbolic(element) && *element != Ty::index()
+        {
             return Err(not_indices());
         }
-        let Some(CtValue::PopArray {
-            elements: lanes, ..
-        }) = built.as_constant()
-        else {
-            return Err(TypeError::Unsupported(format!(
-                "'{name}' takes its 'mask' as a closed '#pop.array' attribute; a mask computed \
-                 from parameters is outside the subset"
-            )));
+        let mask = match built.as_constant() {
+            Some(value) => mojito_types::types::LaneMask::Known(
+                mojito_types::types::LaneMask::attribute_lanes(value).ok_or_else(not_indices)?,
+            ),
+            None => mojito_types::types::LaneMask::Attribute(built),
         };
-        lanes
-            .iter()
-            .map(|lane| match lane {
-                CtValue::Index(lane) => usize::try_from(*lane).ok(),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(not_indices)
+        Ok((mask, count))
     }
 
     /// A lane rule over a dtype still a parameter (`pop.mul` in `SIMD`'s
@@ -417,10 +412,16 @@ fn index_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
     })
 }
 
-/// Check `pop.simd.shuffle` of `operands` by `mask` into `result`, as
+/// Check `pop.simd.shuffle` of `operands` by the lanes `mask` (empty while
+/// open) of `count` elements (when its type names them) into `result`, as
 /// upstream's verifier does; a width still a parameter is the instance's
 /// to check.
-fn shuffle_result(operands: &[Ty], result: &Ty, mask: &[usize]) -> Result<(), String> {
+fn shuffle_result(
+    operands: &[Ty],
+    result: &Ty,
+    mask: &[usize],
+    count: Option<usize>,
+) -> Result<(), String> {
     let slots = |position: &str, ty: &Ty| {
         storage_slots(ty).ok_or_else(|| {
             format!(
@@ -438,13 +439,13 @@ fn shuffle_result(operands: &[Ty], result: &Ty, mask: &[usize]) -> Result<(), St
     if result_dtype != dtype {
         return Err("op expected result dtype to match operand dtypes".to_string());
     }
-    if result_width
-        .known()
-        .is_some_and(|lanes| usize::try_from(lanes).ok() != Some(mask.len()))
+    if let Some(count) = count
+        && result_width
+            .known()
+            .is_some_and(|lanes| usize::try_from(lanes).ok() != Some(count))
     {
         return Err(format!(
-            "op expected result to be a vector of {} elements",
-            mask.len()
+            "op expected result to be a vector of {count} elements"
         ));
     }
     let bound = width

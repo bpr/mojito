@@ -5121,10 +5121,10 @@ fn solve_value_binders_from_defaults(
     }
 }
 
-/// `decl` with each earlier trait-valued binder its value type names
-/// (`values: KGENParamList[Tr]`), and each earlier infer-only value binder
-/// (`t: T[n=n]` after `n: Int, //`), replaced by the argument `arguments`
-/// bound it, or `None` when it names none.
+/// `decl` with each earlier value binder its value type names (`values:
+/// KGENParamList[Tr]`, `mask: StaticTuple[Int, n]` after `n: Int`) replaced
+/// by the argument `arguments` bound it, or `None` when it names none: a
+/// slot's type reads the arguments bound before it.
 fn with_earlier_arguments(
     decl: &ParamDecl,
     decls: &[ParamDecl],
@@ -5136,15 +5136,7 @@ fn with_earlier_arguments(
     let context = mojito_types::param_expr::ParamContext::detached();
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
     for (sibling, argument) in decls.iter().zip(arguments) {
-        if let (
-            ParamDecl::Value {
-                ty: binder_ty,
-                infer_only,
-                ..
-            },
-            TyArg::Val(value),
-        ) = (sibling, argument)
-            && (*infer_only || matches!(binder_ty.kind(), TyKind::AnyTrait(_)))
+        if let (ParamDecl::Value { .. }, TyArg::Val(value)) = (sibling, argument)
             && let Some(value) = match value {
                 CtValue::Expr(expr) => Some(expr.clone()),
                 value => context.constant(value.clone()).ok(),

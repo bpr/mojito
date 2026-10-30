@@ -3138,19 +3138,29 @@ impl Checker {
                     .map_err(param_error),
             );
         }
-        let Some(TyKind::Struct(owner, _)) = base.meta().as_value().map(Ty::kind) else {
+        let Some(TyKind::Struct(owner, arguments)) = base.meta().as_value().map(Ty::kind) else {
             return None;
         };
-        // A builtin body folds before the struct's fields register.
-        let field_ty = [
-            self.structs.get(owner).map(|info| &info.fields),
-            self.builtin_struct_fields.get(owner),
-        ]
-        .into_iter()
-        .flatten()
-        .flatten()
-        .find(|(name, _)| name == field)
-        .map(|(_, ty)| ty.clone())?;
+        // The value's type arguments bind the field's declared type
+        // (`_mlir_value` of a `StaticTuple[SIMDLength, n]`), as a run-time
+        // read does; a builtin body folds before the struct's fields
+        // register, over fields that name no binder.
+        let field_ty = self
+            .structs
+            .get(owner)
+            .and_then(|info| {
+                info.fields
+                    .iter()
+                    .find(|(name, _)| name == field)
+                    .map(|(_, ty)| super::generics::substitute_at(ty, info, arguments))
+            })
+            .or_else(|| {
+                self.builtin_struct_fields
+                    .get(owner)?
+                    .iter()
+                    .find(|(name, _)| name == field)
+                    .map(|(_, ty)| ty.clone())
+            })?;
         Some(
             self.param_context
                 .field(

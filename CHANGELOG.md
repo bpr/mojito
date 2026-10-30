@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A ``__mlir_op.`pop.simd.shuffle` `` mask may now be computed from
+  parameters, as upstream's `SIMD._shuffle_list` passes it: the storage
+  of a `StaticTuple[SIMDLength, n]` parameter (`mask._mlir_value`) runs on
+  both backends and at compile time, each instance lowering and verifying
+  it with the pin's errors, where it was rejected as outside the subset.
+  Two front-end rules it needed now match the pin: a value parameter's
+  type reads every earlier argument (`[n: Int, mask: StaticTuple[Int,
+  n]]`, `assets/ok/dependent_struct_value_parameter.mojo`), and a struct
+  parameter's field is typed by its application's arguments. MIR text moves to 1.142, adding the `lane_attribute` mask,
+  and the package format to `mojito-package 157`. `SIMD.shuffle` and
+  `join` stay compiler rules until R1683 ports them.
 - `std.utils.StaticTuple`, upstream's fixed-size array over `!pop.array`,
   is bundled from upstream's `std/utils/static_tuple.mojo`: its
   construction checks, the default, `fill=`, `*elems`, and

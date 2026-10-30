@@ -863,9 +863,19 @@ impl MutTypeVisitor for Substitution<'_> {
         close_variant_index(index, self.bindings)
     }
 
-    /// A template's lane mask closes part by part; the instance checks the
-    /// closed mask against its receiver (`close_lane_masks`).
+    /// A template's lane mask closes part by part, an attribute to its
+    /// constant; the instance checks the closed mask against its receiver
+    /// (`close_lane_masks`).
     fn visit_lane_mask(&mut self, mask: &mut LaneMask) -> Result<(), MonoError> {
+        if let LaneMask::Attribute(value) = mask {
+            if let Some(constant) = eval_ct(value, self.bindings)
+                .ok()
+                .and_then(|constant| ParamContext::detached().constant(constant).ok())
+            {
+                *value = constant;
+            }
+            return Ok(());
+        }
         *mask = mask.close_with(&|expr| match eval_ct(expr, self.bindings) {
             Ok(CtValue::Int(value)) => Some(value),
             _ => None,

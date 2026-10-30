@@ -1389,6 +1389,12 @@ fn instruction_families_reprint_byte_identically() {
             other: Some(Reg(36)),
             mask: LaneMask::Join,
         },
+        MirInstr::SimdShuffle {
+            dest: Reg(38),
+            value: Reg(35),
+            other: Some(Reg(36)),
+            mask: LaneMask::Attribute(int_parameter("f", 2, "mask")),
+        },
         MirInstr::Drop {
             reg: Reg(2),
             destructor: Some("D.__deinit__".into()),

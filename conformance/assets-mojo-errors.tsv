@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	967
+# swept-count	970
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -626,9 +626,12 @@ assets/type_error/mlir_pop_op_index_operand.mojo	compile-reject	agree	error: 'po
 assets/type_error/mlir_pop_op_simd_struct_operand.mojo	compile-reject	agree	error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype si32}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {2}>>'
 assets/type_error/mlir_scalar_storage_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__mlir_type.`!kgen.scalar<index>`' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/mlir_simd_int_length_operand.mojo	compile-reject	agree	error: invalid MLIR type: !kgen.simd<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> length, "_mlir_value"> : !kgen.scalar<index>, #lit.struct.extract<:!lit.struct<@std::@builtin::@dtype::@DType> dtype, "_mlir_value"> : !kgen.dtype>
+assets/type_error/mlir_simd_shuffle_closed_struct_mask.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op expected mask to be a list of indices
 assets/type_error/mlir_simd_shuffle_instance_mask_out_of_bounds.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op mask element 5 is out of bounds
 assets/type_error/mlir_simd_shuffle_mask_out_of_bounds.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op mask element 9 is out of bounds
 assets/type_error/mlir_simd_shuffle_operands_differ.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op failed to verify that all of {lhs, rhs} have same type
+assets/type_error/mlir_simd_shuffle_parameter_mask_not_indices.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op expected mask to be a list of indices
+assets/type_error/mlir_simd_shuffle_parameter_mask_out_of_bounds.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op mask element 9 is out of bounds
 assets/type_error/mlir_simd_shuffle_result_dtype.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op expected result dtype to match operand dtypes
 assets/type_error/mlir_simd_shuffle_result_width.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op expected result to be a vector of 4 elements
 assets/type_error/mlir_string_size_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.string.size' op operand #0 must be String type for parameters, but got '!lit.struct<@std::@builtin::@string_literal::@StringLiteral<:string "ab">>'

@@ -1441,7 +1441,11 @@ does the `index` attribute of `array.get` and `array.replace`, a MIR
 against the instance's size in `mono/gather.rs`, as the pin's pass manager
 verifies an instance. A `#pop.array` attribute is `CtValue::PopArray`, a
 compile-time value carrying its element type, so it keeps its own meta-type
-in every table a constant passes through. A
+in every table a constant passes through. A `pop.simd.shuffle` mask is judged
+by its attribute's type, as the pin's verifier is: a closed type must be
+`!pop.array<n, index>`, and an open one (`StaticTuple[SIMDLength, n]`'s
+storage) crosses MIR as `LaneMask::Attribute`, which each instance closes,
+lowers to its lanes, and verifies in `mono/gather.rs`. A
 `DType`- or lane-keyed `def`, overloaded or not, is an ordinary generic `def`
 served by its template unless its body keys a clone, its binders bound from
 the call's arguments, an argument's lane slots, or the checker's inferred

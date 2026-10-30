@@ -275,6 +275,7 @@ assets/ok/deinit_field_dies_before_non_raising_call_in_try.mojo	-	ineligible	no-
 assets/ok/deinit_param_destruction_timing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_receiver_fields_die_in_drop_walk.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dependent_struct_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_evaluation_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_list_wrong_length_raises.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_nested_targets.mojo	-	ineligible	no-scalar-entry-shape
@@ -562,6 +563,7 @@ assets/ok/mlir_pop_max_min_bool_casts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_select.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_simd_shuffle.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_pop_simd_shuffle_parameter_mask.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_simd_lane_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_type_overload_identity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_call_list_in_method_loop.mojo	-	ineligible	no-scalar-entry-shape

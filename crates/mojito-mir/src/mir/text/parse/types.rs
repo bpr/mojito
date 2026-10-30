@@ -758,6 +758,9 @@ impl Decoder {
                     count: self.req(value, fields, "width", Self::simd_width_slot)?,
                 }),
                 "lane_join" => Some(LaneMask::Join),
+                "lane_attribute" => self
+                    .req(value, fields, "value", Self::param_expr)
+                    .map(LaneMask::Attribute),
                 other => {
                     self.error(value.span, format!("unknown lane mask `{other}`"));
                     None

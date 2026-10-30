@@ -275,6 +275,7 @@ assets/ok/deinit_field_dies_before_non_raising_call_in_try.mojo	main	exe-differe
 assets/ok/deinit_param_destruction_timing.mojo	main	exe-differential	sanitized
 assets/ok/deinit_receiver_fields_die_in_drop_walk.mojo	main	exe-differential	sanitized
 assets/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
+assets/ok/dependent_struct_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/destructure_evaluation_order.mojo	main	exe-differential	sanitized
 assets/ok/destructure_list_wrong_length_raises.mojo	main	exe-differential	sanitized
 assets/ok/destructure_nested_targets.mojo	main	exe-differential	sanitized
@@ -562,6 +563,7 @@ assets/ok/mlir_pop_max_min_bool_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_select.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_simd_shuffle.mojo	main	exe-differential	sanitized
+assets/ok/mlir_pop_simd_shuffle_parameter_mask.mojo	main	exe-differential	sanitized
 assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_type_overload_identity.mojo	main	exe-differential	sanitized
 assets/ok/module_call_list_in_method_loop.mojo	main	exe-differential	sanitized

@@ -8,9 +8,11 @@
 //! pin's `comptime assert`s run at instantiation. A violated constraint
 //! fails the instance.
 //!
-//! A `pop.simd.shuffle` op's mask is known in the template, but a width it
-//! is checked against may be a binder: the instance runs that part of the
-//! op's verifier, as the pin's pass manager does. So does a `pop.array.get`
+//! A `pop.simd.shuffle` op's mask may be known in the template, or an
+//! attribute it computes from its parameters (`_shuffle_list`'s
+//! `mask._mlir_value`), which the instance lowers to its lanes; and a width
+//! the mask is checked against may be a binder. The instance runs that part
+//! of the op's verifier, as the pin's pass manager does. So does a `pop.array.get`
 //! or `pop.array.replace` whose index or array size a binder names, and
 //! every `pop.array` op over an element a `RegisterPassable`-bounded binder
 //! names, which Mojito's subset admits only trivially register-passable.
@@ -106,6 +108,26 @@ fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result
     for block in blocks {
         for instruction in &mut block.instrs {
             match instruction {
+                MirInstr::SimdShuffle {
+                    dest,
+                    value,
+                    other,
+                    mask: mask @ LaneMask::Attribute(_),
+                } => {
+                    let LaneMask::Attribute(attribute) = &*mask else {
+                        continue;
+                    };
+                    let Some(constant) = attribute.as_constant() else {
+                        continue;
+                    };
+                    let lanes = LaneMask::attribute_lanes(constant).ok_or_else(|| {
+                        "'pop.simd.shuffle' op expected mask to be a list of indices".to_string()
+                    })?;
+                    if other.is_some() {
+                        verify_shuffle_op(reg_types, *dest, *value, &lanes)?;
+                    }
+                    *mask = LaneMask::Known(lanes);
+                }
                 MirInstr::SimdShuffle { value, mask, .. } if mask.is_symbolic() => {
                     let Some(TyKind::Simd { width, .. }) = reg_types.get(&value.0).map(Ty::kind)
                     else {

@@ -2736,8 +2736,10 @@ pub enum MirInstr {
     /// `other`'s, which only a join has (`shufflevector`'s second operand,
     /// of `value`'s own type). The mask is a compile-time parameter: a
     /// known one has every index within those lanes and a valid SIMD width
-    /// as its length; a template's names its binders, and the elaborator
-    /// closes it per instance. Concrete MIR holds only a known mask.
+    /// as its length; a template's names its binders, or is a
+    /// `pop.simd.shuffle` attribute it computes from them, and the
+    /// elaborator closes it per instance. Concrete MIR holds only a known
+    /// mask.
     SimdShuffle {
         dest: Reg,
         value: Reg,

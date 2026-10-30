@@ -2731,6 +2731,7 @@ fn lane_mask(mask: &mojito_types::types::LaneMask) -> String {
             ],
         ),
         LaneMask::Join => record("lane_join", &[]),
+        LaneMask::Attribute(value) => record("lane_attribute", &[("value", param_expr(value))]),
     }
 }
 
