@@ -333,6 +333,7 @@ assets/ok/exceptions.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_consumed_field_droppable.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_raise_edges.mojo	main	exe-differential	sanitized
+assets/ok/explicit_initializer_call.mojo	main	exe-differential	sanitized
 assets/ok/explicit_transfer_convention.mojo	main	exe-differential	sanitized
 assets/ok/external_call_write_stdout.mojo	main	exe-differential	sanitized
 assets/ok/field_overwrite_dies_at_last_use.mojo	main	exe-differential	sanitized

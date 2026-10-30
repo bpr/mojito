@@ -451,8 +451,10 @@ impl Checker {
     /// arguments. A struct over a raw parameter list, which has no source
     /// spelling, spells each parameter by keyword, a type as itself and a
     /// value read off the member's application (`ParameterList[type=Int,
-    /// values=ParameterList.of[4, 5].values]`). `None` when the callee
-    /// names no parameterized type member.
+    /// values=ParameterList.of[4, 5].values]`). An applied `__init__` member
+    /// (`Q.__init__[7]()`) is the explicit initializer call
+    /// [`Self::infer_initializer_call`] spells. `None` when the callee names
+    /// neither.
     pub(super) fn infer_type_member_construction(
         &self,
         expression: &Expr,
@@ -464,6 +466,11 @@ impl Checker {
         let ExprKind::Member { object, field } = &callee.kind else {
             return None;
         };
+        if let Some(construction) =
+            self.infer_initializer_call(expression, (object, field), param_args, args, kwargs)
+        {
+            return Some(construction);
+        }
         let base = object.type_spelling()?;
         let SourceType::Named(owner, _) = &base else {
             return None;
@@ -529,6 +536,67 @@ impl Checker {
             ExprKind::Call {
                 name: name.clone(),
                 param_args: param_args.clone(),
+                args: args.to_vec(),
+                kwargs: kwargs.to_vec(),
+            },
+        );
+        Some(self.infer_spelled(expression, construction))
+    }
+
+    /// Type `T.__init__[params](args)`, an explicit call of a type's
+    /// initializer, as the construction `T(args)` it is: upstream resolves
+    /// every construction through the type's `__init__` member, so both
+    /// spellings select among the same overloads. The receiver is a struct
+    /// name, its application (`S[2].__init__(x)`), `Self`, or a type
+    /// parameter, never a binding. `None` when `member` is no `__init__` or
+    /// the receiver spells no such type.
+    pub(super) fn infer_initializer_call(
+        &self,
+        expression: &Expr,
+        (object, member): (&Expr, &str),
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        if member != "__init__" {
+            return None;
+        }
+        let (name, struct_args) = match &object.kind {
+            ExprKind::Identifier(name) => (name.as_str(), Vec::new()),
+            _ => object
+                .bracket_application()
+                .map(|(name, args)| (name, args.into_owned()))?,
+        };
+        if self.lookup(name).is_some() {
+            return None;
+        }
+        // A type parameter's construction binds no bracket of its own.
+        let parametric = self.tparams.iter().any(|scope| scope.contains_key(name)) || {
+            let owner = if name == "Self" {
+                mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?.0
+            } else {
+                name
+            };
+            !self.structs.get(owner)?.decls.is_empty()
+        };
+        // A construction carries one bracket list: the struct's parameters
+        // on a parametric struct, the initializer's own on any other.
+        if !param_args.is_empty() && (parametric || !struct_args.is_empty()) {
+            return Some(Err(TypeError::Unsupported(format!(
+                "explicit parameters on '{name}.__init__': a construction of the \
+                 parametric type '{name}' has no list for the initializer's own \
+                 parameters beside the type's"
+            ))));
+        }
+        let construction = derived_construction(
+            expression,
+            ExprKind::Call {
+                name: name.to_string(),
+                param_args: if param_args.is_empty() {
+                    struct_args
+                } else {
+                    param_args.to_vec()
+                },
                 args: args.to_vec(),
                 kwargs: kwargs.to_vec(),
             },

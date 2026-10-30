@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1678**.
+Next free ID: **R1679**.
 
 ## Ordered Work
 
@@ -2790,6 +2790,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1678 A construction has one bracket list for the struct's
+  parameters and the initializer's own**
+
+  Problem: `Q[7]()` over a non-parametric `Q` with `__init__[k: Int](out
+  self)` runs and binds `k`, where the pin rejects it ("unexpected
+  parameter").
+  - Cause: a construction's checked form is a call `T[args](…)` with one
+    bracket list. `infer_construction_of` in
+    `crates/mojito-checker/src/checker/declarations.rs` feeds it to the
+    struct's parameters on a parametric struct and to `__init__`'s own on
+    any other.
+  - Upstream reads `T[ps](args)` as `T[ps].__init__(args)`, so the
+    initializer's own parameters are only ever spelled after `.__init__`.
+  - An explicit `T.__init__[ks](…)` is spelled as the construction `T[ks](…)`
+    (`infer_initializer_call` in
+    `crates/mojito-checker/src/checker/initializer_list.rs`), which is why
+    it works only where the struct has no parameters of its own.
+  - Probe: `struct S[n: Int]` with `__init__[k: Int](out self)` storing `k
+    + Self.n`, then `print(S[2].__init__[5]().a)`: rejected as unsupported,
+    where the pin prints `7`. Upstream's `_shuffle_variadic` spells
+    `StaticTuple[SIMDLength, output_size].__init__[*mask]()`.
+  - Probe: `print(Q[7]().a)` prints `7`, where the pin rejects it.
+  - Check the bundled stdlib for constructions that rely on the single
+    list before rejecting `Q[7]()`.
+  - Found while landing R1668 (2026-10-29).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1625 A written-back subscript is loaded once where an augmented
   store loads it twice**
 
@@ -4371,21 +4399,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The verdicts agree
     (`assets/type_error/enum_payload_not_implicitly_copyable.mojo`).
   - Found while landing `enum` (2026-10-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1668 An explicit `T.__init__(…)` call is rejected**
-
-  `P.__init__(4)` and `Q.__init__[7]()` fail with "Undefined variable 'P'",
-  where the pin calls the initializer and prints `4` and `3 7`.
-  - Upstream's `_shuffle_variadic` spells
-    `StaticTuple[SIMDLength, output_size].__init__[*mask]()`.
-  - Probe: `@fieldwise_init struct P(TrivialRegisterPassable)` with `var a:
-    Int`, then `print(P.__init__(4).a)`.
-  - Probe: `struct Q` declaring `__init__(out self)` and `__init__[k:
-    Int](out self)`, then `print(Q.__init__().a, Q.__init__[7]().a)` (pin:
-    `3 7`).
-  - Found while planning R330 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -12704,8 +12717,8 @@ residue found inside a task moves to the task that owns its fix.
     `_to_device_type`, `get_type_name`) with the entries that own them.
   - Probe: `comptime t = StaticTuple[Int, 3](1, 2, 3)` then `print(t[1],
     len(t))` gives `2 3` at the pin.
-  - Depends on R1667 (`!pop.array` storage), R1668 (the explicit
-    `__init__[*values]()` call), R1669 (`reflect[T].name()`), R1316
+  - Depends on R1667 (`!pop.array` storage), R1678 (the explicit
+    `__init__[*values]()` call over the parametric struct), R1669 (`reflect[T].name()`), R1316
     (`_get_kgen_pointer`), and R1317 (`pop.array.gep`).
   - Model: Fable, Planned.
 

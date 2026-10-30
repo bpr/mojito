@@ -468,7 +468,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the contextual type as that type's construction under an identity derived
   from the brace's, checks it, and records
   `SemanticAdjustment::SpelledConstruction` (`record_spelled_construction`,
-  shared with t-strings), which `mojito-checked`'s arena builder answers at
+  shared with t-strings and with `infer_initializer_call`, which spells an
+  explicit `T.__init__[ks](…)` over a type-spelling receiver as the
+  construction `T(…)`), which `mojito-checked`'s arena builder answers at
   the sugar's location; the sugar's node operand is that construction, so
   HIR lowers it in the sugar's place. A contextual type with no closed
   spelling (over a type parameter, a symbolic `SIMD`, a raw list, an origin

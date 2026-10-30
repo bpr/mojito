@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An explicit initializer call, `T.__init__(…)` over a struct name, its
+  application, `Self`, or a type parameter, is now the construction `T(…)`
+  it spells, where it failed as an undefined variable. `Q.__init__[7]()`
+  binds a non-parametric struct's initializer parameters. A parametric
+  struct's explicit initializer parameters are rejected as unsupported
+  until R1678 (R1668).
 - `!pop.array<n, T>`, the storage upstream's `StaticTuple` keeps, is now
   spelled with a parameter size
   (``__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]``, which

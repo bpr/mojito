@@ -1316,14 +1316,18 @@ impl Checker {
                 method,
                 args,
                 kwargs,
-            } => self.reject_direct_trait_member(object).and_then(|()| {
-                self.infer_method_call(
-                    &expr.source_span(),
-                    object,
-                    method,
-                    MethodCallArguments::ordinary(args, kwargs),
-                )
-            }),
+            } => self
+                .infer_initializer_call(expr, (object, method), &[], args, kwargs)
+                .unwrap_or_else(|| {
+                    self.reject_direct_trait_member(object).and_then(|()| {
+                        self.infer_method_call(
+                            &expr.source_span(),
+                            object,
+                            method,
+                            MethodCallArguments::ordinary(args, kwargs),
+                        )
+                    })
+                }),
             ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::TypeApply { .. }
                 if let Some(read) = self.read_parametric_value(expr) =>
             {
