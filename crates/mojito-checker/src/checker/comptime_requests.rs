@@ -35,9 +35,11 @@ pub trait CalleeOracle {
 /// or a static method of one (`S.f(n)`), anywhere below its root (`f(1)`,
 /// `S.f(n) + 1`, `[f(1), 2]`, `L[f(2)]`). A compile-time evaluation of one
 /// in a body is a request the elaborator below MIR serves from its
-/// worklist. The constructions the elaborator folds as literals (`SIMD`,
-/// `Dict`, and `Set` applications) are not applications here, but a method
-/// of a literal is (`"abc".byte_length()`, `{"a": 1}.get("a")`), and so is
+/// worklist. A `SIMD` construction is no request, the check folding its
+/// builtin initializer or denoting any other as its application
+/// (`Checker::selected_call`), and neither is a `Dict` or `Set` one, which
+/// the elaborator folds as a literal; but a method of a literal is
+/// (`"abc".byte_length()`, `{"a": 1}.get("a")`), and so is
 /// a subscript of a dictionary or set display, whose `__getitem__` raises,
 /// and an operator over a tuple display (`(1, 2) < (1, 3)`), which calls
 /// `Tuple`'s dunder.

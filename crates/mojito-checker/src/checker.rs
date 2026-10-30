@@ -647,6 +647,17 @@ pub struct Checker {
     /// one declared below it.
     applicable_functions:
         declaration_table::DeclarationTable<Vec<comptime_validation::ApplicableFunction>>,
+    /// The module `def`s every declaration of which is
+    /// `@always_inline("builtin")` and declares no result, whose call
+    /// statement a folded builtin body drops
+    /// ([`Checker::fold_builtin_bodies`]), as the pin folds such a body to
+    /// nothing.
+    builtin_procedures: HashSet<String>,
+    /// The field types of each non-generic struct declaring a builtin
+    /// member, resolved when builtin bodies fold, before the structs'
+    /// fields register: a folded body reads a field of a struct-typed
+    /// argument (`value._mlir_value` over `value: SIMDLength`) by them.
+    builtin_struct_fields: HashMap<String, Vec<(String, Ty)>>,
     /// The declared result of each non-generic module `def` that declares
     /// one, the first declaration's under an overloaded name: what a module
     /// constant applying it denotes ([`Self::applied_constant_expr`]).
@@ -1064,6 +1075,8 @@ impl Checker {
             lifting_positions: std::rc::Rc::default(),
             instance_inferences: RefCell::new(HashSet::new()),
             applicable_functions: declaration_table::DeclarationTable::default(),
+            builtin_procedures: HashSet::new(),
+            builtin_struct_fields: HashMap::new(),
             module_def_results: declaration_table::DeclarationTable::default(),
             lifted_applications: RefCell::new(Vec::new()),
             lifting_owner: None,

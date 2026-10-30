@@ -178,7 +178,7 @@ impl Checker {
 
     /// The type a `_type` attribute names: a type annotation, or an
     /// expression denoting one (`Lanes[target, Self.length]._mlir_type`).
-    pub(super) fn mlir_result_type(
+    pub(in crate::checker) fn mlir_result_type(
         &self,
         value: &mojito_ast::ast::ParamArg,
     ) -> Result<Ty, TypeError> {

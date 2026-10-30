@@ -1580,12 +1580,13 @@ impl<'a> Specializer<'a> {
                 _ => None,
             }
             .ok_or_else(|| unresolved("an unresolved instance", instance))?;
-            let TyKind::Struct(name, arguments) = ty.kind() else {
+            let Some((name, arguments)) = mojito_types::types::nominal_parts(&ty) else {
                 return Err(unresolved("an instance that is no struct", instance));
             };
-            bind_ty_args(&owner.param_decls, arguments, &mut instance_bindings)
+            bind_ty_args(&owner.param_decls, &arguments, &mut instance_bindings)
                 .map_err(|error| self.error(Some(template), error))?;
-            instance_bindings.self_instance = Some((nominal_template(name).to_string(), ty));
+            let template_name = nominal_template(name).to_string();
+            instance_bindings.self_instance = Some((template_name, ty));
         }
         let mut arguments = Vec::new();
         for ((decl, arg), value) in own_decls.iter().zip(args).zip(parameter_values) {

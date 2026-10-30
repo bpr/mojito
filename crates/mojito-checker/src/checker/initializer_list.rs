@@ -184,9 +184,7 @@ impl Checker {
     pub(super) fn self_instance_spelling(
         &self,
     ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
-        let TyKind::Struct(instance, _) = self.self_ty.as_ref()?.kind() else {
-            return None;
-        };
+        let (instance, _) = mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?;
         let owner = mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance);
         let info = self.structs.get(owner)?;
         let param_args = info

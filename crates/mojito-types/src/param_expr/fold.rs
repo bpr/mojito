@@ -338,6 +338,36 @@ pub fn fold_string_address(string: &CtValue) -> Result<CtValue, ParamError> {
     })
 }
 
+/// `pop.simd.splat` or `pop.cast` of the one-lane `value` at the type `ty`.
+///
+/// Its lane converts to `ty`'s dtype ([`CtLane::cast`]), an exact literal
+/// by the literal rule ([`CtLane::from_value`]), in every lane of `ty`,
+/// held as the host scalar a width-one `Int`, `UInt`, or `Float64` is.
+pub fn fold_lane_op(
+    op: super::ParamOp,
+    ty: &crate::types::Ty,
+    value: &CtValue,
+) -> Result<CtValue, ParamError> {
+    let no_value = || {
+        unsupported(&format!(
+            "'{}' of '{value}' at '{ty}' has no compile-time value",
+            op.name()
+        ))
+    };
+    let (dtype, width) = crate::types::simd_shape(ty.kind()).ok_or_else(no_value)?;
+    let lane = match value {
+        CtValue::IntLiteral(_) | CtValue::FloatLiteral(_) => CtLane::from_value(value, dtype),
+        scalar => CtLane::of_scalar(scalar).map(|lane| lane.cast(dtype)),
+    }
+    .ok_or_else(no_value)?;
+    let width = usize::try_from(width).map_err(|_| no_value())?;
+    let vector = CtValue::Simd {
+        dtype,
+        lanes: vec![lane; width],
+    };
+    Ok(vector.clone().materialize_as(ty).unwrap_or(vector))
+}
+
 /// The integer a concrete value denotes, across the integer kinds.
 pub fn integer_value(value: &CtValue) -> Option<IntLiteral> {
     match value {

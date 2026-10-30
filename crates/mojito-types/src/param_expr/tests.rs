@@ -191,6 +191,65 @@ fn replacement_folds_and_is_order_independent() {
 }
 
 #[test]
+fn lane_ops_fold_closed_and_stay_nodes_over_a_binder() {
+    use crate::ct::CtLane;
+    use mojito_ast::ast::Dtype;
+    let context = ParamContext::new();
+    let vector = context.type_shape(crate::types::canonical_simd_ty(Dtype::Int32, 4));
+    let scalar = context.type_shape(crate::types::canonical_simd_ty(Dtype::UInt8, 1));
+    let wrapped = context
+        .op(
+            ParamOp::Cast,
+            &[
+                scalar,
+                context.constant(CtValue::Int(300)).expect("a constant"),
+            ],
+        )
+        .expect("a closed cast folds");
+    assert_eq!(
+        wrapped.as_constant(),
+        Some(&CtValue::Simd {
+            dtype: Dtype::UInt8,
+            lanes: vec![CtLane::Int(44)],
+        })
+    );
+    let n = int_param(&context, "f", 0, "n");
+    let int32 = context.type_shape(crate::types::canonical_simd_ty(Dtype::Int32, 1));
+    let cast = context
+        .op(ParamOp::Cast, &[int32, n.clone()])
+        .expect("a cast node");
+    let splat = context
+        .op(ParamOp::SimdSplat, &[vector, cast])
+        .expect("a splat node");
+    assert!(matches!(
+        splat.kind(),
+        ParamKind::Op {
+            op: ParamOp::SimdSplat,
+            ..
+        }
+    ));
+    assert_eq!(
+        splat.meta().as_value(),
+        Some(&crate::types::canonical_simd_ty(Dtype::Int32, 4))
+    );
+    let mut bindings = ParamBindings::new();
+    bindings.bind(
+        n.as_decl_ref().expect("a reference").id.clone(),
+        literal(&context, -1),
+    );
+    assert_eq!(
+        context
+            .replace(&splat, &bindings)
+            .expect("the binding folds")
+            .as_constant(),
+        Some(&CtValue::Simd {
+            dtype: Dtype::Int32,
+            lanes: vec![CtLane::Int(-1); 4],
+        })
+    );
+}
+
+#[test]
 fn literal_and_machine_arguments_agree_after_contextual_conversion() {
     let context = ParamContext::new();
     let from_literal = context

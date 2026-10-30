@@ -104,6 +104,46 @@ impl CtLane {
         }
     }
 
+    /// The one lane of a scalar value: a host `Int`, `UInt`, `Float64`, or
+    /// `Bool`, or a one-lane vector. `None` for any other value.
+    pub fn of_scalar(value: &CtValue) -> Option<Self> {
+        Some(match value {
+            CtValue::Int(n) => Self::Int(i128::from(*n)),
+            CtValue::UInt(n) => Self::Int(i128::from(*n)),
+            CtValue::Float(bits) => Self::Float(*bits),
+            CtValue::Bool(b) => Self::Bool(*b),
+            CtValue::Simd { lanes, .. } if let [lane] = lanes.as_slice() => lane.clone(),
+            _ => return None,
+        })
+    }
+
+    /// This lane as one of `dtype`, as upstream's `pop.cast` converts a
+    /// scalar: an integer wraps or rounds into the lane, a float truncates
+    /// toward zero then wraps or rounds, a `bool` is 0/1, and into a `bool`
+    /// lane only the low bit is kept, as the VM's `simd_cast` converts.
+    #[must_use]
+    pub fn cast(&self, dtype: mojito_ast::ast::Dtype) -> Self {
+        if dtype == mojito_ast::ast::Dtype::Bool {
+            return Self::Bool(match self {
+                Self::Int(n) => n & 1 != 0,
+                Self::Float(bits) => (f64::from_bits(*bits).trunc() as i128) & 1 != 0,
+                Self::Bool(b) => *b,
+            });
+        }
+        match (self, dtype.is_float()) {
+            (Self::Int(n), false) => Self::Int(wrap_lane(dtype, *n)),
+            (Self::Int(n), true) => Self::Float(dtype.round_lane(*n as f64).to_bits()),
+            (Self::Float(bits), false) => {
+                Self::Int(wrap_lane(dtype, f64::from_bits(*bits).trunc() as i128))
+            }
+            (Self::Float(bits), true) => {
+                Self::Float(dtype.round_lane(f64::from_bits(*bits)).to_bits())
+            }
+            (Self::Bool(b), false) => Self::Int(i128::from(*b)),
+            (Self::Bool(b), true) => Self::Float(f64::from(u8::from(*b)).to_bits()),
+        }
+    }
+
     /// Materialize an exact integer literal into one lane of `dtype`, as
     /// upstream's `SIMD.__init__(IntLiteral)` does: an integer lane wraps at
     /// the dtype's width, a float lane rounds the exact literal once, and a
@@ -1010,12 +1050,7 @@ impl CtValue {
             Self::FloatLiteral(value) if target == ScalarConversion::Bool => {
                 return Some(Self::Bool(!value.is_zero()));
             }
-            Self::Int(n) => CtLane::Int(i128::from(*n)),
-            Self::UInt(n) => CtLane::Int(i128::from(*n)),
-            Self::Float(bits) => CtLane::Float(*bits),
-            Self::Bool(b) => CtLane::Bool(*b),
-            Self::Simd { lanes, .. } if let [lane] = lanes.as_slice() => lane.clone(),
-            _ => return None,
+            scalar => CtLane::of_scalar(scalar)?,
         };
         let range = match target {
             ScalarConversion::Int => Some(-(2f64.powi(63))..2f64.powi(63)),

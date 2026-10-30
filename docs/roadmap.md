@@ -192,6 +192,14 @@ which names the upstream pass each one follows. Each is measured by the
     collector's `RuntimePack` arm exists.
   - `tests/checker_test.rs`'s "a callable over a pack is applied by no
     call yet" assertion flips.
+  - Probe: `var a: Tag[SIMD[DType.int32, 2](3)] = Tag[SIMD[DType.int32,
+    2](3, 3)]()` over `struct Tag[v: SIMD[DType.int32, 2]]` prints `ok`:
+    `SIMD`'s `*elems` initializer is no compile-time application, so
+    `Checker::staged_simd_construction` folds the element list to the
+    vector. The pin rejects it, keeping the list as the application
+    `SIMD(Int32(3), Int32(3), __list_literal__=NoneType(None))`. Delete
+    that element-list arm, `fn simd_construction`, and its
+    `SimdConstructionError` messages with the fix.
   - Found while landing R1528 (2026-10-29).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -4528,6 +4536,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `name[StaticString("lit")]()`, over `def name[s: StaticString]() ->
     String`, which print `lit` at the pin. The second fails with "not an
     associated comptime expression".
+  - Probe: `f[Int32(n)]()` and `f[Int32(from_int=n)]()` in `def g[n:
+    Int]()`, over `def f[v: Int32]()`, print `7` for `g[7]()` at the pin.
+    Mojito fails with "a SIMD[DType.int32, 1] lane needs a compile-time
+    scalar" and "not an associated comptime expression". The first is
+    `Checker::staged_simd_construction`'s vector-alias arm
+    (`checker/constraints.rs`), which goes once an alias call applies its
+    `SIMD` initializer.
   - Found while landing R1641 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6430,7 +6445,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `#pop<float_literal_convert>`, and `FloatLiteral` is not even a
     parameter type yet ("unknown type 'FloatLiteral'").
   - Porting either removes its literal from
-    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`),
+    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`)
+    and from `Checker::staged_simd_construction` (`checker/constraints.rs`),
+    whose `literal_splat` builds the `pop.simd.splat` of the `pop.cast`
+    those bodies fold to,
     and with both the `IntLiteral`/`FloatLiteral` arms of
     `Checker::infer_conversion` (`checker/builtins.rs`) and the `"Int"`,
     `"UInt"`, and `"Float64"` arms of `infer_unbound_call`, which serve
@@ -10719,43 +10737,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `type_of(v).MAX` over a `Float32` `v` reads the member on the
     type and reports "type 'Float32' has no field 'MAX'".
   - A `Self(...)` member reads at the application (`S[2].Z` is an `S[2]`),
-    but declaring `comptime M = Self(0)` in `SIMD` stops the bundled
-    library with R1597's "not an associated comptime expression".
+    and a trial `comptime M = Self(0)` in `SIMD` loads and reads
+    `SIMD[DType.int32, 2].M` as `[0, 0]`.
   - Found while landing R1555 (2026-10-28).
-  - Depends on R1597.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1597 A compile-time `SIMD` construction folds by the checker's
-  rule**
-
-  `comptime v = SIMD[DType.int32, 4](1, 2, 3, 4)` is folded by
-  `simd_construction` (`checker/constraints.rs`), and
-  `comptime_requests.rs` excludes `SIMD` from requests. The pin folds a
-  `builtin` `__init__` body (`foldInlineBuiltinFunction`) and interprets
-  the variadic one.
-  - The declared default initializer's `comptime res = SIMD[Self.dtype,
-    Self.length](0)` folds through the same rule.
-  - Fold `pop.simd.splat` into a parameter expression (`builtin_fold.rs`
-    declines every typed op), and request the variadic one as any
-    non-builtin compile-time call.
-  - The values agree today: the gap is structural.
-  - A SIMD instance's constructor is no application: `Checker::selected_call`
-    declines one whose body does not fold, since `Specializer`
-    (`native/mono/specializer.rs`) binds only a `TyKind::Struct` instance
-    ("reads an instance that is no struct `SIMD[DType.bool, 4]`"), and past
-    `nominal_parts` the VM's CTFE fails "expects 2 argument(s), got 1".
-    Delete that gate once the `builtin` constructors fold.
-  - So a local `comptime M = SIMD[DType.bool, 4](fill=True)` or `comptime
-    Y = SIMD[DType.int32, 2](from_int=5)` lifts a thunk and prints as at
-    the pin, but a position with no thunk denotes nothing.
-  - Probe: `f[SIMD[DType.bool, 2](fill=True)]()` over `def f[m:
-    SIMD[DType.bool, 2]]()` is "not an associated comptime expression";
-    the pin prints `[True, True]`.
-  - Probe: `SIMD[DType.int32, inf(SIMD[DType.int32, n](0))]` over `def
-    inf[n: Int, //](x: SIMD[DType.int32, n]) -> Int` fails the same way;
-    the pin prints `[1, 1]` for `n = 2`.
-  - Found while landing R1555 (2026-10-28).
-  - Depends on R1592.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a

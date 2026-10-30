@@ -486,7 +486,12 @@ impl VmBackend {
             .collect::<Result<Vec<_>, _>>()?;
         self.ctfe_fuel = Some(fuel);
         let result = match constructed {
-            Some(constructed) => self.construct_bound(prog, constructed, name, args),
+            Some(Constructed::Struct(constructed)) => {
+                self.construct_bound(prog, constructed, name, args)
+            }
+            Some(Constructed::Value(skeleton)) => {
+                self.construct_entered(prog, skeleton, name, args)
+            }
             None => self.call_function(prog, index, args),
         };
         let remaining = self.ctfe_fuel.take().unwrap_or(0);
@@ -778,6 +783,14 @@ struct Prog {
     error_slots: Vec<HashSet<VarId>>,
 }
 
+/// What an initializer's `out self` receiver enters as ([`Prog::constructed`]).
+enum Constructed<'s> {
+    /// A declared struct's skeleton, built by [`VmBackend::construct_bound`].
+    Struct(&'s str),
+    /// The unwritten storage of a receiver the VM holds as a value.
+    Value(Value),
+}
+
 /// A static type with its reference layers removed: a place or parameter
 /// handle describes the same instance as the value behind it.
 fn peel_references(ty: &mojito_types::types::Ty) -> &mojito_types::types::Ty {
@@ -918,18 +931,30 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
-    /// The struct the `__init__` `name`, whose parameters are
-    /// `param_types`, constructs: its `out self` receiver's. `None` for any
-    /// other function.
-    fn constructed<'s>(&'s self, name: &'s str, param_types: &'s [Ty]) -> Option<&'s str> {
-        let receiver = match param_types.first().map(Ty::kind) {
+    /// What the `__init__` `name`, whose parameters are `param_types`,
+    /// constructs: its `out self` receiver's struct, or the unwritten
+    /// storage a receiver the VM holds as a value rather than a declared
+    /// struct (a `SIMD`) enters as. `None` for any other function.
+    fn constructed<'s>(&'s self, name: &'s str, param_types: &'s [Ty]) -> Option<Constructed<'s>> {
+        let receiver = param_types.first();
+        let declared = match receiver.map(Ty::kind) {
             Some(mojito_types::types::TyKind::Struct(receiver, _)) => Some(receiver.as_str()),
             _ => None,
         };
-        match self.lifecycle_constructor(name, receiver)? {
-            (constructed, "__init__") => Some(constructed),
-            _ => None,
+        if let Some((constructed, member)) = self.lifecycle_constructor(name, declared) {
+            return (member == "__init__").then_some(Constructed::Struct(constructed));
         }
+        let receiver = receiver.filter(|ty| mojito_types::types::nominal_parts(ty).is_some())?;
+        let initializes = mojito_symbol::symbol::lifecycle_constructor(name)
+            .is_some_and(|(_, member)| member == "__init__")
+            && self
+                .sigs
+                .get(name)
+                .is_some_and(|signature| signature.has_receiver);
+        initializes
+            .then(|| VmBackend::uninitialized_value(self, receiver))
+            .flatten()
+            .map(Constructed::Value)
     }
 
     /// Per argument a closure's captures fill in a call of its body

@@ -245,6 +245,7 @@ impl ParamContext {
             ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin => self.build_cast(op, &operands[0]),
             ParamOp::DataToStr => self.build_data_to_str(operands),
             ParamOp::StringSize | ParamOp::StringAddress => self.build_string_read(op, operands),
+            ParamOp::SimdSplat | ParamOp::Cast => self.build_lane_op(op, operands),
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -1566,6 +1567,32 @@ impl ParamContext {
         Ok(self.make(MetaTy::value(result), ParamKind::Op { op, operands }))
     }
 
+    /// `pop.simd.splat` or `pop.cast` at the type its first operand names:
+    /// the vector or scalar of the converted lane once the type and the
+    /// value are closed, and otherwise the node, a value of that type.
+    fn build_lane_op(
+        &self,
+        op: ParamOp,
+        operands: Vec<ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        let ty = match operands[0].kind() {
+            ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
+            _ => {
+                return Err(ParamError::TypeMismatch {
+                    operation: op.name().to_string(),
+                    expected: "a type".to_string(),
+                    found: operands[0].meta().to_string(),
+                });
+            }
+        };
+        if let [Some(result), Some(value)] = [operands[0].as_constant(), operands[1].as_constant()]
+        {
+            self.count_fold();
+            return self.constant(fold_primitive(op, &[result, value])?);
+        }
+        Ok(self.make(MetaTy::value(ty), ParamKind::Op { op, operands }))
+    }
+
     /// `and`/`or`: flatten, fold constants, drop duplicates, and sort. The
     /// dominating constant wins only once every operand is known to be a
     /// well-typed `Bool`, which the arity and domain checks established.
@@ -2690,6 +2717,14 @@ pub enum ParamOp {
     /// nul-terminated bytes, which live for the whole program (upstream's
     /// `StringLiteral.ptr`).
     StringAddress,
+    /// `pop.simd.splat`: a one-lane value across every lane of the vector
+    /// type its first operand names, a type shape (upstream's `_type=`).
+    /// The domain reads a vector's `!kgen.simd` storage as the vector, so
+    /// the node is a value of that `SIMD` type.
+    SimdSplat,
+    /// `pop.cast`: a one-lane value converted to the scalar type its first
+    /// operand names, a type shape ([`crate::ct::CtLane::cast`]).
+    Cast,
 }
 
 impl ParamOp {
@@ -2721,6 +2756,8 @@ impl ParamOp {
             Self::DataToStr => "data_to_str",
             Self::StringSize => "string_size",
             Self::StringAddress => "string_address",
+            Self::SimdSplat => "simd_splat",
+            Self::Cast => "cast",
         }
     }
 
@@ -2756,7 +2793,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 25] = [
+    const ALL: [Self; 27] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -2782,6 +2819,8 @@ impl ParamOp {
         Self::DataToStr,
         Self::StringSize,
         Self::StringAddress,
+        Self::SimdSplat,
+        Self::Cast,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
@@ -2822,7 +2861,9 @@ impl ParamOp {
             | Self::CastFromBuiltin
             | Self::DataToStr
             | Self::StringSize
-            | Self::StringAddress => return None,
+            | Self::StringAddress
+            | Self::SimdSplat
+            | Self::Cast => return None,
         })
     }
 
@@ -4003,6 +4044,9 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::DataToStr, [string, rest]) => fold::fold_data_to_str(string, rest),
         (ParamOp::StringSize, [string]) => fold::fold_string_size(string),
         (ParamOp::StringAddress, [string]) => fold::fold_string_address(string),
+        (ParamOp::SimdSplat | ParamOp::Cast, [CtValue::Type(ty), value]) => {
+            fold::fold_lane_op(op, ty, value)
+        }
         (ParamOp::Cond, [condition, then_value, else_value]) => match condition {
             CtValue::Bool(true) => Ok((*then_value).clone()),
             CtValue::Bool(false) => Ok((*else_value).clone()),
@@ -4106,7 +4150,9 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::CastFromBuiltin
         | ParamOp::DataToStr
         | ParamOp::StringSize
-        | ParamOp::StringAddress => 14,
+        | ParamOp::StringAddress
+        | ParamOp::SimdSplat
+        | ParamOp::Cast => 14,
     }
 }
 
@@ -4136,6 +4182,8 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::DataToStr => "data_to_str",
         ParamOp::StringSize => "pop.string.size",
         ParamOp::StringAddress => "pop.string.address",
+        ParamOp::SimdSplat => "pop.simd.splat",
+        ParamOp::Cast => "pop.cast",
     }
 }
 

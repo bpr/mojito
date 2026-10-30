@@ -320,6 +320,19 @@ impl VmBackend {
             name: name.to_string(),
             fields: uninitialized_fields(&def.fields),
         };
+        self.construct_entered(prog, skeleton, constructor, user_args)
+    }
+
+    /// Run the initializer `constructor` over its `out self` receiver
+    /// entering as `skeleton` and `user_args` bound in declared order, for
+    /// the initialized receiver (frame slot 0).
+    pub(super) fn construct_entered(
+        &mut self,
+        prog: &Prog,
+        skeleton: Value,
+        constructor: &str,
+        user_args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
         let fidx = prog.index_of(constructor).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: checked constructor '{constructor}' is missing from MIR"

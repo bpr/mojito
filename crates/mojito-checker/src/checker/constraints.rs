@@ -145,11 +145,20 @@ impl Checker {
 
     /// The attribute a closed module constant's initializer folds to
     /// (`3 + 1 if 3 > 2 else 0`, `Int32(4)`, `(1, 2)`, `"buf" + "fer"`), by
-    /// the one builder. `None` for an initializer that applies a callable,
-    /// reads a declaration not yet registered, or names a type.
+    /// the one builder, a call of a builtin callable included
+    /// (`SIMD[DType.int32, 2](from_int=5)`), as the pin folds one. `None`
+    /// for an initializer that applies any other callable, reads a
+    /// declaration not yet registered, or names a type.
     pub(super) fn closed_module_constant(&self, value: &Expr) -> Option<CtValue> {
         self.ct_value(value, Recording::Silent)
             .ok()
+            .or_else(|| {
+                let _lifting = self.lifting_position();
+                self.compile_dependent_ct_expr(value)
+                    .ok()?
+                    .as_constant()
+                    .cloned()
+            })
             .filter(is_module_constant_attribute)
     }
 
@@ -1200,6 +1209,69 @@ impl Checker {
         }
     }
 
+    /// A construction of the closed vector `SIMD[dtype, width]` spelled
+    /// `name(args…)` that the checker builds itself, staged until Mojito
+    /// applies its upstream initializer. `None` for any other construction.
+    ///
+    /// - One exact literal is upstream's `IntLiteral`/`FloatLiteral`
+    ///   initializer, not yet declared (R1507): the `pop.simd.splat` of its
+    ///   `pop.cast` that body folds to.
+    /// - `width > 1` elements are the `*elems` initializer, whose collector
+    ///   is no compile-time application yet: one lane per element.
+    /// - A vector alias's one argument (`Int32(n)`), which no compile-time
+    ///   call resolves through the alias yet: its lane cast and splat.
+    fn staged_simd_construction(
+        &self,
+        name: &str,
+        (dtype, width): (Dtype, i64),
+        args: &[Expr],
+        recording: Recording,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let vector = |lanes: Result<Vec<CtValue>, TypeError>| {
+            lanes
+                .and_then(|lanes| simd_construction(dtype, width as usize, &lanes))
+                .and_then(|vector| self.ct_param(vector))
+        };
+        match args {
+            [argument] => match self.ct_value(argument, recording) {
+                Ok(literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))) => {
+                    Some(self.literal_splat(dtype, width, literal))
+                }
+                value if name != "SIMD" => Some(vector(value.map(|value| vec![value]))),
+                _ => None,
+            },
+            _ if width > 1 && args.len() as i64 == width => Some(vector(
+                args.iter()
+                    .map(|lane| self.ct_value(lane, recording))
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+
+    /// `pop.simd.splat` of the `pop.cast` of `literal` at `SIMD[dtype,
+    /// width]`, upstream's `IntLiteral`/`FloatLiteral` initializer's body.
+    fn literal_splat(
+        &self,
+        dtype: Dtype,
+        width: i64,
+        literal: CtValue,
+    ) -> Result<ParamExpr, TypeError> {
+        let context = &self.param_context;
+        let scalar = context.type_shape(mojito_types::types::canonical_simd_ty(dtype, 1));
+        let vector = context.type_shape(mojito_types::types::canonical_simd_ty(dtype, width));
+        let literal = self.ct_param(literal)?;
+        context
+            .op(ParamOp::Cast, &[scalar, literal])
+            .and_then(|cast| context.op(ParamOp::SimdSplat, &[vector, cast]))
+            .map_err(|_| {
+                TypeError::NotComptime(format!(
+                    "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
+                    dtype.name()
+                ))
+            })
+    }
+
     /// The application a local `comptime NAME = f(…)` binding denotes, which
     /// each of its reads materializes as upstream's alias reference does: the
     /// binding has no storage of its own. `None` for any other binding, and
@@ -1709,22 +1781,21 @@ impl Checker {
                     }
                 }
             }
-            // `SIMD[DType.d, w](lanes...)`, or a vector alias's application
-            // (`U256(0)`), is a compile-time vector — a hasher key: one lane
-            // per element, or one element splatted across the width.
+            // The constructions of a closed `SIMD[DType.d, w]`, or of a vector
+            // alias (`U256(0)`), whose initializer Mojito does not apply yet
+            // ([`Self::staged_simd_construction`]); every other one is the
+            // application of its declared initializer.
             ExprKind::Call {
                 name,
                 param_args,
                 args,
                 kwargs,
             } if kwargs.is_empty()
-                && let Some((dtype, width)) = self.simd_constructor_shape(name, param_args) =>
+                && let Some((dtype, width)) = self.simd_constructor_shape(name, param_args)
+                && let Some(staged) =
+                    self.staged_simd_construction(name, (dtype, width), args, recording) =>
             {
-                let lanes = args
-                    .iter()
-                    .map(|lane| self.ct_value(lane, recording))
-                    .collect::<Result<Vec<_>, _>>()?;
-                self.ct_param(simd_construction(dtype, width as usize, &lanes)?)
+                staged
             }
             _ if let Some(frozen) = self.frozen_enum_case(expr) => self.ct_param(frozen?),
             _ if let Some(aggregate) = self.aggregate_value(expr, recording) => {
@@ -2204,10 +2275,13 @@ impl Checker {
 
     /// The parameter expression of a compile-time scalar's storage read, as
     /// an `@always_inline("builtin")` body spells its arithmetic: a scalar's
-    /// `_mlir_value` is the scalar, since a width-one vector's storage is its
-    /// value, `Int(mlir_value=s)` the scalar its storage `s` holds, and
+    /// or a vector's `_mlir_value` is the value, since a vector's storage is
+    /// its value, `Int(mlir_value=s)` the scalar its storage `s` holds, and
     /// ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
-    /// ([`super::builtin_fold::mlir_op_operator`]). Between an `Int` and the
+    /// ([`super::builtin_fold::mlir_op_operator`]), and the typed
+    /// ``__mlir_op.`pop.simd.splat` `` and ``__mlir_op.`pop.cast` `` are
+    /// `ParamOp::SimdSplat` and `ParamOp::Cast` at the `SIMD` whose storage
+    /// their `_type=` names. Between an `Int` and the
     /// MLIR builtin `index`, `x.__mlir_index__()` (`pop.cast_to_builtin`,
     /// of an `Int` or an `IntLiteral`) and `Int(mlir_value=i)` over an `index` (`pop.cast_from_builtin`)
     /// are the parameter domain's casts. `None` for any other expression.
@@ -2222,11 +2296,28 @@ impl Checker {
                 .filter(is_scalar_value)
         };
         match &expr.kind {
+            _ if let Some((op, ty, operand)) = super::builtin_fold::typed_lane_op(expr) => {
+                let ty = self.lane_op_result(ty)?;
+                let operand = self.build_ct(operand, recording).ok()?;
+                Some(
+                    self.param_context
+                        .op(op, &[self.param_context.type_shape(ty), operand])
+                        .map_err(param_error),
+                )
+            }
             _ if let Some(operator) = super::builtin_fold::mlir_op_operator(expr) => {
                 Some(self.build_ct(&operator, recording))
             }
             ExprKind::Member { object, field } if field == mojito_types::ct::MLIR_VALUE_FIELD => {
-                scalar(object).map(Ok)
+                let vector = |value: &ParamExpr| {
+                    value
+                        .meta()
+                        .as_value()
+                        .is_some_and(|ty| mojito_types::types::simd_storage(ty).is_some())
+                };
+                scalar(object)
+                    .or_else(|| self.build_ct(object, recording).ok().filter(vector))
+                    .map(Ok)
             }
             ExprKind::MethodCall {
                 object,
@@ -2284,6 +2375,25 @@ impl Checker {
             }
             _ => None,
         }
+    }
+
+    /// The `SIMD` type a typed lane op's `_type=` names the storage of:
+    /// `T` for `T._mlir_type` (`Self._mlir_type`,
+    /// `Scalar[Self.dtype]._mlir_type`), read before the struct's own
+    /// `comptime` members resolve, or the vector a spelled `!kgen.simd`
+    /// stores.
+    fn lane_op_result(&self, attribute: &mojito_ast::ast::ParamArg) -> Option<Ty> {
+        if let mojito_ast::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
+            ..
+        }) = attribute
+            && field == "_mlir_type"
+            && let Ok(ty) = self.denoted_type(object, "attribute '_type'")
+            && mojito_types::types::simd_storage(&ty).is_some()
+        {
+            return Some(ty);
+        }
+        mojito_types::types::storage_simd(&self.mlir_result_type(attribute).ok()?)
     }
 
     /// The `StringLiteral` whose `value` parameter `object.value` reads: a
@@ -2974,13 +3084,16 @@ impl Checker {
         let Some(TyKind::Struct(owner, _)) = base.meta().as_value().map(Ty::kind) else {
             return None;
         };
-        let field_ty = self
-            .structs
-            .get(owner)?
-            .fields
-            .iter()
-            .find(|(name, _)| name == field)
-            .map(|(_, ty)| ty.clone())?;
+        // A builtin body folds before the struct's fields register.
+        let field_ty = [
+            self.structs.get(owner).map(|info| &info.fields),
+            self.builtin_struct_fields.get(owner),
+        ]
+        .into_iter()
+        .flatten()
+        .flatten()
+        .find(|(name, _)| name == field)
+        .map(|(_, ty)| ty.clone())?;
         Some(
             self.param_context
                 .field(

@@ -16,7 +16,7 @@ use super::*;
 use mojito_ast::ast::{InfixOp, PrefixOp};
 use mojito_checked::declaration::InlineLevel;
 use mojito_types::mlir::{MlirLowering, MlirOp};
-use mojito_types::param_expr::{MetaTy, ParamKind};
+use mojito_types::param_expr::{MetaTy, ParamKind, ParamOp};
 
 impl Checker {
     /// Fold every `@always_inline("builtin")` body `stmts` declare into its
@@ -32,6 +32,8 @@ impl Checker {
         if let Some(error) = self.builtin_convention_rejection(stmts) {
             return Err(error);
         }
+        self.builtin_procedures = builtin_procedures(stmts);
+        self.builtin_struct_fields = self.resolved_builtin_struct_fields(stmts);
         let declarations: Vec<_> = self
             .listed_declarations(stmts)
             .into_iter()
@@ -92,6 +94,47 @@ impl Checker {
             Some(result)
         })
         .flatten()
+    }
+
+    /// The field types of each non-generic struct `stmts` declare with a
+    /// builtin member, each resolved in its member scope
+    /// ([`Checker::builtin_struct_fields`]). A struct a field of which does
+    /// not resolve yet is left out.
+    fn resolved_builtin_struct_fields(
+        &mut self,
+        stmts: &[Stmt],
+    ) -> HashMap<String, Vec<(String, Ty)>> {
+        let mut resolved = HashMap::new();
+        for statement in stmts {
+            let StmtKind::Struct {
+                name,
+                type_params,
+                fields,
+                methods,
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            let builtin = methods.iter().any(|method| {
+                matches!(
+                    InlineLevel::of(&method.decorators),
+                    Ok(InlineLevel::Builtin)
+                )
+            });
+            if !builtin || !type_params.is_empty() {
+                continue;
+            }
+            if let Some(Some(types)) = self.in_struct_scope(statement, |checker| {
+                fields
+                    .iter()
+                    .map(|field| Some((field.name.clone(), checker.ty_from_anno(&field.ty).ok()?)))
+                    .collect::<Option<Vec<_>>>()
+            }) {
+                resolved.insert(name.clone(), types);
+            }
+        }
+        resolved
     }
 
     /// The pin's rejection of a builtin method's receiver, judged for every
@@ -464,8 +507,9 @@ impl Checker {
     /// The fields a builtin `__init__`'s body stores, in declaration order,
     /// over its argument slots, as upstream's fold reads the construction:
     /// each `self.f = e` stores `e`, a later store of a field replacing an
-    /// earlier one, and a read of a stored field (`self.b = self.a + 1`) is
-    /// the value stored. A docstring, a `var` or `comptime` binding, and a
+    /// earlier one, `self = e` stores every field of `e` (a `SIMD`'s
+    /// `_mlir_value`, its storage, is `e` itself), and a read of a stored
+    /// field (`self.b = self.a + 1`) is the value stored. A docstring, a `var` or `comptime` binding, and a
     /// `comptime assert` may stand among the stores. `None` for any other
     /// statement (an augmented store, a store into a field's field), or a
     /// field the body leaves unstored.
@@ -494,7 +538,7 @@ impl Checker {
         }
         let spelling = self
             .param_context
-            .apply(symbol, &slots, MetaTy::value(self_ty));
+            .apply(symbol, &slots, MetaTy::value(self_ty.clone()));
         let mut stored: Vec<Option<ParamExpr>> = vec![None; declared.len()];
         for statement in declaration.body {
             let so_far: Vec<(String, ParamExpr)> = declared
@@ -506,6 +550,23 @@ impl Checker {
             self.local_comptime_parameters
                 .last_mut()?
                 .insert("self".to_string(), (level, this));
+            if let StmtKind::Assign { name, value, .. } = &statement.kind
+                && name == "self"
+            {
+                let whole = self.builtin_value(value, &self_ty)?;
+                for ((field, field_ty), slot) in declared.iter().zip(&mut stored) {
+                    *slot = Some(
+                        if mojito_types::types::storage_simd(field_ty).as_ref() == Some(&self_ty) {
+                            whole.clone()
+                        } else {
+                            self.param_context
+                                .field(&whole, field, MetaTy::value(field_ty.clone()))
+                                .ok()?
+                        },
+                    );
+                }
+                continue;
+            }
             let StmtKind::SetPlace { place, value } = &statement.kind else {
                 self.folded_leading_statement(statement, level)?;
                 continue;
@@ -528,8 +589,10 @@ impl Checker {
 
     /// Bind or drop `statement`, one a builtin body may hold before its
     /// result: a docstring or `pass`, a `var` or `comptime` binding bound at
-    /// `level`, or a `comptime assert`, which the pin's fold drops (a closed
-    /// one is the body check's to judge). `None` for any other statement.
+    /// `level`, or a `comptime assert` or a call of a builtin function with
+    /// no result (`_simd_construction_checks[Self.dtype, Self.length]()`),
+    /// which the pin's fold drops (a closed assert is the body check's to
+    /// judge). `None` for any other statement.
     fn folded_leading_statement(&mut self, statement: &Stmt, level: usize) -> Option<()> {
         match &statement.kind {
             StmtKind::Pass
@@ -538,6 +601,14 @@ impl Checker {
                 ..
             })
             | StmtKind::ComptimeAssert { .. } => Some(()),
+            StmtKind::Expr(Expr {
+                kind: ExprKind::Call { name, .. },
+                ..
+            }) if self.builtin_procedures.contains(name)
+                && self.binding_scope(name).is_none_or(|scope| scope == 0) =>
+            {
+                Some(())
+            }
             StmtKind::VarDecl { name, value, .. }
             | StmtKind::Comptime {
                 name,
@@ -557,8 +628,12 @@ impl Checker {
     }
 
     /// The parameter expression of a builtin body's value of type `ty`, a
-    /// closed one materialized at it.
+    /// closed one materialized at it. A value of type `!kgen.simd` is the
+    /// `SIMD` value whose storage it is, as the parameter domain reads a
+    /// vector's storage.
     fn builtin_value(&self, value: &Expr, ty: &Ty) -> Option<ParamExpr> {
+        let storage = mojito_types::types::storage_simd(ty);
+        let ty = storage.as_ref().unwrap_or(ty);
         let value = self.builtin_operand(value)?;
         let value = match value.as_constant() {
             Some(closed) => self
@@ -705,6 +780,40 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
     Some(operator)
 }
 
+/// The op, `_type=` attribute, and operand of ``__mlir_op.`pop.simd.splat`[_type=T](x)``
+/// or ``__mlir_op.`pop.cast`[_type=T](x)``, the typed ops a builtin
+/// `SIMD` initializer folds over, as `ParamOp::SimdSplat` and
+/// `ParamOp::Cast`. `None` for any other expression.
+pub(super) fn typed_lane_op(expr: &Expr) -> Option<(ParamOp, &mojito_ast::ast::ParamArg, &Expr)> {
+    let ExprKind::Invoke {
+        callee,
+        param_args,
+        args,
+        kwargs,
+    } = &expr.kind
+    else {
+        return None;
+    };
+    let ExprKind::Member { object, field } = &callee.kind else {
+        return None;
+    };
+    let op = match field.as_str() {
+        "pop.simd.splat" => ParamOp::SimdSplat,
+        "pop.cast" => ParamOp::Cast,
+        _ => return None,
+    };
+    match (&object.kind, param_args.as_slice(), args.as_slice()) {
+        (
+            ExprKind::Identifier(base),
+            [mojito_ast::ast::ParamArg::Named { name, value }],
+            [operand],
+        ) if base == "__mlir_op" && name == "_type" && kwargs.is_empty() => {
+            Some((op, value.as_ref(), operand))
+        }
+        _ => None,
+    }
+}
+
 /// Whether a builtin cast's `_type=` names one side of the `bool` pair:
 /// `__mlir_type.i1` or ``__mlir_type.`!kgen.scalar<bool>` ``.
 fn names_bool_builtin_pair(argument: &mojito_ast::ast::ParamArg) -> bool {
@@ -722,6 +831,31 @@ fn names_bool_builtin_pair(argument: &mojito_ast::ast::ParamArg) -> bool {
         }
         _ => false,
     }
+}
+
+/// The module functions `stmts` declare every declaration of which is
+/// `@always_inline("builtin")` with no result
+/// ([`Checker::builtin_procedures`]).
+fn builtin_procedures(stmts: &[Stmt]) -> HashSet<String> {
+    let mut procedures: HashMap<&str, bool> = HashMap::new();
+    for statement in stmts {
+        if let StmtKind::Def {
+            name,
+            decorators,
+            ret,
+            ..
+        } = &statement.kind
+        {
+            let procedure =
+                ret.is_none() && matches!(InlineLevel::of(decorators), Ok(InlineLevel::Builtin));
+            *procedures.entry(name).or_insert(true) &= procedure;
+        }
+    }
+    procedures
+        .into_iter()
+        .filter(|&(_, procedure)| procedure)
+        .map(|(name, _)| name.to_string())
+        .collect()
 }
 
 /// A rejection of a builtin body, in the pin's words.

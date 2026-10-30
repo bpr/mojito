@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time `SIMD` construction is now its declared initializer, in a
+  parameter, a type, or a module constant. A builtin one (`from_int=`, the
+  default, the `SIMDLength` and `Scalar[dtype]` splats) folds over the
+  parameter domain's new `pop.simd.splat` and `pop.cast` ops, so
+  `Tag[SIMD[DType.int32, 2](3)]` and `Tag[SIMD[DType.int32, 2](from_int=3)]`
+  are one type; any other (`fill=`, a cast) is an application the
+  elaborator runs on the VM. `f[SIMD[DType.bool, 2](fill=True)]()` and
+  `SIMD[DType.int32, 4]()` in a parameter now run, and a module constant
+  built with `fill=`, `from_int=`, or `()` no longer reads an unbound slot
+  (zeros on the VM). A refined initializer's `out self` must match the
+  instance, so `SIMD[DType.int32, 4](True)` is rejected as at the pin. The
+  lone-literal, element-list, and vector-alias constructions stay the
+  checker's until R1507, R1642, and R1646 (R1597).
+
 - `SIMD[dt, n](a, b, …)`, every alias spelling of it, an initializer list
   `{a, b}` into a `SIMD` slot, and the explicit `__list_literal__=None` now
   bind upstream's declared `__init__(out self, *elems: Scalar[Self.dtype],

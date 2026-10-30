@@ -174,6 +174,13 @@ pub(in crate::checker) struct ApplicableFunction {
     /// Whether it is declared `raises`, which no type or parameter argument
     /// may call.
     raises: bool,
+    /// A refined initializer's `out self` annotation (`out self:
+    /// Scalar[target_dtype]`): the type a construction's instance must
+    /// unify with, inferring the initializer's own parameters, as the pin
+    /// resolves the overload.
+    refined_self: Option<SourceType>,
+    /// Whether it is an `@implicit` initializer.
+    implicit: bool,
     /// The inline level its decorators name.
     pub(in crate::checker) inline: mojito_checked::declaration::InlineLevel,
     /// An `@always_inline("builtin")` body folded over
@@ -577,11 +584,13 @@ pub(super) fn applicable_declarations<'a>(
                             overloads,
                             constants,
                         );
-                        list(
-                            name.clone(),
-                            shape.applicable(symbol, on_instance, SelfSlot::Constructed),
-                            Some(method),
-                        );
+                        let function = shape
+                            .applicable(symbol, on_instance, SelfSlot::Constructed)
+                            .map(|function| ApplicableFunction {
+                                refined_self: method.self_type.clone(),
+                                ..function
+                            });
+                        list(name.clone(), function, Some(method));
                         continue;
                     }
                     // A method with `self` applies only when builtin, its
@@ -1375,20 +1384,43 @@ impl Checker {
         let TyKind::Struct(owner, _) = ty.kind() else {
             return Ok(None);
         };
-        let Some(conversion) = self.implicit_conversion_constructor(source, ty)? else {
-            return Ok(None);
-        };
         let name = template_name(owner).to_string();
-        let Some(function) = self.applicable_functions.get(&name).and_then(|overloads| {
-            overloads
-                .iter()
-                .find(|function| function.constructs() && function.symbol() == conversion.target)
-        }) else {
-            return Err(TypeError::Unsupported(format!(
-                "a parameter argument converted by '{}' is not supported yet: its parameter \
-                 type is not one a compile-time call applies",
-                conversion.target
-            )));
+        let overloads = self.applicable_functions.get(&name);
+        let function = match self.implicit_conversion_constructor(source, ty)? {
+            Some(conversion) => overloads
+                .and_then(|overloads| {
+                    overloads.iter().find(|function| {
+                        function.constructs() && function.symbol() == conversion.target
+                    })
+                })
+                .ok_or_else(|| {
+                    TypeError::Unsupported(format!(
+                        "a parameter argument converted by '{}' is not supported yet: its \
+                         parameter type is not one a compile-time call applies",
+                        conversion.target
+                    ))
+                })?,
+            // A builtin body folds before the struct's initializers
+            // register: its `@implicit` one taking `source` converts.
+            None if self
+                .structs
+                .get(owner)
+                .is_none_or(|info| !info.methods.contains_key("__init__")) =>
+            {
+                let Some(function) = overloads.and_then(|overloads| {
+                    overloads.iter().find(|function| {
+                        function.constructs()
+                            && function.implicit
+                            && function.refined_self.is_none()
+                            && matches!(function.params.as_slice(),
+                                [param] if param.ty.resolved(Some(ty)) == Some(source))
+                    })
+                }) else {
+                    return Ok(None);
+                };
+                function
+            }
+            None => return Ok(None),
         };
         let Some(argument) = function
             .params
@@ -1567,11 +1599,16 @@ impl Checker {
             SourceType::SelfType => Some(None),
             result => self.ty_from_anno(result).ok().map(Some),
         };
+        let refined_self = match &function.refined_self {
+            Some(refined) => self.ty_from_anno(refined).ok().map(Some),
+            None => Some(None),
+        };
         self.tparams.pop();
         Some((
             AppliedSignature {
                 decls,
                 result: result?,
+                refined_self: refined_self?,
             },
             params?,
         ))
@@ -1835,15 +1872,18 @@ impl Checker {
                 }
                 bindings.bind(id, argument.clone());
             }
-            let declared = match instance.as_ref().map(Ty::kind) {
-                Some(TyKind::Struct(owner, instance_args)) => {
+            let nominal = instance
+                .as_ref()
+                .and_then(mojito_types::types::nominal_parts);
+            let declared = match &nominal {
+                Some((owner, instance_args)) => {
                     let decls = &self.structs.get(template_name(owner))?.decls;
                     let declared =
                         mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
                     self.bind_declared(&mut bindings, decls, &declared).ok()?;
                     Some((decls, declared))
                 }
-                _ => None,
+                None => None,
             };
             let replaced = |expr: &ParamExpr| {
                 self.param_context
@@ -1859,6 +1899,17 @@ impl Checker {
                 FoldedBody::Value(value) => replaced(value).map(|folded| {
                     respelled_struct_value(&self.param_context, folded, &application)
                 }),
+                // A vector is its `_mlir_value` storage.
+                FoldedBody::Fields(fields)
+                    if nominal.as_ref().is_some_and(|(owner, _)| {
+                        *owner == mojito_types::types::SIMD_TYPE_NAME
+                    }) =>
+                {
+                    match fields.as_slice() {
+                        [(_, storage)] => replaced(storage),
+                        _ => None,
+                    }
+                }
                 FoldedBody::Fields(fields) => fields
                     .iter()
                     .map(|(name, value)| Some((name.clone(), replaced(value)?)))
@@ -1869,13 +1920,7 @@ impl Checker {
                 return folded;
             }
         }
-        // The elaborator constructs, and binds the parameters of, a
-        // declared struct only: a SIMD instance's constructor is no
-        // application.
-        instance
-            .as_ref()
-            .is_none_or(|instance| matches!(instance.kind(), TyKind::Struct(..)))
-            .then_some(application)
+        Some(application)
     }
 
     /// The name a call of `method` on `object` spells, the struct instance
@@ -2060,15 +2105,20 @@ impl Checker {
             .collect::<Option<Vec<_>>>()?;
         // A slot typed by its struct's parameters (`v: Self.T`) is typed at
         // the instance.
-        let at_owner = |ty: &Ty| match owner.map(Ty::kind) {
-            Some(TyKind::Struct(name, instance_args)) => self
-                .structs
-                .get(template_name(name))
-                .map_or_else(|| ty.clone(), |info| substitute_at(ty, info, instance_args)),
-            _ => ty.clone(),
+        let at_owner = |ty: &Ty| match owner.and_then(mojito_types::types::nominal_parts) {
+            Some((name, instance_args)) => self.structs.get(template_name(name)).map_or_else(
+                || ty.clone(),
+                |info| substitute_at(ty, info, &instance_args),
+            ),
+            None => ty.clone(),
         };
         let mut patterns = Vec::new();
         let mut actuals = Vec::new();
+        // A refined initializer's `out self` is the instance it constructs.
+        if let (Some(refined), Some(owner)) = (&signature.refined_self, owner) {
+            patterns.push(at_owner(refined));
+            actuals.push(owner.clone());
+        }
         for (argument, param) in supplied.iter().zip(&function.params) {
             if let (SlotType::Declared(_, declared), Some(argument)) = (&param.ty, argument) {
                 patterns.push(at_owner(declared.as_ref()?));
@@ -2089,6 +2139,11 @@ impl Checker {
             self.resolve_dependent_ty(&substitute(ty, &bound.subst), &values)
                 .ok()
         };
+        if let (Some(refined), Some(owner)) = (&signature.refined_self, owner)
+            && resolve(&at_owner(refined)).as_ref() != Some(owner)
+        {
+            return None;
+        }
         let mut arguments = Vec::with_capacity(signature.decls.len() + function.params.len());
         for (decl, argument) in signature.decls.iter().zip(&bound.arguments) {
             arguments.push(match (decl, argument) {
@@ -4648,6 +4703,9 @@ struct AppliedSignature {
     /// The result, unless it is `Self` or the instance an `__init__`
     /// constructs.
     result: Option<Ty>,
+    /// A refined initializer's `out self` type
+    /// ([`ApplicableFunction::refined_self`]).
+    refined_self: Option<Ty>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -4817,6 +4875,11 @@ impl ApplicableShape<'_> {
                 _ => return None,
             },
             raises: self.raises,
+            refined_self: None,
+            implicit: self
+                .decorators
+                .iter()
+                .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "implicit"),
             inline: mojito_checked::declaration::InlineLevel::of(self.decorators)
                 .unwrap_or_default(),
             folded_body: None,
