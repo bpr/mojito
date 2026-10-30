@@ -35,6 +35,9 @@ assets/ok/and_or_value_operands.mojo	main	exe-differential	sanitized
 assets/ok/application_generic_construction_parameter.mojo	main	exe-differential	sanitized
 assets/ok/application_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/application_struct_parameter.mojo	main	exe-differential	sanitized
+assets/ok/application_type_pack.mojo	main	exe-differential	sanitized
+assets/ok/application_value_pack.mojo	main	exe-differential	sanitized
+assets/ok/application_variadic_collector.mojo	main	exe-differential	sanitized
 assets/ok/application_where_clause.mojo	main	exe-differential	sanitized
 assets/ok/arithmetic.mojo	main	exe-differential	sanitized
 assets/ok/array_comparable.mojo	main	exe-differential	sanitized

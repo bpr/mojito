@@ -38,6 +38,9 @@ impl Checker {
             .listed_declarations(stmts)
             .into_iter()
             .filter(|declaration| declaration.function.inline == InlineLevel::Builtin)
+            // A callable with a collector folds no body: a call stays its
+            // application, which the elaborator runs.
+            .filter(|declaration| !declaration.function.has_collector())
             .collect();
         if let Some(error) = declarations.iter().find_map(|declaration| {
             self.in_owner_scope(declaration, |checker| {

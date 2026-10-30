@@ -242,6 +242,13 @@ impl VmBackend {
                     fields,
                 }
             }
+            CtValue::Tuple(items)
+                if let Some(target) = target
+                    && let Some(element) =
+                        mojito_types::types::variadic_list_element(target.kind()) =>
+            {
+                return self.thawed_variadic_list(prog, items, element, target);
+            }
             CtValue::Tuple(items) => {
                 let storage = match target.map(Ty::kind) {
                     Some(TyKind::Struct(name, _)) => {
@@ -304,6 +311,57 @@ impl VmBackend {
             Some(ty) => crate::runtime::coerce_checked(materialized, ty),
             None => materialized,
         })
+    }
+
+    /// The `VariadicList` `target` over `items`, each thawed at `element`,
+    /// as a call builds the list it passes a `*xs` collector
+    /// (`mir::variadic_list::build_variadic_list`), in compile-time memory:
+    /// each element stored where its pointer addresses it, the array of
+    /// those pointers stored, and the `Span` over the array's first element
+    /// and its length, which the list wraps. An empty list's array holds one
+    /// uninitialized pointer, so its span still addresses the array.
+    fn thawed_variadic_list(
+        &mut self,
+        prog: &Prog,
+        items: &[mojito_types::ct::CtValue],
+        element: &Ty,
+        target: &Ty,
+    ) -> Result<Value, RuntimeError> {
+        let mut pointers = Vec::with_capacity(items.len().max(1));
+        for item in items {
+            let value = self.thaw(prog, item, Some(element))?;
+            pointers.push(self.store_to_comptime_memory(value));
+        }
+        let length = pointers.len();
+        if pointers.is_empty() {
+            pointers.push(Value::UninitStorage(None));
+        }
+        let Value::Ref { frame, slot, .. } = self.store_to_comptime_memory(Value::Tuple(pointers))
+        else {
+            unreachable!("compile-time memory is addressed by reference");
+        };
+        let first = Value::Ref {
+            frame,
+            slot,
+            projection: vec![RefProjection::Index(0)],
+        };
+        let missing = || {
+            RuntimeError::Unsupported(format!(
+                "the variadic list `{target}` has no declared span to thaw into"
+            ))
+        };
+        let list_name = prog.declared_struct(Some(target)).ok_or_else(missing)?;
+        let [(_, span_ty)] = prog.structs[list_name].fields.as_slice() else {
+            return Err(missing());
+        };
+        let span_name = prog.declared_struct(Some(span_ty)).ok_or_else(missing)?;
+        let length = i64::try_from(length).map_err(|_| missing())?;
+        let span = super::calls::struct_value(
+            &prog.structs[span_name],
+            span_name,
+            vec![first, Value::Int(length)],
+        )?;
+        super::calls::struct_value(&prog.structs[list_name], list_name, vec![span])
     }
 
     /// Build an uninitialized `self` skeleton for `name` (fields = `None`).

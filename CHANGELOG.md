@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time call of a callable with a positional collector is now
+  its application with the arguments flat, as at the pin
+  (`total(n, Int(1))`), where it was rejected as "not an associated
+  comptime expression": a read or `var` `*xs` collector, a keyword
+  parameter past it, a `*xs: *Ts` collector binding its type pack, a
+  callable over a pack its call binds to nothing, and an initializer's
+  value pack from its own bracket or forwarded whole
+  (`StaticTuple[SIMDLength, 2].__init__[*mask]()`) run on both backends,
+  the elaborator passing the run as the `VariadicList` a run-time call
+  builds (R1642). An application whose argument reads the length of a
+  local display (`h(len(vals))`) is now answered in elaboration. Upstream's
+  `StringLiteral._from` is bundled. A
+  `NoneType` parameter (R1691), and so `SIMD`'s element list (R1692),
+  and a value pack of applications (R1688) are not applied yet. The
+  package format moves to `mojito-package 158`.
 - A ``__mlir_op.`pop.simd.shuffle` `` mask may now be computed from
   parameters, as upstream's `SIMD._shuffle_list` passes it: the storage
   of a `StaticTuple[SIMDLength, n]` parameter (`mask._mlir_value`) runs on

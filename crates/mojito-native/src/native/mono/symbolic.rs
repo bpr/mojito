@@ -403,8 +403,15 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
         .and_then(|answered| match &bindings.applications {
             // A type binder among the arguments is the type the instance
             // binds it to, and a type the type the instance substitutes,
-            // each application in it answered (`T[n=f()]()`).
+            // each application in it answered (`T[n=f()]()`). A builtin
+            // one is folded on the way up, so an application over it
+            // (`h(len(vals))`) is offered its constant arguments.
             Some(applications) => context.answer_applications(&answered, &mut |function, args| {
+                if let Some(value) =
+                    mojito_types::param_expr::builtin_application_value(function, args)
+                {
+                    return value.map(Some);
+                }
                 let args: Option<Vec<ParamExpr>> = args
                     .iter()
                     .map(|arg| match arg.kind() {

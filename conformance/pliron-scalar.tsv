@@ -35,6 +35,9 @@ assets/ok/and_or_value_operands.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_generic_construction_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/application_type_pack.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/application_value_pack.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/application_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_where_clause.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/arithmetic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_comparable.mojo	-	ineligible	no-scalar-entry-shape

@@ -939,6 +939,12 @@ Schema 1.142 adds the lane mask `lane_attribute { value: <param_expr> }`, a
 parameter), which elaboration closes to its lanes and verifies. The package
 format moves to `mojito-package 157`.
 
+The package format moves to `mojito-package 158` when a package interface's
+compile-time applicable callables record their positional collector apart
+from their runtime parameters, with its position and element type, so a
+callable with a `*xs` collector or a pack binder is applied by a
+compile-time call; the MIR schema is unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

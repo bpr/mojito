@@ -136,14 +136,16 @@ pub(super) struct ForwardedPack {
 /// A callable a compile-time call applies by name
 /// ([`Checker::called_application`]): a module `def`, a static method of a
 /// struct, a struct's `__init__`, or an `@always_inline("builtin")` method
-/// taking `self`. Its own compile-time parameters are any but a pack, an
-/// origin, or a callable; each runtime parameter is taken `read` or `var`
-/// at a type a parameter expression holds ([`parameter_value_type`]) —
-/// a scalar, a `String` (the domain's `StringLiteral`), a `DType`, a struct,
-/// its struct's `Self` or own parameters, or one of its own type
-/// parameters — and none is a collector; and it returns a scalar or a
-/// named type. A call binds its parameters as a runtime call's do
-/// ([`Checker::resolve_use_params`]), its `where` clauses included.
+/// taking `self`. Its own compile-time parameters are any but an origin or
+/// a callable, packs included; each runtime parameter is taken `read` or
+/// `var` at a type a parameter expression holds ([`parameter_value_type`])
+/// — a scalar, a `String` (the domain's `StringLiteral`), a `DType`, a
+/// struct, its struct's `Self` or own parameters, or one of its own type
+/// parameters — and so is each argument its positional collector takes,
+/// at its element or at its type pack's; it has no keyword collector; and
+/// it returns a scalar or a named type. A call binds its parameters as a
+/// runtime call's do ([`Checker::resolve_use_params`]), its `where` clauses
+/// included.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
     /// The MIR declaration the elaborator runs.
@@ -163,8 +165,12 @@ pub(in crate::checker) struct ApplicableFunction {
     /// classify, and a callable whose parameters do not is applied by no
     /// call.
     signature: Option<AppliedSignature>,
-    /// Its runtime parameters, in declared order.
+    /// Its runtime parameters, in declared order, but its collector.
     params: Vec<ApplicableParameter>,
+    /// Its positional collector, which a call passes the run of its
+    /// arguments at the collector's position, flat, as the pin's
+    /// application keeps them (`total(n, Int(1))`).
+    collector: Option<ApplicableCollector>,
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
     /// The declared result: a scalar, a `DType`, a named struct, one of its
@@ -251,36 +257,46 @@ impl ApplicableFunction {
                 Some((id.clone(), ty.into()))
             })
             .collect();
-        let receiver =
-            (self.self_slot == SelfSlot::Receiver).then(|| Some(("self", Some(owner?.clone()))));
-        let slots =
-            signature
-                .decls
-                .iter()
-                .map(|decl| match decl {
-                    ParamDecl::Value { name, ty, .. } => Some((name.as_str(), Some(ty.clone()))),
-                    ParamDecl::Type { name, .. } => Some((name.as_str(), None)),
-                })
-                .chain(receiver)
-                .chain(self.params.iter().map(|param| {
-                    Some((param.name.as_str(), Some(param.ty.resolved(owner)?.clone())))
-                }))
-                .collect::<Option<Vec<_>>>()?;
+        let receiver = (self.self_slot == SelfSlot::Receiver)
+            .then(|| Some(("self", Some(owner?.clone()), false)));
+        let mut slots = signature
+            .decls
+            .iter()
+            .map(|decl| match decl {
+                ParamDecl::Value { name, ty, .. } => Some((name.as_str(), Some(ty.clone()), false)),
+                ParamDecl::Type { name, .. } => Some((name.as_str(), None, false)),
+            })
+            .chain(receiver)
+            .chain(self.params.iter().map(|param| {
+                Some((
+                    param.name.as_str(),
+                    Some(param.ty.resolved(owner)?.clone()),
+                    false,
+                ))
+            }))
+            .collect::<Option<Vec<_>>>()?;
+        if let Some(collector) = &self.collector {
+            let element = collector.element.resolved(owner)?.clone();
+            slots.insert(
+                self.collector_slot()?,
+                (collector.name.as_str(), Some(element), true),
+            );
+        }
         Some(
             slots
                 .into_iter()
                 .enumerate()
-                .map(|(slot, (name, ty))| {
+                .map(|(slot, (name, ty, variadic))| {
                     let id = binder(slot, name).id;
                     if let Some(ty) = ty {
                         return ParamDecl::Value {
                             id,
                             name: name.to_string(),
-                            ty: substitute(&ty, &subst),
+                            ty: ParamDecl::value_list_ty(substitute(&ty, &subst), variadic),
                             default: None,
                             callable_default: None,
                             infer_only: false,
-                            variadic: false,
+                            variadic,
                             constraints: Vec::new(),
                         };
                     }
@@ -302,10 +318,60 @@ impl ApplicableFunction {
         )
     }
 
+    /// The [`Self::argument_slots`] position of its collector, which takes
+    /// the run of a call's arguments from there: past its own compile-time
+    /// parameters, its `self`, and the runtime parameters before it.
+    fn collector_slot(&self) -> Option<usize> {
+        self.collector
+            .as_ref()
+            .map(|collector| self.binders.len() + usize::from(self.takes_self()) + collector.index)
+    }
+
+    /// A call's flat `arguments` ([`Checker::called_application`]'s order)
+    /// bound to its `slots` ([`Self::argument_slots`]): a type slot its
+    /// argument's type, and its collector's run grouped into the one tuple
+    /// a run-time call passes it. `None` when the arguments are not one
+    /// call's.
+    fn grouped_arguments(
+        &self,
+        slots: &[ParamDecl],
+        arguments: &[ParamExpr],
+    ) -> Option<Vec<TyArg>> {
+        let mut grouped: Vec<CtValue> = arguments
+            .iter()
+            .map(|argument| argument.clone().into_value())
+            .collect();
+        if let Some(start) = self.collector_slot() {
+            let run = (arguments.len() + 1).checked_sub(slots.len())?;
+            let collected: Vec<CtValue> = grouped.drain(start..start.checked_add(run)?).collect();
+            grouped.insert(start, CtValue::Tuple(collected));
+        }
+        (grouped.len() == slots.len()).then(|| {
+            slots
+                .iter()
+                .zip(grouped)
+                .map(|(slot, argument)| match (slot, argument) {
+                    (ParamDecl::Type { .. }, CtValue::Type(ty)) => TyArg::Ty(ty),
+                    (ParamDecl::Type { .. }, CtValue::Expr(ref shape))
+                        if let ParamKind::TypeShape(ty) = shape.kind() =>
+                    {
+                        TyArg::Ty(ty.clone())
+                    }
+                    (_, argument) => TyArg::Val(argument),
+                })
+                .collect()
+        })
+    }
+
     /// Whether it is an `__init__`, whose result is the instance it
     /// constructs.
     pub(in crate::checker) fn constructs(&self) -> bool {
         self.self_slot == SelfSlot::Constructed
+    }
+
+    /// Whether it has a positional collector.
+    pub(in crate::checker) const fn has_collector(&self) -> bool {
+        self.collector.is_some()
     }
 
     /// Whether it is a method taking `self`.
@@ -1482,6 +1548,7 @@ impl Checker {
                         function.constructs()
                             && function.implicit
                             && function.refined_self.is_none()
+                            && function.collector.is_none()
                             && matches!(function.params.as_slice(),
                                 [param] if param.ty.resolved(Some(ty)) == Some(source))
                     })
@@ -1584,8 +1651,14 @@ impl Checker {
                 };
                 if let Some(entry) = self.applicable_entry(declaration) {
                     entry.signature = Some(signature);
-                    for (param, ty) in entry.params.iter_mut().zip(params) {
-                        if let SlotType::Declared(_, declared) = &mut param.ty {
+                    let slots = entry.params.iter_mut().map(|param| &mut param.ty).chain(
+                        entry
+                            .collector
+                            .as_mut()
+                            .map(|collector| &mut collector.element),
+                    );
+                    for (slot, ty) in slots.zip(params) {
+                        if let SlotType::Declared(_, declared) = slot {
                             *declared = ty;
                         }
                     }
@@ -1636,7 +1709,8 @@ impl Checker {
 
     /// `declaration`'s own compile-time parameters classified, its result
     /// over them, and the type of each runtime parameter its signature
-    /// declares rather than spells ([`SlotType::Declared`]).
+    /// declares rather than spells ([`SlotType::Declared`]), its
+    /// collector's element last.
     fn applied_signature(
         &mut self,
         declaration: &ApplicableDeclaration<'_>,
@@ -1659,7 +1733,14 @@ impl Checker {
         let params = function
             .params
             .iter()
-            .map(|param| match &param.ty {
+            .map(|param| &param.ty)
+            .chain(
+                function
+                    .collector
+                    .as_ref()
+                    .map(|collector| &collector.element),
+            )
+            .map(|slot| match slot {
                 SlotType::Declared(source, _) => self.ty_from_anno(source).ok().map(Some),
                 SlotType::Scalar(_) | SlotType::Owner => Some(None),
             })
@@ -1701,7 +1782,38 @@ impl Checker {
     /// spells it ([`Self::self_instance_spelling`]).
     fn selected_application(&self, expr: &Expr) -> Option<Selected<'_>> {
         let self_spelling;
+        // The construction bracket of an initializer called by name
+        // (`S[2].__init__[3, 0]()`), whose own bracket binds the
+        // initializer's own parameters, as its run-time call's does
+        // ([`Self::infer_initializer_call`]).
+        let mut explicit_initializer = None;
         let (name, instance, receiver, param_args, args, kwargs) = match &expr.kind {
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } if let ExprKind::Member { object, field } = &callee.kind
+                && field == "__init__"
+                && let Some((name, struct_args)) = match &object.kind {
+                    ExprKind::Identifier(name) => Some((name.as_str(), Vec::new())),
+                    _ => object
+                        .bracket_application()
+                        .map(|(name, args)| (name, args.into_owned())),
+                }
+                && self.lookup(name).is_none()
+                && self.structs.contains_key(name) =>
+            {
+                explicit_initializer = Some(struct_args);
+                (
+                    name.to_string(),
+                    None,
+                    None,
+                    param_args.as_slice(),
+                    args,
+                    kwargs,
+                )
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -1768,12 +1880,22 @@ impl Checker {
             .get(&name)?
             .iter()
             .filter(|function| function.takes_self() == receiver.is_some())
+            .filter(|function| explicit_initializer.is_none() || function.constructs())
             .filter_map(|function| {
                 // A generic struct's construction is bracketed by the
                 // instance it constructs (`G[2](n)`), not by binders of its
                 // `__init__`; spelled without them (`G(n)`), it constructs
                 // the instance its run-time construction infers.
                 let (instance, param_args) = match (function.constructs(), function.on_instance) {
+                    (true, true) if let Some(struct_args) = &explicit_initializer => (
+                        if struct_args.is_empty() {
+                            self.run_time_type(expr)
+                        } else {
+                            self.ty_from_anno(&SourceType::Named(name.clone(), struct_args.clone()))
+                                .ok()
+                        },
+                        param_args,
+                    ),
                     (true, true) if !param_args.is_empty() => (
                         self.ty_from_anno(&SourceType::Named(name.clone(), param_args.to_vec()))
                             .ok(),
@@ -2035,17 +2157,9 @@ impl Checker {
         let slots = selected
             .function
             .argument_slots(selected.instance.as_ref())?;
-        let arguments: Vec<TyArg> = slots
-            .iter()
-            .zip(&selected.arguments)
-            .map(|(slot, argument)| match (slot, argument.kind()) {
-                (ParamDecl::Type { .. }, ParamKind::TypeShape(ty)) => TyArg::Ty(ty.clone()),
-                (ParamDecl::Type { .. }, ParamKind::Constant(CtValue::Type(ty))) => {
-                    TyArg::Ty(ty.clone())
-                }
-                _ => TyArg::Val(argument.clone().into_value()),
-            })
-            .collect();
+        let arguments = selected
+            .function
+            .grouped_arguments(&slots, &selected.arguments)?;
         let instance = match selected.instance.as_ref().map(Ty::kind) {
             Some(TyKind::Struct(owner, instance_args)) => {
                 let decls = &self.structs.get(template_name(owner))?.decls;
@@ -2149,30 +2263,35 @@ impl Checker {
             args.len(),
             &keywords,
             CallVariadics {
-                positional: false,
+                positional: function.collector.is_some(),
                 keyword: false,
             },
         )
         .ok()?;
         // Each argument the call supplies is a compile-time value, built
         // once; one typed by a declared parameter binds that parameter.
+        let compiled = |argument: &Expr| {
+            // An initializer list is the construction its run-time typing
+            // spelled for the slot (`{1, 2}` at a `Box`).
+            let spelled = self.spelled_construction(argument);
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(spelled.as_ref().unwrap_or(argument))
+                .ok()
+        };
         let supplied = matched
             .slots
             .iter()
-            .map(|slot| {
-                let argument = match slot {
-                    ArgSlot::Positional(index) => &args[*index],
-                    ArgSlot::Keyword(index) => &kwargs[*index].value,
-                    ArgSlot::Default => return Some(None),
-                };
-                // An initializer list is the construction its run-time
-                // typing spelled for the slot (`{1, 2}` at a `Box`).
-                let spelled = self.spelled_construction(argument);
-                let _lifting = self.lifting_position();
-                self.compile_dependent_ct_expr(spelled.as_ref().unwrap_or(argument))
-                    .ok()
-                    .map(Some)
+            .map(|slot| match slot {
+                ArgSlot::Positional(index) => compiled(&args[*index]).map(Some),
+                ArgSlot::Keyword(index) => compiled(&kwargs[*index].value).map(Some),
+                ArgSlot::Default => Some(None),
             })
+            .collect::<Option<Vec<_>>>()?;
+        // The collector's run, each argument at its element.
+        let collected = matched
+            .positional_overflow
+            .iter()
+            .map(|index| compiled(&args[*index]))
             .collect::<Option<Vec<_>>>()?;
         // A slot typed by its struct's parameters (`v: Self.T`) is typed at
         // the instance.
@@ -2190,8 +2309,21 @@ impl Checker {
             patterns.push(at_owner(refined));
             actuals.push(owner.clone());
         }
-        for (argument, param) in supplied.iter().zip(&function.params) {
-            if let (SlotType::Declared(_, declared), Some(argument)) = (&param.ty, argument) {
+        let collector_element = function
+            .collector
+            .as_ref()
+            .map(|collector| &collector.element);
+        let typed_by_declaration = supplied
+            .iter()
+            .zip(&function.params)
+            .filter_map(|(argument, param)| Some((&param.ty, argument.as_ref()?)))
+            .chain(
+                collected
+                    .iter()
+                    .filter_map(|argument| Some((collector_element?, argument))),
+            );
+        for (slot, argument) in typed_by_declaration {
+            if let SlotType::Declared(_, declared) = slot {
                 patterns.push(at_owner(declared.as_ref()?));
                 actuals.push(
                     argument
@@ -2202,10 +2334,20 @@ impl Checker {
                 );
             }
         }
+        // Its own value parameters typed by its struct's (`*values:
+        // Self.element_type`) are typed at the instance.
+        let decls: Vec<ParamDecl> = signature
+            .decls
+            .iter()
+            .map(|decl| match decl {
+                ParamDecl::Value { ty, .. } => decl.with_value_type(at_owner(ty)),
+                ParamDecl::Type { .. } => decl.clone(),
+            })
+            .collect();
         let bound = self
-            .resolve_use_params(name, &signature.decls, param_args, &patterns, &actuals)
+            .resolve_use_params(name, &decls, param_args, &patterns, &actuals)
             .ok()?;
-        let values = Self::value_argument_environment(&signature.decls, &bound.arguments);
+        let values = Self::value_argument_environment(&decls, &bound.arguments);
         let resolve = |ty: &Ty| {
             self.resolve_dependent_ty(&substitute(ty, &bound.subst), &values)
                 .ok()
@@ -2215,11 +2357,33 @@ impl Checker {
         {
             return None;
         }
-        let mut arguments = Vec::with_capacity(signature.decls.len() + function.params.len());
-        for (decl, argument) in signature.decls.iter().zip(&bound.arguments) {
+        let mut arguments =
+            Vec::with_capacity(decls.len() + function.params.len() + collected.len());
+        for (decl, argument) in decls.iter().zip(&bound.arguments) {
             arguments.push(match (decl, argument) {
                 (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
                     self.param_context.type_shape(ty.clone())
+                }
+                // A type pack its collector bound is its element list.
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Val(list @ CtValue::Tuple(_))) => {
+                    self.param_context.constant(list.clone()).ok()?
+                }
+                // A value pack's elements are each its element's value.
+                (ParamDecl::Value { variadic: true, .. }, TyArg::Val(CtValue::Tuple(values))) => {
+                    let element = resolve(decl.value_element_ty()?)?;
+                    let values = values
+                        .iter()
+                        .map(|value| {
+                            self.applied_value(value.clone(), &element)
+                                .map(ParamExpr::into_value)
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    self.param_context.constant(CtValue::Tuple(values)).ok()?
+                }
+                // A caller's pack forwarded whole (`[*mask]`) is that pack,
+                // which the binding checked against the element.
+                (ParamDecl::Value { variadic: true, .. }, TyArg::Val(CtValue::Expr(pack))) => {
+                    pack.clone()
                 }
                 (ParamDecl::Value { ty, .. }, TyArg::Val(value)) => {
                     self.applied_value(value.clone(), &resolve(ty)?)?
@@ -2227,18 +2391,57 @@ impl Checker {
                 _ => return None,
             });
         }
+        let declared_ty = |slot: &SlotType| match slot {
+            SlotType::Declared(_, declared) => {
+                resolve(&at_owner(declared.as_ref()?)).filter(parameter_value_type)
+            }
+            slot => slot.resolved(owner).cloned(),
+        };
+        let mut applied_params = Vec::with_capacity(function.params.len());
         for (argument, param) in supplied.into_iter().zip(&function.params) {
-            let ty = match &param.ty {
-                SlotType::Declared(_, declared) => {
-                    resolve(&at_owner(declared.as_ref()?)).filter(parameter_value_type)?
-                }
-                slot_type => slot_type.resolved(owner)?.clone(),
-            };
-            arguments.push(match argument {
+            let ty = declared_ty(&param.ty)?;
+            applied_params.push(match argument {
                 Some(argument) => self.applied_value(argument.into_value(), &ty)?,
                 None => self.applied_default(param.default.as_ref()?, &ty)?,
             });
         }
+        // The run sits at the collector's position, flat, each argument at
+        // the collector's element, or at its own element of the type pack
+        // the collector is typed by.
+        let mut applied_run = Vec::with_capacity(collected.len());
+        if let Some(collector) = &function.collector {
+            let pack = match &collector.element {
+                SlotType::Declared(_, Some(declared)) => match declared.kind() {
+                    TyKind::Param { binder, .. } if binder.name.starts_with('*') => {
+                        let position = decls.iter().position(|decl| *decl.id() == binder.id)?;
+                        match &bound.arguments[position] {
+                            TyArg::Val(CtValue::Tuple(elements)) => Some(elements),
+                            _ => return None,
+                        }
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            for (index, argument) in collected.into_iter().enumerate() {
+                let ty = match pack {
+                    Some(elements) => match elements.get(index)? {
+                        CtValue::Type(ty) => ty.clone(),
+                        _ => return None,
+                    },
+                    None => declared_ty(&collector.element)?,
+                };
+                applied_run.push(self.applied_value(argument.into_value(), &ty)?);
+            }
+        }
+        let run_at = function
+            .collector
+            .as_ref()
+            .map_or(applied_params.len(), |collector| collector.index);
+        let after = applied_params.split_off(run_at.min(applied_params.len()));
+        arguments.extend(applied_params);
+        arguments.extend(applied_run);
+        arguments.extend(after);
         let result = match &signature.result {
             Some(result) => Some(resolve(result)?),
             None => None,
@@ -4786,6 +4989,19 @@ struct ApplicableParameter {
     default: Option<Expr>,
 }
 
+/// An [`ApplicableFunction`]'s positional collector (`*xs: Int`, `*xs:
+/// *Ts`), which takes the run of positional arguments past the parameters
+/// before it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ApplicableCollector {
+    /// Its position among the runtime parameters.
+    index: usize,
+    name: String,
+    /// The type of each argument it takes: one type, or a type pack
+    /// (`*Ts`), which takes each argument at its own element.
+    element: SlotType,
+}
+
 /// What an [`ApplicableFunction`]'s `self` is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum SelfSlot {
@@ -4876,7 +5092,6 @@ impl ApplicableShape<'_> {
             .map(|binder| {
                 (binder.callable_bound.is_none()
                     && binder.origin_mutability.is_none()
-                    && !binder.name.starts_with('*')
                     && !binder.is_erased_origin_param(self.type_params))
                 .then(|| binder.name.clone())
             })
@@ -4905,15 +5120,36 @@ impl ApplicableShape<'_> {
             }
             _ => None,
         };
+        let by_value = |param: &mojito_ast::ast::FnParam| {
+            matches!(
+                param.convention,
+                None | Some(ArgConvention::Imm | ArgConvention::Var)
+            )
+        };
+        let variadic = self
+            .params
+            .iter()
+            .position(|param| param.kind == mojito_ast::ast::ParamKind::Variadic);
+        let collector = match variadic {
+            Some(position) => {
+                let param = &self.params[position];
+                Some(ApplicableCollector {
+                    index: mojito_ast::call::regular_marker_index(self.params, Some(position))?,
+                    name: param.name.clone(),
+                    element: slot(&param.ty).filter(|_| by_value(param))?,
+                })
+            }
+            None => None,
+        };
+        // A keyword collector is no compile-time value, as the pin rejects
+        // `**kwargs` in a type.
         let params = self
             .params
             .iter()
+            .filter(|param| param.kind != mojito_ast::ast::ParamKind::Variadic)
             .map(|param| {
-                let passed_by_value = param.kind == mojito_ast::ast::ParamKind::Regular
-                    && matches!(
-                        param.convention,
-                        None | Some(ArgConvention::Imm | ArgConvention::Var)
-                    );
+                let passed_by_value =
+                    param.kind == mojito_ast::ast::ParamKind::Regular && by_value(param);
                 Some(ApplicableParameter {
                     name: param.name.clone(),
                     ty: slot(&param.ty).filter(|_| passed_by_value)?,
@@ -4928,8 +5164,16 @@ impl ApplicableShape<'_> {
             binders,
             signature: None,
             params,
-            positional_only: self.positional_only,
-            keyword_only: self.keyword_only,
+            collector,
+            positional_only: mojito_ast::call::regular_marker_index(
+                self.params,
+                self.positional_only,
+            ),
+            keyword_only: mojito_ast::call::effective_keyword_only_index(
+                self.params,
+                self.keyword_only,
+                variadic,
+            ),
             result: match self.ret {
                 SourceType::Int
                 | SourceType::UInt

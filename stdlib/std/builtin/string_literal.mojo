@@ -7,9 +7,7 @@
 # the default initializer's empty body constructs nothing. A bare run-time
 # `StringLiteral` argument is still a value-less compiler type rather than
 # upstream's `StringLiteral[_]` (R1658), which is why `_is_identical` spells
-# its `rhs` as `StringLiteral[_]`. `_from` is not ported: its
-# `_get_kgen_string[s]()` takes a parameter pack, which a compile-time call
-# in a signature does not apply yet (R1642). The comparisons and
+# its `rhs` as `StringLiteral[_]`. The comparisons and
 # `__add__` (R1653), `__hash__` (R1654), and the members whose bodies read
 # `StringSlice(self)` (R1655) are not ported, and for that reason
 # `write_to` and `write_repr_to` read `as_string_slice()`.
@@ -24,6 +22,7 @@
 These are Mojo built-ins, so you don't need to import them.
 """
 
+from std.collections.string.string_span import _get_kgen_string
 from std.span import Span
 from std.string import StaticString
 
@@ -53,6 +52,13 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
     def __init__(out self):
         """Constructor for any value."""
         pass
+
+    # ===-------------------------------------------------------------------===#
+    # Factory methods
+    # ===-------------------------------------------------------------------===#
+
+    comptime _from[s: StaticString] = StringLiteral[_get_kgen_string[s]()]
+    """Creates a string literal from a static string at compile time."""
 
     # ===-------------------------------------------------------------------===#
     # Trait implementations

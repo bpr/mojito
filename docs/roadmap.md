@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1691**.
+Next free ID: **R1693**.
 
 ## Ordered Work
 
@@ -155,64 +155,47 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1642 A variadic collector is no parameter of a compile-time
+- [ ] **R1691 A `NoneType` value is no parameter of a compile-time
   application**
 
-  `ApplicableShape::applicable` (`checker/comptime_validation.rs`) lists
-  no callable with a `*xs` collector, so a call of one denotes nothing in
-  a type, where the pin keeps it as the callee's application with its
-  arguments flat (`total(n, Int(1))`).
-  - Probe: `f[1](SIMD[DType.int8, total(1, 1)](1))` over `def f[n:
-    Int](x: SIMD[DType.int8, total(n, 1)]) -> SIMD[DType.int8, total(n,
-    1)]` and `def total(*xs: Int) -> Int` stops with "not a compile-time
-    Int constant: not an associated comptime expression". The pin prints
-    `[1, 1]`.
-  - Probe: `SIMD[DType.int8, total(n, 1)]` against `SIMD[DType.int8, n +
-    1]` is rejected at the pin naming `total(n, Int(1))`; Mojito stops
-    with the same "not an associated comptime expression".
-  - Probe: `SIMD[DType.int8, cnt(n, True)]` over `def cnt[*Ts:
-    AnyType](*xs: *Ts) -> Int` fails the same way. The pin prints `[1, 1]`
-    for `n = 5`.
-  - Probe: a compile-time parameter pack (`*extra: StaticString`) is
-    refused the same way: `ApplicableShape::applicable` lists no binder
-    starting with `*`. Upstream's `comptime _from[s: StaticString] =
-    StringLiteral[_get_kgen_string[s]()]` in `struct StringLiteral` makes
-    the std package fail with "not an associated comptime expression", so
-    `_from` is not ported; `StringLiteral._from["xyz"]()` prints `xyz` at
-    the pin. In a body the same call already runs, lifted as a thunk.
-  - Probe: `gather[mask=StaticTuple[SIMDLength, 2](1, 0)](v)` over `def
-    gather[n: SIMDLength, mask: StaticTuple[SIMDLength, n]]` is "not an
-    associated comptime expression": `StaticTuple`'s `*elems` initializer
-    is no application. The `fill=` spelling and a `comptime` binding run
-    (found while landing R1671, 2026-10-30).
-  - Probe: `comptime tup = StaticTuple[SIMDLength, 2].__init__[*mask]()`
-    then `first[tup]()`, in `def via[*mask: SIMDLength]`, fails with "not a
-    compile-time Int constant: tup", and so does `__init__[3, 0]()` with
-    literal elements. Reading `tup` locally runs. The pin prints `3` for
-    `via[3, 0]()`. This is `SIMD._shuffle_variadic`'s shape (R1683).
-  - Checker: `ApplicableFunction` records the collector's index and its
-    element `SlotType`, or the `*Ts` binder typing it. `Checker::applied_arguments`
-    matches with `CallVariadics { positional: true, .. }`, applies each
-    overflow argument at the element type, and binds a type pack through
-    `resolve_use_params`, one `Param(Ts)` pattern per overflow argument.
-  - Elaborator: `Specializer::demand_application` regroups the run at the
-    declaration's `variadic_index` into one `CtValue::Tuple`.
-  - VM: `VmBackend::thaw` gains a `VariadicList` target arm building what
-    `mir::variadic_list::build_variadic_list` builds. The type-pack
-    collector's `RuntimePack` arm exists.
-  - `tests/checker_test.rs`'s "a callable over a pack is applied by no
-    call yet" assertion flips.
-  - Probe: `var a: Tag[SIMD[DType.int32, 2](3)] = Tag[SIMD[DType.int32,
-    2](3, 3)]()` over `struct Tag[v: SIMD[DType.int32, 2]]` prints `ok`:
-    `SIMD`'s `*elems` initializer is no compile-time application, so
-    `Checker::staged_simd_construction` folds the element list to the
-    vector. The pin rejects it, keeping the list as the application
-    `SIMD(Int32(3), Int32(3), __list_literal__=NoneType(None))`. Delete
-    that element-list arm, `fn simd_construction`, and its
-    `SimdConstructionError` messages with the fix.
-  - Found while landing R1528 (2026-10-29).
+  `nn(n)` in a type, over `def nn(x: Int, *, tag: NoneType = None) ->
+  Int`, stops with "not a compile-time Int constant: not an associated
+  comptime expression", where the pin keeps the application `nn(n,
+  tag=NoneType(None))`.
+  - `ApplicableShape::applicable` (`checker/comptime_validation.rs`) gives
+    a `NoneType` parameter no `SlotType`, and `parameter_value_type`
+    refuses `TyKind::None`: no `CtValue` holds the `None` value, so no
+    parameter expression is one.
+  - Lever: a `CtValue` for `None` that `VmBackend::freeze` and `thaw` carry
+    as `Value::None`, admitted by `parameter_value_type`; upstream's
+    `NoneType(None)` construction once `NoneType` is declared (R428).
+  - Upstream's `SIMD` element-list initializer and `List`'s `var *values`
+    one both take `__list_literal__: NoneType = None`, so neither applies
+    at compile time (R1692, R1529).
+  - Found while landing R1642 (2026-10-30).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1692 `SIMD`'s element list in a parameter position is the
+  checker's fold, not an application**
+
+  `var a: Tag[SIMD[DType.int32, 2](3)] = Tag[SIMD[DType.int32, 2](3,
+  3)]()` over `struct Tag[v: SIMD[DType.int32, 2]]` prints `ok`, where the
+  pin rejects it, keeping the list as the application `SIMD(Int32(3),
+  Int32(3), __list_literal__=NoneType(None))`.
+  - `SIMD`'s `*elems` initializer is no compile-time application while its
+    `__list_literal__: NoneType` parameter has no value (R1691), so
+    `Checker::staged_simd_construction` (`checker/constraints.rs`) folds
+    the element list to the vector.
+  - Delete that `width > 1` element-list arm with the fix. `fn
+    simd_construction` stays while the vector-alias arm (`U256(0)`) does,
+    and `SimdConstructionError` stays in `mojito-types::ct` for MIR.
+  - Run `assets/ok/comptime_simd_initializer_applications.mojo` and every
+    fixture reading lanes of such a vector at check time: those reads then
+    need the elaborator.
+  - Found while landing R1642 (2026-10-30).
+  - Depends on R1691.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1643 A method taking `self` applies at compile time only when
   builtin**
@@ -299,7 +282,7 @@ which names the upstream pass each one follows. Each is measured by the
     `aggregate_value` goes.
   - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 3.
   - Found while landing R1386 (2026-10-26).
-  - Depends on R1528.
+  - Depends on R1528, R1691 (`List`'s `__list_literal__=NoneType(None)`).
   - Model: Fable, Planned.
 - [ ] **R1474 A predicate alias body or a struct header's condition is
   compiled without its binders in scope**
@@ -4701,6 +4684,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     instance does not fold to values.
   - Probe: `comptime u = StaticTuple[SIMDLength, 4].__init__[7, 2, 5,
     0]()` fails the same way.
+  - Probe: `first[StaticTuple[SIMDLength, 2].__init__[4, 1]()]()` over
+    `def first[t: StaticTuple[SIMDLength, 2]]()` stops with "not an
+    associated comptime expression", where the pin prints `4`. As an
+    application's argument the pack must be one parameter expression, and
+    `ParamContext::constant` refuses a tuple holding the `SIMDLength(4)`
+    applications. The `Int` form and the forwarded `[*mask]` apply.
   - Found while planning R1671 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6981,6 +6970,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     type, which lowering reads in place of its syntax, closes both.
   - Probe: `T[t].boxed.n` and `T[t].boxed(10).get()` over `comptime boxed
     = Box[Self.n + 1]`, which the pin prints as `4` and `14` for `t = 3`.
+  - Probe: a construction through a parameterized type member whose type
+    holds an application, `Lit._from["xyz"]()` over `comptime _from[s:
+    StaticString] = Lit[_get_kgen_string[s]()]` in a `struct Lit` over a
+    `!kgen.string` value, stops with "has no construction to spell"
+    (`infer_type_member_construction`), where the pin runs it.
+    `comptime L = Lit._from["xyz"]` then `L()` runs.
   - Probe: a member read through a bare struct name whose infer-only
     parameter has no default, `comptime v = T.four()` and `g[T.four()]()`
     over `struct T[n: Int, //]` with `comptime four = T[n=4]` and `def
@@ -10439,6 +10434,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `StringLiteral` in an expression is "Undefined variable", because
     `Type::StringLiteral` respells as an identifier no scope binds
     (`ast.rs`).
+  - Probe: `print(StringLiteral._from["xyz"]())`, upstream's bundled
+    factory, is "Undefined variable 'StringLiteral'" the same way; the pin
+    prints `xyz`.
   - Depends on R1657 (the value-less conversion source).
   - Model: Fable, Not Planned.
 

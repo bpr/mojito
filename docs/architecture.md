@@ -1183,6 +1183,11 @@ A value argument or default of a struct-typed parameter that is not of
 that struct converts as a run-time argument does: its value is the
 application of the `@implicit` `__init__` its own type selects
 (`Checker::implicit_parameter_application`), so `T[3]` is `T[W(3)]`.
+A callee with a positional collector, or over a type or value pack, is
+applied the same way, its collector's arguments flat at the collector's
+position (`total(n, 1)`); the elaborator regroups the run into the one
+list a run-time call passes, a `VariadicList` built in compile-time
+memory or the specialized pack's tuple.
 `not` and a conditional expression are the parameter domain's own
 operators (`eval_associated_ct`), never a function. A raising callee is
 rejected where it is called. `native::mono` runs the

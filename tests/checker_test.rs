@@ -2339,15 +2339,18 @@ fn called_generic_callable_binds_its_parameters_as_a_call_does() {
     .expect_err("an application is not its value");
     assert!(matches!(computed, TypeError::TypeMismatch { found, .. }
             if found == "SIMD[DType.int32, idt[Int](2)]"));
-    // A callable over a pack is applied by no call yet (R1642).
-    assert!(
-        check_with_std(&format!(
-            "{prefix}def packed[n: Int]() -> SIMD[DType.int32, many(n)]:\n    \
-             return SIMD[DType.int32, many(n)](7)\n\n\
-             def main():\n    var p = packed[2]()\n"
-        ))
-        .is_err()
-    );
+    // A callable over a pack is applied as any other, and its application
+    // is not its value either.
+    let packed = "def packed[n: Int]() -> SIMD[DType.int32, many(n)]:\n    \
+        return SIMD[DType.int32, many(n)](7)\n\n";
+    ok_std(&format!(
+        "{prefix}{packed}def main():\n    var p = packed[2]()\n"
+    ));
+    let unfolded = check_with_std(&format!(
+        "{prefix}{packed}def main():\n    var p: SIMD[DType.int32, 2] = packed[2]()\n"
+    ))
+    .expect_err("an application over a pack is not its value");
+    assert!(matches!(unfolded, TypeError::TypeMismatch { .. }));
 }
 
 #[test]

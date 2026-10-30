@@ -1999,8 +1999,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   run-time call does (explicit bracket arguments, inference from the
   runtime arguments its parameter types read, defaults; a type
   parameter's argument its type shape), and orders the runtime arguments
-  through `ast::call::match_call_slots`
-  with `applied_default` for an omitted one (an initializer-list argument
+  through `ast::call::match_call_slots`, a positional collector
+  (`ApplicableCollector`, kept apart from the runtime parameters) taking
+  the run flat at its position, each argument at its element or at its
+  type pack's (`*xs: *Ts`), which `ApplicableFunction::grouped_arguments`
+  regroups for a `where` clause and `Specializer::demand_application`
+  regroups into the one list the callee's collector slot takes, thawed at
+  a `VariadicList` slot by `VmBackend::thawed_variadic_list`
+  (`backend/vm/adapters.rs`) as `mir::variadic_list::build_variadic_list`
+  builds it; an initializer called by name (`S[2].__init__[3, 0]()`) is
+  selected as its construction, its own bracket binding the initializer's
+  parameters, with `applied_default` for an omitted one (an initializer-list argument
   compiled as the construction its run-time typing spelled), a SIMD
   instance's constructor that does not fold applying nothing, `calls_raising_application`
   backs the raising-callee rejection in `eval_associated_ct`,

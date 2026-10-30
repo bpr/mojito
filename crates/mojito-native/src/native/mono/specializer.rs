@@ -1529,6 +1529,16 @@ impl<'a> Specializer<'a> {
         let arity = |decls: &[ParamDecl]| {
             decls.len() + usize::from(receives) + declaration.param_types.len()
         };
+        // A positional collector takes a run of any length, flat, as the
+        // check applies it (`total(n, 1)`).
+        let collects = declaration.variadic.is_some();
+        let takes = |decls: &[ParamDecl], count: usize| {
+            if collects {
+                count >= arity(decls)
+            } else {
+                count == arity(decls)
+            }
+        };
         // A static method of a generic struct is applied to the instance it
         // is called on first (`G[n].f()`). A struct whose parameters are all
         // origins binds none of them, since origins are erased, but its
@@ -1539,7 +1549,7 @@ impl<'a> Specializer<'a> {
             .and_then(|(name, _)| self.structs.get(name).map(|owner| (name, owner)))
             .filter(|(name, owner)| {
                 !owner.param_decls.is_empty()
-                    || (args.len() == arity(&declaration.param_decls) + 1
+                    || (takes(&declaration.param_decls, args.len().saturating_sub(1))
                         && args.first().is_some_and(|arg| names_instance_of(arg, name)))
             })
             .map(|(_, owner)| owner);
@@ -1554,7 +1564,7 @@ impl<'a> Specializer<'a> {
             owner_covered_prefix(&owner.param_decls, &declaration.param_decls)
         })..];
         let parameters = arity(own_decls);
-        if parameters != args.len() {
+        if !takes(own_decls, args.len()) {
             return Err(self.error(
                 Some(template),
                 format!(
@@ -1579,7 +1589,25 @@ impl<'a> Specializer<'a> {
                 )
             })?);
         }
-        let called = called_values;
+        let mut called = called_values;
+        // The collector's run is the one list a call passes it, at its
+        // slot.
+        if collects {
+            // An initializer's `out self` is its first slot, which no
+            // argument carries.
+            let offset = usize::from(declaration.has_receiver && !receives);
+            let declared = parameters - own_decls.len();
+            let start = (0..=declared)
+                .find(|&slot| {
+                    declaration.slot_parameter(slot + offset)
+                        == mojito_checked::declaration::SlotParameter::Variadic
+                })
+                .unwrap_or(declared);
+            let run = called.len() - declared;
+            let collected: Vec<CtValue> = called.drain(start..start + run).collect();
+            called.insert(start, CtValue::Tuple(collected));
+        }
+        let called = called;
         let removed = self.removed_params(function, false);
         // A removed binder's argument may not resolve: its error is dropped.
         let parameter_values = own_decls
