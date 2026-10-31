@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1751**.
+Next free ID: **R1753**.
 
 ## Ordered Work
 
@@ -3061,6 +3061,32 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     uninitialized value 'f'", where the pin warns the transfer has no
     effect and prints `2 3`.
   - Found while landing R1367 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1752 `FloatLiteral` is not a parameter type**
+
+  Problem: `def f(x: FloatLiteral)` reports "unknown type 'FloatLiteral'",
+  where the pin binds a float literal argument to it exactly.
+  - R1532 did this for `IntLiteral`; mirror it: `bare_literal` in
+    `type_resolution.rs`, `is_literal_annotation` in `declarations.rs`, the
+    parameter's slot type in `comptime_validation.rs`, an exact rank in
+    `overload_support.rs`'s `conversion_count` (so it outranks `Float64`
+    and a generic `SIMD[_, _]`), and a `KeyMode::Overload` key of its own
+    in `mojito-symbol`'s `ty_raw_in`.
+  - `Self(exp)` over the materialized `Float64` rounds twice for a
+    `float32` `Self`, where the pin rounds the literal once; note that
+    beside R1507, which owns value-carrying literals.
+  - Probe: `print(f(0.5))` over `def f(x: FloatLiteral) -> Float64:
+    return Float64(x)` prints `0.5` at the pin.
+  - Probe: upstream's `SIMD.__pow__(self, exp: FloatLiteral)` (R1567):
+    `SIMD[DType.float32, 4](1, 2, 3, 4) ** 0.5` prints `[1.0, 1.4142135,
+    1.7320508, 2.0]`, and `2 ** 0.5` fails its "a float literal exponent
+    requires a floating point SIMD type" constraint.
+  - Fixtures: `assets/ok/float_literal_parameter_overload.mojo`, mirroring
+    `int_literal_parameter_overload.mojo`, and a `type_error` for a bare
+    local `FloatLiteral`.
+  - Found while planning R1567 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10898,6 +10924,32 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R1751 A qualified `import` of a package still loading binds none
+  of its re-exports**
+
+  Problem: a module on a package's import cycle that writes `import p.ma`
+  and calls `p.ma.ex(x)` reports "Undefined variable 'p'", where the pin
+  resolves the re-export on demand and runs.
+  - `Linker::apply_import` → `bind_namespace_tree`
+    (`crates/mojito-module/src/module.rs`) copies `self.exports[canon]`
+    while the package is still loading, before its `__init__`'s pending
+    re-exports are published, so `rewrite_program` finds no `ex` under
+    `p.ma`.
+  - R1724 already resolves the `from p.ma import ex` spelling on demand
+    (`resolve_pending`). Extend that mechanism to the `import` form: keep
+    the canonical module key beside each namespace, and when the qualified
+    rewrite misses a name of a module with pending imports, resolve it and
+    read the export again. Test beside R1724's in `tests/module_test.rs`.
+  - Probe: package `p` with `p/ma/__init__.mojo` = `from .mm import ex`,
+    `p/ma/mm.mojo` importing `from p.sim import helper`, and `p/sim.mojo`
+    doing `import p.ma` and calling `p.ma.ex(x) + 1`; a `main` importing
+    `p.ma` first prints `102 103` at the pin.
+  - Probe: upstream's `std.simd` writes `import std.math` and calls
+    `std.math.exp`/`std.math.log` in `_powf_scalar` (R1567).
+  - Found while planning R1567 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
   `__pow__` over `_pow`**
 
@@ -10916,9 +10968,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     not defined for Int32 and Int", "… Int32 and Int32"), where the pin
     prints `9`. The rule serves only `Int`, `UInt`, `Float64`, and a
     `float64` lane.
-  - Probe: `Int(2) ** -1`, `Float64(2) ** -1`, and `Int(-1) ** -3` trap
-    ("'**' exponent must be a non-negative Int"), where the pin prints `0
-    0.5 -1`.
+  - Probe: `Int(2) ** -1` and `Int(-1) ** -3` trap ("'**' exponent must
+    be a non-negative Int"), where the pin prints `0 -1`.
+  - A bundled module has no prelude, so `std.simd` imports `all` and `abs`
+    explicitly for the port.
   - Probe: `v ** SIMD[DType.int32, 2](2, -1)` over `SIMD[DType.float64,
     2]`, and `2.0 ** v`, fail at the pin with "The SIMD types must be
     identical or else the exponent must be a scalar."
@@ -10942,7 +10995,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets-mojo-output-diffs.tsv` row.
   - Plan: `R1567-simd-s-plan.md`, Part B.
   - Depends on R333, R1661, R1708, R1709, R1710, R1711, R1714, R1717,
-    R1722, and R1743.
+    R1722, R1743, R1751, and R1752.
   - Model: Fable, Planned.
 
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
