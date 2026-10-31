@@ -22,11 +22,6 @@ impl Checker {
         // they miss falls through to the package's.
         std::sync::Arc::make_mut(&mut self.overload_sets).scan_more(stmts);
         self.default_wrappers = self.plan_default_wrappers(stmts)?;
-        self.method_binder_owners = mojito_symbol::symbol::MethodBinderOwners::scan(
-            stmts,
-            &*self.overload_sets,
-            &*self.program_constants,
-        );
         let applicable = super::comptime_validation::applicable_functions(
             stmts,
             &*self.overload_sets,
@@ -3489,7 +3484,7 @@ impl Checker {
                 TypeError::InvariantViolation(format!("overload '{name}' has no callable type"))
             })
         };
-        let provisional = mojito_symbol::symbol::naming_owner(name);
+        let provisional = mojito_symbol::symbol::naming_owner(name, stmt.syntax_id.0);
         if type_params.is_empty() {
             // Binder-free, the signature types the same under any owner.
             let mut signature =

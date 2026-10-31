@@ -1198,101 +1198,13 @@ pub fn lifecycle_name<P: AnnotatedParam>(shape: LifecycleShape<'_, P>) -> &str {
     }
 }
 
-/// The declaration that owns each struct method's own binders.
-///
-/// It is `Struct.method`, or for an overloaded method the symbol it lowers
-/// to, so two overloads own distinct binders. The checker and the
-/// elaborator both number a method's binders under this owner.
-#[derive(Debug, Clone, Default)]
-pub struct MethodBinderOwners {
-    /// The lowered symbol of every overloaded method, keyed by its struct
-    /// and beside the declaration it lowers: overloads differ in name or
-    /// signature, never in both alike. Its signature qualifier is the one a
-    /// call selecting that overload records.
-    overloaded: HashMap<String, Vec<(OverloadDeclaration, String)>>,
-}
-
-impl MethodBinderOwners {
-    pub fn scan(program: &[Stmt], sets: &impl OverloadLookup, constants: &dyn ModuleNames) -> Self {
-        let overloaded = program
-            .iter()
-            .filter_map(|statement| match &statement.kind {
-                StmtKind::Struct {
-                    name,
-                    type_params,
-                    methods,
-                    ..
-                } => Some((name, type_params, methods)),
-                _ => None,
-            })
-            .flat_map(|(name, type_params, methods)| {
-                methods
-                    .iter()
-                    .filter(|m| specialization_template(&m.name).is_none())
-                    .filter_map(move |m| {
-                        let source = format!("{name}.{}", lifecycle_method_name(m));
-                        let lowered = lowered_method_name(
-                            &source,
-                            type_params,
-                            MethodShape::of(m),
-                            sets,
-                            constants,
-                        );
-                        (lowered != source)
-                            .then(|| (name.clone(), (OverloadDeclaration::of(m), lowered)))
-                    })
-            })
-            .fold(
-                HashMap::<String, Vec<_>>::new(),
-                |mut overloaded, (template, entry)| {
-                    overloaded.entry(template).or_default().push(entry);
-                    overloaded
-                },
-            );
-        Self { overloaded }
-    }
-
-    /// The owner of `m`'s own binders on the struct `owner` names, a
-    /// template or one of its specializations.
-    pub fn owner(&self, owner: &str, m: &Method) -> String {
-        let template = specialization_template(owner).unwrap_or(owner);
-        self.lowered(template, m).map_or_else(
-            || {
-                format!(
-                    "{template}.{}",
-                    specialization_template(&m.name).unwrap_or(&m.name)
-                )
-            },
-            str::to_string,
-        )
-    }
-}
-
-impl MethodBinderOwners {
-    /// The signature qualifier a call selecting `m` records
-    /// (`$ov$T$Copyable$Int`), when `m` is one of several overloads on the
-    /// struct `owner` names.
-    pub fn call_qualifier(&self, owner: &str, m: &Method) -> Option<&str> {
-        self.lowered(owner, m)
-            .or_else(|| self.lowered(specialization_template(owner)?, m))
-            .and_then(overload_qualifier)
-    }
-
-    /// The lowered symbol of the overloaded method on `template` that `m`
-    /// declares.
-    fn lowered(&self, template: &str, m: &Method) -> Option<&str> {
-        self.overloaded
-            .get(template)?
-            .iter()
-            .find(|(declaration, _)| declaration.declares(m))
-            .map(|(_, lowered)| lowered.as_str())
-    }
-}
-
-/// The provisional owner of an overloaded declaration `name`'s binders while
+/// The provisional owner of overloaded declaration `name`'s binders while
 /// its signature is typed to spell its symbol; no lowered symbol spells it.
-pub fn naming_owner(name: &str) -> String {
-    format!("{name}@naming")
+///
+/// `site` tells one overload of `name` from another, since a binder is
+/// identified by its owner and slot alone, not by its spelling.
+pub fn naming_owner(name: &str, site: u64) -> String {
+    format!("{name}@naming{site}")
 }
 
 /// The lifted name of a nested `def` (`inner` declared inside `outer`).
@@ -3386,40 +3298,6 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         }
         // `mangle_parts` validated the whole key before encoding began.
         CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => {}
-    }
-}
-
-/// What tells one overloaded method from another: its name and the
-/// signature facts its lowered symbol spells.
-#[derive(Debug, Clone)]
-struct OverloadDeclaration {
-    name: String,
-    type_params: Vec<TypeParam>,
-    params: Vec<FnParam>,
-    keyword_only: Option<usize>,
-    has_self: bool,
-    self_convention: Option<ArgConvention>,
-}
-
-impl OverloadDeclaration {
-    fn of(m: &Method) -> Self {
-        Self {
-            name: m.name.clone(),
-            type_params: m.type_params.clone(),
-            params: m.params.clone(),
-            keyword_only: m.keyword_only,
-            has_self: m.has_self,
-            self_convention: m.self_convention,
-        }
-    }
-
-    fn declares(&self, m: &Method) -> bool {
-        self.name == m.name
-            && self.has_self == m.has_self
-            && self.self_convention == m.self_convention
-            && self.keyword_only == m.keyword_only
-            && self.params == m.params
-            && self.type_params == m.type_params
     }
 }
 

@@ -1689,18 +1689,22 @@ second expression tree.
   (`callable_lowered_name`); a generic overload's signature is typed first
   under a provisional owner (`symbol::naming_owner`) to spell it, its lifts
   there forgotten, and then again under the symbol. An overloaded struct method is owned the
-  same way, by the symbol its template lowers to (`Box.pick$ov$…`):
-  `symbol::MethodBinderOwners` computes it once per struct and keys it by
-  the struct and the method's declaration (its name and the signature facts
-  its symbol spells), never by its body, which a packaged declaration does
-  not carry. The lowered symbol spells the method's own binders
+  same way, by the symbol its template lowers to (`Box.pick$ov$…`): the
+  check spells it once from the method's registered `MethodSig`
+  (`register_struct_method_signatures`, `method_lowered_name`, a generic
+  one's signature typed first under `naming_owner`), records it per
+  `GenericSite::Method` (`Checker::method_binder_owner` reads it, a `$`
+  clone its template's), and the checked builder declares the method under
+  it. A packaged method is named by its package build's check and imported
+  with its `MethodSig::overload`, never from its body, which a packaged
+  declaration does not carry. The lowered symbol spells the method's own binders
   with their bounds (`First.pick$ov$T$Copyable$Int`), a callable bound
   (`F$Callable$def…`), and an existential `Some[Trait]` parameter
   (`Some$u5B$Writer$u5D$$Writer`) exactly as the checker's `TyKind::Param`
   spells a call's selected overload, so the symbol a call names is the one
   MIR declares. The checker and the elaborator
-  (`comptime/params.rs`, `elaborated_binder`) both name a method's binders
-  through it, and both number a binder by `TypeParam::binder_slot` — its
+  (`comptime/params.rs`, `elaborated_binder`, which classifies with no
+  method owner) both number a binder by `TypeParam::binder_slot` — its
   position with the erased `Origin`/`OriginSet` parameters and their
   mutability binders skipped — so one binder has one id in both. A trait requirement is owned by
   `Trait.method`, or, overloaded, by the symbol `lowered_method_name` gives

@@ -999,6 +999,9 @@ It moves to `mojito-package 168` when a package's compile-time application
 records keep an overloaded `def`'s key apart from the symbol the check
 spelled from its typed signature.
 
+It moves to `mojito-package 169` when a package's overloaded methods are
+declared under the symbol the check spells from their typed signatures.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

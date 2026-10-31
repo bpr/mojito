@@ -108,8 +108,8 @@ pub(super) fn classify_ct_param(
 
 /// The identity of an elaborator-classified binder, as the checker numbers
 /// it: the declaration `owner` names — its template, so a `$` clone shares
-/// its template's binders; a method's is
-/// [`mojito_symbol::symbol::MethodBinderOwners::owner`] — and the binder's
+/// its template's binders; an overloaded method's is the symbol the check
+/// spelled from its typed signature — and the binder's
 /// slot among its siblings, erased origin parameters skipped.
 pub(super) fn elaborated_binder(
     tp: &TypeParam,

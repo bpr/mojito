@@ -8,7 +8,7 @@ use super::decorators::DecoratorSite;
 use super::*;
 use crate::explicit_destroy::Linear;
 use mojito_checked::declaration::{Witness, WitnessTable};
-use mojito_symbol::symbol::{TRAIT_DISPATCH, qualified_method_symbol};
+use mojito_symbol::symbol::{OverloadLookup, TRAIT_DISPATCH, qualified_method_symbol};
 use mojito_types::conformance::{
     Conformance, LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule,
 };
@@ -890,59 +890,16 @@ impl Checker {
         self.generated_declaration.set(name.contains('$'));
         for (method_index, m) in declaration.methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m);
-            let method_decls =
-                self.classify_params(&self.method_binder_owner(name, m), &m.type_params)?;
+            let (all_types, mut sig) =
+                self.declared_method_signature(declaration, method_index, m)?;
             self.generic_parameters.borrow_mut().insert(
                 mojito_checked::checked::GenericSite::Method {
                     module: declaration.module.clone(),
                     declaration: name.to_string(),
                     method: method_index,
                 },
-                method_decls.clone(),
+                sig.decls.clone(),
             );
-            self.push_param_scope(&method_decls);
-            let saved_method_type_params = self.enclosing_type_params.clone();
-            let saved_struct_count = self
-                .enclosing_struct_type_params
-                .replace(saved_method_type_params.len());
-            self.enclosing_type_params.extend(m.type_params.clone());
-            // The method's own `where` clause refines its signature exactly as
-            // it refines its body: a conditionally available method may name
-            // types its receiver's bare bounds do not admit.
-            let signature = match self.method_where_assumptions(
-                &m.where_clauses,
-                &super::declarations::method_arguments(m),
-                &method_decls,
-            ) {
-                Ok(assumptions) => {
-                    self.push_assumptions(assumptions);
-                    let receiver = self.self_ty.clone().filter(|_| m.has_self);
-                    let signature = self.in_signature_scope(receiver.as_ref(), |this| {
-                        let all_types = this.param_tys(&m.params)?;
-                        let sig = this.method_sig(m, method_decls, &all_types)?;
-                        if !name.contains('$') && !m.name.contains('$') {
-                            this.check_result_origins(
-                                m.ret.as_ref(),
-                                &m.params,
-                                &all_types,
-                                receiver.as_ref().map(|ty| (m.self_convention, ty)),
-                            )?;
-                        }
-                        Ok((all_types, sig))
-                    });
-                    self.pop_assumptions();
-                    signature
-                }
-                Err(error) => Err(error),
-            };
-            self.enclosing_type_params = saved_method_type_params;
-            self.enclosing_struct_type_params.set(saved_struct_count);
-            self.tparams.pop();
-            let (all_types, mut sig) = signature?;
-            sig.overload = self
-                .method_binder_owners
-                .call_qualifier(name, m)
-                .map(str::to_string);
             if let Some(info) = self.structs.get(name) {
                 sig.parametric_origin_writes =
                     parametric_origin_writes_in_body(&m.body, &info.fields);
@@ -1006,6 +963,130 @@ impl Checker {
             overloads.push(sig);
         }
         self.register_default_wrappers(declaration)
+    }
+
+    /// Method `m`'s parameter types and signature, the `method_index`-th of
+    /// struct `declaration`: an overloaded one's binders owned by the symbol
+    /// the check spells once from its typed signature, the key a call to it
+    /// spells, which [`Self::method_binder_owner`] then reads.
+    fn declared_method_signature(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        method_index: usize,
+        m: &Method,
+    ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
+        let name = declaration.name;
+        let module = declaration.module.as_ref();
+        let method_name = lifecycle_method_name(m);
+        let overloaded = self
+            .overload_sets
+            .method_is_overloaded(&format!("{name}.{method_name}"), m.params.len());
+        if !overloaded {
+            let owner = self.method_binder_owner(module, name, method_index, m);
+            return self.method_signature_owned_by(declaration, m, &owner);
+        }
+        let recorded = self.recorded_method_owner(module, name, method_index);
+        let provisional = mojito_symbol::symbol::naming_owner(name, method_index as u64);
+        let (all_types, mut sig, owned_by) = match recorded {
+            Some(owner) => {
+                let (all_types, sig) = self.method_signature_owned_by(declaration, m, &owner)?;
+                (all_types, sig, None)
+            }
+            // Binder-free, the signature types the same under any owner.
+            None if m.type_params.is_empty() => {
+                let (all_types, sig) =
+                    self.method_signature_owned_by(declaration, m, &provisional)?;
+                (all_types, sig, None)
+            }
+            None => {
+                // The binders are owned by the symbol the typed signature
+                // spells, so the signature is typed under a provisional owner
+                // to spell it, and its lifts there are forgotten.
+                let lifted = self.lifted_applications.borrow().len();
+                let counts = self.lifted_counts.borrow().clone();
+                let named = self.method_signature_owned_by(declaration, m, &provisional);
+                self.lifted_applications.borrow_mut().truncate(lifted);
+                *self.lifted_counts.borrow_mut() = counts;
+                let symbol = method_lowered_name(
+                    name,
+                    method_name,
+                    &named?.1,
+                    self.self_instance_ty(name).as_ref(),
+                );
+                let (all_types, sig) = self.method_signature_owned_by(declaration, m, &symbol)?;
+                (all_types, sig, Some(symbol))
+            }
+        };
+        let site = mojito_checked::checked::GenericSite::Method {
+            module: declaration.module.clone(),
+            declaration: name.to_string(),
+            method: method_index,
+        };
+        // A clone's own symbol is spelled from its own signature, whose
+        // binders its template's symbol owns.
+        let symbol = owned_by.unwrap_or_else(|| {
+            method_lowered_name(
+                name,
+                method_name,
+                &sig,
+                self.self_instance_ty(name).as_ref(),
+            )
+        });
+        sig.overload = mojito_symbol::symbol::overload_qualifier(&symbol).map(str::to_string);
+        self.name_applicable_method(name, declaration.type_params, m, &symbol);
+        self.declaration_symbols.borrow_mut().insert(site, symbol);
+        Ok((all_types, sig))
+    }
+
+    /// Method `m`'s parameter types and signature on struct `declaration`,
+    /// its own binders owned by `owner`.
+    fn method_signature_owned_by(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        m: &Method,
+        owner: &str,
+    ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
+        let name = declaration.name;
+        let method_decls = self.classify_params(owner, &m.type_params)?;
+        self.push_param_scope(&method_decls);
+        let saved_method_type_params = self.enclosing_type_params.clone();
+        let saved_struct_count = self
+            .enclosing_struct_type_params
+            .replace(saved_method_type_params.len());
+        self.enclosing_type_params.extend(m.type_params.clone());
+        // The method's own `where` clause refines its signature exactly as
+        // it refines its body: a conditionally available method may name
+        // types its receiver's bare bounds do not admit.
+        let signature = match self.method_where_assumptions(
+            &m.where_clauses,
+            &super::declarations::method_arguments(m),
+            &method_decls,
+        ) {
+            Ok(assumptions) => {
+                self.push_assumptions(assumptions);
+                let receiver = self.self_ty.clone().filter(|_| m.has_self);
+                let signature = self.in_signature_scope(receiver.as_ref(), |this| {
+                    let all_types = this.param_tys(&m.params)?;
+                    let sig = this.method_sig(m, method_decls, &all_types)?;
+                    if !name.contains('$') && !m.name.contains('$') {
+                        this.check_result_origins(
+                            m.ret.as_ref(),
+                            &m.params,
+                            &all_types,
+                            receiver.as_ref().map(|ty| (m.self_convention, ty)),
+                        )?;
+                    }
+                    Ok((all_types, sig))
+                });
+                self.pop_assumptions();
+                signature
+            }
+            Err(error) => Err(error),
+        };
+        self.enclosing_type_params = saved_method_type_params;
+        self.enclosing_struct_type_params.set(saved_struct_count);
+        self.tparams.pop();
+        signature
     }
 
     /// Verify declared conformances, select the callable target, and check

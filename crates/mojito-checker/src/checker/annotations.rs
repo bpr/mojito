@@ -6,18 +6,46 @@ use mojito_types::types::TyKind;
 pub use mojito_types::types::splats_to;
 
 impl Checker {
-    /// The declaration that owns method `m`'s own binders on the struct
-    /// `owner` ([`mojito_symbol::symbol::MethodBinderOwners`]).
-    pub(super) fn method_binder_owner(&self, owner: &str, m: &Method) -> String {
-        self.method_binder_owners.owner(owner, m)
+    /// The declaration that owns method `m`'s own binders, the
+    /// `method_index`-th of struct `declaration` (a template or one of its
+    /// specializations): the symbol the check recorded for an overloaded
+    /// method, `Struct.method` otherwise.
+    pub(super) fn method_binder_owner(
+        &self,
+        module: Option<&String>,
+        declaration: &str,
+        method_index: usize,
+        m: &Method,
+    ) -> String {
+        self.recorded_method_owner(module, declaration, method_index)
+            .unwrap_or_else(|| {
+                let template = mojito_symbol::symbol::specialization_template(declaration)
+                    .unwrap_or(declaration);
+                format!(
+                    "{template}.{}",
+                    mojito_symbol::symbol::specialization_template(&m.name).unwrap_or(&m.name)
+                )
+            })
     }
 
-    /// [`Self::method_binder_owner`] of `m` on the struct `self_ty` names.
-    pub(super) fn method_owner(&self, self_ty: &Ty, m: &Method) -> String {
-        match self_ty.kind() {
-            TyKind::Struct(owner, _) => self.method_binder_owner(owner, m),
-            _ => self.method_binder_owner("Self", m),
-        }
+    /// The symbol the check recorded for the overloaded `method_index`-th
+    /// method of struct `declaration`, its template's first.
+    pub(super) fn recorded_method_owner(
+        &self,
+        module: Option<&String>,
+        declaration: &str,
+        method_index: usize,
+    ) -> Option<String> {
+        let site = |declaration: &str| mojito_checked::checked::GenericSite::Method {
+            module: module.cloned(),
+            declaration: declaration.to_string(),
+            method: method_index,
+        };
+        let symbols = self.declaration_symbols.borrow();
+        mojito_symbol::symbol::specialization_template(declaration)
+            .and_then(|template| symbols.get(&site(template)))
+            .or_else(|| symbols.get(&site(declaration)))
+            .cloned()
     }
 
     /// The dtype a SIMD element-type argument names: a `DType.<name>` member,

@@ -2291,6 +2291,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An overloaded method or initializer is declared under the symbol the
+  check spells from its registered `MethodSig`, the key its call spells,
+  instead of re-spelling its annotations' syntax (R1769). Initializers
+  over a struct `comptime` alias (`mlir_value: Self._mlir_type`, `raw:
+  Self.T`), which failed "keyword arguments to … are not supported", run,
+  as do a `Self._T[width]`-bounded `red` overload beside a
+  compile-time-parameter one, and the bundled `StaticTuple`'s
+  `mlir_value=` initializer and `_replace`. `MethodBinderOwners` is gone,
+  and a generic overload's provisional naming owner is now distinct per
+  overload, so two overloads no longer share its binder identities. A
+  module `comptime C = StaticTuple[Int, 3](fill=5)._replace[2](8)` runs,
+  the last probe of R1677, whose `P(x=5).plus[2]()` shape already did.
+  The package format moves to `mojito-package 169`.
 - An overloaded free `def` is declared under the symbol the check spells
   from its typed signature, by the key its call spells, instead of
   re-spelling its annotations' syntax (R600). `pick(p: Pair[Point])`

@@ -703,6 +703,7 @@ assets/ok/overload_var_copy_beside_generic.mojo	main	exe-differential	sanitized
 assets/ok/overload_var_copy_constructor.mojo	main	exe-differential	sanitized
 assets/ok/overload_var_copy_method.mojo	main	exe-differential	sanitized
 assets/ok/overloaded_hash_through_hash.mojo	main	exe-differential	sanitized
+assets/ok/overloaded_method_checked_symbol.mojo	main	exe-differential	sanitized
 assets/ok/overloaded_method_own_binder_symbols.mojo	main	exe-differential	sanitized
 assets/ok/overloaded_signature_module_constant.mojo	main	exe-differential	sanitized
 assets/ok/overloading_arity.mojo	main	exe-differential	sanitized

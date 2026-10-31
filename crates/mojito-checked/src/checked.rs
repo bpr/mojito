@@ -4,7 +4,6 @@ use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{
     ArgConvention, BindingMode, CollectionKind, ComprehensionClause, Expr, ExprKind, ImportNames,
     InfixOp, KwArg, MethodProvenance, ParamArg, ParamKind, PrefixOp, SubscriptArg, TStringPart,
-    TypeParam,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
@@ -4869,8 +4868,6 @@ impl CheckedProgram {
             checked_types: &checked_types,
             generic_parameters: &generic_parameters,
             declaration_effects: &declaration_effects,
-            overloads: &overloads,
-            constants: &constants,
             fieldwise_conventions: &conformances.fieldwise_conventions,
             fieldwise_ref_params: &conformances.fieldwise_ref_params,
             declaration_symbols: &declaration_symbols,
@@ -5197,15 +5194,13 @@ pub(crate) trait NodeMap {
 }
 
 /// The lookups a declaration op's symbol and checked signature are read
-/// from: the check's declaration sites, and the overload sets and module
-/// constants a symbol is spelled by.
+/// from: the check's declaration sites, and the symbol it spelled each
+/// overloaded declaration.
 #[derive(Clone, Copy)]
 pub(crate) struct Signatures<'a> {
     pub(crate) checked_types: &'a HashMap<AnnotationSite, Ty>,
     pub(crate) generic_parameters: &'a HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
     pub(crate) declaration_effects: &'a HashMap<AnnotationSite, DeclarationEffect>,
-    pub(crate) overloads: &'a crate::package::ProgramOverloads,
-    pub(crate) constants: &'a crate::package::ProgramConstants,
     pub(crate) fieldwise_conventions: &'a HashMap<String, Vec<Option<ArgConvention>>>,
     pub(crate) fieldwise_ref_params: &'a HashMap<String, Vec<Option<mojito_types::origin::RefSig>>>,
     pub(crate) declaration_symbols: &'a HashMap<GenericSite, String>,
@@ -6139,7 +6134,6 @@ impl<'a> ArenaBuilder<'a> {
             })),
             StmtKind::Struct {
                 name,
-                type_params,
                 conforms,
                 conformance_conditions,
                 where_clauses,
@@ -6168,7 +6162,7 @@ impl<'a> ArenaBuilder<'a> {
                     .map(|(position, method)| {
                         let registered =
                             mojito_symbol::symbol::lifecycle_method_name(method).to_string();
-                        let symbol = self.method_symbol(name, type_params, &registered, method);
+                        let symbol = self.method_symbol(statement, name, position, &registered);
                         CheckedMethod {
                             name: method.name.clone(),
                             registered,
@@ -6521,23 +6515,25 @@ impl<'a> ArenaBuilder<'a> {
             .unwrap_or_else(|| name.to_string())
     }
 
-    /// The symbol struct `structure`'s method `method`, registered as
-    /// `registered`, lowers to.
+    /// The symbol method `position` of struct `structure`, registered as
+    /// `registered`, lowers to: the one the check spelled from its typed
+    /// signature when its name is overloaded, `Struct.method` otherwise.
     fn method_symbol(
         &self,
+        statement: &Stmt,
         structure: &str,
-        type_params: &[TypeParam],
+        position: usize,
         registered: &str,
-        method: &mojito_ast::ast::Method,
     ) -> String {
-        let signatures = self.signatures;
-        mojito_symbol::symbol::lowered_method_name(
-            &format!("{structure}.{registered}"),
-            type_params,
-            mojito_symbol::symbol::MethodShape::of(method),
-            signatures.overloads,
-            signatures.constants,
-        )
+        self.signatures
+            .declaration_symbols
+            .get(&GenericSite::Method {
+                module: statement.module.clone(),
+                declaration: structure.to_string(),
+                method: position,
+            })
+            .cloned()
+            .unwrap_or_else(|| format!("{structure}.{registered}"))
     }
 }
 

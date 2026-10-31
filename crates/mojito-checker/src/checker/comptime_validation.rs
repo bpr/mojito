@@ -152,8 +152,8 @@ pub(in crate::checker) struct ApplicableFunction {
     /// syntax spells, which owns its argument slots' binders.
     key: String,
     /// The symbol the check spelled the declaration from its typed
-    /// signature, once it has: an overloaded module `def` is listed before
-    /// any signature is typed.
+    /// signature, once it has: an overloaded module `def` or method is
+    /// listed before any signature is typed.
     lowered: Option<String>,
     /// Whether it is a static method or an `__init__` of a generic struct,
     /// which is applied to the instance it is called on, or constructs,
@@ -410,8 +410,6 @@ pub(super) struct ApplicableDeclaration<'a> {
     /// The struct statement declaring a static method or an `__init__`;
     /// `None` for a module `def`.
     pub(super) owner: Option<&'a Stmt>,
-    /// The method it is, a synthesized `__init__` none.
-    method: Option<&'a mojito_ast::ast::Method>,
     /// Its own compile-time parameters as it declares them.
     type_params: &'a [mojito_ast::ast::TypeParam],
 }
@@ -597,7 +595,6 @@ pub(super) fn applicable_declarations<'a>(
                         function,
                         body,
                         owner: None,
-                        method: None,
                         type_params,
                     },
                 ));
@@ -623,7 +620,6 @@ pub(super) fn applicable_declarations<'a>(
                             function,
                             body: method.map_or(&[], |method| method.body.as_slice()),
                             owner: Some(statement),
-                            method,
                             type_params: method.map_or(&[], |method| method.type_params.as_slice()),
                         }));
                     };
@@ -1974,6 +1970,39 @@ impl Checker {
         }
     }
 
+    /// Name the entry [`applicable_functions`] lists for the overloaded
+    /// method `m` of struct `structure` by `symbol`, the one the check
+    /// spelled from its typed signature.
+    pub(super) fn name_applicable_method(
+        &mut self,
+        structure: &str,
+        type_params: &[mojito_ast::ast::TypeParam],
+        m: &mojito_ast::ast::Method,
+        symbol: &str,
+    ) {
+        let (listed, source) =
+            if m.name == "__init__" && m.self_convention == Some(ArgConvention::Out) {
+                (structure.to_string(), format!("{structure}.__init__"))
+            } else {
+                let source = format!("{structure}.{}", m.name);
+                (source.clone(), source)
+            };
+        let key = mojito_symbol::symbol::lowered_method_name(
+            &source,
+            type_params,
+            mojito_symbol::symbol::MethodShape::of(m),
+            &*self.overload_sets,
+            &*self.program_constants,
+        );
+        if let Some(entry) = self
+            .applicable_functions
+            .get_mut(&listed)
+            .and_then(|overloads| overloads.iter_mut().find(|function| function.key == key))
+        {
+            entry.lowered = Some(symbol.to_string());
+        }
+    }
+
     /// The entry [`applicable_functions`] lists for `declaration`.
     pub(super) fn applicable_entry(
         &mut self,
@@ -1994,16 +2023,9 @@ impl Checker {
         declaration: &ApplicableDeclaration<'_>,
     ) -> Option<(AppliedSignature, Vec<Option<Ty>>)> {
         let function = &declaration.function;
-        let owner = match (
-            declaration.method,
-            declaration.owner.map(|owner| &owner.kind),
-        ) {
-            (Some(method), Some(StmtKind::Struct { name, .. })) => {
-                self.method_binder_owner(name, method)
-            }
-            _ => function.key.clone(),
-        };
-        let decls = self.classify_params(&owner, declaration.type_params).ok()?;
+        let decls = self
+            .classify_params(&function.key, declaration.type_params)
+            .ok()?;
         if decls.len() != function.binders.len() {
             return None;
         }

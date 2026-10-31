@@ -532,8 +532,6 @@ pub struct Checker {
     /// declaration's symbol spells it: its own, and an imported package's.
     /// Shared with the checked program it carries to MIR.
     program_constants: std::sync::Arc<mojito_checked::package::ProgramConstants>,
-    /// The binder owner of each struct method, shared with the elaborator.
-    method_binder_owners: mojito_symbol::symbol::MethodBinderOwners,
     /// The wrapper of every trait default a top-level struct inherits, in
     /// program order.
     default_wrappers: Vec<trait_defaults::DefaultWrapper>,
@@ -679,8 +677,9 @@ pub struct Checker {
     /// The index of the next function the check lifts, per owning
     /// declaration.
     lifted_counts: RefCell<HashMap<String, usize>>,
-    /// The symbol each overloaded module `def` lowers to, spelled once
-    /// from its typed signature by the key a call to it spells.
+    /// The symbol each overloaded module `def` and struct method lowers
+    /// to, spelled once from its typed signature by the key a call to it
+    /// spells.
     declaration_symbols: RefCell<HashMap<mojito_checked::checked::GenericSite, String>>,
     /// The element type `paramfor_next_value` gives over each iterator
     /// type a `comptime for` stepped, typed once per type.
@@ -1073,7 +1072,6 @@ impl Checker {
             declared_structs: declaration_table::DeclarationSet::default(),
             overload_sets: std::sync::Arc::default(),
             program_constants: std::sync::Arc::default(),
-            method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             default_wrappers: Vec::new(),
             trait_members: Vec::new(),
             checking_trait_member: false,

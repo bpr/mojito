@@ -1465,8 +1465,8 @@ impl Checker {
         overload_index: usize,
     ) -> Result<(), TypeError> {
         self.parametric_write_frames.borrow_mut().push(Vec::new());
-        let decls =
-            self.classify_params(&self.method_binder_owner(declaration, m), &m.type_params)?;
+        let owner = self.method_binder_owner(module, declaration, method_index, m);
+        let decls = self.classify_params(&owner, &m.type_params)?;
         let saved_site = self
             .method_site
             .replace((module.cloned(), declaration.to_string()));
@@ -1524,7 +1524,7 @@ impl Checker {
                         lifecycle_method_name(m),
                         overload_index,
                     )?;
-                    self.check_method_inner(self_ty, m, effect_key)
+                    self.check_method_inner(self_ty, m, &owner, effect_key)
                 })();
                 self.pop_assumptions();
                 result
@@ -1561,6 +1561,7 @@ impl Checker {
         &mut self,
         self_ty: &Ty,
         m: &Method,
+        owner: &str,
         effect_key: String,
     ) -> Result<(), TypeError> {
         self.check_decorators(
@@ -1689,7 +1690,7 @@ impl Checker {
         };
         // A default may name the method's own value parameters
         // (`x: Int = Self.n + j`), bound around the defaults as in the body.
-        let method_decls = self.classify_params(&self.method_owner(self_ty, m), &m.type_params)?;
+        let method_decls = self.classify_params(owner, &m.type_params)?;
         self.push_scope();
         let defaults = self
             .declare_value_parameters(&method_decls)
@@ -1721,7 +1722,8 @@ impl Checker {
         } else {
             let start = site.as_ref().map(|(key, _)| self.enter_body_site(key));
             let enclosing = self.lifting_owner.replace(effect_key.clone());
-            let checked = self.bind_and_check_method(self_ty, m, &ret_ty, ref_return, effect_key);
+            let checked =
+                self.bind_and_check_method(self_ty, m, owner, &ret_ty, ref_return, effect_key);
             self.lifting_owner = enclosing;
             if let (Some((key, display)), Some(start)) = (site, start) {
                 self.leave_body_site(key, &display, &start);
@@ -1778,6 +1780,7 @@ impl Checker {
         &mut self,
         self_ty: &Ty,
         m: &Method,
+        owner: &str,
         ret_ty: &Ty,
         ref_return: Option<mojito_types::origin::RefSig>,
         effect_key: String,
@@ -1785,7 +1788,7 @@ impl Checker {
         // Compile-time callable/scalar value parameters occupy named runtime
         // slots in a method body, just as they do in a generic free function.
         // Type parameters remain type-only and are available through `tparams`.
-        let method_decls = self.classify_params(&self.method_owner(self_ty, m), &m.type_params)?;
+        let method_decls = self.classify_params(owner, &m.type_params)?;
         self.declare_value_parameters(&method_decls)?;
         let mut reference_type_params = self.enclosing_type_params.clone();
         reference_type_params.extend(m.type_params.iter().cloned());

@@ -199,47 +199,40 @@ fn overloaded_trait_requirements_get_qualified_names() {
 
 #[test]
 fn overloaded_struct_methods_own_distinct_binders_numbered_past_origins() {
-    // The checker and the elaborator share one owner per method and one slot
-    // per binder: two `pick[T]` overloads own distinct `T`s, and the origin
-    // parameter before `U` takes no slot.
+    // The check names each overloaded method from its typed signature and
+    // owns its binders under that symbol: two `pick[T]` overloads own
+    // distinct `T`s, and the origin parameter before `U` takes no slot.
     use mojito::ast::StmtKind;
-    use mojito::symbol::{MethodBinderOwners, OverloadSets};
-    let program = parse(
-        "struct Box:\n\
+    let src = "struct Box:\n\
          \x20   def pick[T: Copyable](self, a: T) -> T:\n\
          \x20       return a.copy()\n\
          \x20   def pick[T: Copyable](self, a: T, b: Int) -> T:\n\
          \x20       return a.copy()\n\
          \x20   def view[o: Origin, U: Copyable](self, a: U) -> U:\n\
-         \x20       return a.copy()\n",
-    )
-    .expect("parse error");
-    let owners = MethodBinderOwners::scan(
-        &program,
-        &OverloadSets::scan(&program),
-        &mojito::symbol::NoModuleNames,
-    );
-    let methods = program
+         \x20       return a.copy()\n";
+    let mir = lower_program(&linked_program(src)).expect("type error");
+    for symbol in ["Box.pick$ov$T$Copyable", "Box.pick$ov$T$Copyable$Int"] {
+        let declaration = mir
+            .declarations
+            .function(symbol)
+            .unwrap_or_else(|| panic!("{symbol} declared"));
+        assert!(
+            declaration
+                .param_decls
+                .iter()
+                .all(|decl| &*decl.id().owner == symbol),
+            "{symbol}: {:?}",
+            declaration.param_decls
+        );
+    }
+    let program = parse(src).expect("parse error");
+    let view = program
         .iter()
         .find_map(|stmt| match &stmt.kind {
-            StmtKind::Struct { methods, .. } => Some(methods),
+            StmtKind::Struct { methods, .. } => Some(&methods[2].type_params),
             _ => None,
         })
         .expect("struct");
-    let named: Vec<_> = methods.iter().map(|m| owners.owner("Box", m)).collect();
-    assert_eq!(
-        named,
-        [
-            "Box.pick$ov$T$Copyable",
-            "Box.pick$ov$T$Copyable$Int",
-            "Box.view"
-        ]
-    );
-    assert_eq!(
-        owners.owner("Box$y3:Int", &methods[1]),
-        "Box.pick$ov$T$Copyable$Int"
-    );
-    let view = &methods[2].type_params;
     assert_eq!(view[1].binder_slot(view), 0);
 }
 
@@ -564,16 +557,83 @@ fn struct_argument_overload_keys_agree_between_declaration_and_call() {
     }
 }
 
+const STRUCT_ALIAS_OVERLOADS: &str = "\
+def add[width: SIMDLength](a: SIMD[DType.int32, width], b: SIMD[DType.int32, width]) -> SIMD[DType.int32, width]:
+    return a + b
+
+struct V(Copyable):
+    comptime n = 4
+    comptime _mlir_type = SIMD[DType.int64, Self.n]
+    var v: Self._mlir_type
+
+    def __init__(out self, *, fill: Int):
+        self.v = SIMD[DType.int64, Self.n](fill)
+
+    def __init__(out self, *, mlir_value: Self._mlir_type):
+        self.v = mlir_value
+
+    def doubled(self) -> Self:
+        return Self(mlir_value=self.v + self.v)
+
+struct P[n: Int](Copyable):
+    comptime T = SIMD[DType.int32, Self.n]
+    var v: Self.T
+
+    def __init__(out self):
+        self.v = Self.T(0)
+
+    def __init__(out self, *, raw: Self.T):
+        self.v = raw
+
+@fieldwise_init
+struct R(Copyable):
+    comptime _T = SIMD[DType.int32, _]
+    var v: SIMD[DType.int32, 4]
+
+    def red[F: ImplicitlyCopyable & RegisterPassable & def[width: SIMDLength](Self._T[width], Self._T[width]) -> Self._T[width], //](self, func: F) -> Int32:
+        return func(self.v, self.v)[0]
+
+    def red[func: def[width: SIMDLength](Self._T[width], Self._T[width]) thin -> Self._T[width]](self) -> Int32:
+        def helper(a: Int, b: Int) -> Int:
+            return a + b
+        return func(self.v, self.v)[0]
+
+def main():
+    print(V(fill=3).doubled().v[0])
+    print(P[2](raw=SIMD[DType.int32, 2](5)).v[1])
+    print(R(SIMD[DType.int32, 4](1, 2, 3, 4)).red(add))
+";
+
+#[test]
+fn struct_alias_overload_keys_agree_between_declaration_and_call() {
+    // An overloaded method or initializer whose annotation spells a struct
+    // `comptime` alias is named from its typed signature, as its call is.
+    let program = linked_program(STRUCT_ALIAS_OVERLOADS);
+    let names = lowered_names(STRUCT_ALIAS_OVERLOADS);
+    assert!(
+        names.contains("V.__init__$ov$SIMD$DType$int64$$4$$kw$mlir_value"),
+        "{names:?}"
+    );
+    for target in &own_call_targets(&program) {
+        assert!(
+            names.contains(target),
+            "checker target '{target}' names no MIR function; emitted: {names:?}"
+        );
+    }
+}
+
 #[test]
 fn naming_owner_never_reaches_mir() {
     // A generic overload's signature is typed under a provisional owner to
     // spell its symbol; no binder lowered to MIR is owned by it.
-    let lowered = lower_program(&linked_program(STRUCT_ARGUMENT_PAIRS)).expect("type error");
-    let spelled = format!("{:?}", lowered.functions);
-    assert!(
-        !spelled.contains("@naming"),
-        "a provisional owner reached MIR"
-    );
+    for src in [STRUCT_ARGUMENT_PAIRS, STRUCT_ALIAS_OVERLOADS] {
+        let lowered = lower_program(&linked_program(src)).expect("type error");
+        let spelled = format!("{:?}", lowered.functions);
+        assert!(
+            !spelled.contains("@naming"),
+            "a provisional owner reached MIR"
+        );
+    }
 }
 
 #[test]
