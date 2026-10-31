@@ -3880,36 +3880,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R60 A generic `comptime` alias is not constructible**
-
-  Problem: `W[Int](8)` over `comptime W[T: AnyType] = Pt[T]` fails with
-  "Undefined variable 'W'", where the pin constructs `Pt[Int]`.
-  - A closed alias's call already constructs the type it names
-    (`infer_type_alias_read`, `checker/initializer_list.rs`), and so does
-    a call through a struct's type member (`Holder[7].Same()`). A
-    generic alias's application has no such read.
-  - Probe: over a pack, `T2[Int, Bool](1, True)` for `comptime T2[*Ts:
-    Copyable] = Tuple[*Ts]`, and `comptime for v in V[1, 2, 3]()` for
-    `comptime V[*vs: Int] = ParameterList[vs.values]`, fail with
-    "Undefined variable", where the pin prints `True` and `1 2 3`.
-  - Probe: a local `comptime a = A[4]()` over `comptime A[k: Int] = W[k]`
-    fails with "Undefined variable 'A'", where the pin constructs `W[4]`.
-  - Probe: a partially bound alias, `Bytes[4](1, 2, 3, 4)` over `comptime
-    Bytes = SIMD[.uint8, _]` and `Self._T[width](v)` over a member `comptime
-    _T = SIMD[Self.dtype, _]`, fails with "Undefined variable 'Bytes'" and
-    "Undefined variable 'Self'", where the pin constructs the vectors.
-    Upstream's `_b64encode.mojo` (`OFFSETS`) and `SIMD.reduce` construct
-    this way.
-  - Probe: a static method called through an alias application,
-    `Y[5].get()` over `comptime Y = D[DType.int8, _]` and `V[7].get()`
-    over `comptime V[k: Int] = W[k]`, fails with "Undefined variable", where
-    the pin prints `5` and `7`; `comptime Z = W[5]` then `Z.get()` runs
-    (moved from R481, 2026-10-30).
-  - A bare type name is read as a value in `Checker::infer_member`
-    (`checker/indexing.rs`), which the alias call must also bypass.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R1598 The `assert` statement does not parse**
 
   `assert n == 3, "boom"` is a parse error ("Expected newline, ';', or EOF
@@ -7257,12 +7227,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     type, which lowering reads in place of its syntax, closes both.
   - Probe: `T[t].boxed.n` and `T[t].boxed(10).get()` over `comptime boxed
     = Box[Self.n + 1]`, which the pin prints as `4` and `14` for `t = 3`.
-  - Probe: a construction through a parameterized type member whose type
-    holds an application, `Lit._from["xyz"]()` over `comptime _from[s:
-    StaticString] = Lit[_get_kgen_string[s]()]` in a `struct Lit` over a
-    `!kgen.string` value, stops with "has no construction to spell"
-    (`infer_type_member_construction`), where the pin runs it.
-    `comptime L = Lit._from["xyz"]` then `L()` runs.
+  - Probe: a static call through a generic alias's application over a
+    symbolic argument, `V[k].get()` inside `def f[k: Int]()` over
+    `comptime V[k: Int] = W[k]`, fails with "Undefined variable 'V'",
+    where the pin prints `3` for `f[3]()`: `alias_application_spelling`
+    (`checker/initializer_list.rs`) has no spelling of `W[k]`, while the
+    construction `V[k]()` runs.
   - Probe: a member read through a bare struct name whose infer-only
     parameter has no default, `comptime v = T.four()` and `g[T.four()]()`
     over `struct T[n: Int, //]` with `comptime four = T[n=4]` and `def
@@ -11301,10 +11271,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Also `operators.rs::infer_simd_alias_construction`, `inference.rs`'s
     `Scalar` and `from_scalar_alias` dimension arms, and
     `comptime_requests.rs`'s `"SIMD"` constructibility.
-  - Lever: once a call through any alias constructs the type it names
-    (R60), a `SIMD` construction is a struct construction whose instance is
-    the resolved alias.
-  - Then `declared_simd_construction` keys off the instance, not the name.
+  - A call through `Scalar` or a closed `SIMD` alias (`Int(x)`,
+    `Int32(x)`) already constructs the resolved instance
+    (`initializer_list.rs::simd_instance_construction`), so the
+    `"Scalar"` arms are reachable only where the alias is not resolved.
+  - What remains: `declared_simd_construction` keys off the instance, not
+    the name, and the name-keyed rules above go.
   - Probe: a program's own `struct Int8` constructs its own type only
     because the linker renames it, and `Scalar[dt](x)` never reads
     `std.simd`'s alias.

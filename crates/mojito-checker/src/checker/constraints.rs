@@ -2702,6 +2702,9 @@ impl Checker {
             }
         }
         self.positioned_application(expr).ok_or_else(|| {
+            if self.probing_literal.get() {
+                return TypeError::NotComptime("not an exact literal".to_string());
+            }
             if let Some(violated) = self.violated_application_constraint(expr) {
                 return violated;
             }

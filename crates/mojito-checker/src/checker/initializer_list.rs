@@ -138,6 +138,28 @@ impl Checker {
                 self.alias_construction(expression, ty, value, args, kwargs)
                     .and_then(|construction| self.infer_spelled(expression, construction))
             }),
+            // A generic alias's application is the type it names
+            // (`W[Int](8)` over `comptime W[T: AnyType] = Pt[T]` is
+            // `Pt[Int](8)`).
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if self.generic_type_alias(name) => Some(
+                self.ty_from_anno(&SourceType::Named(name.clone(), param_args.clone()))
+                    .and_then(|ty| {
+                        let applied = Expr::new(
+                            ExprKind::TypeApply {
+                                name: name.clone(),
+                                args: param_args.clone(),
+                            },
+                            expression.span,
+                        );
+                        self.type_construction(expression, Some(&applied), &ty, args, kwargs)
+                            .and_then(|construction| self.infer_spelled(expression, construction))
+                    }),
+            ),
             // A call of a struct's type member constructs the type it names
             // (`T[4].other(10)`).
             ExprKind::MethodCall {
@@ -149,6 +171,20 @@ impl Checker {
                 self.alias_construction(expression, &ty, &value, args, kwargs)
                     .and_then(|construction| self.infer_spelled(expression, construction)),
             ),
+            _ if let Some(head) = receiver_of(expression)
+                && let Some(receiver) = self.alias_application_spelling(head) =>
+            {
+                Some(receiver.and_then(|receiver| {
+                    let receiver = derived_receiver(expression, &receiver);
+                    over_receiver(expression, |object| {
+                        std::ptr::eq(object, head).then(|| receiver.clone())
+                    })
+                    .ok_or_else(|| {
+                        TypeError::InvariantViolation("an alias receiver lost its read".to_string())
+                    })
+                    .and_then(|spelled| self.infer_spelled(expression, spelled))
+                }))
+            }
             _ => {
                 let spelled = over_receiver(expression, |object| match &object.kind {
                     ExprKind::Identifier(name) => {
@@ -188,14 +224,7 @@ impl Checker {
                     .and_then(|construction| self.infer_spelled(expression, construction)),
             );
         }
-        let head = match &expression.kind {
-            ExprKind::MethodCall { object, .. } | ExprKind::Member { object, .. } => object,
-            ExprKind::Invoke { callee, .. } => match &callee.kind {
-                ExprKind::Member { object, .. } => object,
-                _ => return None,
-            },
-            _ => return None,
-        };
+        let head = receiver_of(expression)?;
         if !is_type_of(head) {
             return None;
         }
@@ -206,7 +235,7 @@ impl Checker {
         let receiver = derived_receiver(expression, &self.binder_spelling(&ty, head.span)?);
         Some(
             over_receiver(expression, |object| {
-                std::ptr::eq(object, head.as_ref()).then(|| receiver.clone())
+                std::ptr::eq(object, head).then(|| receiver.clone())
             })
             .ok_or_else(|| {
                 TypeError::InvariantViolation("a 'type_of' receiver lost its read".to_string())
@@ -341,6 +370,99 @@ impl Checker {
         ))
     }
 
+    /// Whether `name` names a module `comptime` alias of a type over its
+    /// own parameters (`comptime W[T: AnyType] = Pt[T]`, the partially
+    /// bound `comptime Bytes = SIMD[DType.uint8, _]`), which a binding or a
+    /// type parameter does not shadow.
+    fn generic_type_alias(&self, name: &str) -> bool {
+        self.lookup(name).is_none()
+            && !self.tparams.iter().any(|scope| scope.contains_key(name))
+            && !self
+                .local_type_aliases
+                .iter()
+                .any(|scope| scope.contains_key(name))
+            && self.comptime_aliases.get(name).is_some_and(|alias| {
+                !alias.decls.is_empty() && matches!(alias.body, AliasBody::Type(_))
+            })
+    }
+
+    /// The spelling of the type `object` names when it applies a generic
+    /// type alias (`V[7]` over `comptime V[k: Int] = W[k]` is `W[7]`), the
+    /// receiver a static call or member read through it reads. `None` when
+    /// `object` applies no such alias, or names a `SIMD` instance, whose
+    /// spelling is an alias read through this one again (`Scalar[DType.int8]`
+    /// spells `Int8`) and whose members the member read types itself
+    /// (`Scalar[dtype].MIN`), or a type with no source spelling.
+    fn alias_application_spelling(&self, object: &Expr) -> Option<Result<Expr, TypeError>> {
+        let (name, param_args) = object.bracket_application()?;
+        if !self.generic_type_alias(name) {
+            return None;
+        }
+        let ty = match self.ty_from_anno(&SourceType::Named(
+            name.to_string(),
+            param_args.into_owned(),
+        )) {
+            Ok(ty) if ty.is_simd() => return None,
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        mojito_types::ct::source_type(&ty, object.span)
+            .and_then(|spelled| {
+                self.keyword_spelling(spelled)
+                    .expression_spelling(object.span)
+            })
+            .or_else(|| self.binder_spelling(&ty, object.span))
+            .map(Ok)
+    }
+
+    /// The construction of the `SIMD` instance `ty` a call through an
+    /// alias names (`Int(x)`, `Scalar[dt](x)`, `Bytes[4](…)`): `SIMD`'s own
+    /// construction bound to the instance, never the alias's spelling again,
+    /// since `Scalar` and the sized aliases are aliases of `SIMD` whose
+    /// spellings read one another.
+    fn simd_instance_construction(
+        &self,
+        expression: &Expr,
+        ty: &Ty,
+        args: &[Expr],
+        kwargs: &[KwArg],
+    ) -> Result<Expr, TypeError> {
+        self.instance_construction(expression, ty, args.to_vec(), kwargs.to_vec())
+            .ok_or_else(|| TypeError::InvariantViolation(format!("'{ty}' lost its construction")))
+    }
+
+    /// The construction of `ty`, the type an application `applied` names,
+    /// with a call's arguments: a struct over a raw parameter list by
+    /// keyword ([`Self::raw_list_spelling`]), a `SIMD` instance as `SIMD`'s
+    /// own construction ([`Self::simd_instance_construction`]), and any
+    /// other type as an initializer list at it constructs.
+    fn type_construction(
+        &self,
+        expression: &Expr,
+        applied: Option<&Expr>,
+        ty: &Ty,
+        args: &[Expr],
+        kwargs: &[KwArg],
+    ) -> Result<Expr, TypeError> {
+        if ty.is_simd() {
+            return self.simd_instance_construction(expression, ty, args, kwargs);
+        }
+        if let Some((name, param_args)) =
+            applied.and_then(|applied| self.raw_list_spelling(applied, ty))
+        {
+            return Ok(derived_construction(
+                expression,
+                ExprKind::Call {
+                    name,
+                    param_args,
+                    args: args.to_vec(),
+                    kwargs: kwargs.to_vec(),
+                },
+            ));
+        }
+        self.initializer_list_construction(expression, args.to_vec(), kwargs.to_vec(), ty)
+    }
+
     /// The spelling of the type `object` reads when it names a struct's
     /// closed `comptime` type member ([`Self::type_member_read`]): inside
     /// the struct, the member's own spelling over `Self`; through a spelled
@@ -446,7 +568,9 @@ impl Checker {
     }
 
     /// The construction a call of a type alias of `ty`, bound to `value`,
-    /// spells with the call's arguments ([`Self::infer_type_alias_read`]).
+    /// spells with the call's arguments ([`Self::infer_type_alias_read`]):
+    /// the alias's application applied to them, or a `SIMD` instance's own
+    /// construction ([`Self::simd_instance_construction`]).
     fn alias_construction(
         &self,
         expression: &Expr,
@@ -455,6 +579,9 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Expr, TypeError> {
+        if ty.is_simd() {
+            return self.simd_instance_construction(expression, ty, args, kwargs);
+        }
         // The alias's application is read again under identities derived
         // from the call's, as a receiver through the alias is.
         let mut applied = value.clone();
@@ -524,8 +651,14 @@ impl Checker {
             return Some(construction);
         }
         let base = object.type_spelling()?;
-        let SourceType::Named(owner, _) = &base else {
-            return None;
+        let owner = match &base {
+            SourceType::Named(owner, _) => owner.as_str(),
+            // `Self._T[w](v)`: the enclosing struct's own member.
+            SourceType::SelfType if self.lookup("Self").is_none() => {
+                let (instance, _) = mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?;
+                mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance)
+            }
+            _ => return None,
         };
         let owner = self.structs.get(owner)?;
         if !owner.parameterized_associated.contains_key(field) || owner.methods.contains_key(field)
@@ -537,30 +670,10 @@ impl Checker {
             name: field.clone(),
             args: param_args.to_vec(),
         };
-        let construction = self.ty_from_anno(&member).and_then(|ty| {
-            let (name, param_args) = member_application(callee, param_args)
-                .and_then(|applied| self.raw_list_spelling(&applied, &ty))
-                .or_else(
-                    || match mojito_types::ct::source_type(&ty, expression.span) {
-                        Some(SourceType::Named(name, param_args)) => Some((name, param_args)),
-                        _ => None,
-                    },
-                )
-                .ok_or_else(|| {
-                    TypeError::Unsupported(format!(
-                        "a construction through '{field}': '{ty}' has no construction to spell"
-                    ))
-                })?;
-            Ok(derived_construction(
-                expression,
-                ExprKind::Call {
-                    name,
-                    param_args,
-                    args: args.to_vec(),
-                    kwargs: kwargs.to_vec(),
-                },
-            ))
-        });
+        let applied = member_application(callee, param_args);
+        let construction = self
+            .ty_from_anno(&member)
+            .and_then(|ty| self.type_construction(expression, applied.as_ref(), &ty, args, kwargs));
         Some(construction.and_then(|construction| self.infer_spelled(expression, construction)))
     }
 
@@ -1023,6 +1136,19 @@ fn over_receiver(expression: &Expr, receiver: impl Fn(&Expr) -> Option<Box<Expr>
         _ => return None,
     };
     Some(spelled_node(expression, 0, spelled, expression.span))
+}
+
+/// The receiver of `expression`, a static call, a member read, or an
+/// applied member. `None` for any other expression.
+fn receiver_of(expression: &Expr) -> Option<&Expr> {
+    match &expression.kind {
+        ExprKind::MethodCall { object, .. } | ExprKind::Member { object, .. } => Some(object),
+        ExprKind::Invoke { callee, .. } => match &callee.kind {
+            ExprKind::Member { object, .. } => Some(object),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// The type spelling `value` read as `expression`'s receiver, in its source

@@ -4254,9 +4254,13 @@ impl Checker {
     pub(super) fn comptime_type_operand(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
         match &expr.kind {
             // A reflection handle is a compile-time value, not a type, and a
-            // `comptime` alias or a trivial predicate applies to a `Bool`.
+            // predicate or value `comptime` alias or a trivial predicate
+            // applies to a value.
             ExprKind::TypeApply { name, .. }
-                if self.comptime_aliases.contains_key(name)
+                if self
+                    .comptime_aliases
+                    .get(name)
+                    .is_some_and(|alias| !matches!(alias.body, super::AliasBody::Type(_)))
                     || mojito_types::types::trivial_predicate_name(name).is_some() =>
             {
                 Ok(None)

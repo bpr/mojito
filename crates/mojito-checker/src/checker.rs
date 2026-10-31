@@ -646,6 +646,11 @@ pub struct Checker {
     /// [`Self::run_time_overload`]), which applies none of them again
     /// meanwhile.
     instance_inferences: RefCell<HashSet<SourceSpan>>,
+    /// Whether the compile-time value being built is only probed for an
+    /// exact literal ([`Self::exact_literal_value`]), whose failure no one
+    /// reads: a shape no arm builds fails without typing it again to say
+    /// why.
+    probing_literal: std::cell::Cell<bool>,
     /// The module functions and static methods a compile-time call applies
     /// by name, every overload under the name a call spells
     /// ([`comptime_validation::applicable_functions`]): known before any
@@ -1098,6 +1103,7 @@ impl Checker {
             installed: None,
             lifting_positions: std::rc::Rc::default(),
             instance_inferences: RefCell::new(HashSet::new()),
+            probing_literal: std::cell::Cell::new(false),
             applicable_functions: declaration_table::DeclarationTable::default(),
             builtin_procedures: HashSet::new(),
             builtin_struct_fields: HashMap::new(),
@@ -2179,7 +2185,10 @@ impl Checker {
     }
 
     fn exact_literal_value(&self, expression: &Expr) -> Option<CtValue> {
-        match self.eval_associated_ct(expression).ok()? {
+        let probing = self.probing_literal.replace(true);
+        let value = self.eval_associated_ct(expression);
+        self.probing_literal.set(probing);
+        match value.ok()? {
             value @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)) => Some(value),
             _ => None,
         }

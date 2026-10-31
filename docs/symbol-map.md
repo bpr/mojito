@@ -515,6 +515,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ComptimeAlias::value`) (a
   call, a static call, a member read) over that parameter expression, a
   call as the type's construction, and records the spelling the same way;
+  a generic alias's application (`generic_type_alias`) is the type it
+  resolves to, a call of it that type's construction (`type_construction`;
+  a `SIMD` instance, `simd_instance_construction`, is `SIMD`'s own call
+  bound to it, as a closed `SIMD` alias's call is) and a receiver through it
+  the type's spelling (`alias_application_spelling`), and
+  `infer_type_member_construction` constructs `Self._T[w](v)` the same way;
   `infer_type_of_read` spells a call of `type_of(value)` as the
   construction of the type it denotes, and a receiver over a type
   parameter as its binder (`binder_spelling`; `over_receiver` is the read

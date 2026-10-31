@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call of a generic `comptime` alias's application constructs the type
+  it names, as at the pin (R60): `P[Int](8)` over `comptime P[T: AnyType]
+  = Pt[T]`, a pack alias (`T2[Int, Bool](1, True)`), `comptime for v in
+  V[1, 2, 3]()` over a `ParameterList` alias, a partially bound
+  `Bytes[4](1, 2, 3, 4)`, and a closed or local alias of such an
+  application. A static call through one reads the type (`V[7].get()`),
+  and `Self._T[w](v)` constructs a struct's own parameterized type member.
+  `Scalar[dt](x)` and a closed `SIMD` alias's call (`Int(x)`) construct
+  the resolved `SIMD` instance, and probing a construction for an exact
+  literal no longer re-types it to explain a failure no one reads.
+
 - A static method read through its struct is a function value, as at the
   pin: `var f = S.st` then `f(3)`, `Self.st` inside the struct, a bracket
   binding the static's own parameters (`S.gst[10]`), and an overloaded

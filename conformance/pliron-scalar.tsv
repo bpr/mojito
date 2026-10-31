@@ -395,6 +395,7 @@ assets/ok/function_value_array_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_value_array_element_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_type_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_value_unapplied.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_alias_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_alias_type_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_constructor_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_conversion_reads_argument_in_place.mojo	-	ineligible	no-scalar-entry-shape
@@ -1004,6 +1005,7 @@ assets/ok/scalar_uint_dtype.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_call_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_dict.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_vec.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/self_member_alias_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sequence_starred_evaluation_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sequence_starred_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sequence_starred_temporary_lifetime.mojo	-	ineligible	no-scalar-entry-shape

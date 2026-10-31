@@ -5748,8 +5748,9 @@ impl EnclosingBinders {
 
     /// Whether checked node `node` of `tables` spells `Self` or one of these
     /// binders: a name or a call it reaches, a bracket argument or a type
-    /// in value position the check resolved over one of them, or a lambda
-    /// whose checked function type mentions one.
+    /// in value position the check resolved over one of them, a spelled
+    /// construction of an instance over one, or a lambda whose checked
+    /// function type mentions one.
     fn named_by(
         &self,
         tables: &mojito_checked::checked::CheckedTables,
@@ -5779,6 +5780,19 @@ impl EnclosingBinders {
                     .ty
                     .as_ref()
                     .is_some_and(|ty| self.mentioned_in(ty)),
+                // A construction the check spelled for an instance no bracket
+                // names (`SIMD(0)` for `Scalar[dtype](0)`) constructs its type.
+                CheckedOp::Call {
+                    name, param_args, ..
+                } if param_args.is_empty()
+                    && expression.ty.as_ref().is_some_and(|ty| {
+                        mojito_types::types::nominal_parts(ty)
+                            .is_some_and(|(constructed, _)| constructed == name)
+                            && self.mentioned_in(ty)
+                    }) =>
+                {
+                    true
+                }
                 CheckedOp::Call { param_args, .. }
                 | CheckedOp::Invoke { param_args, .. }
                 | CheckedOp::TypeApply {

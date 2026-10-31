@@ -2193,6 +2193,31 @@ fn accepts_scalar_alias_types_and_construction() {
 }
 
 #[test]
+fn generic_alias_call_binds_its_brackets_as_the_type_position_does() {
+    let prefix = "@fieldwise_init\nstruct Pt[T: AnyType](Copyable):\n    var x: Int\n\ncomptime P[T: AnyType] = Pt[T]\ncomptime N[k: Int] = k\ncomptime G[n: Int]: AnyType where (n > 0, \"positive only\") = Pt[Int]\n\n";
+    ok_std(&format!(
+        "{prefix}def main():\n    var p = P[Int](8)\n    var g = G[2](8)\n"
+    ));
+    let arity = err_std(&format!(
+        "{prefix}def main():\n    var p = P[Int, Bool](8)\n"
+    ));
+    assert!(
+        matches!(&arity, TypeError::WrongTypeArgCount { name, expected: 1, got: 2 } if name == "P"),
+        "{arity:?}"
+    );
+    let violated = err_std(&format!("{prefix}def main():\n    var g = G[0](8)\n"));
+    assert!(
+        matches!(&violated, TypeError::BadCall { reason, .. } if reason.contains("positive only")),
+        "{violated:?}"
+    );
+    let value = err_std(&format!("{prefix}def main():\n    var n = N[3]()\n"));
+    assert!(
+        matches!(&value, TypeError::UndefinedVariable(name) if name == "N"),
+        "{value:?}"
+    );
+}
+
+#[test]
 fn byte_alias_contextually_materializes_with_integer_wrapping() {
     ok("var byte: Byte = 255\nvar same: UInt8 = byte\n");
     ok("var wrapped_zero: Byte = 256\nvar wrapped_max: Byte = -1\n");

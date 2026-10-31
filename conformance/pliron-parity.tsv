@@ -395,6 +395,7 @@ assets/ok/function_value_array_display.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_element_binding.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_parameter.mojo	main	exe-differential	sanitized
 assets/ok/generator_value_unapplied.mojo	main	exe-differential	sanitized
+assets/ok/generic_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/generic_alias_type_pack.mojo	main	exe-differential	sanitized
 assets/ok/generic_constructor_literal_argument.mojo	main	exe-differential	sanitized
 assets/ok/generic_conversion_reads_argument_in_place.mojo	main	exe-differential	sanitized
@@ -1004,6 +1005,7 @@ assets/ok/scalar_uint_dtype.mojo	main	exe-differential	sanitized
 assets/ok/self_call_construction.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_dict.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_vec.mojo	main	exe-differential	sanitized
+assets/ok/self_member_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/sequence_starred_evaluation_order.mojo	main	exe-differential	sanitized
 assets/ok/sequence_starred_forms.mojo	main	exe-differential	sanitized
 assets/ok/sequence_starred_temporary_lifetime.mojo	main	exe-differential	sanitized
