@@ -752,6 +752,8 @@ assets/ok/param_expr_overflow.mojo	main	exe-differential	sanitized
 assets/ok/param_expr_where.mojo	main	exe-differential	sanitized
 assets/ok/param_expr_where_assumption.mojo	main	exe-differential	sanitized
 assets/ok/parameter_default_dtype_application.mojo	main	exe-differential	sanitized
+assets/ok/parameter_default_none_application.mojo	main	exe-differential	sanitized
+assets/ok/parameter_default_none_application_struct.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_of_alias.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_raw_parameter.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_raw_values.mojo	main	exe-differential	sanitized

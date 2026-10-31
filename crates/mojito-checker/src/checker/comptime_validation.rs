@@ -173,8 +173,8 @@ pub(in crate::checker) struct ApplicableFunction {
     collector: Option<ApplicableCollector>,
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
-    /// The declared result: a scalar, a `DType`, a named struct, one of its
-    /// own type parameters, or `Self`, which a call resolves at the instance
+    /// The declared result: a scalar, `None`, a `DType`, a named struct, one
+    /// of its own type parameters, or `Self`, which a call resolves at the instance
     /// it constructs or is called on.
     result: SourceType,
     /// Whether it is declared `raises`, which no type or parameter argument
@@ -562,11 +562,12 @@ pub(super) fn applicable_declarations<'a>(
                 keyword_only,
                 captures: None,
                 raises,
-                ret: Some(ret),
+                ret,
                 where_clauses,
                 body,
                 ..
             } => {
+                // A `def` without `->` returns `None`, as `-> None` does.
                 let shape = ApplicableShape {
                     decorators,
                     type_params,
@@ -574,7 +575,7 @@ pub(super) fn applicable_declarations<'a>(
                     positional_only: *positional_only,
                     keyword_only: *keyword_only,
                     raises: *raises,
-                    ret,
+                    ret: ret.as_ref().unwrap_or(&SourceType::None),
                     where_clauses,
                 };
                 let symbol = mojito_symbol::symbol::lowered_def_name(
@@ -686,21 +687,27 @@ pub(super) fn applicable_declarations<'a>(
                     // receiver taken `imm`, as the pin folds it, or when it
                     // returns `!kgen.deferred` and so runs only at compile
                     // time (`FastMathFlag._mlir_attr`); an ordinary one is a
-                    // run-time call.
-                    let Some(ret) = method.ret.as_ref().filter(|ret| {
-                        !method.has_self
-                            || ((is_mlir_source(ret, "!kgen.deferred")
-                                || matches!(
-                                    mojito_checked::declaration::InlineLevel::of(
-                                        &method.decorators
-                                    ),
-                                    Ok(mojito_checked::declaration::InlineLevel::Builtin)
-                                ))
-                                && matches!(
-                                    method.self_convention,
-                                    None | Some(ArgConvention::Imm)
-                                ))
-                    }) else {
+                    // run-time call. A static method without `->` returns
+                    // `None`.
+                    let Some(ret) = method
+                        .ret
+                        .as_ref()
+                        .or_else(|| (!method.has_self).then_some(&SourceType::None))
+                        .filter(|ret| {
+                            !method.has_self
+                                || ((is_mlir_source(ret, "!kgen.deferred")
+                                    || matches!(
+                                        mojito_checked::declaration::InlineLevel::of(
+                                            &method.decorators
+                                        ),
+                                        Ok(mojito_checked::declaration::InlineLevel::Builtin)
+                                    ))
+                                    && matches!(
+                                        method.self_convention,
+                                        None | Some(ArgConvention::Imm)
+                                    ))
+                        })
+                    else {
                         continue;
                     };
                     let shape = ApplicableShape {
@@ -1403,7 +1410,7 @@ impl Checker {
     }
 
     /// The parameter expression of a compile-time `Int`, `UInt`, `Bool`,
-    /// `Float64`, or `String` expression that compiles to none (`h(L[0])`,
+    /// `Float64`, `None`, or `String` expression that compiles to none (`h(L[0])`,
     /// `n > 2`, `min(L[0], L[1])`, `half(n)`, `pick(n) + "!"`), written in a
     /// type or a parameter argument or bound by a local `comptime`.
     ///
@@ -1456,8 +1463,10 @@ impl Checker {
             // (an attribute only where an op's attribute takes it), and so
             // is any `String` expression, which it freezes to a
             // compile-time string, and any `!kgen.string` expression; no
-            // other struct expression lifts.
+            // other struct expression lifts. A `None`-valued call is an
+            // application too (`_constrain[dtype]()`).
             TyKind::Struct(..)
+            | TyKind::None
             | TyKind::Simd { .. }
             | TyKind::Index
             | TyKind::I1
@@ -2423,6 +2432,7 @@ impl Checker {
                     | TyKind::I1
                     | TyKind::Bool
                     | TyKind::FLOAT64
+                    | TyKind::None
                     | TyKind::Dtype
                     | TyKind::Simd { .. }
                     | TyKind::Struct(..)
@@ -5657,6 +5667,7 @@ impl ApplicableShape<'_> {
                 | SourceType::UInt
                 | SourceType::Bool
                 | SourceType::Float64
+                | SourceType::None
                 | SourceType::SelfType
                 | SourceType::Named(..) => self.ret.clone(),
                 ret if is_mlir_index_source(ret)

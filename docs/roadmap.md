@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1736**.
+Next free ID: **R1737**.
 
 ## Ordered Work
 
@@ -7180,24 +7180,37 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1720 A `NoneType` parameter default that calls a function is
-  rejected, so `FPUtils`' `_constraint` cannot be declared**
+- [ ] **R1736 An instance is keyed by its parameter applications'
+  values, so a default whose call fails is evaluated where the pin never
+  reads it**
 
-  `struct F[k: Int, *, _x: NoneType = _c()]` and `def f[d: DType, *, _k:
-  NoneType = _c[d]()]()` report "not a compile-time Int constant: not an
-  associated comptime expression", where the pin runs both.
-  - `applicable_declarations` (`checker/comptime_validation.rs`) lists only
-    a `def` with `ret: Some(_)`, and `lifted_application` admits no
-    `TyKind::None` result.
-  - `= None` and an `Int`-valued default call (`k: Int = _c[dtype]()`)
-    already work.
-  - The pin evaluates such a default lazily: `FPUtils[DType.int32]
-    .integral_type`, and a static method of `F[DType.int32]` whose
-    constraint fails, both run. The constraint fires where an instance's
-    method body is instantiated.
-  - Add `assets/ok` and `assets/type_error` fixtures for both the struct
-    and the `def` forms.
-  - Found while planning R1711 (2026-10-30).
+  The elaborator answers every kept parameter's application when it keys
+  an instance, where the pin keys it by the unevaluated application
+  (`S[h(3)]` is not `S[6]`) and evaluates it only where a surviving read
+  materializes it.
+  - `substitute_arg` (`mono/substitute.rs`) answers a struct type
+    argument's application to key the struct instance, and a function
+    instance answers a parameter its body reads at keying, even when that
+    read is dead once an `@always_inline` callee is inlined.
+  - A 2026-10-30 prototype that kept a closed residual in struct
+    arguments, and mangled it, broke `Array`'s `length` in
+    `_write_int`, receiver binding ("solution for `_x` is not
+    constant"), and parameter-constant reads: every consumer of a
+    struct's bindings must demand the residual.
+  - Probe: `var x = F[DType.int32]()` and `x.g()` over `struct F[d: DType,
+    *, _x: NoneType = _c[d]()]` whose `_c` asserts a float dtype report
+    "function instantiation of `_c` failed", where the pin runs both.
+  - Probe: `comptime x = F[DType.int32].g()` over the same `F` fails the
+    same way.
+  - Probe: the same over an `Int`-typed default (`_x: Int = _c[d]()`)
+    fails the same way.
+  - Probe: `var s = String(); _k.write_to(s)` in `def f[d: DType, *, _k:
+    NoneType = _c[d]()]() -> Int` at `DType.int32` fails, where the pin
+    prints the result (`print(_k)` and a generic `Writable` call fail at
+    both).
+  - A static method or `comptime` member reached without constructing,
+    and an unread parameter of a function, already run (R1720).
+  - Found while landing R1720 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

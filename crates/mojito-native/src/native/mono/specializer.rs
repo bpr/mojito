@@ -936,7 +936,7 @@ impl<'a> Specializer<'a> {
             target,
             &self.enclosing,
         )?;
-        apply_defaults(contract, &mut bindings)?;
+        apply_defaults(contract, &[], &mut bindings)?;
         // A default is evaluated as a literal; it binds at the parameter's
         // declared type, as the VM materializes it.
         Ok(contract
@@ -1252,8 +1252,9 @@ impl<'a> Specializer<'a> {
     /// that binds a parameter its callee removed and has no value under
     /// `bindings` (`10 // n` at `n == 0`), in a call's `instantiated_args`
     /// or its static receiver: upstream's `RemoveUnusedParams` rewrote the
-    /// call without it, so nothing evaluates it. One with a value stays,
-    /// which binds the callee's removed parameter for inference.
+    /// call without it, so nothing evaluates it. An application nothing has
+    /// run is no value: upstream's call never evaluates it. One with a value
+    /// stays, which binds the callee's removed parameter for inference.
     fn erase_valueless_removed_arguments(&self, blocks: &mut [MirBlock], bindings: &Bindings) {
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
             for region in mojito_mir::mir::instruction_regions_mut(instruction) {
@@ -1293,9 +1294,13 @@ impl<'a> Specializer<'a> {
             if removed.is_empty() {
                 continue;
             }
+            let probe = Bindings {
+                applications: None,
+                ..bindings.clone()
+            };
             let erase = |decls: &[ParamDecl], arguments: &mut [TyArg]| {
                 for (decl, argument) in decls.iter().zip(arguments) {
-                    if removed.contains(decl.id()) && substitute_arg(argument, bindings).is_err() {
+                    if removed.contains(decl.id()) && substitute_arg(argument, &probe).is_err() {
                         *argument = TyArg::Val(CtValue::RemovedArg);
                     }
                 }
@@ -1306,7 +1311,7 @@ impl<'a> Specializer<'a> {
             if let Some(receiver) = receiver
                 && let TyKind::Struct(name, arguments) = receiver.kind()
                 && let Some(owner) = self.structs.get(name.as_str())
-                && substitute_ty(receiver, bindings).is_err()
+                && substitute_ty(receiver, &probe).is_err()
             {
                 let mut arguments = arguments.clone();
                 erase(&owner.param_decls, &mut arguments);
@@ -2513,7 +2518,7 @@ impl<'a> Specializer<'a> {
             .collect::<Result<Vec<_>, _>>()?;
         let mut bindings = self.base_bindings();
         self.bind_instantiated_arguments(owner, target, &decls, &arguments, &mut bindings)?;
-        apply_defaults(&decls, &mut bindings)?;
+        apply_defaults(&decls, &[], &mut bindings)?;
         let instance_arguments = ordered_arguments(&decls, &bindings, target)?;
         self.enqueue(target, bindings, instance_arguments)
     }

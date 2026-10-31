@@ -1615,7 +1615,7 @@ impl Const {
     }
 
     /// The constant a read of the parameter value `value` at `slot_ty` is: a
-    /// scalar, a function named by a callable-typed slot, a string read at the
+    /// scalar or `None`, a function named by a callable-typed slot, a string read at the
     /// nominal `String` or a vector, struct, or tuple as the typed constant a
     /// backend materializes at that type (upstream's `kgen.param.constant`),
     /// an untyped or a target attribute as the attribute constant the
@@ -1628,6 +1628,7 @@ impl Const {
             CtValue::Index(value) => Some(Self::Value(CtValue::Index(*value))),
             CtValue::Float(bits) => Some(Self::Float(f64::from_bits(*bits))),
             CtValue::Bool(value) => Some(Self::Bool(*value)),
+            CtValue::None => Some(Self::None),
             CtValue::Dtype(value) => Some(Self::Dtype(*value)),
             CtValue::Str(value)
                 if matches!(

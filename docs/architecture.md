@@ -6934,7 +6934,14 @@ point where a slot declared in a loop is uninitialized again.
   `param_decls` (`Specializer::own_arguments`), so instances that differ
   only in it are one, and names an instance whose template removed any
   parameter by `instance_symbol` even when no argument is left (`f$mono`).
-  Every caller still binds every parameter. Upstream instead rewrites the
+  A caller still binds a removed parameter's spelled argument when it has
+  a value, but evaluates nothing for it, as upstream's call passes
+  `_REMOVED_ARG`: the callee's default for it is never applied
+  (`unify::apply_defaults`' `removed` list, which `infer_call` and
+  `infer_receiver_call` pass), and an argument that is an application
+  nothing has answered is erased (`Specializer::erase_valueless_removed_arguments`),
+  so `_constraint: NoneType = _constrain[dtype]()` runs no constraint at
+  an instance that never reads it. Upstream instead rewrites the
   generator's signature and its callers; Mojito keeps both, and an
   instance clears the field. The verifier takes a removed binder out of the
   body's scope but inside a struct argument, which an instance erases

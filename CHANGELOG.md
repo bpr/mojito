@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time call of a `def` or static method returning `None` is an
+  application, so a parameter default such as `FPUtils`' `_constraint:
+  NoneType = _constrain_fp_type[dtype]()` declares on a `def` and a struct
+  (R1720). The elaborator never evaluates a default or argument for a
+  parameter its callee does not read, as at the pin, so an instance that
+  never reads a failing constraint, or an unread `Int` default whose call
+  fails, runs; a body reading a `NoneType` parameter prints `None`.
+  Constructing such a struct instance still evaluates the default (R1736).
 - `SIMD` declares upstream's `slice`, `insert`, `split`, `interleave`, and
   `deinterleave` (R1673): `v.insert[offset=2](SIMD[DType.int32, 2](7, 8))`,
   `var lo, hi = v.split()`, and `v.interleave(w)` run as at the pin, on the

@@ -326,16 +326,17 @@ impl Specializer<'_> {
             instantiated,
             &mut bindings,
         )?;
+        let removed = self.removed_params(target, bindings.reduced);
         bind_explicit_value_arguments(
             &declaration.param_decls,
-            self.removed_params(target, bindings.reduced),
+            removed,
             param_args,
             &self.constant_values,
             &mut bindings,
             target,
             &self.enclosing,
         )?;
-        apply_defaults(&declaration.param_decls, &mut bindings)?;
+        apply_defaults(&declaration.param_decls, removed, &mut bindings)?;
         let names = &declaration.param_names;
         let required = &declaration.required;
         let slots = match_call_slots(
@@ -744,7 +745,11 @@ impl Specializer<'_> {
                 )
             })?;
         }
-        apply_defaults(&declaration.param_decls, &mut bindings)?;
+        apply_defaults(
+            &declaration.param_decls,
+            self.removed_params(target, bindings.reduced),
+            &mut bindings,
+        )?;
         if bindings.self_instance.is_none()
             && let TyKind::Struct(template, arguments) = peel_refs(receiver_pattern).kind()
             && !arguments.is_empty()

@@ -202,13 +202,17 @@ pub(super) fn bind_explicit_value_arguments(
     Ok(())
 }
 
+/// Bind each parameter of `decls` that `bindings` leave unbound to its
+/// default. An erased parameter, and one in `removed` that the callee's
+/// generator removed, takes none: upstream's call passes `_REMOVED_ARG`, so
+/// nothing evaluates its default (`_constraint: NoneType = _c[dtype]()`).
 pub(super) fn apply_defaults(
     decls: &[ParamDecl],
+    removed: &[mojito_types::param_expr::ParamId],
     bindings: &mut Bindings,
 ) -> Result<(), MonoError> {
     for decl in decls {
-        // An erased parameter takes no default: it has no value at all.
-        if bindings.removed.contains(&decl.binder()) {
+        if bindings.removed.contains(&decl.binder()) || removed.contains(decl.id()) {
             continue;
         }
         match decl {

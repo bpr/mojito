@@ -264,7 +264,7 @@ pub(super) fn struct_instance<'b>(
             construct,
         }
     })?;
-    apply_defaults(&shape.param_decls, &mut instance)?;
+    apply_defaults(&shape.param_decls, &[], &mut instance)?;
     Ok(Some(StructInstance {
         template,
         shape,
