@@ -5,6 +5,15 @@ use super::*;
 use crate::checker::call_inference::folded_parameter_arguments;
 use mojito_types::types::TyKind;
 
+/// A bracket over a static read through its struct, as
+/// [`Checker::static_method_bracket`] finds it.
+pub(in crate::checker) struct StaticMethodBracket<'e> {
+    pub receiver: &'e Expr,
+    pub owner: String,
+    pub method: &'e str,
+    pub arguments: Vec<mojito_ast::ast::ParamArg>,
+}
+
 impl Checker {
     /// Type a call whose receiver spells a type rather than a value:
     /// `Self.T()`, an applied type (`Dict[Int, Int].fromkeys(...)`), a
@@ -158,6 +167,133 @@ impl Checker {
             return self.infer_struct_name_call(span, object, sname, method, call);
         }
         Ok(None)
+    }
+
+    /// Type `object.method` read as a value when `object` spells a struct
+    /// and `method` names one of its statics (`S.st`, `Q.__init__`,
+    /// `Self.st`), binding a bracket's operands (`S.gst[10]`): upstream's
+    /// overload set for that attribute of the struct type, read as the
+    /// function it selects. `None` when `object.method` names no static.
+    pub(in crate::checker) fn infer_static_method_value(
+        &self,
+        span: SourceSpan,
+        (object, method): (&Expr, &str),
+        arguments: &[mojito_ast::ast::ParamArg],
+        expected: Option<&Ty>,
+        record: bool,
+    ) -> Result<Option<Ty>, TypeError> {
+        let Some((owner, parametric)) = self.static_method_owner(object, method) else {
+            return Ok(None);
+        };
+        if self.structs.get(&owner).is_some_and(|info| {
+            info.methods.get(method).is_some_and(|sigs| {
+                sigs.iter()
+                    .any(|sig| sig.has_self && takes_no_receiver(sig))
+            })
+        }) {
+            return Err(TypeError::Unsupported(format!(
+                "reading the initializer '{owner}.{method}' as a value is not supported yet: \
+                 its `out self` lowers as a parameter, not the function's result (roadmap R1796)"
+            )));
+        }
+        if parametric {
+            return Err(TypeError::Unsupported(format!(
+                "reading the static method '{owner}.{method}' of a parametric struct as a \
+                 value is not supported yet (roadmap R1794)"
+            )));
+        }
+        if record {
+            self.record_static_receiver(object, &owner, &[]);
+        }
+        self.infer_specialized_callable_value(
+            span,
+            CallableValueSource::Static {
+                owner: &owner,
+                method,
+            },
+            arguments,
+            expected,
+            record,
+        )
+    }
+
+    /// The receiver, its struct, the static, and the operands of a bracket
+    /// over a static read through its struct (`S.gst[10]`,
+    /// `Q.__init__[7]`), which binds the static's own parameters as a
+    /// bracket over a function does.
+    pub(in crate::checker) fn static_method_bracket<'e>(
+        &self,
+        expr: &'e Expr,
+    ) -> Option<StaticMethodBracket<'e>> {
+        let (base, arguments) = expr.bracket_operands()?;
+        let ExprKind::Member { object, field } = &base.kind else {
+            return None;
+        };
+        let (owner, _) = self.static_method_owner(object, field)?;
+        Some(StaticMethodBracket {
+            receiver: object,
+            owner,
+            method: field,
+            arguments,
+        })
+    }
+
+    /// Type the bracket over a static read through its struct that
+    /// [`Self::static_method_bracket`] found in `expr`.
+    pub(in crate::checker) fn infer_static_method_bracket(
+        &self,
+        expr: &Expr,
+        bracket: &StaticMethodBracket<'_>,
+    ) -> Result<Ty, TypeError> {
+        self.infer_static_method_value(
+            expr.source_span(),
+            (bracket.receiver, bracket.method),
+            &bracket.arguments,
+            None,
+            true,
+        )?
+        .ok_or_else(|| TypeError::NoSuchField {
+            object_type: bracket.owner.clone(),
+            field: bracket.method.to_string(),
+        })
+    }
+
+    /// The struct `object` spells and whether it is parametric, when
+    /// `object` is a struct name no binding shadows, bare or applied, or
+    /// `Self`, and `method` names one of that struct's statics or
+    /// initializers. An applied struct counts as parametric.
+    pub(in crate::checker) fn static_method_owner(
+        &self,
+        object: &Expr,
+        method: &str,
+    ) -> Option<(String, bool)> {
+        let ExprKind::Identifier(name) = &object.kind else {
+            // An applied struct (`P[Int].st`) is a parametric receiver.
+            let (name, _) = object.bracket_application()?;
+            let info = self
+                .structs
+                .get(name)
+                .filter(|_| self.lookup(name).is_none())?;
+            return info
+                .methods
+                .get(method)?
+                .iter()
+                .any(takes_no_receiver)
+                .then(|| (name.to_string(), true));
+        };
+        let owner = if name == "Self" {
+            self.self_instance_spelling()?.0
+        } else if self.lookup(name).is_none() {
+            name.clone()
+        } else {
+            return None;
+        };
+        let info = self.structs.get(&owner)?;
+        info.methods
+            .get(method)?
+            .iter()
+            .any(takes_no_receiver)
+            .then_some((owner, !info.decls.is_empty()))
     }
 
     /// Type a call through `object`, a receiver bound to the type `instance`
@@ -438,4 +574,11 @@ impl Checker {
         }
         Ok(None)
     }
+}
+
+/// Whether the method `sig` is called with no receiver value, and so reads
+/// through its struct as a function: a static, or an initializer, whose
+/// `out self` is its result.
+fn takes_no_receiver(sig: &MethodSig) -> bool {
+    !sig.has_self || sig.self_convention == Some(mojito_ast::ast::ArgConvention::Out)
 }

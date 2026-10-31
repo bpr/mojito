@@ -1258,7 +1258,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   denotes a function (upstream's overload set), which `infer`'s
   `Index`/`MultiIndex` and `Invoke` arms and `infer_with_expected` spell as
   the `TypeApply` or `Call` they check through
-  `infer_specialized_callable_value`; a generic function's value records
+  `infer_specialized_callable_value`, over a `CallableValueSource`: a
+  binding, or a static read through its struct, which
+  `type_receivers.rs`'s `infer_static_method_value` routes there from
+  `infer_member`, `infer`'s bracket arm (`static_method_bracket`, over
+  `Expr::bracket_operands`), and `infer_with_expected`, and which MIR's
+  `access_family` lowers to the same function constant through
+  `callable_constant`; a generic function's value records
   its bound arguments as `GenericInstantiation`, which MIR lowers to
   `Const::FunctionInstance` and `native::mono`'s
   `Specializer::function_value_instance` names as the instance;

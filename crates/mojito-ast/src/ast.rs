@@ -2011,14 +2011,26 @@ impl Expr {
     /// slice operand (`twice[4]`, `pair[a=3, b=4]`, `total[]`). The view
     /// never says what the name denotes; each caller decides that.
     pub fn bracket_application(&self) -> Option<(&str, Cow<'_, [ParamArg]>)> {
-        let (object, args) = match &self.kind {
-            ExprKind::TypeApply { name, args } => return Some((name, Cow::Borrowed(args))),
-            ExprKind::Index { object, index } => (object, subscript_param_args(index)),
-            ExprKind::MultiIndex { object, args } => (object, multi_subscript_param_args(args)?),
-            _ => return None,
-        };
+        if let ExprKind::TypeApply { name, args } = &self.kind {
+            return Some((name, Cow::Borrowed(args)));
+        }
+        let (object, args) = self.bracket_operands()?;
         match &object.kind {
             ExprKind::Identifier(name) => Some((name, Cow::Owned(args))),
+            _ => None,
+        }
+    }
+
+    /// The base a subscript with no slice operand applies and the
+    /// compile-time operands it spells, whatever the base
+    /// (`S.gst[10]`, `twice[4]`): the bracket read as upstream's
+    /// `SubscriptNode` before its base is classified.
+    pub fn bracket_operands(&self) -> Option<(&Self, Vec<ParamArg>)> {
+        match &self.kind {
+            ExprKind::Index { object, index } => Some((object, subscript_param_args(index))),
+            ExprKind::MultiIndex { object, args } => {
+                Some((object, multi_subscript_param_args(args)?))
+            }
             _ => None,
         }
     }

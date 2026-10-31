@@ -1363,16 +1363,11 @@ impl Checker {
                 read
             }
             // A bracket over a function binds its parameters, as upstream's
-            // `SubscriptNode` binds an overload set's: the application is
-            // spelled as the parameter application it is.
+            // `SubscriptNode` binds an overload set's.
             ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
-                if let Some((name, args)) = self.bracket_callable(expr) =>
+                if let Some(applied) = self.infer_bracket_callable(expr) =>
             {
-                let spelled = super::initializer_list::derived_construction(
-                    expr,
-                    ExprKind::TypeApply { name, args },
-                );
-                self.infer_spelled(expr, spelled)
+                applied
             }
             ExprKind::Index { object, index }
                 if let Some(element) = self.comptime_display_subscript(expr, object, index) =>
@@ -1603,7 +1598,7 @@ impl Checker {
             ExprKind::TypeApply { name, args } => {
                 if let Some(specialized) = self.infer_specialized_callable_value(
                     expr.source_span(),
-                    name,
+                    CallableValueSource::Binding(name),
                     args,
                     None,
                     true,
@@ -2269,13 +2264,34 @@ impl Checker {
             && matches!(expected.kind(), TyKind::Func(_))
             && let Some(specialized) = self.infer_specialized_callable_value(
                 expression.source_span(),
-                name,
+                CallableValueSource::Binding(name),
                 args,
                 Some(expected),
                 record,
             )?
         {
             return Ok(specialized);
+        }
+        // A static read through its struct selects among its overloads by
+        // the expected callable type, as a function name does.
+        if matches!(expected.kind(), TyKind::Func(_)) {
+            let read = match &expression.kind {
+                ExprKind::Member { object, field } => Some((&**object, field.as_str(), Vec::new())),
+                _ => self
+                    .static_method_bracket(expression)
+                    .map(|bracket| (bracket.receiver, bracket.method, bracket.arguments)),
+            };
+            if let Some((receiver, method, arguments)) = read
+                && let Some(value) = self.infer_static_method_value(
+                    expression.source_span(),
+                    (receiver, method),
+                    &arguments,
+                    Some(expected),
+                    record,
+                )?
+            {
+                return Ok(value);
+            }
         }
         if matches!(expected.kind(), TyKind::Func(_))
             && matches!(

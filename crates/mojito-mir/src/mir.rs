@@ -2912,14 +2912,20 @@ fn selected_call(
 fn callable_target(adjustments: &[mojito_checked::checked::SemanticAdjustment]) -> Option<String> {
     selected_call(adjustments)
         .map(|contract| contract.target)
-        .or_else(|| {
-            adjustments.iter().find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ResolveCallable(target) => {
-                    Some(target.clone())
-                }
-                _ => None,
-            })
-        })
+        .or_else(|| resolved_callable(adjustments))
+}
+
+/// The callable the check resolved an expression to, among its
+/// `adjustments`, when it records no selected call.
+fn resolved_callable(
+    adjustments: &[mojito_checked::checked::SemanticAdjustment],
+) -> Option<String> {
+    adjustments.iter().find_map(|adjustment| match adjustment {
+        mojito_checked::checked::SemanticAdjustment::ResolveCallable(target) => {
+            Some(target.clone())
+        }
+        _ => None,
+    })
 }
 
 /// The parameter value the check recorded for an expression read as a

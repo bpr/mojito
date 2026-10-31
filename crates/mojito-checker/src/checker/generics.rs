@@ -625,6 +625,15 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
     }
 }
 
+/// What a function value reads: a binding in scope (`twice`), or a static
+/// method reached through its struct (`S.st`), upstream's overload set for
+/// that attribute of the struct type.
+#[derive(Clone, Copy)]
+pub(super) enum CallableValueSource<'n> {
+    Binding(&'n str),
+    Static { owner: &'n str, method: &'n str },
+}
+
 /// The bindings concrete resolution of a parameterized associated type
 /// substitutes into its symbolic template: type parameters by name (the
 /// enclosing struct's and the member's), value parameters by binder identity
@@ -1045,6 +1054,23 @@ impl Checker {
             .then(|| (name.to_string(), args.into_owned()))
     }
 
+    /// Type a bracket over a function, which binds its parameters, or
+    /// `None` for any other base. A bracket over a function's name is
+    /// spelled as the parameter application it is (`twice[4]`), and one
+    /// over a static read through its struct binds the static's
+    /// (`S.gst[10]`).
+    pub(super) fn infer_bracket_callable(&self, expr: &Expr) -> Option<Result<Ty, TypeError>> {
+        if let Some((name, args)) = self.bracket_callable(expr) {
+            let spelled = super::initializer_list::derived_construction(
+                expr,
+                ExprKind::TypeApply { name, args },
+            );
+            return Some(self.infer_spelled(expr, spelled));
+        }
+        self.static_method_bracket(expr)
+            .map(|bracket| self.infer_static_method_bracket(expr, &bracket))
+    }
+
     /// Whether `value` reads a function its bracket specialized
     /// (`borrow[origin_of(v)]`, `twice[4]`) as a value.
     pub(super) fn specializes_callable_value(&self, value: &Expr) -> bool {
@@ -1059,25 +1085,21 @@ impl Checker {
     pub(super) fn infer_specialized_callable_value(
         &self,
         span: SourceSpan,
-        name: &str,
+        source: CallableValueSource<'_>,
         arguments: &[mojito_ast::ast::ParamArg],
         expected: Option<&Ty>,
         record: bool,
     ) -> Result<Option<Ty>, TypeError> {
-        let Some(callable) = self.lookup(name).cloned() else {
+        let Some(CallableValueCandidates {
+            name,
+            callable,
+            signatures,
+            targets,
+        }) = self.callable_value_candidates(&span, source, record)?
+        else {
             return Ok(None);
         };
-        if !matches!(
-            callable.kind(),
-            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
-        ) {
-            return Ok(None);
-        }
-        self.check_capture_access(name, false)?;
-        if record && let Some(owner) = self.lookup_owner(name) {
-            self.record_at(span.clone()).binding = Some(owner);
-        }
-        let signatures = self.lookup_callable_origins(name).unwrap_or_default();
+        let name = name.as_str();
         let ((selected, instance_arguments), target) =
             if let TyKind::Overload(candidates) = callable.kind() {
                 let expected = expected.ok_or_else(|| TypeError::BadCall {
@@ -1101,7 +1123,7 @@ impl Checker {
                             .ok()
                             .filter(|(specialized, _)| self.value_coerces(specialized, expected))
                         })
-                        .and_then(|_| callable_lowered_name(name, candidate))
+                        .and_then(|_| targets.get(index).cloned().flatten())
                         .map(|target| (index, target))
                     })
                     .collect::<Vec<_>>();
@@ -1137,7 +1159,12 @@ impl Checker {
                     callable,
                     signatures.first(),
                 )?;
-                (specialized, name.to_string())
+                let target = targets
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .unwrap_or_else(|| name.to_string());
+                (specialized, target)
             };
         if record {
             // A generic function's value names its instance at the
@@ -1671,6 +1698,85 @@ impl Checker {
         }
         Ok(())
     }
+    /// The candidates `source` reads as a function value, or `None` when it
+    /// names no function: the value's type (an `Overload` of several), each
+    /// candidate's origin signature, and the symbol each lowers to.
+    fn callable_value_candidates(
+        &self,
+        span: &SourceSpan,
+        source: CallableValueSource<'_>,
+        record: bool,
+    ) -> Result<Option<CallableValueCandidates>, TypeError> {
+        let (owner, method) = match source {
+            CallableValueSource::Static { owner, method } => (owner, method),
+            CallableValueSource::Binding(name) => {
+                let Some(callable) = self.lookup(name).cloned() else {
+                    return Ok(None);
+                };
+                if !matches!(
+                    callable.kind(),
+                    TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+                ) {
+                    return Ok(None);
+                }
+                self.check_capture_access(name, false)?;
+                if record && let Some(owner) = self.lookup_owner(name) {
+                    self.record_at(span.clone()).binding = Some(owner);
+                }
+                let targets = match callable.kind() {
+                    TyKind::Overload(candidates) => candidates
+                        .iter()
+                        .map(|candidate| callable_lowered_name(name, candidate))
+                        .collect(),
+                    _ => vec![Some(name.to_string())],
+                };
+                return Ok(Some(CallableValueCandidates {
+                    name: name.to_string(),
+                    signatures: self.lookup_callable_origins(name).unwrap_or_default(),
+                    callable,
+                    targets,
+                }));
+            }
+        };
+        let Some(signatures) = self
+            .structs
+            .get(owner)
+            .and_then(|info| info.methods.get(method))
+        else {
+            return Ok(None);
+        };
+        let statics = signatures
+            .iter()
+            .filter(|sig| !sig.has_self)
+            .collect::<Vec<_>>();
+        let mut types = statics
+            .iter()
+            .map(|sig| static_method_value_ty(sig))
+            .collect::<Vec<_>>();
+        // A method sharing its name with another lowers to its overload's
+        // symbol, as the static call through the struct names it.
+        let targets = statics
+            .iter()
+            .map(|sig| {
+                Some(if signatures.len() > 1 {
+                    method_lowered_name(owner, method, sig, self.self_instance_ty(owner).as_ref())
+                } else {
+                    format!("{owner}.{method}")
+                })
+            })
+            .collect();
+        let callable = match types.len() {
+            0 => return Ok(None),
+            1 => types.pop().expect("one static"),
+            _ => TyKind::Overload(types).into(),
+        };
+        Ok(Some(CallableValueCandidates {
+            name: format!("{owner}.{method}"),
+            callable,
+            signatures: Vec::new(),
+            targets,
+        }))
+    }
 }
 
 /// Why an availability clause rejected a call.
@@ -1704,6 +1810,32 @@ pub(super) fn violated_constraint_reason(constraint: &impl std::fmt::Display) ->
     format!(
         "violated constraint; constraint declared here evaluated to False, expected '{constraint}'"
     )
+}
+
+/// The function values a callable read selects among, as
+/// [`Checker::callable_value_candidates`] resolves them.
+struct CallableValueCandidates {
+    /// The spelling diagnostics and parameter binding name the value by.
+    name: String,
+    callable: Ty,
+    signatures: Vec<CallableOriginSignature>,
+    /// Per candidate (one for a callable that is no `Overload`), the
+    /// symbol it lowers to; `None` for a candidate that names none.
+    targets: Vec<Option<String>>,
+}
+
+/// The value type of the static `sig`: a thin function, since a static
+/// captures nothing, generic over the method's own parameters.
+fn static_method_value_ty(sig: &MethodSig) -> Ty {
+    let func = method_func_ty(sig, mojito_types::origin::CallableEnvironment::Thin);
+    if sig.decls.is_empty() {
+        return TyKind::Func(Box::new(func)).into();
+    }
+    TyKind::GenericFunc(Box::new(GenericFuncTy {
+        decls: sig.decls.clone(),
+        func,
+    }))
+    .into()
 }
 
 /// Whether a struct symbol names the bundled `Span` view (bare or

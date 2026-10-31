@@ -188,8 +188,21 @@ pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstrain
 }
 
 pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
-    TyKind::Func(Box::new(FuncTy {
-        environment: mojito_types::origin::CallableEnvironment::Default,
+    TyKind::Func(Box::new(method_func_ty(
+        method,
+        mojito_types::origin::CallableEnvironment::Default,
+    )))
+    .into()
+}
+
+/// The function type of `method`'s call surface, its receiver excluded,
+/// in `environment`.
+pub(super) fn method_func_ty(
+    method: &MethodSig,
+    environment: mojito_types::origin::CallableEnvironment,
+) -> FuncTy {
+    FuncTy {
+        environment,
         params: method.params.clone(),
         names: method.names.clone(),
         ret: method.ret.clone(),
@@ -204,8 +217,7 @@ pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
         ref_params: method.ref_params.clone(),
         ref_return: method.ref_return.clone().map(Box::new),
         transfers: TransferSet::default(),
-    }))
-    .into()
+    }
 }
 
 /// A method's contract with its own binders canonicalized to signature slots

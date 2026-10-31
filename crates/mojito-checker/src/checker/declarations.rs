@@ -1354,7 +1354,7 @@ impl Checker {
         let actual = self
             .infer_specialized_callable_value(
                 expression.source_span(),
-                name,
+                CallableValueSource::Binding(name),
                 arguments,
                 Some(expected),
                 true,

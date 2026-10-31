@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A static method read through its struct is a function value, as at the
+  pin: `var f = S.st` then `f(3)`, `Self.st` inside the struct, a bracket
+  binding the static's own parameters (`S.gst[10]`), and an overloaded
+  static selected by an expected `def(...)` type (R59). A parametric
+  struct's static (R1794) and an initializer (R1796) read as values are
+  rejected explicitly.
+
 - `SIMD[...]` binds its brackets through the declared struct, so a keyword
   `length=` or `dtype=` works in a signature, a binding, a construction,
   and a partial alias (R1557). `Scalar`, `Byte`, and the sized aliases are

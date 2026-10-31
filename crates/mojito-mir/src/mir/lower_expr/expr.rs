@@ -682,18 +682,7 @@ impl<'a> Flatten<'a> {
                     self.nested_type_apply(node, name)
                 } else {
                     let function = callable_target(&checked.adjustments)?;
-                    let arguments = node.instantiated_args();
-                    self.literal(
-                        checked,
-                        if arguments.is_empty() {
-                            Const::Function(function)
-                        } else {
-                            Const::FunctionInstance {
-                                function,
-                                arguments,
-                            }
-                        },
-                    )
+                    self.callable_constant(node, function)
                 }
             }
             _ => return None,
@@ -705,6 +694,20 @@ impl<'a> Flatten<'a> {
     /// other op, which another family lowers.
     fn access_family(&mut self, node: Node<'a>) -> Option<Reg> {
         let bound = |id: &Option<CheckedNodeId>| id.and_then(|id| node.operand_of(id));
+        // A static read through its struct (`S.st`, `S.gst[10]`) is the
+        // function constant the check resolved it to; its type-name
+        // receiver is never lowered.
+        if matches!(
+            node.op(),
+            CheckedOp::Member { .. } | CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. }
+        ) && node
+            .ty()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_)))
+            && selected_call(&node.checked.adjustments).is_none()
+            && let Some(function) = resolved_callable(&node.checked.adjustments)
+        {
+            return Some(self.callable_constant(node, function));
+        }
         Some(match node.op() {
             CheckedOp::Member { field, .. } => self.member_expr(node, node.object()?, field),
             // A variant projection spelled with a struct-name index
@@ -986,6 +989,23 @@ impl<'a> Flatten<'a> {
             "HIR's slot for a name is its binding's"
         );
         self.read_slot(var, checked.location(), Some(checked))
+    }
+
+    /// The constant naming `function`, which `node` reads, at the
+    /// arguments its bracket bound.
+    fn callable_constant(&mut self, node: Node<'a>, function: String) -> Reg {
+        let arguments = node.instantiated_args();
+        self.literal(
+            node.checked,
+            if arguments.is_empty() {
+                Const::Function(function)
+            } else {
+                Const::FunctionInstance {
+                    function,
+                    arguments,
+                }
+            },
+        )
     }
 
     /// Dictionary display `node` as upstream's

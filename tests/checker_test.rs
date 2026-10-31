@@ -2660,6 +2660,30 @@ fn enforces_raises_effect_at_struct_operators() {
 }
 
 #[test]
+fn reads_a_static_method_through_its_struct_as_a_function_value() {
+    ok_std(
+        "struct S:\n    @staticmethod\n    def st(x: Int) -> Int:\n        return x + 1\n\n\
+        def main():\n    var f = S.st\n    var g: Int = f(3)\n",
+    );
+    let parametric = err_std(
+        "struct P[T: AnyType]:\n    @staticmethod\n    def st(x: Int) -> Int:\n        \
+        return x + 1\n\ndef main():\n    var f = P.st\n",
+    );
+    assert!(
+        matches!(&parametric, TypeError::Unsupported(message) if message.contains("R1794")),
+        "got {parametric:?}"
+    );
+    let initializer = err_std(
+        "struct Q:\n    var a: Int\n    def __init__(out self):\n        \
+        self.a = 1\n\ndef main():\n    var f = Q.__init__\n",
+    );
+    assert!(
+        matches!(&initializer, TypeError::Unsupported(message) if message.contains("R1796")),
+        "got {initializer:?}"
+    );
+}
+
+#[test]
 fn enforces_raises_effect_at_instance_and_static_method_calls() {
     let declarations = "@fieldwise_init\nstruct Bomb:\n    var code: Int\n    def explode(self) raises -> Int:\n        raise \"boom\"\n    @staticmethod\n    def static_explode() raises -> Int:\n        raise \"boom\"\n";
     assert!(matches!(

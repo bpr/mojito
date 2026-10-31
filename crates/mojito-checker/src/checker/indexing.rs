@@ -1780,6 +1780,11 @@ impl Checker {
         object: &Expr,
         field: &str,
     ) -> Result<Ty, TypeError> {
+        if let Some(value) =
+            self.infer_static_method_value(span.clone(), (object, field), &[], None, true)?
+        {
+            return Ok(value);
+        }
         // `Self.n` reads the enclosing struct's value parameter.
         if let ExprKind::Identifier(s) = &object.kind
             && s == "Self"

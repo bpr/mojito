@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1794**.
+Next free ID: **R1797**.
 
 ## Ordered Work
 
@@ -3821,21 +3821,64 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R59 A static method read through its struct as a value is
-  rejected**
+- [ ] **R1796 An initializer read through its struct is not a function
+  value**
 
-  Problem: `var f = S.st` over `@staticmethod def st(x: Int) -> Int` fails
-  with "Undefined variable 'S'", where the pin prints `4` for `f(3)`.
-  - The checker reads the bare struct name `S` as a value before any
-    static-method path sees the read.
-  - The explicit-argument call `P.plain[Int](4)` this entry first named
-    already runs (checked 2026-10-29).
-  - Probe: `var f = Q.__init__[7]` then `print(f().a)`, over `__init__[k:
-    Int](out self)`, fails with "type 'Q' has no field '__init__'", where
-    the pin prints `7`. `var g = Q.st` gives the same "no field 'st'".
-  - The plan must first find which pass infers the bare type name as a value.
+  Problem: `var f = Q.__init__[7]` then `print(f().a)`, over
+  `__init__[k: Int](out self)`, is rejected with "reading the initializer
+  'Q.__init__' as a value is not supported yet", where the pin prints `7`.
+  - Upstream's `out self` is the initializer's result, so the value is a
+    `def() -> Q`.
+  - Mojito lowers `out self` as a receiver parameter slot, which only a
+    direct construction fills (the VM's `construct_via_init`).
+  - A call through a function value (`CallIndirect`) has no such slot, on
+    either backend.
+  - A free function's named `out` result already lowers as its result
+    (`var f = mk` then `f(3)` runs), which is the model.
+  - The checker's rejection is in `infer_static_method_value`
+    (`checker/method_calls/type_receivers.rs`).
+  - Probe: `var g = Q.__init__` then `print(g(3).a)` over `__init__(out
+    self, k: Int)`, expected `3`.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1794 A static of a parametric struct read as a value is not a
+  function value**
+
+  Problem: `var f = P[Int].st` then `print(f(3))`, over `struct P[T:
+  Copyable]` with `@staticmethod def st(x: Int) -> Int`, is rejected with
+  "reading the static method 'P.st' of a parametric struct as a value is
+  not supported yet".
+  - A non-parametric struct's static reads as `Const::Function` (R59).
+  - A parametric struct's static is a template over the struct's
+    parameters too.
+  - `Const::FunctionInstance` names only the function's own arguments.
+    The static call carries the receiver instance separately (`receiver:
+    struct_type`), which a constant has no slot for.
+  - Upstream's symbol reference names the specialization of the struct
+    and the method together.
+  - Probe: `var f = Self.st` inside a method of `P`, and `var f = P.st`
+    where `P`'s parameters default, give the same error.
+  - Probe: `var g = P[Int].gst[3]` over `def gst[k: Int](x: Int)`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1795 An instance method read through its type is reported as a
+  missing field**
+
+  Problem: `var h = S.get`, over `def get(self) -> Int`, fails with "type
+  'S' has no field 'get'".
+  - The pin's behavior is not yet recorded: probe it first.
+  - If the pin accepts it, the value takes the receiver as its first
+    parameter, as the call `S.get(s)` already does
+    (`infer_type_receiver_instance_call`).
+  - The static path that would carry it is `callable_value_candidates`
+    (`checker/generics.rs`), which today gathers receiver-less methods
+    only.
+  - If the pin rejects it, move this to an `assets/type_error` fixture
+    with the pin's message and delete the entry.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R60 A generic `comptime` alias is not constructible**
 
@@ -3862,8 +3905,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     over `comptime V[k: Int] = W[k]`, fails with "Undefined variable", where
     the pin prints `5` and `7`; `comptime Z = W[5]` then `Z.get()` runs
     (moved from R481, 2026-10-30).
-  - Depends on R59, which finds the pass that reads a bare type name as a
-    value; the alias call needs the same answer.
+  - A bare type name is read as a value in `Checker::infer_member`
+    (`checker/indexing.rs`), which the alias call must also bypass.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 - [ ] **R1598 The `assert` statement does not parse**
