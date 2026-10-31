@@ -1,4 +1,4 @@
-//! Floating/integer arithmetic helpers: pow, division variants,
+//! Floating/integer arithmetic helpers: division variants,
 //! conversions, comparisons, and trap guards.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -46,49 +46,6 @@ impl FnLowering<'_> {
             CallIntrinsicOp::new(ctx, StringAttr::new(intrinsic.to_string()), fn_ty, operands);
         self.append(ctx, call.get_operation(), Some(dest));
         call.get_result(ctx)
-    }
-
-    /// `x ** y` on Int/UInt: guard the exponent to the accepted range
-    /// (`0 ..= u32::MAX`, one unsigned compare covers negative-as-i64 too),
-    /// then call the bundled `std._intrinsics._pow_int` body — the same Mojo
-    /// square-and-multiply the VM runs, rather than a second hand-written
-    /// helper. Wrapping i64 multiplication is bit-identical for Int and
-    /// `UInt`, so the one body serves both.
-    pub(super) fn lower_pow(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        lhs: Value,
-        rhs: Value,
-    ) -> Result<(), PlironError> {
-        let limit = self.int_constant(ctx, u32::MAX as i64);
-        let out_of_range = ICmpOp::new(ctx, ICmpPredicateAttr::UGT, rhs, limit);
-        self.append(ctx, out_of_range.get_operation(), Some(dest));
-        self.emit_trap_guard(
-            ctx,
-            out_of_range.get_result(ctx),
-            TrapCategory::PowExponent,
-            dest,
-        )?;
-        let symbol = mojito_symbol::symbol::POW_INT_SYMBOL;
-        let Some(signature) = self.signatures.get(symbol) else {
-            return Err(self.unsupported_reg(
-                "`**` on integers without the bundled `_pow_int` body".into(),
-                dest,
-            ));
-        };
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(callee),
-            signature.func_ty,
-            vec![lhs, rhs],
-        );
-        self.define(ctx, dest, call.get_operation(), call.get_result(ctx))
     }
 
     pub(super) fn int_to_f64(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {

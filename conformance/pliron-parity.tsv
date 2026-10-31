@@ -219,6 +219,7 @@ assets/ok/comptime_match_forms.mojo	main	exe-differential	sanitized
 assets/ok/comptime_match_patterns.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_constant_parameter_values.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_sized_scalar_constant.mojo	main	exe-differential	sanitized
+assets/ok/comptime_pow_applies_dunder.mojo	main	exe-differential	sanitized
 assets/ok/comptime_self_member_applied.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_simd_initializer_applications.mojo	main	exe-differential	sanitized
@@ -839,6 +840,7 @@ assets/ok/pliron_struct_fieldwise.mojo	main	exe-differential	sanitized
 assets/ok/pliron_struct_init_method.mojo	main	exe-differential	sanitized
 assets/ok/pliron_subscript_ref.mojo	main	exe-differential	sanitized
 assets/ok/pliron_thin_callables.mojo	main	exe-differential	sanitized
+assets/ok/pliron_trap_pow_negative.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_cleanup_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_handled_error.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_loop_escape.mojo	main	exe-differential	sanitized
@@ -1040,6 +1042,7 @@ assets/ok/simd_mlir_storage.mojo	main	exe-differential	sanitized
 assets/ok/simd_modf_floor.mojo	main	exe-differential	sanitized
 assets/ok/simd_nullary_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_parameter_default_construction.mojo	main	exe-differential	sanitized
+assets/ok/simd_pow_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_float.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_int.mojo	main	exe-differential	sanitized
 assets/ok/simd_scalar_splat.mojo	main	exe-differential	sanitized
@@ -1613,7 +1616,6 @@ assets/runtime_error/pliron_raise_iter_body.mojo	main,__toplevel__	error-differe
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/pliron_raise_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/pliron_trap_mod_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
-assets/runtime_error/pliron_trap_pow_negative.mojo	main,__toplevel__	error-differential	category=PowExponent
 assets/runtime_error/pointer_dangling.mojo	main,__toplevel__	error-differential	category=PointerDangling
 assets/runtime_error/pointer_double_free.mojo	main,__toplevel__	error-differential	category=PointerDoubleFree
 assets/runtime_error/pointer_use_after_free.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree

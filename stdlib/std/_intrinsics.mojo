@@ -9,23 +9,6 @@
 # before the functions that call it.
 
 
-# `x ** y` on `Int`/`UInt`: wrapping square-and-multiply. The caller has
-# already guarded the exponent to `0 ..= UInt32.MAX` (native trap category 2,
-# the VM's `'**' exponent` type error), so the loop only sees a non-negative
-# count. Wrapping i64 multiplication is bit-identical for `Int` and `UInt`, so
-# the one body serves both: the unsigned caller reinterprets the bits.
-def _pow_int(base: Int, exponent: Int) -> Int:
-    var accumulator = 1
-    var factor = base
-    var remaining = exponent
-    while remaining != 0:
-        if remaining & 1 != 0:
-            accumulator = accumulator * factor
-        factor = factor * factor
-        remaining = remaining >> 1
-    return accumulator
-
-
 # The digits of `value` at `out[at ...]`, returning how many were written.
 # Counting first lets the fill run right to left, so there is no reversal.
 def _uint_digits_at(value: UInt, out: UnsafePointer[Byte], at: Int) -> Int:

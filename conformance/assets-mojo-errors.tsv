@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1004
+# swept-count	1007
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -165,7 +165,6 @@ assets/runtime_error/pliron_raise_iter_body.mojo	trap	agree	boom at 2
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	compile-reject	skip	error: 'main()' can only raise 'Error'; remove the explicit error type
 assets/runtime_error/pliron_raise_unhandled.mojo	trap	agree	negative input
 assets/runtime_error/pliron_trap_mod_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero
-assets/runtime_error/pliron_trap_pow_negative.mojo	runs	subset	the pin runs it; Mojito rejects: '**' exponent must be a non-negative Int
 assets/runtime_error/pointer_dangling.mojo	trap	agree	error: execution crashed
 assets/runtime_error/pointer_double_free.mojo	runs	subset	the pin runs it; Mojito rejects: double free
 assets/runtime_error/pointer_use_after_free.mojo	runs	subset	the pin runs it; Mojito rejects: use after
@@ -415,6 +414,7 @@ assets/type_error/fieldwise_unknown_keyword.mojo	compile-reject	agree	error: no 
 assets/type_error/float32_from_intable.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/float_literal_local_not_concrete.mojo	compile-reject	agree	error: cannot implicitly convert 'FloatLiteral[0.5]' value to 'FloatLiteral[_]'
 assets/type_error/float_literal_parameter_float_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Float64' to 'FloatLiteral[x.value]', it depends on an unresolved parameter 'x.value'
+assets/type_error/float_literal_pow_is_float64.mojo	compile-reject	agree	error: cannot implicitly convert 'Float64' value to 'Float32'
 assets/type_error/float_literal_to_int.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/for_discard_target_read.mojo	compile-reject	agree	error: cannot read from discard pattern '_'
 assets/type_error/for_sequence_target_not_raising.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
@@ -500,6 +500,7 @@ assets/type_error/int_literal_local_not_concrete.mojo	compile-reject	agree	error
 assets/type_error/int_literal_parameter_int_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Int' to 'IntLiteral[x.value]', it depends on an unresolved parameter 'x.value'
 assets/type_error/int_literal_receiver_len.mojo	compile-reject	agree	error: 'IntLiteral[5]' value has no attribute '__len__'
 assets/type_error/int_mlir_value_index_vector.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/int_pow_float_literal.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/int_storage_init_from_int.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
@@ -539,6 +540,7 @@ assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no 
 assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/list_slice_assigned_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebuild' call
 assets/type_error/literal_left_comparison_uint.mojo	compile-reject	agree	error: no matching method in call to '__lt__'
+assets/type_error/literal_pow_simd_exponent.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/llvm_intrinsic_bswap_odd_bytes.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
 assets/type_error/llvm_intrinsic_deinterleave_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/llvm_intrinsic_deinterleave_vector_result.mojo	compile-reject	agree	error: call intrinsic signature <4 x i32> (<8 x i32>) to overloaded intrinsic "llvm.vector.deinterleave2" : !kgen.string does not match any of the overloads: intrinsic return type expected literal non-packed struct with 2 elements, but got <4 x i32>
@@ -861,6 +863,7 @@ assets/type_error/simd_int_width_binder_from_length.mojo	compile-reject	agree	er
 assets/type_error/simd_int_width_binder_not_inferred.mojo	compile-reject	agree	error: invalid call to 'lanes': value passed to 'v' cannot be converted from 'SIMD[.int32, 4]' to 'SIMD[.int32, n]', it depends on an unresolved parameter 'n'
 assets/type_error/simd_length_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'SIMDLength' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/simd_mlir_index_float.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_pow_exponent_shape.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_scalar_splat_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Int32' value to 'SIMD[.int64, 4]'
 assets/type_error/simd_select_non_bool_mask.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_shuffle_index_out_of_range.mojo	compile-reject	agree	error: function instantiation failed

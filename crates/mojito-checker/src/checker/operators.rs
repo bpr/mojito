@@ -161,8 +161,8 @@ impl Checker {
         if matches!(op, In | NotIn) {
             return self.infer_membership(span, op, left, right, &lt, &rt);
         }
-        // `+`, `-`, `*`, `/`, `//`, the bitwise operators, the shifts, and the
-        // comparisons beside a `SIMD` operand, a scalar's included, are
+        // `+`, `-`, `*`, `/`, `//`, `**`, the bitwise operators, the shifts,
+        // and the comparisons beside a `SIMD` operand, a scalar's included, are
         // `SIMD`'s declared dunders, `a.__add__(b)` else the reflected
         // `b.__radd__(a)`, as upstream's `emitBinOpCall` resolves them. A
         // comparison has no reflected dunder, so a literal left operand
@@ -177,7 +177,7 @@ impl Checker {
         if let Some(span) = &span
             && (matches!(
                 op,
-                Add | Sub | Mul | Div | FloorDiv | BitAnd | BitOr | BitXor | Shl | Shr
+                Add | Sub | Mul | Div | FloorDiv | Pow | BitAnd | BitOr | BitXor | Shl | Shr
             ) || (comparison
                 && self.comptime_positions.get() == 0
                 && self.structs.contains_key("SIMD")))
@@ -286,21 +286,19 @@ impl Checker {
                 }
             }
         }
-        // Integer powers of exact literals stay exact. A fractional exponent
-        // is not rational in general, so this is the semantic boundary where
-        // both operands become Float64 and runtime `powf` takes over.
-        if matches!(op, Pow) && matches!(common.as_ref().map(Ty::kind), Some(TyKind::FloatLiteral))
+        // A float literal's `**` is `Float64`'s `__pow__` (`4.0 ** 0.5`), its
+        // left operand materialized, as upstream's `FloatLiteral` declares
+        // none; only an `IntLiteral` pair stays a literal power.
+        if let Some(span) = &span
+            && matches!(op, Pow)
+            && matches!(common.as_ref().map(Ty::kind), Some(TyKind::FloatLiteral))
+            && self.structs.contains_key("SIMD")
         {
-            let exponent_is_integer = match self.exact_literal_value(right) {
-                Some(CtValue::IntLiteral(_)) => true,
-                Some(CtValue::FloatLiteral(value)) => value.to_int_if_whole().is_some(),
-                _ => false,
-            };
-            if !exponent_is_integer {
-                self.record_literal_materializations(left, &lt, &Ty::float64())?;
-                self.record_literal_materializations(right, &rt, &Ty::float64())?;
-                return Ok(Ty::float64());
-            }
+            let receiver = mojito_types::types::default_literal(&lt);
+            self.record_literal_materializations(left, &lt, &receiver)?;
+            return self
+                .infer_operator_call(span, op, left, right, &receiver, Some(&rt))?
+                .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
         }
         let result = match op {
             // Upstream's `Bool.__and__`/`__or__`/`__xor__`: the eager `i1` op.
@@ -340,9 +338,10 @@ impl Checker {
             {
                 common
             }
-            // `%` and `**` keep the common type until their `SIMD` dunders
-            // land (R1623, R1567).
-            Mod | Pow => common,
+            // `%` keeps the common type until its `SIMD` dunder lands
+            // (R1623); an `IntLiteral` pair's `**` is the literal's own.
+            Mod => common,
+            Pow if common.as_ref().is_some_and(|ty| *ty == TyKind::IntLiteral) => common,
             // A literal pair divides exactly into a `FloatLiteral`, as
             // upstream's `IntLiteral.__truediv__` does; concrete operands
             // keep their common type.
@@ -645,8 +644,10 @@ impl Checker {
     /// `emitBinOpCall` does: the receiver `lt`'s dunder call
     /// `left.__op__(right)`, else, when the right operand has a type `rt`,
     /// its reflected dunder call `right.__rop__(left)`, marked reflected so
-    /// MIR still evaluates the operands in source order. `None` when
-    /// neither selects a candidate.
+    /// MIR still evaluates the operands in source order. A literal receiver
+    /// whose own dunder takes no `right` first materializes to its default
+    /// type (`Int`, `Float64`), whose dunder is tried before the reflected
+    /// one. `None` when none selects a candidate.
     fn infer_operator_call(
         &self,
         span: &SourceSpan,
@@ -668,6 +669,23 @@ impl Checker {
             )?
         {
             return Ok(Some(ty));
+        }
+        let materialized = mojito_types::types::default_literal(lt);
+        if let Some(dunder) = op.dunder()
+            && matches!(lt.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+        {
+            let before = self.record_at(left.source_span()).adjustment.clone();
+            self.record_literal_materializations(left, lt, &materialized)?;
+            if let Some(ty) = self.infer_operator_method_call(
+                span,
+                left,
+                &materialized,
+                dunder,
+                std::slice::from_ref(right),
+            )? {
+                return Ok(Some(ty));
+            }
+            self.record_at(left.source_span()).adjustment = before;
         }
         let (Some(reflected), Some(rt)) = (op.reflected_dunder(), rt) else {
             return Ok(None);

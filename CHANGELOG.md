@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `**` and `**=` are upstream's `SIMD.__pow__` (three overloads),
+  `__rpow__`, and `__ipow__` over `_pow`, `_powf_scalar`, `_powf`, and
+  `_powi`, verbatim, on both backends and at compile time (R1567):
+  `Float64(2) ** 0.5` prints the pin's `1.4142135623734946`, `4.0 **
+  0.5` is `Float64`'s `2.000000000000565`, `Int32(3) ** 2` and a vector
+  power run, `Int(2) ** -1` is `0` rather than a trap, and a parameter's
+  `**` folds as `_powi`. A literal left operand of a routed operator
+  tries its default type's dunder before the reflected one, as at the
+  pin. `SIMD` declares `Powable`, and the compiler's `_pow_int`, the
+  VM's and Pliron's own `**`, and trap category 2's emitter are gone.
 - A parameter may be annotated `FloatLiteral`, as at the pin (R1752): a
   float literal argument selects it over a `Float64` or generic `SIMD`
   overload, while a `Float64` value selects the `Float64` one, so

@@ -274,12 +274,12 @@ pub fn leaf_conforms(
 /// `std.simd`, which the checker and the elaborator read instead.
 ///
 /// `SIMD` lists every `std.math` operation trait but `CeilDivableRaising`;
-/// its `Absable`, `Ceilable`, `Floorable`, and `Truncable` are its
+/// its `Absable`, `Ceilable`, `Floorable`, `Powable`, and `Truncable` are its
 /// declaration's, and `IntLiteral` lists `Ceilable`, `Floorable`, and
-/// `Truncable`. For `Powable`, `Roundable`, `DivModable`, and
-/// `CeilDivable` a numeric literal answers as the scalar it materializes
-/// to, and only `Int`, `UInt`, and `Float64` conform, since the backends
-/// compute those operations over no other `SIMD`.
+/// `Truncable`. For `Roundable`, `DivModable`, and `CeilDivable` a numeric
+/// literal answers as the scalar it materializes to, and only `Int`,
+/// `UInt`, and `Float64` conform, since the backends compute those
+/// operations over no other `SIMD`.
 ///
 /// `Bool`, `StringLiteral`, and `DType` list `Hashable` (a `SIMD`'s is its
 /// declaration's); none lists `Hasher`.
@@ -327,8 +327,8 @@ pub fn modelled_conformance(
             TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
         ),
         "Ceilable" | "Floorable" | "Truncable" => *ty == TyKind::IntLiteral,
-        "Absable" => false,
-        "Powable" | "Roundable" | "DivModable" | "CeilDivable" => is_numeric_like(ty),
+        "Absable" | "Powable" => false,
+        "Roundable" | "DivModable" | "CeilDivable" => is_numeric_like(ty),
         "Hashable" => builtin_hashable_ty(ty),
         "Writable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {

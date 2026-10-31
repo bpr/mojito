@@ -57,14 +57,6 @@ impl ModuleNames for NoModuleNames {
     }
 }
 
-/// The lowered symbol of `std._intrinsics._pow_int`.
-///
-/// It is the Mojo body both backends call for `**` on `Int`/`UInt`.
-/// `std.prelude` imports the module, so every linked program carries the
-/// definition; the exponent arrives already guarded to `0 ..= u32::MAX` by
-/// the caller.
-pub const POW_INT_SYMBOL: &str = "__module$std$$intrinsics$_pow_int";
-
 /// The lowered symbols of `std._intrinsics._int_digits`/`_uint_digits`.
 ///
 /// They are the Mojo bodies the native backend calls for an integer's
@@ -108,24 +100,6 @@ pub const SIMD_LENGTH_CONVERSION: &str = "SIMD.__init__$simd_length";
 /// The symbol of upstream's `@implicit SIMDLength.__init__(Int)`, which
 /// spells the length a vector's `Int` width converts to.
 pub const SIMD_LENGTH_FROM_INT: &str = "SIMDLength.__init__$ov$Int";
-
-/// Whether a `**` on these operand types calls [`POW_INT_SYMBOL`].
-///
-/// Every pair the native lowering routes to its integer arms does, which is
-/// anything without a float or vector operand (an unmaterialized literal
-/// pair lowers as `Int`). Monomorphization enqueues the body and the
-/// backend's reachable set declares it on exactly this rule, so the two
-/// cannot drift.
-pub fn calls_pow_int(left: Option<&Ty>, right: Option<&Ty>) -> bool {
-    let floating = |ty: Option<&Ty>| {
-        ty.map(Ty::kind).is_some_and(|kind| match kind {
-            TyKind::INT | TyKind::UINT => false,
-            TyKind::FloatLiteral | TyKind::Simd { .. } => true,
-            _ => false,
-        })
-    };
-    !floating(left) && !floating(right)
-}
 
 /// One declaration visible to phase-neutral runtime/backend dispatch.
 #[derive(Debug, Clone, Copy)]

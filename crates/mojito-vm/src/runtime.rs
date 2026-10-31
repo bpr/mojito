@@ -1897,48 +1897,6 @@ fn value_to_bool_lane(v: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-/// Validate an integer exponent for `**` (non-negative and `u32`-sized).
-///
-/// `0 ..= u32::MAX` is the range the native backend traps outside of (trap
-/// category 2) before calling the same `_pow_int` body.
-pub fn pow_exponent(y: i64) -> Result<u32, RuntimeError> {
-    u32::try_from(y).map_err(|_| {
-        RuntimeError::TypeError(
-            "'**' exponent must be a non-negative Int that fits in 32 bits".to_string(),
-        )
-    })
-}
-
-/// The `(unsigned, base, exponent)` bits of an integer `**`.
-///
-/// Both operands must be runtime integers — a literal operand takes the
-/// other's signedness, as [`apply_infix`]'s materialization would. `None` for
-/// every other pair, which leaves float `**`, literal-only `**`, and
-/// non-numeric operands on their own paths; the caller runs the bundled
-/// `_pow_int` body on what this accepts.
-pub fn integer_pow_operands(left: &Value, right: &Value) -> Option<(bool, i64, i64)> {
-    enum Operand {
-        Runtime(Num),
-        Literal(i64),
-    }
-    let operand = |value: &Value| match value {
-        Value::Int(n) => Some(Operand::Runtime(Num::I(*n))),
-        Value::UInt(n) => Some(Operand::Runtime(Num::U(*n))),
-        Value::IntLiteral(literal) => literal.wrapping_signed(64).map(Operand::Literal),
-        _ => None,
-    };
-    let (left, right) = (operand(left)?, operand(right)?);
-    let unsigned = match (&left, &right) {
-        (Operand::Literal(_), Operand::Literal(_)) => return None,
-        (Operand::Runtime(num), _) | (_, Operand::Runtime(num)) => num.rank() == 1,
-    };
-    let bits = |operand: &Operand| match operand {
-        Operand::Runtime(num) => num.as_i64(),
-        Operand::Literal(value) => *value,
-    };
-    Some((unsigned, bits(&left), bits(&right)))
-}
-
 /// The `(bits, signed)` lane shape of an integer SIMD dtype, or `None` for
 /// the float and bool dtypes. Shared with the native backends so their width
 /// tables cannot drift from the VM's.
@@ -2356,23 +2314,6 @@ fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Valu
         Mod => Value::FloatLiteral(left.floor_mod(&right).ok_or_else(|| {
             RuntimeError::TypeError("floating literal modulo by zero".to_string())
         })?),
-        Pow => {
-            if let Some(exponent) = right.to_int_if_whole() {
-                Value::FloatLiteral(left.pow_int(&exponent).ok_or_else(|| {
-                    RuntimeError::TypeError("invalid FloatLiteral exponent".to_string())
-                })?)
-            } else {
-                Value::Float64(
-                    left.to_f64()
-                        .ok_or_else(|| literal_materialization_error(&left, "Float64"))?
-                        .powf(
-                            right
-                                .to_f64()
-                                .ok_or_else(|| literal_materialization_error(&right, "Float64"))?,
-                        ),
-                )
-            }
-        }
         Lt | Le | Gt | Ge | Eq | Ne => Value::Bool(match op {
             Lt => left.numeric_cmp(&right).is_lt(),
             Le => !left.numeric_cmp(&right).is_gt(),
@@ -2382,7 +2323,7 @@ fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Valu
             Ne => !left.numeric_cmp(&right).is_eq(),
             _ => unreachable!(),
         }),
-        Shl | Shr | BitAnd | BitOr | BitXor | MatMul | And | Or | In | NotIn | Is | IsNot => {
+        Pow | Shl | Shr | BitAnd | BitOr | BitXor | MatMul | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for FloatLiteral"
             )));
@@ -2428,8 +2369,7 @@ fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
         Ge => Value::Bool(x >= y),
         Eq => Value::Bool(x == y),
         Ne => Value::Bool(x != y),
-        // `**` runs the bundled `std._intrinsics._pow_int` body, dispatched by
-        // `VmBackend::integer_pow` before an operand pair reaches here.
+        // `**` is `SIMD.__pow__`'s declared body.
         Pow | MatMul | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for integer dispatch"
@@ -2462,8 +2402,7 @@ fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
         Ge => Value::Bool(x >= y),
         Eq => Value::Bool(x == y),
         Ne => Value::Bool(x != y),
-        // `**` runs the bundled `std._intrinsics._pow_int` body, dispatched by
-        // `VmBackend::integer_pow` before an operand pair reaches here.
+        // `**` is `SIMD.__pow__`'s declared body.
         Pow | MatMul | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for unsigned dispatch"
@@ -2488,7 +2427,6 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
         Div => Value::Float64(x / y),
         FloorDiv => Value::Float64((x / y).floor()),
         Mod => Value::Float64(y.mul_add(-(x / y).floor(), x)),
-        Pow => Value::Float64(x.powf(y)),
         Lt => Value::Bool(x < y),
         Gt => Value::Bool(x > y),
         Le => Value::Bool(x <= y),
@@ -2496,7 +2434,7 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
         Eq => Value::Bool(x == y),
         // `pop.cmp ne` is the ordered predicate: a NaN is unequal to nothing.
         Ne => Value::Bool(x.partial_cmp(&y).is_some_and(std::cmp::Ordering::is_ne)),
-        MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn | Is | IsNot => {
+        Pow | MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for float dispatch"
             )));
@@ -2646,11 +2584,8 @@ mod tests {
             int(i64::MIN)
         );
         assert_eq!(int_op(InfixOp::Mod, i64::MIN, -1).unwrap(), int(0));
-        // Zero divisors still trap; only overflow got defined. `**` wraps in
-        // the bundled `_pow_int` body, so only its exponent guard is here.
+        // Zero divisors still trap; only overflow got defined.
         assert!(int_op(InfixOp::FloorDiv, 1, 0).is_err());
-        assert!(pow_exponent(-1).is_err());
-        assert!(pow_exponent(i64::from(u32::MAX)).is_ok());
 
         let uint = |value| Value::UInt(value);
         assert_eq!(uint_op(InfixOp::Sub, 0, 1).unwrap(), uint(u64::MAX));

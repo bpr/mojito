@@ -384,7 +384,7 @@ pub fn write_executable(
             runtime: true,
         },
     )?;
-    // `-lm`: float `**` lowers to `llvm.pow.f64`, which selects to libm.
+    // `-lm`: a float intrinsic (`llvm.floor.f64`, …) may select to libm.
     clang_from_bitcode(ctx, module, target, path, EXE_LINK_ARGS, &toolchain, debug)
 }
 

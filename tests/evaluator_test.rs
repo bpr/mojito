@@ -465,12 +465,13 @@ fn floor_division_and_modulo_floor_toward_negative_infinity() {
 }
 
 #[test]
-#[allow(clippy::suboptimal_flops, reason = "mirrors the `**` the VM evaluates")]
 fn power_and_true_division() {
     let e = run("var p: Int = 2 ** 10\nvar h: Float64 = 7 / 2\nvar r: Float64 = 2.0 ** 0.5\n");
     assert_eq!(binding(&e, "p"), Value::Int(1024));
     assert_eq!(binding(&e, "h"), Value::Float64(3.5)); // true division of ints -> Float64
-    assert_eq!(binding(&e, "r"), Value::Float64(2.0_f64.powf(0.5)));
+    // `Float64.__pow__`'s `_powf_scalar` computes `exp(0.5 * log(2))`, the
+    // pin's digits rather than the host's `powf`.
+    assert_eq!(binding(&e, "r"), Value::Float64(1.414_213_562_373_494_6));
 }
 
 #[test]

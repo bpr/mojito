@@ -1,4 +1,4 @@
-//! Free helpers: thunk/pow bodies, C-ABI types, MIR scans, scalar
+//! Free helpers: thunk bodies, C-ABI types, MIR scans, scalar
 //! predicates, and instruction metadata.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

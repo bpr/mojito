@@ -288,8 +288,10 @@ impl Checker {
                     ) => {
                         !(matches!(left.kind, ExprKind::Int(_))
                             && matches!(right.kind, ExprKind::Int(_)))
-                            && (*op != InfixOp::FloorDiv
-                                || !self.checker.simd_dunder_is_builtin("__floordiv__"))
+                            && (*op == InfixOp::Mod
+                                || op.dunder().is_none_or(|dunder| {
+                                    !self.checker.simd_dunder_is_builtin(dunder)
+                                }))
                     }
                     ExprKind::Infix(
                         InfixOp::Add | InfixOp::Sub | InfixOp::Mul | InfixOp::Div,

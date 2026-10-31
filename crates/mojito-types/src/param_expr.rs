@@ -3930,7 +3930,7 @@ pub enum ParamError {
         found: usize,
     },
     /// An evaluation that has no value: division by zero, an overflowing
-    /// power, a negative exponent.
+    /// literal power, a negative literal exponent.
     Arithmetic(String),
     /// An operator the compile-time surface does not define.
     Unsupported(String),

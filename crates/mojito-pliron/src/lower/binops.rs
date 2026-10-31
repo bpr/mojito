@@ -459,7 +459,6 @@ impl FnLowering<'_> {
                 let rhs = self.sanitized_divisor(ctx, dest, lhs, rhs)?;
                 self.lower_floor_mod(ctx, dest, lhs, rhs)
             }
-            InfixOp::Pow => self.lower_pow(ctx, dest, lhs, rhs),
             other => {
                 Err(self.unsupported_reg(format!("operator `{other:?}` on Int operands"), dest))
             }
@@ -523,7 +522,6 @@ impl FnLowering<'_> {
                 let rem = URemOp::new(ctx, lhs, rhs);
                 self.define(ctx, dest, rem.get_operation(), rem.get_result(ctx))
             }
-            InfixOp::Pow => self.lower_pow(ctx, dest, lhs, rhs),
             other => {
                 Err(self.unsupported_reg(format!("operator `{other:?}` on UInt operands"), dest))
             }
@@ -575,19 +573,6 @@ impl FnLowering<'_> {
                 let rem =
                     FSubOp::new_with_fast_math_flags(ctx, lhs, scaled.get_result(ctx), flags());
                 self.define(ctx, dest, rem.get_operation(), rem.get_result(ctx))
-            }
-            // Float `**` is the VM's `f64::powf` — both resolve to the host
-            // libm `pow`.
-            InfixOp::Pow => {
-                let f64_ty: TypeHandle = FP64Type::get(ctx).into();
-                let fn_ty = FuncType::get(ctx, f64_ty, vec![f64_ty, f64_ty], false);
-                let call = CallIntrinsicOp::new(
-                    ctx,
-                    StringAttr::new("llvm.pow.f64".to_string()),
-                    fn_ty,
-                    vec![lhs, rhs],
-                );
-                self.define(ctx, dest, call.get_operation(), call.get_result(ctx))
             }
             other => {
                 Err(self.unsupported_reg(format!("operator `{other:?}` on Float64 operands"), dest))

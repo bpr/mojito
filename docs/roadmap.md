@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1753**.
+Next free ID: **R1754**.
 
 ## Ordered Work
 
@@ -1275,6 +1275,10 @@ change that needs a new `MJRT_ABI_VERSION`.
     the parity harness cannot map the VM error, so the trap is pinned by
     `tests/pliron_opt_regression_test.rs` instead of an
     `assets/runtime_error` fixture.
+  - Trap category 2 (`rt_abi::TRAP_POW_EXPONENT`) has no emitter since
+    `**` became `SIMD.__pow__`'s body: retire its runtime message row,
+    its `docs/native-abi.md` entry, and its `tests/native_abi_test.rs`
+    pin.
   - Three runtime rows are dead code the bump should delete:
     `mjrt_fmt_i64`, `mjrt_fmt_u64` (integer display moved to the bundled
     `_int_digits`/`_uint_digits` Mojo bodies, 2026-09-12) and
@@ -8006,10 +8010,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R171 Seven corpus fixtures compute different numbers from the pin at
+- [ ] **R171 Four corpus fixtures compute different numbers from the pin at
   arithmetic edge cases such as an over-wide shift**
 
-  Problem: seven corpus fixtures compute different numbers from the pin,
+  Problem: four corpus fixtures compute different numbers from the pin,
   found by the 2026-09-12 stdout sweep and listed in
   [`conformance/assets-mojo-output-diffs.tsv`](../conformance/assets-mojo-output-diffs.tsv)
   under `arithmetic`.
@@ -8017,7 +8021,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     (`assets/ok/pliron_straightline.mojo`: `a << 65`, where the pin prints
     7 and Mojito 51102306).
   - The SIMD shift and floor-division fixtures disagree wholesale.
-  - Also here: an out-of-range float-to-int cast and `Float64` `**`.
+  - Also here: an out-of-range float-to-int cast.
   - `round()`'s half-way case left this list on 2026-09-13, when `round`
     became ties-to-even on both backends.
   - Each case needs the pin's rule established before Mojito's is changed.
@@ -8030,8 +8034,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     pin prints `-128` for an `Int8` lane, as Mojito does, and crashes
     (SIGFPE) on `Int`, so the fixture's row pins LLVM's undefined case,
     not a zero-divisor rule.
-  - R1567 (`pliron_float_pow.mojo`: `_powf_scalar`'s `exp(log)`) removes
-    a row.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -9320,6 +9322,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1158 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1753 `IntLiteral` and `FloatLiteral` declare no members, so a
+  literal receiver's explicit dunder call is rejected**
+
+  `(2).__add__(3)` reports "type 'Int' has no method '__add__'", where
+  upstream's `std/builtin/int_literal.mojo` and `float_literal.mojo`
+  declare the operator dunders and the pin prints `5`.
+  - The literal types are compiler-modelled (`TyKind::IntLiteral`,
+    `TyKind::FloatLiteral`); an operator over two literals is a checker
+    rule and a fold, not the declared dunder.
+  - The fix ports the two structs' operator and comparison dunders and
+    bridges the declarations onto the literal kinds, as R1652 did for
+    `StringLiteral`.
+  - Probe: `print((2).__pow__(10), (2).__floordiv__(3), (2).__lt__(3))`
+    prints `1024 0 True` at the pin.
+  - Probe: `(2).__abs__()` is rejected at the pin with "'IntLiteral[2]'
+    value has no attribute '__abs__'", not resolved as `Int`'s, and
+    `(2.5).__pow__(2.0)` likewise, since `FloatLiteral` declares no
+    `__pow__`.
+  - Found while landing R1567 (2026-10-31).
+  - Depends on R1507 (the declared struct is `IntLiteral[value]`).
+  - Model: Fable, Not Planned.
 
 - [ ] **R1458 `round` and `divmod` are compiler builtins, and `pow` is
   missing, where upstream's `std/math` declares library functions**
@@ -10904,54 +10928,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
-  `__pow__` over `_pow`**
-
-  `v ** 2` over a `float32` vector is rejected, and `Float64(2) **
-  Float64(0.5)` prints the host's `powf` (`1.4142135623730951`), where the
-  pin prints `1.4142135623734946` through `_powf_scalar`'s `exp(log)`.
-  - Port the three `__pow__` overloads, `__rpow__`, `__ipow__` (`rhs:
-    Int`), `_pow`, `_powf`, `_powf_scalar`, and `_powi` verbatim, in
-    upstream's positions below `struct SIMD`.
-  - Route `**` to `a.__pow__(b)` else `b.__rpow__(a)`, and `**=` to
-    `__ipow__`, as `+` and `+=` are routed.
-  - `FloatLiteral` has no `__pow__`: `4.0 ** 0.5` materializes both to
-    `Float64` and prints `2.000000000000565` at the pin. `IntLiteral **
-    IntLiteral` and `ParamOp::Pow` stay literal operations.
-  - Probe: `Int32(3) ** 2` and `Int32(3) ** Int32(2)` are rejected ("…
-    not defined for Int32 and Int", "… Int32 and Int32"), where the pin
-    prints `9`. The rule serves only `Int`, `UInt`, `Float64`, and a
-    `float64` lane.
-  - Probe: `Int(2) ** -1` and `Int(-1) ** -3` trap ("'**' exponent must
-    be a non-negative Int"), where the pin prints `0 -1`.
-  - A bundled module has no prelude, so `std.simd` imports `all` and `abs`
-    explicitly for the port.
-  - Probe: `v ** SIMD[DType.int32, 2](2, -1)` over `SIMD[DType.float64,
-    2]`, and `2.0 ** v`, fail at the pin with "The SIMD types must be
-    identical or else the exponent must be a scalar."
-  - Retire the checker rule: `math_operation_requirement`'s `__pow__` arm,
-    the `FloatLiteral` exact/fractional `Pow` rule and `Pow` in `Mod | Pow
-    => common` (`checker/operators.rs`), and `builtin_fold.rs`'s `Pow` arm.
-  - Retire the lowering: the elaborator's `__pow__` rewrite
-    (`mono/specializer.rs`), `std._intrinsics._pow_int` with
-    `POW_INT_SYMBOL`, `calls_pow_int`, and `implicit_callees`'s `**` arm;
-    the VM's `integer_pow`, `runtime::pow_exponent`, and the scalar `Pow`
-    arms; Pliron's `lower_pow`, the `InfixOp::Pow` arms of
-    `lower/binops.rs`, and `TrapCategory::PowExponent`.
-  - Trap category 2 (`rt_abi::TRAP_POW_EXPONENT`) loses its emitter; add
-    its retirement to R18.
-  - List `Powable` in `SIMD`'s declaration, and drop its
-    `modelled_conformance` arm for `SIMD`.
-  - Move `assets/runtime_error/pliron_trap_pow_negative.mojo` to
-    `assets/ok` (the pin prints `0`), with its manifest and
-    `assets-mojo-errors.tsv` rows.
-  - Removes `pliron_float_pow.mojo` from R171 and its
-    `assets-mojo-output-diffs.tsv` row.
-  - Plan: `R1567-simd-s-plan.md`, Part B.
-  - Depends on R333, R1661, R1708, R1709, R1710, R1711, R1714, R1717,
-    R1722, R1743, R1751, and R1752.
-  - Model: Fable, Planned.
-
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
   upstream evaluates them and carries them to LLVM**
 
@@ -10982,10 +10958,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port both overloads together: once the declaration has a
     `__round__`, every `__round__` call reads it, so a lone `__round__()`
     breaks `Float64(x).__round__(2)`.
-  - The `ndigits` overload computes `Self(10) ** ndigits` (R1567).
+  - The `ndigits` overload computes `Self(10) ** ndigits`.
   - List `Roundable`, and drop its `modelled_conformance` arm for
     `SIMD`.
-  - Depends on R1567.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1585 `SIMD`'s reductions are checker rules, where upstream's are
@@ -12045,16 +12021,16 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R937 `**` on integers and scalar displays call bundled bodies
-  that no instruction names**
+- [ ] **R937 Native scalar displays call bundled bodies that no
+  instruction names**
 
-  `**` on `Int`/`UInt` calls `_pow_int`, and a scalar display calls the
-  digit bodies, but the MIR instruction names neither, where upstream calls
-  `Int.__pow__` and `write_to`, whose callees are ordinary symbol uses.
+  The native backend's scalar display calls the digit bodies, but the MIR
+  instruction does not name them, where upstream calls `write_to`, whose
+  callees are ordinary symbol uses.
   - The elaborator, Pliron's reachable set, and `eliminate-dead-symbols`
     each read the edge from `mir::implicit_callees`, a rule outside the
     symbol walk.
-  - The fix lowers each to a call that names its callee, then deletes
+  - The fix lowers it to a call that names its callee, then deletes
     `implicit_callees`.
   - Depends on nothing.
   - Model: Opus, Not Planned.

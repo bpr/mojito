@@ -734,7 +734,6 @@ fn math_operation_requirement(method: &str, argc: usize) -> Option<&'static str>
         ("__floor__", 0) => "Floorable",
         ("__trunc__", 0) => "Truncable",
         ("__round__", 0 | 1) => "Roundable",
-        ("__pow__", 1) => "Powable",
         ("__ceildiv__", 1) => "CeilDivable",
         ("__divmod__", 1) => "DivModable",
         _ => return None,

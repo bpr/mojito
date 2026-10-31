@@ -6172,9 +6172,8 @@ point where a slot declared in a loop is uninitialized again.
   The walk visits a value's serialized form and looks up only those
   references (a type is walked once per table); a local, field, keyword,
   literal, or parameter binder that spells a symbol is no use (R835). An
-  instruction that calls a bundled body without naming it — `**` on
-  integers calls `_pow_int`, a scalar display the digit bodies — uses it
-  too, by `mir::implicit_callees`, the rule the elaborator enqueues those
+  instruction that calls a bundled body without naming it — a scalar
+  display calls the digit bodies — uses it too, by `mir::implicit_callees`, the rule the elaborator enqueues those
   bodies by. The pass's `--timings` counters are `dead_functions`,
   `dead_instructions`, and `dead_structs`. `emit-mir` and
   `drop_elaborated_mir` therefore omit every dead program function and

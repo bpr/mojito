@@ -120,11 +120,6 @@ impl VmBackend {
             let fname = prog.runtime_method_name(&sname, dunder, resolved, 1);
             return self.call_resolved_dunder(prog, &sname, dunder, vec![l, r], fname.as_deref());
         }
-        if op == InfixOp::Pow
-            && let Some(result) = self.integer_pow(prog, &l, &r)?
-        {
-            return Ok(result);
-        }
         apply_infix(op, l, r)
     }
 
@@ -798,43 +793,6 @@ impl VmBackend {
 
     /// One heap allocation holding `bytes` as width-1 `UInt8` scalars, sized
     /// exactly; returns its allocation id (offset 0 is the first byte).
-    /// `x ** y` on runtime `Int`/`UInt`: the wrapping square-and-multiply body
-    /// is the bundled `std._intrinsics._pow_int`, called here exactly as the
-    /// native backend calls its compiled symbol, so one Mojo definition serves
-    /// both runtimes. `None` leaves every other operand pair — floats,
-    /// arbitrary-precision literals, SIMD lanes, structs — to `apply_infix`.
-    fn integer_pow(
-        &mut self,
-        prog: &Prog,
-        l: &Value,
-        r: &Value,
-    ) -> Result<Option<Value>, RuntimeError> {
-        let Some((unsigned, base, exponent)) = crate::runtime::integer_pow_operands(l, r) else {
-            return Ok(None);
-        };
-        // The guard is the caller's, matching the native trap the backend
-        // emits before its own call.
-        let exponent = i64::from(crate::runtime::pow_exponent(exponent)?);
-        let Some(index) = prog.index_of(mojito_symbol::symbol::POW_INT_SYMBOL) else {
-            return Err(RuntimeError::Unsupported(
-                "vm: the bundled `std._intrinsics._pow_int` body is not linked".to_string(),
-            ));
-        };
-        let (result, _) =
-            self.call_frame(prog, index, vec![Value::Int(base), Value::Int(exponent)])?;
-        let Value::Int(bits) = result else {
-            return Err(RuntimeError::TypeError(format!(
-                "`_pow_int` did not return an Int, got {}",
-                crate::runtime::type_name(&result)
-            )));
-        };
-        Ok(Some(if unsigned {
-            Value::UInt(bits as u64)
-        } else {
-            Value::Int(bits)
-        }))
-    }
-
     /// The program-lifetime byte allocation holding `text`'s UTF-8 bytes,
     /// allocated once per distinct text and never freed.
     pub(super) fn static_literal_bytes(&mut self, text: &str) -> Result<u64, RuntimeError> {

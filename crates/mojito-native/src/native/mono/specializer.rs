@@ -2725,35 +2725,6 @@ impl<'a> Specializer<'a> {
                         };
                     }
                 }
-                // `x.__pow__(y)` on a scalar is its `**`, which an integer
-                // runs through the bundled `_pow_int` body.
-                if let MirInstr::MethodCall {
-                    dest,
-                    recv,
-                    method,
-                    args,
-                    kwargs,
-                    raises,
-                    ..
-                } = instruction
-                    && method == "__pow__"
-                    && kwargs.is_empty()
-                    && let [exponent] = args.as_slice()
-                    && matches!(
-                        (function.reg_types.get(&recv.0).map(peel_refs)).map(Ty::kind),
-                        Some(TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
-                    )
-                {
-                    *instruction = MirInstr::BinOp {
-                        op: mojito_ast::ast::InfixOp::Pow,
-                        dest: *dest,
-                        a: *recv,
-                        b: *exponent,
-                        resolved: None,
-                        raises: raises.take(),
-                        refined_bound: None,
-                    };
-                }
                 // A prefix `-`/`~` on a nominal operand is the VM's dunder
                 // dispatch (`apply_prefix` → `__neg__`/`__invert__`); `not`
                 // arrives already converted through `Bool(x)` by MIR.
@@ -2851,10 +2822,9 @@ impl<'a> Specializer<'a> {
                         refined_bound: None,
                     };
                 }
-                // `**` on Int/UInt and the expansions that display a scalar
-                // call bundled bodies without naming them, so the
-                // instruction is a use of each.
-                for symbol in mojito_mir::mir::implicit_callees(instruction, &function.reg_types) {
+                // The expansions that display a scalar call bundled bodies
+                // without naming them, so the instruction is a use of each.
+                for symbol in mojito_mir::mir::implicit_callees(instruction) {
                     if self.functions.contains_key(symbol) {
                         self.enqueue(symbol, self.base_bindings(), Vec::new())?;
                     }

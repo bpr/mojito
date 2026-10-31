@@ -1034,9 +1034,9 @@ fn unknown_entry_is_rejected() {
 }
 
 /// One compact function per Stage 2 surface: float arithmetic and compares,
-/// `UInt` operators, conversions, the div-by-zero and pow-exponent trap blocks,
-/// the call into the bundled `_pow_int` body, and the shared `mjrt_trap`
-/// scaffolding all print canonically.
+/// `UInt` operators, conversions, the div-by-zero trap block, `SIMD.__pow__`'s
+/// inlined body (whose float arm calls `_modf_scalar`), and the shared
+/// `mjrt_trap` scaffolding all print canonically.
 const STAGE2_SURFACE: &str = "\
 def mix(a: Int, b: UInt, x: Float64) -> Float64:
     var q = a // 3
@@ -1061,8 +1061,7 @@ fn stage2_surface_prints_canonically() {
     for needle in [
         "llvm.func @mjrt_trap",
         "llvm.call @mjrt_trap",
-        "llvm.func @mj__u_umodule_24std_24_24intrinsics_24_upow_uint",
-        "llvm.call @mj__u_umodule_24std_24_24intrinsics_24_upow_uint",
+        "llvm.call @mj__u_umodule_24std_24simd_24_umodf_uscalar",
         "llvm.call_intrinsic",
         "llvm.udiv",
         "llvm.lshr",
@@ -1078,14 +1077,12 @@ fn stage2_surface_prints_canonically() {
             "canonical text lacks `{needle}`:\n{text}"
         );
     }
-    // Trap blocks pass the category codes to `mjrt_trap`.
-    for category in [TrapCategory::DivModZero, TrapCategory::PowExponent] {
-        let code = category.code();
-        assert!(
-            text.contains(&format!("<{code}: i32>")),
-            "canonical text lacks trap category code {code}:\n{text}"
-        );
-    }
+    // The trap block passes its category code to `mjrt_trap`.
+    let code = TrapCategory::DivModZero.code();
+    assert!(
+        text.contains(&format!("<{code}: i32>")),
+        "canonical text lacks trap category code {code}:\n{text}"
+    );
 }
 
 /// Source locations propagate into the canonical Pliron text as

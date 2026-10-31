@@ -1446,6 +1446,12 @@ impl<'a> Flatten<'a> {
         {
             return (self.expr(expression), None);
         }
+        // A literal receiver materialized to its default type (`K * n` over
+        // `comptime K = 8`, `Int`'s `__mul__`) is the converted value, not
+        // the literal's place.
+        if expression.literal_materialization().is_some() {
+            return (self.expr(expression), None);
+        }
         match self.try_place(expression) {
             Some(place) => {
                 let value = self.fresh(expression.location(), Some(place.root));

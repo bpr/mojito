@@ -377,23 +377,6 @@ impl FloatLiteral {
         Some(self.sub(&rhs.mul(&quotient)))
     }
 
-    pub fn pow_int(&self, exponent: &IntLiteral) -> Option<Self> {
-        let exponent = exponent.to_i64()?;
-        let magnitude = u32::try_from(exponent.unsigned_abs()).ok()?;
-        if u64::from(magnitude) > MAX_LITERAL_EXPONENT {
-            return None;
-        }
-        let value = if exponent >= 0 {
-            self.value.pow(magnitude as i32)
-        } else {
-            if self.is_zero() {
-                return None;
-            }
-            self.value.pow(-(magnitude as i32))
-        };
-        Some(Self::from_rational(value))
-    }
-
     pub fn trunc_to_int(&self) -> IntLiteral {
         IntLiteral(self.value.to_integer())
     }

@@ -394,7 +394,6 @@ fn compiler_called_intrinsic_bodies_keep_their_lowered_symbols() {
         .map(|(name, _)| name)
         .collect();
     for symbol in [
-        mojito::symbol::POW_INT_SYMBOL,
         mojito::symbol::INT_DIGITS_SYMBOL,
         mojito::symbol::UINT_DIGITS_SYMBOL,
     ] {

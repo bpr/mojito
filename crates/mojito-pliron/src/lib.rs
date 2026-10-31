@@ -584,8 +584,6 @@ pub enum RetKind {
 pub enum TrapCategory {
     /// `//` or `%` with a zero divisor on Int/UInt (`runtime::nonzero`).
     DivModZero,
-    /// `**` exponent outside `0 ..= u32::MAX` (`runtime::pow_exp`).
-    PowExponent,
     /// `mjrt_alloc` exhaustion or invalid alignment.
     AllocFailure,
     /// `mjrt_write_stdout` failure.
@@ -609,9 +607,8 @@ pub enum TrapCategory {
 }
 
 impl TrapCategory {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 13] = [
         Self::DivModZero,
-        Self::PowExponent,
         Self::AllocFailure,
         Self::StdoutFailure,
         Self::UnhandledError,
@@ -632,7 +629,6 @@ impl TrapCategory {
         use mojito_native::native::rt_abi;
         let code = match self {
             Self::DivModZero => rt_abi::TRAP_DIV_MOD_ZERO,
-            Self::PowExponent => rt_abi::TRAP_POW_EXPONENT,
             Self::AllocFailure => rt_abi::TRAP_ALLOC_FAILURE,
             Self::StdoutFailure => rt_abi::TRAP_STDOUT_FAILURE,
             Self::UnhandledError => rt_abi::TRAP_UNHANDLED_ERROR,
@@ -667,7 +663,6 @@ impl TrapCategory {
     pub const fn runtime_message(self) -> &'static str {
         match self {
             Self::DivModZero => "integer division or modulo by zero",
-            Self::PowExponent => "'**' exponent must be a non-negative Int that fits in 32 bits",
             Self::AllocFailure => "allocation failed",
             Self::StdoutFailure => "stdout write failed",
             Self::UnhandledError => "unhandled error",
@@ -689,7 +684,6 @@ impl TrapCategory {
         matches!(
             self,
             Self::DivModZero
-                | Self::PowExponent
                 | Self::PointerDangling
                 | Self::PointerUseAfterFree
                 | Self::PointerDoubleFree
@@ -705,7 +699,6 @@ impl TrapCategory {
     pub fn from_vm_message(message: &str) -> Option<Self> {
         [
             Self::DivModZero,
-            Self::PowExponent,
             Self::PointerDangling,
             Self::PointerUseAfterFree,
             Self::PointerDoubleFree,
@@ -972,7 +965,7 @@ fn visit_call_edges<'p>(
             // without naming them in an instruction. `format_scalar`
             // rejects a display whose digit bodies were not declared, so a
             // formatting shape missing from the rule fails loudly.
-            for callee in mojito_mir::mir::implicit_callees(instr, &function.reg_types) {
+            for callee in mojito_mir::mir::implicit_callees(instr) {
                 edges.push_named(callee);
             }
             edges.dispatch_edges(instr);

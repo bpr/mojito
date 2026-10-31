@@ -532,11 +532,16 @@ fn fold_int(op: InfixOp, a: i64, b: i64) -> Result<i64, ParamError> {
                 remainder
             }
         }
-        InfixOp::Pow if b < 0 => return Err(arithmetic("negative exponent")),
-        InfixOp::Pow => u32::try_from(b)
-            .ok()
-            .and_then(|exponent| a.checked_pow(exponent))
-            .ok_or_else(|| arithmetic("compile-time integer overflow"))?,
+        // `SIMD.__pow__`'s `_powi`, over the exponent cast to `Int32`.
+        InfixOp::Pow => match b as i32 {
+            exponent if exponent < 0 => match a {
+                1 => 1,
+                -1 if exponent % 2 == 0 => 1,
+                -1 => -1,
+                _ => 0,
+            },
+            exponent => a.wrapping_pow(exponent.unsigned_abs()),
+        },
         InfixOp::Shl => a.wrapping_shl(shift_amount(b)?),
         InfixOp::Shr => a.wrapping_shr(shift_amount(b)?),
         InfixOp::BitAnd => a & b,
@@ -555,10 +560,16 @@ fn fold_uint(op: InfixOp, a: u64, b: u64) -> Result<u64, ParamError> {
         InfixOp::FloorDiv | InfixOp::Mod if b == 0 => 0,
         InfixOp::Div | InfixOp::FloorDiv => a / b,
         InfixOp::Mod => a % b,
-        InfixOp::Pow => u32::try_from(b)
-            .ok()
-            .and_then(|exponent| a.checked_pow(exponent))
-            .ok_or_else(|| arithmetic("compile-time integer overflow"))?,
+        // `SIMD.__pow__`'s `_powi`, over the exponent cast to `Int32`.
+        InfixOp::Pow => match b as i32 {
+            exponent if exponent < 0 => match a {
+                1 => 1,
+                u64::MAX if exponent % 2 == 0 => 1,
+                u64::MAX => u64::MAX,
+                _ => 0,
+            },
+            exponent => a.wrapping_pow(exponent.unsigned_abs()),
+        },
         InfixOp::Shl => a.wrapping_shl(shift_amount(i64::try_from(b).unwrap_or(-1))?),
         InfixOp::Shr => a.wrapping_shr(shift_amount(i64::try_from(b).unwrap_or(-1))?),
         InfixOp::BitAnd => a & b,
@@ -608,9 +619,6 @@ fn fold_float_literal(
         InfixOp::Div => a.div(b),
         InfixOp::FloorDiv => a.floor_div(b),
         InfixOp::Mod => a.floor_mod(b),
-        InfixOp::Pow => b
-            .to_int_if_whole()
-            .and_then(|exponent| a.pow_int(&exponent)),
         _ => {
             return Err(unsupported("unsupported exact compile-time float operator"));
         }

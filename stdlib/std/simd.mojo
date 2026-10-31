@@ -6,15 +6,16 @@
 # conversions, `Bool`, `fill=`, `Int` from an `index`, the
 # `Scalar[Self.dtype]` splat, the element list, and `from_bits=`, and its instance
 # `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
-# `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__pos__`, `__neg__`, `__and__`,
+# `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, the three `__pow__`
+# overloads, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
 # comparisons `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, and
 # `__le__`, the elementwise `eq`, `ne`, `gt`, `ge`, `lt`, and `le` with
 # their `_Mask` alias, the `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE`
 # members over the bundled `std.utils.numerics`, the in-place `__iadd__`, `__isub__`, `__imul__`,
-# `__itruediv__`, `__ifloordiv__`, `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and
+# `__itruediv__`, `__ifloordiv__`, `__ipow__`, `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and
 # `__irshift__`, the reflected `__radd__`, `__rsub__`, `__rmul__`,
-# `__rtruediv__`, `__rfloordiv__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
+# `__rtruediv__`, `__rfloordiv__`, `__rpow__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
 # `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
@@ -22,8 +23,9 @@
 # variadic `shuffle` overloads, `slice`, `insert`, `join`, `interleave`,
 # `split`, `deinterleave`, `select`, `write_to`, and `write_repr_to`, with
 # the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`,
-# `_write_scalar`, `_floor`, `_modf_scalar`, and `_modf`. The other
-# members are still served by the compiler or undeclared (R1623, R1567,
+# `_write_scalar`, `_floor`, `_pow`, `_powf_scalar`, `_powf`, `_powi`,
+# `_modf_scalar`, and `_modf`. The other
+# members are still served by the compiler or undeclared (R1623,
 # R1581, R1582, R1585, R1586, R1675; the two `IndexList` `shuffle`
 # overloads are R1675's), `write_padded` is not ported
 # (R1663), and the native backend's `print`, `String`, and `repr` of a value still
@@ -80,9 +82,12 @@ components, including tensor operations, linear algebra routines, and
 domain-specific libraries for machine learning and scientific computing.
 """
 
-# `max`/`min` are upstream's prelude names, which `std.simd` cannot see
-# while the prelude bootstraps (R894).
-from std.math import Ceilable, Floorable, Truncable, max, min
+import std.math
+
+# `abs`, `all`, `max`, and `min` are upstream's prelude names, which
+# `std.simd` cannot see while the prelude bootstraps (R894).
+from std.math import Ceilable, Floorable, Powable, Truncable, abs, max, min
+from std.builtin.bool import all
 from std._plugin import CurrentPlugin
 from std.sys import _RegisterPackType, llvm_intrinsic
 from std.sys.info import bit_width_of, simd_width_of
@@ -107,6 +112,7 @@ from std.utils.numerics import max_finite as _max_finite
 from std.utils.numerics import max_or_inf as _max_or_inf
 from std.utils.numerics import min_finite as _min_finite
 from std.utils.numerics import min_or_neg_inf as _min_or_neg_inf
+from std.utils.numerics import nan as _nan
 
 
 # ===----------------------------------------------------------------------=== #
@@ -315,6 +321,7 @@ struct SIMD[dtype: DType, length: SIMDLength](
     Hashable,
     Indexer,
     Intable,
+    Powable,
     Sized,
     TrivialRegisterPassable,
     Truncable,
@@ -889,6 +896,70 @@ struct SIMD[dtype: DType, length: SIMDLength](
         )
         return is_zero_mask.select(Self(), floordiv)
 
+    @inline(.nodebug)
+    def __pow__(self, exp: SIMD[_, _]) -> Self:
+        """Computes the vector raised to the power of the input integer value.
+
+        Args:
+            exp: The exponent value.
+
+        Returns:
+            A SIMD vector where each element is raised to the power of the
+            specified exponent value.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        comptime assert (
+            Self.length == exp.length and Self.dtype == exp.dtype
+        ) or exp.length == 1, (
+            "The SIMD types must be identical or else the exponent must be a"
+            " scalar."
+        )
+        comptime if Self.length == exp.length and self.dtype == exp.dtype:
+            return _pow(self, rebind[Self](exp))
+        else:
+            return _pow(
+                self,
+                SIMD[exp.dtype, self.length](rebind[Scalar[exp.dtype]](exp)),
+            )
+
+    @inline(.nodebug)
+    def __pow__(self, exp: FloatLiteral) -> Self:
+        """Computes the vector raised to the power of a float literal.
+
+        The literal is converted to `Self`, so the exponent always has the
+        same dtype as the base.
+
+        Constraints:
+            The SIMD dtype must be floating point.
+
+        Args:
+            exp: The exponent value.
+
+        Returns:
+            A SIMD vector where each element is raised to the power of the
+            specified exponent value.
+        """
+        comptime assert (
+            Self.dtype.is_floating_point()
+        ), "a float literal exponent requires a floating point SIMD type"
+        return _pow(self, Self(exp))
+
+    # TODO(#22771): remove this overload.
+    @inline(.nodebug)
+    def __pow__(self, exp: Self) -> Self:
+        """Computes the vector raised elementwise to the right hand side power.
+
+        Args:
+            exp: The exponent value.
+
+        Returns:
+            A SIMD vector where each element is raised to the power of the
+            specified exponent value.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return _pow(self, exp)
+
+
     @always_inline("builtin")
     def __pos__(self) -> Self:
         """Defines the unary `+` operation.
@@ -1302,6 +1373,20 @@ struct SIMD[dtype: DType, length: SIMDLength](
         self = self // rhs
 
     @inline(.nodebug)
+    def __ipow__(mut self, rhs: Int):
+        """In-place pow operator.
+
+        The vector is mutated where each element at position `i` is computed as
+        `pow(self[i], rhs)`.
+
+        Args:
+            rhs: The rhs of the operation.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        self = self.__pow__(rhs)
+
+
+    @inline(.nodebug)
     def __iand__(mut self, rhs: Self):
         """Computes `self & rhs` and save the result in `self`.
 
@@ -1444,6 +1529,20 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         comptime assert Self.dtype.is_numeric(), "the type must be numeric"
         return rhs // self
+
+    @inline(.nodebug)
+    def __rpow__(self, base: Self) -> Self:
+        """Returns `base ** self`.
+
+        Args:
+            base: The base value.
+
+        Returns:
+            `base ** self`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the type must be numeric"
+        return base**self
+
 
     @always_inline("builtin")
     def __rand__(self, value: Self) -> Self:
@@ -2224,6 +2323,115 @@ struct SIMD[dtype: DType, length: SIMDLength](
             false_case._mlir_value,
         )
         return SIMD(mlir_value=res)
+
+
+# ===----------------------------------------------------------------------=== #
+# _pow
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def _pow[
+    width: SIMDLength
+](base: SIMD[_, width], exp: SIMD[_, width], out result: type_of(base)):
+    """Computes the power of the elements of a SIMD vector raised to the
+    corresponding elements of another SIMD vector.
+
+    Parameters:
+        width: The width of the input and output SIMD vectors.
+
+    Args:
+        base: Base of the power operation.
+        exp: Exponent of the power operation.
+
+    Returns:
+        A vector containing elementwise `base` raised to the power of `exp`.
+    """
+
+    comptime if exp.dtype.is_floating_point() and base.dtype == exp.dtype:
+        if __is_run_in_comptime_interpreter:
+            return _powf(base, exp)
+
+        comptime hook = CurrentPlugin.binary_math_fn["pow", base.dtype, width]
+        comptime if hook:
+            return comptime (hook.value())(base, rebind[type_of(base)](exp))
+        return _powf(base, exp)
+    elif exp.dtype.is_integral():
+        # Common cases
+        if all(exp.eq(2)):
+            return base * base
+        if all(exp.eq(3)):
+            return base * base * base
+
+        result = {}
+
+        comptime for i in range(width):
+            result[i] = _powi(base[i], exp[i].cast[DType.int32]())
+    else:
+        comptime assert False, "unsupported type combination"
+
+
+@inline(.always)
+def _powf_scalar(
+    base: Scalar, exponent: Scalar
+) -> type_of(base) where base.dtype.is_floating_point():
+    comptime assert (
+        exponent.dtype.is_floating_point()
+    ), "exponent must be floating point"
+
+    var integral, fractional = _modf_scalar(exponent)
+
+    if integral == exponent:
+        return _powi(base, integral.cast[DType.int32]())
+
+    if fractional and base < 0:
+        return _nan[base.dtype]()
+
+    return std.math.exp(exponent.cast[base.dtype]() * std.math.log(base))
+
+
+@inline(.always)
+def _powf[
+    width: SIMDLength
+](base: SIMD[_, width], exp: SIMD[_, width], out result: type_of(base)):
+    comptime assert (
+        exp.dtype.is_floating_point()
+    ), "exponent must be floating point"
+    comptime assert (
+        base.dtype.is_floating_point()
+    ), "base must be floating point"
+    result = {}
+
+    comptime for i in range(width):
+        result[i] = _powf_scalar(base[i], exp[i])
+
+
+@inline(.always)
+def _powi(base: Scalar, exp: Int32) -> type_of(base):
+    if base.dtype.is_integral() and exp < 0:
+        if base == 1:
+            return 1
+        if base == -1:
+            # (-1) ** n is 1 for even n, -1 for odd n.
+            return Scalar[base.dtype](1 if (-exp) & 1 == 0 else -1)
+        # For |base| > 1, this is the integer truncation of
+        # 1 / base^|exp|. Note: 0 ** negative is mathematically
+        # undefined, but we return 0 here for now.
+        return 0
+
+    var a = base
+    var b = abs(exp) if base.dtype.is_floating_point() else exp
+    var res: Scalar[base.dtype] = 1
+    while b > 0:
+        if b & 1:
+            res *= a
+        a *= a
+        b >>= 1
+
+    comptime if base.dtype.is_floating_point():
+        if exp < 0:
+            return 1.0 / res
+    return res
 
 
 # ===----------------------------------------------------------------------=== #
