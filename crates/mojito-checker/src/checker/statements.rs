@@ -3971,6 +3971,7 @@ impl Checker {
             },
             (Ok(source_ty), None) => {
                 match self.lower_parameterized_member(
+                    name,
                     &decls,
                     type_scope(&decls),
                     type_params,

@@ -2291,6 +2291,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Each anonymous callable contract declares its `def[...]` binders under
+  its own owner, so a contract applied as `h[4](...)` keeps its own binder
+  (`k`) instead of inheriting the spelling (`wq`) of an earlier contract in
+  another function, method, or comptime alias, which failed with "expected
+  SIMD[DType.int32, wq]" and, in the bundled `SIMD`, stopped the library
+  packaging (R1763).
 - A value of a callable-binder-bounded type parameter passed on to another
   generic call keeps its callee (R1762): `outer(x, func)` returning
   `inner(x, func)`, where `inner` calls `func[n](x, x)`, and upstream's

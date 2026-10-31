@@ -1703,7 +1703,10 @@ second expression tree.
   it (`Picker.pick$ov$T`): `OverloadSets` counts requirements as it counts
   struct methods. A type binder is the same identity: `ParamDecl`
   carries its `id`, `TyKind::Param { binder: ParamRef }` compares by it, and every
-  type substitution is a `TySubst` keyed by it; a canonicalized callable
+  type substitution is a `TySubst` keyed by it; an anonymous callable
+  contract declares its binders under its own owner
+  (`$callable:<declaration>:<parameter>`, or `$callable:<alias>` for an
+  alias body), so no two contracts share a binder, and a canonicalized
   contract's binders are `$contract` slots, so contracts differing only in
   spelling are one identity and a trait witness may spell its binder as it
   likes. A `where` operand and a callable default's parameter are `ParamRef`s

@@ -602,9 +602,9 @@ body names is declared by the function's own declaration
 name is prefixed with (`MirStructDeclaration.param_decls`, since a method's
 declaration carries only its own binders), by a generic callable signature
 enclosing the occurrence (`Ty::GenericFunc.decls`), or it is a *contract
-binder*: one whose owner starts with `$` — `$contract`, `$callable`, a
-`$synthetic:Some[Trait]` witness request — bound by the construct that
-spells it. A reference's recorded kind is the binder's declared kind. A
+binder*: one whose owner starts with `$` — `$contract`, a contract's own
+`$callable:…` owner, a `$synthetic:Some[Trait]` witness request — bound by
+the construct that spells it. A reference's recorded kind is the binder's declared kind. A
 hole is a finding; a signature index is checked by the callable-contract
 rules as before.
 

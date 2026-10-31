@@ -318,6 +318,7 @@ assets/ok/discarded_transfer_destroyed_in_place.mojo	main	exe-differential	sanit
 assets/ok/display_argument_built_at_call_setup.mojo	main	exe-differential	sanitized
 assets/ok/display_element_read_at_construction.mojo	main	exe-differential	sanitized
 assets/ok/display_read_temporary_slot.mojo	main	exe-differential	sanitized
+assets/ok/distinct_callable_contract_binders.mojo	main	exe-differential	sanitized
 assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_compile_time_values.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized

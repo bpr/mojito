@@ -6,7 +6,7 @@
 //! function's own declaration or, for a method, its struct declares it, when
 //! a generic callable signature enclosing the occurrence declares it, or when
 //! it is a contract binder: one spelled by the callable contract or witness
-//! request that holds it (`$contract`, `$callable`, `$synthetic:…`). Each
+//! request that holds it (`$contract`, `$callable:…`, `$synthetic:…`). Each
 //! expression is well-kinded for its slot: an `Int` lane count, a `DType`
 //! lane, a `Type` dependent type, a declared value parameter's type in a
 //! struct argument, and a declared binder's own kind at every reference. The

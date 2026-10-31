@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1767**.
+Next free ID: **R1769**.
 
 ## Ordered Work
 
@@ -11013,24 +11013,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     time.
   - Model: Fable, Not Planned.
 
-- [ ] **R1763 A struct method's callable-binder parameter leaks its
-  binder's name into another struct's callable binder**
+- [ ] **R1767 A compile-time callable parameter's contract is matched
+  before the parameters it names are substituted**
 
-  Declaring `def _probe_r[func: def[wq: Int](SIMD[Self.dtype, wq]) ->
-  SIMD[Self.dtype, wq]](self) -> Int` in the bundled `SIMD` stops the
-  library packaging, with "type mismatch for argument to 'elt_handler':
-  expected Ts[wq], found Ts[…paramfor_next_value…]" in
-  `Tuple.consume_elements`, whose `elt_handler: def[index: Int](var
-  element: Self.Ts[index]) capturing` takes the other method's binder.
-  - The same declaration as a module function, or in a user struct, is
-    harmless.
-  - Lead: canonical contract binders share `ParamId($contract, i)`
-    (`canonical_generic_signature`, `checker/traits_support.rs`), so some
-    table keyed by that identity keeps the first spelling.
-  - Upstream's `SIMD.reduce` parameter overload declares `func:
-    def[width: Int](Self._T[width], Self._T[width]) thin -> Self._T[width]`
-    (R1764).
-  - Found while planning R1585 (2026-10-31).
+  Upstream substitutes a call's other compile-time arguments into a
+  parameter's declared type before converting the argument to it; Mojito
+  compares the argument with the contract as declared.
+  - Probe: `struct C[dtype: DType]` with `def run[h: def(Scalar[Self.dtype])
+    capturing -> None](self)`, called `C[DType.int32]().run[show]()` over
+    `def show(v: Scalar[DType.int32])`, fails "invalid call to 'run': no
+    overload matches"; a contract that does not name `Self.dtype` runs.
+  - Probe: `def run[d: DType, h: def(SIMD[d, 2]) capturing -> None]()`,
+    called `run[DType.int32, show]()`, passes the check and fails MIR
+    verification ("compile-time value parameter 'h' has register type
+    def(SIMD[DType.int32, 2]) thin -> None, declared def(SIMD[d, 2])
+    capturing[] -> None"): the call-argument rule in
+    `mir/verify/subscripts.rs` reads the callee's declared `ty` without the
+    call's instantiated arguments.
+  - Probe: the same two shapes with a `def[k: Int](SIMD[Self.dtype, k])`
+    contract; upstream's `SIMD.reduce` parameter overload declares one over
+    `Self._T[width]` (R1764).
+  - Found while landing R1763 (2026-10-31).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11096,8 +11099,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     which prints as the pin's `68104130000000.0` once R159 lands.
   - `assets/ok/simd_reductions_float.mojo` says reductions fold left to
     right; its outputs change with the tree.
-  - Depends on R1763 and R1765.
+  - Depends on R1765 and R1767.
   - Model: Fable, Planned.
+
+- [ ] **R1768 An anonymous callable contract's own binders are named
+  references, where upstream's are signature slots**
+
+  `GenericFuncTy.decls` holds a contract's binders as `DeclRef`s under a
+  per-contract `$callable:…` owner; upstream stores a function type's
+  parameters as signature index refs and renames them into a declaration's
+  named refs where one is opened (`replaceIndexRefsWithNamedRefs`).
+  - `canonical_generic_signature` (`checker/traits_support.rs`) rebuilds the
+    slot form for every comparison instead of reading it.
+  - `instantiate_generic_callable_value` (`checker/generics.rs`) binds a
+    contract's arguments by spelling (`value_argument_environment`, then
+    `ParamBindings::from_named_values`), not by slot.
+  - The consumers that move with the representation: that function, call
+    inference over `GenericFunc` (`call_inference.rs`), MIR lowering of
+    callable-binder calls, and `native::mono` substitution; split the entry
+    on planning if they outgrow one session.
+  - Found while landing R1763 (2026-10-31).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1586 `reduce_and` and `reduce_or` are checker rules and
   `reduce_bit_count` is missing**

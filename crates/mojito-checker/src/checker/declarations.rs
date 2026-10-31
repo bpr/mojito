@@ -1022,7 +1022,11 @@ impl Checker {
                         "retained callable parameter bound is not a function type".to_string(),
                     ));
                 };
-                let checked = self.lower_anonymous_callable_type(callable, tps)?;
+                let checked = self.lower_anonymous_callable_type(
+                    &format!("$callable:{binder_owner}:{}", source.name),
+                    callable,
+                    tps,
+                )?;
                 let Some(index) = decls.iter().position(|decl| decl.name() == source.name) else {
                     return Err(TypeError::InvariantViolation(format!(
                         "callable constraint parameter '{}' was not classified",
@@ -1183,14 +1187,16 @@ impl Checker {
             .map_err(param_error)
     }
 
-    /// Lower a callable contract with its own `def[...]` binders. The
-    /// anonymous scope is nested inside the surrounding declaration's scope,
-    /// so alpha-renamed binders retain their own identity while a signature may
-    /// still depend on an outer type. Origin declarations stay in the source
+    /// Lower a callable contract with its own `def[...]` binders, declared
+    /// under `owner`, which names this contract alone, so no two contracts'
+    /// binders share an identity. The anonymous scope is nested inside the
+    /// surrounding declaration's scope, so alpha-renamed binders retain their
+    /// own identity while a signature may still depend on an outer type. Origin declarations stay in the source
     /// context used by reference/capture lowering, but are erased from the
     /// ordinary `GenericFuncTy::decls` just like named defs.
     pub(super) fn lower_anonymous_callable_type(
         &mut self,
+        owner: &str,
         callable: &SourceType,
         outer_type_params: &[mojito_ast::ast::TypeParam],
     ) -> Result<Ty, TypeError> {
@@ -1204,7 +1210,7 @@ impl Checker {
                 "anonymous callable lowering received a non-function type".to_string(),
             ));
         };
-        let mut decls = self.classify_params("$callable", type_params)?;
+        let mut decls = self.classify_params(owner, type_params)?;
         // A trailing `where` clause constrains the contract's own `def[...]`
         // parameters; with none declared there is nothing to constrain.
         if !where_clauses.is_empty() && decls.is_empty() {

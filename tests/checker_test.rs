@@ -4519,6 +4519,15 @@ fn generic_anonymous_callable_bounds_are_alpha_equivalent_and_invokable() {
 }
 
 #[test]
+fn callable_contract_binders_belong_to_their_own_contract() {
+    // `probe`'s contract, declared first, spells its binder `wq`; `run`'s
+    // binder `k` keeps its own identity, so `h[4]` binds `k`.
+    ok_std(
+        "def probe[func: def[wq: Int](SIMD[DType.int32, wq]) -> SIMD[DType.int32, wq]]() -> Int:\n    return 0\n\ndef run[h: def[k: Int](SIMD[DType.int32, k]) capturing -> None]():\n    h[4](SIMD[DType.int32, 4](1))\n\ndef show[n: Int](v: SIMD[DType.int32, n]) -> None:\n    print(v)\n\ndef main():\n    run[show]()\n",
+    );
+}
+
+#[test]
 fn generic_anonymous_callable_contracts_preserve_binder_shape_and_bounds() {
     let wrong_bounds = err(
         "def identity[U: ImplicitlyCopyable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & Deinitable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",

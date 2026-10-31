@@ -318,6 +318,7 @@ impl Checker {
                     _ => assoc_body_source_type(&member.value).and_then(|source_ty| {
                         let decls = self.classify_params(&member_owner, &member.params)?;
                         let template = self.lower_parameterized_member(
+                            &member_owner,
                             &decls,
                             member_type_scope(&member_owner, &member.params),
                             &member.params,
@@ -629,6 +630,7 @@ impl Checker {
     /// concrete resolution substitutes an application's arguments into the result.
     pub(super) fn lower_parameterized_member(
         &mut self,
+        owner: &str,
         decls: &[ParamDecl],
         scope: HashMap<String, Ty>,
         params: &[mojito_ast::ast::TypeParam],
@@ -656,7 +658,7 @@ impl Checker {
             // width: SIMDLength, //](SIMD[dtype, width]) thin -> …`) is the
             // parametric function type a callable bound's is.
             (_, SourceType::Func { type_params, .. }) if !type_params.is_empty() => {
-                self.lower_anonymous_callable_type(source_ty, params)
+                self.lower_anonymous_callable_type(&format!("$callable:{owner}"), source_ty, params)
             }
             _ => self.ty_from_anno(source_ty),
         };

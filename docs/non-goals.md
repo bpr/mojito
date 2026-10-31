@@ -308,10 +308,12 @@ element's codepoints.
 
 ### A nested callable contract's binders are not told from its enclosing contract's
 
-Every anonymous callable contract declares its binders under the owner
-`$callable` and canonicalizes them to `$contract` slots, which is the
-alpha-equivalence contracts need at depth 0. A contract binder bounded by
-another contract that names the outer binder would collide one level down.
+Every anonymous callable contract declares its binders under its own
+owner, `$callable:<declaration>:<parameter>` (a nested contract's owner
+extends its enclosing contract's), and canonicalizes them to `$contract`
+slots for alpha-equivalence. A nested contract's binders therefore keep an
+identity distinct from the enclosing contract's; what remains unsupported is
+the shape itself, which the pin rejects.
 
 - The pinned Mojo rejects every shape that reaches it (2026-09-26): a runtime
   `f: def[U: Writable](U, T) -> None` fails with "value cannot be converted
