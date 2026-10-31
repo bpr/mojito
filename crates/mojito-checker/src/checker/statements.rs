@@ -156,58 +156,7 @@ impl Checker {
         // whose initializer applies a callable is its application (decision
         // D3), whose identity a type keeps and a body's read evaluates.
         for statement in stmts {
-            let StmtKind::Comptime {
-                name,
-                type_params,
-                ty,
-                value,
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            if !type_params.is_empty() {
-                continue;
-            }
-            // The constant is bound ahead of its statement, so a body
-            // declared before it reads it; the statement binds it again. A
-            // vector-annotated scalar is its splat, which
-            // `fold_module_constants` folded at the annotation.
-            let vector = ty
-                .as_ref()
-                .filter(|_| matches!(self.module_values.get(name), Some(CtValue::Simd { .. })))
-                .and_then(|annotation| self.ty_from_anno(annotation).ok());
-            let predeclared = if vector.is_some() {
-                vector
-            } else if self.program_constants.own(name).is_some() {
-                Some(Ty::int_literal())
-            } else if let Some(applied) = self.applied_constant_expr(value) {
-                let ty = applied.meta().as_value().cloned();
-                self.comptime_applied.insert(name.clone(), applied);
-                ty
-            } else if super::traits::literal_default(value) {
-                self.comptime_literals.insert(name.clone(), value.clone());
-                self.infer(value).ok()
-            } else if let Some(folded) = self
-                .eval_associated_ct(value)
-                .ok()
-                .filter(super::constraints::is_module_constant_attribute)
-            {
-                self.module_values.insert(name.clone(), folded);
-                self.infer(value).ok()
-            } else if let Ok(generator @ CtValue::Generator(_)) = self.eval_associated_ct(value) {
-                // A generator (`comptime g = Twice`) has no runtime form.
-                self.module_values.insert(name.clone(), generator);
-                None
-            } else {
-                None
-            };
-            if let Some(ty) = predeclared
-                && self.lookup(name).is_none()
-            {
-                self.declare_immutable(name, ty)?;
-                self.predeclared_constants.insert(name.clone());
-            }
+            self.predeclare_module_constant(statement)?;
         }
         // A trait whose signature reads a struct member (`_MLIR.
         // KGENParamListType[AnyType]`) or constructs a struct (`TypeList[...]()`)
@@ -450,6 +399,82 @@ impl Checker {
         }
         self.predeclared_constants.insert(name.clone());
         Ok(true)
+    }
+
+    /// Bind the module constant `statement` declares ahead of its
+    /// statement, so a body declared before it reads it; the statement
+    /// binds it again.
+    fn predeclare_module_constant(&mut self, statement: &Stmt) -> Result<(), TypeError> {
+        let StmtKind::Comptime {
+            name,
+            type_params,
+            ty,
+            value,
+            ..
+        } = &statement.kind
+        else {
+            return Ok(());
+        };
+        if !type_params.is_empty() {
+            return Ok(());
+        }
+        // A vector-annotated scalar is its splat, which
+        // `fold_module_constants` folded at the annotation.
+        let vector = ty
+            .as_ref()
+            .filter(|_| matches!(self.module_values.get(name), Some(CtValue::Simd { .. })))
+            .and_then(|annotation| self.ty_from_anno(annotation).ok());
+        // An annotation converting the value through its struct's
+        // `@implicit` constructor binds the conversion's application
+        // (`comptime W: L = 4` is `L(4)`), never the folded literal.
+        let converted = ty
+            .as_ref()
+            .filter(|_| vector.is_none())
+            .and_then(|annotation| {
+                self.annotated_comptime_conversion(annotation, value)
+                    .ok()
+                    .flatten()
+            });
+        let predeclared = if vector.is_some() {
+            vector
+        } else if let Some(applied) = converted {
+            self.comptimes.remove(name);
+            self.comptime_literals.remove(name);
+            self.module_values.remove(name);
+            std::sync::Arc::make_mut(&mut self.program_constants).withdraw(name);
+            let ty = applied.meta().as_value().cloned();
+            self.comptime_applied.insert(name.clone(), applied);
+            ty
+        } else if self.program_constants.own(name).is_some() {
+            Some(Ty::int_literal())
+        } else if let Some(applied) = self.applied_constant_expr(value) {
+            let ty = applied.meta().as_value().cloned();
+            self.comptime_applied.insert(name.clone(), applied);
+            ty
+        } else if super::traits::literal_default(value) {
+            self.comptime_literals.insert(name.clone(), value.clone());
+            self.infer(value).ok()
+        } else if let Some(folded) = self
+            .eval_associated_ct(value)
+            .ok()
+            .filter(super::constraints::is_module_constant_attribute)
+        {
+            self.module_values.insert(name.clone(), folded);
+            self.infer(value).ok()
+        } else if let Ok(generator @ CtValue::Generator(_)) = self.eval_associated_ct(value) {
+            // A generator (`comptime g = Twice`) has no runtime form.
+            self.module_values.insert(name.clone(), generator);
+            None
+        } else {
+            None
+        };
+        if let Some(ty) = predeclared
+            && self.lookup(name).is_none()
+        {
+            self.declare_immutable(name, ty)?;
+            self.predeclared_constants.insert(name.clone());
+        }
+        Ok(())
     }
 
     /// Whether `value` reads (`T.plugin`, `T[4].plugin`) or applies
@@ -2137,6 +2162,7 @@ impl Checker {
                             .as_ref()
                             .and_then(|annotation| self.vector_annotation(annotation))
                             .is_none()
+                        && self.local_comptime_application(name).is_none()
                     {
                         self.comptimes.insert(name.clone(), v);
                     }

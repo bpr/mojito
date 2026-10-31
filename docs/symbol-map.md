@@ -2058,7 +2058,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `implicit_conversion_constructor` selects
   (`Checker::implicit_parameter_application`, called by
   `resolve_param_arg` and `Checker::converted_parameter_value`, which
-  converts a parameter default and a `comptime` member's value), which
+  converts a parameter default and a `comptime` member's value, and,
+  through `Checker::annotated_comptime_conversion`, an annotated
+  `comptime` binding's: a module constant's in the declarations
+  pre-pass, which withdraws its folded literal, and a local's in
+  `bind_template_comptime`), which
   `bound_bracket_attribute` makes the argument's attribute. The
   constructor's own parameters the conversion solved lead its arguments
   (`Checker::own_parameter_arguments`, shared with `applied_arguments`:

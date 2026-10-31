@@ -118,6 +118,7 @@ assets/ok/comprehension_temporary_source_drop.mojo	main	exe-differential	sanitiz
 assets/ok/comptime_alias_generic.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_value_body.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_value_parametric.mojo	main	exe-differential	sanitized
+assets/ok/comptime_annotated_implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/comptime_annotated_scalar.mojo	main	exe-differential	sanitized
 assets/ok/comptime_application_argument.mojo	main	exe-differential	sanitized
 assets/ok/comptime_application_receiver_method.mojo	main	exe-differential	sanitized

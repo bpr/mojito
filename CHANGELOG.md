@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An annotated `comptime` binding converts its value through the
+  annotation's `@implicit` constructor (R1538, R1705): `comptime w: L = 4`
+  binds `L(4)`, and `comptime t: StaticString = "lit"`, `comptime g: W =
+  True`, and `comptime x: Optional[Int] = None` bind their conversions, at
+  module scope and in a body, on the VM and natively.
 - An ordinary method applies at compile time with the struct value it is
   called on as its receiver (R1643): `L(n).ord()` in a signature,
   `Self.l.get()` in a struct method's return type, and a `comptime`

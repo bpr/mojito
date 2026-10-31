@@ -1181,6 +1181,8 @@ A value argument or default of a struct-typed parameter that is not of
 that struct converts as a run-time argument does: its value is the
 application of the `@implicit` `__init__` its own type selects
 (`Checker::implicit_parameter_application`), so `T[3]` is `T[W(3)]`.
+An annotated `comptime` binding converts the same way: `comptime w: L =
+4` binds `L(4)`, never the literal.
 A callee with a positional collector, or over a type or value pack, is
 applied the same way, its collector's arguments flat at the collector's
 position (`total(n, 1)`); the elaborator regroups the run into the one

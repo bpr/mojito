@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1738**.
+Next free ID: **R1741**.
 
 ## Ordered Work
 
@@ -4590,51 +4590,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1538 An annotated `comptime` binding does not convert its value
-  through the annotation's `@implicit` constructor**
+- [ ] **R1738 An `Int`-annotated `comptime` binding stays an
+  `IntLiteral`**
 
-  `comptime w: L = 4`, where `L` declares `@implicit __init__(out self,
-  value: IntLiteral, /)`, keeps the literal `4` as the binding's
-  compile-time value, where the pin binds `L(4)`.
-  - Probe: `comptime w: L = 4; f[w]()` in `main`, over `def f[w: L]()`,
-    fails with "not a compile-time Int constant: w". The pin prints `4`.
-  - Probe: module `comptime W: L = 4` and `f[W]()` fail with "type
-    mismatch for value parameter 'w': expected L, found 4". The pin
-    prints `4`.
-  - Probe: `comptime t: StaticString = "lit"` then `name[t]()`, over
-    `def name[s: StaticString]() -> String`, local and module, fail the
-    same two ways. The pin prints `lit`.
+  `comptime n: Int = 3`, local or module, binds the literal `3`, where the
+  pin binds `Int(3)`, so its reads take literal semantics.
   - Probe: `comptime n: Int = 3` in `main`, then `var x: UInt8 = n` or
     `SIMD[DType.uint8, 2](n, n)`, run, where the pin rejects "cannot
     implicitly convert 'Int' value to 'UInt8'" and "no matching function
-    in initialization": the binding stays an `IntLiteral`, which converts
-    to any lane. A module `comptime N: Int = 3` does the same.
+    in initialization". A module `comptime N: Int = 3` does the same.
   - Probe: `comptime x: Int = 7; comptime y = x / 2` in `main` prints
-    `3.5`, where the pin prints `3`: the `IntLiteral` binding makes `x / 2`
-    a literal pair, which divides exactly, where an `Int`'s `/` truncates.
+    `3.5`, where the pin prints `3`: the literal pair divides exactly.
   - Probe: `comptime g = x // 0` over a module `comptime x: Int = 7`, then
-    `print(g)`, fails with "keeps the parameter constant `7 // 0`", where
-    the pin prints `0`: the literal pair's `//` by zero does not fold (R1624),
-    where an `Int`'s folds to `0`.
-  - Probe: `comptime M: List[Int] = [1, 2, 3]` is typed `Array[Int,
-    Int(3)]`, so `M[:2]` is "invalid call to '__getitem__'" and `var x:
-    Int = M` names `Array`, where the pin builds the `List` (`comptime a =
-    M[:2]` then `len(a), a[1]` prints `2 2`). The annotation is not the
-    display's contextual type, as it is for `var x: List[Int] = [...]`
-    (`Checker::record_display_construction`).
-  - Cause, module: `Checker::fold_module_constants`
-    (`checker/constraints.rs`) folds the initializer to an `IntLiteral`
-    before any struct registers, ignoring the annotation, and the later
-    passes declare the constant `IntLiteral`.
-  - Cause, local: the annotated arm of the `Comptime` statement
-    (`checker/statements.rs`) records the folded literal in `comptimes`
-    and binds no compile-time value of the annotation's type.
-  - Lever: once the annotation resolves to a struct the value is not,
-    bind `Checker::implicit_parameter_application` of the value, as a
-    parameter argument (R1533) and an application's argument already
-    convert.
+    `print(g)`, fails its compile-time evaluation, where the pin prints
+    `0`: an `Int`'s `//` by zero folds to `0`, the literal pair's does not
+    (R1624).
+  - Cause: the `comptimes` table and `ProgramConstants` hold an
+    `IntLiteral` per constant, and `Checker::eval_ct` folds over literals
+    alone. `fold_module_constants` and the annotated arm of the `Comptime`
+    statement (`checker/statements.rs`) filter an `Int` annotation out and
+    declare the binding `IntLiteral`.
+  - Lever: declare the binding `Int` and record its folded value as an
+    `Int` constant (`CtValue::Int`), so a compile-time read folds as
+    `Int`'s methods do while a value parameter still reads the number.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1646 A construction spelled through a closed type alias is no
   compile-time application**
@@ -5910,22 +5890,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1705 A module-level `comptime` with a declared struct type does
-  not convert its value**
-
-  `comptime g: W = True`, over `W` with an `@implicit __init__(n: Bool)`,
-  reports "field access on non-struct Bool" for `g.n`, where the pin prints
-  `7`.
-  - Probe: `comptime x: Optional[Int] = None` read in `comptime if x:`
-    stops with "keeps the parameter constant `None` in elaborated MIR",
-    where the pin prints the else arm.
-  - A struct's `comptime` member converts through
-    `Checker::converted_parameter_value`, but a module constant is folded
-    before any declaration (`fold_module_constants`, `program_constants`)
-    and keeps the unconverted value.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1707 A function is no compile-time value of a function type**
 
   A struct's `comptime f: OptionalReg[def(Int) thin -> Int] = sq`, read as
@@ -7037,6 +7001,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `ParamContext::store_to_mem`) is typed `Origin::Static` too, and so is
     the origin binder it binds (`f[Span(l)]()` over a `List[Int]` binder):
     move it with `bind_comptime_memory`.
+  - Probe: `comptime b = c[:2]` over `comptime c: List[Int] = [1, 2,
+    3]`, then a run-time `print(b[1])`, prints `2` for a module `c` and
+    stops in the VM with "use after Pointer deallocation" for a local one.
+    Mojo 1.3.0.dev2026102605 rejects both with "use of a never-initialized
+    interior reference 'ComptimeOrigin["element"]'", and `comptime n =
+    len(b)` prints `2`.
   - Found while landing R793 (2026-10-14).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -7292,7 +7262,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     arithmetic error and the VM's literal division traps.
   - Ledger name: `assets/runtime_error/div_by_zero.mojo`, which moves to
     `assets/ok` when this lands, with its errors-ledger and manifest rows.
-  - Also R1538's `comptime g = x // 0` probe, whose `x` stays a literal.
+  - Also R1738's `comptime g = x // 0` probe, whose `x` stays a literal.
   - `docs/non-goals.md` no longer keeps a compile-time zero divisor an
     error: `SIMD.__floordiv__`'s mask makes the `Int` form `0`, and this
     entry makes the literal form follow `int_literal_bin`.
@@ -11006,9 +10976,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `def g[c: Span[Scalar[dtype], _]]()` is "not an associated comptime
     expression", where the pin prints `2`.
     The `ref self` receiver of `List.__getitem__(ref self,
-    ContiguousSlice)` applies since R1643, but `comptime coefficients:
-    List[Float64] = [...]` is held as an `Array[Float64, 3]`, so the
-    slice selects no `__getitem__` (R1538).
+    ContiguousSlice)` applies since R1643, and `comptime coefficients:
+    List[Float64] = [...]` is a `List` since R1538, but the slice's `Span`
+    is still no parameter expression.
   - Found while planning R1567 (2026-10-30).
   - Depends on R1711, R1712, R1593, R1634, R1673, R1661, R333, R1721,
     R1154, R1643, and R1538.

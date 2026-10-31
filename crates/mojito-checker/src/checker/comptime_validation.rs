@@ -3246,6 +3246,22 @@ impl Checker {
         annotation: Option<&SourceType>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
+        // An annotation naming a struct the value is not converts it
+        // through the struct's `@implicit` constructor, as a parameter
+        // argument converts: `comptime w: L = 4` binds `L(4)`.
+        if !self.function_bases.is_empty()
+            && let Some(annotation) = annotation
+            && let Some(converted) = self.annotated_comptime_conversion(annotation, value)?
+        {
+            let level = self.tparams.len().saturating_sub(1);
+            self.local_comptime_parameters
+                .last_mut()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
+                })?
+                .insert(name.to_string(), (level, converted));
+            return Ok(false);
+        }
         // A string literal's KGEN string, or a closed raw list read off a
         // struct's parameter, is compile-time only before any probe below
         // types it as a template's expression.
@@ -3438,6 +3454,28 @@ impl Checker {
             scope.insert(name.to_string(), (level, expression));
         }
         Ok(false)
+    }
+
+    /// The application of the `@implicit` constructor of the struct
+    /// `annotation` names that converts a `comptime` binding's `value` of
+    /// another type, which the pin binds: `comptime w: L = 4` is `L(4)`
+    /// ([`Self::converted_parameter_value`]). `None` for an annotation
+    /// naming no struct, a value already of its type, or one no
+    /// constructor converts, which the binding's ordinary check rejects.
+    pub(super) fn annotated_comptime_conversion(
+        &self,
+        annotation: &SourceType,
+        value: &Expr,
+    ) -> Result<Option<ParamExpr>, TypeError> {
+        let expected =
+            self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
+        if !matches!(expected.kind(), TyKind::Struct(..)) {
+            return Ok(None);
+        }
+        let Ok(compiled) = self.compile_dependent_ct_expr(value) else {
+            return Ok(None);
+        };
+        Ok(self.converted_parameter_value(value, &compiled, &expected))
     }
 
     /// Require a raw list binding's annotation, if any, to name the list's

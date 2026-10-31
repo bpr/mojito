@@ -1417,6 +1417,12 @@ impl ProgramConstants {
         self.own.insert(name, value);
     }
 
+    /// Withdraw the own constant `name`, whose annotation converts its
+    /// folded literal to a value of another type (`comptime W: L = 4`).
+    pub fn withdraw(&mut self, name: &str) {
+        self.own.remove(name);
+    }
+
     /// The own constant `name`'s value.
     pub fn own(&self, name: &str) -> Option<&IntLiteral> {
         self.own.get(name)
