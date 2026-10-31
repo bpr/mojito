@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1744**.
+Next free ID: **R1746**.
 
 ## Ordered Work
 
@@ -2965,6 +2965,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1744 A `SIMDLength` binder passed to an `Int` value parameter
+  reaches MIR as the `SIMDLength` register**
+
+  `mask[dtype, width]()` over `def mask[dtype: DType, width: Int]()`,
+  called from a `def` whose `width: SIMDLength`, passes the check and then
+  fails MIR verification: "compile-time value parameter 'width' has
+  register type SIMDLength, declared Int". The pin converts it and runs.
+  - The checker converts the argument (`Checker::simd_length_lanes`,
+    `checker/comptime_validation.rs`), but `param_arg_regs`
+    (`crates/mojito-mir/src/mir.rs`) passes the caller's binder register
+    unconverted; the verifier's check is in `mir/verify/subscripts.rs`.
+  - Lever: lower the argument through `types::simd_length_image`, as
+    `value_binder_operand` does for a recorded `SimdFromLength`
+    adjustment.
+  - Probe: `def f[dtype: DType, width: SIMDLength, //](x: SIMD[dtype,
+    width])` returning `x + mask[dtype, width]()` prints `[2.0, 3.0, 4.0,
+    5.0]` at the pin for `f(SIMD[DType.float32, 4](1, 2, 3, 4))`.
+  - Probe: upstream's `frexp` and `_frexp_bits` call `_frexp_mask1[dtype,
+    width]()` this way (R1714).
+  - Related: R1687 (the checker's `Self.n` arm of the same conversion).
+  - Found while landing R1714 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1504 A slice or multi-index store through a getter's mutable
   reference is rejected**
 
@@ -4640,6 +4664,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     vector (upstream's `_exp_impl`).
   - Probe: `comptime neg_ln2 = -0.693…` local, then `k.fma(neg_ln2, xc)`,
     fails the same way.
+  - Probe: `fr[0].lt(_SQRT2 / 2)` over the module constant `_SQRT2`
+    (upstream's `_log_reduce`) finds no `lt` overload, and neither do
+    `_log_base`'s local `x1.lt(sqrt2_div_2)` and `exp.fma(ln2, y)` (R1714).
   - Cause: the unannotated arm of the `Comptime` statement
     (`checker/statements.rs`) declares `inferred_binding_ty`, `Float64`,
     and records a literal materialization; `fold_module_constants` does
@@ -4648,6 +4675,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     so a run-time read materializes at the use as a literal does. `var b =
     a; print(b, a / 4, a * 3)` must keep printing `1.5 0.375 4.5`.
   - Found while landing R1713 (2026-10-30).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1745 A lifted local `comptime` application omits the binders
+  only its result type names**
+
+  In a `def` generic over `dtype` and `width: SIMDLength`, `comptime TInt =
+  SIMD[_integral_type_of[dtype](), width]` then `comptime m = TInt((1 <<
+  (bit_width_of[dtype]() - 1)) - 1)` fails MIR verification: the lifted
+  `$comptime$f$c0` "names parameter `width` of `f` that no enclosing
+  declaration binds". The pin runs it.
+  - Cause: `Checker::lifted_application`
+    (`checker/comptime_validation.rs`) applies the lifted function to the
+    binders the expression's syntax reads (`names_read`), while its
+    result type, `SIMD[_integral_type_of(dtype), width]`, also names
+    `width`.
+  - `SIMD[DType.int32, width](…bit_width_of…)`,
+    `SIMD[_integral_type_of[dtype](), width](7)`, and a `var` all run.
+  - Probe: upstream's `_is_zero_bits` and `_is_subnormal_bits` bind
+    `magnitude` this way (R1714); `(x._to_bits_signed() & m).eq(0)` prints
+    `[True, True, False, False]` at the pin for `float32 × 4` input `0,
+    -0.0, 1, 2`.
+  - Probe: spelled inline, `comptime m = SIMD[_integral_type_of[dtype](),
+    width]((1 << (bit_width_of[dtype]() - 1)) - 1)` instead "keeps the
+    parameter constant … in elaborated MIR after monomorphization"; the
+    pin prints `[2147483647, …]` at `float32 × 4`.
+  - Found while landing R1714 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -10796,6 +10850,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     bundled `String.__add__` takes `Self` where upstream's takes
     `StringSlice`; the `comptime assert` message `String("bad: ") +
     reflect[T].name()` fails the same way.
+  - Probe: `"`" + name + "` y"` over `name: StaticString` fails with
+    "operator '+' is not defined for StringLiteral["`"] and StringSpan",
+    where the pin prints `` `log` y ``: the bundled `StringSpan` lacks
+    upstream's `__add__(self, rhs: StringSpan) -> String` and `__radd__`
+    (`collections/string/string_span.mojo`, over `String._add`).
+    Upstream's `_assert_float64_supported` (R1714) builds its message this
+    way.
   - Depends on R1652 (a literal receiver is the struct).
   - Model: Opus, Not Planned.
 
@@ -11026,8 +11087,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     landed `__truediv__`.
   - Probe: `print(log(Float64(2)), log(SIMD[DType.float32, 4](1, 2, 0.5,
     10)), log(Float64(0)), log(Float64(-1)))` against the pin.
+  - Place the port callee-first after `_LN2_LO_F64`, where upstream's
+    `log` and `frexp` precede their kernels (R592).
+  - Omit the `bfloat16` arms of `_frexp_mask1` and `_frexp_mask2` (R65).
+  - `__init__` re-exports `frexp` after `fma` and `log` after `ldexp`.
+  - The pin's float64 digits are fdlibm's `k_log.h`, libm-exact
+    (`log(Float64(1e300))` = `690.7755278982137`). Mojo 1.1 predates
+    `_log_accurate` and is no oracle for them.
+  - A verbatim port with the four blockers worked around printed the
+    pin's values on the VM and natively (2026-10-30).
   - Found while planning R1567 (2026-10-30).
-  - Depends on R1711, R1712, R1593, R1634, R1661, R333, R1721, and R1723.
+  - Depends on R1653, R1741, R1744, and R1745.
   - Model: Fable, Not Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
