@@ -8,9 +8,9 @@
 # `log1p`, `log2`, `log10`, `logb`, `modf`, `perm`, `pow`, `recip`,
 # `remainder`, `round`, `scalb`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`,
 # `ulp`, `y0`, and `y1`. The `std.utils.numerics` import follows `.math`'s,
-# where upstream's leads: `std.utils.numerics` reaches `std.sys`, whose
-# re-exports a module on its import cycle cannot yet read while it loads
-# (R1724).
+# where upstream's leads: `std.sys.info` is then still loading when
+# `std.math.math` links, so `ldexp` precedes the `simd_width_of` it calls
+# (R592).
 """Math functions and constants: trig, exponential, logarithmic, and special functions.
 
 The `math` package provides mathematical functions and constants for numerical

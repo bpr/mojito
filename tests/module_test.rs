@@ -695,6 +695,71 @@ fn mutual_module_import_cycle_is_not_a_self_import() {
     assert_eq!(run(&main).expect("mutual import cycle"), "42\n");
 }
 
+/// Package `pkg` whose `__init__` is `init` imports `.b` first, so `b.mojo`
+/// (`b`) reads `pkg` while it loads; `.a` declares `fa`. Runs
+/// `print(fb())` with the directory as a search root.
+fn run_package_cycle(init: &str, b: &str) -> Result<String, String> {
+    let d = TempDir::new();
+    d.write("pkg/__init__.mojo", init);
+    d.write("pkg/b.mojo", b);
+    d.write("pkg/a.mojo", "def fa() -> Int:\n    return 1\n");
+    let main = d.write(
+        "main.mojo",
+        "from pkg import fb\n\ndef main():\n    print(fb())\n",
+    );
+    let compiler = Compiler::new(
+        LinkOptions {
+            search_roots: vec![d.0.clone()],
+        },
+        BackendKind::Vm,
+    );
+    compiler
+        .run_path(&main)
+        .map(|execution| execution.output)
+        .map_err(|error| error.to_string())
+}
+
+#[test]
+fn package_reexport_is_readable_on_its_import_cycle() {
+    let output = run_package_cycle(
+        "from .b import fb\nfrom .a import fa\n",
+        "from pkg import fa\n\ndef fb() -> Int:\n    return fa() + 1\n",
+    );
+    assert_eq!(output.unwrap(), "2\n");
+}
+
+#[test]
+fn aliased_and_wildcard_package_reexports_resolve_on_a_cycle() {
+    let aliased = run_package_cycle(
+        "from .b import fb\nfrom .a import fa as g\n",
+        "from pkg import g\n\ndef fb() -> Int:\n    return g() + 1\n",
+    );
+    assert_eq!(aliased.unwrap(), "2\n");
+    let wildcard = run_package_cycle(
+        "from .b import fb\nfrom .a import *\n",
+        "from pkg import *\n\ndef fb() -> Int:\n    return fa() + 1\n",
+    );
+    assert_eq!(wildcard.unwrap(), "2\n");
+    let namespace = run_package_cycle(
+        "from .b import fb\nfrom . import a\n",
+        "from pkg import a\n\ndef fb() -> Int:\n    return a.fa() + 1\n",
+    );
+    assert_eq!(namespace.unwrap(), "2\n");
+}
+
+#[test]
+fn recursive_package_reexport_is_rejected() {
+    let error = run_package_cycle(
+        "from .b import fb, fa\n",
+        "from pkg import fa\n\ndef fb() -> Int:\n    return fa() + 1\n",
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("attempt to resolve a recursive reference to declaration 'fa'"),
+        "{error}"
+    );
+}
+
 #[test]
 fn aliases_qualified_imports_and_same_named_declarations_do_not_collide() {
     let d = TempDir::new();

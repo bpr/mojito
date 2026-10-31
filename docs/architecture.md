@@ -871,8 +871,8 @@ Currently it supports:
   shadowing of an imported namespace tree
 - source-package precedence over a same-named source module in each search root
 - underscore-prefixed wildcard privacy and collision-free module identities
-- transitive imports, dependency-first hoisting, deduplication, and simple cycle
-  breaking by canonical path
+- transitive imports, dependency-first hoisting, deduplication, and cycle
+  breaking by canonical path, a loading module's imports resolving on demand
 
 Imported declarations receive module-qualified internal names before they are
 hoisted. A module under a search root is named by its path under that root
@@ -908,7 +908,19 @@ already explicit local name. Import resolution also compares canonical source
 paths and rejects an exact self-import. A module publishes provisional local
 exports before following dependencies, so this check does not mistake a real
 two-module cycle for self-import and mutually recursive modules can bind each
-other's declarations deterministically.
+other's declarations deterministically. A loading module also keeps its
+top-level imports as pending import declarations (`Linker::pending`, by the
+name each binds: named, aliased, wildcard, and `from . import sub`): a cycle
+peer's lookup that misses the provisional exports resolves the one binding the
+name, loading its source first, and publishes it (`Linker::resolve_pending`;
+a wildcard import of a loading module resolves them all,
+`Linker::force_pending`), as upstream resolves a module's import declarations
+when a name is looked up, whatever their order. A lookup that leads back to
+itself is `ModuleError::RecursiveReference`, the pin's "attempt to resolve a
+recursive reference to declaration". A packaged link needs no pending table:
+a record publishes its final exports before its loads. Linking binds names
+only; a peer that calls a loading module's own function still meets the
+check's source-order binding of module functions (R592).
 
 Package directories resolve through `__init__.mojo`. Imports in that file become
 package re-exports. Mojo forbids executable file-scope statements, so package

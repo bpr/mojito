@@ -3381,6 +3381,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `std/math/math.mojo` declares `copysign` after `abs`, which it
     calls, where upstream's precedes `iota`: declared first, it stops with
     "Undefined variable '__module$std$math$math$abs'".
+  - Probe: moving `std/math/__init__.mojo`'s `from std.utils.numerics
+    import …` ahead of `.constants`, upstream's position, stops packaging
+    with "Undefined variable '__module$std$sys$info$simd_width_of'":
+    `std.sys.info` is loading when `std.math.math` links, so `ldexp`
+    precedes `simd_width_of`. Restore upstream's order when this lands.
+  - Probe: package `pkg` whose `__init__` imports `.b` and declares `def
+    fa`, where `b.mojo` calls `fa` through `from pkg import fa`, stops with
+    "Undefined variable '__module$pkg$fa'", where the pin prints `2`.
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10984,33 +10992,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `isinf`, `isnan`, `nan`, and `nextafter` this way. The bundled port
     omits that line until this lands.
   - The import cycle (`__init__` imports `.math`, and `.math` imports
-    `.`) must resolve as the pin's does (R1724).
+    `.`) must resolve as the pin's does, through the loading package's
+    pending imports (`Linker::resolve_pending`).
   - Probe: package `mth/` with `__init__` `from .constants import pi` and
     `from .math import twice_pi`, and `math.mojo` `from . import pi`; the
     pin prints `6.28`.
   - Found while planning R1711 (2026-10-30).
-  - Depends on R1724.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1724 A package's re-exports are unreadable by a module on its
-  import cycle while the package loads**
-
-  Package `pkg` whose `__init__` imports `.b` before `.a`, where `b.mojo`
-  reads `from pkg import fa` and `.a` declares `fa`, reports "module
-  'pkg' has no declaration named 'fa'", where the pin prints `2`.
-  - `Linker::load_module` (`mojito-module/src/module.rs`) publishes only
-    a loading module's local declarations to a cycle peer, so a package
-    `__init__`, which holds only re-exports, publishes nothing.
-  - Upstream resolves a module's names declaratively, whatever the order
-    of its imports.
-  - Probe: `std/math/__init__.mojo` imports `std.utils.numerics` after
-    `.math`, where upstream's leads. Upstream's order fails with "module
-    'std.sys' has no declaration named 'llvm_intrinsic'": `std.sys` loads
-    from `std.builtin.dtype`, and `std.math.math`, on `std.sys`'s cycle
-    through `std._plugin`, reads it.
-  - Found while landing R1711 (2026-10-30).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1743 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
   Taylor polynomial and `_ldexp_impl`**

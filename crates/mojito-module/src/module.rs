@@ -35,6 +35,9 @@ pub enum ModuleError {
     EmptyModulePath,
     /// The entry module declares a name an explicit import already binds.
     Redefinition { name: String },
+    /// A lookup of `name` in a loading module's imports leads back to
+    /// itself.
+    RecursiveReference { module: String, name: String },
     /// An installed compiler's standard-library package is missing, or is
     /// not one this compiler can read.
     InstalledPackage { path: PathBuf, reason: String },
@@ -99,6 +102,11 @@ impl std::fmt::Display for ModuleError {
             Self::Redefinition { name } => write!(
                 f,
                 "invalid redefinition of '{name}': an import already binds this name"
+            ),
+            Self::RecursiveReference { module, name } => write!(
+                f,
+                "attempt to resolve a recursive reference to declaration '{name}' (module \
+                 '{module}')"
             ),
             Self::InstalledPackage { path, reason } => write!(
                 f,
@@ -834,6 +842,11 @@ struct Linker<'p> {
     /// deliberately re-export a submodule without making every file below the
     /// package directory an implicit member.
     namespace_exports: HashMap<PathBuf, HashMap<String, HashMap<String, String>>>,
+    /// Each loading module's top-level imports, by the name each binds: a
+    /// cycle peer's lookup that misses its provisional exports resolves
+    /// one on demand, as upstream resolves an import declaration when a
+    /// name is looked up.
+    pending: HashMap<PathBuf, PendingImports>,
     /// Hoisted declarations from all loaded modules, in dependency order.
     decls: Vec<Stmt>,
     /// The table position of each module loaded from its package record,
@@ -869,6 +882,66 @@ impl ResolvedModule {
     }
 }
 
+/// A loading module's top-level imports, unresolved.
+struct PendingImports {
+    /// The module's directory, which its relative imports start from.
+    dir: PathBuf,
+    /// `from X import Y [as Z]`, by the name it binds.
+    named: HashMap<String, PendingName>,
+    /// `from X import *`, in source order: each source's level and path.
+    wildcards: Vec<(usize, Vec<String>)>,
+    /// `from . import a [as b]`, by the name it binds: the level and the
+    /// submodule's name.
+    submodules: HashMap<String, (usize, String)>,
+}
+
+impl PendingImports {
+    fn new(dir: &Path, program: &[Stmt]) -> Self {
+        let mut pending = Self {
+            dir: dir.to_path_buf(),
+            named: HashMap::new(),
+            wildcards: Vec::new(),
+            submodules: HashMap::new(),
+        };
+        for stmt in program {
+            let StmtKind::FromImport { level, path, names } = &stmt.kind else {
+                continue;
+            };
+            match names {
+                ImportNames::Wildcard => pending.wildcards.push((*level, path.clone())),
+                ImportNames::Names(items) => {
+                    for item in items {
+                        let local = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                        if path.is_empty() {
+                            pending
+                                .submodules
+                                .insert(local, (*level, item.name.clone()));
+                        } else {
+                            pending.named.insert(
+                                local,
+                                PendingName {
+                                    level: *level,
+                                    path: path.clone(),
+                                    name: item.name.clone(),
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        pending
+    }
+}
+
+/// One pending `from X import Y`: `X`'s level and path, and `Y`.
+#[derive(Clone)]
+struct PendingName {
+    level: usize,
+    path: Vec<String>,
+    name: String,
+}
+
 struct ImportScope<'a> {
     bindings: &'a mut HashMap<String, String>,
     namespaces: &'a mut HashMap<String, HashMap<String, String>>,
@@ -894,6 +967,7 @@ impl<'p> Linker<'p> {
             loaded: HashSet::new(),
             exports: HashMap::new(),
             namespace_exports: HashMap::new(),
+            pending: HashMap::new(),
             decls: Vec::new(),
             packaged: Vec::new(),
             prelude_bindings: None,
@@ -1069,6 +1143,8 @@ impl<'p> Linker<'p> {
         // Publish local declarations before following imports so a distinct
         // module in a mutual cycle can bind them while this module is loading.
         self.exports.insert(canon.clone(), local.clone());
+        self.pending
+            .insert(canon.clone(), PendingImports::new(dir, &program));
         let importer = Some(canon.as_path());
         // Modules loaded after prelude bootstrap see the same implicit names as
         // the entry module. Prelude dependencies themselves are loaded while the
@@ -1176,6 +1252,7 @@ impl<'p> Linker<'p> {
                 records.push((identity, record));
             }
         }
+        self.pending.remove(canon);
         self.exports.insert(canon.clone(), exports);
         self.namespace_exports
             .insert(canon.clone(), visible_namespaces);
@@ -1365,8 +1442,148 @@ impl<'p> Linker<'p> {
         let module = self.resolve_module(dir, level, path)?;
         check_self_import(importer, &module)?;
         self.load_module(&module)?;
+        match names {
+            ImportNames::Names(items) => {
+                for item in items {
+                    self.resolve_pending(&module.key, &item.name, &mut Vec::new())?;
+                }
+            }
+            ImportNames::Wildcard => self.force_pending(&module.key)?,
+        }
         self.check_names(&module, names)?;
         self.bind_from_imports(&module, names, scope)
+    }
+
+    /// Publish `name` from the loading module `key` by resolving the
+    /// pending import that binds it, loading its source first; `true` once
+    /// `key` exports it. A completed module has no pending imports.
+    /// `visiting` holds the lookups under way, and meeting one again is
+    /// the pin's recursive-reference error.
+    fn resolve_pending(
+        &mut self,
+        key: &Path,
+        name: &str,
+        visiting: &mut Vec<(PathBuf, String)>,
+    ) -> Result<bool, ModuleError> {
+        if self.exports.get(key).is_some_and(|e| e.contains_key(name)) {
+            return Ok(true);
+        }
+        let Some(pending) = self.pending.get(key) else {
+            return Ok(false);
+        };
+        let dir = pending.dir.clone();
+        let named = pending.named.get(name).cloned();
+        let wildcards = pending.wildcards.clone();
+        let submodule = pending.submodules.get(name).cloned();
+        // A wildcard skips a private name, and a prelude name, which every
+        // module sees implicitly rather than as its export.
+        let wildcard = !name.starts_with('_')
+            && !self
+                .prelude_bindings
+                .as_ref()
+                .is_some_and(|bindings| bindings.contains_key(name));
+        if named.is_none() && submodule.is_none() && (!wildcard || wildcards.is_empty()) {
+            return Ok(false);
+        }
+        let lookup = (key.to_path_buf(), name.to_string());
+        if visiting.contains(&lookup) {
+            return Err(ModuleError::RecursiveReference {
+                module: self.rooted_module_name(key).unwrap_or_else(|| display(key)),
+                name: name.to_string(),
+            });
+        }
+        visiting.push(lookup);
+        let found = if let Some(entry) = named {
+            self.publish_pending(key, name, &dir, &entry, visiting)?
+        } else if let Some((level, submodule)) = submodule {
+            let module = self.resolve_module(&dir, level, &[submodule])?;
+            self.load_module(&module)?;
+            let mut children = HashMap::new();
+            self.bind_namespace_tree(&module.key, name, &mut children);
+            self.namespace_exports
+                .entry(key.to_path_buf())
+                .or_default()
+                .extend(children);
+            true
+        } else {
+            let mut found = false;
+            for (level, path) in wildcards {
+                let source = PendingName {
+                    level,
+                    path,
+                    name: name.to_string(),
+                };
+                if self.publish_pending(key, name, &dir, &source, visiting)? {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        visiting.pop();
+        Ok(found)
+    }
+
+    /// Resolve every pending import of the loading module `key`, for a
+    /// wildcard import of it. A name that only leads back to itself is
+    /// left out, as nothing names it.
+    fn force_pending(&mut self, key: &Path) -> Result<(), ModuleError> {
+        let Some(pending) = self.pending.get(key) else {
+            return Ok(());
+        };
+        let mut names: Vec<String> = pending
+            .named
+            .keys()
+            .chain(pending.submodules.keys())
+            .cloned()
+            .collect();
+        let dir = pending.dir.clone();
+        for (level, path) in pending.wildcards.clone() {
+            let module = self.resolve_module(&dir, level, &path)?;
+            self.load_module(&module)?;
+            if self.pending.contains_key(&module.key) {
+                self.force_pending(&module.key)?;
+            }
+            names.extend(
+                self.exports[&module.key]
+                    .keys()
+                    .filter(|name| !name.starts_with('_'))
+                    .cloned(),
+            );
+        }
+        names.sort();
+        names.dedup();
+        for name in names {
+            match self.resolve_pending(key, &name, &mut Vec::new()) {
+                Ok(_) | Err(ModuleError::RecursiveReference { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    /// Load the module `source` imports from, relative to `dir`, and once
+    /// it exports `source.name`, publish that declaration from `key` as
+    /// `name`.
+    fn publish_pending(
+        &mut self,
+        key: &Path,
+        name: &str,
+        dir: &Path,
+        source: &PendingName,
+        visiting: &mut Vec<(PathBuf, String)>,
+    ) -> Result<bool, ModuleError> {
+        let module = self.resolve_module(dir, source.level, &source.path)?;
+        self.load_module(&module)?;
+        if !self.resolve_pending(&module.key, &source.name, visiting)? {
+            return Ok(false);
+        }
+        let target = self.exports[&module.key][&source.name].clone();
+        self.exports
+            .entry(key.to_path_buf())
+            .or_default()
+            .insert(name.to_string(), target);
+        Ok(true)
     }
 
     fn resolve_scoped_imports(

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A package's re-exports are readable from a module on its import cycle
+  while the package loads (R1724): the loading module's top-level imports
+  (named, aliased, wildcard, and `from . import sub`) resolve on a peer's
+  lookup, as upstream resolves import declarations, and one leading back
+  to itself is the pin's "attempt to resolve a recursive reference to
+  declaration".
 - `std.math` re-exports upstream's `ldexp`, over `_ldexp_impl` verbatim
   (R1713): an AVX-512 host computes `float32` at 16 lanes or more through
   `llvm.x86.avx512.mask.scalef.ps.512`, now in the `llvm_intrinsic` table
