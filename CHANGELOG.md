@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.math` gains upstream's `log` and `frexp` (R1714), verbatim over
+  `_log_accurate` for `float64` and `_log_base[27]` otherwise: `from
+  std.math import log` runs on both backends and at compile time, with the
+  pin's libm-exact `float64` digits.
 - A local `comptime` binding constructed through a local type alias over
   the function's binders (`comptime m = TInt(…)` over `comptime TInt =
   SIMD[_integral_type_of[dtype](), width]`) and a parameter constant whose

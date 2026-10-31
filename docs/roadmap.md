@@ -11011,34 +11011,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R393, R1742, and R1747.
   - Model: Fable, Not Planned.
 
-- [ ] **R1714 `std.math` has no `log`, where upstream's is `_log_accurate`
-  for `float64` and `_log_base[27]` otherwise**
-
-  `from std.math import log` fails, and upstream's `_powf_scalar` takes its
-  digits from it (R1567).
-  - Port `log`, `_log_base`, `frexp`, `_frexp_mask1`, `_frexp_mask2`,
-    `_frexp_bits`, `_log_reduce`, `_log_combine`, `_log_kernel`,
-    `_log_accurate`, `_is_zero_bits`, `_is_subnormal_bits`, and
-    `_assert_float64_supported`.
-  - `log`'s `is_nvidia_gpu()` arm (through `log2`'s PTX intrinsic) is
-    omitted under R1635.
-  - `_log_kernel`'s `f / (2.0 + f)` divides `float32` lanes through the
-    landed `__truediv__`.
-  - Probe: `print(log(Float64(2)), log(SIMD[DType.float32, 4](1, 2, 0.5,
-    10)), log(Float64(0)), log(Float64(-1)))` against the pin.
-  - Place the port callee-first after `_LN2_LO_F64`, where upstream's
-    `log` and `frexp` precede their kernels (R592).
-  - Omit the `bfloat16` arms of `_frexp_mask1` and `_frexp_mask2` (R65).
-  - `__init__` re-exports `frexp` after `fma` and `log` after `ldexp`.
-  - The pin's float64 digits are fdlibm's `k_log.h`, libm-exact
-    (`log(Float64(1e300))` = `690.7755278982137`). Mojo 1.1 predates
-    `_log_accurate` and is no oracle for them.
-  - A verbatim port with the four blockers worked around printed the
-    pin's values on the VM and natively (2026-10-30).
-  - Found while planning R1567 (2026-10-30).
-  - Depends on R1747.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
   `__pow__` over `_pow`**
 

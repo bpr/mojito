@@ -3,14 +3,13 @@
 # ported: `nextafter` from `std.utils.numerics`, and from `.math` `acos`,
 # `acosh`, `align_down`, `align_up`, `mulwide`, `mulhi`, `asin`, `asinh`,
 # `atan`, `atan2`, `atanh`, `cbrt`, `cos`, `cosh`, `divmod`, `erf`, `erfc`,
-# `exp`, `exp2`, `expm1`, `comb`, `factorial`, `frexp`, `gamma`, `gcd`,
-# `hypot`, `isclose`, `rsqrt`, `j0`, `j1`, `lcm`, `lgamma`, `log`,
-# `log1p`, `log2`, `log10`, `logb`, `modf`, `perm`, `pow`, `recip`,
-# `remainder`, `round`, `scalb`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`,
-# `ulp`, `y0`, and `y1`. The `std.utils.numerics` import follows `.math`'s,
-# where upstream's leads: `std.sys.info` is then still loading when
-# `std.math.math` links, so `ldexp` precedes the `simd_width_of` it calls
-# (R592).
+# `exp`, `exp2`, `expm1`, `comb`, `factorial`, `gamma`, `gcd`, `hypot`,
+# `isclose`, `rsqrt`, `j0`, `j1`, `lcm`, `lgamma`, `log1p`, `log2`,
+# `log10`, `logb`, `modf`, `perm`, `pow`, `recip`, `remainder`, `round`,
+# `scalb`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`, `ulp`, `y0`, and `y1`.
+# The `std.utils.numerics` import follows `.math`'s, where upstream's
+# leads: `std.sys.info` is then still loading when `std.math.math` links,
+# so `ldexp` precedes the `simd_width_of` it calls (R592).
 """Math functions and constants: trig, exponential, logarithmic, and special functions.
 
 The `math` package provides mathematical functions and constants for numerical
@@ -46,8 +45,10 @@ from .math import (
     copysign,
     floor,
     fma,
+    frexp,
     iota,
     ldexp,
+    log,
     max,
     min,
     trunc,
