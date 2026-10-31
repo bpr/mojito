@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares upstream's `@implicit __init__(value: IntLiteral)` and
+  `__init__(value: FloatLiteral)` over `#pop.int_literal_convert<v> : T` and
+  `#pop<float_literal_convert<v>> : T`, which now read at any `!kgen.simd`
+  type (R1781). `Int(3)`, `Int8(300)`, `Float32(x)` over `x: FloatLiteral`,
+  and `Scalar[dtype](2)` bind them and fold the exact literal once, and
+  `Int(2.5)` or `SIMD[DType.int32, 2](2.5)` fails the instance's "the SIMD
+  type must be floating point" as at the pin. A literal at a symbolic
+  `Scalar[dtype]` parameter is the declared conversion's application.
+  `FloatLiteral` declares `__float__`, `write_to`, and `write_repr_to`, and
+  `type_of(-2.5)` is `FloatLiteral[-2.5]`. `Float64(2.5)` prefers the
+  `FloatLiteral` initializer over `[T: Floatable]` as a free function's
+  overloads already did, `mem-2-reg` promotes a slot written by a
+  whole-root `place.store`, a `SIMD` member's compile-time instance is
+  keyed on its owner's dtype and width, and the compile-time fuel quota is
+  1,000,000 steps. The checker's literal construction rules are gone but
+  for a vector alias (R1646) and a module alias registered before `SIMD`'s
+  initializers (R1788). An implicit literal conversion is R1789
+  (`mojito-mir 1.153`, `mojito-package 173`).
+
 - A bare `IntLiteral` or `FloatLiteral` parameter is upstream's per-call
   `IntLiteral[x.value]`, auto-parameterized like any bare struct (R1780), so
   `def h(x: IntLiteral) -> IntLiteral[x.value]` runs and `g(3)` binds `def

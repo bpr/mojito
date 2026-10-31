@@ -26,9 +26,10 @@ impl Checker {
             return Ok(ty);
         }
         match (op, t.kind()) {
-            // A literal's negation and unary plus are literals.
+            // A literal's negation and unary plus are literals, whose type
+            // carries the folded value (`-2.5` is `FloatLiteral[-2.5]`).
             (PrefixOp::Neg | PrefixOp::Pos, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) => {
-                return Ok(t);
+                return Ok(mojito_types::types::value_less_literal(&t));
             }
             (PrefixOp::Not, TyKind::Bool) => return Ok(Ty::bool()),
             // A numeric scalar is `Boolable`: `not n` over an `Int`, or
@@ -38,9 +39,10 @@ impl Checker {
             }
             // A literal's and a `Bool`'s inversion keep their type; a
             // `SIMD`'s is its `__invert__` above.
-            (PrefixOp::Invert, TyKind::IntLiteral(_) | TyKind::Bool) => {
-                return Ok(t);
+            (PrefixOp::Invert, TyKind::IntLiteral(_)) => {
+                return Ok(mojito_types::types::value_less_literal(&t));
             }
+            (PrefixOp::Invert, TyKind::Bool) => return Ok(t),
             _ => {}
         }
         // `-x` and `~x` over a type parameter or a projection are the calls
@@ -785,6 +787,8 @@ impl Checker {
         if self.comptime_positions.get() == 0 || !matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
             return;
         }
+        // An operand may be an application (`SIMD[DType.int32, 4](3)`).
+        let _lifting = self.lifting_position();
         let vector = |operand: &Expr| {
             self.compile_dependent_ct_expr(operand)
                 .ok()

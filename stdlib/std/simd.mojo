@@ -3,8 +3,9 @@
 # initializers `__init__(out self)`, the `Intable` and `IntableRaising`
 # conversions, the cast from `SIMD[other_dtype, Self.length]`, the
 # `SIMDLength` splat, `from_int=`, the `Floatable` and `FloatableRaising`
-# conversions, `Bool`, `fill=`, `mlir_value=`, `Int` from an `index`, the
-# `Scalar[Self.dtype]` splat, the element list, and `from_bits=`, and its instance
+# conversions, `IntLiteral`, `Bool`, `fill=`, `mlir_value=`, `Int` from an
+# `index`, the `Scalar[Self.dtype]` splat, the element list, `FloatLiteral`,
+# and `from_bits=`, and its instance
 # `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
 # `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, the three `__pow__`
 # overloads, `__pos__`, `__neg__`, `__and__`,
@@ -32,11 +33,8 @@
 # `write_padded` is not ported
 # (R1663), and the native backend's `print`, `String`, and `repr` of a value still
 # format in the compiler rather than calling `write_to` and
-# `write_repr_to` as the VM's do (R1664). So are the
-# other initializers:
-# `IntLiteral` and `FloatLiteral` (R1781); `py=` is not ported. Until
-# then a construction takes a declared overload only where its arguments
-# select one at the pin. The element list omits upstream's
+# `write_repr_to` as the VM's do (R1664). `py=` is not ported. The element
+# list omits upstream's
 # `assert Self.length == len(elems)`, which the pin's default `-D ASSERT`
 # mode skips, so too few elements read past `elems` there as here (R1598).
 # `_simd_dtype_checks` is `True`: Mojito has no
@@ -696,6 +694,25 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         self = value.__float__()
 
+    @always_inline("builtin")
+    @implicit
+    def __init__(out self, value: IntLiteral, /):
+        """Initializes the SIMD vector with an integer.
+
+        The integer value is splatted across all the elements of the SIMD
+        vector.
+
+        Args:
+            value: The input value.
+        """
+        _simd_construction_checks[Self.dtype, Self.length]()
+        self._mlir_value = __mlir_attr[
+            `#pop.int_literal_convert<`,
+            value.value,
+            `> : `,
+            Self._mlir_type,
+        ]
+
     @inline(.nodebug)
     @implicit
     def __init__(out self: SIMD[.bool, Self.length], value: Bool, /):
@@ -785,6 +802,27 @@ struct SIMD[dtype: DType, length: SIMDLength](
 
         comptime for i in range(Self.length):
             self[i] = elems[i]
+
+    # TODO: should be "builtin" when constrained is replaced with 'requires'.
+    @inline(.nodebug)
+    @implicit
+    def __init__(out self, value: FloatLiteral, /):
+        """Initializes the SIMD vector with a float.
+
+        The value is splatted across all the elements of the SIMD
+        vector.
+
+        Args:
+            value: The input value.
+        """
+        _simd_construction_checks[Self.dtype, Self.length]()
+        comptime assert (
+            Self.dtype.is_floating_point()
+        ), "the SIMD type must be floating point"
+        var res = __mlir_attr[
+            `#pop<float_literal_convert<`, value.value, `>> : `, Self._mlir_type
+        ]
+        self = Self(mlir_value=res)
 
     @staticmethod
     def __init__[

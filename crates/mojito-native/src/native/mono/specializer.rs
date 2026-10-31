@@ -511,7 +511,23 @@ impl<'a> Specializer<'a> {
             Some((_, instance)) if let TyKind::Struct(name, _) = instance.kind() => {
                 Some(name.clone())
             }
-            _ => None,
+            // The `SIMD` bridge is no struct instance a member retargets to
+            // (R1557): its owner arguments lead the member's own, as a
+            // generator's kept ones do, so `Int`'s and `UInt`'s instances
+            // of one member are two.
+            Some((owner_template, _)) => {
+                let decls = self
+                    .structs
+                    .get(owner_template.as_str())
+                    .map_or(&[][..], |owner| owner.param_decls.as_slice());
+                arguments = decls
+                    .iter()
+                    .map(|decl| bound_argument(decl, &bindings, template))
+                    .chain(arguments.into_iter().map(Ok))
+                    .collect::<Result<_, _>>()?;
+                None
+            }
+            None => None,
         };
 
         // Origins erase from the runtime ABI and from the instance symbol, so

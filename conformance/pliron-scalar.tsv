@@ -1052,6 +1052,7 @@ assets/ok/simd_length_int_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_self_param_int_slot.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_struct.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_literal_convert_attribute.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_literal_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_math_cast_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_max_min_members.mojo	-	ineligible	no-scalar-entry-shape

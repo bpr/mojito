@@ -252,8 +252,10 @@ impl ParamContext {
             }
             ParamOp::DtypeToUi8 => self.build_dtype_code(operands),
             ParamOp::StoreToMem => self.build_store_to_mem(operands),
-            ParamOp::IntLiteralConvert
-            | ParamOp::IntToFloatLiteral
+            ParamOp::IntLiteralConvert | ParamOp::FloatLiteralConvert => {
+                self.build_literal_convert(op, operands)
+            }
+            ParamOp::IntToFloatLiteral
             | ParamOp::FloatToIntLiteral
             | ParamOp::FloatLiteralIsNan
             | ParamOp::FloatLiteralIsNegZero
@@ -1676,7 +1678,7 @@ impl ParamContext {
     }
 
     /// A `#pop` attribute over one `!pop.int_literal` or `!pop.float_literal`
-    /// operand ([`ParamOp::IntLiteralConvert`] through
+    /// operand ([`ParamOp::IntToFloatLiteral`] through
     /// [`ParamOp::FloatLiteralIsNormal`]): its fold once the operand is
     /// constant, and otherwise the node, whose type the attribute spells.
     fn build_literal_attribute(
@@ -1685,7 +1687,6 @@ impl ParamContext {
         operands: Vec<ParamExpr>,
     ) -> Result<ParamExpr, ParamError> {
         let (operand, result) = match op {
-            ParamOp::IntLiteralConvert => (TyKind::PopIntLiteral, MetaTy::int()),
             ParamOp::IntToFloatLiteral => (
                 TyKind::PopIntLiteral,
                 MetaTy::value(TyKind::PopFloatLiteral.into()),
@@ -1855,6 +1856,29 @@ impl ParamContext {
             return self.constant(fold_primitive(op, &[result, value])?);
         }
         Ok(self.make(MetaTy::value(ty), ParamKind::Op { op, operands }))
+    }
+
+    /// `#pop.int_literal_convert` or `#pop<float_literal_convert>` of a
+    /// literal at the vector type its first operand names: the vector once
+    /// both are constant, and otherwise the node, a value of that type.
+    fn build_literal_convert(
+        &self,
+        op: ParamOp,
+        operands: Vec<ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        let literal = if op == ParamOp::IntLiteralConvert {
+            TyKind::PopIntLiteral
+        } else {
+            TyKind::PopFloatLiteral
+        };
+        if *operands[1].meta() != MetaTy::value(literal.clone().into()) {
+            return Err(ParamError::TypeMismatch {
+                operation: op.name().to_string(),
+                expected: literal.to_string(),
+                found: operands[1].meta().to_string(),
+            });
+        }
+        self.build_lane_op(op, operands)
     }
 
     /// `and`/`or`: flatten, fold constants, drop duplicates, and sort. The
@@ -3064,10 +3088,19 @@ pub enum ParamOp {
     /// Over a constant it is the frozen reference
     /// ([`CtValue::StoreToMem`]).
     StoreToMem,
-    /// `#pop.int_literal_convert` to `!kgen.scalar<index>`: a
-    /// `!pop.int_literal` as the `Int` storage it wraps to (upstream's
-    /// `IntLiteral.__mlir_index__`, under `#kgen.cast_to_builtin`).
+    /// `#pop.int_literal_convert<v> : T`: a `!pop.int_literal`, the second
+    /// operand, converted into every lane of the vector type the first
+    /// operand names, a type shape read as [`ParamOp::SimdSplat`]'s is
+    /// (upstream's `SIMD.__init__(IntLiteral)`, and
+    /// `IntLiteral.__mlir_index__` at `!kgen.scalar<index>`). A lane wraps
+    /// to its dtype ([`crate::ct::CtLane::of_int_literal`]); a `bool` lane
+    /// is whether the literal is nonzero.
     IntLiteralConvert,
+    /// `#pop<float_literal_convert<v>> : T`: a `!pop.float_literal`, the
+    /// second operand, rounded once into every lane of the float vector
+    /// type the first operand names (upstream's
+    /// `SIMD.__init__(FloatLiteral)`).
+    FloatLiteralConvert,
     /// `#pop<int_to_float_literal>`: a `!pop.int_literal` as the
     /// `!pop.float_literal` of the same value (upstream's implicit
     /// `FloatLiteral` initializer from an `IntLiteral`).
@@ -3125,6 +3158,7 @@ impl ParamOp {
             Self::DtypeToUi8 => "dtype_to_ui8",
             Self::StoreToMem => "store_to_mem",
             Self::IntLiteralConvert => "int_literal_convert",
+            Self::FloatLiteralConvert => "float_literal_convert",
             Self::IntToFloatLiteral => "int_to_float_literal",
             Self::FloatToIntLiteral => "float_to_int_literal",
             Self::FloatLiteralIsNan => "float_literal_isa_nan",
@@ -3174,7 +3208,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 38] = [
+    const ALL: [Self; 39] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -3208,6 +3242,7 @@ impl ParamOp {
         Self::DtypeToUi8,
         Self::StoreToMem,
         Self::IntLiteralConvert,
+        Self::FloatLiteralConvert,
         Self::IntToFloatLiteral,
         Self::FloatToIntLiteral,
         Self::FloatLiteralIsNan,
@@ -3224,7 +3259,6 @@ impl ParamOp {
             | Self::StringAddress
             | Self::DtypeToUi8
             | Self::StoreToMem
-            | Self::IntLiteralConvert
             | Self::IntToFloatLiteral
             | Self::FloatToIntLiteral
             | Self::FloatLiteralIsNan
@@ -3270,6 +3304,7 @@ impl ParamOp {
             | Self::DtypeToUi8
             | Self::StoreToMem
             | Self::IntLiteralConvert
+            | Self::FloatLiteralConvert
             | Self::IntToFloatLiteral
             | Self::FloatToIntLiteral
             | Self::FloatLiteralIsNan
@@ -4532,8 +4567,11 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::DtypeToUi8, [dtype]) => fold::fold_dtype_to_ui8(dtype),
         (ParamOp::StoreToMem, [referent]) => Ok(CtValue::StoreToMem(Box::new((*referent).clone()))),
         (
-            ParamOp::IntLiteralConvert
-            | ParamOp::IntToFloatLiteral
+            ParamOp::IntLiteralConvert | ParamOp::FloatLiteralConvert,
+            [CtValue::Type(ty), literal],
+        ) => fold::fold_literal_convert(op, ty, literal),
+        (
+            ParamOp::IntToFloatLiteral
             | ParamOp::FloatToIntLiteral
             | ParamOp::FloatLiteralIsNan
             | ParamOp::FloatLiteralIsNegZero
@@ -4655,6 +4693,7 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::DtypeToUi8
         | ParamOp::StoreToMem
         | ParamOp::IntLiteralConvert
+        | ParamOp::FloatLiteralConvert
         | ParamOp::IntToFloatLiteral
         | ParamOp::FloatToIntLiteral
         | ParamOp::FloatLiteralIsNan
@@ -4697,6 +4736,7 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::DtypeToUi8 => "pop.dtype.to_ui8",
         ParamOp::StoreToMem => "store_to_mem",
         ParamOp::IntLiteralConvert => "pop.int_literal_convert",
+        ParamOp::FloatLiteralConvert => "pop.float_literal_convert",
         ParamOp::IntToFloatLiteral => "pop.int_to_float_literal",
         ParamOp::FloatToIntLiteral => "pop.float_to_int_literal",
         ParamOp::FloatLiteralIsNan => "pop.float_literal_isa<nan>",

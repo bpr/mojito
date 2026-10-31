@@ -10,8 +10,8 @@
 //! trivially register-passable ([`MirDeclarations::copy_is_identity`]),
 //! whatever binders it names (`SIMD[DType.int64, n]` in a body over `n`),
 //! as upstream's `canPromote` has no type test, and every
-//! mention of it is a store (`var.store`), a read (`var.use`, or a
-//! whole-root `place.load`), or a mention with no effect on such a type
+//! mention of it is a store (`var.store`, or a whole-root `place.store`), a
+//! read (`var.use`, or a whole-root `place.load`), or a mention with no effect on such a type
 //! once drops are elaborated (`var.declare`, `drop.var`, and `var.consume`).
 //! A whole-root `ref.make` of the slot whose register only `ref.read` and
 //! `ref.write` take as their reference is the allocation's own address, as
@@ -1016,6 +1016,9 @@ fn slot_use(instruction: &MirInstr, uses: &Uses) -> Option<(VarId, Mention)> {
         }
         MirInstr::LoadPlace { dest, place } if place.proj.is_empty() && place.through.is_none() => {
             Some((place.root, Mention::Read { dest: *dest }))
+        }
+        MirInstr::Store { place, src } if place.proj.is_empty() && place.through.is_none() => {
+            Some((place.root, Mention::Store(*src)))
         }
         MirInstr::MakeRef { dest, place } if addresses.contains_key(&dest.0) => {
             Some((place.root, Mention::Address))

@@ -3141,21 +3141,22 @@ impl Checker {
                     if matches!(value, CtValue::Expr(_)) {
                         return Ok(TyArg::Val(value));
                     }
-                    // A literal at a vector whose dtype is still symbolic
-                    // (`Scalar[dtype]`) is its literal initializer's splat.
-                    if let Some(splat) = self.symbolic_literal_splat(&value, ty) {
-                        return Ok(TyArg::Val(CtValue::Expr(splat?)));
-                    }
                     let rendered = value.to_string();
-                    let value =
-                        value
-                            .materialize_as(ty)
-                            .ok_or_else(|| TypeError::TypeMismatch {
-                                expected: ty.to_string(),
-                                found: rendered,
-                                context: format!("value parameter '{name}'"),
-                            })?;
-                    Ok(TyArg::Val(value))
+                    if let Some(value) = value.materialize_as(ty) {
+                        return Ok(TyArg::Val(value));
+                    }
+                    // A literal at a vector whose dtype is still symbolic
+                    // (`Scalar[dtype]`) is its declared literal initializer's
+                    // application.
+                    self.implicit_parameter_application(&actual, ty, |slot| {
+                        self.applied_argument(expr, slot)
+                    })?
+                    .map(|application| TyArg::Val(CtValue::Expr(application)))
+                    .ok_or_else(|| TypeError::TypeMismatch {
+                        expected: ty.to_string(),
+                        found: rendered,
+                        context: format!("value parameter '{name}'"),
+                    })
                 }
                 // `Self.n` names the enclosing struct's own value parameter:
                 // symbolic while checking the template (exactly the bare

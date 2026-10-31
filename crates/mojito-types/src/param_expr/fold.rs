@@ -334,19 +334,54 @@ pub fn fold_dtype_to_ui8(dtype: &CtValue) -> Result<CtValue, ParamError> {
     }
 }
 
+/// `#pop.int_literal_convert` or `#pop<float_literal_convert>` of a
+/// concrete literal at the vector type `ty`: the literal in every lane,
+/// held as [`fold_lane_op`] holds a vector.
+///
+/// An integer lane wraps the integer as the pin does, a float lane rounds
+/// the exact value once, and a `bool` lane is whether the integer is
+/// nonzero. A float literal converts only into float lanes.
+pub fn fold_literal_convert(
+    op: ParamOp,
+    ty: &crate::types::Ty,
+    literal: &CtValue,
+) -> Result<CtValue, ParamError> {
+    let no_value = || {
+        unsupported(&format!(
+            "'{}' of '{literal}' at '{ty}' has no compile-time value",
+            op.name()
+        ))
+    };
+    let (dtype, width) = crate::types::simd_shape(ty.kind()).ok_or_else(no_value)?;
+    let lane = match (op, literal) {
+        (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value)) if dtype == Dtype::Bool => {
+            Some(CtLane::Bool(!value.is_zero()))
+        }
+        (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value)) => {
+            CtLane::of_int_literal(value, dtype)
+        }
+        (ParamOp::FloatLiteralConvert, CtValue::PopFloatLiteral(value)) => {
+            CtLane::of_float_literal(value, dtype)
+        }
+        _ => None,
+    }
+    .ok_or_else(no_value)?;
+    let width = usize::try_from(width).map_err(|_| no_value())?;
+    let vector = CtValue::Simd {
+        dtype,
+        lanes: vec![lane; width],
+    };
+    Ok(vector.clone().materialize_as(ty).unwrap_or(vector))
+}
+
 /// A `#pop` attribute over a concrete `!pop.int_literal` or
 /// `!pop.float_literal`.
 ///
-/// `int_literal_convert` wraps the integer to an `Int` as the pin does,
 /// `int_to_float_literal` and `float_to_int_literal` (which truncates toward
 /// zero) change the literal's kind, and the `float_literal_isa` predicates
 /// test a finite literal, which is never not a number or infinite.
 pub fn fold_literal_attribute(op: ParamOp, literal: &CtValue) -> Result<CtValue, ParamError> {
     match (op, literal) {
-        (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value)) => value
-            .wrapping_signed(64)
-            .map(CtValue::Int)
-            .ok_or_else(|| unsupported("'#pop.int_literal_convert' cannot wrap the literal")),
         (ParamOp::IntToFloatLiteral, CtValue::PopIntLiteral(value)) => {
             Ok(CtValue::PopFloatLiteral(FloatLiteral::from_int(value)))
         }
@@ -1013,12 +1048,49 @@ mod tests {
             CtValue::PopFloatLiteral(if negative { value.neg() } else { value })
         };
         let fold = |op, value: &CtValue| fold_literal_attribute(op, value).ok();
+        let simd = |dtype, width| -> crate::types::Ty {
+            crate::types::TyKind::simd(
+                crate::types::SimdDtype::Known(dtype),
+                crate::types::SimdWidth::Known(width),
+            )
+            .into()
+        };
+        let convert =
+            |op, ty: crate::types::Ty, value: &CtValue| fold_literal_convert(op, &ty, value).ok();
         assert_eq!(
-            fold(
+            convert(
                 ParamOp::IntLiteralConvert,
+                simd(Dtype::Int, 1),
                 &int("1000000000000000000000000000000")
             ),
             Some(CtValue::Int(5_076_944_270_305_263_616))
+        );
+        let float32 = |width| simd(Dtype::Float32, width);
+        assert_eq!(
+            convert(
+                ParamOp::FloatLiteralConvert,
+                float32(2),
+                &float("1.0000000596046448", false)
+            ),
+            Some(CtValue::Simd {
+                dtype: Dtype::Float32,
+                lanes: vec![CtLane::Float(f64::from(1.000_000_1_f32).to_bits()); 2],
+            })
+        );
+        assert_eq!(
+            convert(ParamOp::IntLiteralConvert, simd(Dtype::Bool, 1), &int("2")),
+            Some(CtValue::Simd {
+                dtype: Dtype::Bool,
+                lanes: vec![CtLane::Bool(true)],
+            })
+        );
+        assert!(
+            convert(
+                ParamOp::FloatLiteralConvert,
+                simd(Dtype::Int8, 1),
+                &float("2.5", false)
+            )
+            .is_none()
         );
         assert_eq!(
             fold(ParamOp::FloatToIntLiteral, &float("3.7", true)),
@@ -1041,6 +1113,6 @@ mod tests {
             fold(ParamOp::FloatLiteralIsNan, &float("2.5", false)),
             Some(CtValue::Bool(false))
         );
-        assert!(fold(ParamOp::IntLiteralConvert, &float("2.5", false)).is_none());
+        assert!(convert(ParamOp::IntLiteralConvert, float32(1), &float("2.5", false)).is_none());
     }
 }

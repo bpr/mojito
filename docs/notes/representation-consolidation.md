@@ -41,7 +41,7 @@ command cannot use both.
    - R1557 makes `SIMD` and its aliases the declared struct in the
      checker, after R1556 (no `TyKind::Simd` pattern matches outside
      `mojito-types`), R1593, R1399,
-     R1781, R1662, R1671, R1673, and R1675.
+     R1662, R1671, R1673, and R1675.
    - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
      both backends.
    - The limit members (`MAX`, `MIN`, `MAX_FINITE`, `MIN_FINITE`) are

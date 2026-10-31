@@ -1,14 +1,13 @@
 # Upstream's `std/builtin/float_literal.mojo`, in part: the
 # `FloatLiteral[value]` struct with its default initializer, `is_nan`,
-# `is_neg_zero`, `_is_normal`, `__int_literal__`, and `__int__`. A
+# `is_neg_zero`, `_is_normal`, `__int_literal__`, `__int__`, `__float__`,
+# `write_to`, and `write_repr_to`. A
 # literal `2.5` is its application `FloatLiteral[2.5]`, as is an explicit
 # one (`FloatLiteral[(2.5).value]()`).
 # Not ported: the implicit initializer from `IntLiteral[_]`, whose
 # declaration has no `out self` (R1784); the `nan`, `infinity`,
 # `negative_infinity`, and `negative_zero` members, whose attributes the
-# compiler's exact rational cannot hold (R1783); `__float__`, `write_to`,
-# and `write_repr_to`, which read `Float64(self)` through `SIMD`'s
-# undeclared `FloatLiteral` initializer (R1781); and `__bool__` and the
+# compiler's exact rational cannot hold (R1783); and `__bool__` and the
 # operator dunders (R1753). `@__nonmaterializable(Float64)` is not read (R1651). The struct
 # declares only the traits whose requirements are ported here.
 """Implements the FloatLiteral class.
@@ -23,8 +22,10 @@ These are Mojo built-ins, so you don't need to import them.
 
 struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
     Defaultable,
+    Floatable,
     Intable,
     TrivialRegisterPassable,
+    Writable,
 ):
     """Mojo floating point literal type.
 
@@ -113,3 +114,30 @@ struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
             The value as an integer.
         """
         return self.__int_literal__().__int__()
+
+    @inline(.nodebug)
+    def __float__(self) -> Float64:
+        """Converts the FloatLiteral to a concrete Float64.
+
+        Returns:
+            The Float value.
+        """
+        return Float64(self)
+
+    @inline(.never)
+    def write_to(self, mut writer: Some[Writer]):
+        """Writes the FloatLiteral in string form.
+
+        Args:
+            writer: The Writer to write the value to.
+        """
+        Float64(self).write_to(writer)
+
+    @inline(.never)
+    def write_repr_to(self, mut writer: Some[Writer]):
+        """Writes the FloatLiteral in repr form.
+
+        Args:
+            writer: The Writer to write the value to.
+        """
+        Float64(self).write_repr_to(writer)

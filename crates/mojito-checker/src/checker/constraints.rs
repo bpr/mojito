@@ -27,6 +27,17 @@ pub(super) fn is_module_constant_attribute(value: &CtValue) -> bool {
         )
 }
 
+/// The literal conversion a whitespace-free bracketed attribute spells,
+/// `#pop.int_literal_convert<v> : T` or `#pop<float_literal_convert<v>> : T`
+/// over a literal `v` and a `!kgen.simd` type `T`.
+pub(super) fn literal_convert_op(shape: &str) -> Option<ParamOp> {
+    match shape {
+        "#pop.int_literal_convert<{}>:{}" => Some(ParamOp::IntLiteralConvert),
+        "#pop<float_literal_convert<{}>>:{}" => Some(ParamOp::FloatLiteralConvert),
+        _ => None,
+    }
+}
+
 impl Checker {
     /// Evaluate a compile-time `Int` expression: literals, `comptime` constants,
     /// and `+ - * // % **` / unary `-`. Rejects anything non-comptime (a value
@@ -1250,9 +1261,12 @@ impl Checker {
     /// `name(args…)` that the checker builds itself, staged until Mojito
     /// applies its upstream initializer. `None` for any other construction.
     ///
-    /// - One exact literal is upstream's `IntLiteral`/`FloatLiteral`
-    ///   initializer, not yet declared (R1781): the `pop.simd.splat` of its
-    ///   `pop.cast` that body folds to.
+    /// - One literal is the application of its declared `IntLiteral` or
+    ///   `FloatLiteral` initializer. Through a vector alias (`U256(0)`),
+    ///   which no compile-time call resolves yet (R1646), or in a module
+    ///   alias registered before `SIMD`'s initializers are (R1788), it is
+    ///   the attribute that body folds to
+    ///   ([`Self::literal_initializer_body`]).
     /// - `width > 1` elements are the `*elems` initializer, whose collector
     ///   is no compile-time application yet: one lane per element.
     /// - A vector alias's one argument (`Int32(n)`), which no compile-time
@@ -1272,10 +1286,16 @@ impl Checker {
         match args {
             [argument] => match self.ct_value(argument, recording) {
                 Ok(literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))) => {
-                    Some(self.literal_splat(
-                        &mojito_types::types::canonical_simd_ty(dtype, width),
-                        literal,
-                    ))
+                    let registered = self
+                        .structs
+                        .get(mojito_types::types::SIMD_TYPE_NAME)
+                        .is_some_and(|info| info.methods.contains_key("__init__"));
+                    (!registered || name != "SIMD").then(|| {
+                        self.literal_initializer_body(
+                            &mojito_types::types::canonical_simd_ty(dtype, width),
+                            literal,
+                        )
+                    })
                 }
                 value if name != "SIMD" => Some(vector(value.map(|value| vec![value]))),
                 _ => None,
@@ -1289,84 +1309,43 @@ impl Checker {
         }
     }
 
-    /// `pop.simd.splat` of the `pop.cast` of `literal` at the vector type
-    /// `vector`, closed or symbolic (`SIMD[dtype, 1]`), upstream's
-    /// `IntLiteral`/`FloatLiteral` initializer's body.
-    fn literal_splat(&self, vector: &Ty, literal: CtValue) -> Result<ParamExpr, TypeError> {
-        let context = &self.param_context;
-        let lane_needs_scalar =
-            || TypeError::NotComptime(format!("a {vector} lane needs a compile-time scalar"));
-        let Some((dtype, _)) = vector.as_simd() else {
-            return Err(lane_needs_scalar());
-        };
-        let scalar = mojito_types::types::simd_ty_from_slots(dtype.clone(), SimdWidth::Known(1))
-            .map_err(param_error)?;
-        let literal = self.ct_param(literal)?;
-        context
-            .op(ParamOp::Cast, &[context.type_shape(scalar), literal])
-            .and_then(|cast| {
-                context.op(
-                    ParamOp::SimdSplat,
-                    &[context.type_shape(vector.clone()), cast],
-                )
-            })
-            .map_err(|_| lane_needs_scalar())
-    }
-
-    /// The closed literal `value` at the vector `ty` whose dtype is still
-    /// symbolic (`2.0` at `Scalar[dtype]`), which no closed value
-    /// materializes: its literal initializer's splat
-    /// ([`Self::literal_splat`]). `None` for any other value or type.
-    pub(super) fn symbolic_literal_splat(
+    /// What `SIMD.__init__(IntLiteral)` or `SIMD.__init__(FloatLiteral)`
+    /// folds to at the closed `vector`: `#pop.int_literal_convert` or
+    /// `#pop<float_literal_convert>` of the literal's value, the latter
+    /// failing its `comptime assert` at an integer dtype.
+    fn literal_initializer_body(
         &self,
-        value: &CtValue,
-        ty: &Ty,
-    ) -> Option<Result<ParamExpr, TypeError>> {
-        let (dtype, _) = ty.as_simd()?;
-        let literal = Ty::of_literal_value(value)?;
-        (dtype.known().is_none() && mojito_types::types::splats_to(literal.kind(), dtype))
-            .then(|| self.literal_splat(ty, value.clone()))
-    }
-
-    /// The vector one exact literal constructs when its dtype is still
-    /// symbolic (`SIMD[dtype, 1](1.0)`, `Scalar[dtype](2)`), or a
-    /// parametric vector alias spells it (`Scalar[DType.float32](1.5)`):
-    /// upstream's literal initializer, staged as a closed vector's is
-    /// ([`Self::staged_simd_construction`]). `None` for any other call.
-    fn literal_vector_construction(
-        &self,
-        name: &str,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-        recording: Recording,
-    ) -> Option<Result<ParamExpr, TypeError>> {
-        let [argument] = args else {
-            return None;
-        };
-        let literal = |expr: &Expr| matches!(expr.kind, ExprKind::Int(_) | ExprKind::Float(_));
-        if !(literal(argument)
-            || matches!(&argument.kind, ExprKind::Prefix(_, operand) if literal(operand)))
-            || param_args.is_empty()
-            || (name != "SIMD" && self.applicable_functions.contains_key(name))
-        {
-            return None;
-        }
-        let vector = match name {
-            "SIMD" => self.simd_type(param_args).ok()?.0,
-            _ => match self.ty_value_from_name(name, param_args).ok()?? {
-                CtValue::Type(ty) => ty,
-                _ => return None,
-            },
-        };
-        if !vector.is_simd() {
-            return None;
-        }
-        match self.ct_value(argument, recording) {
-            Ok(literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))) => {
-                Some(self.literal_splat(&vector, literal))
+        vector: &Ty,
+        literal: CtValue,
+    ) -> Result<ParamExpr, TypeError> {
+        let (op, value) = match literal {
+            CtValue::IntLiteral(value) => {
+                (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value))
             }
-            _ => None,
-        }
+            CtValue::FloatLiteral(value) => {
+                if !vector.as_simd().is_some_and(|(dtype, _)| {
+                    dtype.known().is_some_and(mojito_ast::ast::Dtype::is_float)
+                }) {
+                    return Err(super::builtins::float_literal_conversion_error(vector));
+                }
+                (
+                    ParamOp::FloatLiteralConvert,
+                    CtValue::PopFloatLiteral(value),
+                )
+            }
+            _ => {
+                return Err(TypeError::NotComptime(format!(
+                    "a {vector} lane needs a literal"
+                )));
+            }
+        };
+        let context = &self.param_context;
+        context
+            .op(
+                op,
+                &[context.type_shape(vector.clone()), self.ct_param(value)?],
+            )
+            .map_err(param_error)
     }
 
     /// The application a local `comptime NAME = f(…)` binding denotes, which
@@ -1874,17 +1853,6 @@ impl Checker {
                 && let Some((dtype, width)) = self.simd_constructor_shape(name, param_args)
                 && let Some(staged) =
                     self.staged_simd_construction(name, (dtype, width), args, recording) =>
-            {
-                staged
-            }
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if kwargs.is_empty()
-                && let Some(staged) =
-                    self.literal_vector_construction(name, param_args, args, recording) =>
             {
                 staged
             }
@@ -3169,9 +3137,26 @@ impl Checker {
                 [literal],
             ) => {
                 let literal = self.bracket_operand(literal, recording)?;
+                let storage = context.type_shape(Ty::int());
                 context
-                    .op(ParamOp::IntLiteralConvert, &[literal])
+                    .op(ParamOp::IntLiteralConvert, &[storage, literal])
                     .and_then(|storage| context.cast_to_builtin(&storage))
+                    .map_err(param_error)
+            }
+            // A literal in every lane of a `SIMD`'s storage (upstream's
+            // `SIMD.__init__(IntLiteral)` and `SIMD.__init__(FloatLiteral)`),
+            // a value of that `SIMD`, as a storage read is.
+            (shape, [literal, ty]) if let Some(op) = literal_convert_op(shape) => {
+                let vector = self
+                    .lane_op_result(ty)
+                    .ok_or_else(|| TypeError::TypeMismatch {
+                        expected: "a '!kgen.simd' type".to_string(),
+                        found: format!("{ty:?}"),
+                        context: format!("the result type of '{}'", op.name()),
+                    })?;
+                let literal = self.bracket_operand(literal, recording)?;
+                context
+                    .op(op, &[context.type_shape(vector), literal])
                     .map_err(param_error)
             }
             (shape, [literal]) if let Some(op) = literal_attribute_op(shape) => {
@@ -3185,7 +3170,8 @@ impl Checker {
                  '#kgen.param.expr<target_get_field>' of a known field, \
                  '#kgen.param.expr<rebind>', '#kgen.param.expr<get_sizeof>', \
                  '#kgen.param.expr<get_alignof>', '#kgen.param.identical', \
-                 '#pop.string_concat', the 'IntLiteral' index conversion, \
+                 '#pop.string_concat', '#pop.int_literal_convert' and \
+                 '#pop<float_literal_convert>' at a '!kgen.simd' type, \
                  '#pop<int_to_float_literal>', '#pop<float_to_int_literal>', and \
                  '#pop<float_literal_isa>' are read"
             ))),
@@ -3439,14 +3425,13 @@ impl Checker {
 
     /// The struct parameter `field` read off the compile-time value `object`
     /// of a struct type (`target._mlir_value` over `target:
-    /// CompilationTarget`): the argument the value's type binds it to, as
+    /// CompilationTarget`, `value.value` over an auto-parameterized `value:
+    /// IntLiteral`): the argument the value's type binds it to, as
     /// upstream resolves the name against the type's parameters. `None`
     /// when `object` is no such value or its struct has no such parameter.
     fn value_type_argument(&self, object: &Expr, field: &str) -> Option<ParamExpr> {
         let base = self.compile_dependent_ct_expr(object).ok()?;
-        let TyKind::Struct(owner, arguments) = base.meta().as_value()?.kind() else {
-            return None;
-        };
+        let (owner, arguments) = mojito_types::types::nominal_parts(base.meta().as_value()?)?;
         let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
         let decls = &self.structs.get(owner)?.decls;
         let index = decls.iter().position(|decl| decl.name() == field)?;

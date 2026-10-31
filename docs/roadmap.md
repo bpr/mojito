@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1788**.
+Next free ID: **R1790**.
 
 ## Ordered Work
 
@@ -4675,6 +4675,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     comptime expression", while `g[SIMD[DType.float32, 1](from_bits=…)]()`
     runs; `g[Float32(UInt32(7))]()` fails with "a SIMD[DType.float32, 1]
     lane needs a compile-time scalar" (found while landing R1593).
+  - Probe: `comptime u = Int32(5)` and `U256(0)` fold through
+    `Checker::literal_initializer_body` (`checker/constraints.rs`), the
+    attribute `SIMD.__init__(IntLiteral)`'s body folds to, rather than
+    applying the declared initializer through the alias (found while
+    landing R1781).
   - Found while landing R1641 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6716,40 +6721,50 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1781 `SIMD`'s `IntLiteral` and `FloatLiteral` initializers are
-  checker rules**
+- [ ] **R1789 An implicit literal conversion into `SIMD` is a checker rule,
+  not the declared `@implicit` initializer**
 
   Problem: `min(3, 2.5)` is rejected at overload resolution ("no overload
   matches"), where the pin binds `std.math`'s `SIMD` overload at `Int` and
-  fails the instance on the `FloatLiteral` initializer's assert ("the SIMD
+  fails `SIMD.__init__(FloatLiteral)`'s assert at instantiation ("the SIMD
   type must be floating point").
-  - Probe: `Int(FloatLiteral[(-3.7).value]())` prints `-3` through
-    `Intable`, where the pin selects the `FloatLiteral` initializer and
-    fails the same assert.
-  - Probe: `def f(x: FloatLiteral) -> Float32: return Float32(x)` over
-    `f(1.0000000596046448)` prints `1.0000001192092896` on both backends,
-    where the pin prints `1.0000001`. The parameter's type carries the
-    exact value, but `Float32(x)` still converts the run-time register
-    through `infer_conversion`'s literal arm rather than the declared
-    initializer reading `x.value`.
-  - Port upstream's `simd.mojo:850-866` and `:970-986`, over a
-    `#pop.int_literal_convert` and `#pop<float_literal_convert>` to
-    `Self._mlir_type` (`mlir_bracket_attribute` reads only the `index`
-    form, `ParamOp::IntLiteralConvert`).
-  - Then port `FloatLiteral.__float__`, `write_to`, and `write_repr_to`,
-    whose `Float64(self)` would recurse through `Floatable` without it.
-  - Delete the rules the bodies replace: the literal arm of
-    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`),
-    `staged_simd_construction`'s literal arm, `literal_splat`,
-    `symbolic_literal_splat`, and `literal_vector_construction`
-    (`checker/constraints.rs`), the `IntLiteral`/`FloatLiteral` arms of
-    `Checker::infer_conversion` (`checker/builtins.rs`), and the `"Int"`,
-    `"UInt"`, and `"Float64"` arms of `infer_unbound_call`.
-  - Done when `rg 'literal_splat|literal_vector_construction|binds_undeclared_overload' crates`
-    is empty.
-  - Plan: `R1507-a-literal-s-type-does-not-plan.md`, slice 4.
-  - Depends on R1780.
+  - Cause: `Checker::record_implicit_conversion` (`checker.rs`) decides a
+    literal's implicit conversion by `types::splats_to`, whose
+    `FloatLiteral` arm admits only a float dtype. The declared `@implicit`
+    initializer's signature admits every dtype, and its body's
+    `comptime assert` rejects the instance.
+  - `Checker::implicit_conversion_constructor` matches only a
+    `TyKind::Struct` target, so it never reaches `SIMD`'s declared
+    `IntLiteral` and `FloatLiteral` initializers. Only a compile-time
+    parameter argument takes them (`implicit_parameter_application`).
+  - Probe: `var x: Int = 2.5`, `Int8(3) + 2.5`, and `f(2.5)` over `def
+    f(x: Int32)` are a type mismatch or "operator not defined", where the
+    pin fails the same assert.
+  - Lever: accept the conversion by the declared signature and select the
+    declared initializer, as an explicit construction does, so
+    the assert fails at instantiation. `mir/calls.rs` and `operators.rs`
+    read `splats_to` too.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1788 A module `comptime` alias registers before the structs'
+  initializers, so its constructions fold by checker rules**
+
+  Problem: `comptime default_hasher = AHasher[SIMD[DType.uint64, 4](0)]`
+  in `std.hash.hasher` cannot apply `SIMD.__init__(IntLiteral)`: module
+  aliases register before any struct's `__init__` signatures do, and a
+  struct field or default naming the alias needs it at once.
+  - `Checker::staged_simd_construction` (`checker/constraints.rs`) folds
+    such a literal construction to its declared body's attribute
+    (`literal_initializer_body`) while `SIMD`'s initializers are not
+    registered.
+  - The pin resolves declarations lazily, in dependency order, so an
+    alias reads the initializer whenever it is needed.
+  - Lever: register a module alias lazily, at its first read, once the
+    initializers it applies are classified, and delete the unregistered
+    arm of `staged_simd_construction`.
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R1782 A float literal narrowed past its format's range is `inf`,
   where the pin's `float_literal_convert` gives `nan`**
@@ -9141,6 +9156,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `Scalar`s": the check records the assertion at every run-time
     position (`Checker::record_instance_assertion`), and only a
     `comptime` position skips it.
+  - Probe: `comptime q = SIMD[DType.int32, 4](3)` then `comptime r = v >
+    q` in `def folded[v: SIMD[DType.int32, 4]]()` prints `True` at the
+    pin. Mojito lifts the comparison over the application-valued `q` to a
+    `$comptime$` function whose `SIMD.__gt__` instance fails the same
+    assertion (also with `from_int=3`; found while landing R1781).
   - Without the decorator both are rejected, at the pin and here.
   - Found while landing R1522 (2026-10-27).
   - Depends on nothing.
@@ -10792,7 +10812,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     early returns, `mlir_conversion`'s `__mlir_bool__`/`__mlir_i1__` arms,
     the VM `invoke.rs` and Pliron `methods.rs` conversion arms on a `Bool`
     (`runtime::builtin_convert` and `lower_convert` keep their `Int`,
-    `UInt`, and `Float64` targets for a literal receiver's dunders, R1781),
+    `UInt`, and `Float64` targets for a literal receiver's dunders, until
+    a probe shows the declared members serve every literal receiver),
     `modelled_conformance`'s `Bool` arms for the declared traits, and the
     `Bool` hash leaf (`builtin_hashable_ty`, both `hash_leaf_ty`s, the VM
     `__hash__` arm, `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
@@ -10824,9 +10845,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `self._mlir_value = …` in an initializer lowers as a `scalar.cast` to
     `Bool` into `self`'s place, the store half of `BoolStorage`, which the
     checker rejects outside an initializer today.
-  - Delete the two `"Bool"` arms of `infer_unbound_call` and the `Bool`
-    arms of `Checker::infer_conversion` (`builtins.rs`), which `Int`,
-    `UInt`, and `Float64` leave only for a literal (R1781), and narrow the
+  - Delete the two `"Bool"` arms of `infer_unbound_call` and
+    `Checker::infer_bool_conversion` (`builtins.rs`), and narrow the
     elaborator's `Bool` rewrite in `Specializer::rewrite_blocks`.
   - The `@implicit` stand-ins in `Checker::record_implicit_conversion`
     (`i1` and `Scalar[DType.bool]` to `Bool`) stay until R1612.
@@ -11272,7 +11292,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     with "type 'Scalar' expects 1 type argument(s), got 0", where the pin
     prints `8` for `f(Scalar(4))`.
   - Depends on R1555, R1662, R1671, R1683, R1673, R1675, R1556, R1591, R1592,
-    R1593, R1595, R1399, and R1781.
+    R1593, R1595, and R1399.
   - Model: Fable, Planned.
 
 - [ ] **R1558 MIR and the backends hold a `SIMD` value as a vector type,

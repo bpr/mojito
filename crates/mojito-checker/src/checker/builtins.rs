@@ -882,21 +882,18 @@ impl Checker {
         Ok(true)
     }
 
-    /// Type the conversions `std.simd` does not declare yet: `Bool(x)`
-    /// (R1609), and `Int(x)`, `UInt(x)`, and `Float64(x)` over an
-    /// `IntLiteral` or a `FloatLiteral` (R1781), the only arguments
-    /// [`Self::binds_undeclared_overload`] leaves to this rule. `Bool(x)`
-    /// takes exactly one argument of a numeric or `Bool` type, recorded as
-    /// the `ScalarCast` upstream's inlined `pop.cast` is, or a value whose
-    /// `Boolable` bound or declared `__bool__` promises the conversion.
-    pub(super) fn infer_conversion(
+    /// Type `Bool(x)`, which `std.builtin.bool` does not declare yet
+    /// (R1609): no argument is `False`, and one argument is of a numeric or
+    /// `Bool` type, recorded as the `ScalarCast` upstream's inlined
+    /// `pop.cast` is, or a value whose `Boolable` bound or declared
+    /// `__bool__` promises the conversion.
+    pub(super) fn infer_bool_conversion(
         &self,
         span: &SourceSpan,
-        target: Ty,
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
-        // `Bool` is `Defaultable`: the nullary form is `False`.
-        if args.is_empty() && target == Ty::bool() {
+        let target = Ty::bool();
+        if args.is_empty() {
             return Ok(target);
         }
         if args.len() != 1 {
@@ -908,35 +905,11 @@ impl Checker {
         }
         let arg_ty = self.infer(&args[0])?;
         let arg_ty = self.opaque_element(&arg_ty).unwrap_or(arg_ty);
-        // A literal argument is converted where the call is built, as
-        // upstream's builtin-inline `SIMD.__init__(IntLiteral)` is
-        // `pop.int_literal_convert`.
-        if match arg_ty.kind() {
-            TyKind::IntLiteral(_) => target.is_int() || target.is_uint() || target.is_float64(),
-            TyKind::FloatLiteral(_) => target.is_float64(),
-            _ => false,
-        } {
-            self.record_literal_materializations(&args[0], &arg_ty, &target)?;
-            self.record_at(span.clone()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::ConvertedArgument,
-            ));
-            return Ok(target);
-        }
-        // Upstream's exact-type `@implicit SIMD.__init__(FloatLiteral)`
-        // outranks the generic `Intable` overload, and its `comptime assert`
-        // fails for an integer dtype. A generic `Int(x)` instantiated at a
-        // `FloatLiteral` still binds `Intable` inside its body.
-        if arg_ty.is_float_literal() && (target.is_int() || target.is_uint()) {
-            return Err(float_literal_conversion_error(&target));
-        }
         let mismatch = || TypeError::TypeMismatch {
             expected: "a numeric or Bool value".to_string(),
             found: arg_ty.to_string(),
             context: format!("argument to '{target}'"),
         };
-        if target != Ty::bool() {
-            return Err(mismatch());
-        }
         if mojito_types::ct::ScalarConversion::Bool.casts_from(&arg_ty) {
             self.record_at(span.clone()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ScalarCast(

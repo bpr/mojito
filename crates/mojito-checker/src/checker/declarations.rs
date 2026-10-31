@@ -3314,7 +3314,7 @@ impl Checker {
                             continue;
                         }
                     };
-                    let mut score = 0;
+                    let (mut score, mut simd_erasures) = (0, 0);
                     let mut ok = true;
                     let mut expected_tys = Vec::with_capacity(bound.len());
                     // The k-th argument a `*args: *Self.Ts` collector took
@@ -3369,6 +3369,10 @@ impl Checker {
                             ok = false;
                             break;
                         };
+                        simd_erasures += usize::from(
+                            matches!(pty.kind(), TyKind::Param { .. })
+                                && mojito_types::types::simd_shape(&actual).is_some(),
+                        );
                         if coerces(&actual, &expected) {
                             if actual != expected {
                                 score += CONVERSION_UNIT;
@@ -3416,6 +3420,7 @@ impl Checker {
                         ) + binding.rank();
                         matches.push(GenericConstructorMatch {
                             rank,
+                            simd_erasures,
                             sig: sig.clone(),
                             tyargs,
                             own_arguments: own.arguments,
@@ -3434,6 +3439,16 @@ impl Checker {
                     .into_iter()
                     .filter(|candidate| candidate.rank == best)
                     .collect::<Vec<_>>();
+                // The `SIMD`-pattern tie-break of `select_callable_overload`,
+                // for initializers: `Float64(2.5)` selects
+                // `__init__(out self, value: FloatLiteral)` beside
+                // `__init__[T: Floatable, //](out self: Float64, value: T)`.
+                let fewest_erasures = best_matches
+                    .iter()
+                    .map(|candidate| candidate.simd_erasures)
+                    .min()
+                    .unwrap_or(0);
+                best_matches.retain(|candidate| candidate.simd_erasures == fewest_erasures);
                 if best_matches.len() != 1 {
                     return Err(TypeError::BadCall {
                         func: name.to_string(),
@@ -5363,6 +5378,9 @@ impl OwnParameters {
 
 struct GenericConstructorMatch {
     rank: usize,
+    /// How many arguments with a lane the candidate binds to a bare type
+    /// parameter (`CallableOverloadMatch::simd_erasures`).
+    simd_erasures: usize,
     sig: MethodSig,
     tyargs: Vec<TyArg>,
     /// The selected `__init__`'s own compile-time parameters.

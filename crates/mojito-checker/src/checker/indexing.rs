@@ -2115,6 +2115,14 @@ impl Checker {
                     context: format!("the attribute '__mlir_attr[`{text}`]'"),
                 })?
         };
+        // The compile-time domain reads a literal conversion's storage as
+        // its vector; a run-time read is the storage the attribute spells.
+        let shape: String = text.split_whitespace().collect();
+        let ty = if super::constraints::literal_convert_op(&shape).is_some() {
+            mojito_types::types::simd_storage(&ty).unwrap_or(ty)
+        } else {
+            ty
+        };
         self.read_attribute(expr.source_span(), value, ty)
     }
 

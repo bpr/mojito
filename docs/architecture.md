@@ -2051,14 +2051,16 @@ from the exact rational directly to binary32 or binary64, preserving signed
 zero and producing IEEE infinity on overflow. Bindings, stores, calls, returns,
 typed tuple/list/set/dictionary elements, and `range` arguments all record their
 scalar boundaries rather than relying on VM container coercion. A built-in
-scalar constructed from a literal (`UInt(7)`, `Int(7)`, `Float64(2.5)`) is
-that literal's materialization, as upstream's builtin-inline
-`SIMD.__init__(IntLiteral)` is `pop.int_literal_convert`: `infer_conversion`
-records `SemanticAdjustment::ConvertedArgument` on the call and
-`MaterializeLiteral` on its argument, and MIR lowers the call as its argument.
-Every other argument, and the nullary `UInt()`, binds `SIMD`'s declared
-`__init__` overloads (the `Intable`, `Floatable`, `SIMDLength`, and default
-initializers), as any `SIMD` construction does.
+scalar constructed from a literal (`UInt(7)`, `Int(7)`, `Float64(2.5)`)
+binds `SIMD`'s declared `@implicit __init__(value: IntLiteral)` or
+`__init__(value: FloatLiteral)`, whose body reads the bracketed attribute
+`#pop.int_literal_convert<v> : T` or `#pop<float_literal_convert<v>> : T`
+(`ParamOp::IntLiteralConvert`, `ParamOp::FloatLiteralConvert`) over the
+literal's auto-parameterized value, so each instance folds the exact value
+into its lanes once, as upstream's does. Every other argument, and the
+nullary `UInt()`, binds the other declared `__init__` overloads (the
+`Intable`, `Floatable`, `SIMDLength`, and default initializers), as any
+`SIMD` construction does.
 
 A runtime scalar meets a multi-lane vector of its dtype through upstream's
 implicit `SIMD.__init__(Scalar[dtype])`, which the builtin `SIMD` cannot
@@ -5609,7 +5611,7 @@ current Mojo:
   `"b" in strs()` destroys the list after the test. A `Bool(x)`
   conversion reads its argument as a read parameter does, as `Int(x)` and
   `Float64(x)` do through their declared `SIMD` initializers'
-  read parameter: `infer_conversion` marks a temporary argument
+  read parameter: `infer_bool_conversion` marks a temporary argument
   `ReadTemporaryArgument`, so `Bool(make())` destroys `make()`'s result
   after the conversion, from a slot, not a register, and it reads a named
   `x: T` bounded by the conversion's trait where it lies
@@ -6688,8 +6690,10 @@ point where a slot declared in a loop is uninitialized again.
   slot in a body over `n` is promoted, and so is a slot of a `T` whose
   bound is or refines `TrivialRegisterPassable`), it is no parameter, and
   every
-  mention of it is a `var.store` of a register defined once and read by
-  the store alone; a `var.use` (copy, move, or forward)
+  mention of it is a `var.store` or whole-root `place.store` of a register
+  defined once and read by the store alone (an inlined initializer's
+  `self._mlir_value = …` into a `SIMD` slot is one); a `var.use` (copy,
+  move, or forward)
   or a whole-root `place.load` at the slot's type; or a `var.declare`,
   `drop.var`, or `var.consume`, all of which do nothing to such a type
   once drops are elaborated.

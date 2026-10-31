@@ -102,7 +102,9 @@ point, as upstream's toolchain does.
   part: an explicit application over a literal's `.value` constructs one,
   and the members that read its `!pop.int_literal` or `!pop.float_literal`
   attribute (`__mlir_index__`, `__int__`, `__int_literal__`, `is_nan`,
-  `is_neg_zero`) run as at the pin. A literal `4` is the application
+  `is_neg_zero`) run as at the pin, and `FloatLiteral`'s `__float__`,
+  `write_to`, and `write_repr_to` read `Float64(self)`, `SIMD`'s declared
+  `FloatLiteral` initializer. A literal `4` is the application
   `IntLiteral[4]`, which the compiler holds as its literal type, and a bare
   `IntLiteral` parameter is upstream's per-call `IntLiteral[x.value]`. The
   prelude exports both.

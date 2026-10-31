@@ -1017,6 +1017,13 @@ to the literal type, and a symbolic value as its `ct_expr`. The value-less
 `IntLiteral` and `FloatLiteral` keep their atoms. The package format moves
 to `mojito-package 172`.
 
+Schema 1.153 gives the parameter operator `int_literal_convert` the result
+type as its first operand, `(type, literal)`, as `simd_splat` and `cast`
+take theirs, and adds `float_literal_convert` of the same shape: upstream's
+`#pop.int_literal_convert<v> : T` and `#pop<float_literal_convert<v>> : T`,
+which `SIMD`'s literal initializers read. The package format moves to
+`mojito-package 173`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

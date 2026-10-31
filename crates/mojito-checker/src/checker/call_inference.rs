@@ -370,12 +370,7 @@ impl Checker {
             "input" => self.infer_input(span, args),
             "len" => self.infer_len(args),
             "range" => self.infer_range(args),
-            // An `IntLiteral` or `FloatLiteral` argument (R1781); every
-            // other argument binds `SIMD`'s declared overloads above.
-            "Int" => self.infer_conversion(&span, Ty::int(), args),
-            "UInt" => self.infer_conversion(&span, Ty::uint(), args),
-            "Float64" => self.infer_conversion(&span, Ty::float64(), args),
-            "Bool" => self.infer_conversion(&span, Ty::bool(), args),
+            "Bool" => self.infer_bool_conversion(&span, args),
             "divmod" => self.infer_divmod(args),
             "SIMD" => self.infer_simd_construction(&span, param_args, args),
             // `Self(...)` in `SIMD`'s own body constructs by the rule too.
@@ -443,10 +438,8 @@ impl Checker {
     }
 
     /// A `SIMD` construction through the `__init__` overloads `std.simd`
-    /// declares, or `None` when it is the checker's rule's: its arguments
-    /// select an overload not declared yet
-    /// ([`Self::binds_undeclared_overload`]), or no declared one matches
-    /// and a rule serves its keyword (`copy=`) or its one
+    /// declares, or `None` when it is the checker's rule's: no declared one
+    /// matches and a rule serves its keyword (`copy=`) or its one
     /// positional argument into a width not known here (`SIMD[dt, _]`,
     /// R1544); any other miss is the declared selection's error, so
     /// `Int8(x)` over a struct whose `__int__` raises but which does not
@@ -466,7 +459,6 @@ impl Checker {
             .structs
             .get(name)
             .is_some_and(|info| info.methods.contains_key("__init__"))
-            || self.binds_undeclared_overload(args)
         {
             return None;
         }
@@ -713,19 +705,6 @@ impl Checker {
                         .map(|(dtype, width)| simd_ty(dtype, width))
                 }),
         }
-    }
-
-    /// Whether a `SIMD` construction's positional arguments select, at the
-    /// pin, an overload `std.simd` does not declare yet, which the checker's
-    /// rule serves instead: one `IntLiteral` or `FloatLiteral` (R1781),
-    /// which would otherwise reach a declared overload through an implicit
-    /// conversion the pin never takes.
-    fn binds_undeclared_overload(&self, args: &[Expr]) -> bool {
-        let [argument] = args else {
-            return false;
-        };
-        self.probe(|| self.infer(argument))
-            .is_ok_and(|ty| matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
     }
 
     /// Check every member of a free-function overload set against the

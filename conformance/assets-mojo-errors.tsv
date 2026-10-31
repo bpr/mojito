@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1018
+# swept-count	1019
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -419,6 +419,7 @@ assets/type_error/float_literal_parameter_float_argument.mojo	compile-reject	agr
 assets/type_error/float_literal_parameter_int_attribute.mojo	compile-reject	agree	error: 'FloatLiteral' parameter 'value' has '__mlir_type.`!pop.float_literal`' type, but value has type '__mlir_type.`!pop.int_literal`'
 assets/type_error/float_literal_pow_is_float64.mojo	compile-reject	agree	error: cannot implicitly convert 'Float64' value to 'Float32'
 assets/type_error/float_literal_to_int.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_to_int_vector.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/float_literal_value_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'FloatLiteral[0.20000000000000001]' value to 'FloatLiteral[0.10000000000000001]'
 assets/type_error/for_discard_target_read.mojo	compile-reject	agree	error: cannot read from discard pattern '_'
 assets/type_error/for_sequence_target_not_raising.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise

@@ -15,7 +15,7 @@ use mojito_types::ct::{CtLane, CtValue};
 /// The quota of compile-time execution steps per compilation: elaboration
 /// entries, instructions executed, frames entered. A hard bound, so
 /// compile-time execution cannot hang the compiler.
-pub const CTFE_FUEL: usize = 100_000;
+pub const CTFE_FUEL: usize = 1_000_000;
 
 /// A compile-time value as the runtime value the VM takes.
 pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
