@@ -3175,6 +3175,19 @@ impl Checker {
                     else {
                         return Ok(TyArg::Val(value));
                     };
+                    if let Some(lanes) = self.simd_length_lanes(
+                        &actual,
+                        ty,
+                        &self
+                            .param_context
+                            .constant(value.clone())
+                            .map_err(param_error)?,
+                    ) {
+                        let lanes = lanes?;
+                        return Ok(TyArg::Val(
+                            lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int),
+                        ));
+                    }
                     self.implicit_parameter_application(&actual, ty, |slot| {
                         self.applied_value(value, slot)
                     })?

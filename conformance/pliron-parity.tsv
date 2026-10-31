@@ -580,6 +580,7 @@ assets/ok/memory_bitcast.mojo	main	exe-differential	sanitized
 assets/ok/method_capturing_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_named_result.mojo	main	exe-differential	sanitized
+assets/ok/method_overload_parameter_pack.mojo	main	exe-differential	sanitized
 assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized
 assets/ok/method_simd_pattern_beside_bare.mojo	main	exe-differential	sanitized
 assets/ok/method_struct_comptime_parameter_argument.mojo	main	exe-differential	sanitized
@@ -1045,6 +1046,7 @@ assets/ok/simd_lane_dynamic_widths.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_write.mojo	main	exe-differential	sanitized
 assets/ok/simd_length_int_parameter.mojo	main	exe-differential	sanitized
 assets/ok/simd_length_parameter_default.mojo	main	exe-differential	sanitized
+assets/ok/simd_length_self_param_int_slot.mojo	main	exe-differential	sanitized
 assets/ok/simd_length_struct.mojo	main	exe-differential	sanitized
 assets/ok/simd_literal_splat.mojo	main	exe-differential	sanitized
 assets/ok/simd_math_cast_members.mojo	main	exe-differential	sanitized
@@ -1059,6 +1061,7 @@ assets/ok/simd_pow_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_reduce_tree.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_float.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_int.mojo	main	exe-differential	sanitized
+assets/ok/simd_rotate_shift_reversed.mojo	main	exe-differential	sanitized
 assets/ok/simd_round_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_scalar_splat.mojo	main	exe-differential	sanitized
 assets/ok/simd_shifts_masked.mojo	main	exe-differential	sanitized

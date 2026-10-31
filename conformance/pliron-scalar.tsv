@@ -580,6 +580,7 @@ assets/ok/memory_bitcast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_capturing_callable_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_named_result.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/method_overload_parameter_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_result_pointer_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_simd_pattern_beside_bare.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_struct_comptime_parameter_argument.mojo	-	ineligible	no-scalar-entry-shape
@@ -1045,6 +1046,7 @@ assets/ok/simd_lane_dynamic_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_int_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_length_self_param_int_slot.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_literal_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_math_cast_members.mojo	-	ineligible	no-scalar-entry-shape
@@ -1059,6 +1061,7 @@ assets/ok/simd_pow_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_reduce_tree.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_reductions_float.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_reductions_int.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_rotate_shift_reversed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_round_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_scalar_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_shifts_masked.mojo	-	ineligible	no-scalar-entry-shape

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares upstream's `rotate_left`, `rotate_right`, `shift_left`,
+  `shift_right`, `reversed`, and the two `shuffle[mask: IndexList[…]]`
+  overloads, over `_rotate_mask` and `_shift_mask` (R1675). A method now
+  overloads on whether a compile-time parameter is a pack, which its symbol
+  keys, and `Self.n` of type `SIMDLength` binds an `Int` parameter slot.
+  An inline `Index(…)` mask awaits R1778, and `_dynamic_shuffle` is R1777.
+
 - `std.utils` bundles upstream's `IndexList`, `Index`, and `product`
   (`std/utils/index.mojo`) with their constructors, element access,
   arithmetic, all-elements comparisons, shape helpers, hashing, and

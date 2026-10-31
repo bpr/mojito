@@ -20,14 +20,16 @@
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, both `__round__` overloads, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
 # `_to_bits_signed`, `fma`, `_shuffle_variadic`, `_shuffle_list`, the two
-# variadic `shuffle` overloads, `slice`, `insert`, `join`, `interleave`,
-# `split`, `deinterleave`, `select`, `write_to`, and `write_repr_to`, with
-# the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`,
+# variadic and the two `IndexList` `shuffle` overloads, `slice`, `insert`,
+# `join`, `interleave`, `split`, `deinterleave`, `select`, `rotate_left`,
+# `rotate_right`, `shift_left`, `shift_right`, `reversed`, `write_to`, and
+# `write_repr_to`, with the `FastMathFlag` enum `fma` takes, and the module's
+# `_rotate_mask`, `_shift_mask`, `_scalar_repr_alias`,
 # `_write_scalar`, `_floor`, `_pow`, `_powf_scalar`, `_powf`, `_powi`,
 # `_modf_scalar`, and `_modf`. The other
 # members are still served by the compiler or undeclared (R1623,
-# R1581, R1585, R1586, R1675; the two `IndexList` `shuffle`
-# overloads are R1675's), `write_padded` is not ported
+# R1581, R1585, R1586; `_dynamic_shuffle` is R1777's),
+# `write_padded` is not ported
 # (R1663), and the native backend's `print`, `String`, and `repr` of a value still
 # format in the compiler rather than calling `write_to` and
 # `write_repr_to` as the VM's do (R1664). So are the
@@ -108,7 +110,7 @@ from std.string import StaticString
 from std.builtin.enum_like import EnumLike
 from std.memory import bitcast, pack_bits
 from std.bit import pop_count
-from std.utils import StaticTuple
+from std.utils import IndexList, StaticTuple
 from std.utils.numerics import FPUtils
 from std.builtin.dtype import (
     _integral_type_of,
@@ -172,6 +174,36 @@ def _simd_construction_checks[dtype: DType, size: SIMDLength]():
     # comptime assert (
     #     size <= 2**15
     # ), "simd size is too large and must be less than 2^15"
+
+
+# Shuffle masks for `SIMD.{rotate,shift}_{left,right}` on backends that do
+# not lower `llvm.vector.splice`.
+
+
+@inline(.nodebug)
+def _rotate_mask[size: Int, shift: Int]() -> IndexList[size]:
+    """Mask for `SIMD.rotate_left[shift]()`; any sign of `shift`."""
+    var res = IndexList[size]()
+    comptime for i in range(size):
+        res[i] = (i + shift + size) % size
+    return res
+
+
+@inline(.nodebug)
+def _shift_mask[size: Int, shift: Int]() -> IndexList[size]:
+    """Mask for `SIMD.shift_{left,right}[shift]()`.
+
+    Sign of `shift` selects direction (positive=left, negative=right);
+    out-of-range lanes index `other`, which callers pass as zero.
+    """
+    var res = IndexList[size]()
+    comptime for i in range(size):
+        var src = i + shift
+        if 0 <= src < size:
+            res[i] = src
+        else:
+            res[i] = size
+    return res
 
 
 # ===----------------------------------------------------------------------=== #
@@ -2155,6 +2187,42 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         return self._shuffle_variadic[*mask](other)
 
+    @inline(.nodebug)
+    def shuffle[mask: IndexList[Self.length, element_type=_]](self) -> Self:
+        """Shuffles (also called blend) the values of the current vector with
+        the `other` value using the specified mask (permutation). The mask
+        values must be within `2 * len(self)`.
+
+        Parameters:
+            mask: The permutation to use in the shuffle.
+
+        Returns:
+            A new vector with the same length as the mask where the value at
+            position `i` is `(self)[permutation[i]]`.
+        """
+        return self._shuffle_list[Self.length, mask.as_index_tuple()](self)
+
+    @inline(.nodebug)
+    def shuffle[
+        mask: IndexList[Self.length, element_type=_]
+    ](self, other: Self) -> Self:
+        """Shuffles (also called blend) the values of the current vector with
+        the `other` value using the specified mask (permutation). The mask
+        values must be within `2 * len(self)`.
+
+        Parameters:
+            mask: The permutation to use in the shuffle.
+
+        Args:
+            other: The other vector to shuffle with.
+
+        Returns:
+            A new vector with the same length as the mask where the value at
+            position `i` is `(self + other)[permutation[i]]`.
+        """
+        return self._shuffle_list[Self.length, mask.as_index_tuple()](other)
+
+
     @inline(.always)
     def slice[
         output_width: Int, /, *, offset: Int = 0
@@ -2695,6 +2763,170 @@ struct SIMD[dtype: DType, length: SIMDLength](
             false_case._mlir_value,
         )
         return SIMD(mlir_value=res)
+
+        return SIMD(mlir_value=res)
+
+    # ===------------------------------------------------------------------=== #
+    # Rotation operations
+    # ===------------------------------------------------------------------=== #
+
+    @inline(.always)
+    def rotate_left[shift: Int](self) -> Self:
+        """Shifts the elements of a SIMD vector to the left by `shift`
+        elements (with wrap-around).
+
+        Constraints:
+            `-length <= shift < length`
+
+        Parameters:
+            shift: The number of positions by which to rotate the elements of
+                   SIMD vector to the left (with wrap-around).
+
+        Returns:
+            The SIMD vector rotated to the left by `shift` elements
+            (with wrap-around).
+        """
+
+        comptime assert (
+            shift >= -Self.length and shift < Self.length
+        ), "Constraint: -length <= shift < length"
+
+        comptime if Self.length == 1:
+            comptime assert shift == 0, "for scalars the shift must be 0"
+            return self
+
+        comptime if not CurrentPlugin.lowers_subvector_intrinsics:
+            return self.shuffle[mask=_rotate_mask[Self.length, shift]()]()
+
+        comptime if shift >= 0:
+            return llvm_intrinsic[
+                "llvm.vector.splice.left", Self, has_side_effect=False
+            ](self, self, Int32(shift))
+        else:
+            return llvm_intrinsic[
+                "llvm.vector.splice.right", Self, has_side_effect=False
+            ](self, self, Int32(-shift))
+
+    @inline(.always)
+    def rotate_right[shift: Int](self) -> Self:
+        """Shifts the elements of a SIMD vector to the right by `shift`
+        elements (with wrap-around).
+
+        Constraints:
+            `-length < shift <= length`
+
+        Parameters:
+            shift: The number of positions by which to rotate the elements of
+                   SIMD vector to the right (with wrap-around).
+
+        Returns:
+            The SIMD vector rotated to the right by `shift` elements
+            (with wrap-around).
+        """
+
+        comptime assert (
+            shift > -Self.length and shift <= Self.length
+        ), "Constraint: -length < shift <= length"
+
+        comptime if Self.length == 1:
+            comptime assert shift == 0, "for scalars the shift must be 0"
+            return self
+        return self.rotate_left[-shift]()
+
+    # ===------------------------------------------------------------------=== #
+    # Shift operations
+    # ===------------------------------------------------------------------=== #
+
+    @inline(.always)
+    def shift_left[shift: Int](self) -> Self:
+        """Shifts the elements of a SIMD vector to the left by `shift`
+        elements (no wrap-around, fill with zero).
+
+        Constraints:
+            `0 <= shift <= length`
+
+        Parameters:
+            shift: The number of positions by which to rotate the elements of
+                   SIMD vector to the left (no wrap-around, fill with zero).
+
+        Returns:
+            The SIMD vector rotated to the left by `shift` elements (no
+            wrap-around, fill with zero).
+        """
+
+        comptime assert 0 <= shift <= Self.length, (
+            "shift must be greater than or equal to 0 and less than equal"
+            " to the length"
+        )
+
+        comptime if shift == 0:
+            return self
+        elif shift == Self.length:
+            return 0
+
+        comptime if not CurrentPlugin.lowers_subvector_intrinsics:
+            return self.shuffle[mask=_shift_mask[Self.length, shift]()](Self())
+
+        return llvm_intrinsic[
+            "llvm.vector.splice.left", Self, has_side_effect=False
+        ](self, Self(), Int32(shift))
+
+    @inline(.always)
+    def shift_right[shift: Int](self) -> Self:
+        """Shifts the elements of a SIMD vector to the right by `shift`
+        elements (no wrap-around, fill with zero).
+
+        Constraints:
+            `0 <= shift <= length`
+
+        Parameters:
+            shift: The number of positions by which to rotate the elements of
+                   SIMD vector to the right (no wrap-around, fill with zero).
+
+        Returns:
+            The SIMD vector rotated to the right by `shift` elements (no
+            wrap-around, fill with zero).
+        """
+
+        # Note the order of the llvm_intrinsic arguments below differ from
+        # shift_left(), so we cannot directly reuse it here.
+
+        comptime assert 0 <= shift <= Self.length, (
+            "shift must be greater than or equal to 0 and less than equal"
+            " to the length"
+        )
+
+        comptime if shift == 0:
+            return self
+        elif shift == Self.length:
+            return 0
+
+        comptime if not CurrentPlugin.lowers_subvector_intrinsics:
+            return self.shuffle[mask=_shift_mask[Self.length, -shift]()](Self())
+
+        return llvm_intrinsic[
+            "llvm.vector.splice.right", Self, has_side_effect=False
+        ](Self(), self, Int32(shift))
+
+    def reversed(self) -> Self:
+        """Reverses the SIMD vector by indexes.
+
+        Returns:
+            The by index reversed vector.
+
+        Examples:
+        ```mojo
+        print(SIMD[.uint8, 4](1, 2, 3, 4).reversed()) # [4, 3, 2, 1]
+        ```
+        """
+
+        def indices() -> IndexList[Self.length]:
+            var res = IndexList[Self.length]()
+            for i in range(Self.length):
+                res[i] = Self.length - i - 1
+            return res
+
+        return self.shuffle[mask=indices()]()
 
 
 # ===----------------------------------------------------------------------=== #

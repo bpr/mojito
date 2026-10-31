@@ -415,7 +415,8 @@ pub(super) fn method_lowered_name(
 }
 
 /// The names a call may bind in brackets, as the declaration side spells
-/// them: every compile-time parameter after the `//` infer-only marker.
+/// them (a pack's with its leading `*`): every compile-time parameter after
+/// the `//` infer-only marker.
 pub(super) fn explicit_parameter_names(decls: &[ParamDecl]) -> impl Iterator<Item = &str> {
     decls
         .iter()
@@ -431,7 +432,7 @@ pub(super) fn explicit_parameter_names(decls: &[ParamDecl]) -> impl Iterator<Ite
                 }
             )
         })
-        .map(|decl| decl.name().trim_start_matches('*'))
+        .map(ParamDecl::name)
 }
 
 /// The lowered symbol of the constructor a construction selected: the

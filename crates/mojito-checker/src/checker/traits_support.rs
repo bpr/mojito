@@ -87,6 +87,14 @@ pub(super) fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
             || a.variadic.is_some()
             || a.kw_variadic.is_some()
             || explicit_parameter_names(&a.decls).eq(explicit_parameter_names(&b.decls)))
+        && parameter_packs(a).eq(parameter_packs(b))
+}
+
+/// Which explicit compile-time parameters of `sig` are packs, part of its
+/// symbol (`SignatureKey`'s `packs`): `shuffle[*mask: SIMDLength]` overloads
+/// `shuffle[mask: IndexList[…]]`.
+fn parameter_packs(sig: &MethodSig) -> impl Iterator<Item = bool> + '_ {
+    explicit_parameter_names(&sig.decls).map(|name| name.starts_with('*'))
 }
 
 /// A conforming method may promise no error where its trait requirement raises,

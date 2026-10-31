@@ -5006,7 +5006,10 @@ application. Keyword-only parameter names are part of callable identity —
 `same_method_shape` compares them at declaration and `SignatureKey` appends a
 `$kw$...` suffix (only when keyword-only names exist) in both symbol
 producers, the checker's call-target mangling and MIR's declaration-side
-mangling.
+mangling. So is which explicit compile-time parameter is a pack: a
+`$ctv<i>` suffix per pack, compared by `same_method_shape`, separates
+`shuffle[*mask: SIMDLength](self, other: Self)` from
+`shuffle[mask: IndexList[…]](self, other: Self)`.
 
 ### Collection-owned interior origins
 

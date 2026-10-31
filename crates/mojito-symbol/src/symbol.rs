@@ -424,6 +424,13 @@ pub struct SignatureKey {
     /// `bit_width_of[dtype: DType]()`), so their binders are their identity;
     /// the suffix stays empty for every other signature.
     parameters: Vec<String>,
+    /// Indexes of the explicit compile-time parameters that are packs
+    /// (`*mask: SIMDLength`). Overloads may differ only there
+    /// (`shuffle[*mask: SIMDLength](self, other: Self)` beside
+    /// `shuffle[mask: IndexList[…]](self, other: Self)`), so a pack is part of
+    /// identity whatever the run-time parameters; the suffix stays empty for
+    /// a signature without one.
+    packs: Vec<usize>,
 }
 
 impl SignatureKey {
@@ -442,6 +449,7 @@ impl SignatureKey {
             keywords: Vec::new(),
             owned: Vec::new(),
             parameters: Vec::new(),
+            packs: Vec::new(),
         }
     }
 
@@ -453,6 +461,7 @@ impl SignatureKey {
             keywords: Vec::new(),
             owned: Vec::new(),
             parameters: Vec::new(),
+            packs: Vec::new(),
         }
     }
 
@@ -477,6 +486,7 @@ impl SignatureKey {
             keywords: Vec::new(),
             owned: Vec::new(),
             parameters: Vec::new(),
+            packs: Vec::new(),
         }
     }
 
@@ -508,13 +518,24 @@ impl SignatureKey {
         self
     }
 
-    /// Attach the explicit compile-time parameter names `names` when this
-    /// signature has no run-time parameter (see [`SignatureKey`]'s
-    /// `parameters`).
+    /// Attach the explicit compile-time parameter names `names`, spelled as
+    /// declared (a pack's with its leading `*`): which are packs, and every
+    /// name when this signature has no run-time parameter (see
+    /// [`SignatureKey`]'s `parameters` and `packs`).
     #[must_use]
     pub fn with_parameter_names<'a>(mut self, names: impl IntoIterator<Item = &'a str>) -> Self {
+        let names: Vec<&str> = names.into_iter().collect();
+        self.packs = names
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| name.starts_with('*'))
+            .map(|(index, _)| index)
+            .collect();
         if self.types.is_empty() && self.kw_variadic.is_none() {
-            self.parameters = names.into_iter().map(str::to_string).collect();
+            self.parameters = names
+                .iter()
+                .map(|name| name.trim_start_matches('*').to_string())
+                .collect();
         }
         self
     }
@@ -543,6 +564,10 @@ impl SignatureKey {
             suffix.push_str("$ct$");
             suffix.push_str(&self.parameters.join("$"));
         }
+        for index in &self.packs {
+            suffix.push_str("$ctv");
+            suffix.push_str(&index.to_string());
+        }
         suffix
     }
 
@@ -563,6 +588,7 @@ impl SignatureKey {
             keywords: self.keywords.clone(),
             owned: self.owned.clone(),
             parameters: self.parameters.clone(),
+            packs: self.packs.clone(),
         }
     }
 }
@@ -2482,6 +2508,7 @@ fn signature_from_ast<P: AnnotatedParam>(
         keywords: Vec::new(),
         owned: Vec::new(),
         parameters: Vec::new(),
+        packs: Vec::new(),
     }
 }
 
@@ -2562,7 +2589,7 @@ fn explicit_parameter_names(type_params: &[TypeParam]) -> impl Iterator<Item = &
     type_params
         .iter()
         .filter(|param| !param.infer_only)
-        .map(|param| param.name.trim_start_matches('*'))
+        .map(|param| param.name.as_str())
 }
 
 fn keyword_only_names<P: DeclaredParam>(params: &[P], keyword_only: Option<usize>) -> Vec<String> {
@@ -3478,6 +3505,28 @@ mod tests {
         assert_eq!(method_of_symbol("Lis", "List.pop"), None);
         assert_eq!(method_of_symbol("Dict", "List.pop$ov$"), None);
         assert_eq!(method_of_symbol("List", "List."), None);
+    }
+
+    #[test]
+    fn a_parameter_pack_is_part_of_an_overload_symbol() {
+        let int = Ty::int();
+        let symbol = |names: &[&str]| {
+            method_symbol(
+                "SIMD",
+                "shuffle",
+                &SignatureKey::from_tys([&int]).with_parameter_names(names.iter().copied()),
+            )
+        };
+        assert_eq!(symbol(&["*mask"]), "SIMD.shuffle$ov$Int$ctv0");
+        assert_eq!(symbol(&["mask"]), "SIMD.shuffle$ov$Int");
+        assert_eq!(
+            method_symbol(
+                "SIMD",
+                "shuffle",
+                &SignatureKey::from_tys([]).with_parameter_names(["*mask"]),
+            ),
+            "SIMD.shuffle$ov$$ct$mask$ctv0"
+        );
     }
 
     #[test]

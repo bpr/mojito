@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1777**.
+Next free ID: **R1779**.
 
 ## Ordered Work
 
@@ -2944,31 +2944,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1687 `Self.n` of type `SIMDLength` does not convert into an
-  `Int` parameter slot**
+- [ ] **R1687 A `comptime` binding annotated `Int` rejects a `SIMDLength`
+  value**
 
-  `StaticTuple[SIMDLength, Self.n]` in a method of `struct
-  Lanes[dt: DType, n: SIMDLength]` fails with "type mismatch for value
-  parameter 'size': expected Int, found SIMDLength", where the pin
-  converts it and runs.
-  - A `def` binder `n: SIMDLength` in the same slot converts.
-  - The `ParamArg::Type(SourceType::SelfParam)` arm of `resolve_param_arg`
-    (`checker/type_resolution.rs`) lacks the `SIMDLength` to `Int` image
-    its `ParamArg::Value` arm has.
-  - Probe: a `gather[mask: StaticTuple[SIMDLength, Self.n]]` method over
-    `pop.simd.shuffle` prints `[4, 3, 2, 1]` at the pin.
-  - Probe: `comptime t = StaticTuple[SIMDLength, Self.n](fill=1)` in a
-    method of `struct Lanes[n: SIMDLength]`, then `len(t)`, prints `4` at
-    the pin. Mojito reports "no constructor overload matches".
-  - Probe: `comptime n: Int = w` over `w: SIMDLength` in a `def` reports
-    "type mismatch for comptime 'n': expected Int, found SIMDLength",
-    where the pin prints `4`. A parameter default and an explicit argument
-    convert through `Checker::simd_length_lanes`, which both these sites
-    should call.
-  - Probe: `count[Self.n]()` over `def count[width: Int]()`, in a static
-    method of `struct Lanes[n: SIMDLength]`, reports "type mismatch for
-    value parameter 'width': expected Int, found SIMDLength"; a `def`
-    binder in the same bracket converts (R1744).
+  `comptime n: Int = w` over `w: SIMDLength` in a `def` reports "type
+  mismatch for comptime 'n': expected Int, found SIMDLength", where the
+  pin prints `4` for `w = 4`.
+  - The annotated-binding arm of `bind_template_comptime`'s denoted
+    expression (`checker/comptime_validation.rs`) admits only an equal
+    type for an `Int` or `Bool` annotation.
+  - A parameter default, an explicit argument, and a `Self.n` bracket
+    argument convert through `Checker::simd_length_lanes`, which this site
+    should call too.
   - Found while planning R1671 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6179,6 +6166,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Bool` arguments, so a pack argument still needs its own path (R1284).
   - `Box[vs.size]` is the spelling that works today.
   - Found while landing R494 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1778 A function with a named `out` result is never a
+  compile-time application**
+
+  `h[mk(5)]()` over `def mk(a: Int, out result: B)` and `def h[b: B]()`
+  prints `5` at the pin. Mojito reports "not a compile-time Int constant:
+  not an associated comptime expression".
+  - Cause: `ApplicableShape::applicable` (`checker/comptime_validation.rs`)
+    drops any callable with an `out` parameter, so `called_application`
+    finds no candidate, though `infer` types the call.
+  - The application's result is the `out` parameter's type, as a `->`
+    result's is.
+  - Probe: `v.shuffle[mask=Index(3, 2, 1, 0)]()` on a `SIMD[DType.int32,
+    4]`, through `Index`'s `out result: IndexList[args.__len__(), …]`;
+    `comptime m = Index(…)` then `mask=m` runs.
+  - Found while landing R1675 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11624,18 +11629,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1674, R1703.
   - Model: Opus, Not Planned.
 
-- [ ] **R1675 `SIMD`'s rotations, shifts, `reversed`, and `IndexList`
-  `shuffle` overloads are undeclared**
+- [ ] **R1777 `SIMD._dynamic_shuffle` is undeclared**
 
-  `v.rotate_left[1]()`, `v.shift_right[1]()`, `v.reversed()`, and
-  `v.shuffle[mask=Index(…)]()` report "has no method", where the pin
-  declares them in `std/simd.mojo` over `_rotate_mask` and `_shift_mask`,
-  which return an `IndexList`.
-  - Port `_rotate_mask`, `_shift_mask`, both `shuffle[mask: IndexList…]`
-    overloads, `rotate_left`/`rotate_right`, `shift_left`/`shift_right`,
-    and `reversed`.
-  - `_dynamic_shuffle` stays out until R1635's `has_neon` lands.
-  - Depends on R1671, R1683 (`_shuffle_list`) and R1674 (`IndexList`).
+  `v._dynamic_shuffle(mask)` over a run-time `SIMD[DType.uint8, n]` mask
+  reports "has no method", where the pin declares it in `std/simd.mojo`.
+  - Port it with `_pshuf_or_tbl1`, `_pshuf`, and `_tbl1`, whose fast path
+    is `llvm.x86.ssse3.pshuf.b.128` or `llvm.aarch64.neon.tbl1` on a
+    16-lane `uint8` vector.
+  - Neither intrinsic is in `mojito-types/src/llvm_intrinsic.rs`, so the
+    VM and Pliron need a rule for each, beside the unrolled fallback the
+    port keeps for every other shape.
+  - Probe: `SIMD[DType.uint8, 16](…)._dynamic_shuffle(SIMD[DType.uint8,
+    4](3, 2, 1, 0))` prints the gathered lanes at the pin.
+  - Found while landing R1675 (2026-10-31).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
