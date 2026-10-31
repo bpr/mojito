@@ -11157,17 +11157,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1556 Code outside `mojito-types` matches `TyKind::Simd` and
-  `TyKind::INT` by pattern**
-
-  167 `TyKind::Simd` and 115 `TyKind::INT`/`UINT`/`FLOAT64` pattern sites
-  span the checker, MIR, the elaborator, Pliron, and the VM, so R1557 and
-  R1558 would each touch all of them.
-  - Replace them with `types::simd_slots`, `Ty::is_int()`, and their
-    siblings. No behavior changes.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1557 `SIMD` and its aliases are compiler types in the checker,
   where upstream's are the declared struct and `comptime` aliases**
 
@@ -11212,6 +11201,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A `SIMD` register is a held one-field struct (R1396's rule,
     `MirDeclarations::translated_type` for Pliron).
   - Delete the verifier's equivalence and the `held_simd_*` helpers.
+  - Code outside `mojito-types` reads the variant through `TyKind`'s
+    accessors (`as_simd`, `known_simd`, `as_held_simd`, `is_simd`) since
+    R1556. Only four exhaustive walks still name it: `mir::text`'s
+    `type_spelling`, `text/write.rs`'s type record, `verify/scope.rs`'s
+    walk, and the checker's `type_is_symbolic`.
   - Depends on R1557.
   - Model: Fable, Planned.
 

@@ -448,15 +448,8 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
             .collect::<Option<Vec<_>>>()
             .map(tuple_type),
         // A vector-typed value parameter (`[key: SIMD[DType.uint64, 4]]`).
-        Type::Named(name, args) if name == "SIMD" => {
-            simd_source_dims(args).map(|(dtype, width)| {
-                TyKind::Simd {
-                    dtype: mojito_types::types::SimdDtype::Known(dtype),
-                    width: mojito_types::types::SimdWidth::Known(width),
-                }
-                .into()
-            })
-        }
+        Type::Named(name, args) if name == "SIMD" => simd_source_dims(args)
+            .map(|(dtype, width)| mojito_types::types::canonical_simd_ty(dtype, width)),
         _ => None,
     }
 }
@@ -484,11 +477,11 @@ fn source_type_from_ty_with_origins(
     origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
 ) -> Option<Type> {
     Some(match ty.kind() {
-        TyKind::INT | TyKind::IntLiteral => Type::Int,
-        TyKind::UINT => Type::UInt,
+        kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => Type::Int,
+        kind if kind.is_uint() => Type::UInt,
         TyKind::Bool => Type::Bool,
         TyKind::StringLiteral(_) => Type::ClosedStringLiteral,
-        TyKind::FLOAT64 | TyKind::FloatLiteral => Type::Float64,
+        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => Type::Float64,
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::KgenString => kgen_string_source_type(),
@@ -582,7 +575,7 @@ fn source_type_from_ty_with_origins(
         ),
         // A symbolic slot has no source spelling; the elaborator only spells
         // bound instances.
-        TyKind::Simd { dtype, width } => Type::Named(
+        kind if let Some((dtype, width)) = kind.as_simd() => Type::Named(
             "SIMD".to_string(),
             vec![
                 ParamArg::Value(CtValue::Dtype(dtype.known()?).materialize((0, 0))?),
@@ -651,13 +644,8 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         // classification keeps the literal type via `ct_value_param_type`.
         // The sized scalar aliases (`Int8`, `UInt64`, `Float32`, ...) are
         // width-1 SIMD types, so `comptime c_int = Int32` is a type value.
-        _ => mojito_ast::ast::Dtype::from_scalar_alias(name).map(|dtype| {
-            TyKind::Simd {
-                dtype: mojito_types::types::SimdDtype::Known(dtype),
-                width: mojito_types::types::SimdWidth::Known(1),
-            }
-            .into()
-        }),
+        _ => mojito_ast::ast::Dtype::from_scalar_alias(name)
+            .map(|dtype| mojito_types::types::canonical_simd_ty(dtype, 1)),
     }
 }
 

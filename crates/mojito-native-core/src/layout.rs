@@ -98,8 +98,15 @@ impl LayoutCx<'_> {
                 .struct_layout(&[Ty::bool(), element.clone()])
                 .map(|s| s.layout);
         }
+        if let Some((dtype, width)) = ty.as_simd() {
+            let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
+                return Err(LayoutError::Symbolic(ty.to_string()));
+            };
+            let lane = lane_layout(dtype);
+            return Ok(Layout::new(lane.size * width as u64, lane.align));
+        }
         match ty.kind() {
-            TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Index => Ok(Layout::new(8, 8)),
+            TyKind::Index => Ok(Layout::new(8, 8)),
             // A `DType` is its one-byte upstream code.
             TyKind::Bool | TyKind::I1 | TyKind::Dtype => Ok(Layout::new(1, 1)),
             TyKind::None => Ok(Layout::ZERO),
@@ -140,13 +147,6 @@ impl LayoutCx<'_> {
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.
             TyKind::Func(_) => Ok(compose(&[self.pointer(), self.pointer()]).layout),
-            TyKind::Simd { dtype, width } => {
-                let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
-                    return Err(LayoutError::Symbolic(ty.to_string()));
-                };
-                let lane = lane_layout(dtype);
-                Ok(Layout::new(lane.size * width as u64, lane.align))
-            }
             // A vector's `!kgen.simd` storage lays out as the vector.
             TyKind::KgenSimd { .. } => self.layout_of(&mojito_types::types::held_simd_ty(ty)),
             // Literal-typed storage holds the value at its default
@@ -304,12 +304,7 @@ mod tests {
 
     #[test]
     fn width_one_simd_scalars_store_at_lane_width() {
-        let scalar = |dtype| {
-            Ty::new(TyKind::Simd {
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(1),
-            })
-        };
+        let scalar = |dtype| Ty::new(TyKind::simd(SimdDtype::Known(dtype), SimdWidth::Known(1)));
         assert_eq!(layout_of(&scalar(Dtype::Int8)), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&scalar(Dtype::UInt8)), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&scalar(Dtype::Int16)), Ok(Layout::new(2, 2)));
@@ -532,9 +527,9 @@ mod tests {
             },
             TyKind::Infer,
             TyKind::SelfType,
-            TyKind::Simd {
-                dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
-                width: mojito_types::types::SimdWidth::Expr(
+            TyKind::simd(
+                mojito_types::types::SimdDtype::Known(Dtype::Int32),
+                mojito_types::types::SimdWidth::Expr(
                     mojito_types::types::simd_length_converted(
                         &mojito_types::param_expr::ParamContext::detached(),
                         "SIMDLength.__init__$ov$Int",
@@ -542,7 +537,7 @@ mod tests {
                     )
                     .expect("an Int converts"),
                 ),
-            },
+            ),
             TyKind::Struct(
                 "Buf".into(),
                 vec![mojito_types::types::TyArg::Val(

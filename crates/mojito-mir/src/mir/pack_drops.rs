@@ -174,7 +174,7 @@ mod tests {
     }
 
     fn runs_no_code(ty: &Ty) -> bool {
-        matches!(ty.kind(), TyKind::INT)
+        ty.is_int()
     }
 
     #[test]

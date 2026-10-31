@@ -364,8 +364,9 @@ impl VmBackend {
             TyKind::Tuple(_) | TyKind::PopArray { .. } => Some(uninitialized_field(ty)),
             // Upstream's `undef` vector, which `SIMD`'s element list marks
             // initialized before writing it lane by lane: the zero vector.
-            TyKind::Simd { dtype, width } => {
+            kind if let Some((dtype, width)) = kind.as_simd() => {
                 let dtype = dtype.known()?;
+
                 let width = usize::try_from(width.known()?).ok()?;
                 let zero = if dtype == mojito_ast::ast::Dtype::Bool {
                     Value::Bool(false)

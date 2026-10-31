@@ -502,11 +502,11 @@ pub const fn constant_spelling(constant: &Const) -> &'static str {
 
 pub fn type_spelling(ty: &Ty) -> &'static str {
     match ty.kind() {
-        TyKind::INT => "Int",
-        TyKind::UINT => "UInt",
+        kind if kind.is_int() => "Int",
+        kind if kind.is_uint() => "UInt",
         TyKind::Bool => "Bool",
         TyKind::StringLiteral(_) => "StringLiteral",
-        TyKind::FLOAT64 => "Float64",
+        kind if kind.is_float64() => "Float64",
         TyKind::None => "None",
         TyKind::Never => "Never",
         TyKind::IntLiteral => "IntLiteral",
@@ -522,6 +522,7 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
         TyKind::SelfType => "Self",
         TyKind::Struct(_, _) => "struct_type",
         TyKind::Simd { .. } => "simd",
+
         TyKind::KgenSimd { .. } => "kgen_simd",
         TyKind::Error => "Error",
         TyKind::ComptimeList(_) => "comptime_list",

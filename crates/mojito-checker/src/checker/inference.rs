@@ -526,7 +526,7 @@ impl Checker {
                 // A rule construction's dimensions are its slots: known, or the
                 // parameter expressions a generator names, which the
                 // elaborator closes per instance.
-                let dimensions = if let TyKind::Simd { dtype, width } = ty.kind()
+                let dimensions = if let Some((dtype, width)) = ty.as_simd()
                     && self
                         .spelled_instances
                         .borrow()
@@ -536,10 +536,8 @@ impl Checker {
                 } else if name == "SIMD" {
                     self.simd_dims(param_args).ok().map(|(dtype, width, _)| {
                         // An unbound `_` is the width the construction bound.
-                        let width = match ty.kind() {
-                            TyKind::Simd { width: bound, .. } if width.is_inferred() => {
-                                bound.clone()
-                            }
+                        let width = match ty.as_simd() {
+                            Some((_, bound)) if width.is_inferred() => bound.clone(),
                             _ => width,
                         };
                         (dtype, width)
@@ -547,11 +545,8 @@ impl Checker {
                 } else if name == "Self"
                     && param_args.is_empty()
                     && self.lookup(name).is_none()
-                    && let TyKind::Simd { dtype, width } = ty.kind()
-                    && matches!(
-                        self.self_ty.as_ref().map(Ty::kind),
-                        Some(TyKind::Simd { .. })
-                    )
+                    && let Some((dtype, width)) = ty.as_simd()
+                    && self.self_ty.as_ref().is_some_and(|ty| ty.is_simd())
                 {
                     Some((dtype.clone(), width.clone()))
                 } else if name == "Scalar" && param_args.len() == 1 {
@@ -2860,7 +2855,7 @@ impl Checker {
         }
         let name = match ty.kind() {
             TyKind::Struct(name, _) => name.as_str(),
-            TyKind::Simd { .. } => "SIMD",
+            kind if kind.is_simd() => "SIMD",
             _ => return false,
         };
         self.structs

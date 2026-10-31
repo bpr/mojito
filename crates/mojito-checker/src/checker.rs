@@ -1811,7 +1811,7 @@ impl Checker {
             }));
         }
         // And upstream's `@implicit SIMD.__init__(SIMDLength)` by this one.
-        if mojito_types::types::is_simd_length(from) && matches!(to.kind(), TyKind::Simd { .. }) {
+        if mojito_types::types::is_simd_length(from) && to.is_simd() {
             return Ok(Some(SelectedConversion {
                 target: mojito_symbol::symbol::SIMD_LENGTH_CONVERSION.to_string(),
                 source_borrow: None,
@@ -2032,10 +2032,7 @@ impl Checker {
                 }),
             };
         }
-        if let TyKind::Simd {
-            dtype,
-            width: SimdWidth::Known(1),
-        } = to.kind()
+        if let Some((dtype, SimdWidth::Known(1))) = to.as_simd()
             && splats_to(from, dtype)
         {
             self.record_literal_materializations(expression, from, to)?;
@@ -2089,7 +2086,7 @@ impl Checker {
         // Upstream's implicit `Bool` to `SIMD[DType.bool, n]` constructor,
         // which asserts one lane.
         if *from == TyKind::Bool
-            && let TyKind::Simd { width, .. } = to.kind()
+            && let Some((_, width)) = to.as_simd()
         {
             return self.record_instance_assertion(
                 &expression.source_span(),
@@ -2098,8 +2095,11 @@ impl Checker {
             );
         }
         let scalar_boundary = matches!(from.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
-            && (matches!(to.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
-                || matches!(to.kind(), TyKind::Simd { width, .. } if !width.is_inferred()));
+            && (to.is_int()
+                || to.is_uint()
+                || to.is_float64()
+                || to.as_simd().is_some_and(|(_, width)| !width.is_inferred()));
+
         if scalar_boundary {
             if let Some(value) = self.exact_literal_value(expression)
                 && !self.literal_value_fits_target(&value, to)
@@ -2189,13 +2189,19 @@ impl Checker {
     fn literal_value_fits_target(&self, value: &CtValue, target: &Ty) -> bool {
         // A literal's fit into a symbolic lane is the instantiation's to check.
         match (value, target.kind()) {
-            (CtValue::IntLiteral(_), TyKind::Simd { dtype, width }) if !width.is_inferred() => {
+            (CtValue::IntLiteral(_), kind)
+                if let Some((dtype, width)) = kind.as_simd()
+                    && !width.is_inferred() =>
+            {
                 dtype.licenses(int_literal_materializes_to_dtype)
             }
-            (CtValue::FloatLiteral(_), TyKind::Simd { dtype, width }) if !width.is_inferred() => {
+            (CtValue::FloatLiteral(_), kind)
+                if let Some((dtype, width)) = kind.as_simd()
+                    && !width.is_inferred() =>
+            {
                 dtype.licenses(Dtype::is_float)
             }
-            (value, TyKind::INT | TyKind::UINT | TyKind::FLOAT64) => {
+            (value, kind) if kind.is_int() || kind.is_uint() || kind.is_float64() => {
                 value.clone().materialize_as(target).is_some()
             }
             _ => false,

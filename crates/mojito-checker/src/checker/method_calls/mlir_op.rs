@@ -202,7 +202,7 @@ impl Checker {
             )));
         };
         let built = self.compile_dependent_ct_expr(index)?;
-        if !matches!(built.meta().as_value().map(Ty::kind), Some(TyKind::INT)) {
+        if !built.meta().as_value().is_some_and(|ty| ty.is_int()) {
             return Err(invalid("attribute 'index' takes a compile-time 'Int'"));
         }
         let result = self.tuple_storage_element(&elements.iter().collect::<Vec<_>>(), index)?;

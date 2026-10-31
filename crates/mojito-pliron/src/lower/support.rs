@@ -180,7 +180,8 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
 /// refuses it.
 pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {
     match mojito_types::types::held_simd_ty(ty).kind() {
-        TyKind::Simd { dtype, width } => Some((dtype.known()?, width.known()?)),
+        kind if let Some((dtype, width)) = kind.as_simd() => Some((dtype.known()?, width.known()?)),
+
         TyKind::Index => Some((Dtype::Int, 1)),
         _ => None,
     }

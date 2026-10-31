@@ -179,8 +179,7 @@ impl Checker {
                 op,
                 Add | Sub | Mul | Div | FloorDiv | Pow | BitAnd | BitOr | BitXor | Shl | Shr
             ) || (comparison && self.structs.contains_key("SIMD")))
-            && (matches!(lt.kind(), TyKind::Simd { .. })
-                || matches!(rt.kind(), TyKind::Simd { .. }))
+            && (lt.is_simd() || rt.is_simd())
             && !pointer_or_archetype(&lt)
             && !pointer_or_archetype(&rt)
         {
@@ -199,10 +198,8 @@ impl Checker {
         // `%` beside a vector is the one SIMD operator still typed here
         // (before the scalar-numeric path, which `Int`, `UInt`, and
         // `Float64` operands keep).
-        let vector = |ty: &Ty| {
-            matches!(ty.kind(), TyKind::Simd { .. })
-                && !mojito_types::types::has_host_scalar_value(ty.kind())
-        };
+        let vector =
+            |ty: &Ty| ty.is_simd() && !mojito_types::types::has_host_scalar_value(ty.kind());
         if vector(&lt) || vector(&rt) {
             return simd_infix(op, &lt, &rt);
         }
@@ -223,7 +220,9 @@ impl Checker {
         }
         if let TyKind::Pointer { element, .. } = lt.kind() {
             match (op, rt.kind()) {
-                (Add | Sub, TyKind::INT | TyKind::IntLiteral) => return Ok(lt.clone()),
+                (Add | Sub, kind) if kind.is_int() || matches!(kind, TyKind::IntLiteral) => {
+                    return Ok(lt.clone());
+                }
                 (Sub, TyKind::Pointer { element: other, .. }) if element == other => {
                     return Ok(Ty::int());
                 }
@@ -274,7 +273,7 @@ impl Checker {
         // does beside a closed one: the instance's lane decides the value.
         if common.is_none() {
             for (literal, literal_ty, lane) in [(right, &rt, &lt), (left, &lt, &rt)] {
-                if let TyKind::Simd { dtype, width } = lane.kind()
+                if let Some((dtype, width)) = lane.as_simd()
                     && *width == SimdWidth::Known(1)
                     && dtype.is_symbolic()
                     && matches!(literal_ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
@@ -492,7 +491,7 @@ impl Checker {
             return Ok(rt);
         }
         let target = match lt.kind() {
-            TyKind::Simd { .. } => lt.clone(),
+            kind if kind.is_simd() => lt.clone(),
             TyKind::IntLiteral => Ty::int(),
             _ => return Ok(rt),
         };
@@ -788,8 +787,7 @@ impl Checker {
                 .ok()
                 .and_then(|built| built.meta().as_value().cloned())
                 .is_some_and(|ty| {
-                    matches!(ty.kind(), TyKind::Simd { .. })
-                        && !mojito_types::types::has_host_scalar_value(ty.kind())
+                    ty.is_simd() && !mojito_types::types::has_host_scalar_value(ty.kind())
                 })
         };
         if (vector(left) || vector(right))
@@ -885,13 +883,7 @@ impl Checker {
         let AliasBody::Type(ty) = &alias.body else {
             return None;
         };
-        match *ty.kind() {
-            TyKind::Simd {
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(width),
-            } if alias.decls.is_empty() => Some((dtype, width)),
-            _ => None,
-        }
+        ty.known_simd().filter(|_| alias.decls.is_empty())
     }
 
     /// Type a vector alias's construction `U256(a, b, c, d)` as the spelled
@@ -924,11 +916,7 @@ impl Checker {
             });
         }
         self.check_simd_args(&SimdDtype::Known(dtype), &SimdWidth::Known(1), args)?;
-        Ok(TyKind::Simd {
-            dtype: SimdDtype::Known(dtype),
-            width: SimdWidth::Known(1),
-        }
-        .into())
+        Ok(mojito_types::types::canonical_simd_ty(dtype, 1))
     }
 
     /// Check the arguments of a SIMD construction against upstream's
@@ -1256,7 +1244,12 @@ impl Checker {
         let aty = self.infer(arg)?;
         match aty.kind() {
             TyKind::IntLiteral | TyKind::FloatLiteral => Ok(SimdWidth::Known(1)),
-            TyKind::Simd { width, .. } if !width.is_inferred() => Ok(width.clone()),
+            kind if let Some((_, width)) = kind.as_simd()
+                && !width.is_inferred() =>
+            {
+                Ok(width.clone())
+            }
+
             TyKind::Bool | TyKind::Param { .. } | TyKind::Struct(..)
                 if !mojito_types::types::is_simd_length(&aty)
                     && (*aty == TyKind::Bool || self.conforms_to(&aty, "Intable")) =>
@@ -1376,10 +1369,7 @@ fn is_bound_archetype(ty: &Ty) -> bool {
 /// fails its float-dtype assert, anything else matches no overload.
 fn simd_argument_error(dtype: &SimdDtype, width: &SimdWidth, aty: &Ty) -> TypeError {
     if *aty == TyKind::FloatLiteral && dtype.known().is_some_and(|dtype| !dtype.is_float()) {
-        let target = Ty::from(TyKind::Simd {
-            dtype: dtype.clone(),
-            width: width.clone(),
-        });
+        let target = Ty::from(TyKind::simd(dtype.clone(), width.clone()));
         return super::builtins::float_literal_conversion_error(&target);
     }
     TypeError::TypeMismatch {
@@ -1462,24 +1452,13 @@ fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
     // Determine the common SIMD type, allowing a numeric literal on one
     // side. The slots may be symbolic: identity is structural, and a
     // dtype gate a symbolic lane cannot answer is the instantiation's.
-    let (dtype, width) = match (lt.kind(), rt.kind()) {
-        (
-            TyKind::Simd {
-                dtype: d1,
-                width: w1,
-            },
-            TyKind::Simd {
-                dtype: d2,
-                width: w2,
-            },
-        ) if d1 == d2 && w1 == w2 => (d1.clone(), w1.clone()),
-        (TyKind::Simd { dtype, width }, other) | (other, TyKind::Simd { dtype, width })
-            if splats_to(other, dtype) =>
-        {
-            (dtype.clone(), width.clone())
-        }
+    let (dtype, width) = match (lt.as_simd(), rt.as_simd()) {
+        (Some(left), Some(right)) if left == right => left,
+        (Some((dtype, width)), _) if splats_to(rt, dtype) => (dtype, width),
+        (_, Some((dtype, width))) if splats_to(lt, dtype) => (dtype, width),
         _ => return Err(bad()),
     };
+    let (dtype, width) = (dtype.clone(), width.clone());
     let same = || simd_of(dtype.clone(), width.clone());
     match op {
         // Remainder on integer lanes (upstream defines it on float lanes

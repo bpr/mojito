@@ -1741,10 +1741,8 @@ fn method_call_spread_passes_the_bound_pack_itself() {
 
 #[test]
 fn llvm_intrinsic_spread_passes_the_moved_pack_elements() {
-    let int32 = Ty::new(TyKind::Simd {
-        dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-        width: mojito_types::types::SimdWidth::Known(1),
-    });
+    let int32 = mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Int32, 1);
+
     let pack = Ty::new(TyKind::Tuple(vec![int32.clone(), Ty::bool()]));
     let mut function = MirFunction {
         blocks: vec![MirBlock {

@@ -518,10 +518,8 @@ fn visit_vector_slots<V: MutTypeVisitor + ?Sized>(
     dtype: &mut SimdDtype,
     width: &mut SimdWidth,
 ) -> Result<(), V::Error> {
-    let mut built = Ty::new(TyKind::Simd {
-        dtype: dtype.clone(),
-        width: width.clone(),
-    });
+    let mut built = Ty::new(TyKind::simd(dtype.clone(), width.clone()));
+
     visitor.visit_ty(&mut built, TySite::VectorSlots)?;
     if let Some((visited_dtype, visited_width)) = mojito_types::types::simd_slots(&built) {
         *dtype = visited_dtype;

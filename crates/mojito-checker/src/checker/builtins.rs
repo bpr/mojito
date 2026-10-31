@@ -141,16 +141,13 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 /// Functions, ranges, and opaque type parameters are not printable.
 pub(super) fn is_printable(ty: &Ty) -> bool {
     match ty.kind() {
-        TyKind::INT
-        | TyKind::UINT
-        | TyKind::Bool
+        kind if kind.is_simd() => true,
+        TyKind::Bool
         | TyKind::StringLiteral(_)
-        | TyKind::FLOAT64
         | TyKind::None
         | TyKind::IntLiteral
         | TyKind::FloatLiteral
         | TyKind::Struct(_, _)
-        | TyKind::Simd { .. }
         | TyKind::Dtype
         | TyKind::Error
         | TyKind::ComptimeList(_) => true,
@@ -233,10 +230,10 @@ pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
     match (a.kind(), b.kind()) {
         (TyKind::StringLiteral(_), _) if is_nominal_string(b) => Some(b.clone()),
         (_, TyKind::StringLiteral(_)) if is_nominal_string(a) => Some(a.clone()),
-        (TyKind::IntLiteral | TyKind::FloatLiteral, TyKind::Simd { .. }) if coerces(a, b) => {
+        (TyKind::IntLiteral | TyKind::FloatLiteral, _) if b.is_simd() && coerces(a, b) => {
             Some(b.clone())
         }
-        (TyKind::Simd { .. }, TyKind::IntLiteral | TyKind::FloatLiteral) if coerces(b, a) => {
+        (_, TyKind::IntLiteral | TyKind::FloatLiteral) if a.is_simd() && coerces(b, a) => {
             Some(a.clone())
         }
         (TyKind::Struct(..), TyKind::Struct(..)) if a != b => {
@@ -600,7 +597,7 @@ impl Checker {
     /// calls `std.math.round`.
     pub(super) fn infer_round(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("round", 1, args)?;
-        if matches!((tys[0]).kind(), TyKind::FLOAT64 | TyKind::FloatLiteral) {
+        if tys[0].is_float64() || matches!(tys[0].kind(), TyKind::FloatLiteral) {
             Ok(Ty::float64())
         } else if self.param_has_bound(&tys[0], "Roundable") {
             Ok(tys[0].clone())
@@ -622,7 +619,7 @@ impl Checker {
         {
             for element in elements {
                 match self.len_result_for_type(element)?.as_ref().map(Ty::kind) {
-                    Some(TyKind::INT) => {}
+                    Some(kind) if kind.is_int() => {}
                     _ => return Ok(None),
                 }
             }
@@ -741,12 +738,12 @@ impl Checker {
         let mut triggered = false;
         for ty in &tys {
             let this = match ty.kind() {
-                TyKind::FLOAT64 => {
+                kind if kind.is_float64() => {
                     triggered = true;
                     Some(Dtype::Float64)
                 }
-                TyKind::INT => Some(Dtype::Int),
-                TyKind::UINT => Some(Dtype::UInt),
+                kind if kind.is_int() => Some(Dtype::Int),
+                kind if kind.is_uint() => Some(Dtype::UInt),
                 TyKind::IntLiteral | TyKind::FloatLiteral => None,
                 // Not a scalar-range shape at all (a symbolic lane included);
                 // the ordinary no-matching-overload diagnostic stands.
@@ -900,13 +897,11 @@ impl Checker {
         // A literal argument is converted where the call is built, as
         // upstream's builtin-inline `SIMD.__init__(IntLiteral)` is
         // `pop.int_literal_convert`.
-        if matches!(
-            (arg_ty.kind(), target.kind()),
-            (
-                TyKind::IntLiteral,
-                TyKind::INT | TyKind::UINT | TyKind::FLOAT64
-            ) | (TyKind::FloatLiteral, TyKind::FLOAT64)
-        ) {
+        if match arg_ty.kind() {
+            TyKind::IntLiteral => target.is_int() || target.is_uint() || target.is_float64(),
+            TyKind::FloatLiteral => target.is_float64(),
+            _ => false,
+        } {
             self.record_literal_materializations(&args[0], &arg_ty, &target)?;
             self.record_at(span.clone()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ConvertedArgument,
@@ -917,7 +912,7 @@ impl Checker {
         // outranks the generic `Intable` overload, and its `comptime assert`
         // fails for an integer dtype. A generic `Int(x)` instantiated at a
         // `FloatLiteral` still binds `Intable` inside its body.
-        if *arg_ty == TyKind::FloatLiteral && matches!(target.kind(), TyKind::INT | TyKind::UINT) {
+        if *arg_ty == TyKind::FloatLiteral && (target.is_int() || target.is_uint()) {
             return Err(float_literal_conversion_error(&target));
         }
         let mismatch = || TypeError::TypeMismatch {

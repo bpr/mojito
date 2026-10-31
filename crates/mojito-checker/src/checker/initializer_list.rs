@@ -884,7 +884,8 @@ impl Checker {
     ) -> Option<Expr> {
         let name = match instance.kind() {
             TyKind::Struct(name, _) => name.clone(),
-            TyKind::Simd { .. } => mojito_types::types::SIMD_TYPE_NAME.to_string(),
+            kind if kind.is_simd() => mojito_types::types::SIMD_TYPE_NAME.to_string(),
+
             TyKind::StringLiteral(Some(_)) => {
                 mojito_types::types::STRING_LITERAL_TYPE_NAME.to_string()
             }

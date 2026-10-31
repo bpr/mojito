@@ -1035,6 +1035,64 @@ impl TyKind {
     /// The value-less `StringLiteral` ([`TyKind::StringLiteral(_)`]).
     pub const STRING_LITERAL: &'static Self = &Self::StringLiteral(None);
 
+    /// A `SIMD[dtype, width]` vector over slots as given: ones read off
+    /// another vector or a MIR instruction, already canonical. New slots go
+    /// through [`simd_ty_from_slots`].
+    pub const fn simd(dtype: SimdDtype, width: SimdWidth) -> Self {
+        Self::Simd { dtype, width }
+    }
+
+    /// Whether this is `Int`.
+    pub const fn is_int(&self) -> bool {
+        matches!(self, Self::INT)
+    }
+
+    /// Whether this is `UInt`.
+    pub const fn is_uint(&self) -> bool {
+        matches!(self, Self::UINT)
+    }
+
+    /// Whether this is `Float64`.
+    pub const fn is_float64(&self) -> bool {
+        matches!(self, Self::FLOAT64)
+    }
+
+    /// Whether this is a `SIMD` vector, its slots symbolic or not. An exact
+    /// numeric literal is not one ([`simd_shape`] reports what it
+    /// materializes to).
+    pub const fn is_simd(&self) -> bool {
+        matches!(self, Self::Simd { .. })
+    }
+
+    /// The dtype and width slots of a `SIMD` vector, symbolic or not.
+    pub const fn as_simd(&self) -> Option<(&SimdDtype, &SimdWidth)> {
+        match self {
+            Self::Simd { dtype, width } => Some((dtype, width)),
+            _ => None,
+        }
+    }
+
+    /// The dtype and lane count of a `SIMD` vector whose slots are both
+    /// known. Unlike [`simd_shape`], an exact literal answers `None`.
+    pub const fn known_simd(&self) -> Option<(Dtype, i64)> {
+        match self {
+            Self::Simd {
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(width),
+            } => Some((*dtype, *width)),
+            _ => None,
+        }
+    }
+
+    /// The slots of a register a backend holds as a vector, borrowed: a
+    /// `SIMD` value or its `!kgen.simd` storage ([`held_simd_slots`]).
+    pub const fn as_held_simd(&self) -> Option<(&SimdDtype, &SimdWidth)> {
+        match self {
+            Self::Simd { dtype, width } | Self::KgenSimd { dtype, width } => Some((dtype, width)),
+            _ => None,
+        }
+    }
+
     /// Whether this is a string literal's type, value-less or not.
     pub const fn is_string_literal(&self) -> bool {
         matches!(self, Self::StringLiteral(_))
@@ -3271,9 +3329,10 @@ pub fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
 /// The SIMD type of two slots that may still be symbolic.
 ///
 /// A slot whose expression is a closed constant becomes `Known`, and two
-/// known slots canonicalize through [`canonical_simd_ty`]. This is the only
-/// constructor of a symbolic `TyKind::Simd`, so `Expr` never holds a closed
-/// expression.
+/// known slots canonicalize through [`canonical_simd_ty`]. This is the
+/// constructor of a symbolic `TyKind::Simd` from new slots, so `Expr` never
+/// holds a closed expression; [`TyKind::simd`] only reassembles slots read
+/// off a vector or a MIR instruction.
 pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, ParamError> {
     let dtype = match dtype {
         SimdDtype::Expr(expr) => match expr.as_constant() {

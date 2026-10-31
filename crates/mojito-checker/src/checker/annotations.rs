@@ -198,10 +198,9 @@ pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {
     if splats_to(ty, dtype) {
         return true;
     }
-    let integer_source = matches!(ty.kind(), TyKind::INT | TyKind::UINT)
+    let integer_source = (ty.is_int() || ty.is_uint())
         || matches!(scalar_simd_dtype(ty), Some(d) if !d.is_float() && d != Dtype::Bool);
-    let float_source = matches!(ty.kind(), TyKind::FLOAT64)
-        || matches!(scalar_simd_dtype(ty), Some(d) if d.is_float());
+    let float_source = ty.is_float64() || matches!(scalar_simd_dtype(ty), Some(d) if d.is_float());
     match dtype.known() {
         // Upstream's `IntLiteral` initializer converts a literal into a
         // mask lane by `value != 0`.

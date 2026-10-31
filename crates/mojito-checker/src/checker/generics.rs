@@ -395,7 +395,7 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 }
             }
         }
-        (TyKind::Simd { dtype, width }, _) => {
+        (kind, _) if let Some((dtype, width)) = kind.as_simd() => {
             let actual_slots = match actual.kind() {
                 TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
                 _ => simd_slots(actual),
@@ -714,11 +714,12 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
         // A symbolic literal text closes the same way.
-        TyKind::Simd { .. }
-        | TyKind::KgenSimd { .. }
-        | TyKind::StringLiteral(Some(_))
-        | TyKind::PopArray { .. }
-            if mojito_types::types::is_symbolic(ty) =>
+        kind if (kind.is_simd()
+            || matches!(
+                kind,
+                TyKind::KgenSimd { .. } | TyKind::StringLiteral(Some(_)) | TyKind::PopArray { .. }
+            ))
+            && mojito_types::types::is_symbolic(ty) =>
         {
             mojito_types::types::replace_parameters(&context, ty, bindings, 0)
                 .unwrap_or_else(|_| ty.clone())

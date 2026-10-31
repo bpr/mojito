@@ -948,10 +948,9 @@ impl Checker {
             ExprKind::Int(_) | ExprKind::Bool(_) => true,
             ExprKind::Identifier(_) | ExprKind::Member { .. } => {
                 self.parameter_value_ty(operand).is_some_and(|ty| {
-                    matches!(
-                        ty.kind(),
-                        TyKind::INT | TyKind::UINT | TyKind::Bool | TyKind::IntLiteral
-                    )
+                    ty.is_int()
+                        || ty.is_uint()
+                        || matches!(ty.kind(), TyKind::Bool | TyKind::IntLiteral)
                 })
             }
             ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Invert | PrefixOp::Pos, inner) => {
@@ -1140,7 +1139,7 @@ impl Checker {
                 |binder| ConstraintOperand::Param(binder.clone()),
             ),
         };
-        let integer = matches!(ty.kind(), TyKind::INT | TyKind::UINT | TyKind::IntLiteral);
+        let integer = ty.is_int() || ty.is_uint() || matches!(ty.kind(), TyKind::IntLiteral);
         let constraint = match ty.kind() {
             TyKind::Bool => {
                 structural()
@@ -1454,10 +1453,10 @@ impl Checker {
         }
         let ty = ty.ok()?;
         let ty = match ty.kind() {
-            TyKind::INT | TyKind::IntLiteral => Ty::int(),
-            TyKind::UINT => Ty::uint(),
+            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => Ty::int(),
+            kind if kind.is_uint() => Ty::uint(),
             TyKind::Bool => Ty::bool(),
-            TyKind::FLOAT64 | TyKind::FloatLiteral => Ty::float64(),
+            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => Ty::float64(),
             // A struct-, sized-scalar-, or attribute-valued call is an
             // application the elaborator below MIR runs and materializes
             // (an attribute only where an op's attribute takes it), and so
@@ -1465,15 +1464,17 @@ impl Checker {
             // compile-time string, and any `!kgen.string` expression; no
             // other struct expression lifts. A `None`-valued call is an
             // application too (`_constrain[dtype]()`).
-            TyKind::Struct(..)
-            | TyKind::None
-            | TyKind::Simd { .. }
-            | TyKind::Index
-            | TyKind::I1
-            | TyKind::Dtype
-            | TyKind::KgenDeferred
-            | TyKind::KgenTarget
-                if called.is_some() || self.calls_compile_time_callee(expr) =>
+            kind if kind.is_simd()
+                || matches!(
+                    kind,
+                    TyKind::Struct(..)
+                        | TyKind::None
+                        | TyKind::Index
+                        | TyKind::I1
+                        | TyKind::Dtype
+                        | TyKind::KgenDeferred
+                        | TyKind::KgenTarget
+                ) && (called.is_some() || self.calls_compile_time_callee(expr)) =>
             {
                 ty
             }
@@ -1523,7 +1524,8 @@ impl Checker {
         let scalar = expression
             .meta()
             .as_value()
-            .is_some_and(|ty| matches!(ty.kind(), TyKind::INT | TyKind::Bool));
+            .is_some_and(|ty| ty.is_int() || matches!(ty.kind(), TyKind::Bool));
+
         if self.outside_bodies() || !applies || !scalar || expression.as_constant().is_some() {
             return;
         }
@@ -1826,7 +1828,7 @@ impl Checker {
         ty: &Ty,
         value: &ParamExpr,
     ) -> Option<Result<ParamExpr, TypeError>> {
-        (is_simd_length(found) && matches!(ty.kind(), TyKind::INT)).then(|| {
+        (is_simd_length(found) && ty.is_int()).then(|| {
             mojito_types::types::simd_length_image(&self.param_context, value).map_err(param_error)
         })
     }
@@ -2514,22 +2516,19 @@ impl Checker {
             _ => result.or_else(|| self.ty_from_anno(&function.result).ok()),
         }
         .filter(|ty| {
-            matches!(
-                ty.kind(),
-                TyKind::INT
-                    | TyKind::UINT
-                    | TyKind::Index
-                    | TyKind::I1
-                    | TyKind::Bool
-                    | TyKind::FLOAT64
-                    | TyKind::None
-                    | TyKind::Dtype
-                    | TyKind::Simd { .. }
-                    | TyKind::Struct(..)
-                    | TyKind::KgenDeferred
-                    | TyKind::KgenTarget
-                    | TyKind::KgenString
-            )
+            ty.is_simd()
+                || matches!(
+                    ty.kind(),
+                    TyKind::Index
+                        | TyKind::I1
+                        | TyKind::Bool
+                        | TyKind::None
+                        | TyKind::Dtype
+                        | TyKind::Struct(..)
+                        | TyKind::KgenDeferred
+                        | TyKind::KgenTarget
+                        | TyKind::KgenString
+                )
         })?;
         if function.raises {
             return None;
@@ -3245,15 +3244,16 @@ impl Checker {
     /// string leaf makes it no constant.
     fn parameter_aggregate_element(&self, element: &Ty) -> bool {
         let leaf = |ty: &Ty| {
-            matches!(
-                ty.kind(),
-                TyKind::INT
-                    | TyKind::FLOAT64
-                    | TyKind::Bool
-                    | TyKind::IntLiteral
-                    | TyKind::FloatLiteral
-                    | TyKind::StringLiteral(_)
-            ) || matches!(ty.kind(), TyKind::Struct(name, args)
+            (ty.is_int()
+                || ty.is_float64()
+                || matches!(
+                    ty.kind(),
+                    TyKind::Bool
+                        | TyKind::IntLiteral
+                        | TyKind::FloatLiteral
+                        | TyKind::StringLiteral(_)
+                ))
+                || matches!(ty.kind(), TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name))
                 || self.parameter_aggregate_element(ty)
         };
@@ -3477,7 +3477,9 @@ impl Checker {
                     .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
                 // Any other annotation converts the value, as a runtime
                 // binding's does (`comptime x: Float64 = i`).
-                if &expected != found && !matches!(expected.kind(), TyKind::INT | TyKind::Bool) {
+                if &expected != found
+                    && !(expected.is_int() || matches!(expected.kind(), TyKind::Bool))
+                {
                     return Ok(false);
                 }
                 if &expected != found {
@@ -5668,22 +5670,19 @@ impl SlotType {
 /// `StringLiteral`, a `DType`, a struct, or a SIMD vector. A reference, a
 /// pointer, an origin, or a function is no such value.
 fn parameter_value_type(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::INT
-            | TyKind::UINT
-            | TyKind::Bool
-            | TyKind::None
-            | TyKind::FLOAT64
-            | TyKind::Index
-            | TyKind::I1
-            | TyKind::IntLiteral
-            | TyKind::FloatLiteral
-            | TyKind::StringLiteral(_)
-            | TyKind::Dtype
-            | TyKind::Struct(..)
-            | TyKind::Simd { .. }
-    )
+    ty.is_simd()
+        || matches!(
+            ty.kind(),
+            TyKind::Bool
+                | TyKind::None
+                | TyKind::Index
+                | TyKind::I1
+                | TyKind::IntLiteral
+                | TyKind::FloatLiteral
+                | TyKind::StringLiteral(_)
+                | TyKind::Dtype
+                | TyKind::Struct(..)
+        )
 }
 
 /// The signature of a `def` or a static method, as its declaration spells
@@ -5895,8 +5894,10 @@ fn template_name(name: &str) -> &str {
 fn materialized_collection_spelling(ty: &Ty) -> String {
     fn scalar(element: &Ty) -> String {
         match element.kind() {
-            TyKind::INT | TyKind::IntLiteral => "Int".to_string(),
-            TyKind::FLOAT64 | TyKind::FloatLiteral => "Float64".to_string(),
+            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => "Int".to_string(),
+            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => {
+                "Float64".to_string()
+            }
             TyKind::StringLiteral(_) => "String".to_string(),
             _ => match mojito_types::types::tuple_elements(element) {
                 Some(elements) => format!(
@@ -6044,7 +6045,9 @@ fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
         _ => false,
     };
     display
-        && (matches!(element.kind(), TyKind::INT | TyKind::Bool | TyKind::FLOAT64)
+        && (element.is_int()
+            || element.is_float64()
+            || matches!(element.kind(), TyKind::Bool)
             || matches!(element.kind(), TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)))
 }

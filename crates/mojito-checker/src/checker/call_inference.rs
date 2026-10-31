@@ -394,8 +394,8 @@ impl Checker {
             // `Self(...)` in `SIMD`'s own body constructs by the rule too.
             "Self"
                 if param_args.is_empty()
-                    && let Some(TyKind::Simd { dtype, width }) =
-                        self.self_ty.as_ref().map(Ty::kind) =>
+                    && let Some((dtype, width)) =
+                        self.self_ty.as_ref().and_then(|ty| ty.as_simd()) =>
             {
                 self.construct_simd(&span, dtype, width, args)
             }
@@ -577,10 +577,10 @@ impl Checker {
         match instance.kind() {
             // `copy=` and an undeclared `mlir_value=` are the checker's
             // rules for the instance, as for a spelled `SIMD[dt, n]`.
-            TyKind::Simd { .. }
-                if args.is_empty()
-                    && let [keyword] = kwargs
-                    && matches!(keyword.name.as_str(), "mlir_value" | "copy") =>
+            kind if kind.is_simd()
+                && args.is_empty()
+                && let [keyword] = kwargs
+                && matches!(keyword.name.as_str(), "mlir_value" | "copy") =>
             {
                 let name = mojito_types::types::SIMD_TYPE_NAME;
                 if keyword.name == "copy" {
@@ -592,7 +592,7 @@ impl Checker {
                         })
                 }
             }
-            TyKind::Simd { dtype, width } => self
+            kind if let Some((dtype, width)) = kind.as_simd() => self
                 .declared_simd_construction(span, Some(instance), &[], args, kwargs)
                 .unwrap_or_else(|| {
                     super::calls::reject_kwargs(kwargs)?;
@@ -710,10 +710,7 @@ impl Checker {
     fn simd_alias_instance(&self, name: &str) -> Option<Ty> {
         match name {
             "Int" | "UInt" | "Float64" => scalar_type_name(name),
-            "Self" if self.lookup(name).is_none() => self
-                .self_ty
-                .clone()
-                .filter(|ty| matches!(ty.kind(), TyKind::Simd { .. })),
+            "Self" if self.lookup(name).is_none() => self.self_ty.clone().filter(|ty| ty.is_simd()),
             _ => Dtype::from_scalar_alias(name)
                 .map(|dtype| simd_ty(dtype, 1))
                 .or_else(|| {
@@ -2652,7 +2649,7 @@ impl Checker {
     /// Mojo.
     fn infer_float_text(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("_mojito_float_text", 2, args)?;
-        if tys[0].kind() != TyKind::FLOAT64 {
+        if !tys[0].is_float64() {
             return Err(TypeError::TypeMismatch {
                 expected: "Float64".to_string(),
                 found: tys[0].to_string(),

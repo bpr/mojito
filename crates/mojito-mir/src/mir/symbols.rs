@@ -21,7 +21,7 @@ use mojito_symbol::symbol::{
     INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL, WRITE_FORMATTED, member_table_name,
 };
 use mojito_types::symbol_ref::SYMBOL_REF;
-use mojito_types::types::{Ty, TyKind, mentions};
+use mojito_types::types::{Ty, mentions};
 use serde::Serialize;
 use serde::ser;
 use std::cell::RefCell;
@@ -143,7 +143,7 @@ impl<'t> SymbolTable<'t> {
     fn member_table_uses(&self, ty: &Ty) -> Vec<&'t str> {
         let simds = RefCell::new(Vec::new());
         mentions(ty, &|nested| {
-            if matches!(nested.kind(), TyKind::Simd { .. }) {
+            if nested.is_simd() {
                 simds.borrow_mut().push(nested.clone());
             }
             false

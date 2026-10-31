@@ -55,10 +55,7 @@ impl Checker {
         ty: &'t Ty,
         method: &str,
     ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
-        if !matches!(
-            ty.kind(),
-            TyKind::Simd { .. } | TyKind::StringLiteral(Some(_))
-        ) {
+        if !(ty.is_simd() || matches!(ty.kind(), TyKind::StringLiteral(Some(_)))) {
             return None;
         }
         self.nominal_struct(ty).filter(|(name, _)| {
@@ -230,7 +227,7 @@ impl Checker {
                             && matches!(method, "__getitem__" | "__getitem_param__")
                             && matches!(sig.decls.as_slice(),
                             [decl @ ParamDecl::Value { .. }]
-                                if decl.value_element_ty().is_some_and(|ty| **ty == *TyKind::INT)) =>
+                                if decl.value_element_ty().is_some_and(|ty| ty.is_int())) =>
                     {
                         availability_failure.get_or_insert_with(|| {
                             "expected a compile-time Int index, found a runtime value".to_string()

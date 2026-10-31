@@ -68,11 +68,13 @@ pub(super) struct SetupReference {
 pub(super) fn literal_materializes_to(found: &Ty, target: &Ty) -> bool {
     let scalar = match found.kind() {
         TyKind::IntLiteral => {
-            matches!(target.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
+            target.is_int()
+                || target.is_uint()
+                || target.is_float64()
                 || mojito_types::types::is_scalar_simd(target)
         }
         TyKind::FloatLiteral => {
-            matches!(target.kind(), TyKind::FLOAT64)
+            target.is_float64()
                 || mojito_types::types::scalar_simd_dtype(target)
                     .is_some_and(mojito_ast::ast::Dtype::is_float)
         }
@@ -2321,9 +2323,7 @@ impl<'a> Flatten<'a> {
                     None | Some(mojito_ast::ast::ArgConvention::Imm)
                 )
             })
-            && receiver
-                .ty()
-                .is_some_and(|ty| matches!(ty.kind(), TyKind::Simd { .. }))
+            && receiver.ty().is_some_and(|ty| ty.is_simd())
         {
             return (value, None);
         }

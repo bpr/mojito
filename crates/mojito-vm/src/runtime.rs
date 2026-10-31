@@ -1421,21 +1421,20 @@ pub fn materialize_literal(
     value: Value,
     target: &mojito_types::types::Ty,
 ) -> Result<Value, RuntimeError> {
-    use mojito_types::types::TyKind;
     match (value, target.kind()) {
-        (Value::IntLiteral(value), TyKind::INT) => value
+        (Value::IntLiteral(value), target) if target.is_int() => value
             .wrapping_signed(64)
             .map(Value::Int)
             .ok_or_else(|| literal_materialization_error(&value, "Int")),
-        (Value::IntLiteral(value), TyKind::UINT) => value
+        (Value::IntLiteral(value), target) if target.is_uint() => value
             .wrapping_unsigned(64)
             .map(Value::UInt)
             .ok_or_else(|| literal_materialization_error(&value, "UInt")),
-        (Value::IntLiteral(value), TyKind::FLOAT64) => value
+        (Value::IntLiteral(value), target) if target.is_float64() => value
             .to_f64()
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
-        (Value::FloatLiteral(value), TyKind::FLOAT64) => value
+        (Value::FloatLiteral(value), target) if target.is_float64() => value
             .to_f64()
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
@@ -1480,11 +1479,11 @@ pub fn coerce_checked(value: Value, ty: &mojito_types::types::Ty) -> Value {
         return materialized;
     }
     match ty.kind() {
-        TyKind::UINT => match value {
+        ty if ty.is_uint() => match value {
             Value::Int(n) => Value::UInt(n as u64),
             value => value,
         },
-        TyKind::FLOAT64 => match value {
+        ty if ty.is_float64() => match value {
             Value::Int(n) => Value::Float64(n as f64),
             Value::UInt(n) => Value::Float64(n as f64),
             value => value,

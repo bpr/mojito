@@ -264,7 +264,7 @@ impl Specializer<'_> {
         let declarations = &self.source.declarations;
         // A `SIMD` answers a trait its declaration lists, or one such a
         // trait refines, as the struct it is.
-        let declared_by_simd = matches!(ty.kind(), TyKind::Simd { .. })
+        let declared_by_simd = ty.is_simd()
             && declarations.declares_trait(trait_name)
             && self
                 .structs

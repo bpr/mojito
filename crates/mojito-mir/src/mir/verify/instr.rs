@@ -232,7 +232,7 @@ pub(super) fn verify_instruction(
             dest,
         } => {
             if let Some(ty) = cx.reg_ty(*dest)
-                && !matches!(ty.kind(), mojito_types::types::TyKind::UINT)
+                && !ty.is_uint()
             {
                 errors.push(format!(
                     "{}: `UInt` value constant is read at `{ty}`",
@@ -546,9 +546,10 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
     let prefix = cx.prefix;
     match instruction {
         MirInstr::MaterializeLiteral { value, target, .. } => {
-            let valid_target =
-                matches!(target.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
-                    || mojito_types::types::is_scalar_simd(target);
+            let valid_target = target.is_int()
+                || target.is_uint()
+                || target.is_float64()
+                || mojito_types::types::is_scalar_simd(target);
             if !valid_target {
                 errors.push(format!(
                     "{prefix}: literal materialization has non-scalar target {target}"
@@ -556,13 +557,14 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             }
             // A target whose lane dtype is still a parameter expression takes
             // either literal; the instance's dtype decides the value.
-            let symbolic_lane =
-                matches!(target.kind(), TyKind::Simd { dtype, .. } if dtype.is_symbolic());
+            let symbolic_lane = target
+                .as_simd()
+                .is_some_and(|(dtype, _)| dtype.is_symbolic());
             if let Some(found) = cx.reg_ty(*value) {
                 let valid_source = match found.kind() {
                     TyKind::IntLiteral => valid_target,
                     TyKind::FloatLiteral => {
-                        matches!(target.kind(), TyKind::FLOAT64)
+                        target.is_float64()
                             || symbolic_lane
                             || mojito_types::types::scalar_simd_dtype(target)
                                 .is_some_and(mojito_ast::ast::Dtype::is_float)
@@ -1073,7 +1075,8 @@ fn verify_simd_lane_instruction(
     let index_ok = |register: Reg| {
         cx.reg_ty(register).is_none_or(|ty| {
             types_compatible(ty, &Ty::int())
-                || matches!(ty.kind(), TyKind::UINT | TyKind::IntLiteral | TyKind::Index)
+                || ty.is_uint()
+                || matches!(ty.kind(), TyKind::IntLiteral | TyKind::Index)
         })
     };
     match *instruction {

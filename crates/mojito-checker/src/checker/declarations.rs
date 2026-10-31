@@ -894,15 +894,14 @@ impl Checker {
             if let [only] = tp.bounds.as_slice()
                 && let Some(vty) = scalar_type_name(only)
             {
-                if !matches!(
-                    vty.kind(),
-                    TyKind::INT
-                        | TyKind::UINT
-                        | TyKind::Bool
-                        | TyKind::StringLiteral(_)
-                        | TyKind::FLOAT64
-                        | TyKind::Dtype
-                ) {
+                if !(vty.is_int()
+                    || vty.is_uint()
+                    || vty.is_float64()
+                    || matches!(
+                        vty.kind(),
+                        TyKind::Bool | TyKind::StringLiteral(_) | TyKind::Dtype
+                    ))
+                {
                     return Err(TypeError::BadValueParamType {
                         name: tp.name.clone(),
                         ty: only.clone(),

@@ -1006,7 +1006,7 @@ impl Checker {
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key(dunder)),
-            TyKind::Simd { .. } => self.declared_receiver_member(operand_ty, dunder).is_some(),
+            kind if kind.is_simd() => self.declared_receiver_member(operand_ty, dunder).is_some(),
             _ => self.bound_inplace_operator(operand_ty, op),
         };
         if !has_method {
@@ -1457,7 +1457,10 @@ impl Checker {
                         // before the conversion, so the value converts to the
                         // vector the binding declares.
                         let expected = match expected.kind() {
-                            TyKind::Simd { width, .. } if width.is_inferred() => {
+                            kind if kind
+                                .as_simd()
+                                .is_some_and(|(_, width)| width.is_inferred()) =>
+                            {
                                 Self::bind_unbound_tails(&expected, &found)
                             }
                             _ => expected,
@@ -2142,7 +2145,7 @@ impl Checker {
                     })
                     .transpose()?
                     .filter(|expected| {
-                        !matches!(expected.kind(), TyKind::INT | TyKind::IntLiteral)
+                        !(expected.is_int() || matches!(expected.kind(), TyKind::IntLiteral))
                     });
                 // A module constant was folded before any declaration; only a
                 // body's own constant folds here.

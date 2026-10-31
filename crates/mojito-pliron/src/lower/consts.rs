@@ -140,17 +140,21 @@ impl FnLowering<'_> {
         let mut bytes = Vec::new();
         for value in elements {
             let encoded = match (element.kind(), value) {
-                (TyKind::INT, CtValue::Int(value)) => Some(value.to_le_bytes().to_vec()),
-                (TyKind::INT, CtValue::IntLiteral(value)) => {
+                (kind, CtValue::Int(value)) if kind.is_int() => Some(value.to_le_bytes().to_vec()),
+                (kind, CtValue::IntLiteral(value)) if kind.is_int() => {
                     value.to_i64().map(|v| v.to_le_bytes().to_vec())
                 }
-                (TyKind::UINT, CtValue::UInt(value)) => Some(value.to_le_bytes().to_vec()),
+                (kind, CtValue::UInt(value)) if kind.is_uint() => {
+                    Some(value.to_le_bytes().to_vec())
+                }
                 (TyKind::Index, CtValue::Index(value)) => Some(value.to_le_bytes().to_vec()),
-                (TyKind::UINT, CtValue::IntLiteral(value)) => {
+                (kind, CtValue::IntLiteral(value)) if kind.is_uint() => {
                     value.to_u64().map(|v| v.to_le_bytes().to_vec())
                 }
-                (TyKind::FLOAT64, CtValue::Float(bits)) => Some(bits.to_le_bytes().to_vec()),
-                (TyKind::FLOAT64, CtValue::FloatLiteral(value)) => {
+                (kind, CtValue::Float(bits)) if kind.is_float64() => {
+                    Some(bits.to_le_bytes().to_vec())
+                }
+                (kind, CtValue::FloatLiteral(value)) if kind.is_float64() => {
                     value.to_f64().map(|v| v.to_bits().to_le_bytes().to_vec())
                 }
                 (TyKind::Bool, CtValue::Bool(value)) => Some(vec![u8::from(*value)]),
@@ -518,9 +522,9 @@ impl FnLowering<'_> {
         target: &Ty,
     ) -> Result<(), PlironError> {
         let target = match target.kind() {
-            TyKind::INT => ScalarTy::Int,
-            TyKind::UINT => ScalarTy::UInt,
-            TyKind::FLOAT64 => ScalarTy::Float64,
+            kind if kind.is_int() => ScalarTy::Int,
+            kind if kind.is_uint() => ScalarTy::UInt,
+            kind if kind.is_float64() => ScalarTy::Float64,
             ty if let Some(dtype) = scalar_simd_dtype(ty) => ScalarTy::of_dtype(dtype),
             // Literal-typed storage holds the exact value at its default
             // width, rejecting what i64/f64 cannot represent.

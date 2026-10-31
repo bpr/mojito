@@ -2728,7 +2728,7 @@ impl<'a> Specializer<'a> {
                     // string literal's is `StringLiteral`'s.
                     let bool_cast = mojito_types::ct::ScalarConversion::Bool;
                     let vector = |operand: &Ty| {
-                        matches!(operand.kind(), TyKind::Simd { .. })
+                        operand.is_simd()
                             && func.0 == bool_cast.name()
                             && !bool_cast.casts_from(operand)
                     };
@@ -2853,10 +2853,8 @@ impl<'a> Specializer<'a> {
                     && kwargs.is_empty()
                     && let [other] = args.as_slice()
                     && let Some(op) = comparison_of_dunder(method)
-                    && !matches!(
-                        (function.reg_types.get(&recv.0).map(peel_refs)).map(Ty::kind),
-                        Some(TyKind::Struct(..) | TyKind::Simd { .. }) | None
-                    )
+                    && !(function.reg_types.get(&recv.0).map(peel_refs))
+                        .is_none_or(|ty| matches!(ty.kind(), TyKind::Struct(..)) || ty.is_simd())
                 {
                     *instruction = MirInstr::BinOp {
                         op,

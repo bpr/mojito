@@ -865,12 +865,13 @@ impl<'a> Flatten<'a> {
             return None;
         }
         let zero = match (name.as_str(), node.ty.as_ref()?.kind()) {
-            ("Int", TyKind::INT) => Const::Int(0),
-            ("UInt", TyKind::UINT) => {
+            ("Int", kind) if kind.is_int() => Const::Int(0),
+            ("UInt", kind) if kind.is_uint() => {
                 let value = self.literal(node, Const::IntLiteral(0.into()));
                 return Some(self.materialize_literal(value, &Ty::uint(), node.location()));
             }
-            ("Float64", TyKind::FLOAT64) => Const::Float(0.0),
+            ("Float64", kind) if kind.is_float64() => Const::Float(0.0),
+
             ("Bool", TyKind::Bool) => Const::Bool(false),
             _ => return None,
         };

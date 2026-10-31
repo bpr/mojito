@@ -653,10 +653,10 @@ fn const_value_and_param_field_round_trip() {
             k: Const::Param(rows),
         },
     ];
-    let vector = TyKind::Simd {
-        dtype: mojito_types::types::SimdDtype::Known(Dtype::UInt64),
-        width: mojito_types::types::SimdWidth::Known(2),
-    };
+    let vector = TyKind::simd(
+        mojito_types::types::SimdDtype::Known(Dtype::UInt64),
+        mojito_types::types::SimdWidth::Known(2),
+    );
     let program = program_with(vec![(
         "consts".into(),
         function_with(vec![vector.into(), extent, Ty::int()], instrs),
@@ -2140,10 +2140,10 @@ fn symbolic_simd_slots_round_trip() {
         .infix(InfixOp::Mul, &n, &constant(CtValue::Int(2)))
         .expect("Int * Int builds");
     let dtype = context.decl_ref(ParamId::new("f", 1), "dt", MetaTy::value(Ty::dtype()));
-    let symbolic = Ty::new(TyKind::Simd {
-        dtype: mojito_types::types::SimdDtype::Expr(dtype),
-        width: width_of(&width),
-    });
+    let symbolic = Ty::new(TyKind::simd(
+        mojito_types::types::SimdDtype::Expr(dtype),
+        width_of(&width),
+    ));
     let program = program_with(vec![(
         "main".into(),
         function_with(vec![symbolic.clone()], Vec::new()),
@@ -3431,14 +3431,14 @@ fn param_apply_list_get_and_reflect_round_trip() {
     let types = vec![
         TyKind::Dependent(DependentType::Parameter(element)),
         TyKind::Dependent(DependentType::Parameter(reflected)),
-        TyKind::Simd {
-            dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
-            width: width_of(&applied),
-        },
-        TyKind::Simd {
-            dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
-            width: width_of(&static_method),
-        },
+        TyKind::simd(
+            mojito_types::types::SimdDtype::Known(Dtype::Float32),
+            width_of(&applied),
+        ),
+        TyKind::simd(
+            mojito_types::types::SimdDtype::Known(Dtype::Float32),
+            width_of(&static_method),
+        ),
     ]
     .into_iter()
     .map(Ty::new)

@@ -165,28 +165,34 @@ pub fn lower_ty(
         // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor,
         // as is a `!kgen.string`'s.
         // A retained callable is the two-word `{ invoke, env }` value.
-        TyKind::Error
-        | TyKind::Struct(..)
-        | TyKind::Tuple(_)
-        | TyKind::PopArray { .. }
-        | TyKind::RuntimePack(_)
-        | TyKind::Variant(_)
-        | TyKind::Simd { .. }
-        | TyKind::StringLiteral(_)
-        | TyKind::KgenString
-        | TyKind::Func(_) => match layout.layout_of(ty) {
-            Ok(computed) => Ok(LowerTy::Aggregate {
-                ty: ty.clone(),
-                layout: computed,
-            }),
-            Err(error) => Err(PlironError {
-                function: Some(function.to_string()),
-                kind: PlironErrorKind::Unsupported {
-                    construct: format!("type `{ty:?}` ({error})"),
-                },
-                location,
-            }),
-        },
+        kind if kind.is_simd()
+            || matches!(
+                kind,
+                TyKind::Error
+                    | TyKind::Struct(..)
+                    | TyKind::Tuple(_)
+                    | TyKind::PopArray { .. }
+                    | TyKind::RuntimePack(_)
+                    | TyKind::Variant(_)
+                    | TyKind::StringLiteral(_)
+                    | TyKind::KgenString
+                    | TyKind::Func(_)
+            ) =>
+        {
+            match layout.layout_of(ty) {
+                Ok(computed) => Ok(LowerTy::Aggregate {
+                    ty: ty.clone(),
+                    layout: computed,
+                }),
+                Err(error) => Err(PlironError {
+                    function: Some(function.to_string()),
+                    kind: PlironErrorKind::Unsupported {
+                        construct: format!("type `{ty:?}` ({error})"),
+                    },
+                    location,
+                }),
+            }
+        }
         other => Err(PlironError {
             function: Some(function.to_string()),
             kind: PlironErrorKind::Unsupported {

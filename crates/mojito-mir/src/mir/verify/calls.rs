@@ -638,7 +638,7 @@ pub(super) fn validate_dependent_bindings_in(
             // A symbolic lane or width is a parameter expression like a
             // struct's value argument; `verify/scope.rs` checks its binders
             // and kind, and the concrete mode rejects it.
-            TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
+            kind if let Some((dtype, width)) = kind.as_held_simd() => {
                 if let mojito_types::types::SimdDtype::Expr(expr) = dtype {
                     check_expr(expr, frames)?;
                 }

@@ -3385,9 +3385,10 @@ impl MirInstr {
                 target,
             } => {
                 let literal = operand(*value)?;
-                let materializes =
-                    matches!(target.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
-                        || mojito_types::types::scalar_simd_dtype(target.kind()).is_some();
+                let materializes = target.is_int()
+                    || target.is_uint()
+                    || target.is_float64()
+                    || mojito_types::types::scalar_simd_dtype(target.kind()).is_some();
                 if !materializes
                     || !matches!(literal, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))
                 {
@@ -3870,22 +3871,22 @@ pub struct SpanTable(pub HashMap<u32 /*reg*/, (SourceSpan, Option<VarId>)>);
 /// is the one `ty` names.
 fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
     match (constant, ty.kind()) {
-        (Const::Int(value), TyKind::INT) => Some(CtValue::Int(*value)),
-        (Const::Float(value), TyKind::FLOAT64) => Some(CtValue::Float(value.to_bits())),
+        (Const::Int(value), kind) if kind.is_int() => Some(CtValue::Int(*value)),
+        (Const::Float(value), kind) if kind.is_float64() => Some(CtValue::Float(value.to_bits())),
         (Const::Bool(value), TyKind::Bool | TyKind::I1) => Some(CtValue::Bool(*value)),
         (Const::IntLiteral(value), TyKind::IntLiteral) => Some(CtValue::IntLiteral(value.clone())),
         (Const::FloatLiteral(value), TyKind::FloatLiteral) => {
             Some(CtValue::FloatLiteral(value.clone()))
         }
-        (Const::Value(value @ CtValue::UInt(_)), TyKind::UINT) => Some(value.clone()),
+        (Const::Value(value @ CtValue::UInt(_)), kind) if kind.is_uint() => Some(value.clone()),
         (Const::Value(value @ CtValue::Index(_)), TyKind::Index) => Some(value.clone()),
-        (
-            Const::Value(value @ CtValue::Simd { dtype, lanes }),
-            TyKind::Simd {
-                dtype: mojito_types::types::SimdDtype::Known(own),
-                width: mojito_types::types::SimdWidth::Known(width),
-            },
-        ) if own == dtype && usize::try_from(*width) == Ok(lanes.len()) => Some(value.clone()),
+        (Const::Value(value @ CtValue::Simd { dtype, lanes }), kind)
+            if let Some((own, width)) = kind.known_simd()
+                && own == *dtype
+                && usize::try_from(width) == Ok(lanes.len()) =>
+        {
+            Some(value.clone())
+        }
         _ => None,
     }
 }
@@ -3897,31 +3898,24 @@ fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
 /// (`Int`, `UInt`, `Bool`, or an integral or `bool` vector) folds: a float
 /// may be NaN.
 fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
-    use mojito_types::types::{SimdDtype, SimdWidth};
     let holds = match op {
         InfixOp::Eq | InfixOp::Le | InfixOp::Ge => true,
         InfixOp::Ne | InfixOp::Lt | InfixOp::Gt => false,
         _ => return None,
     };
-    let int_like = match operand.kind() {
-        TyKind::INT | TyKind::UINT | TyKind::Bool | TyKind::IntLiteral => true,
-        TyKind::Simd {
-            dtype: SimdDtype::Known(dtype),
-            ..
-        } => !dtype.is_float(),
-        _ => false,
-    };
+    let int_like = matches!(operand.kind(), TyKind::Bool | TyKind::IntLiteral)
+        || operand
+            .as_simd()
+            .and_then(|(dtype, _)| dtype.known())
+            .is_some_and(|dtype| !dtype.is_float());
     if !int_like {
         return None;
     }
     match dest.kind() {
         TyKind::Bool => Some(CtValue::Bool(holds)),
-        TyKind::Simd {
-            dtype: SimdDtype::Known(Dtype::Bool),
-            width: SimdWidth::Known(width),
-        } => Some(CtValue::Simd {
+        kind if let Some((Dtype::Bool, width)) = kind.known_simd() => Some(CtValue::Simd {
             dtype: Dtype::Bool,
-            lanes: vec![mojito_types::ct::CtLane::Bool(holds); usize::try_from(*width).ok()?],
+            lanes: vec![mojito_types::ct::CtLane::Bool(holds); usize::try_from(width).ok()?],
         }),
         _ => None,
     }
@@ -3931,8 +3925,10 @@ fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
 /// defined by, when `ty` names `value`'s kind.
 fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
     match (value, ty.kind()) {
-        (CtValue::Int(value), TyKind::INT) => Some(Const::Int(value)),
-        (CtValue::Float(bits), TyKind::FLOAT64) => Some(Const::Float(f64::from_bits(bits))),
+        (CtValue::Int(value), kind) if kind.is_int() => Some(Const::Int(value)),
+        (CtValue::Float(bits), kind) if kind.is_float64() => {
+            Some(Const::Float(f64::from_bits(bits)))
+        }
         (CtValue::Bool(value), TyKind::Bool | TyKind::I1) => Some(Const::Bool(value)),
         (CtValue::IntLiteral(value), TyKind::IntLiteral) => Some(Const::IntLiteral(value)),
         (CtValue::FloatLiteral(value), TyKind::FloatLiteral) => Some(Const::FloatLiteral(value)),
@@ -4191,12 +4187,7 @@ mod tests {
 
     #[test]
     fn forwarded_operand_folds_only_an_identity_copy() {
-        let lane = |width| {
-            Ty::new(TyKind::Simd {
-                dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
-                width: mojito_types::types::SimdWidth::Known(width),
-            })
-        };
+        let lane = |width| mojito_types::types::canonical_simd_ty(Dtype::Int32, width);
         let param = Ty::new(TyKind::Param {
             binder: mojito_types::param_expr::ParamRef::unbound("T"),
             bounds: Vec::new(),
@@ -4269,10 +4260,7 @@ mod tests {
             };
         let struct_ty = |name: &str| Ty::new(TyKind::Struct(name.into(), Vec::new()));
         let unconditional = || vec![GenericConstraint::Bool(true)];
-        let lanes = Ty::new(TyKind::Simd {
-            dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
-            width: mojito_types::types::SimdWidth::Known(4),
-        });
+        let lanes = mojito_types::types::canonical_simd_ty(Dtype::Int32, 4);
         let string = struct_ty("String");
         let trivial = "TrivialRegisterPassable";
         let mut declarations = MirDeclarations {
@@ -4655,8 +4643,8 @@ mod tests {
                 InfixOp::Add,
                 Const::Int(i64::MAX),
                 Const::Int(1),
-                TyKind::INT.clone(),
-                TyKind::INT.clone()
+                Ty::int().kind().clone(),
+                Ty::int().kind().clone()
             ),
             Some(Const::Int(i64::MIN))
         ));
@@ -4665,8 +4653,8 @@ mod tests {
                 InfixOp::Div,
                 Const::Int(-7),
                 Const::Int(2),
-                TyKind::INT.clone(),
-                TyKind::INT.clone()
+                Ty::int().kind().clone(),
+                Ty::int().kind().clone()
             ),
             Some(Const::Int(-3))
         ));
@@ -4675,15 +4663,15 @@ mod tests {
             (InfixOp::Shl, Const::Int(1), Const::Int(64)),
             (InfixOp::Div, Const::Int(7), Const::Int(0)),
         ] {
-            assert!(binary(op, a, b, TyKind::INT.clone(), TyKind::INT.clone()).is_none());
+            assert!(binary(op, a, b, Ty::int().kind().clone(), Ty::int().kind().clone()).is_none());
         }
         assert!(
             binary(
                 InfixOp::Add,
                 Const::Int(1),
                 Const::Int(2),
-                TyKind::UINT.clone(),
-                TyKind::UINT.clone()
+                Ty::uint().kind().clone(),
+                Ty::uint().kind().clone()
             )
             .is_none()
         );
@@ -4705,7 +4693,7 @@ mod tests {
                 InfixOp::Lt,
                 nan.clone(),
                 nan,
-                TyKind::FLOAT64.clone(),
+                Ty::float64().kind().clone(),
                 TyKind::Bool
             ),
             Some(Const::Bool(false))
@@ -4720,16 +4708,16 @@ mod tests {
                 InfixOp::Add,
                 param.clone(),
                 param,
-                TyKind::INT.clone(),
-                TyKind::INT.clone()
+                Ty::int().kind().clone(),
+                Ty::int().kind().clone()
             )
             .is_none()
         );
 
         let reg_types = HashMap::from([
-            (0, ty(TyKind::INT.clone())),
-            (1, ty(TyKind::INT.clone())),
-            (2, ty(TyKind::INT.clone())),
+            (0, ty(Ty::int().kind().clone())),
+            (1, ty(Ty::int().kind().clone())),
+            (2, ty(Ty::int().kind().clone())),
         ]);
         let ones = |_: Reg| Some(Const::Int(1));
         let raising = MirInstr::BinOp {
@@ -4739,7 +4727,7 @@ mod tests {
             b: Reg(1),
             resolved: None,
             raises: Some(Raises {
-                ty: ty(TyKind::INT.clone()),
+                ty: ty(Ty::int().kind().clone()),
                 flag: Reg(3),
                 error: Reg(4),
             }),
@@ -4784,11 +4772,11 @@ mod tests {
             )
         };
         assert!(matches!(
-            materialize(TyKind::INT.clone()),
+            materialize(Ty::int().kind().clone()),
             Some(Const::Int(i64::MIN))
         ));
         assert!(matches!(
-            materialize(TyKind::UINT.clone()),
+            materialize(Ty::uint().kind().clone()),
             Some(Const::Value(CtValue::UInt(value))) if value == 1 << 63
         ));
 
@@ -4819,7 +4807,11 @@ mod tests {
             (Some(Const::Value(a)), Const::Value(b)) if a == b
         ));
         assert!(matches!(
-            materialize_into(literal(-1), TyKind::IntLiteral, ty(TyKind::UINT.clone())),
+            materialize_into(
+                literal(-1),
+                TyKind::IntLiteral,
+                ty(Ty::uint().kind().clone())
+            ),
             Some(Const::Value(CtValue::UInt(u64::MAX)))
         ));
         let tenth =
@@ -4850,8 +4842,8 @@ mod tests {
                 InfixOp::Add,
                 uint.clone(),
                 uint.clone(),
-                TyKind::UINT.clone(),
-                TyKind::UINT.clone()
+                Ty::uint().kind().clone(),
+                Ty::uint().kind().clone()
             ),
             Some(Const::Value(CtValue::UInt(2)))
         ));
@@ -4860,8 +4852,8 @@ mod tests {
                 InfixOp::FloorDiv,
                 Const::Value(CtValue::UInt(7)),
                 Const::Value(CtValue::UInt(0)),
-                TyKind::UINT.clone(),
-                TyKind::UINT.clone()
+                Ty::uint().kind().clone(),
+                Ty::uint().kind().clone()
             )
             .is_none()
         );
@@ -4966,8 +4958,10 @@ mod tests {
         };
         assert_eq!(make(1), Some(vec![CtLane::Int(7)]));
         assert_eq!(make(4), Some(vec![CtLane::Int(7); 4]));
-        let reg_types =
-            HashMap::from([(0, ty(TyKind::UINT.clone())), (1, ty(TyKind::UINT.clone()))]);
+        let reg_types = HashMap::from([
+            (0, ty(Ty::uint().kind().clone())),
+            (1, ty(Ty::uint().kind().clone())),
+        ]);
         assert!(matches!(
             MirInstr::CopyValue {
                 dest: Reg(1),
@@ -4983,10 +4977,8 @@ mod tests {
     fn folded_constant_folds_a_self_comparison_of_int_like_values() {
         use mojito_types::ct::CtLane;
         use mojito_types::types::{SimdDtype, SimdWidth};
-        let simd = |dtype, width| TyKind::Simd {
-            dtype: SimdDtype::Known(dtype),
-            width: SimdWidth::Known(width),
-        };
+        let simd = |dtype, width| TyKind::simd(SimdDtype::Known(dtype), SimdWidth::Known(width));
+
         let compare = |op, operand: TyKind, dest: TyKind| {
             let reg_types = HashMap::from([(0, Ty::new(operand)), (1, Ty::new(dest))]);
             MirInstr::BinOp {
@@ -5008,7 +5000,11 @@ mod tests {
             (InfixOp::Ge, true),
             (InfixOp::Eq, true),
         ] {
-            for operand in [TyKind::INT.clone(), TyKind::UINT.clone(), TyKind::Bool] {
+            for operand in [
+                Ty::int().kind().clone(),
+                Ty::uint().kind().clone(),
+                TyKind::Bool,
+            ] {
                 assert!(matches!(
                     compare(op, operand, TyKind::Bool),
                     Some(Const::Bool(value)) if value == holds
@@ -5019,10 +5015,17 @@ mod tests {
                 Some(Const::Value(CtValue::Simd { dtype: Dtype::Bool, lanes }))
                     if lanes == vec![CtLane::Bool(holds); 4]
             ));
-            assert!(compare(op, TyKind::FLOAT64.clone(), TyKind::Bool).is_none());
+            assert!(compare(op, Ty::float64().kind().clone(), TyKind::Bool).is_none());
             assert!(compare(op, simd(Dtype::Float32, 4), simd(Dtype::Bool, 4)).is_none());
         }
-        assert!(compare(InfixOp::Add, TyKind::INT.clone(), TyKind::INT.clone()).is_none());
+        assert!(
+            compare(
+                InfixOp::Add,
+                Ty::int().kind().clone(),
+                Ty::int().kind().clone()
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -5080,7 +5083,7 @@ mod tests {
             Some(vec![CtLane::Bool(true); 4])
         );
         assert!(splat(Const::Bool(true), bool_ty, Dtype::Bool, 1).is_none());
-        let int = Ty::new(TyKind::INT.clone());
+        let int = Ty::new(Ty::int().kind().clone());
         assert_eq!(
             lanes_of(splat(Const::Int(300), int.clone(), Dtype::UInt8, 1)),
             Some(vec![CtLane::Int(44)])
@@ -5214,7 +5217,7 @@ mod tests {
         assert!(
             make(
                 vec![
-                    some(Const::Int(7), TyKind::INT.clone()),
+                    some(Const::Int(7), Ty::int().kind().clone()),
                     some(literal(2).0, TyKind::IntLiteral)
                 ],
                 Dtype::Int32,
@@ -5242,7 +5245,11 @@ mod tests {
             .folded_constant(|_| Some(operand.clone()), &reg_types, &none)
         };
         assert!(matches!(
-            conversion(ScalarConversion::UInt, Const::Int(7), TyKind::INT.clone()),
+            conversion(
+                ScalarConversion::UInt,
+                Const::Int(7),
+                Ty::int().kind().clone()
+            ),
             Some(Const::Value(CtValue::UInt(7)))
         ));
         assert!(matches!(
@@ -5257,7 +5264,7 @@ mod tests {
             conversion(
                 ScalarConversion::Int,
                 Const::Float(1e30),
-                TyKind::FLOAT64.clone()
+                Ty::float64().kind().clone()
             )
             .is_none()
         );

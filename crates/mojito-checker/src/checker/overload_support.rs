@@ -873,9 +873,8 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
         )
     {
         0
-    } else if matches!(actual.kind(), TyKind::IntLiteral) && matches!(expected.kind(), TyKind::INT)
-        || matches!(actual.kind(), TyKind::FloatLiteral)
-            && matches!(expected.kind(), TyKind::FLOAT64)
+    } else if matches!(actual.kind(), TyKind::IntLiteral) && expected.is_int()
+        || matches!(actual.kind(), TyKind::FloatLiteral) && expected.is_float64()
     {
         1
     } else if matches!(actual.kind(), TyKind::StringLiteral(_))

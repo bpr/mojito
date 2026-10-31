@@ -2058,17 +2058,17 @@ impl Checker {
             TyKind::Struct(name, args) => self.struct_trait_conformance(ty, name, args, tr),
             // A `SIMD` answers a trait its declaration lists as the struct it
             // is; the traits `std.simd` does not declare yet keep the model.
-            TyKind::Simd { .. }
-                if let Some((name, args)) = self.nominal_struct(ty)
-                    && matches!(
-                        struct_trait_rule(tr, self.traits.contains_key(tr)),
-                        StructTraitRule::Declared
-                    )
-                    && self.structs.get(name).is_some_and(|info| {
-                        info.conforms
-                            .iter()
-                            .any(|declared| self.trait_implies(declared, tr))
-                    }) =>
+            simd if simd.is_simd()
+                && let Some((name, args)) = self.nominal_struct(ty)
+                && matches!(
+                    struct_trait_rule(tr, self.traits.contains_key(tr)),
+                    StructTraitRule::Declared
+                )
+                && self.structs.get(name).is_some_and(|info| {
+                    info.conforms
+                        .iter()
+                        .any(|declared| self.trait_implies(declared, tr))
+                }) =>
             {
                 self.struct_conformance(name, &args, tr)
             }
@@ -2512,10 +2512,8 @@ impl Checker {
         let mut fieldwise = Some(capability?);
         for (_, field_ty) in &info.fields {
             let decided = if mojito_types::types::is_symbolic(field_ty) {
-                (matches!(
-                    field_ty.kind(),
-                    TyKind::Simd { .. } | TyKind::Pointer { .. }
-                ) && self.is_trivially(kind, field_ty))
+                ((field_ty.is_simd() || matches!(field_ty.kind(), TyKind::Pointer { .. }))
+                    && self.is_trivially(kind, field_ty))
                 .then_some(true)
             } else {
                 Some(self.is_trivially(kind, field_ty))

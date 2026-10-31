@@ -4333,10 +4333,10 @@ impl<'a> Flatten<'a> {
         if displays.is_empty() {
             return None;
         }
-        if !matches!(
-            expression.ty().as_ref().map(Ty::kind),
-            Some(TyKind::INT | TyKind::IntLiteral | TyKind::Bool)
-        ) {
+        if !expression
+            .ty()
+            .is_some_and(|ty| ty.is_int() || matches!(ty.kind(), TyKind::IntLiteral | TyKind::Bool))
+        {
             for display in &displays {
                 self.build_display(display);
             }
@@ -5249,11 +5249,11 @@ fn close_register_types(
                         dest,
                         reg_types.get(&base.0).and_then(|base| match base.kind() {
                             TyKind::Pointer { element, .. } => Some(element.clone()),
-                            TyKind::Simd { dtype, .. } => Some(
-                                TyKind::Simd {
-                                    dtype: dtype.clone(),
-                                    width: mojito_types::types::SimdWidth::Known(1),
-                                }
+                            kind if let Some((dtype, _)) = kind.as_simd() => Some(
+                                TyKind::simd(
+                                    dtype.clone(),
+                                    mojito_types::types::SimdWidth::Known(1),
+                                )
                                 .into(),
                             ),
                             // A tuple element type needs the compile-time
@@ -5327,17 +5327,17 @@ fn close_register_types(
                     MirInstr::SimdShuffle {
                         dest, value, mask, ..
                     } => {
-                        let dtype = match reg_types.get(&value.0).map(Ty::kind) {
-                            Some(TyKind::Simd { dtype, .. }) => Some(dtype.clone()),
-                            _ => None,
-                        };
+                        let dtype = reg_types
+                            .get(&value.0)
+                            .and_then(|ty| ty.as_simd())
+                            .map(|(dtype, _)| dtype.clone());
                         Some((
                             dest,
                             dtype.zip(mask.known()).map(|(dtype, mask)| {
-                                TyKind::Simd {
+                                TyKind::simd(
                                     dtype,
-                                    width: mojito_types::types::SimdWidth::Known(mask.len() as i64),
-                                }
+                                    mojito_types::types::SimdWidth::Known(mask.len() as i64),
+                                )
                                 .into()
                             }),
                         ))
@@ -5349,11 +5349,11 @@ fn close_register_types(
                     | MirInstr::SimdReduce { dest, value, .. } => Some((
                         dest,
                         reg_types.get(&value.0).and_then(|ty| match ty.kind() {
-                            TyKind::Simd { dtype, .. } => Some(
-                                TyKind::Simd {
-                                    dtype: dtype.clone(),
-                                    width: mojito_types::types::SimdWidth::Known(1),
-                                }
+                            kind if let Some((dtype, _)) = kind.as_simd() => Some(
+                                TyKind::simd(
+                                    dtype.clone(),
+                                    mojito_types::types::SimdWidth::Known(1),
+                                )
                                 .into(),
                             ),
                             _ => None,

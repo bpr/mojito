@@ -182,10 +182,10 @@ impl FnLowering<'_> {
         // resolved instead.
         if resolved.is_none()
             && let Some(recv_ty) = self.func.reg_types.get(&recv.0).cloned()
-            && matches!(
-                recv_ty.kind(),
-                TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::IntLiteral
-            )
+            && (recv_ty.is_int()
+                || recv_ty.is_uint()
+                || recv_ty.is_float64()
+                || matches!(recv_ty.kind(), TyKind::IntLiteral))
         {
             match (method, args.len()) {
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {

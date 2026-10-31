@@ -150,7 +150,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     }
                     // A bound vector type is concrete (the elaborator binds
                     // no symbolic slot), so a symbolic one is left as it is.
-                    TyKind::Simd { dtype, width } => {
+                    kind if let Some((dtype, width)) = kind.as_simd() => {
                         if let (Some(mut dtype), Some(mut width)) = (
                             dtype
                                 .known()
@@ -221,7 +221,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                         };
                         return;
                     }
-                    TyKind::Simd { dtype, width } => {
+                    kind if let Some((dtype, width)) = kind.as_simd() => {
                         let Some(dtype) = dtype
                             .known()
                             .and_then(|dtype| CtValue::Dtype(dtype).materialize(e.span))
@@ -2041,7 +2041,7 @@ fn pack_element_default_construction(
 fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr> {
     // A SIMD element default-constructs to zero lanes: the checker accepts one
     // lane to splat, not a nullary construction, so spell the zero explicitly.
-    if let (TyKind::Simd { dtype, .. }, Type::Named(name, arguments)) = (semantic.kind(), ty) {
+    if let (Some((dtype, _)), Type::Named(name, arguments)) = (semantic.as_simd(), ty) {
         let zero = match dtype.known() {
             Some(mojito_ast::ast::Dtype::Bool) => ExprKind::Bool(false),
             Some(dtype) if dtype.is_float() => ExprKind::Float(0.0.into()),

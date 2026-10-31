@@ -317,7 +317,7 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
 pub fn member_table_name(ty: &Ty) -> Option<Cow<'_, str>> {
     match ty.kind() {
         TyKind::Struct(name, _) => Some(Cow::Borrowed(name)),
-        kind @ TyKind::Simd { .. } => {
+        kind if kind.is_simd() => {
             let (dtype, width) = mojito_types::types::simd_shape(kind)?;
             let arguments =
                 mojito_types::types::simd_struct_arguments(canonical_simd_ty(dtype, width).kind())?
@@ -1450,9 +1450,9 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // is; an instance argument materializes the literal.
         TyKind::IntLiteral if mode == KeyMode::Overload => "IntLiteral".to_string(),
         TyKind::FloatLiteral if mode == KeyMode::Overload => "FloatLiteral".to_string(),
-        TyKind::INT | TyKind::IntLiteral => "Int".to_string(),
-        TyKind::UINT => "UInt".to_string(),
-        TyKind::FLOAT64 | TyKind::FloatLiteral => "Float64".to_string(),
+        kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => "Int".to_string(),
+        kind if kind.is_uint() => "UInt".to_string(),
+        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => "Float64".to_string(),
         TyKind::Bool => "Bool".to_string(),
         TyKind::StringLiteral(None) => "StringLiteral".to_string(),
         // A literal whose type carries its value spells as the application
@@ -3337,8 +3337,10 @@ struct TypeNameSpeller<'a> {
 
 impl TypeNameSpeller<'_> {
     fn name(&self, ty: &Ty) -> String {
+        if let Some((dtype, width)) = ty.as_simd() {
+            return self.simd(dtype, width);
+        }
         match ty.kind() {
-            TyKind::Simd { dtype, width } => self.simd(dtype, width),
             TyKind::IntLiteral => self.simd(&"DType.int", &1),
             TyKind::FloatLiteral => self.simd(&"DType.float64", &1),
             TyKind::Bool => self.qualify("std.builtin.bool", "Bool"),
@@ -3463,7 +3465,10 @@ impl TypeNameSpeller<'_> {
 /// name, without module or parameters.
 fn reflected_base_name(ty: &Ty) -> String {
     match ty.kind() {
-        TyKind::Simd { .. } | TyKind::IntLiteral | TyKind::FloatLiteral => "SIMD",
+        kind if kind.is_simd() || matches!(kind, TyKind::IntLiteral | TyKind::FloatLiteral) => {
+            "SIMD"
+        }
+
         TyKind::Bool => "Bool",
         TyKind::None => "NoneType",
         TyKind::Dtype => "DType",

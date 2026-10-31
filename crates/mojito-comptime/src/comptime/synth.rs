@@ -538,7 +538,7 @@ pub(super) fn fold_simd_alias_bounds(
 ) {
     let imported = |name: &str| {
         let ty = installed?.type_alias(name)?;
-        if !matches!(*ty.kind(), TyKind::Simd { .. }) {
+        if !ty.is_simd() {
             return None;
         }
         match source_type_from_ty(ty)? {

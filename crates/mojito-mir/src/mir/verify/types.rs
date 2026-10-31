@@ -268,9 +268,8 @@ fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
 /// Whether `actual` fits the vector `pattern` when one of the pattern's
 /// slots is symbolic; `None` when the pattern is not such a vector.
 fn symbolic_simd_compatible(pattern: &Ty, actual: &Ty) -> Option<bool> {
-    let TyKind::Simd { dtype, width } = pattern.kind() else {
-        return None;
-    };
+    let (dtype, width) = pattern.as_simd()?;
+
     if !dtype.is_symbolic() && !width.is_symbolic() {
         return None;
     }
@@ -781,9 +780,9 @@ mod tests {
         // A symbolic lane width crosses as a parameter expression; a hole
         // in it is the same boundary error as anywhere else.
         let symbolic = |width: mojito_types::param_expr::ParamExpr| {
-            Ty::new(TyKind::Simd {
-                dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                width: mojito_types::types::SimdWidth::Expr(
+            Ty::new(TyKind::simd(
+                mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+                mojito_types::types::SimdWidth::Expr(
                     mojito_types::types::simd_length_converted(
                         &context,
                         "SIMDLength.__init__$ov$Int",
@@ -791,7 +790,7 @@ mod tests {
                     )
                     .expect("an Int converts"),
                 ),
-            })
+            ))
         };
         assert!(
             super::super::calls::validate_dependent_bindings(&symbolic(context.decl_ref(

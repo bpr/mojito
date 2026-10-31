@@ -2147,8 +2147,8 @@ fn result_adapter_value(value: CheckedResultAdapter) -> String {
 
 fn ty_value(ty: &Ty) -> String {
     match ty.kind() {
-        TyKind::INT => "Int".into(),
-        TyKind::UINT => "UInt".into(),
+        kind if kind.is_int() => "Int".into(),
+        kind if kind.is_uint() => "UInt".into(),
         TyKind::Bool => "Bool".into(),
         TyKind::StringLiteral(None) => "StringLiteral".into(),
         // A literal whose type carries its value is spelled as the struct
@@ -2165,7 +2165,7 @@ fn ty_value(ty: &Ty) -> String {
                 )
             },
         ),
-        TyKind::FLOAT64 => "Float64".into(),
+        kind if kind.is_float64() => "Float64".into(),
         TyKind::None => "None".into(),
         TyKind::Never => "Never".into(),
         TyKind::IntLiteral => "IntLiteral".into(),

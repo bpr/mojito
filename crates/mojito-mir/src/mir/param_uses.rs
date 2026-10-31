@@ -298,22 +298,19 @@ pub fn method_owner_params<'a>(
 
 /// A compiler-known scalar, whose drop runs no code.
 pub fn has_no_destructor(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::INT
-            | TyKind::UINT
-            | TyKind::Bool
-            | TyKind::FLOAT64
-            | TyKind::StringLiteral(_)
-            | TyKind::None
-            | TyKind::IntLiteral
-            | TyKind::FloatLiteral
-            | TyKind::Dtype
-            | TyKind::Index
-            | TyKind::I1
-            | TyKind::Simd { .. }
-            | TyKind::KgenSimd { .. }
-    )
+    ty.is_simd()
+        || matches!(
+            ty.kind(),
+            TyKind::Bool
+                | TyKind::StringLiteral(_)
+                | TyKind::None
+                | TyKind::IntLiteral
+                | TyKind::FloatLiteral
+                | TyKind::Dtype
+                | TyKind::Index
+                | TyKind::I1
+                | TyKind::KgenSimd { .. }
+        )
 }
 
 /// `function`, the body of `name`, with every call dropping the arguments of the callee's

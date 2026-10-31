@@ -218,9 +218,13 @@ fn default_construction<S: BuildHasher>(
     declarations: &MirDeclarations,
 ) -> Result<Vec<MirInstr>, TypeConstructionError> {
     let zero = match ty.kind() {
-        TyKind::INT | TyKind::IntLiteral | TyKind::UINT => Some(Const::Int(0)),
+        kind if kind.is_int() || kind.is_uint() || matches!(kind, TyKind::IntLiteral) => {
+            Some(Const::Int(0))
+        }
         TyKind::Bool => Some(Const::Bool(false)),
-        TyKind::FLOAT64 | TyKind::FloatLiteral => Some(Const::Float(0.0)),
+        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => {
+            Some(Const::Float(0.0))
+        }
         // A literal's type names its one value, as upstream's empty
         // `StringLiteral[value]` struct does.
         kind @ TyKind::StringLiteral(_) => Some(Const::Str(
@@ -233,7 +237,7 @@ fn default_construction<S: BuildHasher>(
         return Ok(vec![MirInstr::Const { dest, k }]);
     }
     match ty.kind() {
-        TyKind::Simd { dtype, width } => {
+        kind if let Some((dtype, width)) = kind.as_simd() => {
             let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
                 return Err(TypeConstructionError::OpenVector(ty.clone()));
             };

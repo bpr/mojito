@@ -703,8 +703,7 @@ impl Literal {
                 (Const::FloatLiteral(value.clone()), None)
             }
             (CheckedConst::Float(value), _)
-                if matches!(ty.kind(), TyKind::FLOAT64)
-                    || scalar_simd_dtype(ty).is_some_and(Dtype::is_float) =>
+                if ty.is_float64() || scalar_simd_dtype(ty).is_some_and(Dtype::is_float) =>
             {
                 (
                     Const::FloatLiteral(value.clone()),

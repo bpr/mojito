@@ -863,10 +863,7 @@ impl Checker {
                 "{UNTYPED_ELEMENT} does not conform to 'Sized'"
             )));
         }
-        if matches!(
-            subject.ty.kind(),
-            TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Simd { .. }
-        ) {
+        if subject.ty.is_simd() {
             return Err(TypeError::Unsupported(format!(
                 "a sequence pattern over '{}'",
                 subject.ty

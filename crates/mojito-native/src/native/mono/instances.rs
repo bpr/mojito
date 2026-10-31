@@ -298,9 +298,7 @@ impl Specializer<'_> {
         ty: &Ty,
         method: &str,
     ) -> Result<(), MonoError> {
-        if mojito_types::types::simd_shape(ty.kind()).is_some()
-            && matches!(ty.kind(), TyKind::Simd { .. })
-        {
+        if mojito_types::types::simd_shape(ty.kind()).is_some() && ty.is_simd() {
             return self.enqueue_simd_format_instance(owner, ty, method);
         }
         let TyKind::Struct(name, arguments) = ty.kind() else {

@@ -542,9 +542,9 @@ mod tests {
                     "Arr",
                     value_decl("Arr", "n"),
                     vec![
-                        TyKind::Simd {
-                            dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int64),
-                            width: SimdWidth::Expr(
+                        TyKind::simd(
+                            SimdDtype::Known(mojito_ast::ast::Dtype::Int64),
+                            SimdWidth::Expr(
                                 mojito_types::types::simd_length_converted(
                                     &ParamContext::detached(),
                                     "SIMDLength.__init__$ov$Int",
@@ -552,7 +552,7 @@ mod tests {
                                 )
                                 .expect("an Int converts"),
                             ),
-                        }
+                        )
                         .into(),
                     ],
                 ),

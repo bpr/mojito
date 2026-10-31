@@ -469,7 +469,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         // against a four-lane vector); a compound expression (`2 * n`) is
         // bound from the call's recorded arguments, as the pin binds it from
         // the brackets, and only its evaluation is compared.
-        TyKind::Simd { dtype, width } => {
+        kind if let Some((dtype, width)) = kind.as_simd() => {
             let Some((actual_dtype, actual_width)) = mojito_types::types::simd_slots(actual) else {
                 return Err(format!("expected `{pattern}`, found `{actual}`"));
             };

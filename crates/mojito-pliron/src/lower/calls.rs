@@ -96,7 +96,7 @@ impl FnLowering<'_> {
         if mojito_symbol::symbol::is_initializer_symbol(name)
             && !params.is_empty()
             && let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned()
-            && matches!(struct_ty.kind(), TyKind::Struct(..) | TyKind::Simd { .. })
+            && (matches!(struct_ty.kind(), TyKind::Struct(..)) || struct_ty.is_simd())
         {
             // A receiver held as a scalar (a one-lane `SIMD`) is read back
             // from that storage.

@@ -709,10 +709,7 @@ impl Checker {
                     SourceType::SelfParam(name) => {
                         let base = match &self.self_ty {
                             Some(ty)
-                                if matches!(
-                                    ty.kind(),
-                                    TyKind::Struct(..) | TyKind::Simd { .. }
-                                ) =>
+                                if (ty.is_simd() || matches!(ty.kind(), TyKind::Struct(..))) =>
                             {
                                 ty.clone()
                             }
@@ -2152,11 +2149,15 @@ impl Checker {
             // A symbolic lane dtype or width closes under the use's bindings
             // and re-canonicalizes: `Scalar[dt]` at `dt = DType.float64` is
             // `Float64`.
-            TyKind::Simd { .. }
-            | TyKind::KgenSimd { .. }
-            | TyKind::StringLiteral(Some(_))
-            | TyKind::PopArray { .. }
-                if !parameters.is_empty() && mojito_types::types::is_symbolic(ty) =>
+            kind if (kind.is_simd()
+                || matches!(
+                    kind,
+                    TyKind::KgenSimd { .. }
+                        | TyKind::StringLiteral(Some(_))
+                        | TyKind::PopArray { .. }
+                ))
+                && !parameters.is_empty()
+                && mojito_types::types::is_symbolic(ty) =>
             {
                 let context = &self.param_context;
                 let bindings =
@@ -2386,7 +2387,7 @@ impl Checker {
             }
             .into()),
             // A vector's `!kgen.simd` storage type, its `_mlir_value`'s.
-            TyKind::Simd { .. } if name == "_mlir_type" && args.is_empty() => {
+            kind if kind.is_simd() && name == "_mlir_type" && args.is_empty() => {
                 Ok(mojito_types::types::simd_storage(base).unwrap_or_else(|| base.clone()))
             }
             // A pointer's raw MLIR types: the `!kgen.pointer` it wraps and
@@ -2403,12 +2404,12 @@ impl Checker {
                 .into())
             }
             // A member alias `SIMD` declares, over the vector's parameters.
-            TyKind::Simd { .. }
-                if let Some((sname, targs)) = self.nominal_struct(base)
-                    && self.structs.get(sname).is_some_and(|info| {
-                        info.associated.contains_key(name)
-                            || info.parameterized_associated.contains_key(name)
-                    }) =>
+            kind if kind.is_simd()
+                && let Some((sname, targs)) = self.nominal_struct(base)
+                && self.structs.get(sname).is_some_and(|info| {
+                    info.associated.contains_key(name)
+                        || info.parameterized_associated.contains_key(name)
+                }) =>
             {
                 self.declared_associated_type(base, sname, &targs, name, args)
             }
@@ -2731,7 +2732,9 @@ impl Checker {
                     rebuilt
                 }
             }
-            TyKind::Dependent(_) | TyKind::Simd { .. } => self.answer_concrete_members(ty),
+            kind if kind.is_simd() || matches!(kind, TyKind::Dependent(_)) => {
+                self.answer_concrete_members(ty)
+            }
             TyKind::ComptimeList(elem) => TyKind::ComptimeList(self.resolve_assoc_ty(elem)).into(),
             TyKind::ParamList(elem) => TyKind::ParamList(self.resolve_assoc_ty(elem)).into(),
             TyKind::Tuple(elems) => {
@@ -4190,7 +4193,10 @@ impl Checker {
     /// width hole takes the initializer's lane count the same way.
     pub(super) fn bind_unbound_tails(declared: &Ty, found: &Ty) -> Ty {
         match (declared.kind(), found.kind()) {
-            (TyKind::Simd { dtype, width }, _) if width.is_inferred() => {
+            (kind, _)
+                if let Some((dtype, width)) = kind.as_simd()
+                    && width.is_inferred() =>
+            {
                 mojito_types::types::simd_slots(found)
                     .filter(|(_, found_width)| !found_width.is_expr())
                     .and_then(|(_, found_width)| {

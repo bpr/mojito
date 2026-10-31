@@ -1247,10 +1247,7 @@ impl Checker {
             return None;
         }
         match self.ty_value_from_name(name, &[]).ok().flatten()? {
-            CtValue::Type(ty) => match *ty.kind() {
-                TyKind::Simd { .. } => mojito_types::types::simd_shape(&ty),
-                _ => None,
-            },
+            CtValue::Type(ty) => ty.known_simd(),
             _ => None,
         }
     }
@@ -1305,7 +1302,7 @@ impl Checker {
         let context = &self.param_context;
         let lane_needs_scalar =
             || TypeError::NotComptime(format!("a {vector} lane needs a compile-time scalar"));
-        let TyKind::Simd { dtype, .. } = vector.kind() else {
+        let Some((dtype, _)) = vector.as_simd() else {
             return Err(lane_needs_scalar());
         };
         let scalar = mojito_types::types::simd_ty_from_slots(dtype.clone(), SimdWidth::Known(1))
@@ -1331,9 +1328,7 @@ impl Checker {
         value: &CtValue,
         ty: &Ty,
     ) -> Option<Result<ParamExpr, TypeError>> {
-        let TyKind::Simd { dtype, .. } = ty.kind() else {
-            return None;
-        };
+        let (dtype, _) = ty.as_simd()?;
         let literal = match value {
             CtValue::IntLiteral(_) => TyKind::IntLiteral,
             CtValue::FloatLiteral(_) => TyKind::FloatLiteral,
@@ -1373,7 +1368,7 @@ impl Checker {
                 _ => return None,
             },
         };
-        if !matches!(vector.kind(), TyKind::Simd { .. }) {
+        if !vector.is_simd() {
             return None;
         }
         match self.ct_value(argument, recording) {
@@ -1844,16 +1839,15 @@ impl Checker {
             } if kwargs.is_empty()
                 && param_args.is_empty()
                 && args.len() == 1
-                && matches!(
-                    scalar_type_name(name).as_ref().map(Ty::kind),
-                    Some(TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Bool)
-                ) =>
+                && scalar_type_name(name).is_some_and(|ty| {
+                    ty.is_int() || ty.is_uint() || ty.is_float64() || *ty == TyKind::Bool
+                }) =>
             {
                 let target = scalar_type_name(name).expect("guard established a scalar type");
                 let operand = build(&args[0])?;
                 // `Int(m)` of a `SIMDLength` is its lane count: upstream's
                 // builtin `SIMD.__init__(SIMDLength)` folded.
-                if is_simd_length_value(&operand) && matches!(target.kind(), TyKind::INT) {
+                if is_simd_length_value(&operand) && target.is_int() {
                     return mojito_types::types::simd_length_image(context, &operand)
                         .map_err(param_error);
                 }
@@ -2215,7 +2209,7 @@ impl Checker {
             built
                 .meta()
                 .as_value()
-                .is_some_and(|ty| matches!(ty.kind(), TyKind::Simd { .. } | TyKind::IntLiteral))
+                .is_some_and(|ty| ty.is_simd() || matches!(ty.kind(), TyKind::IntLiteral))
         };
         let right_built = if is_simd_length_value(&right_built) && numeric(&left_built) {
             mojito_types::types::simd_length_image(&self.param_context, &right_built)
@@ -2338,7 +2332,7 @@ impl Checker {
         let (left, right) = (operand(left)?, operand(right)?);
         let condition = match common.map(Ty::kind) {
             Some(TyKind::Bool) => left.clone(),
-            Some(TyKind::INT | TyKind::UINT | TyKind::Index) => {
+            Some(kind) if kind.is_int() || kind.is_uint() || matches!(kind, TyKind::Index) => {
                 let zero = CtValue::IntLiteral(0.into())
                     .materialize_as(common.ok_or_else(unsupported)?)
                     .ok_or_else(unsupported)?;
@@ -2496,10 +2490,11 @@ impl Checker {
                     Some(CtValue::UInt(bits)) => self.ct_param(CtValue::Int(*bits as i64)).ok()?,
                     _ => value,
                 };
-                if !matches!(
-                    value.meta().as_value().map(Ty::kind),
-                    Some(TyKind::INT | TyKind::IntLiteral)
-                ) {
+                if !value
+                    .meta()
+                    .as_value()
+                    .is_some_and(|ty| ty.is_int() || *ty == TyKind::IntLiteral)
+                {
                     return None;
                 }
                 Some(
@@ -5723,10 +5718,7 @@ fn is_simd_length_value(value: &ParamExpr) -> bool {
 
 fn is_scalar_value(value: &ParamExpr) -> bool {
     value.meta().as_value().is_some_and(|ty| {
-        matches!(
-            ty.kind(),
-            TyKind::INT | TyKind::UINT | TyKind::Bool | TyKind::FLOAT64
-        )
+        ty.is_int() || ty.is_uint() || ty.is_float64() || matches!(ty.kind(), TyKind::Bool)
     })
 }
 

@@ -42,13 +42,11 @@ pub(in crate::mir) fn struct_operator_method(
 ) -> Option<&'static str> {
     crate::mir::operator_method(op).filter(|_| {
         receiver.ty().is_some_and(|ty| {
-            matches!(
-                ty.kind(),
-                TyKind::Struct(..)
-                    | TyKind::Simd { .. }
-                    | TyKind::IntLiteral
-                    | TyKind::FloatLiteral
-            )
+            ty.is_simd()
+                || matches!(
+                    ty.kind(),
+                    TyKind::Struct(..) | TyKind::IntLiteral | TyKind::FloatLiteral
+                )
         })
     })
 }
@@ -873,10 +871,12 @@ impl<'a> Flatten<'a> {
         // `Bool(x)` call so the negation is scalar on both backends.
         let ra = if op == PrefixOp::Not
             && value.ty().is_some_and(|ty| {
-                matches!(
-                    ty.kind(),
-                    TyKind::Struct(..) | TyKind::Simd { .. } | TyKind::StringLiteral(Some(_))
-                ) || mojito_types::conformance::is_numeric(&ty)
+                ty.is_simd()
+                    || matches!(
+                        ty.kind(),
+                        TyKind::Struct(..) | TyKind::StringLiteral(Some(_))
+                    )
+                    || mojito_types::conformance::is_numeric(&ty)
             }) {
             self.bool_conversion(value.location(), ra, value.ty().as_ref())
         } else {

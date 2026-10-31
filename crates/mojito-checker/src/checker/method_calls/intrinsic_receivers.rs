@@ -44,7 +44,7 @@ impl Checker {
         }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.
-        if matches!(obj_ty.kind(), TyKind::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if *ty == *TyKind::INT))
+        if matches!(obj_ty.kind(), TyKind::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if ty.is_int()))
             && !self.structs.contains_key("Optional")
         {
             return self.infer_raw_optional_method(site).map(Some);
@@ -73,8 +73,7 @@ impl Checker {
                 TyKind::Struct(name, targs)
                     if !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
             )
-            && !(matches!(receiver.kind(), TyKind::Simd { .. })
-                && self.declared_receiver_member(receiver, method).is_some())
+            && !(receiver.is_simd() && self.declared_receiver_member(receiver, method).is_some())
             && self.conforms_to(obj_ty, "Writable")
         {
             return self.infer_inverted_write(site).map(Some);

@@ -1700,7 +1700,7 @@ impl Checker {
     }
 
     pub(super) fn has_index_normalization(&self, expression: &Expr, expected: &Ty) -> bool {
-        *expected == *TyKind::INT
+        expected.is_int()
             && self
                 .node_facts
                 .borrow()
@@ -1763,7 +1763,7 @@ impl Checker {
                 || self
                     .implicit_conversion_target(&actual, &expected)?
                     .is_some();
-            accepts_int |= expected == *TyKind::INT;
+            accepts_int |= expected.is_int();
         }
         if !accepts_source && accepts_int {
             self.record_at(expression.source_span()).implicit_conversion = Some(target);
@@ -2340,17 +2340,11 @@ impl Checker {
     }
 }
 
-/// The lane dtype a `SIMD` type exposes as `dtype`, where `Int` and `Float64`
-/// are width-1 vectors and `UInt`'s `DType.uint` has no Mojito dtype. `None`
-/// for any other type: a `Bool` or a literal type has no `dtype`.
+/// The lane dtype a `SIMD` type exposes as `dtype`, `Int`, `UInt`, and
+/// `Float64` included. `None` for any other type: a `Bool` or a literal
+/// type has no `dtype`.
 pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<SimdDtype, TypeError>> {
-    match ty.kind() {
-        TyKind::INT => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Int))),
-        TyKind::FLOAT64 => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Float64))),
-        TyKind::UINT => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::UInt))),
-        TyKind::Simd { dtype, .. } => Some(Ok(dtype.clone())),
-        _ => None,
-    }
+    ty.as_simd().map(|(dtype, _)| Ok(dtype.clone()))
 }
 
 impl Checker {

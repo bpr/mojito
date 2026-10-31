@@ -3217,6 +3217,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Code outside `mojito-types` reads a `SIMD` type through `TyKind`'s accessors
+  (`as_simd`, `known_simd`, `as_held_simd`, `is_simd`, `is_int`, `is_uint`,
+  `is_float64`) rather than matching `TyKind::Simd` or `TyKind::INT`/`UINT`/
+  `FLOAT64`, so retiring the compiler's vector type (R1557, R1558) changes
+  those accessors, not every phase (R1556). No behavior changes.
+
 - `std.math.polynomial` stays unported (R1712): its `coefficients:
   Span[Scalar[dtype], _]` parameter binds a list display, which at the pin
   is an `Array` converted by `Span`'s `@implicit` `ref` constructor from
