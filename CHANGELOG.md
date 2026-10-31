@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An ordinary method applies at compile time with the struct value it is
+  called on as its receiver (R1643): `L(n).ord()` in a signature,
+  `Self.l.get()` in a struct method's return type, and a `comptime`
+  binding over a method call run as at the pin, on the VM and natively. A
+  `read` or `var self` takes the value, and a `ref self` takes it stored
+  in compile-time memory, as the pin's `store_to_mem(a)`. The package
+  format moves to `mojito-package 167`.
 - `List` declares upstream's constructor from an iterable (R1154):
   `List(xs[1:3])`, `List[Int](span)`, and `List(dict)` copy the elements
   into a new list, at the run time and the compile time, on the VM and

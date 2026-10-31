@@ -176,36 +176,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1691.
   - Model: Opus, Not Planned.
 
-- [ ] **R1643 A method taking `self` applies at compile time only when
-  builtin**
-
-  `applicable_declarations` (`checker/comptime_validation.rs`) lists a
-  method with `self` only when it is `@always_inline("builtin")` or
-  returns `!kgen.deferred`, so an ordinary method called on a
-  compile-time struct value denotes nothing in a signature, where the pin
-  keeps it as the method's application with the struct as receiver.
-  - Probe: `SIMD[DType.int8, L(n).ord()]` over a non-builtin `def
-    ord(self) -> Int` of `@fieldwise_init struct L` is "not an associated
-    comptime expression"; the pin names `L(Int(2)).ord()` in a mismatch
-    and prints `[1, 1]` when matched.
-  - Probe: `-> SIMD[DType.int8, Self.l.get()]` as the return type of a
-    method of `struct Tagged[l: L]`, over a non-builtin `get`, fails the
-    same way; the pin prints `1` for `Tagged[L(1)]`. In a body it already
-    runs, lifted as a thunk.
-  - Lever: list every `imm`/default-receiver method. The receiver is the
-    struct value the elaborator thaws (`demand_application` already counts
-    `has_receiver`).
-  - Trap: R397's `len[T: Sized]` made every `len(x)` a candidate and the
-    std package check took minutes. Time a cold package build
-    (`MOJITO_CACHE_DIR=$(mktemp -d)`) before and after.
-  - A `ref self` receiver is passed as upstream's `a.method()` is,
-    `store_to_mem(a)`: reuse `ParamContext::store_to_mem` and
-    `ApplicableParameter::by_reference`, which R1644 added for `ref`
-    parameters.
-  - Found while landing R1528 (2026-10-29).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1731 A callee with a callable compile-time parameter, or a
   parameter holding a function, is no compile-time application**
 
@@ -6111,9 +6081,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A local `comptime L = W(n)` alias of a struct value prints as the
     application of its lifted function, `B[$comptime$f$c0(n)]`, where the
     pin prints `B[L]` and notes "'L' is aka 'W(n)'".
+  - A method's application prints its receiver as a first argument:
+    `var x: SIMD[DType.int8, 4] = f[2]()` over `def f[n: Int]() ->
+    SIMD[DType.int8, L(n).ord()]` finds `SIMD[DType.int8, L.ord(L(2))]`,
+    where the pin names `L(Int(2)).ord()` (found while landing R1643,
+    2026-10-30).
   - The application holds the MIR declaration's name and every argument in
     one list (`ParamKind::Apply`, `param_expr.rs`), so the printer knows
-    neither the source name nor which arguments are compile-time ones.
+    neither the source name nor which arguments are compile-time ones, nor
+    which one is a method's receiver.
   - Found while landing the callee shapes a signature applies (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11029,11 +11005,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     parameter position: `g[coefficients[:2]]()` over a compile-time `List`
     and `def g[c: Span[Scalar[dtype], _]]()` is "not an associated comptime
     expression", where the pin prints `2`.
-    `List.__getitem__(ref self, ContiguousSlice)` as an application is
-    R1643's `ref self` receiver.
+    The `ref self` receiver of `List.__getitem__(ref self,
+    ContiguousSlice)` applies since R1643, but `comptime coefficients:
+    List[Float64] = [...]` is held as an `Array[Float64, 3]`, so the
+    slice selects no `__getitem__` (R1538).
   - Found while planning R1567 (2026-10-30).
   - Depends on R1711, R1712, R1593, R1634, R1673, R1661, R333, R1721,
-    R1154, and R1643.
+    R1154, R1643, and R1538.
   - Model: Fable, Not Planned.
 
 - [ ] **R1714 `std.math` has no `log`, where upstream's is `_log_accurate`

@@ -257,7 +257,8 @@ impl ApplicableFunction {
                 Some((id.clone(), ty.into()))
             })
             .collect();
-        let receiver = (self.self_slot == SelfSlot::Receiver)
+        let receiver = self
+            .takes_self()
             .then(|| Some(("self", Some(owner?.clone()), false)));
         let mut slots = signature
             .decls
@@ -375,8 +376,8 @@ impl ApplicableFunction {
     }
 
     /// Whether it is a method taking `self`.
-    fn takes_self(&self) -> bool {
-        self.self_slot == SelfSlot::Receiver
+    const fn takes_self(&self) -> bool {
+        matches!(self.self_slot, SelfSlot::Receiver { .. })
     }
 
     /// Whether it is declared `raises`.
@@ -683,30 +684,25 @@ pub(super) fn applicable_declarations<'a>(
                         list(name.clone(), function, Some(method));
                         continue;
                     }
-                    // A method with `self` applies only when builtin, its
-                    // receiver taken `imm`, as the pin folds it, or when it
-                    // returns `!kgen.deferred` and so runs only at compile
-                    // time (`FastMathFlag._mlir_attr`); an ordinary one is a
-                    // run-time call. A static method without `->` returns
-                    // `None`.
+                    // A method's `self` is its receiver, taken by value
+                    // (`read`, `var`) or stored in compile-time memory
+                    // (`ref`), as the pin applies `a.method()`; a `mut`,
+                    // `deinit`, or `out` receiver takes no compile-time
+                    // value. A static method without `->` returns `None`.
+                    if method.has_self
+                        && !matches!(
+                            method.self_convention,
+                            None | Some(
+                                ArgConvention::Imm | ArgConvention::Var | ArgConvention::Ref
+                            )
+                        )
+                    {
+                        continue;
+                    }
                     let Some(ret) = method
                         .ret
                         .as_ref()
                         .or_else(|| (!method.has_self).then_some(&SourceType::None))
-                        .filter(|ret| {
-                            !method.has_self
-                                || ((is_mlir_source(ret, "!kgen.deferred")
-                                    || matches!(
-                                        mojito_checked::declaration::InlineLevel::of(
-                                            &method.decorators
-                                        ),
-                                        Ok(mojito_checked::declaration::InlineLevel::Builtin)
-                                    ))
-                                    && matches!(
-                                        method.self_convention,
-                                        None | Some(ArgConvention::Imm)
-                                    ))
-                        })
                     else {
                         continue;
                     };
@@ -734,7 +730,10 @@ pub(super) fn applicable_declarations<'a>(
                             symbol,
                             on_instance,
                             if method.has_self {
-                                SelfSlot::Receiver
+                                SelfSlot::Receiver {
+                                    by_reference: method.self_convention
+                                        == Some(ArgConvention::Ref),
+                                }
                             } else {
                                 SelfSlot::None
                             },
@@ -2162,7 +2161,13 @@ impl Checker {
                     kwargs,
                 )?;
                 if let Some(receiver) = &receiver {
-                    arguments.insert(function.binders.len(), receiver.clone());
+                    let receiver = match function.self_slot {
+                        SelfSlot::Receiver { by_reference: true } => {
+                            self.param_context.store_to_mem(receiver).ok()?
+                        }
+                        _ => receiver.clone(),
+                    };
+                    arguments.insert(function.binders.len(), receiver);
                 }
                 Some(Selected {
                     name: name.clone(),
@@ -5493,7 +5498,12 @@ enum SelfSlot {
     /// A method's `self`, which a call binds to its receiver, after its
     /// own compile-time parameters and before its runtime ones, as its MIR
     /// declaration orders them.
-    Receiver,
+    Receiver {
+        /// Whether it is a `ref self`, whose receiver the application
+        /// passes stored in compile-time memory, as the pin's `a.method()`
+        /// does (`apply(bc, store_to_mem(a))`).
+        by_reference: bool,
+    },
 }
 
 /// The type of an [`ApplicableParameter`].

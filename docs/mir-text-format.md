@@ -991,6 +991,10 @@ Schema 1.150 removes the lane mask `lane_slice`: `SIMD`'s `slice` is a
 library body, an element loop or `llvm.vector.extract`. The package format
 moves to `mojito-package 166`.
 
+Schema 1.150's package format moves to `mojito-package 167` when a
+package's compile-time application records mark a method's `ref self`
+receiver, which an application passes stored in compile-time memory.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
