@@ -492,7 +492,7 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 1593,
+            differential == 1596,
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 862"
         );
         assert!(

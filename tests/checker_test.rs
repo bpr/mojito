@@ -7698,6 +7698,26 @@ fn lambda_in_a_parameter_default_is_rejected_contextually() {
 }
 
 #[test]
+fn leading_dot_parameter_default_needs_a_type_with_members() {
+    let error = err("def f[n: Int = .x]() -> Int:\n    return n\n");
+    assert!(
+        matches!(&error, TypeError::ContextualMember { member, .. } if member == "x"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn comptime_for_over_a_struct_field_is_dynamic() {
+    let error = err_std(
+        "struct Row[n: Int](ImplicitlyCopyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n\ndef f(r: Row) -> Int:\n    var c = 0\n    comptime for i in range(r.x):\n        c += 1\n    return c\n",
+    );
+    assert!(
+        error.to_string().contains("dynamic value in 'for'"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn generic_lambda_is_a_closure() {
     // A lambda-owned parameter list forces the capturing environment, so a
     // thin `def(...)` contract rejects it.

@@ -1133,6 +1133,19 @@ impl Checker {
                 .as_ref()
                 .map(|expr| {
                     let _lifting = self.lifting_position();
+                    // A leading-dot default (`d: DType = .int64`) names a
+                    // member of the parameter's declared type.
+                    let rooted = super::inference::contextual_root_span(expr)
+                        .map(|_| {
+                            super::inference::contextual_parameter_base(&ty, expr).map(|base| {
+                                super::inference::with_contextual_root(
+                                    expr,
+                                    &ExprKind::Identifier(base),
+                                )
+                            })
+                        })
+                        .transpose()?;
+                    let expr = rooted.as_ref().unwrap_or(expr);
                     let compiled = self.compile_dependent_ct_expr(expr)?;
                     Ok::<_, TypeError>(
                         self.converted_parameter_value(expr, &compiled, &ty)

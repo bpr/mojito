@@ -177,6 +177,7 @@ assets/ok/comptime_for_tuple_elements.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_unserved_nested.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_value_pack_iterator.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_value_parameter_member.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_value_struct_method.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
@@ -444,6 +445,7 @@ assets/ok/implicit_conversion_raising.mojo	main	exe-differential	sanitized
 assets/ok/implicit_copy_last_use_forwards.mojo	main	exe-differential	sanitized
 assets/ok/implicit_value_parameter_conversion.mojo	main	exe-differential	sanitized
 assets/ok/imported_alias_in_generic_method.mojo	main	exe-differential	sanitized
+assets/ok/index_list.mojo	main	exe-differential	sanitized
 assets/ok/indexer_normalization.mojo	main	exe-differential	sanitized
 assets/ok/infer_only_parameter_by_keyword.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
@@ -496,6 +498,7 @@ assets/ok/later_argument_converts_to_bound_parameter.mojo	main	exe-differential	
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
 assets/ok/leading_dot_bracket_argument.mojo	main	exe-differential	sanitized
 assets/ok/leading_dot_equality_operand.mojo	main	exe-differential	sanitized
+assets/ok/leading_dot_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/len_library_overloads.mojo	main	exe-differential	sanitized
 assets/ok/library_declared_conformances.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_deprecated_spellings.mojo	main	exe-differential	sanitized

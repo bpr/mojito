@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1773**.
+Next free ID: **R1777**.
 
 ## Ordered Work
 
@@ -3635,8 +3635,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     parameter 'dtype'" here. The pin binds `dtype` from the converted
     parameter before the run-time argument:
     `polynomial_evaluate[[Float32(1.0)]](Float64(2))` is rejected at `x`.
+  - Probe: `first(s)` over `def first(a: IndexList) -> Int` and a
+    `StaticTuple[Int64, 2]` prints `4` at the pin. On landing, restore
+    upstream's `_int_tuple_compare[apply_fn](self.data, rhs.data)` in
+    `IndexList`'s five comparisons (`stdlib/std/utils/index.mojo`).
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R1774 An `@implicit` initializer over a type pack does not
+  convert**
+
+  `var t: IndexList[2] = (Int32(8), 9)` prints `(8, 9)` at the pin, through
+  `IndexList`'s `@implicit __init__[*Ts: Movable & Intable](out self, elems:
+  Tuple[*Ts])`. Mojito reports a type mismatch.
+  - Cause: `Checker::conversion_constructor_parameter` and
+    `solve_constructor_own_params` (`checker/declarations.rs`) solve a
+    constructor's own binders from a plain pattern only, never a
+    `Tuple[*Ts]` pack pattern from the source tuple's element types.
+  - The explicit `IndexList[2]((Int32(8), 9))` checks, and a non-pack
+    `@implicit __init__[T: Intable]` converts.
+  - Probe: `take((1, 2, 3))` against `def take(a: IndexList[3])`.
+  - Found while landing R1674 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1541 A compound value-parameter pattern solves no binder**
 
@@ -4003,6 +4024,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: a construction with one bracket argument takes the unbound
     width `argument_simd_width` already binds for `_`.
   - Found while landing R186 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1773 A `_` type slot in a construction is not bound by the
+  selected initializer**
+
+  `StaticTuple[_, 3](fill=Int64(2))` prints `2` at the pin, which leaves
+  `element_type` unbound for the initializer to bind. Mojito stops with
+  "type '_' for parameter 'element_type' does not conform to trait
+  'ImplicitlyCopyable'".
+  - Cause: the type resolver maps `_` to `Ty::infer()`
+    (`checker/type_resolution.rs`), and the construction checks the
+    parameter's bound against that hole instead of leaving the slot for
+    the selected `__init__` to solve.
+  - R1544 and R1545 are the same rule for `SIMD`'s width; this is a
+    struct's type slot.
+  - Probe: `B[_, 3](fill=x)` over a user `struct B[T: ImplicitlyCopyable,
+    n: Int]`.
+  - On landing, restore upstream's `StaticTuple[_, Self.size]` in
+    `IndexList.__init__()` and `__init__(fill=)`
+    (`stdlib/std/utils/index.mojo`).
+  - Found while landing R1674 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4422,6 +4465,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     importing `ContiguousSlice` reports it, in a `comptime` binding and
     at run time alike.
   - Found while landing R1742 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1776 A call's arguments are re-inferred for every overload
+  candidate, so nested constructions cost candidates to the power of their
+  depth**
+
+  `c += Int(binary_fn(Scalar[DType.int64](a[0]), Scalar[DType.int64](b[0])))`
+  in a function over `a: StaticTuple[Int64, _]` and a callable binder takes
+  3 s in a debug `mojito check`; each piece alone takes milliseconds.
+  - Cause: `infer_construction_of` (`checker/declarations.rs`) scores each
+    `__init__` candidate by re-inferring every argument
+    (`instantiate_method_generics`, `score_method_call`,
+    `solving_argument_ty`), and the selected candidate re-runs, so an
+    argument that is itself a construction is checked once per outer
+    candidate: about 30 `SIMD` initializers per level.
+  - Lever: infer each argument's bare type once per call and replay its
+    journaled facts for later candidates, rather than re-checking the
+    subtree.
+  - Probe: upstream's `_int_tuple_binary_apply`
+    (`stdlib/std/utils/index.mojo`) dominates that module's share of the
+    package build.
+  - Probe: `Int(Scalar[DType.int64](a.get[0]()))` alone takes 0.3 s.
+  - R137's nested `wrap(wrap(…))` may share this cause.
+  - Found while landing R1674 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -12536,6 +12604,8 @@ residue found inside a task moves to the task that owns its fix.
   - The bundled `TypeNames[*Ts: Movable]` is narrower than upstream's
     `AnyType`, so it cannot name `ParameterList`'s element type.
   - The bundled collections' `write_repr_to` bodies write by hand too.
+  - `IndexList.write_repr_to` is omitted (`stdlib/std/utils/index.mojo`):
+    restore it with its `import std.format._utils as fmt`.
   - Done when they and `ParameterList` use upstream's builder text.
   - Found while landing R493 (2026-10-13).
   - Depends on nothing.
@@ -13021,18 +13091,18 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on R1458, R1661, and R1717.
   - Model: Opus, Not Planned.
 
-- [ ] **R1674 `IndexList` is not bundled**
+- [ ] **R1775 `std.utils.lock` is not bundled**
 
-  `from std.utils import IndexList` fails, where upstream's
-  `std/utils/index.mojo` declares the `StaticTuple`-backed index vector that
-  `SIMD`'s rotation and shift masks are.
-  - Port the struct, its constructors, `__getitem__`/`__setitem__`,
-    `__len__`, the comparisons, `Index`, and `product`, which `SIMD`'s
-    bodies and `Index(…)` masks reach.
-  - Header-list the rest of the 797-line file (`Hasher`, `DevicePassable`,
-    the arithmetic and formatting members) with the entries that own each.
-  - Depends on R1670 (`StaticTuple`).
-  - Model: Opus, Planned.
+  `from std.utils import BlockingSpinLock` fails, where upstream's
+  `std/utils/lock.mojo` declares `BlockingScopedLock`, `BlockingSpinLock`,
+  and `SpinWaiter`, and `std/utils/__init__.mojo` re-exports them.
+  - Port the file into `stdlib/std/utils/lock.mojo` in upstream's order and
+    restore the re-export the bundled `std/utils/__init__.mojo` omits.
+  - Probe its atomics and `sleep` reads first: header-list what is not
+    bundled with the entries that own each.
+  - Found while landing R1674 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1703 `std.utils.coord.Coord` is not bundled**
 

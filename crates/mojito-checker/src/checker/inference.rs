@@ -28,6 +28,23 @@ pub(super) fn contextual_root_span(expression: &Expr) -> Option<mojito_common::t
     }
 }
 
+/// The base type a leading-dot value of a compile-time parameter declared
+/// as `ty` roots at (`f[.bool]()`, `[d: DType = .int64]`): the parameter's
+/// declared type, as upstream resolves it.
+pub(super) fn contextual_parameter_base(ty: &Ty, expr: &Expr) -> Result<String, TypeError> {
+    match ty.kind() {
+        TyKind::Struct(name, arguments) if arguments.is_empty() => Ok(name.clone()),
+        TyKind::Dtype => Ok("DType".to_string()),
+        other => Err(TypeError::ContextualMember {
+            member: contextual_member_name(expr),
+            reason: format!(
+                "the parameter type '{other}' does not supply struct members; \
+                 write the base type explicitly"
+            ),
+        }),
+    }
+}
+
 impl Checker {
     /// Check a comprehension in its own lexical scope and cache its result type
     /// for ordinary read-only expression inference. Clauses are visited in

@@ -7,7 +7,7 @@
 # `std.sys.info` import cycle spell it.
 # Omitted, with the imports only they use:
 # - `reduce_generator_fn`, with `_ReduceGeneratorPluginHookFnType`:
-#   `IndexList` and `std.utils.coord.Coord` are not bundled (roadmap
+#   `std.utils.coord.Coord` is not bundled (roadmap
 #   R1702);
 # - `default_atomic_ordering`: `std.atomic` is not bundled;
 # - `stack_allocation_fn`, `address_space_fn`, and `unsafe_dangling_fn`:

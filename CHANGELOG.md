@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.utils` bundles upstream's `IndexList`, `Index`, and `product`
+  (`std/utils/index.mojo`) with their constructors, element access,
+  arithmetic, all-elements comparisons, shape helpers, hashing, and
+  formatting, printing as the pin does (R1674). Its departures (a spelled
+  `StaticTuple` element slot, R1773; the comparisons' conversion, R52;
+  `assert`, R1598; `write_repr_to`, R813; `DevicePassable`, R942) are
+  listed in the file's header. `_int_type_of_width` joins `std.builtin.dtype`.
+- A leading-dot value-parameter default (`[d: DType = .int64]`) names a
+  member of the parameter's type, and `comptime for i in range(a.size)`
+  over a run-time struct value reads its type's parameter, as at the pin.
+
 - `SIMD`'s `reduce_and`, `reduce_or`, and `reduce_bit_count` are upstream's
   declared bodies, verbatim (R1586): `m.reduce_and[2]()` and
   `v.reduce_bit_count()` run, and `reduce_and`/`reduce_or` give
@@ -2309,6 +2320,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `SIMD` construction no longer checks its declared initializers twice
+  when the checker's rule cannot serve it, which made nested constructions
+  such as `Int(f(Scalar[dt](x)))` cost twice per level; the bundled
+  library's package build is about a third faster.
 - A compile-time callable parameter's contract is matched under the
   call's other arguments, as the pin substitutes them (R1767): a method's
   `h: def(Scalar[Self.dtype])` or `def[k: Int](Self._T[k])` contract,

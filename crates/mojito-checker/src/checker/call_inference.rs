@@ -504,7 +504,7 @@ impl Checker {
         };
         // An explicit initializer list binds only a declared initializer.
         let explicit_own = self.spelled_initializer_args.borrow().contains_key(span);
-        if self.probe(construct).is_err() && !explicit_own && rule_served() {
+        if !explicit_own && self.probe(rule_served) && self.probe(construct).is_err() {
             return None;
         }
         Some(construct().and_then(|ty| {

@@ -1,14 +1,53 @@
-# Upstream's `std/builtin/dtype.mojo`, in part: `_uint_type_of_width`,
-# `_integral_type_of`, and `_unsigned_integral_type_of`. `DType` itself
-# stays a compiler type (R160). The chain's `_uint1`,
-# `_uint2`, `_uint4`, `uint128`, and `uint256` arms are omitted until R65
-# admits those dtypes; the second assert rejects their widths explicitly.
+# Upstream's `std/builtin/dtype.mojo`, in part: `_int_type_of_width`,
+# `_uint_type_of_width`, `_integral_type_of`, and
+# `_unsigned_integral_type_of`. `DType` itself stays a compiler type (R160).
+# The `int128`, `int256`, `_uint1`, `_uint2`, `_uint4`, `uint128`, and
+# `uint256` arms are omitted until R65 admits those dtypes; a second assert
+# rejects their widths explicitly.
 """Implements the DType class.
 
 These are Mojo built-ins, so you don't need to import them.
 """
 
 from std.sys import bit_width_of
+
+
+# ===-------------------------------------------------------------------===#
+# _int_type_of_width
+# ===-------------------------------------------------------------------===#
+
+
+@inline(.always)
+def _int_type_of_width[width: Int]() -> DType:
+    comptime assert width in (
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+    ), "width must be either 8, 16, 32, 64, 128, or 256"
+    comptime assert width in (
+        8,
+        16,
+        32,
+        64,
+    ), "an int DType of width 128 or 256 is not supported yet"
+
+    comptime match width:
+        case 8:
+            return DType.int8
+        case 16:
+            return DType.int16
+        case 32:
+            return DType.int32
+        case _:
+            return DType.int64
+
+
+# ===-------------------------------------------------------------------===#
+# _uint_type_of_width
+# ===-------------------------------------------------------------------===#
 
 
 @always_inline("builtin")

@@ -2936,19 +2936,7 @@ impl Checker {
                 if let ParamArg::Value(expr) = arg
                     && super::inference::contextual_root_span(expr).is_some() =>
             {
-                let base = match ty.kind() {
-                    TyKind::Struct(name, arguments) if arguments.is_empty() => name.clone(),
-                    TyKind::Dtype => "DType".to_string(),
-                    other => {
-                        return Err(TypeError::ContextualMember {
-                            member: super::inference::contextual_member_name(expr),
-                            reason: format!(
-                                "the parameter type '{other}' does not supply struct members; \
-                                 write the base type explicitly"
-                            ),
-                        });
-                    }
-                };
+                let base = super::inference::contextual_parameter_base(ty, expr)?;
                 let rewritten =
                     super::inference::with_contextual_root(expr, &ExprKind::Identifier(base));
                 let resolved = self.resolve_param_arg(decl, &ParamArg::Value(rewritten))?;

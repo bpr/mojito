@@ -177,6 +177,7 @@ assets/ok/comptime_for_tuple_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_unserved_nested.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_user_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_value_pack_iterator.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_value_parameter_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_value_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
@@ -444,6 +445,7 @@ assets/ok/implicit_conversion_raising.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_copy_last_use_forwards.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_value_parameter_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/imported_alias_in_generic_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/index_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/indexer_normalization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/infer_only_parameter_by_keyword.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/init_out_self.mojo	-	ineligible	no-scalar-entry-shape
@@ -496,6 +498,7 @@ assets/ok/later_argument_converts_to_bound_parameter.mojo	-	ineligible	no-scalar
 assets/ok/layout_allocation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/leading_dot_bracket_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/leading_dot_equality_operand.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/leading_dot_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/len_library_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/library_declared_conformances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lifecycle_deprecated_spellings.mojo	-	ineligible	no-scalar-entry-shape

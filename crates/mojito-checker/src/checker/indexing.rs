@@ -2159,15 +2159,22 @@ impl Checker {
     }
 
     /// Whether `field` read through a value of type `ty` is a parameter of
-    /// that type (a SIMD value's `dtype` or `length`), which the instance
-    /// only types: the read is the type's, not the value's.
+    /// that type (a SIMD value's `dtype` or `length`, a struct's declared
+    /// parameter such as `StaticTuple`'s `size`), which the instance only
+    /// types: the read is the type's, not the value's.
     pub(super) fn is_parameter_member(&self, ty: &Ty, field: &str) -> bool {
         match field {
-            "dtype" => simd_dtype(ty).is_some(),
-            "length" => simd_slots(ty)
+            "dtype" if simd_dtype(ty).is_some() => true,
+            "length" if simd_slots(ty).is_some() => simd_slots(ty)
                 .and_then(|(_, width)| self.simd_length_parameter(&width))
                 .is_some_and(|length| length.meta().as_value().is_some()),
-            _ => false,
+            _ => match ty.kind() {
+                TyKind::Struct(name, _) => self.structs.get(name).is_some_and(|info| {
+                    info.decls.iter().any(|decl| decl.name() == field)
+                        && !info.fields.iter().any(|(name, _)| name == field)
+                }),
+                _ => false,
+            },
         }
     }
 
