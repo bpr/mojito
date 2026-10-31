@@ -2,16 +2,19 @@
 # its operation traits, the rounding helpers `floor`/`ceil`/`trunc`/
 # `ceildiv`, the plugin-hook signatures `_UnaryMathPluginHookFnType` and
 # `_BinaryMathPluginHookFnType`, `_ldexp_impl` and `ldexp` (with its
-# AVX-512 `scalef` arm), `copysign`, the `SIMD` overload of `iota`,
+# AVX-512 `scalef` arm), `_Expable`, `_exp_taylor`, both overloads of
+# `exp`, `_exp_impl`, `copysign`, the `SIMD` overload of `iota`,
 # `fma`, `modf` over `std.simd`'s `_modf`, `clamp`, both overloads each of
 # `max` and `min`, `abs`, and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
 # `_frexp_mask1`, `_frexp_mask2`, `frexp`, `_log_base`, `log`, and their
 # kernels `_assert_float64_supported`, `_log_kernel`, `_is_zero_bits`,
 # `_is_subnormal_bits`, `_frexp_bits`, `_log_reduce`, `_log_combine`, and
 # `_log_accurate`, verbatim (the buffer overload of `iota` is omitted).
-# The traits precede the functions, where upstream interleaves them. The
+# The traits precede the functions, where upstream interleaves them, save
+# `_Expable`, which keeps upstream's position. The
 # masks' `bfloat16` cases are omitted (R65), and so
-# is `log`'s `is_nvidia_gpu()` arm through `log2` (R1635). The
+# are `log`'s `is_nvidia_gpu()` arm through `log2` and `exp`'s `is_gpu()`
+# arm through `exp2` (R1635). The
 # `std.string` import is explicit, as bundled modules' are. Upstream's
 # `from . import` line omits `nextafter`, which the package does not yet
 # re-export. The prelude exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and
@@ -218,6 +221,125 @@ def ldexp[
         Vector containing elementwise result of ldexp on x and exp.
     """
     return _ldexp_impl(x, exp.cast[dtype]())
+
+
+# ===----------------------------------------------------------------------=== #
+# exp
+# ===----------------------------------------------------------------------=== #
+
+
+trait _Expable:
+    """Trait for types that support the exp function."""
+
+    def __exp__(self) -> Self:
+        """Computes the exponential of the input value.
+
+        Returns:
+            The exponential of the input value.
+        """
+        ...
+
+
+@inline(.always)
+def _exp_taylor[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> SIMD[dtype, width]:
+    comptime coefficients = List(
+        [
+            Scalar[dtype](1.0),
+            1.0,
+            0.5,
+            0.16666666666666666667,
+            0.041666666666666666667,
+            0.0083333333333333333333,
+            0.0013888888888888888889,
+            0.00019841269841269841270,
+            0.000024801587301587301587,
+            2.7557319223985890653e-6,
+            2.7557319223985890653e-7,
+            2.5052108385441718775e-8,
+            2.0876756987868098979e-9,
+        ]
+    )
+    return polynomial_evaluate[
+        coefficients[:] if dtype == .float64 else coefficients[:8],
+    ](x)
+
+
+@inline(.always)
+def exp[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
+    """Calculates elementwise exponential of the input vector.
+
+    Given an input vector $X$ and an output vector $Y$, sets $Y_i = e^{X_i}$ for
+    each position $i$ in the input vector (where $e$ is the mathematical constant
+    $e$).
+
+    Constraints:
+        The input must be a floating-point type.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        x: The input SIMD vector.
+
+    Returns:
+        A SIMD vector containing $e$ raised to the power $X_i$ where $X_i$ is an
+        element in the input SIMD vector.
+    """
+
+    if __is_run_in_comptime_interpreter:
+        return _exp_impl(x)
+
+    comptime hook = CurrentPlugin.unary_math_fn["exp", dtype, width]
+    comptime if hook:
+        return comptime (hook.value())(x)
+
+    return _exp_impl(x)
+
+
+@inline(.always)
+def _exp_impl[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
+    comptime neg_ln2 = -0.69314718055966295651160180568695068359375
+
+    comptime if dtype not in (DType.float32, DType.float64):
+        return exp(x.cast[.float32]()).cast[dtype]()
+
+    var min_val: SIMD[dtype, width]
+    var max_val: SIMD[dtype, width]
+
+    comptime if dtype == .float64:
+        min_val = -709.436139303
+        max_val = 709.437
+    else:
+        min_val = -88.3762626647949
+        max_val = 88.3762626647950
+
+    var xc = x.clamp(min_val, max_val)
+    var k = floor(xc.fma(log2e, 0.5))
+    var r = k.fma(neg_ln2, xc)
+    return max(_ldexp_impl(_exp_taylor(r), k), xc)
+
+
+@inline(.always)
+def exp[T: _Expable](x: T) -> T:
+    """Computes the exponential of the input value.
+
+    Parameters:
+        T: The type of the input value.
+
+    Args:
+        x: The input value.
+
+    Returns:
+        The exponential of the input value.
+    """
+    return x.__exp__()
 
 
 # ===----------------------------------------------------------------------=== #

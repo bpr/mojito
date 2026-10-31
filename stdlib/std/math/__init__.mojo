@@ -3,7 +3,7 @@
 # ported: `nextafter` from `std.utils.numerics`, and from `.math` `acos`,
 # `acosh`, `align_down`, `align_up`, `mulwide`, `mulhi`, `asin`, `asinh`,
 # `atan`, `atan2`, `atanh`, `cbrt`, `cos`, `cosh`, `divmod`, `erf`, `erfc`,
-# `exp`, `exp2`, `expm1`, `comb`, `factorial`, `gamma`, `gcd`, `hypot`,
+# `exp2`, `expm1`, `comb`, `factorial`, `gamma`, `gcd`, `hypot`,
 # `isclose`, `rsqrt`, `j0`, `j1`, `lcm`, `lgamma`, `log1p`, `log2`,
 # `log10`, `logb`, `perm`, `pow`, `recip`, `remainder`, `round`,
 # `scalb`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`, `ulp`, `y0`, and `y1`.
@@ -43,6 +43,7 @@ from .math import (
     ceildiv,
     clamp,
     copysign,
+    exp,
     floor,
     fma,
     frexp,

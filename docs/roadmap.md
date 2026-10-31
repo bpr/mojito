@@ -7594,6 +7594,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     '__module$std$math$math$max'" (`call_inference.rs` passes the linked name to
     `TypeError::BadCall`), where the pin says "no matching function in call
     to 'max'" (`assets/type_error/max_literal_first_mismatch.mojo`).
+    `exp(SIMD[DType.int32, 2](1, 2))` and `log` over an integral dtype
+    say '__module$std$math$math$exp' and '…$log' the same way
+    (`assets/type_error/math_exp_integral_dtype.mojo`,
+    `assets/type_error/math_log_integral_dtype.mojo`).
   - The lever: diagnostics spell a type through `unqualified_type_name`,
     as runtime type names already do.
   - Found while landing R605 (2026-10-10).
@@ -10893,34 +10897,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Closes R850.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R1743 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
-  Taylor polynomial and `_ldexp_impl`**
-
-  `from std.math import exp` fails, and upstream's `_powf_scalar` takes its
-  digits from it (R1567).
-  - Port `_Expable`, both `exp` overloads, `_exp_impl`, and
-    `_exp_taylor` verbatim, in upstream's order after `ldexp`, and
-    re-export `exp` from `std/math/__init__.mojo`.
-  - Imports: `std._plugin`'s `CurrentPlugin` and `.constants`' `log2e`.
-    `CurrentPlugin.unary_math_fn["exp", …]` is `None` on the default
-    plugin.
-  - The `is_gpu()` arm (`exp2`) is omitted under R1635, as `SIMD.cast`'s
-    GPU arms are; record it in the file header.
-  - Probe: `print(exp(Float64(1)), exp(SIMD[DType.float32, 4](0, 1, 2,
-    -1)))` prints `2.718281828459813` and `[1.0, 2.7182817459106445,
-    7.389056205749512, 0.3678794503211975]` (widened) at Mojo 1.1.
-  - Probe: `comptime exp(Float64(2))` prints `7.389056098936909`;
-    `float16` goes through the `float32` arm (`[2.71875, 7.390625]`).
-  - Fixture: `assets/ok/math_exp.mojo` (a 16-lane `float32` input of
-    `0.5` keeps the AVX-512 arm's output host-independent), and
-    `assets/type_error/math_exp_integral_dtype.mojo`.
-  - Blocker: `_exp_taylor`'s `coefficients[:]` is no compile-time
-    application (R1742).
-  - Plan: `R1713-std-math-has-no-exp-where-plan.md` (Slices 2 and 3; Slice
-    1 and `ldexp` landed with R1713).
-  - Depends on R1742 and R1747.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
   `__pow__` over `_pow`**

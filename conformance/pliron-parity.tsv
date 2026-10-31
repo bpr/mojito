@@ -552,6 +552,7 @@ assets/ok/match_sequence_custom_sized.mojo	main	exe-differential	sanitized
 assets/ok/match_sequence_fixed_length.mojo	main	exe-differential	sanitized
 assets/ok/match_struct_and_initializer_patterns.mojo	main	exe-differential	sanitized
 assets/ok/match_tuple_patterns.mojo	main	exe-differential	sanitized
+assets/ok/math_exp.mojo	main	exe-differential	sanitized
 assets/ok/math_ldexp.mojo	main	exe-differential	sanitized
 assets/ok/math_log.mojo	main	exe-differential	sanitized
 assets/ok/math_modf.mojo	main	exe-differential	sanitized

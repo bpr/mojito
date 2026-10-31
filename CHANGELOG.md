@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.math` re-exports upstream's `exp`, verbatim (R1743): `_Expable`,
+  both `exp` overloads, `_exp_impl`, and `_exp_taylor`'s Taylor
+  polynomial over `polynomial_evaluate` and `_ldexp_impl`, so `exp` over
+  a `float64`, `float32`, or `float16` scalar or vector prints the pin's
+  digits at run time and compile time, and `exp[T: _Expable]` calls a
+  user `__exp__` (`assets/ok/math_exp.mojo`,
+  `assets/type_error/math_exp_integral_dtype.mojo`). The GPU arm through
+  `exp2` is omitted (R1635).
 - A slice subscript of a compile-time value applies, as at the pin
   (R1742): `g[c[:2]]()` over a `comptime c = List(...)`, a `comptime s =
   c[1:]` passed as a parameter, a module `comptime S = C[1:]`, and
