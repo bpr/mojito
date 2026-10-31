@@ -708,7 +708,14 @@ impl Checker {
                     // concretely; otherwise the trait's abstract `Self`.
                     SourceType::SelfParam(name) => {
                         let base = match &self.self_ty {
-                            Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => ty.clone(),
+                            Some(ty)
+                                if matches!(
+                                    ty.kind(),
+                                    TyKind::Struct(..) | TyKind::Simd { .. }
+                                ) =>
+                            {
+                                ty.clone()
+                            }
                             _ => Ty::self_type(),
                         };
                         if self.declared_type_member(&base, name) {
@@ -892,7 +899,7 @@ impl Checker {
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Ty, TypeError> {
-        if let TyKind::Struct(struct_name, _) = base_ty.kind()
+        if let Some((struct_name, _)) = self.nominal_struct(base_ty)
             && let Some(member) = self
                 .structs
                 .get(struct_name)
@@ -959,7 +966,7 @@ impl Checker {
     /// list does: a member with no origin parameter, which the declared
     /// parameters erase.
     fn declared_type_member(&self, base_ty: &Ty, name: &str) -> bool {
-        let TyKind::Struct(struct_name, _) = base_ty.kind() else {
+        let Some((struct_name, _)) = self.nominal_struct(base_ty) else {
             return false;
         };
         self.structs

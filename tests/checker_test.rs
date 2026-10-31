@@ -1025,6 +1025,11 @@ fn rejects_wrong_type_argument_count() {
 }
 
 #[test]
+fn applies_a_simd_generator_member() {
+    ok_std("def main():\n    var w: SIMD[DType.int32, 4]._T[2] = SIMD[DType.int32, 2](5, 6)\n");
+}
+
+#[test]
 fn binds_a_member_application_through_its_parameter_list() {
     let members = "struct S[T: AnyType]:\n    comptime Of[U: AnyType] = Int\n\n\
                    struct P:\n    comptime Buf[n: Int] = SIMD[DType.int64, n]\n    \

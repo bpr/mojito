@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares upstream's generator member `comptime _T =
+  SIMD[Self.dtype, _]`, and `Self._T[n]` in a `SIMD` method or
+  `SIMD[DType.int32, 4]._T[2]` in a program resolves, where it was
+  "dependent type indexing requires a type-valued associated member" or
+  "no associated type '_T'". Porting upstream's `reduce` tree on it waits
+  on three filed gaps (R1761, R1762, R1763, then R1764).
 - `CompilationTarget`'s string-field predicates are upstream's, verbatim
   (R1635): `is_x86()`, `is_linux()`, and `_os()` print `True`, `True`,
   and `linux` on this host, as at the pin, with `is_triple`, `_arch`,

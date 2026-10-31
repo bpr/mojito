@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1761**.
+Next free ID: **R1765**.
 
 ## Ordered Work
 
@@ -8384,7 +8384,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - The reduction shape changes in the VM and in the
     `llvm.vector.reduce.fmul` lowering together.
   - Ledger name: `float32-reduce-ordering`.
-  - Depends on R159, whose float-format difference hides the same rows.
+  - Depends on R159, whose float-format difference hides the same rows,
+    and R1764, which ports upstream's `reduce` tree.
   - Model: Fable, Planned.
 
 - [ ] **R188 `sp[byte=i]` and `s[codepoint=i]` yield a byte value and a
@@ -11012,26 +11013,92 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     time.
   - Model: Fable, Not Planned.
 
-- [ ] **R1585 `SIMD`'s reductions are checker rules, where upstream's are
+- [ ] **R1761 A call through a callable binder does not infer the
+  binder's own parameters from its arguments**
+
+  `func(a, b)` in `def apply[F: ImplicitlyCopyable & RegisterPassable &
+  def[width: SIMDLength](SIMD[DType.int32, width], SIMD[DType.int32,
+  width]) -> SIMD[DType.int32, width], //](a: SIMD[DType.int32, 4], b:
+  SIMD[DType.int32, 4], func: F)` passes the check, then fails MIR
+  verification with "required compile-time value parameter 'width' is
+  missing", where the pin infers `width = 4` as for a call to a generic
+  `def`.
+  - The explicit spelling `func[4](a, b)` runs (R1583).
+  - The lever: solve the binder's parameters from the argument types
+    (`checker/call_inference.rs`, `checker/generics.rs`) and record them on
+    the call as an explicit application is recorded, so MIR lowering
+    carries the parameter argument.
+  - Upstream's `SIMD.reduce` closure overload calls `func(lhs, rhs)` this
+    way (R1764).
+  - Found while planning R1585 (2026-10-31).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1762 A value of a callable-binder-bounded type parameter loses
+  its callee when passed on to another generic call**
+
+  `outer[F: …def[width: SIMDLength](…)…, //, n: SIMDLength](x, func: F)`
+  returning `inner(x, func)`, where `inner` calls `func[n](x, x)`, fails
+  with "in `inner`: … keeps compile-time parameter `width` in elaborated
+  MIR", where the pin runs it.
+  - The same chain over a plain `def(Int) -> Int` bound runs, so only a
+    callable with its own binder loses the callee.
+  - Cause: the elaborator binds a retained generic-callable argument
+    (`bindings.callables`, `native/mono/infer.rs`) only when
+    `callable_targets` knows the actual register. A forwarded `func` is a
+    `read` parameter passed by place, which
+    `substitute_callable_binder_reads` (`mono/substitute.rs`) rewrites only
+    as a `UseVar`.
+  - Probe: a recursive `SIMD` method forwarding `func`
+    (`func[Self.length // 2](lhs, rhs)._probe_tree(func)`) fails with
+    "place keeps symbolic type `def[width: SIMDLength](…) thin -> …`".
+  - Upstream's `SIMD.reduce` recurses as `func(lhs,
+    rhs).reduce[size_out](func)` (R1764).
+  - Found while planning R1585 (2026-10-31).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1763 A struct method's callable-binder parameter leaks its
+  binder's name into another struct's callable binder**
+
+  Declaring `def _probe_r[func: def[wq: Int](SIMD[Self.dtype, wq]) ->
+  SIMD[Self.dtype, wq]](self) -> Int` in the bundled `SIMD` stops the
+  library packaging, with "type mismatch for argument to 'elt_handler':
+  expected Ts[wq], found Ts[…paramfor_next_value…]" in
+  `Tuple.consume_elements`, whose `elt_handler: def[index: Int](var
+  element: Self.Ts[index]) capturing` takes the other method's binder.
+  - The same declaration as a module function, or in a user struct, is
+    harmless.
+  - Lead: canonical contract binders share `ParamId($contract, i)`
+    (`canonical_generic_signature`, `checker/traits_support.rs`), so some
+    table keyed by that identity keeps the first spelling.
+  - Upstream's `SIMD.reduce` parameter overload declares `func:
+    def[width: Int](Self._T[width], Self._T[width]) thin -> Self._T[width]`
+    (R1764).
+  - Found while planning R1585 (2026-10-31).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1764 `SIMD`'s reductions are checker rules, where upstream's are
   a `reduce` tree**
 
   `infer_simd_method`'s `reduce_*` arm, `runtime::simd_method`, Pliron's
   `lower_simd_reduce`, and `INTRINSIC_METHODS` serve `reduce_add`,
   `reduce_mul`, `reduce_max`, and `reduce_min` by name.
   - Port both `reduce` overloads (`simd.mojo:3107`, `:3135`), then
-    `reduce_add`, `reduce_mul`, `reduce_max`, and `reduce_min`.
-  - Their bodies read `comptime _T = SIMD[Self.dtype, _]` as `Self._T[n]`,
-    which runs, apply a callable binder at a `SIMDLength` (R1583), spell the
-    closure overload's binder as a trait composition with a function type
-    (R1584), and call `split()` (R1673).
-  - `reduce_max` and `reduce_min` take `llvm.vector.reduce.*` only off
-    x86 (`CompilationTarget.is_x86()`, R1635); the host is x86_64, so the
-    tree runs.
+    `reduce_add`, `reduce_mul`, `reduce_max`, and `reduce_min`, after the
+    `_T` member the bundled `std.simd` already declares.
+  - Add `CompilationTarget` to `std.simd`'s `from std.sys import`:
+    `reduce_max` and `reduce_min` take `llvm.vector.reduce.*` only off x86.
+  - `lower_simd_reduce` stays for `reduce_and`/`reduce_or` (R1586); only
+    its `add`/`mul`/`min`/`max` arms go.
   - Closes R187: `reduce_mul` over the sixteen `float32` lanes `1.1, 2.3,
     3.7, 4.9, 5.3, 6.1, 7.7, 8.3, 9.9, 10.1, 11.3, 12.7, 13.9, 14.1, 15.3,
-    16.7` prints `68104130000000.0` at the pin and `68104122007552.0`
-    here.
-  - Depends on R296, R1583, R1584, R1673, and R1635.
+    16.7` is `68104122007552.0` here; the tree gives `68104130396160.0`,
+    which prints as the pin's `68104130000000.0` once R159 lands.
+  - `assets/ok/simd_reductions_float.mojo` says reductions fold left to
+    right; its outputs change with the tree.
+  - Depends on R1761, R1762, and R1763.
   - Model: Fable, Planned.
 
 - [ ] **R1586 `reduce_and` and `reduce_or` are checker rules and
@@ -11043,12 +11110,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port both and `reduce_bit_count`, with `pack_bits` (R1578) and
     `std.bit.pop_count`.
   - Each body holds `self.reduce[size_out](…)` under `comptime if
-    size_out > 1`, which a template checks too (R1585).
+    size_out > 1`, which a template checks too (R1764).
   - The result type needs `and`/`or` over a lane (R97); `__contains__`'s
     `-> Bool` return then converts it.
   - Retire `SemanticAdjustment::SimdReceiverOp` and
     `record_simd_receiver_op`.
-  - Depends on R1585, R1578, and R97.
+  - Depends on R1764, R1578, and R97.
   - Model: Fable, Planned.
 
 - [ ] **R1591 `SIMD`'s `mlir_value=` initializer is a checker rule that
@@ -11280,7 +11347,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Pliron's per-method SIMD lowering serve no program.
   - Delete what the member entries left of them.
   - Done when `rg simd_method crates` finds nothing.
-  - Depends on R1555, R1589, R1579, R1580, R1581, R1582, R1585, R1586,
+  - Depends on R1555, R1589, R1579, R1580, R1581, R1582, R1764, R1586,
     R1671, R1683, R1673, R1675, and R276, which port the last members, and R1561, which retires
     the lane subscript.
   - Model: Opus, Not Planned.
