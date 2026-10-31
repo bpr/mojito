@@ -712,10 +712,11 @@ struct Specializer<'a> {
     /// specialized could not compute, by destination register: each fails
     /// the instantiation once the instance is found to reach it.
     unreached_failures: HashMap<u32, MonoError>,
-    /// Each generic nested body declared in an unrolled region copy, under
-    /// the name the copy's closure value takes: the template and the copy's
-    /// bindings, which a call binding the body's own parameters extends.
-    region_generators: HashMap<String, (String, Bindings)>,
+    /// Each generic nested body referenced as a value under an enclosing
+    /// instance or an unrolled region copy, under its generator's name: the
+    /// template and the enclosing bindings, which a call binding the body's
+    /// own parameters extends.
+    nested_generators: HashMap<String, (String, Bindings)>,
     /// The first instance whose `pop.array` op holds an element Mojito's
     /// subset rejects ([`Self::close_lane_masks`]), reported once the
     /// worklist drains, so an instance's own `comptime assert` over the

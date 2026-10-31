@@ -630,6 +630,7 @@ assets/ok/nested_def_reads_comptime_for_index.mojo	main	exe-differential	sanitiz
 assets/ok/nested_def_reads_enclosing_parameter.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_storage_method.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_value_argument.mojo	main	exe-differential	sanitized
+assets/ok/nested_generic_def_callable_binder_argument.mojo	main	exe-differential	sanitized
 assets/ok/nested_generic_unread_own_instances.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_method_unread_owner_instances.mojo	main	exe-differential	sanitized

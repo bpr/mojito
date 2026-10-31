@@ -2291,6 +2291,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic nested `def` passed as a value names its generator under the
+  enclosing instance, so a `body[width]` calling the enclosing compile-time
+  `func[width]` (or reading `k` or `Self.k`) runs when handed to a
+  callable-binder parameter, where it failed with "unsupported nested body
+  reading unresolved parameter `func`" (R1765). The generator's name now
+  includes a method's owner struct instance, so `W[100]` and `W[7]` no
+  longer share one `comptime for` copy's nested body and print the second
+  instance's answer for both.
 - Each anonymous callable contract declares its `def[...]` binders under
   its own owner, so a contract applied as `h[4](...)` keeps its own binder
   (`k`) instead of inheriting the spelling (`wq`) of an earlier contract in

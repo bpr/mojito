@@ -1565,7 +1565,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `region_binders_up_to`, which reaches a body nested in a region body
   inlined into the template) points each region copy's closure at its
   instance, a generic one at the copy's
-  generator (`Specializer::region_generators`).
+  generator (`Specializer::nested_generator`, recorded in
+  `nested_generators`, which also names a generic body's value nested in an
+  instance).
 
 ### VM and Comptime
 

@@ -68,7 +68,7 @@ impl<'a> Specializer<'a> {
             closure_captures: HashMap::new(),
             enclosing: Bindings::default(),
             unreached_failures: HashMap::new(),
-            region_generators: HashMap::new(),
+            nested_generators: HashMap::new(),
             array_element_failure: None,
         }
     }
@@ -2439,9 +2439,11 @@ impl<'a> Specializer<'a> {
     /// being specialized: the nested body is a generator over `owner`'s
     /// binders, not a function of its own. A call of it by name is a
     /// direct call, which names its reduced generator as any direct call
-    /// does. A closure over its storage's method names the method's
-    /// instance at the storage instance it captures, as a call on that
-    /// storage would.
+    /// does. A generic nested body's value names its generator under this
+    /// instance, its enclosing binders bound and its own open, which a call
+    /// binding its own parameters extends. A closure over its storage's
+    /// method names the method's instance at the storage instance it
+    /// captures, as a call on that storage would.
     fn instantiate_nested_bodies(
         &mut self,
         owner: &str,
@@ -2481,6 +2483,24 @@ impl<'a> Specializer<'a> {
                     let (bindings, arguments) =
                         self.nested_bindings(target, &self.enclosing, false)?;
                     *target = self.enqueue(target, bindings, arguments)?;
+                }
+                MirInstr::MakeClosure {
+                    function: target, ..
+                }
+                | MirInstr::Const {
+                    k: Const::Function(target),
+                    ..
+                } if self
+                    .declarations
+                    .get(target.as_str())
+                    .is_some_and(|declaration| declaration.enclosing.as_deref() == Some(owner)) =>
+                {
+                    let (bindings, arguments) =
+                        self.nested_bindings(target, &self.enclosing, false)?;
+                    if arguments.is_empty() && bindings.self_instance.is_none() {
+                        continue;
+                    }
+                    *target = self.nested_generator(target, bindings, &arguments);
                 }
                 instruction => {
                     for region in mojito_mir::mir::instruction_regions_mut(instruction) {
@@ -2584,6 +2604,32 @@ impl<'a> Specializer<'a> {
             })
             .collect::<Result<_, _>>()?;
         Ok((bindings, arguments))
+    }
+
+    /// Name the generic nested body `target`'s value under `bindings`, those
+    /// of the instance (or unrolled region copy) it is declared in, with
+    /// `arguments` their solutions of its enclosing scope's binders: the
+    /// generator over its own parameters that a call binding them extends.
+    /// A body nested in a method is spelled under its owner instance, as
+    /// [`Self::enqueue`] spells the method's, so two instances of a generic
+    /// struct name two generators.
+    pub(super) fn nested_generator(
+        &mut self,
+        target: &str,
+        bindings: Bindings,
+        arguments: &[InstanceArg],
+    ) -> String {
+        let base = match bindings.self_instance.as_ref().map(|(_, ty)| ty.kind()) {
+            Some(TyKind::Struct(name, _)) => {
+                mojito_symbol::symbol::retarget_method_symbol(target, name)
+                    .unwrap_or_else(|| target.to_string())
+            }
+            _ => target.to_string(),
+        };
+        let generator = mojito_symbol::symbol::instance_symbol(&base, arguments);
+        self.nested_generators
+            .insert(generator.clone(), (target.to_string(), bindings));
+        generator
     }
 
     /// The instance of the generic struct whose method the outermost
@@ -2843,10 +2889,11 @@ impl<'a> Specializer<'a> {
                         spread,
                         ..
                     } => {
-                        // A body nested in an unrolled region is named as
-                        // its region copy's generator, whose bindings its
+                        // A generic nested body's value is named as its
+                        // generator under the instance or unrolled region
+                        // copy it is declared in, whose bindings its
                         // instance inherits.
-                        let region = self.region_generators.get(func.0.as_str()).cloned();
+                        let region = self.nested_generators.get(func.0.as_str()).cloned();
                         if let Some((template, _)) = &region {
                             func.0.clone_from(template);
                         }
@@ -3193,9 +3240,10 @@ impl<'a> Specializer<'a> {
                                     .collect();
                                 preludes.push((index, loads));
                             }
-                            // A generic body declared in an unrolled region
-                            // is named as its region copy's generator.
-                            let (target, region) = match self.region_generators.get(&target) {
+                            // A generic nested body's value is named as its
+                            // generator under the instance or unrolled
+                            // region copy it is declared in.
+                            let (target, region) = match self.nested_generators.get(&target) {
                                 Some((template, bindings)) => {
                                     (template.clone(), Some(bindings.clone()))
                                 }

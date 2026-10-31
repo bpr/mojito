@@ -733,7 +733,7 @@ which names the upstream pass each one follows. Each is measured by the
     `Arr[$iter + 1]` against the argument from empty bindings and only
     then inherits the region's binders (`nested_bindings`).
   - Inherit the enclosing and region binders before unifying, as the
-    generic region path does through `region_generators`.
+    generic region path does through `nested_generators`.
   - Probes: the shape above, with or without `leaf` reading `a`; the
     vector analog `leaf(y: SIMD[DType.int64, i + 1])` and the plain nested
     analog over `Arr[n]` already run.
@@ -11037,27 +11037,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1765 A nested generic `def` that reads an enclosing
-  compile-time callable parameter cannot be passed to a callable-binder
-  parameter**
-
-  `red[func: def[width: Int](…) thin -> …](v)` declaring `def
-  body[width: SIMDLength](lhs, rhs): return func[width](lhs, rhs)` and
-  returning `run2(v, body)`, where `run2` takes `func: F` under a
-  callable-binder bound, fails with "in `red$body`: unsupported nested
-  body reading unresolved parameter `func`", where the pin runs it.
-  - Lead: the `ParamDecl::Value` arm beside that error
-    (`native/mono/specializer.rs`) reads only `bindings.values`, but a
-    compile-time callable is bound in `bindings.callables`.
-  - Probe: the same `body` inside one of two same-name `red` overloads
-    fails instead with "keeps compile-time parameter `F` in elaborated
-    MIR", in `main` or in `V.red$ov$$ct$func`.
-  - Upstream's parameter `reduce` overload (`simd.mojo:3107`) is this
-    shape (R1764).
-  - Found while planning R1762 (2026-10-31).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1766 A callable-bounded overload's symbol spells its bound from
   the AST's `Debug` form, source spans included**
 
@@ -11066,8 +11045,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   func: F)` declares as `V.red$ov$F$…$Callable$def$SIMD$Value$Expr$$$kind…$span$$$468$$473…`,
   while its call names `V.red$ov$F$…$Callable$def$width$$SIMDLength$$SIMD$DType$int32…`.
   - Callable identity must not depend on byte offsets or source paths
-    (invariant 6); the two spellings are reconciled somewhere today, so
-    the overloaded probes still run.
+    (invariant 6); only an arity fallback reconciles the two spellings,
+    so the plain method pair runs and the probes below do not.
   - Cause: `BinderSpelling::of` → `func_annotation_raw` →
     `annotation_display` (`mojito-symbol/src/symbol.rs`) prints a value
     argument with `{:?}` and drops the bound's own binders, where the doc
@@ -11075,6 +11054,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `emit-mir` of a struct with two `red` overloads, one taking
     `func: F` under that bound and one `[func: def[width: Int](…) thin ->
     …]`, called as `x.red(add)`.
+  - Probe: the same pair where the parameter overload only declares an
+    unrelated nested `def helper(a: Int, b: Int) -> Int` fails `x.red(add)`
+    with "in `main`: … keeps compile-time parameter `F`"; without `helper`
+    it runs. `resolve_method_symbol`'s arity fallback reconciles the two
+    spellings only while no other declaration shares the `V.red$ov$`
+    prefix, and the nested def's `V.red$ov$$ct$func$helper` does.
+  - Probe: the free-function pair (`red(v, func: F)` beside
+    `red[func: …](v)`) fails outright with "vm backend does not support
+    the built-in or callee `red$ov$SIMD$DType$int32$$4$$F$…`": nothing
+    reconciles a free overload's spellings.
   - Upstream's `SIMD.reduce` has exactly that overload pair (R1764).
   - Found while planning R1762 (2026-10-31).
   - Depends on nothing.
@@ -11099,7 +11088,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     which prints as the pin's `68104130000000.0` once R159 lands.
   - `assets/ok/simd_reductions_float.mojo` says reductions fold left to
     right; its outputs change with the tree.
-  - Depends on R1765 and R1767.
+  - Depends on R1766 and R1767.
   - Model: Fable, Planned.
 
 - [ ] **R1768 An anonymous callable contract's own binders are named
