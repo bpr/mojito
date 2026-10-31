@@ -2291,6 +2291,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An overloaded free `def` is declared under the symbol the check spells
+  from its typed signature, by the key its call spells, instead of
+  re-spelling its annotations' syntax (R600). `pick(p: Pair[Point])`
+  beside `pick(n: Int)`, which failed "vm backend does not support the
+  built-in or callee `pick$ov$Pair$Point`", runs, beside a generic
+  `pick[T](p: Pair[T])` and in a compile-time or type-level application
+  (`SIMD[DType.int64, g(Pair[Point](Point(4)), 3)]`). A generic overload's
+  signature is typed under a provisional owner to spell the symbol its
+  binders are then owned by. The free-function `StringSlice` probe of R240
+  runs; its method shapes move to R1769, with R1770 and R1771 filed
+  behind it. The package format moves to `mojito-package 168`.
 - An overload bounded by a generic callable contract (`F: … &
   def[width: SIMDLength](SIMD[DType.int32, width], …) -> …`) declares
   the symbol its call names, spelled as the checked contract displays

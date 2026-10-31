@@ -1684,7 +1684,11 @@ second expression tree.
   same-spelled parameters of unrelated declarations differ and a `$` clone
   shares its template's. An overloaded module-level `def` is owned by the
   signature-qualified symbol MIR names it by (`tally$ov$…`), so two overloads
-  of one name never share a binder. An overloaded struct method is owned the
+  of one name never share a binder. The checker spells that symbol once from
+  the typed signature, by the key a call to it spells
+  (`callable_lowered_name`); a generic overload's signature is typed first
+  under a provisional owner (`symbol::naming_owner`) to spell it, its lifts
+  there forgotten, and then again under the symbol. An overloaded struct method is owned the
   same way, by the symbol its template lowers to (`Box.pick$ov$…`):
   `symbol::MethodBinderOwners` computes it once per struct and keys it by
   the struct and the method's declaration (its name and the signature facts

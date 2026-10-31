@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1769**.
+Next free ID: **R1772**.
 
 ## Ordered Work
 
@@ -4444,7 +4444,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Staging the receiver through its own constant
     (`comptime B = P(x=5)`, `comptime Q = B.plus[2]()`) runs.
   - Probe: upstream-shaped `comptime C = StaticTuple[Int, 3](fill=5)._replace[2](8)`,
-    which the pin prints `8` for at `C[2]`, once R600 lets `_replace`
+    which the pin prints `8` for at `C[2]`, once R1769 lets `_replace`
     construct; `assets/ok/mlir_pop_array_ops.mojo` stages its `FOLDED`
     this way (found while landing R1667, 2026-10-29).
   - Depends on nothing.
@@ -4734,8 +4734,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     into `!kgen.type`) and stops `var element: M.Of[Int]()[0]` parsing.
   - The lever: `symbol::ast_raw` spells a bare type operand as the type it
     names, excluding `_`/`...`, binders, `Int` constants, and `DType`
-    members (measured 0 corpus diffs while planning R1370); R600's
-    resolved-signature mangling is the full fix.
+    members (measured 0 corpus diffs while planning R1370); R1769's
+    resolved-signature mangling of a method is the full fix.
   - Probe: `materialize[Int8.MAX]()` and `materialize[Int32.dtype]()`
     print `127` and `int32` at the pin. Mojito parses the operand as a
     type path (`ParamArg::Type(Assoc)`), so
@@ -9533,58 +9533,93 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R594.
   - Model: Fable, Not Planned.
 
-- [ ] **R600 An overloaded declaration's symbol is spelled from its
-  syntax, and its call's from its checked type**
+- [ ] **R1769 An overloaded method's symbol is spelled from its syntax,
+  and its call's from its checked `MethodSig`**
 
-  The declaration side re-spells an overloaded `def` or method's symbol
-  from its AST signature, while the call side spells it from the checked
-  `FuncTy`, and upstream mangles a declaration once, from its resolved
+  An overloaded method or `__init__` names its declaration from the AST,
+  while its call spells `method_lowered_name` over the checked
+  `MethodSig`; upstream mangles a declaration once, from its resolved
   signature.
-  - `lowered_def_name`/`lowered_method_name` (`mojito-symbol`) run
-    `signature_from_ast`, which still folds an annotation's own arithmetic
-    (`SIMD[d, N * 2]`) over the check's constants.
-  - The call side is `overload_support::callable_lowered_name`/
-    `method_lowered_name`; the two agree only because both spell alike.
-  - The check needs the owner before the signature is typed
-    (`check_def` classifies binders under it), so the lever restructures
-    binder ownership: type the signature, then name its declaration.
-  - Found while landing R599 (2026-10-10).
-  - Probe: `def pick(p: Pair[Point])` beside `def pick(n: Int)` fails on
-    the VM with "does not support … `pick$ov$Pair$Point`", where the pin
-    prints `4` for `pick(Pair[Point](Point(4)))`. The declaration spells
-    the bare operand `VPoint` (`symbol::value_expr_raw`), the call
-    `Point` (found while landing R1370, 2026-10-27).
-  - Probe: a struct with two keyword initializers, `fill: Int` and
-    `mlir_value: Self._mlir_type` (a `comptime` member over
-    `` __mlir_type[`!pop.array<`, …, `>`] `` or `SIMD[DType.int64, Self.n]`),
-    whose method returns `Self(mlir_value=…)`. The call names
-    `__init__$ov$SIMD$DType$int64$$n$$kw$mlir_value`, the declaration
-    `__init__$ov$$u5F$mlir$u5F$type$kw$mlir_value`, and the elaborator's
-    arity fallback finds two candidates, so the instance "keeps
-    compile-time argument slots". Upstream's `StaticTuple._replace` is this
-    shape (found while landing R1667, 2026-10-29).
-  - Probe: the bundled `StaticTuple[Int, 2](mlir_value=b._mlir_value)`
+  - The syntax spellers: `MethodBinderOwners::scan` (the binder owners and
+    `sig.overload`'s `call_qualifier`), `checked.rs::method_symbol`, and the
+    compile-time applicable table's `lowered_method_name` entries.
+  - The lever is R600's for a free `def`: in
+    `register_struct_method_signatures`, type each overloaded method's
+    parameters under `symbol::naming_owner` in its receiver scope, spell
+    `method_lowered_name` over that `MethodSig`, record it per
+    `GenericSite::Method`, then type it under the symbol; the checked
+    builder and the applicable entry (`name_applicable_def`'s analogue)
+    read the record.
+  - Check first that every template's methods are registered before a `$`
+    clone's body is re-classified, and how a packaged struct's methods are
+    named without their bodies.
+  - Probe: a struct with `comptime _mlir_type = SIMD[DType.int64, Self.n]`
+    and keyword initializers `fill: Int` and `mlir_value: Self._mlir_type`,
+    whose method returns `Self(mlir_value=…)`, fails with "keyword
+    arguments to `V.__init__$ov$SIMD$DType$int64$$4$$kw$mlir_value` are not
+    supported"; the declaration is `…$u5F$mlir$u5F$type$kw$mlir_value`.
+  - Probe: the bundled `StaticTuple[Int, 2](mlir_value=b._mlir_value)` and
+    `t._replace[0](9)` keep compile-time argument slots; the pin prints the
+    element. `assets/ok/static_tuple.mojo` leaves both out.
+  - Probe: `struct P[n: Int]` with `comptime T = SIMD[DType.int32, Self.n]`
+    and `__init__(out self, *, raw: Self.T)` beside `__init__(out self)`
     fails on the VM with "keyword arguments to
-    `…__init__$ov$$pop$array$size…$kw$mlir_value` are not supported", and
-    `t._replace[0](9)` keeps compile-time argument slots; the pin prints
-    the element. `assets/ok/static_tuple.mojo` leaves both out.
+    'P.__init__$ov$SIMD$DType$int32$$n$$kw$raw' are not supported", where
+    the pin runs `P[2](raw=SIMD[DType.int32, 2](5))`. `SIMD`'s
+    `mlir_value: Self._mlir_type` overload hits it (R1591). An overloaded
+    constructor spelled with the `StringSlice` or `Byte` alias does too;
+    the ports spell the canonical names.
   - Probe: a struct with `comptime _T = SIMD[DType.int32, _]` and two
-    `red` overloads, one `red[F: ImplicitlyCopyable & RegisterPassable &
-    def[width: SIMDLength](Self._T[width], Self._T[width]) ->
-    Self._T[width], //](self, func: F)` and one `red[func:
-    def[width: SIMDLength](Self._T[width], …) thin -> Self._T[width]](self)`
-    holding a nested `def helper(a: Int, b: Int) -> Int`, fails
-    `x.red(add)` with "in `main`: … keeps compile-time parameter `F`"; the
-    pin prints `2`. The declaration spells the bound's `Self._T[width]` as
-    `_T[width]`, the call as `SIMD[DType.int32, width]`, and the arity
-    fallback sees the lifted `V.red$ov$$ct$func$helper` as a third
-    overload. Upstream's `SIMD.reduce` pair is this shape (R1764; found
-    while landing R1766, 2026-10-31).
-  - `symbol::value_expr_raw` spells any annotation value it does not
-    recognize as `expr`, so two same-arity overloads differing only in
-    such a value would share one symbol; spelling a declaration from its
-    resolved signature removes that too.
+    `red` overloads, one bounded `F: … & def[width: SIMDLength](Self._T[width],
+    Self._T[width]) -> Self._T[width], //` and one taking `func` as a
+    compile-time parameter and holding a nested `def helper`, fails
+    `x.red(add)` with "keeps compile-time parameter `F`"; the pin prints
+    `2`. The declaration spells `_T[width]`, the call `SIMD[DType.int32,
+    width]`, and the arity fallback sees the lifted
+    `V.red$ov$$ct$func$helper` as a third overload. Upstream's
+    `SIMD.reduce` pair is this shape (R1764).
+  - Found while landing R600 (2026-10-31).
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1770 A trait requirement's symbol, and the applicable table's
+  key, are still spelled from syntax**
+
+  A trait requirement's binder owner (`traits.rs`) and its default's
+  `member_symbol` (`trait_defaults.rs`) are spelled by
+  `lowered_method_name` from the AST, and the compile-time applicable
+  table keys a module `def` by `lowered_def_name`; upstream names every
+  declaration from its resolved signature.
+  - Name a requirement from its typed `MethodSig` with
+    `method_lowered_name(…, None)` and store it on the trait info, so
+    `member_symbol` reads it.
+  - Key an applicable entry by its declaration site rather than a symbol,
+    so `ApplicableFunction::key` and `name_applicable_def` go.
+  - Then delete `lowered_def_name`, `lowered_method_name`, `MethodShape`,
+    `signature_from_ast`, `value_expr_raw`, `MethodBinderOwners`, and every
+    `ast_raw` path left without a caller, porting `tests/symbol_test.rs`'s
+    AST-key tests.
+  - `symbol::value_expr_raw` spells any annotation value it does not
+    recognize as `expr`, so two same-arity method overloads differing only
+    in such a value share one symbol; this removes it.
+  - Found while landing R600 (2026-10-31).
+  - Depends on R1769.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1771 An overloaded generic declaration's signature is typed twice
+  to name it**
+
+  A binder is owned by its declaration's lowered symbol (`ParamId::owner`),
+  so an overloaded generic `def` types its signature once under
+  `symbol::naming_owner` just to spell that symbol, then again under it;
+  upstream types a signature once, its binders declaration-relative, and
+  derives the mangled name afterward.
+  - The readers of owner == symbol: `mir/param_uses.rs`'s owner filters,
+    `native/mono/specializer.rs`'s removed-parameter keys, and the MIR
+    text format's binder spelling.
+  - Same direction as R1768: declaration-relative binder identity.
+  - Found while landing R600 (2026-10-31).
+  - Depends on R1770.
   - Model: Fable, Not Planned.
 
 - [ ] **R561 A package body's types name the package check's binding
@@ -11072,7 +11107,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     which prints as the pin's `68104130000000.0` once R159 lands.
   - `assets/ok/simd_reductions_float.mojo` says reductions fold left to
     right; its outputs change with the tree.
-  - Depends on R600 and R1767.
+  - Depends on R1769 and R1767.
   - Model: Fable, Planned.
 
 - [ ] **R1768 An anonymous callable contract's own binders are named
@@ -11131,14 +11166,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Self(mlir_value=…)` (`checker/call_inference.rs`).
   - Declaring the overload today breaks the inlined `cast` body's
     per-instance re-check: its call names `SIMD.__init__$ov$$$KgenSimd…`
-    while the declaration is `…$u5F$mlir$u5F$type…` (R240).
+    while the declaration is `…$u5F$mlir$u5F$type…` (R1769).
   - Then a `!kgen.simd` parameter pattern unifies a slot only with a
     binder-valued slot, the stand-ins retire, and the concrete-`v` program
     becomes a `type_error` fixture.
   - Keep the template's selection in a per-instance re-check, where the
     slots are concrete.
   - Found while landing R1555 (2026-10-28).
-  - Depends on R240.
+  - Depends on R1769.
   - Model: Fable, Planned.
 
 - [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a
@@ -12929,29 +12964,6 @@ residue found inside a task moves to the task that owns its fix.
   - A small port.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R240 An overloaded constructor spelled with the `StringSlice` or
-  `Byte` alias mangles a different key than the call selects**
-
-  Problem: an overloaded constructor spelled with the `StringSlice` or
-  `Byte` alias mangles a different key than the `StringSpan` / `UInt8` the
-  call selects.
-  - Workaround: the ports spell the canonical names.
-  - Probe: an overloaded free function hits it too: `def f(value:
-    StringSlice)` beside `def f(value: Int)` fails on the VM with "does not
-    support the built-in or callee 'f$ov$StringSpan'"; the bundled `len`'s
-    `@unavailable` overload spells `StringSpan` for it.
-  - Cause: the declaration's symbol mangles the annotation's spelling
-    (`signature_from_ast`), the call's the type it resolves to
-    (`TypeKey::from_ty_with_self`), and an alias spells neither the same.
-  - Probe: a member alias does too. `struct P[n: Int]` with `comptime T =
-    SIMD[DType.int32, Self.n]` and `__init__(out self, *, raw: Self.T)`
-    beside `__init__(out self)` fails on the VM with "keyword arguments to
-    'P.__init__$ov$SIMD$DType$int32$$n$$kw$raw' are not supported", where
-    the pin runs `P[2](raw=SIMD[DType.int32, 2](5))`. `SIMD`'s
-    `mlir_value: Self._mlir_type` overload hits it (R1591).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R241 A temporary view used as a method argument or
   augmented-assignment operand fails in the VM**

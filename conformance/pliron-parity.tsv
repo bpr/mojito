@@ -697,6 +697,7 @@ assets/ok/os_dir_operations.mojo	main	exe-differential	sanitized
 assets/ok/os_path_functions.mojo	main	exe-differential	sanitized
 assets/ok/overload_key_scalar_alias_origin.mojo	main	exe-differential	sanitized
 assets/ok/overload_nested_application_parameter.mojo	main	exe-differential	sanitized
+assets/ok/overload_struct_argument.mojo	main	exe-differential	sanitized
 assets/ok/overload_transfer_effect_isolation.mojo	main	exe-differential	sanitized
 assets/ok/overload_var_copy_beside_generic.mojo	main	exe-differential	sanitized
 assets/ok/overload_var_copy_constructor.mojo	main	exe-differential	sanitized

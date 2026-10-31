@@ -8,6 +8,7 @@ use super::indexing::SubscriptLValue;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_common::timing;
+use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 
@@ -3465,17 +3466,77 @@ impl Checker {
         )?;
         self.validate_origin_signature(type_params, params, None)?;
         // Two overloads of one name are two declarations, so each owns its
-        // binders under the symbol it lowers to.
-        let owner = if self.function_bases.is_empty() {
-            mojito_symbol::symbol::lowered_def_name(
-                name,
-                type_params,
-                params,
-                &*self.overload_sets,
-                &*self.program_constants,
-            )
-        } else {
-            name.clone()
+        // binders under the symbol it lowers to, spelled once from its typed
+        // signature by the key a call to it spells.
+        if !self.function_bases.is_empty()
+            || !self
+                .overload_sets
+                .function_is_overloaded(name, params.len())
+        {
+            return self.def_signature_owned_by(stmt, &shape, name.clone(), unavailable, required);
+        }
+        let site = mojito_checked::checked::GenericSite::Function {
+            module: stmt.module.clone(),
+            declaration: stmt.span,
+            syntax: stmt.syntax_id,
+        };
+        let recorded = self.declaration_symbols.borrow().get(&site).cloned();
+        if let Some(symbol) = recorded {
+            return self.def_signature_owned_by(stmt, &shape, symbol, unavailable, required);
+        }
+        let symbol_of = |signature: &DefSignature| {
+            callable_lowered_name(name, &signature.fn_ty).ok_or_else(|| {
+                TypeError::InvariantViolation(format!("overload '{name}' has no callable type"))
+            })
+        };
+        let provisional = mojito_symbol::symbol::naming_owner(name);
+        if type_params.is_empty() {
+            // Binder-free, the signature types the same under any owner.
+            let mut signature =
+                self.def_signature_owned_by(stmt, &shape, provisional, unavailable, required)?;
+            let symbol = symbol_of(&signature)?;
+            signature.owner.clone_from(&symbol);
+            self.name_applicable_def(stmt, &symbol);
+            self.declaration_symbols.borrow_mut().insert(site, symbol);
+            return Ok(signature);
+        }
+        // The binders are owned by the symbol the typed signature spells, so
+        // the signature is typed under a provisional owner to spell it, and
+        // its lifts there are forgotten: no key spells a binder's owner, so
+        // the spelling is the one the owned signature gives.
+        let lifted = self.lifted_applications.borrow().len();
+        let counts = self.lifted_counts.borrow().clone();
+        let named = self.def_signature_owned_by(
+            stmt,
+            &shape,
+            provisional,
+            unavailable.clone(),
+            required.clone(),
+        );
+        self.lifted_applications.borrow_mut().truncate(lifted);
+        *self.lifted_counts.borrow_mut() = counts;
+        let symbol = symbol_of(&named?)?;
+        self.name_applicable_def(stmt, &symbol);
+        self.declaration_symbols
+            .borrow_mut()
+            .insert(site, symbol.clone());
+        self.def_signature_owned_by(stmt, &shape, symbol, unavailable, required)
+    }
+
+    /// [`Self::def_signature`] with the declaration's binders owned by
+    /// `owner`.
+    fn def_signature_owned_by(
+        &mut self,
+        stmt: &Stmt,
+        shape: &DefShape<'_>,
+        owner: String,
+        unavailable: Option<String>,
+        required: Vec<bool>,
+    ) -> Result<DefSignature, TypeError> {
+        let StmtKind::Def { type_params, .. } = &stmt.kind else {
+            return Err(TypeError::InvariantViolation(
+                "check_def requires a function declaration".to_string(),
+            ));
         };
         let decls = self.classify_params(&owner, type_params)?;
         // Type parameters are in scope while resolving the signature (as
@@ -3483,7 +3544,7 @@ impl Checker {
         // dependent parameter expression names (`Buf[n + 1]`).
         self.push_param_scope(&decls);
         let signature =
-            self.def_signature_in_scope(stmt, &shape, owner, decls, unavailable, required);
+            self.def_signature_in_scope(stmt, shape, owner, decls, unavailable, required);
         self.tparams.pop();
         signature
     }

@@ -524,6 +524,58 @@ fn callable_bound_overload_keys_agree_between_declaration_and_call() {
     }
 }
 
+const STRUCT_ARGUMENT_PAIRS: &str = "\
+@fieldwise_init
+struct Point(Copyable):
+    var x: Int
+
+@fieldwise_init
+struct Pair[T: Copyable & Deinitable](Copyable):
+    var a: Self.T
+
+def pick[T: Copyable & Deinitable](p: Pair[T], n: Int) -> Int:
+    return n
+
+def pick(p: Pair[Point], n: Int) -> Int:
+    return p.a.x
+
+def pick(n: Int, m: Int) -> Int:
+    return n
+
+def main():
+    print(pick(Pair[Point](Point(4)), 0))
+    print(pick(Pair[Int](5), 1))
+    print(pick(7, 0))
+";
+
+#[test]
+fn struct_argument_overload_keys_agree_between_declaration_and_call() {
+    // An overload over `Pair[Point]` is named from its typed signature, as
+    // its call is, so the declaration spells `Point` rather than the bare
+    // operand's syntax.
+    let program = linked_program(STRUCT_ARGUMENT_PAIRS);
+    let names = lowered_names(STRUCT_ARGUMENT_PAIRS);
+    assert!(names.contains("pick$ov$Pair$Point$Int"), "{names:?}");
+    for target in &own_call_targets(&program) {
+        assert!(
+            names.contains(target),
+            "checker target '{target}' names no MIR function; emitted: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn naming_owner_never_reaches_mir() {
+    // A generic overload's signature is typed under a provisional owner to
+    // spell its symbol; no binder lowered to MIR is owned by it.
+    let lowered = lower_program(&linked_program(STRUCT_ARGUMENT_PAIRS)).expect("type error");
+    let spelled = format!("{:?}", lowered.functions);
+    assert!(
+        !spelled.contains("@naming"),
+        "a provisional owner reached MIR"
+    );
+}
+
 #[test]
 fn overload_keys_carry_no_source_positions() {
     // No overload symbol embeds a span, a syntax id, or the source path,

@@ -697,6 +697,7 @@ assets/ok/os_dir_operations.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_path_functions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_key_scalar_alias_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_nested_application_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overload_struct_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_transfer_effect_isolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_var_copy_beside_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_var_copy_constructor.mojo	-	ineligible	no-scalar-entry-shape

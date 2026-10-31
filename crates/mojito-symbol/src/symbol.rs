@@ -1289,6 +1289,12 @@ impl MethodBinderOwners {
     }
 }
 
+/// The provisional owner of an overloaded declaration `name`'s binders while
+/// its signature is typed to spell its symbol; no lowered symbol spells it.
+pub fn naming_owner(name: &str) -> String {
+    format!("{name}@naming")
+}
+
 /// The lifted name of a nested `def` (`inner` declared inside `outer`).
 pub fn nested_lifted_name(outer: &str, inner: &str) -> String {
     format!("{outer}${inner}")

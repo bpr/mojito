@@ -4411,6 +4411,9 @@ pub struct DiscoveryResult {
     pub default_wrappers: Vec<CheckedDefaultWrapper>,
     /// Every trait default the check checked as its trait's member.
     pub trait_members: Vec<CheckedTraitMember>,
+    /// The symbol each overloaded module `def` lowers to, as the check
+    /// spelled it from the declaration's typed signature.
+    pub declaration_symbols: HashMap<GenericSite, String>,
 }
 
 impl DiscoveryResult {
@@ -4847,6 +4850,7 @@ impl CheckedProgram {
             constants,
             mut default_wrappers,
             trait_members,
+            declaration_symbols,
         } = discovery;
         // Each statement's warnings in the order the check emitted them, the
         // statements in source order: an enclosing `match`'s come before a
@@ -4869,6 +4873,7 @@ impl CheckedProgram {
             constants: &constants,
             fieldwise_conventions: &conformances.fieldwise_conventions,
             fieldwise_ref_params: &conformances.fieldwise_ref_params,
+            declaration_symbols: &declaration_symbols,
         };
         for wrapper in &mut default_wrappers {
             wrapper.signature = signatures.method(
@@ -5203,6 +5208,7 @@ pub(crate) struct Signatures<'a> {
     pub(crate) constants: &'a crate::package::ProgramConstants,
     pub(crate) fieldwise_conventions: &'a HashMap<String, Vec<Option<ArgConvention>>>,
     pub(crate) fieldwise_ref_params: &'a HashMap<String, Vec<Option<mojito_types::origin::RefSig>>>,
+    pub(crate) declaration_symbols: &'a HashMap<GenericSite, String>,
 }
 
 impl Signatures<'_> {
@@ -6103,7 +6109,6 @@ impl<'a> ArenaBuilder<'a> {
         Some(match &statement.kind {
             StmtKind::Def {
                 name,
-                type_params,
                 params,
                 positional_only,
                 keyword_only,
@@ -6115,7 +6120,7 @@ impl<'a> ArenaBuilder<'a> {
                 ..
             } => CheckedStmtOp::Def(Box::new(CheckedDef {
                 name: name.clone(),
-                symbol: self.function_symbol(name, type_params, params),
+                symbol: self.function_symbol(statement, name),
                 signature: self.signatures.function(statement, params.len()),
                 params: self.fn_params(params),
                 positional_only: *positional_only,
@@ -6498,26 +6503,22 @@ impl<'a> ArenaBuilder<'a> {
         body
     }
 
-    /// The symbol the `def` `name` lowers to, as the check names its
-    /// owner: a module `def`'s signature-qualified when its name is
-    /// overloaded, a nested one's its own name.
-    fn function_symbol(
-        &self,
-        name: &str,
-        type_params: &[TypeParam],
-        params: &[mojito_ast::ast::FnParam],
-    ) -> String {
+    /// The symbol the `def` `statement` named `name` lowers to, as the
+    /// check names its owner: a module `def`'s the check spelled from its
+    /// typed signature when its name is overloaded, its own name otherwise.
+    fn function_symbol(&self, statement: &Stmt, name: &str) -> String {
         if self.functions > 0 {
             return name.to_string();
         }
-        let signatures = self.signatures;
-        mojito_symbol::symbol::lowered_def_name(
-            name,
-            type_params,
-            params,
-            signatures.overloads,
-            signatures.constants,
-        )
+        self.signatures
+            .declaration_symbols
+            .get(&GenericSite::Function {
+                module: statement.module.clone(),
+                declaration: statement.span,
+                syntax: statement.syntax_id,
+            })
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
     }
 
     /// The symbol struct `structure`'s method `method`, registered as

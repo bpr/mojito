@@ -148,8 +148,13 @@ pub(super) struct ForwardedPack {
 /// included.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
-    /// The MIR declaration the elaborator runs.
-    symbol: String,
+    /// The declaration's key among its name's overloads, the symbol its
+    /// syntax spells, which owns its argument slots' binders.
+    key: String,
+    /// The symbol the check spelled the declaration from its typed
+    /// signature, once it has: an overloaded module `def` is listed before
+    /// any signature is typed.
+    lowered: Option<String>,
     /// Whether it is a static method or an `__init__` of a generic struct,
     /// which is applied to the instance it is called on, or constructs,
     /// before any other argument.
@@ -217,7 +222,7 @@ pub(in crate::checker) enum FoldedBody {
 impl ApplicableFunction {
     /// The MIR declaration the elaborator runs.
     pub(in crate::checker) fn symbol(&self) -> &str {
-        &self.symbol
+        self.lowered.as_deref().unwrap_or(&self.key)
     }
 
     /// The compile-time parameters, then `self`, then the runtime
@@ -233,7 +238,7 @@ impl ApplicableFunction {
     pub(in crate::checker) fn argument_slots(&self, owner: Option<&Ty>) -> Option<Vec<ParamDecl>> {
         let signature = self.signature.as_ref()?;
         let binder = |slot: usize, name: &str| {
-            super::annotations::builtin_body_binder(&self.symbol, slot, name)
+            super::annotations::builtin_body_binder(&self.key, slot, name)
         };
         let subst: TySubst = signature
             .decls
@@ -1695,7 +1700,7 @@ impl Checker {
         }
         if function.raises {
             return Err(TypeError::BadCall {
-                func: function.symbol.clone(),
+                func: function.symbol().to_string(),
                 reason: "cannot call raising function in type parameter".to_string(),
             });
         }
@@ -1835,7 +1840,7 @@ impl Checker {
     /// argument.
     pub(super) fn calls_raising_application(&self, expr: &Expr) -> Option<&str> {
         let function = self.selected_application(expr)?.function;
-        function.raises.then_some(function.symbol.as_str())
+        function.raises.then_some(function.symbol())
     }
 
     /// Compile the `where` clauses of each callable `stmts` declare that a
@@ -1931,13 +1936,42 @@ impl Checker {
                     .and_then(|overloads| {
                         overloads
                             .iter()
-                            .find(|function| function.symbol() == declaration.function.symbol())
+                            .find(|function| function.key == declaration.function.key)
                     })
             {
                 declaration.function = listed.clone();
             }
         }
         declarations
+    }
+
+    /// Name the entry [`applicable_functions`] lists for the overloaded
+    /// module `def` `statement` by `symbol`, the one the check spelled from
+    /// its typed signature.
+    pub(super) fn name_applicable_def(&mut self, statement: &Stmt, symbol: &str) {
+        let StmtKind::Def {
+            name,
+            type_params,
+            params,
+            ..
+        } = &statement.kind
+        else {
+            return;
+        };
+        let key = mojito_symbol::symbol::lowered_def_name(
+            name,
+            type_params,
+            params,
+            &*self.overload_sets,
+            &*self.program_constants,
+        );
+        if let Some(entry) = self
+            .applicable_functions
+            .get_mut(name)
+            .and_then(|overloads| overloads.iter_mut().find(|function| function.key == key))
+        {
+            entry.lowered = Some(symbol.to_string());
+        }
     }
 
     /// The entry [`applicable_functions`] lists for `declaration`.
@@ -1948,7 +1982,7 @@ impl Checker {
         self.applicable_functions
             .get_mut(&declaration.name)?
             .iter_mut()
-            .find(|function| function.symbol() == declaration.function.symbol())
+            .find(|function| function.key == declaration.function.key)
     }
 
     /// `declaration`'s own compile-time parameters classified, its result
@@ -1967,7 +2001,7 @@ impl Checker {
             (Some(method), Some(StmtKind::Struct { name, .. })) => {
                 self.method_binder_owner(name, method)
             }
-            _ => function.symbol().to_string(),
+            _ => function.key.clone(),
         };
         let decls = self.classify_params(&owner, declaration.type_params).ok()?;
         if decls.len() != function.binders.len() {
@@ -2221,7 +2255,7 @@ impl Checker {
         let mut ranked: Vec<_> = match self.run_time_overload(expr) {
             Some(target) => tied
                 .into_iter()
-                .filter(|selected| selected.function.symbol == target)
+                .filter(|selected| selected.function.symbol() == target)
                 .collect(),
             None => tied
                 .into_iter()
@@ -2484,14 +2518,14 @@ impl Checker {
         }
         applied.extend(arguments.iter().cloned());
         let application = self.param_context.apply(
-            &function.symbol,
+            function.symbol(),
             &applied,
             mojito_types::param_expr::MetaTy::value(result),
         );
         if let Some(body) = &function.folded_body {
             let mut bindings = mojito_types::param_expr::ParamBindings::new();
             for (slot, argument) in arguments.iter().enumerate() {
-                let id = super::annotations::builtin_body_binder(&function.symbol, slot, "").id;
+                let id = super::annotations::builtin_body_binder(&function.key, slot, "").id;
                 // A `ref` slot's body reads the referent its reference holds.
                 let argument = &self.param_context.referent(argument).ok()?;
                 // A type slot binds the type its argument's shape names, so
@@ -5733,7 +5767,8 @@ impl ApplicableShape<'_> {
             })
             .collect::<Option<Vec<_>>>()?;
         Some(ApplicableFunction {
-            symbol,
+            key: symbol,
+            lowered: None,
             on_instance,
             self_slot,
             binders,

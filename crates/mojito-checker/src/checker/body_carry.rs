@@ -173,6 +173,7 @@ pub struct HandoffStores {
     constants: Arc<mojito_checked::package::ProgramConstants>,
     default_wrappers: Vec<CheckedDefaultWrapper>,
     trait_members: Vec<CheckedTraitMember>,
+    declaration_symbols: HashMap<GenericSite, String>,
 }
 
 impl HandoffStores {
@@ -196,6 +197,7 @@ impl HandoffStores {
             constants: self.constants,
             default_wrappers: self.default_wrappers,
             trait_members: self.trait_members,
+            declaration_symbols: self.declaration_symbols,
         }
     }
 }
@@ -563,6 +565,7 @@ fn carried_result(checker: &Checker) -> HandoffStores {
         declaration_effects: checker.declaration_effects.take(),
         default_wrappers: checker.checked_default_wrappers(),
         trait_members: Vec::new(),
+        declaration_symbols: checker.declaration_symbols.take(),
     }
 }
 
