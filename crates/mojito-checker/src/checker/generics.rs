@@ -1420,8 +1420,9 @@ impl Checker {
     /// `signature` with each own value parameter's type closed under the
     /// receiver's arguments, when one names a pack element of the struct's
     /// (`elt_handler: def[index: Int](var element: Self.Ts[index])`) or a
-    /// callable contract names its parameters (`h: def(Scalar[Self.dtype])`);
-    /// `None` when no declaration does.
+    /// callable contract names its parameters (`h: def(Scalar[Self.dtype])`),
+    /// or a type parameter's callable bound names them (`FuncType:
+    /// def[w: SIMDLength](Self._T[w]) …`); `None` when no declaration does.
     pub(super) fn method_decls_at_receiver(
         &self,
         signature: &MethodSig,
@@ -1465,6 +1466,10 @@ impl Checker {
                             default: Some(_),
                             ..
                         }
+                        | ParamDecl::Type {
+                            callable_bound: Some(_),
+                            ..
+                        }
                 )
             })
         {
@@ -1502,13 +1507,23 @@ impl Checker {
                     }
                 }
                 ParamDecl::Type {
-                    default: Some(ty), ..
+                    default,
+                    callable_bound,
+                    ..
                 } => {
-                    let at_receiver = substitute_at(ty, info, targs);
-                    retyped |= at_receiver != *ty;
-                    *ty = at_receiver;
+                    for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
+                        let at_receiver = substitute_at(ty, info, targs);
+                        let at_receiver = mojito_types::types::replace_parameters(
+                            &mojito_types::param_expr::ParamContext::detached(),
+                            &at_receiver,
+                            &owner_values,
+                            0,
+                        )
+                        .unwrap_or(at_receiver);
+                        retyped |= at_receiver != *ty;
+                        *ty = at_receiver;
+                    }
                 }
-                ParamDecl::Type { .. } => {}
             }
         }
         (rewrite.closed || retyped).then_some(closed)

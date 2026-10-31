@@ -860,11 +860,7 @@ impl FnLowering<'_> {
                 else {
                     return Err(self.unsupported_reg("SIMD reduction operand type".into(), *dest));
                 };
-                let method = match op {
-                    mojito_types::mlir::SimdReduction::And => "reduce_and",
-                    mojito_types::mlir::SimdReduction::Or => "reduce_or",
-                };
-                self.lower_simd_reduce(ctx, *dest, *value, dtype, width as usize, method)
+                self.lower_simd_reduce(ctx, *dest, *value, dtype, width as usize, *op)
             }
             MirInstr::If {
                 results,

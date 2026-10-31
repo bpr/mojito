@@ -2050,27 +2050,6 @@ pub fn simd_shuffle(
     Ok(simd_value(dtype, gathered))
 }
 
-/// Dispatch a method call on a SIMD receiver: the numeric lane
-/// reductions. The checker validated shapes; an unknown name is a clean
-/// has-no-method error.
-pub fn simd_method(
-    dtype: Dtype,
-    lanes: &SimdLanes,
-    method: &str,
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
-    match method {
-        "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {
-            simd_reduce(dtype, lanes, method)
-        }
-        _ => Err(RuntimeError::Unsupported(format!(
-            "vm: SIMD[DType.{}, {}] has no method '{method}'",
-            dtype.name(),
-            lanes.width()
-        ))),
-    }
-}
-
 /// `pop.select`: `when_true` where the one-lane `bool` `condition` is set,
 /// else `when_false`. The cases are trivially register-passable, so the
 /// chosen one is a bit copy.
@@ -2168,41 +2147,6 @@ pub fn simd_reduce_lanes(
         }
     };
     Ok(simd_value(lane.0, lane.1))
-}
-
-/// Collapse lanes to the canonicalized width-1 scalar. Integer `add`/`mul`
-/// wrap at the element width per step, like the elementwise operators;
-/// `float32` rounds each step to single precision.
-fn simd_reduce(dtype: Dtype, lanes: &SimdLanes, method: &str) -> Result<Value, RuntimeError> {
-    match lanes {
-        SimdLanes::Int(v) => {
-            let mut acc = v[0];
-            for x in &v[1..] {
-                acc = match method {
-                    "reduce_add" => wrap_lane(dtype, acc.wrapping_add(*x)),
-                    "reduce_mul" => wrap_lane(dtype, acc.wrapping_mul(*x)),
-                    "reduce_min" => acc.min(*x),
-                    _ => acc.max(*x),
-                };
-            }
-            Ok(simd_value(dtype, SimdLanes::Int(vec![acc])))
-        }
-        SimdLanes::Float(v) => {
-            let mut acc = v[0];
-            for x in &v[1..] {
-                acc = match method {
-                    "reduce_add" => dtype.round_lane(acc + x),
-                    "reduce_mul" => dtype.round_lane(acc * x),
-                    "reduce_min" => acc.min(*x),
-                    _ => acc.max(*x),
-                };
-            }
-            Ok(simd_value(dtype, SimdLanes::Float(vec![acc])))
-        }
-        SimdLanes::Bool(_) => Err(RuntimeError::TypeError(format!(
-            "{method}() requires numeric lanes"
-        ))),
-    }
 }
 
 /// Materialize an operand as `width` integer lanes of `dtype` — its own lanes if

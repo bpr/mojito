@@ -8353,22 +8353,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R187 `reduce_mul` over `Float32` lanes folds left at lane precision,
-  where the pin reduces pairwise**
-
-  Problem: `reduce_mul` over `Float32` lanes folds left at lane precision in
-  Mojito and pairwise in the pin (`319256416.0` against `319256448.0` on
-  sixteen lanes).
-  - `assets/ok/simd_wide_widths.mojo` now reduces an exactly representable
-    vector to avoid it.
-  - The float-format entry (R159) hides the same rows.
-  - The reduction shape changes in the VM and in the
-    `llvm.vector.reduce.fmul` lowering together.
-  - Ledger name: `float32-reduce-ordering`.
-  - Depends on R159, whose float-format difference hides the same rows,
-    and R1764, which ports upstream's `reduce` tree.
-  - Model: Fable, Planned.
-
 - [ ] **R188 `sp[byte=i]` and `s[codepoint=i]` yield a byte value and a
   `Codepoint`, where the pin yields one-byte and one-codepoint views**
 
@@ -10554,7 +10538,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `float-format`).
   - The pin writes an exponent sign: `1e+23`, where Mojito writes `1e23`.
   - The pin renders a `Float32` at its own precision: `0.1`, where Mojito
-    writes `0.10000000149011612`.
+    writes `0.10000000149011612`. The sixteen-lane `float32` `reduce_mul` in
+    `assets/ok/simd_reductions_float.mojo` is one such row: Mojito prints
+    `68104130396160.0`, the pin `68104130000000.0`.
   - The lever: port upstream's `std/builtin/_format_float.mojo`, which is
     already Mojo, in place of the bundled module's staged `_write_float`
     leaf, and delete the `_mojito_float_text` builtin with its checker,
@@ -11022,28 +11008,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     time.
   - Model: Fable, Not Planned.
 
-- [ ] **R1764 `SIMD`'s reductions are checker rules, where upstream's are
-  a `reduce` tree**
-
-  `infer_simd_method`'s `reduce_*` arm, `runtime::simd_method`, Pliron's
-  `lower_simd_reduce`, and `INTRINSIC_METHODS` serve `reduce_add`,
-  `reduce_mul`, `reduce_max`, and `reduce_min` by name.
-  - Port both `reduce` overloads (`simd.mojo:3107`, `:3135`), then
-    `reduce_add`, `reduce_mul`, `reduce_max`, and `reduce_min`, after the
-    `_T` member the bundled `std.simd` already declares.
-  - Add `CompilationTarget` to `std.simd`'s `from std.sys import`:
-    `reduce_max` and `reduce_min` take `llvm.vector.reduce.*` only off x86.
-  - `lower_simd_reduce` stays for `reduce_and`/`reduce_or` (R1586); only
-    its `add`/`mul`/`min`/`max` arms go.
-  - Closes R187: `reduce_mul` over the sixteen `float32` lanes `1.1, 2.3,
-    3.7, 4.9, 5.3, 6.1, 7.7, 8.3, 9.9, 10.1, 11.3, 12.7, 13.9, 14.1, 15.3,
-    16.7` is `68104122007552.0` here; the tree gives `68104130396160.0`,
-    which prints as the pin's `68104130000000.0` once R159 lands.
-  - `assets/ok/simd_reductions_float.mojo` says reductions fold left to
-    right; its outputs change with the tree.
-  - Depends on R1769 and R1767.
-  - Model: Fable, Planned.
-
 - [ ] **R1768 An anonymous callable contract's own binders are named
   references, where upstream's are signature slots**
 
@@ -11073,7 +11037,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port both and `reduce_bit_count`, with `pack_bits` (R1578) and
     `std.bit.pop_count`.
   - Each body holds `self.reduce[size_out](…)` under `comptime if
-    size_out > 1`, which a template checks too (R1764).
+    size_out > 1`, which a template checks too, as the landed `reduce`
+    tree does.
   - The result type needs `and`/`or` over a lane (R97); `__contains__`'s
     `-> Bool` return then converts it.
   - Retire `SemanticAdjustment::SimdReceiverOp` and

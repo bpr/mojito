@@ -1052,6 +1052,7 @@ assets/ok/simd_modf_floor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_nullary_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_parameter_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_pow_dunders.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_reduce_tree.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_reductions_float.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_reductions_int.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_round_members.mojo	-	ineligible	no-scalar-entry-shape

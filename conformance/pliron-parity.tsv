@@ -1052,6 +1052,7 @@ assets/ok/simd_modf_floor.mojo	main	exe-differential	sanitized
 assets/ok/simd_nullary_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_parameter_default_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_pow_dunders.mojo	main	exe-differential	sanitized
+assets/ok/simd_reduce_tree.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_float.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_int.mojo	main	exe-differential	sanitized
 assets/ok/simd_round_members.mojo	main	exe-differential	sanitized

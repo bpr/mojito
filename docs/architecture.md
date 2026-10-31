@@ -2808,12 +2808,16 @@ or a callable keeps a register; a type argument has none
 (`verify_param_arguments` rejects one), and concrete MIR keeps no slot
 (`drop_parameter_slots`, `verify_concrete`). A register is checked against
 its declared type closed under the call's instantiated arguments and, for a
-method or static call, the receiver struct's (`owner_arguments`): the pin
+method or static call, the receiver's (`owner_arguments`, a `SIMD`'s
+through `nominal_parts`): the pin
 substitutes the whole parameter list into a parameter's type before
 converting its argument, so `h: def(SIMD[d, 2])` takes a
 `def(SIMD[DType.int32, 2])` at `d = DType.int32`. The checker closes a
-method's callable contract over the receiver's arguments the same way
-(`method_decls_at_receiver`).
+method's callable contract, and a type parameter's callable bound, over the
+receiver's arguments the same way (`method_decls_at_receiver`), and a type
+parameter's callable bound over the call's own value arguments too
+(`validate_callable_parameter_bounds`), so `SIMD.reduce`'s `FuncType:
+def[width: SIMDLength](Self._T[width], …)` accepts an `int32` reduction.
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features and advanced expression/declaration forms that the VM does not

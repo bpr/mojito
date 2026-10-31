@@ -98,7 +98,7 @@ type	assoc	unsupported	semantic-only; Stage 5 monomorphization target
 type	dependent_parameter	unsupported	semantic-only; Stage 5 monomorphization target
 type	Self	unsupported	semantic-only
 type	struct_type	partial	concrete field layouts only
-type	simd	supported	width-1 scalar aliases; multi-lane values compute as LLVM fixed vectors (arithmetic, masked shifts, floor div/mod, comparisons, select, casts, to_bits, shuffle, extract, llvm.vector.reduce.* and minnum/maxnum reductions) over lane-aligned aggregate storage with byte-per-lane Bool; lane writes and formatting go lane-wise
+type	simd	supported	width-1 scalar aliases; multi-lane values compute as LLVM fixed vectors (arithmetic, masked shifts, floor div/mod, comparisons, select, casts, to_bits, shuffle, extract, llvm.vector.reduce.and/or reductions) over lane-aligned aggregate storage with byte-per-lane Bool; lane writes and formatting go lane-wise
 type	Error	supported	MjError storage
 type	comptime_list	unsupported	CTFE bridge; no runtime values
 type	tuple	partial	concrete element layouts only

@@ -1657,6 +1657,15 @@ impl Checker {
                 )));
             };
             let contract = substitute(bound, &subst);
+            // A contract naming the call's value arguments (`def[w:
+            // SIMDLength](SIMD[d, w])` after `d: DType`) reads them; its own
+            // binders stay its own.
+            let context = mojito_types::param_expr::ParamContext::detached();
+            let mut bindings = mojito_types::param_expr::ParamBindings::new();
+            bindings.bind_value_arguments(&context, decls, arguments);
+            let contract =
+                mojito_types::types::replace_parameters(&context, &contract, &bindings, 0)
+                    .unwrap_or(contract);
             let Some(actual_contract) = self.declared_callable_contract(actual) else {
                 return Err(TypeError::TraitNotSatisfied {
                     param: name.clone(),

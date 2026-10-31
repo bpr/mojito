@@ -444,34 +444,9 @@ impl FnLowering<'_> {
         call.get_result(ctx)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn lower_simd_method(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        recv: Reg,
-        dtype: Dtype,
-        width: usize,
-        method: &str,
-        args: &[Reg],
-    ) -> Result<(), PlironError> {
-        match method {
-            "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {
-                self.lower_simd_reduce(ctx, dest, recv, dtype, width, method)
-            }
-            _ => Err(self.unsupported_reg(format!("SIMD method `{method}`"), dest)),
-        }
-    }
-
-    /// The six reductions (`runtime::simd_reduce`, and `simd.reduce`'s
-    /// `runtime::simd_reduce_lanes`): a strict left fold in the VM. Integer
-    /// add/mul wrap per step, so the wrapping vector reductions are exact;
-    /// min/max select the signed or unsigned family; `and`/`or` are the
-    /// bitwise reductions over integer or `<N x i1>` lanes; float add/mul
-    /// use the *ordered* `llvm.vector.reduce.fadd/fmul` from the exact
-    /// identity (`-0.0`, `1.0`) with no reassociation, which is the VM's
-    /// fold; float min/max fold lane by lane through `minnum`/`maxnum`
-    /// (Rust `f64::min`/`max`, NaN-quieting).
+    /// The two bitwise reductions `simd.reduce` names (and `runtime::
+    /// simd_reduce_lanes` runs): `llvm.vector.reduce.and`/`or` over integer
+    /// or `<N x i1>` lanes.
     pub(super) fn lower_simd_reduce(
         &mut self,
         ctx: &mut Context,
@@ -479,11 +454,11 @@ impl FnLowering<'_> {
         recv: Reg,
         dtype: Dtype,
         width: usize,
-        method: &str,
+        op: mojito_types::mlir::SimdReduction,
     ) -> Result<(), PlironError> {
         let lane_ty = ScalarTy::of_dtype(dtype);
-        // A width-1 vector is a scalar register: every reduction is the
-        // lane itself.
+        // A width-1 vector is a scalar register: its reduction is the lane
+        // itself.
         if width == 1 {
             let value = self.reg_value(ctx, recv, lane_ty)?;
             self.reg_values.insert(dest.0, value);
@@ -492,94 +467,15 @@ impl FnLowering<'_> {
         let vector = self.simd_load_vector(ctx, recv, dtype, width, dest)?;
         let lane_handle = lane_ty.handle(ctx);
         let vector_ty = self.simd_vector_ty(ctx, dtype, width);
-        let is_float = lane_ty.int_shape().is_none() && lane_ty != ScalarTy::Bool;
-        let value = match method {
-            // Half-precision lanes fold lane by lane at f64, rounding each
-            // step as the VM does: LLVM computes `half` arithmetic through
-            // `float`, which double-rounds a product.
-            "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max"
-                if dtype == Dtype::Float16 =>
-            {
-                let mut accumulator = self.simd_extract(ctx, vector, 0, dest);
-                for lane in 1..width {
-                    let next = self.simd_extract(ctx, vector, lane, dest);
-                    let wide_accumulator = self.widen_float_lane(ctx, accumulator, dest);
-                    let wide_next = self.widen_float_lane(ctx, next, dest);
-                    let wide = match method {
-                        "reduce_add" => self.simd_float_binop_vectors(
-                            ctx,
-                            InfixOp::Add,
-                            wide_accumulator,
-                            wide_next,
-                            dest,
-                        )?,
-                        "reduce_mul" => self.simd_float_binop_vectors(
-                            ctx,
-                            InfixOp::Mul,
-                            wide_accumulator,
-                            wide_next,
-                            dest,
-                        )?,
-                        _ => self.float_min_max(
-                            ctx,
-                            ScalarTy::Float64,
-                            method == "reduce_min",
-                            wide_accumulator,
-                            wide_next,
-                            dest,
-                        ),
-                    };
-                    accumulator = self.round_float_lane(ctx, dtype, wide, dest);
-                }
-                accumulator
-            }
-            "reduce_min" | "reduce_max" if is_float => {
-                let is_min = method == "reduce_min";
-                let mut accumulator = self.simd_extract(ctx, vector, 0, dest);
-                for lane in 1..width {
-                    let next = self.simd_extract(ctx, vector, lane, dest);
-                    accumulator = self.float_min_max(ctx, lane_ty, is_min, accumulator, next, dest);
-                }
-                accumulator
-            }
-            "reduce_add" | "reduce_mul" if is_float => {
-                let (name, start) = match (method, lane_ty) {
-                    ("reduce_add", ScalarTy::Float64) => ("fadd", self.float_constant(ctx, -0.0)),
-                    ("reduce_add", _) => ("fadd", self.f32_constant(ctx, -0.0)),
-                    (_, ScalarTy::Float64) => ("fmul", self.float_constant(ctx, 1.0)),
-                    _ => ("fmul", self.f32_constant(ctx, 1.0)),
-                };
-                let fn_ty = FuncType::get(ctx, lane_handle, vec![lane_handle, vector_ty], false);
-                let name = format!("llvm.vector.reduce.{name}.{}", simd_mangle(dtype, width));
-                let call =
-                    CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![start, vector]);
-                self.append(ctx, call.get_operation(), Some(dest));
-                call.get_result(ctx)
-            }
-            _ => {
-                let name = match (method, lane_ty.int_shape()) {
-                    ("reduce_add", Some(_)) => "add",
-                    ("reduce_mul", Some(_)) => "mul",
-                    ("reduce_min", Some((_, true))) => "smin",
-                    ("reduce_max", Some((_, true))) => "smax",
-                    ("reduce_min", Some((_, false))) => "umin",
-                    ("reduce_max", Some((_, false))) => "umax",
-                    ("reduce_and", _) => "and",
-                    ("reduce_or", _) => "or",
-                    _ => {
-                        return Err(self.unsupported_reg(
-                            format!("SIMD `{method}` on {} lanes", lane_ty.name()),
-                            dest,
-                        ));
-                    }
-                };
-                let fn_ty = FuncType::get(ctx, lane_handle, vec![vector_ty], false);
-                let name = format!("llvm.vector.reduce.{name}.{}", simd_mangle(dtype, width));
-                let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![vector]);
-                self.append(ctx, call.get_operation(), Some(dest));
-                call.get_result(ctx)
-            }
-        };
+        let fn_ty = FuncType::get(ctx, lane_handle, vec![vector_ty], false);
+        let name = format!(
+            "llvm.vector.reduce.{}.{}",
+            op.mnemonic(),
+            simd_mangle(dtype, width)
+        );
+        let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![vector]);
+        self.append(ctx, call.get_operation(), Some(dest));
+        let value = call.get_result(ctx);
         self.reg_values.insert(dest.0, value);
         Ok(())
     }
@@ -1958,30 +1854,6 @@ impl FnLowering<'_> {
         cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
         self.append(ctx, cast.get_operation(), Some(dest));
         cast.get_result(ctx)
-    }
-
-    /// `llvm.minnum`/`llvm.maxnum` on two lanes — Rust's `f64::min`/`max`
-    /// (the VM's float `reduce_min`/`reduce_max` step): a NaN operand
-    /// yields the other operand, so a NaN lane never poisons the fold.
-    fn float_min_max(
-        &mut self,
-        ctx: &mut Context,
-        lane_ty: ScalarTy,
-        is_min: bool,
-        a: Value,
-        b: Value,
-        dest: Reg,
-    ) -> Value {
-        let (suffix, handle) = match lane_ty {
-            ScalarTy::Sized(Dtype::Float32) => ("f32", FP32Type::get(ctx).into()),
-            _ => ("f64", FP64Type::get(ctx).into()),
-        };
-        let handle: TypeHandle = handle;
-        let fn_ty = FuncType::get(ctx, handle, vec![handle, handle], false);
-        let name = format!("llvm.{}.{suffix}", if is_min { "minnum" } else { "maxnum" });
-        let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![a, b]);
-        self.append(ctx, call.get_operation(), Some(dest));
-        call.get_result(ctx)
     }
 }
 

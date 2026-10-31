@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD`'s reductions are upstream's declared `reduce` tree, verbatim
+  (R1764): both `reduce` overloads, so `v.reduce(add)`, `v.reduce[2](add)`,
+  and `v.reduce[addi]()` run, and `reduce_add`, `reduce_mul`, `reduce_min`,
+  and `reduce_max` over it with `size_out` (`reduce_add[4]()`). Reductions
+  now combine a vector's halves lane-wise, as the pin does, instead of
+  folding left, so a float `reduce_add` or `reduce_mul` gives the pin's value
+  (R187: the sixteen-lane `float32` product is `68104130396160.0`, where it
+  was `68104122007552.0`). A type parameter's callable bound is now closed
+  under the call's value arguments and the receiver's, and the MIR verifier
+  reads a `SIMD` receiver's parameters. The checker, VM, and Pliron rules
+  for the four reductions are gone.
 - `SIMD` declares upstream's generator member `comptime _T =
   SIMD[Self.dtype, _]`, and `Self._T[n]` in a `SIMD` method or
   `SIMD[DType.int32, 4]._T[2]` in a program resolves, where it was

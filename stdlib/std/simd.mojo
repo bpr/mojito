@@ -98,7 +98,7 @@ from std.math import (
 )
 from std.builtin.bool import all
 from std._plugin import CurrentPlugin
-from std.sys import _RegisterPackType, llvm_intrinsic
+from std.sys import CompilationTarget, _RegisterPackType, llvm_intrinsic
 from std.sys.info import bit_width_of, simd_width_of
 from std.builtin._format_float import _write_float
 from std.builtin.format_int import _write_int
@@ -2342,6 +2342,216 @@ struct SIMD[dtype: DType, length: SIMDLength](
     # ===------------------------------------------------------------------=== #
 
     comptime _T = SIMD[Self.dtype, _]
+
+    @inline(.always)
+    def reduce[
+        func: def[width: Int](Self._T[width], Self._T[width]) thin -> Self._T[
+            width
+        ],
+        size_out: Int = 1,
+    ](self) -> Self._T[size_out]:
+        """Reduces the vector using a provided reduce operator.
+
+        Parameters:
+            func: The reduce function to apply to elements in this SIMD.
+            size_out: The width of the reduction.
+
+        Constraints:
+            `size_out` must not exceed width of the vector.
+
+        Returns:
+            A new scalar which is the reduction of all vector elements.
+        """
+
+        @inline(.always)
+        def body[
+            width: SIMDLength
+        ](lhs: Self._T[width], rhs: Self._T[width]) -> Self._T[width]:
+            return func[width](lhs, rhs)
+
+        return self.reduce[size_out](body)
+
+    @inline(.always)
+    def reduce[
+        FuncType: ImplicitlyCopyable
+        & RegisterPassable
+        & def[width: SIMDLength](Self._T[width], Self._T[width]) -> Self._T[
+            width
+        ],
+        //,
+        size_out: Int = 1,
+    ](self, func: FuncType) -> Self._T[size_out]:
+        """Reduces the vector using a provided reduce closure.
+
+        Parameters:
+            FuncType: The type of the reduce closure.
+            size_out: The width of the reduction.
+
+        Args:
+            func: The reduce function to apply to elements in this SIMD.
+
+        Constraints:
+            `size_out` must not exceed width of the vector.
+
+        Returns:
+            A new scalar which is the reduction of all vector elements.
+
+        Example:
+
+        ```mojo
+        def add[width: SIMDLength](
+            lhs: SIMD[DType.int32, width], rhs: SIMD[DType.int32, width]
+        ) -> SIMD[DType.int32, width]:
+            return lhs + rhs
+
+        var total = SIMD[DType.int32, 4](1, 2, 3, 4).reduce(add)  # 10
+        ```
+        """
+        comptime assert (
+            size_out <= Self.length
+        ), "reduction cannot increase simd width"
+
+        comptime if Self.length == size_out:
+            return self._refine[new_size=size_out]()
+        else:
+            var lhs, rhs = self.split()
+            return func(lhs, rhs).reduce[size_out](func)
+
+    @inline(.nodebug)
+    def reduce_max[size_out: Int = 1](self) -> Self._T[size_out]:
+        """Reduces the vector using the `max` operator.
+
+        Parameters:
+            size_out: The width of the reduction.
+
+        Constraints:
+            `size_out` must not exceed width of the vector.
+            The element type of the vector must be integer or FP.
+
+        Returns:
+            The maximum element of the vector.
+        """
+
+        comptime if Self.length == 1:
+            return self[0]
+
+        comptime if CompilationTarget.is_x86() or size_out > 1:
+
+            def max_fn[
+                width: SIMDLength
+            ](lhs: Self._T[width], rhs: Self._T[width]) -> Self._T[width]:
+                return max(lhs, rhs)
+
+            return self.reduce[size_out](max_fn)
+
+        comptime if Self.dtype.is_unsigned():
+            return llvm_intrinsic[
+                "llvm.vector.reduce.umax",
+                Scalar[Self.dtype],
+                has_side_effect=False,
+            ](self)._refine[new_size=size_out]()
+        elif Self.dtype.is_integral():
+            return llvm_intrinsic[
+                "llvm.vector.reduce.smax",
+                Scalar[Self.dtype],
+                has_side_effect=False,
+            ](self)._refine[new_size=size_out]()
+        else:
+            return llvm_intrinsic[
+                "llvm.vector.reduce.fmax",
+                Scalar[Self.dtype],
+                has_side_effect=False,
+            ](self)._refine[new_size=size_out]()
+
+    @inline(.nodebug)
+    def reduce_min[size_out: Int = 1](self) -> SIMD[Self.dtype, size_out]:
+        """Reduces the vector using the `min` operator.
+
+        Parameters:
+            size_out: The width of the reduction.
+
+        Constraints:
+            `size_out` must not exceed width of the vector.
+            The element type of the vector must be integer or FP.
+
+        Returns:
+            The minimum element of the vector.
+        """
+
+        comptime if Self.length == 1:
+            return self[0]
+
+        comptime if CompilationTarget.is_x86() or size_out > 1:
+
+            def min_fn[
+                width: SIMDLength
+            ](lhs: Self._T[width], rhs: Self._T[width]) -> Self._T[width]:
+                return min(lhs, rhs)
+
+            return self.reduce[size_out](min_fn)
+
+        comptime if Self.dtype.is_unsigned():
+            return llvm_intrinsic[
+                "llvm.vector.reduce.umin",
+                Scalar[Self.dtype],
+                has_side_effect=False,
+            ](self)._refine[new_size=size_out]()
+        elif Self.dtype.is_integral():
+            return llvm_intrinsic[
+                "llvm.vector.reduce.smin",
+                Scalar[Self.dtype],
+                has_side_effect=False,
+            ](self)._refine[new_size=size_out]()
+        else:
+            return llvm_intrinsic[
+                "llvm.vector.reduce.fmin",
+                Scalar[Self.dtype],
+                has_side_effect=False,
+            ](self)._refine[new_size=size_out]()
+
+    @inline(.always)
+    def reduce_add[size_out: Int = 1](self) -> SIMD[Self.dtype, size_out]:
+        """Reduces the vector using the `add` operator.
+
+        Parameters:
+            size_out: The width of the reduction.
+
+        Constraints:
+            `size_out` must not exceed width of the vector.
+
+        Returns:
+            The sum of all vector elements.
+
+        """
+
+        def add_fn[
+            width: SIMDLength
+        ](lhs: Self._T[width], rhs: Self._T[width]) -> Self._T[width]:
+            return lhs + rhs
+
+        return self.reduce[size_out](add_fn)
+
+    @inline(.always)
+    def reduce_mul[size_out: Int = 1](self) -> SIMD[Self.dtype, size_out]:
+        """Reduces the vector using the `mul` operator.
+
+        Parameters:
+            size_out: The width of the reduction.
+
+        Constraints:
+            `size_out` must not exceed width of the vector.
+            The element type of the vector must be integer or FP.
+
+        Returns:
+            The product of all vector elements.
+        """
+
+        def mul_fn[
+            width: SIMDLength
+        ](lhs: Self._T[width], rhs: Self._T[width]) -> Self._T[width]:
+            return lhs * rhs
+
+        return self.reduce[size_out](mul_fn)
 
     # ===------------------------------------------------------------------=== #
     # select

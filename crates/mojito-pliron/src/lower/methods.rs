@@ -224,14 +224,6 @@ impl FnLowering<'_> {
         {
             return self.lower_binop(ctx, op, dest, recv, args[0], None);
         }
-        // The compiler-known `SIMD` methods, after the scalar dunders the
-        // width-one host scalars answer above. A member `std.simd` declares
-        // arrives resolved to its compiled instance, and is called below.
-        if resolved.is_none_or(|resolved| !self.signatures.contains_key(resolved))
-            && let Some((dtype, width)) = self.func.reg_types.get(&recv.0).and_then(simd_dims)
-        {
-            return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
-        }
         let Some(resolved) = resolved else {
             let receiver = self.func.reg_types.get(&recv.0).map_or_else(
                 || "an untyped register".to_string(),

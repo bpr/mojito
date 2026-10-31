@@ -48,27 +48,17 @@ impl Checker {
         let dtype = dtype.clone();
         // A name no compiler-known method answers falls through, keywords
         // and all, to the declared members (`__setitem__(i, val=…)`).
-        if !matches!(
-            method,
-            "copy"
-                | "reduce_add"
-                | "reduce_mul"
-                | "reduce_min"
-                | "reduce_max"
-                | "reduce_and"
-                | "reduce_or"
-        ) {
+        if !matches!(method, "copy" | "reduce_and" | "reduce_or") {
             return Err(TypeError::NoSuchMethod {
                 object_type: obj_ty.to_string(),
                 method: method.to_string(),
             });
         }
         reject_kwargs(kwargs)?;
-        // Compiler-known SIMD methods: the lane reductions collapse to
-        // the canonicalized width-1 scalar (`reduce_and`/`reduce_or` to
-        // `Bool`). A symbolic dtype licenses
-        // every dtype-gated method, and a lane fact records the symbolic
-        // slot: both are the instantiation's to check.
+        // Compiler-known SIMD methods: `copy` reads the value, and the
+        // bitwise reductions collapse to one lane (`Bool` for `bool` lanes).
+        // A symbolic dtype licenses every dtype-gated method, and a lane fact
+        // records the symbolic slot: both are the instantiation's to check.
         match method {
             // `Copyable.copy` on a scalar or vector is the value read
             // itself (the builtin-copy rule of the nominal resolver).
@@ -77,11 +67,6 @@ impl Checker {
                     self.record_at(object.source_span()).copy_place_value_use = true;
                 }
                 Ok(obj_ty.clone())
-            }
-            "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max"
-                if dtype.licenses(|d| d != Dtype::Bool) && args.is_empty() =>
-            {
-                simd_of(dtype, SimdWidth::Known(1))
             }
             // Upstream's `bool` and integer reductions give one lane,
             // which Mojito types `Bool` for `bool` lanes (and a symbolic

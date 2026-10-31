@@ -1303,11 +1303,14 @@ fn comptime_for_index_typed_local_takes_a_slot_per_copy() {
     // A `var` whose type names the index is one slot per copy, each at its
     // iteration's type, and the template's slot leaves the instance — even
     // when the range is empty.
-    let source = "def total[n: Int]() -> Int:\n\
+    let source = "def bump[w: Int](mut x: SIMD[DType.int32, w]) -> Int:\n\
+         \x20   x += 1\n\
+         \x20   return w\n\
+         def total[n: Int]() -> Int:\n\
          \x20   var sum = 0\n\
          \x20   comptime for i in range(1, n):\n\
          \x20       var v = SIMD[DType.int32, i](7)\n\
-         \x20       sum += Int(v.reduce_add())\n\
+         \x20       sum += bump(v)\n\
          \x20   return sum\n\
          def main():\n\
          \x20   print(total[3]())\n\

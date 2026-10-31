@@ -35,8 +35,8 @@ pub const BUILTIN_CALLEES: &[&str] = &[
 ///
 /// They are the methods of strings, packs, SIMD vectors, `DType`,
 /// pointers, and hashable scalars: the arms of
-/// `backend::vm::invoke::method_call` that run before struct dispatch,
-/// `runtime::simd_method`, and the `DType` predicates.
+/// `backend::vm::invoke::method_call` that run before struct dispatch, and
+/// the `DType` predicates.
 pub const INTRINSIC_METHODS: &[&str] = &[
     "__hash__",
     "__floor__",
@@ -53,10 +53,6 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "copy",
     "free",
     "unsafe_free",
-    "reduce_add",
-    "reduce_mul",
-    "reduce_min",
-    "reduce_max",
     "is_integral",
     "is_floating_point",
     "is_signed",

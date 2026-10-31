@@ -1468,13 +1468,18 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
 #[test]
 fn verifier_checks_compile_time_arguments_under_the_call_and_receiver_arguments() {
     // `h`'s declared contract names the earlier parameter `d` (free) or the
-    // receiver's `Self.dtype` (method): each register is checked against it
-    // closed under those arguments.
+    // receiver's `Self.dtype` (method, on a struct or on `SIMD`): each
+    // register is checked against it closed under those arguments.
     const FREE: &str = "def run[d: DType, h: def(SIMD[d, 2]) capturing -> None]():\n    h(SIMD[d, 2](1, 2))\n\ndef show(v: SIMD[DType.int32, 2]):\n    print(v)\n\ndef main():\n    run[DType.int32, show]()\n";
     const METHOD: &str = "struct C[dtype: DType]:\n    def __init__(out self):\n        pass\n\n    def run[h: def(Scalar[Self.dtype]) capturing -> None](self):\n        h(Scalar[Self.dtype](3))\n\ndef show(v: Scalar[DType.int32]):\n    print(v)\n\ndef main():\n    C[DType.int32]().run[show]()\n";
+    const SIMD_METHOD: &str = "def addi[width: Int](lhs: SIMD[DType.int32, width], rhs: SIMD[DType.int32, width]) -> SIMD[DType.int32, width]:\n    return lhs + rhs\n\ndef main():\n    print(SIMD[DType.int32, 4](1, 2, 3, 4).reduce[addi, 2]())\n";
     let mut free = lower_linked_source(FREE);
     assert_eq!(verify(&free), Vec::<String>::new());
     assert_eq!(verify(&lower_linked_source(METHOD)), Vec::<String>::new());
+    assert_eq!(
+        verify(&lower_linked_source(SIMD_METHOD)),
+        Vec::<String>::new()
+    );
 
     for (_, function) in &mut free.functions {
         for instr in function

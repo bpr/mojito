@@ -91,15 +91,18 @@ pub(super) fn verify_call_instruction(
                     arg_places,
                     errors,
                 );
+                let owner = receiver
+                    .as_ref()
+                    .and_then(|receiver| owner_arguments(cx.declarations, receiver));
                 verify_param_arguments(
                     prefix,
                     cx.function,
                     &declaration.param_decls,
                     param_arg_regs,
                     instantiated_args,
-                    receiver
+                    owner
                         .as_ref()
-                        .and_then(|receiver| owner_arguments(cx.declarations, receiver)),
+                        .map(|(decls, arguments)| (*decls, arguments.as_ref())),
                     errors,
                 );
             }
@@ -217,14 +220,18 @@ pub(super) fn verify_call_instruction(
                         declaration.lowered_name
                     ));
                 }
+                let owner = cx
+                    .reg_ty(*recv)
+                    .and_then(|receiver| owner_arguments(cx.declarations, receiver));
                 verify_param_arguments(
                     prefix,
                     cx.function,
                     &declaration.param_decls,
                     param_arg_regs,
                     instantiated_args,
-                    cx.reg_ty(*recv)
-                        .and_then(|receiver| owner_arguments(cx.declarations, receiver)),
+                    owner
+                        .as_ref()
+                        .map(|(decls, arguments)| (*decls, arguments.as_ref())),
                     errors,
                 );
             }
@@ -248,20 +255,21 @@ pub(super) fn verify_call_instruction(
     }
 }
 
-/// The receiver struct's parameter declarations beside its arguments, for
-/// a call whose callee's declarations name them (`Self.dtype`); a
-/// reference receiver answers for its referent.
+/// The receiver's parameter declarations beside its arguments (a struct's
+/// own, a `SIMD`'s as `SIMD`'s), for a call whose callee's declarations
+/// name them (`Self.dtype`); a reference receiver answers for its referent.
 fn owner_arguments<'a>(
     declarations: &'a MirDeclarations,
     receiver: &'a Ty,
-) -> Option<(&'a [mojito_types::types::ParamDecl], &'a [TyArg])> {
+) -> Option<(
+    &'a [mojito_types::types::ParamDecl],
+    std::borrow::Cow<'a, [TyArg]>,
+)> {
     let receiver = match receiver.kind() {
         TyKind::Ref(reference) => &reference.referent,
         _ => receiver,
     };
-    let TyKind::Struct(name, arguments) = receiver.kind() else {
-        return None;
-    };
+    let (name, arguments) = mojito_types::types::nominal_parts(receiver)?;
     Some((&declarations.structure(name)?.param_decls, arguments))
 }
 

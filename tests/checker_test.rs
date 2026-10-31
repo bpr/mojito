@@ -4545,6 +4545,23 @@ fn callable_contract_closes_over_receiver_parameters() {
 }
 
 #[test]
+fn callable_type_bound_closes_over_the_calls_value_arguments() {
+    // `F`'s bound names `d`, so at an `Int32` vector it is the `int32`
+    // contract: an `int32` `add` satisfies it, and a `float32` one does not.
+    let source = |dtype: &str| {
+        format!(
+            "def add[width: SIMDLength](a: SIMD[DType.{dtype}, width], b: SIMD[DType.{dtype}, width]) -> SIMD[DType.{dtype}, width]:\n    return a + b\n\ndef red[d: DType, F: ImplicitlyCopyable & RegisterPassable & def[width: SIMDLength](SIMD[d, width], SIMD[d, width]) -> SIMD[d, width], //](x: SIMD[d, 4], func: F) -> SIMD[d, 4]:\n    return func(x, x)\n\ndef main():\n    print(red(SIMD[DType.int32, 4](1, 2, 3, 4), add))\n"
+        )
+    };
+    ok_std(&source("int32"));
+    let error = err_std(&source("float32"));
+    assert!(
+        matches!(&error, TypeError::TraitNotSatisfied { reason: Some(reason), .. } if reason.contains("is incompatible")),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn generic_anonymous_callable_contracts_preserve_binder_shape_and_bounds() {
     let wrong_bounds = err(
         "def identity[U: ImplicitlyCopyable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & Deinitable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",

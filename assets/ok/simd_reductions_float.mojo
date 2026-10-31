@@ -1,6 +1,7 @@
-# Float reductions fold lanes left to right — the order is observable in
-# `reduce_add` — Float32 rounds every step, and `reduce_min`/`reduce_max`
-# skip NaN lanes and follow infinities.
+# Float reductions are `std.simd`'s pairwise `reduce` tree — each step
+# combines the low and high halves lane-wise until one lane remains, so the
+# order is observable in `reduce_add` — Float32 rounds every step, and
+# `reduce_min`/`reduce_max` skip NaN lanes and follow infinities.
 def main():
     var f = SIMD[DType.float64, 4](1e16, 1.0, -1e16, 1.0)
     print(f.reduce_add(), f.reduce_mul(), f.reduce_min(), f.reduce_max())
@@ -24,3 +25,5 @@ def main():
     print(nan32.reduce_min(), nan32.reduce_max(), nan32.reduce_add())
     var wide = SIMD[DType.float64, 16](0.1)
     print(wide.reduce_add(), wide.reduce_mul(), wide.reduce_max())
+    var r = SIMD[DType.float32, 16](1.1, 2.3, 3.7, 4.9, 5.3, 6.1, 7.7, 8.3, 9.9, 10.1, 11.3, 12.7, 13.9, 14.1, 15.3, 16.7)
+    print(r.reduce_mul())
