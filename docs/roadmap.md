@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1765**.
+Next free ID: **R1767**.
 
 ## Ordered Work
 
@@ -11013,30 +11013,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     time.
   - Model: Fable, Not Planned.
 
-- [ ] **R1762 A value of a callable-binder-bounded type parameter loses
-  its callee when passed on to another generic call**
-
-  `outer[F: …def[width: SIMDLength](…)…, //, n: SIMDLength](x, func: F)`
-  returning `inner(x, func)`, where `inner` calls `func[n](x, x)`, fails
-  with "in `inner`: … keeps compile-time parameter `width` in elaborated
-  MIR", where the pin runs it.
-  - The same chain over a plain `def(Int) -> Int` bound runs, so only a
-    callable with its own binder loses the callee.
-  - Cause: the elaborator binds a retained generic-callable argument
-    (`bindings.callables`, `native/mono/infer.rs`) only when
-    `callable_targets` knows the actual register. A forwarded `func` is a
-    `read` parameter passed by place, which
-    `substitute_callable_binder_reads` (`mono/substitute.rs`) rewrites only
-    as a `UseVar`.
-  - Probe: a recursive `SIMD` method forwarding `func`
-    (`func[Self.length // 2](lhs, rhs)._probe_tree(func)`) fails with
-    "place keeps symbolic type `def[width: SIMDLength](…) thin -> …`".
-  - Upstream's `SIMD.reduce` recurses as `func(lhs,
-    rhs).reduce[size_out](func)` (R1764).
-  - Found while planning R1585 (2026-10-31).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1763 A struct method's callable-binder parameter leaks its
   binder's name into another struct's callable binder**
 
@@ -11055,6 +11031,49 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     def[width: Int](Self._T[width], Self._T[width]) thin -> Self._T[width]`
     (R1764).
   - Found while planning R1585 (2026-10-31).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1765 A nested generic `def` that reads an enclosing
+  compile-time callable parameter cannot be passed to a callable-binder
+  parameter**
+
+  `red[func: def[width: Int](…) thin -> …](v)` declaring `def
+  body[width: SIMDLength](lhs, rhs): return func[width](lhs, rhs)` and
+  returning `run2(v, body)`, where `run2` takes `func: F` under a
+  callable-binder bound, fails with "in `red$body`: unsupported nested
+  body reading unresolved parameter `func`", where the pin runs it.
+  - Lead: the `ParamDecl::Value` arm beside that error
+    (`native/mono/specializer.rs`) reads only `bindings.values`, but a
+    compile-time callable is bound in `bindings.callables`.
+  - Probe: the same `body` inside one of two same-name `red` overloads
+    fails instead with "keeps compile-time parameter `F` in elaborated
+    MIR", in `main` or in `V.red$ov$$ct$func`.
+  - Upstream's parameter `reduce` overload (`simd.mojo:3107`) is this
+    shape (R1764).
+  - Found while planning R1762 (2026-10-31).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1766 A callable-bounded overload's symbol spells its bound from
+  the AST's `Debug` form, source spans included**
+
+  An overload `red[F: ImplicitlyCopyable & RegisterPassable &
+  def[width: SIMDLength](SIMD[DType.int32, width], …) -> …, //](self,
+  func: F)` declares as `V.red$ov$F$…$Callable$def$SIMD$Value$Expr$$$kind…$span$$$468$$473…`,
+  while its call names `V.red$ov$F$…$Callable$def$width$$SIMDLength$$SIMD$DType$int32…`.
+  - Callable identity must not depend on byte offsets or source paths
+    (invariant 6); the two spellings are reconciled somewhere today, so
+    the overloaded probes still run.
+  - Cause: `BinderSpelling::of` → `func_annotation_raw` →
+    `annotation_display` (`mojito-symbol/src/symbol.rs`) prints a value
+    argument with `{:?}` and drops the bound's own binders, where the doc
+    comment promises the checker's `TyKind::Param` spelling (`ty_raw_in`).
+  - Probe: `emit-mir` of a struct with two `red` overloads, one taking
+    `func: F` under that bound and one `[func: def[width: Int](…) thin ->
+    …]`, called as `x.red(add)`.
+  - Upstream's `SIMD.reduce` has exactly that overload pair (R1764).
+  - Found while planning R1762 (2026-10-31).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11077,7 +11096,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     which prints as the pin's `68104130000000.0` once R159 lands.
   - `assets/ok/simd_reductions_float.mojo` says reductions fold left to
     right; its outputs change with the tree.
-  - Depends on R1762 and R1763.
+  - Depends on R1763 and R1765.
   - Model: Fable, Planned.
 
 - [ ] **R1586 `reduce_and` and `reduce_or` are checker rules and

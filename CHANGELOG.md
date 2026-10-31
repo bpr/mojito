@@ -2291,6 +2291,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A value of a callable-binder-bounded type parameter passed on to another
+  generic call keeps its callee (R1762): `outer(x, func)` returning
+  `inner(x, func)`, where `inner` calls `func[n](x, x)`, and upstream's
+  recursive `func(lhs, rhs).reduce[size_out](func)` shape run, where
+  elaboration reported "keeps compile-time parameter `width`". The
+  elaborator folds a whole-slot load of the binder's `read` parameter as
+  it already folded a use.
 - A call through a callable binder infers the binder's own value
   parameters from its arguments, as a direct generic call does (R1761):
   `func(a, b)` over `F: ... & def[width: SIMDLength](...)` binds

@@ -149,10 +149,12 @@ pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMa
 }
 
 /// Rewrite each read of a callable binder's slot in `blocks`, its regions
-/// included, into the function the binder is bound to. A callable binder is
-/// the one value binder a body still reads from a frame slot; any other
-/// value binder's read is its parameter constant, which the substitution
-/// closes.
+/// included, into the function the binder is bound to. A read is a `UseVar`
+/// of the slot or a whole-slot `LoadPlace` (a `read` parameter passed on to
+/// another call); a projected or `through` load is not a read of the
+/// binder's value. A callable binder is the one value binder a body still
+/// reads from a frame slot; any other value binder's read is its parameter
+/// constant, which the substitution closes.
 pub(super) fn substitute_callable_binder_reads(
     blocks: &mut [MirBlock],
     var_names: &[String],
@@ -162,13 +164,22 @@ pub(super) fn substitute_callable_binder_reads(
 ) -> Result<(), MonoError> {
     for block in blocks {
         for instruction in &mut block.instrs {
-            if let MirInstr::UseVar { dest, var, .. } = instruction
-                && let Some(name) = var_names.get(*var as usize)
+            let read = match instruction {
+                MirInstr::UseVar { dest, var, .. } => Some((*dest, *var)),
+                MirInstr::LoadPlace { dest, place }
+                    if place.through.is_none() && place.proj.is_empty() =>
+                {
+                    Some((*dest, place.root))
+                }
+                _ => None,
+            };
+            if let Some((dest, var)) = read
+                && let Some(name) = var_names.get(var as usize)
                 && let Some(constant) = callables
                     .get(name)
                     .map(|callable| Ok(Const::Function(callable.clone())))
                     .or_else(|| {
-                        let ty = var_tys.get(var).filter(|ty| {
+                        let ty = var_tys.get(&var).filter(|ty| {
                             matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
                         })?;
                         let value = locals.get(name.as_str())?;
@@ -181,10 +192,7 @@ pub(super) fn substitute_callable_binder_reads(
                         )
                     })
             {
-                *instruction = MirInstr::Const {
-                    dest: *dest,
-                    k: constant?,
-                };
+                *instruction = MirInstr::Const { dest, k: constant? };
             } else {
                 for region in mojito_mir::mir::instruction_regions_mut(instruction) {
                     substitute_callable_binder_reads(

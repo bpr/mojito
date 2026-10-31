@@ -1343,8 +1343,9 @@ binder: the check records each read of one as its parameter value
 `kgen.param.constant`, and the elaborator answers per instance. A bracket
 argument over the binders (`f[n + 1]()`), which the check compiles without
 inferring its names, lowers the same way (`Flatten::param_arg_reg`). A
-callable value binder is still a slot the elaborator rewrites by name
-(`substitute_callable_binder_reads`).
+callable value binder is still a slot the elaborator rewrites by name at
+each read, a use or a whole-slot load such as a `read` parameter passed on
+to another call (`substitute_callable_binder_reads`).
 
 **One check.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
