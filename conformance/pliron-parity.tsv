@@ -1032,6 +1032,7 @@ assets/ok/simd_max_min_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_methods.mojo	main	exe-differential	sanitized
 assets/ok/simd_min_max_clamp.mojo	main	exe-differential	sanitized
 assets/ok/simd_mlir_storage.mojo	main	exe-differential	sanitized
+assets/ok/simd_modf_floor.mojo	main	exe-differential	sanitized
 assets/ok/simd_nullary_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_parameter_default_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_float.mojo	main	exe-differential	sanitized

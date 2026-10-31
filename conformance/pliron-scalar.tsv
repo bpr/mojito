@@ -1032,6 +1032,7 @@ assets/ok/simd_max_min_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_min_max_clamp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_mlir_storage.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_modf_floor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_nullary_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_parameter_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_reductions_float.mojo	-	ineligible	no-scalar-entry-shape

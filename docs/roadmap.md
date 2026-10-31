@@ -3393,6 +3393,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: package `pkg` whose `__init__` imports `.b` and declares `def
     fa`, where `b.mojo` calls `fa` through `from pkg import fa`, stops with
     "Undefined variable '__module$pkg$fa'", where the pin prints `2`.
+  - Probe: `std.math.modf`, upstream's `return _modf(x)` with `from
+    std.simd import _modf` in `std/math/math.mojo`, stops packaging with
+    "Undefined variable '__module$std$simd$_modf'": `std.simd` imports
+    `std.math` first, so `std.math.math` links before `_modf`. Any import
+    moved ahead of `std.math` in `std.simd` instead stops at
+    `std/sys/_io.mojo`'s `comptime stdin = RawFileDescriptor(0)`, "not an
+    associated comptime expression", since `std.io` is then still loading.
+    Port `modf` and re-export it from `std/math/__init__.mojo` when this
+    lands.
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10935,26 +10944,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Closes R850.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R1722 `std.simd` lacks upstream's `_modf_scalar`, `_modf`, and
-  `_floor`**
-
-  `_powf_scalar` (R1567) and `std.math.modf` read them, and none is
-  bundled.
-  - Port them verbatim above `struct SIMD`, callee first (`_floor`,
-    `_modf_scalar`, `_modf`), since R127 and R393 are open.
-  - Import `FPUtils` into `std.simd`, as upstream does.
-  - `_floor` ends in `type_of(x)(from_bits=bits)` (R1593).
-  - A 2026-10-30 prototype (with `bitcast` standing in for `from_bits=`)
-    printed the pin's `2.0 -2.0 [1.0, -1.0, 0.125, 10000000000.0]`, `3.0
-    0.25`, `-3.0 -0.25`, `[1.0, -2.0] [0.5, -0.75]`, and `5 0`.
-  - `_floor(0.25)` is `0.125` at the pin too: upstream's own bit-mask
-    arithmetic.
-  - Fixture inputs keep `shift_factor - e` under the lane width:
-    `_floor(Float32(1e-5))` is poison at the pin.
-  - Found while planning R1711 (2026-10-30).
-  - Depends on R1721 and R1593.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1743 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
   Taylor polynomial and `_ldexp_impl`**

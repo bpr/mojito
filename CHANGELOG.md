@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.simd` gains upstream's `_floor`, `_modf_scalar`, and `_modf`
+  (R1722), verbatim over `FPUtils` and `from_bits=`: they run on both
+  backends and at compile time with the pin's output, `_floor`'s bit-mask
+  truncation included (`assets/ok/simd_modf_floor.mojo`). `std.math.modf`
+  still waits on the `std.simd` ↔ `std.math` import cycle (R592).
 - A `where` clause reads the declaration's arguments, as at the pin
   (R1717): `def p[dtype: DType](base: Scalar[dtype]) -> Int where
   base.dtype == DType.float32`, `where x.dtype.is_floating_point()` over a
