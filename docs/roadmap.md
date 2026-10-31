@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1735**.
+Next free ID: **R1736**.
 
 ## Ordered Work
 
@@ -7327,6 +7327,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1735 A bracket argument binds across a parameter list's `/` or
+  bare `*` marker, which the pin rejects**
+
+  `f[1, 2]()` and `f[a=1, b=2]()` over `def f[a: Int, /, *, b: Int = 0]()`
+  print `1 2`, where the pin reports "invalid call to 'f': unexpected
+  parameter" and "unexpected keyword parameter 'a'".
+  - Cause: `parse_type_params` (`parser/types.rs`) skips both markers, so
+    `TypeParam` records no positional-only or keyword-only boundary.
+  - `match_parameter_slots` (`mojito-ast/src/call.rs`) then binds a
+    positional argument to any slot and a keyword to any name.
+  - Fix: record the two boundaries on the parameter list, as a `def`'s
+    run-time list records `keyword_only`, and have `match_parameter_slots`
+    reject a positional argument past the `*` and a keyword before the `/`.
+  - Probe: `v.slice[2, 1]()` over a `SIMD[DType.int32, 4]`, whose `offset`
+    is keyword-only, runs here and is rejected at the pin.
+  - Found while landing R1673 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1615 A `for` over a bound declaring only `Element` iterates, where
   the pin requires `__iter__`**
 
@@ -11376,7 +11395,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   Once every `SIMD` member is a library body,
   `checker/method_calls/simd_receivers.rs`, the SIMD arms of
-  `checker/operators.rs`, `LaneMask::resolve`, `runtime::simd_method`, and
+  `checker/operators.rs`, `runtime::simd_method`, and
   Pliron's per-method SIMD lowering serve no program.
   - Delete what the member entries left of them.
   - Done when `rg simd_method crates` finds nothing.
@@ -11673,25 +11692,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Upstream reads the hook only in MAX (`algorithm/reduction.mojo`), so
     no bundled `std` read site waits on it.
   - Depends on R1674, R1703.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1673 `SIMD`'s `slice` is a checker intrinsic, and `insert`,
-  `split`, `interleave`, and `deinterleave` are undeclared**
-
-  `v.slice[n, offset=o]()` is typed by `infer_simd_slice` and closed by
-  `LaneMask::Slice`, and `insert`, `split`, `interleave`, and `deinterleave`
-  report "has no method", where the pin declares all five in
-  `std/simd.mojo`.
-  - Port them verbatim. The pin's `slice` lowers to `llvm.vector.extract`
-    or an element loop, not a shuffle.
-  - The bodies' intrinsics run since R1519 (`deinterleave`'s since R1547),
-    and `slice` reads `__is_run_in_comptime_interpreter` (R1546),
-    `CurrentPlugin.lowers_subvector_intrinsics`, and `simd_width_of`.
-  - `interleave`'s width-1 arm is `return [self[0], other[0]]`.
-  - Retire `infer_simd_slice`, `LaneMask::Slice`, `LaneMask::resolve`,
-    `gather_parameter`, and `record_lane_gather`.
-  - Depends on R1671, R1683 (the `LaneMask` cleanup follows its), R1634
-    (`simd_width_of`), and R1666 (the list display).
   - Model: Opus, Not Planned.
 
 - [ ] **R1675 `SIMD`'s rotations, shifts, `reversed`, and `IndexList`

@@ -630,25 +630,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.next_token()?; // consume '['
         let mut params: Vec<mojito_ast::ast::TypeParam> = Vec::new();
         loop {
-            // Mojo's `//` marker ends the infer-only prefix. Parameters before it
-            // are inferred; parameters after it may be supplied explicitly.
-            if matches!(self.peek_token()?, Some(Token::DoubleSlash)) {
-                self.next_token()?;
-                for parameter in &mut params {
-                    parameter.infer_only = true;
-                }
-                match self.peek_token()? {
-                    Some(Token::Comma) => {
-                        self.next_token()?;
-                    }
-                    Some(Token::RBracket) => {}
-                    _ => {
-                        return Err(ParseError::UnexpectedToken(
-                            self.next_token()?,
-                            "expected ']' for parameter list".into(),
-                        ));
-                    }
-                }
+            if self.parse_type_param_marker(&mut params)? {
                 if matches!(self.peek_token()?, Some(Token::RBracket)) {
                     break;
                 }
@@ -832,6 +814,40 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         self.expect(&Token::RBracket, "Expected ']' after type parameters")?;
         Ok(params)
+    }
+
+    /// Consume a parameter-list marker and the `,` after it, reporting
+    /// whether one was there. Mojo's `//` ends the infer-only prefix, so
+    /// every parameter before it is inferred; the `/` positional-only
+    /// marker, as the bare `*` keyword-only one, the list does not record
+    /// yet (roadmap R1735). A marker is followed by `,` or the closing `]`.
+    fn parse_type_param_marker(
+        &mut self,
+        params: &mut [mojito_ast::ast::TypeParam],
+    ) -> Result<bool, ParseError> {
+        match self.peek_token()? {
+            Some(Token::DoubleSlash) => {
+                for parameter in params {
+                    parameter.infer_only = true;
+                }
+            }
+            Some(Token::Slash) => {}
+            _ => return Ok(false),
+        }
+        self.next_token()?;
+        match self.peek_token()? {
+            Some(Token::Comma) => {
+                self.next_token()?;
+            }
+            Some(Token::RBracket) => {}
+            _ => {
+                return Err(ParseError::UnexpectedToken(
+                    self.next_token()?,
+                    "expected ']' for parameter list".into(),
+                ));
+            }
+        }
+        Ok(true)
     }
 
     /// The parenthesized operand of `type_of`, whose name was just read.

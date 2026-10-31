@@ -2441,30 +2441,20 @@ fn accepts_simd_dtype_cast() {
 
 #[test]
 fn accepts_simd_shuffle_masks() {
-    ok(
-        "def main():\n    var v = SIMD[DType.int32, 4](10, 20, 30, 40)\n    var r: SIMD[DType.int32, 4] = v.shuffle[3, 2, 1, 0]()\n    var pair: SIMD[DType.int32, 2] = v.slice[2, offset=1]()\n    var one: Int32 = v.slice[1, offset=3]()\n    var wide: SIMD[DType.int32, 8] = v.join(v)\n",
-    );
+    check_with_std(
+        "def main():\n    var v = SIMD[DType.int32, 4](10, 20, 30, 40)\n    var r: SIMD[DType.int32, 4] = v.shuffle[3, 2, 1, 0]()\n    var pair: SIMD[DType.int32, 2] = v.slice[2, offset=1]()\n    var one: Int32 = v.slice[1, offset=3]()\n    var wide: SIMD[DType.int32, 8] = v.join(v)\n    var lanes: SIMD[DType.int32, 4] = v.insert[offset=2](pair)\n    var mixed: SIMD[DType.int32, 8] = v.interleave(v)\n",
+    )
+    .expect("expected the program to type-check");
 }
 
 #[test]
 fn rejects_bad_simd_slices_and_lane_method_calls() {
     // `SIMD`'s initializers are the bundled library's.
     let err = |source: &str| check_with_std(source).expect_err("expected a type error");
-    // A slice's width must be a valid SIMD width and fit from its offset.
-    assert!(matches!(
-        err(
-            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.slice[3]()\n"
-        ),
-        TypeError::BadSimdWidth(_)
-    ));
-    assert!(matches!(
-        err(
-            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.slice[2, offset=3]()\n"
-        ),
-        TypeError::TypeMismatch { .. }
-    ));
     // The declared `join` takes a vector of the receiver's own type. A
-    // shuffle mask's count and range are `_shuffle_list`'s instance
+    // slice's bounds are `slice`'s instance constraint
+    // (`assets/type_error/lane_gather_template_slice_bounds.mojo`), and a
+    // shuffle mask's count and range are `_shuffle_list`'s
     // constraints (`assets/type_error/simd_shuffle_width_mismatch.mojo`,
     // `assets/type_error/simd_shuffle_index_out_of_range.mojo`).
     assert!(err(

@@ -2717,13 +2717,6 @@ fn lane_mask(mask: &mojito_types::types::LaneMask) -> String {
     use mojito_types::types::LaneMask;
     match mask {
         LaneMask::Known(lanes) => list(lanes.iter().map(usize::to_string)),
-        LaneMask::Slice { start, count } => record(
-            "lane_slice",
-            &[
-                ("offset", param_expr(start)),
-                ("width", simd_width_slot(count)),
-            ],
-        ),
         LaneMask::Attribute(value) => record("lane_attribute", &[("value", param_expr(value))]),
     }
 }

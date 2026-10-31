@@ -19,12 +19,12 @@
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
 # `_to_bits_signed`, `fma`, `_shuffle_variadic`, `_shuffle_list`, the two
-# variadic `shuffle` overloads, `join`, `select`, `write_to`, and
-# `write_repr_to`, with
+# variadic `shuffle` overloads, `slice`, `insert`, `join`, `interleave`,
+# `split`, `deinterleave`, `select`, `write_to`, and `write_repr_to`, with
 # the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`
 # and `_write_scalar`. The other
 # members are still served by the compiler or undeclared (R1623, R1567,
-# R1581, R1582, R1585, R1586, R1673, R1675; the two `IndexList` `shuffle`
+# R1581, R1582, R1585, R1586, R1675; the two `IndexList` `shuffle`
 # overloads are R1675's), `write_padded` is not ported
 # (R1663), and the native backend's `print`, `String`, and `repr` of a value still
 # format in the compiler rather than calling `write_to` and
@@ -85,7 +85,9 @@ domain-specific libraries for machine learning and scientific computing.
 # `max`/`min` are upstream's prelude names, which `std.simd` cannot see
 # while the prelude bootstraps (R894).
 from std.math import Ceilable, Floorable, Truncable, max, min
-from std.sys.info import bit_width_of
+from std._plugin import CurrentPlugin
+from std.sys import _RegisterPackType, llvm_intrinsic
+from std.sys.info import bit_width_of, simd_width_of
 from std.builtin._format_float import _write_float
 from std.builtin.format_int import _write_int
 from std.builtin.simd_length import SIMDLength
@@ -2108,6 +2110,99 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         return self._shuffle_variadic[*mask](other)
 
+    @inline(.always)
+    def slice[
+        output_width: Int, /, *, offset: Int = 0
+    ](self) -> SIMD[Self.dtype, output_width]:
+        """Returns a slice of the vector of the specified width with the given
+        offset.
+
+        Constraints:
+            `output_width + offset` must not exceed the size of this SIMD
+            vector.
+
+        Parameters:
+            output_width: The output SIMD vector size.
+            offset: The given offset for the slice.
+
+        Returns:
+            A new vector whose elements map to
+            `self[offset:offset+output_width]`.
+        """
+        comptime assert (
+            0 <= offset < output_width + offset <= Self.length
+        ), "output width must be a positive integer less than simd size"
+
+        @inline(.always)
+        def slice_body() {imm} -> SIMD[Self.dtype, output_width]:
+            var tmp = SIMD[Self.dtype, output_width]()
+
+            comptime for i in range(output_width):
+                tmp[i] = self[i + offset]
+            return tmp
+
+        comptime if output_width == 1:
+            return self[offset]
+        elif offset % simd_width_of[Self.dtype]():
+            return slice_body()
+
+        if __is_run_in_comptime_interpreter:
+            return slice_body()
+
+        comptime if not CurrentPlugin.lowers_subvector_intrinsics:
+            return slice_body()
+
+        return llvm_intrinsic[
+            "llvm.vector.extract",
+            SIMD[Self.dtype, output_width],
+            has_side_effect=False,
+        ](self, Int64(offset))
+
+    @inline(.nodebug)
+    def insert[*, offset: Int = 0](self, value: SIMD[Self.dtype, _]) -> Self:
+        """Returns a new vector where the elements between `offset` and
+        `offset + input_width` have been replaced with the elements in `value`.
+
+        Parameters:
+            offset: The offset to insert at. This must be a multiple of value's
+                    size.
+
+        Args:
+            value: The value to be inserted.
+
+        Returns:
+            A new vector whose elements at `self[offset:offset+input_width]`
+            contain the values of `value`.
+        """
+        comptime assert (
+            offset % value.length == 0
+        ), "offset must be a multiple of the subvector's size"
+
+        comptime input_width = value.length
+        comptime assert (
+            0 <= offset < input_width + offset <= Self.length
+        ), "insertion position must not exceed the size of the vector"
+
+        comptime if Self.length == 1:
+            comptime assert (
+                input_width == 1
+            ), "the input width must be 1 if the size is 1"
+            return value[0]
+
+        # `llvm.vector.insert` needs a vector as its subvector operand, but a
+        # width-1 `SIMD` lowers to a scalar.
+        comptime if (
+            input_width == 1 or not CurrentPlugin.lowers_subvector_intrinsics
+        ):
+            var result = self
+            comptime for i in range(input_width):
+                result[offset + i] = value[i]
+            return result
+
+        return llvm_intrinsic[
+            "llvm.vector.insert", Self, has_side_effect=False
+        ](self, value, Int64(offset))
+
     @inline(.nodebug)
     def join(self, other: Self) -> SIMD[Self.dtype, 2 * Int(Self.length)]:
         """Concatenates the two vectors together.
@@ -2126,6 +2221,77 @@ struct SIMD[dtype: DType, length: SIMDLength](
             return res
 
         return self._shuffle_list[2 * Self.length, indices()](other)
+
+    @inline(.nodebug)
+    def interleave(self, other: Self) -> SIMD[Self.dtype, Int(Self.length) * 2]:
+        """Constructs a vector by interleaving two input vectors.
+
+        Args:
+            other: The other SIMD vector.
+
+        Returns:
+            A new vector `self_0, other_0, ..., self_n, other_n`.
+        """
+
+        comptime if Self.length == 1:
+            return [self[0], other[0]]
+
+        return llvm_intrinsic[
+            "llvm.vector.interleave2",
+            SIMD[Self.dtype, Int(Self.length) * 2],
+            has_side_effect=False,
+        ](self, other)
+
+    @inline(.nodebug)
+    def split(
+        self,
+    ) -> Tuple[
+        SIMD[Self.dtype, Self.length // 2], SIMD[Self.dtype, Self.length // 2]
+    ]:
+        """Splits the SIMD vector into 2 subvectors.
+
+        Returns:
+            A new vector `self_0:N/2, self_N/2:N`.
+        """
+        comptime assert Self.length > 1, "the simd width must be at least 2"
+        comptime half_size = Self.length // 2
+        var se = self.slice[half_size]()
+        var lf = self.slice[half_size, offset=half_size]()
+        return se, lf
+
+    @inline(.nodebug)
+    def deinterleave(
+        self,
+    ) -> Tuple[
+        SIMD[Self.dtype, Self.length / 2], SIMD[Self.dtype, Self.length / 2]
+    ]:
+        """Constructs two vectors by deinterleaving the even and odd lanes of
+        the vector.
+
+        Constraints:
+            The vector size must be greater than 1.
+
+        Returns:
+            Two vectors the first of the form `self_0, self_2, ..., self_{n-2}`
+            and the other being `self_1, self_3, ..., self_{n-1}`.
+        """
+
+        comptime assert (
+            Self.length > 1
+        ), "the vector size must be greater than 1."
+
+        comptime if Self.length == 2:
+            return self[0], self[1]
+
+        var res = llvm_intrinsic[
+            "llvm.vector.deinterleave2",
+            _RegisterPackType[
+                SIMD[Self.dtype, Self.length / 2],
+                SIMD[Self.dtype, Self.length / 2],
+            ],
+            has_side_effect=False,
+        ](self)
+        return res[0], res[1]
 
     # ===------------------------------------------------------------------=== #
     # select

@@ -493,22 +493,13 @@ impl fmt::Display for VariantIndex {
 /// `i` reads lane `mask[i]` of the source lanes, the first operand's
 /// followed by the second's.
 ///
-/// A `slice` whose receiver width, or whose own compile-time arguments,
-/// name a template's binders keeps the method's form, which the
-/// instantiation closes and checks against the method's constraints, as
-/// the pin's `comptime assert`s do. A `pop.simd.shuffle` op's mask a
+/// A `pop.simd.shuffle` op's mask a
 /// template computes from its parameters (`_shuffle_list`'s, which
 /// `shuffle` and `join` reach) is an `Attribute`, which each instance
 /// closes and the op's verifier judges. Concrete MIR holds only `Known`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum LaneMask {
     Known(Vec<usize>),
-    /// `v.slice[count, offset=start]()`: `count` consecutive receiver lanes
-    /// from `start`.
-    Slice {
-        start: ParamExpr,
-        count: SimdWidth,
-    },
     /// A `pop.simd.shuffle` mask a template computes from its parameters
     /// (`_shuffle_list`'s `mask._mlir_value`), a `!pop.array` attribute
     /// each instance closes ([`Self::attribute_lanes`]).
@@ -519,7 +510,7 @@ impl LaneMask {
     pub fn known(&self) -> Option<&[usize]> {
         match self {
             Self::Known(mask) => Some(mask),
-            _ => None,
+            Self::Attribute(_) => None,
         }
     }
 
@@ -556,18 +547,10 @@ impl LaneMask {
         match self {
             Self::Known(_) => Vec::new(),
             Self::Attribute(value) => vec![value],
-            Self::Slice { start, count } => {
-                let count = match count {
-                    SimdWidth::Expr(expr) => Some(expr),
-                    SimdWidth::Known(_) => None,
-                };
-                std::iter::once(start).chain(count).collect()
-            }
         }
     }
 
-    /// The mask with each expression rebuilt through `f`, a slice's lane
-    /// count known once `f` closes it.
+    /// The mask with each expression rebuilt through `f`.
     pub fn try_map_exprs<E>(
         &self,
         f: &mut impl FnMut(&ParamExpr) -> Result<ParamExpr, E>,
@@ -575,69 +558,7 @@ impl LaneMask {
         Ok(match self {
             Self::Known(_) => self.clone(),
             Self::Attribute(value) => Self::Attribute(f(value)?),
-            Self::Slice { start, count } => Self::Slice {
-                start: f(start)?,
-                count: match count {
-                    SimdWidth::Known(_) => count.clone(),
-                    SimdWidth::Expr(length) => {
-                        let length = f(length)?;
-                        SimdWidth::of_length(&ParamContext::detached(), length.clone())
-                            .unwrap_or(SimdWidth::Expr(length))
-                    }
-                },
-            },
         })
-    }
-
-    /// The mask with each lane expression `close` answers replaced by its
-    /// constant; one it leaves open, and an attribute, stays as written.
-    #[must_use]
-    pub fn close_with(&self, close: &impl Fn(&ParamExpr) -> Option<i64>) -> Self {
-        let context = ParamContext::detached();
-        let expr = |expr: &ParamExpr| {
-            close(expr)
-                .and_then(|value| context.constant(CtValue::Int(value)).ok())
-                .unwrap_or_else(|| expr.clone())
-        };
-        let width = |width: &SimdWidth| match width {
-            SimdWidth::Expr(_) => width
-                .lanes(&context)
-                .ok()
-                .and_then(|lanes| close(&lanes))
-                .map_or_else(|| width.clone(), SimdWidth::Known),
-            SimdWidth::Known(_) => width.clone(),
-        };
-        match self {
-            Self::Known(_) | Self::Attribute(_) => self.clone(),
-            Self::Slice { start, count } => Self::Slice {
-                start: expr(start),
-                count: width(count),
-            },
-        }
-    }
-
-    /// The lane indices of a gather over a `width`-lane receiver, checked
-    /// against its method's constraints, worded as the pin's: `None` while
-    /// an expression is open, and for an attribute, which the op's verifier
-    /// judges.
-    pub fn resolve(&self, width: i64) -> Option<Result<Vec<usize>, String>> {
-        match self {
-            Self::Known(mask) => Some(Ok(mask.clone())),
-            Self::Attribute(_) => None,
-            Self::Slice { start, count } => {
-                let (start, count) = (start.as_i64()?, count.known()?);
-                Some(
-                    if 0 <= start && start < count + start && count + start <= width {
-                        Ok((start..start + count).map(|lane| lane as usize).collect())
-                    } else {
-                        Err(
-                            "output width must be a positive integer less than simd size"
-                                .to_string(),
-                        )
-                    },
-                )
-            }
-        }
     }
 }
 
@@ -645,7 +566,6 @@ impl fmt::Display for LaneMask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Known(mask) => write!(f, "{mask:?}"),
-            Self::Slice { start, count } => write!(f, "slice[{count}, offset={start}]"),
             Self::Attribute(value) => write!(f, "attribute({value})"),
         }
     }

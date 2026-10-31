@@ -155,6 +155,7 @@ impl Checker {
         let rt = self.infer(right)?;
         let rt = self.opaque_element(&rt).unwrap_or(rt);
         let rt = self.simd_length_operand(right, &lt, rt)?;
+        let rt = self.literal_beside_simd_length(right, op, &lt, rt)?;
 
         // Membership `in` / `not in` — the right operand is a container.
         if matches!(op, In | NotIn) {
@@ -499,6 +500,31 @@ impl Checker {
         } else {
             rt
         })
+    }
+
+    /// The type a right literal operand takes after a left `SIMDLength`
+    /// whose struct declares no dunder for `op`: `Int`, its default
+    /// materialization, whose reflected dunder takes the left operand
+    /// through upstream's `@implicit SIMD.__init__(SIMDLength)` (`n // 2`
+    /// is `Int(2).__rfloordiv__(n)`). `rt` itself for any other pair.
+    fn literal_beside_simd_length(
+        &self,
+        right: &Expr,
+        op: InfixOp,
+        lt: &Ty,
+        rt: Ty,
+    ) -> Result<Ty, TypeError> {
+        if !mojito_types::types::is_simd_length(lt)
+            || rt != TyKind::IntLiteral
+            || op.reflected_dunder().is_none()
+            || op
+                .dunder()
+                .is_some_and(|dunder| self.declared_receiver_member(lt, dunder).is_some())
+        {
+            return Ok(rt);
+        }
+        self.record_literal_materializations(right, &rt, &Ty::int())?;
+        Ok(Ty::int())
     }
 
     /// Type a chained comparison `a < b < c`: each adjacent pair must

@@ -4373,6 +4373,30 @@ fn infer_only_marker_is_followed_by_a_comma_or_the_bracket() {
 }
 
 #[test]
+fn positional_only_marker_parses_in_a_parameter_list() {
+    // Upstream's `SIMD.slice[output_width: Int, /, *, offset: Int = 0]`.
+    let statements =
+        parse("def slice[output_width: Int, /, *, offset: Int = 0](value: Int):\n    pass\n");
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
+    let names: Vec<_> = type_params
+        .iter()
+        .map(|param| param.name.as_str())
+        .collect();
+    assert_eq!(names, ["output_width", "offset"]);
+    assert!(type_params.iter().all(|param| !param.infer_only));
+    let error = mojito::parse("def f[a: Int, / b: Int]():\n    pass\n")
+        .expect_err("a parameter directly after `/` is rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("expected ']' for parameter list"),
+        "{error}"
+    );
+}
+
+#[test]
 fn parses_parenthesized_from_imports() {
     assert_eq!(
         parse("from .backend import (\n    tile,\n    vectorize as vec,\n)\n"),

@@ -2192,12 +2192,13 @@ impl Checker {
         // A `SIMDLength` after a vector or a literal converts to the left
         // operand's type, as it does at run time (`2 * w` is `2 * Int(w)`):
         // its lane count, upstream's `SIMD.__init__(SIMDLength)` folded.
-        let right_built = if is_simd_length_value(&right_built)
-            && left_built
+        let numeric = |built: &ParamExpr| {
+            built
                 .meta()
                 .as_value()
                 .is_some_and(|ty| matches!(ty.kind(), TyKind::Simd { .. } | TyKind::IntLiteral))
-        {
+        };
+        let right_built = if is_simd_length_value(&right_built) && numeric(&left_built) {
             mojito_types::types::simd_length_image(&self.param_context, &right_built)
                 .map_err(param_error)?
         } else {
@@ -2215,8 +2216,31 @@ impl Checker {
             {
                 candidates.push((right, dunder, Some(left)));
             }
-            return self.struct_operator_value(expr, op.symbol(), &candidates);
+            let applied = self.struct_operator_value(expr, op.symbol(), &candidates);
+            // A `SIMDLength` before a vector or a literal, under an operator
+            // `SIMDLength` declares no dunder for, converts to the right
+            // operand's type, whose reflected dunder takes it (`n // 2` is
+            // `Int(2).__rfloordiv__(Int(n))`).
+            if applied.is_err() && is_simd_length_value(&left_built) && numeric(&right_built) {
+                let left_built =
+                    mojito_types::types::simd_length_image(&self.param_context, &left_built)
+                        .map_err(param_error)?;
+                return self.fold_infix(op, &left_built, &right_built);
+            }
+            return applied;
         }
+        self.fold_infix(op, &left_built, &right_built)
+    }
+
+    /// The parameter expression of `left op right` over built non-struct
+    /// operands: closed ones fold through the shared folder, and a residual
+    /// one builds the canonical expression.
+    fn fold_infix(
+        &self,
+        op: InfixOp,
+        left_built: &ParamExpr,
+        right_built: &ParamExpr,
+    ) -> Result<ParamExpr, TypeError> {
         match (left_built.as_constant(), right_built.as_constant()) {
             (Some(left), Some(right)) => {
                 mojito_types::param_expr::fold::fold_comparison(op, left, right)
@@ -2225,7 +2249,7 @@ impl Checker {
             }
             _ => self
                 .param_context
-                .infix(op, &left_built, &right_built)
+                .infix(op, left_built, right_built)
                 .map_err(param_error),
         }
     }

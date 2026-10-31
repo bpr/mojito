@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares upstream's `slice`, `insert`, `split`, `interleave`, and
+  `deinterleave` (R1673): `v.insert[offset=2](SIMD[DType.int32, 2](7, 8))`,
+  `var lo, hi = v.split()`, and `v.interleave(w)` run as at the pin, on the
+  VM and natively, and an out-of-range `slice` fails its instance with the
+  pin's "output width must be a positive integer less than simd size". A
+  parameter list now parses the `/` positional-only marker, and a
+  `SIMDLength` before a literal under an operator it declares no dunder for
+  (`Self.length // 2`) is `Int`'s reflected dunder, as at the pin. The
+  compiler's `slice` rule and the `lane_slice` mask are gone (MIR 1.150,
+  package 166).
 - A list display at any type whose struct declares a `__list_literal__`
   initializer is that type's construction `T(a, b, __list_literal__=None)`,
   as upstream's parser emits it (R1666): `var v: SIMD[DType.int32, 4] = [1,

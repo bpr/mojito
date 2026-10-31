@@ -128,19 +128,6 @@ fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result
                     }
                     *mask = LaneMask::Known(lanes);
                 }
-                MirInstr::SimdShuffle { value, mask, .. } if mask.is_symbolic() => {
-                    let Some(TyKind::Simd { width, .. }) = reg_types.get(&value.0).map(Ty::kind)
-                    else {
-                        continue;
-                    };
-                    match width.known().and_then(|width| mask.resolve(width)) {
-                        Some(Ok(lanes)) => *mask = LaneMask::Known(lanes),
-                        Some(Err(constraint)) => {
-                            return Err(format!("constraint failed: {constraint}"));
-                        }
-                        _ => {}
-                    }
-                }
                 MirInstr::SimdShuffle {
                     dest,
                     value,

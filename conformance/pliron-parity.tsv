@@ -1030,6 +1030,7 @@ assets/ok/simd_shifts_masked.mojo	main	exe-differential	sanitized
 assets/ok/simd_shuffle.mojo	main	exe-differential	sanitized
 assets/ok/simd_shuffle_double_width_index.mojo	main	exe-differential	sanitized
 assets/ok/simd_shuffle_two_operand.mojo	main	exe-differential	sanitized
+assets/ok/simd_slice_insert_split_interleave.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_surface.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_width_hooks.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_width_literal_binding.mojo	main	exe-differential	sanitized

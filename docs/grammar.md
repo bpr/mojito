@@ -410,11 +410,21 @@ captures implicitly, mutable where the enclosing binding is mutable.
 ### Parameterization (generics)
 
 ```
-params_decl: '[' ','.param_decl+ ']'
+params_decl: '[' ','.param_marker_or_decl+ ']'
+param_marker_or_decl:
+    | '//'                                   # infer-only marker
+    | '/'                                    # positional-only marker
+    | '*'                                    # keyword-only marker (bare)
+    | param_decl
 param_decl: ['*'] NAME ':' ( bound | type | generator_type ) ['=' expression]
                                              # a type/callable parameter (or pack), or a value parameter
 bound: '&'.NAME+ ['&' function_type] | function_type
 ```
+
+The `/` positional-only and bare `*` keyword-only markers parse
+(`slice[output_width: Int, /, *, offset: Int = 0]`), but the parameter
+list does not record them yet, so a bracket argument binds by position or
+keyword whichever side of a marker its parameter sits (R1735).
 
 A value parameter's `type` may be an earlier type parameter of the same list
 (`[T: Copyable, //, v: T]`, `[T: Copyable, //, *vs: T]`) or, on a method,

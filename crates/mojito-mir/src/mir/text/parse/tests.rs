@@ -1369,15 +1369,6 @@ fn instruction_families_reprint_byte_identically() {
             mask: LaneMask::Known(vec![0, 1, 2, 3, 4, 5, 6, 7]),
         },
         MirInstr::SimdShuffle {
-            dest: Reg(37),
-            value: Reg(35),
-            other: None,
-            mask: LaneMask::Slice {
-                start: constant(CtValue::Int(1)),
-                count: width_of(&int_parameter("f", 1, "w")),
-            },
-        },
-        MirInstr::SimdShuffle {
             dest: Reg(38),
             value: Reg(35),
             other: Some(Reg(36)),

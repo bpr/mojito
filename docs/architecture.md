@@ -1450,7 +1450,10 @@ by its attribute's type, as the pin's verifier is: a closed type must be
 storage) crosses MIR as `LaneMask::Attribute`, which each instance closes,
 lowers to its lanes, and verifies in `mono/gather.rs`. `SIMD`'s `shuffle`
 and `join` are declared methods that reach `pop.simd.shuffle` through
-`_shuffle_list`, its mask such a `StaticTuple` parameter. A
+`_shuffle_list`, its mask such a `StaticTuple` parameter, and its `slice`,
+`insert`, `split`, `interleave`, and `deinterleave` are declared methods
+over element loops and `llvm.vector.*` intrinsics, so no lane gather keeps
+a method's form across the waist. A
 `DType`- or lane-keyed `def`, overloaded or not, is an ordinary generic `def`
 served by its template unless its body keys a clone, its binders bound from
 the call's arguments, an argument's lane slots, or the checker's inferred
