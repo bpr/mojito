@@ -25,13 +25,23 @@ impl<'a> Flatten<'a> {
 
     /// Lower `e`'s recorded parameter value: a closed one is its constant,
     /// and one a generator names is a parameter constant the elaborator
-    /// folds per instance.
+    /// folds per instance. A literal value converts to the type its use
+    /// takes, as upstream's implicit literal conversion does.
     pub(in crate::mir) fn param_value_register(
         &mut self,
         e: Node<'a>,
         value: mojito_types::param_expr::ParamExpr,
     ) -> Reg {
-        self.param_value_register_at(e.location(), e.ty(), value)
+        let value = self.param_value_register_at(e.location(), e.ty(), value);
+        let literal = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral));
+        match e.param_literal_target().filter(|_| literal) {
+            Some(target) => self.materialize_literal(value, &target, e.location()),
+            None => value,
+        }
     }
 
     /// [`Self::param_value_register`] at `location`, typed `ty` when the

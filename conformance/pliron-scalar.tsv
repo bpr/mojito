@@ -590,6 +590,7 @@ assets/ok/mlir_simd_lane_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_type_overload_identity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_call_list_in_method_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_constant_literal_bracket.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/module_constant_literal_uses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_reference_result_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_type_alias_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/movable_where_false_explicit_destroy.mojo	-	ineligible	no-scalar-entry-shape

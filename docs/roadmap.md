@@ -1210,31 +1210,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1747 Natively, a module constant read as a vector, or at two
-  types in one function, miscompiles**
-
-  `comptime K = 3`, then `print(SIMD[DType.int32, 2](1) * K)`, stops
-  natively with "unsupported read of undefined aggregate register", where
-  the VM and the pin print `[3, 3]`.
-  - Cause: both reads share one unmaterialized literal register. The splat
-    stores the scalar literal into a vector-typed hidden slot with no
-    `literal.materialize`.
-  - Likely site, unverified: the module-constant hidden slot in
-    `Flatten::reference_handle` (`crates/mojito-mir/src/mir.rs`, `$mat_r…`)
-    and `materialize_borrow_slot` (`mir/calls.rs`) cache the slot per
-    owner in `owner_vars`, typed from the first read's register, and
-    `param_value_register` materializes at the constant's literal type,
-    not at the read's target.
-  - Probe: `show(K)` (a `[T: Writable & Copyable]` generic), then
-    `List[Float32]().append(K)`, stores `4.203895392974451e-45` natively,
-    where the VM and the pin store `3.0`.
-  - Probe: a float module constant is a `FloatLiteral` and fails the same
-    way: `x.fma(log2e, 0.5)` over `x: SIMD[dtype, width]` in a generic
-    (upstream's `_exp_impl` and `_log_base`) stops with the same error.
-  - Found while landing R1741 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R275 Native `repr` of a `SIMD` vector wider than one lane is
   unsupported**
 
@@ -11028,8 +11003,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Fixture: `assets/ok/math_exp.mojo` (a 16-lane `float32` input of
     `0.5` keeps the AVX-512 arm's output host-independent), and
     `assets/type_error/math_exp_integral_dtype.mojo`.
-  - Blockers: `exp` and `_exp_impl` call each other (R393), natively
-    `x.fma(log2e, …)` splats a module constant (R1747), and
+  - Blockers: `exp` and `_exp_impl` call each other (R393), and
     `_exp_taylor`'s `coefficients[:]` is no compile-time application
     (R1742).
   - Plan: `R1713-std-math-has-no-exp-where-plan.md` (Slices 2 and 3; Slice

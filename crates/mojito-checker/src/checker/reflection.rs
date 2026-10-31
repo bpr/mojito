@@ -691,6 +691,7 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::ParamValue {
                 value,
                 materialized,
+                literal_target: None,
             },
         ));
     }

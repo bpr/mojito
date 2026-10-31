@@ -1791,6 +1791,7 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::ParamValue {
                     value,
                     materialized: None,
+                    literal_target: None,
                 },
             ));
             return Ok(Ty::int());
@@ -1817,6 +1818,7 @@ impl Checker {
                     mojito_checked::checked::SemanticAdjustment::ParamValue {
                         value,
                         materialized: None,
+                        literal_target: None,
                     },
                 ));
                 return Ok(ty);
@@ -2063,11 +2065,23 @@ impl Checker {
         self.read_attribute(expr.source_span(), value, ty)
     }
 
+    /// Record `value` as the member read at `span`. A read re-inferred
+    /// keeps the conversion its use already applied to the literal.
     pub(super) fn record_member_value(&self, span: SourceSpan, value: ParamExpr) {
-        self.record_at(span).adjustment = Some(Box::new(
+        let mut record = self.record_at(span);
+        let literal_target = match record.adjustment.as_deref() {
+            Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
+                value: recorded,
+                literal_target,
+                ..
+            }) if *recorded == value => literal_target.clone(),
+            _ => None,
+        };
+        record.adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ParamValue {
                 value,
                 materialized: None,
+                literal_target,
             },
         ));
     }

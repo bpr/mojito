@@ -21,8 +21,7 @@ to evolve under the `0.x` compatibility rules.
 - An unannotated float `comptime` binding is a `FloatLiteral`, local or
   module and imported or not, as at the pin (R1741): each read materializes
   at its use, so `Float32(1) * a` and a vector's `fma(log2e, …)` run where
-  the binding was declared `Float64`. Natively, a module constant splatted
-  into a vector still miscompiles (R1747).
+  the binding was declared `Float64`.
 - `StringLiteral`'s comparisons and `__add__` are upstream's dunders
   (R1653): `"ab" == s` and `"a" < "b"` call `StringLiteral.__eq__`/`__lt__`
   over `StringSlice`, two literals concatenate through `__add__` over the
@@ -2203,6 +2202,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A literal constant read at a vector or another sized type (`SIMD[DType.int32,
+  2](1) * K` of `comptime K = 3`, a generic `x.fma(HALF, 0.25)`, `A.K` of a
+  struct member) stays the literal and converts at its use, as at the pin
+  (R1747). Natively the splat read an undefined register, and a second read
+  in one function lost its conversion (`List[Float32].append(K)` stored the
+  integer's bits).
 - A `comptime assert` whose condition folds to `False` now ends its path in
   HIR and MIR (`hlcf.unreachable`), as the pin's constraint-failure
   terminator does, so an `out result` function whose untaken `comptime if`

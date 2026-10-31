@@ -4215,6 +4215,7 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::ParamValue {
                     value,
                     materialized: None,
+                    literal_target: None,
                 },
             ));
         }
@@ -4667,6 +4668,7 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::ParamValue {
                     value: self.param_context.pack_query(pack, query),
                     materialized: None,
+                    literal_target: None,
                 },
             ));
         }

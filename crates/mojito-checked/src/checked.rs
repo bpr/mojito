@@ -1022,6 +1022,10 @@ pub enum SemanticAdjustment {
         /// materialized borrow source (see `MaterializeBorrowSource`), and
         /// one span carries one adjustment.
         materialized: Option<mojito_types::origin::OwnerId>,
+        /// The type a literal value (`comptime K = 3`) converts to where it
+        /// is used (`SIMD[dt, w](1) * K`): upstream's implicit literal
+        /// conversion applies at the use, and the alias stays the literal.
+        literal_target: Option<Ty>,
     },
     /// `v.slice[width, offset=o]()`: a lane gather by a compile-time mask,
     /// the result taking the mask's (power-of-two) width. The mask is known

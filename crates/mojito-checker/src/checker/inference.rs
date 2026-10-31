@@ -1024,6 +1024,7 @@ impl Checker {
                         mojito_checked::checked::SemanticAdjustment::ParamValue {
                             value,
                             materialized: None,
+                            literal_target: None,
                         },
                     ));
                     return Ok(Ty::int());
@@ -1224,24 +1225,27 @@ impl Checker {
                 // declaration denotes, as upstream's parameter and alias
                 // references are. A re-inference keeps the temporary a
                 // borrow of the read already materialized it as, which the
-                // borrow's origin names.
+                // borrow's origin names, and the conversion its use already
+                // applied to the literal.
                 if let Some(value) = self
                     .value_binder_read(name)
                     .or_else(|| self.module_constant_value(name))
                     .or_else(|| self.local_comptime_application(name))
                 {
                     let mut record = self.record_at(expr.source_span());
-                    let materialized = match record.adjustment.as_deref() {
+                    let (materialized, literal_target) = match record.adjustment.as_deref() {
                         Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
                             value: recorded,
                             materialized,
-                        }) if *recorded == value => *materialized,
-                        _ => None,
+                            literal_target,
+                        }) if *recorded == value => (*materialized, literal_target.clone()),
+                        _ => (None, None),
                     };
                     record.adjustment = Some(Box::new(
                         mojito_checked::checked::SemanticAdjustment::ParamValue {
                             value,
                             materialized,
+                            literal_target,
                         },
                     ));
                 }
@@ -1260,6 +1264,7 @@ impl Checker {
                             mojito_checked::checked::SemanticAdjustment::ParamValue {
                                 value,
                                 materialized: None,
+                                literal_target: None,
                             },
                         ));
                     }
@@ -2641,6 +2646,7 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::ParamValue {
                     value,
                     materialized: None,
+                    literal_target: None,
                 },
             ));
             // A string element reads as a loop over the display binds it.

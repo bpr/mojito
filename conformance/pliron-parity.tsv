@@ -590,6 +590,7 @@ assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_type_overload_identity.mojo	main	exe-differential	sanitized
 assets/ok/module_call_list_in_method_loop.mojo	main	exe-differential	sanitized
 assets/ok/module_constant_literal_bracket.mojo	main	exe-differential	sanitized
+assets/ok/module_constant_literal_uses.mojo	main	exe-differential	sanitized
 assets/ok/module_reference_result_reads.mojo	main	exe-differential	sanitized
 assets/ok/module_type_alias_reads.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized

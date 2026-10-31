@@ -2096,16 +2096,14 @@ impl Checker {
                 });
             }
             // A literal parameter value read (`A.K` of `comptime K = 7`)
-            // materializes as its constant.
+            // stays the literal, converted where it is used.
             let mut record = self.record_at(expression.source_span());
-            if let Some(mojito_checked::checked::SemanticAdjustment::ParamValue { value, .. }) =
-                record.adjustment.as_deref_mut()
-                && let Some(materialized) = value
-                    .as_constant()
-                    .and_then(|constant| constant.clone().materialize_as(to))
-                    .and_then(|constant| self.param_context.constant(constant).ok())
+            if let Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
+                literal_target,
+                ..
+            }) = record.adjustment.as_deref_mut()
             {
-                *value = materialized;
+                *literal_target = Some(to.clone());
                 return Ok(());
             }
             record.adjustment = Some(Box::new(

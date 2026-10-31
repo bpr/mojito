@@ -619,6 +619,19 @@ impl<'a> Node<'a> {
         recorded_param_value(&self.checked.adjustments)
     }
 
+    /// The type the literal parameter value this node reads converts to at
+    /// its use (`SIMD[dt, w](1) * K` of `comptime K = 3`).
+    pub(super) fn param_literal_target(self) -> Option<Ty> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ParamValue {
+                    literal_target, ..
+                } => literal_target.clone(),
+                _ => None,
+            })
+    }
+
     /// Whether this node reads a parameter value the check recorded with no
     /// materialized borrow source of its own (a module constant), which
     /// lowers as a value wherever it stands.

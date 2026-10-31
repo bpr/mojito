@@ -269,6 +269,7 @@ impl Checker {
                     .op(op, &[string])
                     .map_err(|error| TypeError::Unsupported(error.to_string()))?,
                 materialized: None,
+                literal_target: None,
             },
             Err(_) => {
                 mojito_checked::checked::SemanticAdjustment::MlirOp(if op == ParamOp::StringSize {
