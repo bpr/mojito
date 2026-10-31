@@ -306,32 +306,6 @@ pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
     }
 }
 
-/// Whether a parameter annotation is a bare value-parameterized literal type
-/// ([`is_string_literal_annotation`], or exactly `IntLiteral` or
-/// `FloatLiteral`), whose value the parameter infers per call.
-pub(super) fn is_literal_annotation(annotation: &SourceType) -> bool {
-    is_string_literal_annotation(annotation) || numeric_literal_annotation(annotation).is_some()
-}
-
-/// The literal type a parameter annotation spells when it is exactly the
-/// bare `IntLiteral` or `FloatLiteral`.
-pub(super) fn numeric_literal_annotation(annotation: &SourceType) -> Option<Ty> {
-    match annotation {
-        SourceType::Named(name, args) if args.is_empty() => numeric_literal_type(name),
-        _ => None,
-    }
-}
-
-/// The literal type the bare spelling `name` names: `IntLiteral` or
-/// `FloatLiteral`.
-pub(super) fn numeric_literal_type(name: &str) -> Option<Ty> {
-    match name {
-        "IntLiteral" => Some(Ty::int_literal()),
-        "FloatLiteral" => Some(Ty::float_literal()),
-        _ => None,
-    }
-}
-
 /// The names a method's arguments bind in its signature: its receiver
 /// (`self`) and each parameter, which a `where` clause may read.
 pub(super) fn method_arguments(method: &Method) -> Vec<&str> {
@@ -1822,7 +1796,7 @@ impl Checker {
             // `Pointer[T, _]` is concrete here only).
             self.resolving_parameter_annotation.set(true);
             self.bare_literal_parameter
-                .set(is_literal_annotation(&p.ty));
+                .set(is_string_literal_annotation(&p.ty));
             let generated = self.generated_declaration.get();
             self.generated_declaration
                 .set(generated || m.name.contains('$'));
@@ -3277,6 +3251,7 @@ impl Checker {
                             error,
                             TypeError::TraitNotSatisfied { .. }
                                 | TypeError::CannotInferTypeParam { .. }
+                                | TypeError::UnresolvedArgumentParameter { .. }
                         ))
                     && bound_failure.is_none()
                 {
@@ -4049,10 +4024,7 @@ impl Checker {
                 {
                     TyArg::Ty((*ty).clone())
                 } else {
-                    return Err(TypeError::CannotInferTypeParam {
-                        name: name.to_string(),
-                        param: decl.name().to_string(),
-                    });
+                    return Err(self.unsolved_binder(name, decl, patterns, actuals));
                 };
                 if let (ParamDecl::Type { id, .. }, TyArg::Ty(t)) = (decl, &tyarg) {
                     subst.insert(id.clone(), t.clone());
@@ -4186,10 +4158,7 @@ impl Checker {
                     } else if callable_default.is_some() {
                         tyargs.push(TyArg::Val(CtValue::Deferred(decl.binder())));
                     } else {
-                        return Err(TypeError::CannotInferTypeParam {
-                            name: name.to_string(),
-                            param: pname.clone(),
-                        });
+                        return Err(self.unsolved_binder(name, decl, patterns, actuals));
                     }
                 }
                 ParamDecl::Type {
@@ -4239,10 +4208,7 @@ impl Checker {
                         .get(id)
                         .cloned()
                         .or_else(|| default.clone())
-                        .ok_or_else(|| TypeError::CannotInferTypeParam {
-                            name: name.to_string(),
-                            param: pname.clone(),
-                        })?;
+                        .ok_or_else(|| self.unsolved_binder(name, decl, patterns, actuals))?;
                     subst.insert(id.clone(), solved.clone());
                     for bound in bounds {
                         if !self.conforms_to(&solved, bound) {
@@ -4302,6 +4268,49 @@ impl Checker {
     /// parameter bounded by `bounds` as itself: the pin materializes it
     /// unless the type it materializes to fails a bound its own type meets
     /// (`FloatLiteral` is `Floatable`, `Float64` is not).
+    /// The error for `decl`, a binder of `name` no argument solves:
+    /// upstream's unresolved-parameter conversion error when
+    /// auto-parameterization declared it for an argument whose type a
+    /// pattern spells (`Int` to `IntLiteral[x.value]`), else that it
+    /// cannot be inferred.
+    fn unsolved_binder(
+        &self,
+        name: &str,
+        decl: &ParamDecl,
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> TypeError {
+        let own = std::slice::from_ref(decl);
+        let binder = decl.name().trim_start_matches('*');
+        patterns
+            .iter()
+            .zip(actuals)
+            .find_map(|(pattern, actual)| {
+                let (owner, arguments) = mojito_types::types::nominal_parts(pattern)?;
+                let (declared, _) = self
+                    .structs
+                    .get(mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner))?
+                    .decls
+                    .iter()
+                    .zip(arguments.iter())
+                    .find(|(_, argument)| mentioned_binder(argument, own).is_some())?;
+                let parameter = declared.name().trim_start_matches('*');
+                let argument = mojito_ast::ast::auto_binder_owner(binder, parameter)?;
+                let shown = format!("{argument}.{parameter}");
+                Some(TypeError::UnresolvedArgumentParameter {
+                    callee: name.to_string(),
+                    argument: argument.to_string(),
+                    from: actual.to_string(),
+                    to: pattern.to_string().replace(binder, &shown),
+                    parameter: shown,
+                })
+            })
+            .unwrap_or_else(|| TypeError::CannotInferTypeParam {
+                name: name.to_string(),
+                param: decl.name().to_string(),
+            })
+    }
+
     fn binds_unmaterialized_literal(&self, literal: &Ty, bounds: &[String]) -> bool {
         matches!(
             literal.kind(),

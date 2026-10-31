@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1017
+# swept-count	1018
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -233,6 +233,7 @@ assets/type_error/assign_named_interior_view_aggregate_over_source.mojo	compile-
 assets/type_error/assign_named_interior_view_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'view' argument and constructed as a result in 'takes' call
 assets/type_error/assign_subscript_call_over_viewed_element.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'keep' call
 assets/type_error/associated_value_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
+assets/type_error/auto_parameterized_argument_unresolved.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'B' to 'W[x.v]', it depends on an unresolved parameter 'x.v'
 assets/type_error/bad_operator.mojo	compile-reject	agree	error: no matching method in call to '__add__'
 assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' argument must be passed as 'deinit'
 assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer

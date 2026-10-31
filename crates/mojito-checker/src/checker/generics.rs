@@ -415,6 +415,14 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 }
             }
         }
+        (TyKind::FloatLiteral(Some(pattern)), TyKind::IntLiteral(Some(_))) => {
+            if let CtValue::Expr(expr) = pattern.as_ref()
+                && let Some(reference) = expr.as_decl_ref()
+                && let Some(value) = mojito_types::types::int_literal_as_float(actual)
+            {
+                out.entry(reference.name.to_string()).or_insert(value);
+            }
+        }
         (kind, _) if let Some((dtype, width)) = kind.as_simd() => {
             let actual_slots = match actual.kind() {
                 TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1787**.
+Next free ID: **R1788**.
 
 ## Ordered Work
 
@@ -3667,6 +3667,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1787 A bare parametric struct annotation on an initialized local
+  does not infer its parameters from the initializer**
+
+  Problem: `var x: W = W[3]()` over `struct W[v: Int]` reports "cannot
+  infer type parameter 'v' of 'W' from the arguments", where the pin
+  infers `W[3]` and prints `3` for `print(x.v)`.
+  - The annotation resolves through `resolve_storage_annotation` under
+    `StorageStrictness` as the struct with its parameters unbound, before
+    the initializer's type is known.
+  - Probe: `var x: IntLiteral = 3` reports the same "cannot infer type
+    parameter 'value' of 'IntLiteral'", where the pin says "cannot
+    implicitly convert 'IntLiteral[3]' value to 'IntLiteral[_]'"
+    (`assets/type_error/int_literal_local_not_concrete.mojo`,
+    `float_literal_local_not_concrete.mojo`). Once the rule infers, those
+    two fixtures take the pin's text.
+  - Found while landing R1780 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1541 A compound value-parameter pattern solves no binder**
 
   Problem: `g[w: Int](x: B[w * 2])` called as `g(B[n * 2]())` in `def
@@ -6697,34 +6716,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1780 A bare `IntLiteral` or `FloatLiteral` parameter is a run-time
-  register, where upstream auto-parameterizes it**
-
-  Problem: `def f(x: IntLiteral)` binds a run-time `IntLiteral` register
-  rather than inferring `x.value` per call, so `f(n)` over `var n = 3`
-  reports "expected Int, found Int".
-  - The pin says "cannot be converted from 'Int' to
-    'IntLiteral[x.value]'"
-    (`assets/type_error/int_literal_parameter_int_argument.mojo`). A
-    `FloatLiteral` parameter does the same with "expected Float64, found
-    Float64" (`float_literal_parameter_float_argument.mojo`).
-  - Probe: `def h(x: IntLiteral) -> IntLiteral[x.value]: return x` then
-    `print(h(6))` prints `6` at the pin and is rejected here.
-  - Probe: a `def f(x: FloatLiteral) -> Float32: return Float32(x)` rounds
-    the literal to a `Float64` register first where it is stored as one
-    (Pliron), where the pin rounds the exact value once
-    (`SIMD.__pow__`'s `Self(exp)`, R1567).
-  - Cause: `auto_parameterize.rs` skips the bare names, and the checker's
-    `bare_literal_parameter` flag with `numeric_literal_annotation` and
-    `numeric_literal_type` (`checker/declarations.rs`) types them.
-  - Lever: drop the skip and the numeric half of those rules, so the
-    bundled `SIMDLength.__init__(value: IntLiteral)` and `SIMD.__pow__`'s
-    `exp: FloatLiteral` instantiate per literal. Measure the `std` build
-    with a fresh `MOJITO_CACHE_DIR`.
-  - Plan: `R1507-a-literal-s-type-does-not-plan.md`, slice 3.
-  - Depends on R1779.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1781 `SIMD`'s `IntLiteral` and `FloatLiteral` initializers are
   checker rules**
 
@@ -6735,6 +6726,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `Int(FloatLiteral[(-3.7).value]())` prints `-3` through
     `Intable`, where the pin selects the `FloatLiteral` initializer and
     fails the same assert.
+  - Probe: `def f(x: FloatLiteral) -> Float32: return Float32(x)` over
+    `f(1.0000000596046448)` prints `1.0000001192092896` on both backends,
+    where the pin prints `1.0000001`. The parameter's type carries the
+    exact value, but `Float32(x)` still converts the run-time register
+    through `infer_conversion`'s literal arm rather than the declared
+    initializer reading `x.value`.
   - Port upstream's `simd.mojo:850-866` and `:970-986`, over a
     `#pop.int_literal_convert` and `#pop<float_literal_convert>` to
     `Self._mlir_type` (`mlir_bracket_attribute` reads only the `index`
@@ -7874,6 +7871,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `comptime f = 1.5 if True else 2.5`, then `Float32(1) * f`,
     prints `1.5`: an unannotated `comptime` binding keeps its
     initializer's type.
+  - Probe: `k(1 if c else 2)` over `comptime c = True` and `def k(x:
+    IntLiteral)` prints `1`, where the pin rejects it: "value passed to
+    'x' cannot be converted from 'Int' to 'IntLiteral[x.value]'". With a
+    run-time condition both reject it.
   - Found while landing R1741 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.

@@ -3921,7 +3921,7 @@ impl Checker {
                 // (a bare `Pointer[T, _]` is concrete here only).
                 self.resolving_parameter_annotation.set(true);
                 self.bare_literal_parameter
-                    .set(super::declarations::is_literal_annotation(&parameter.ty));
+                    .set(super::declarations::is_string_literal_annotation(&parameter.ty));
                 let resolved = self.resolve_storage_annotation(
                     &parameter.ty,
                     super::StorageStrictness::AllowBare,

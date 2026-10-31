@@ -78,6 +78,7 @@ assets/ok/bracket_capitalized_module_constant.mojo	-	ineligible	no-scalar-entry-
 assets/ok/bracket_capitalized_subscript_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bracket_function_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bracketed_call_defaulted_struct_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/builtin_init_auto_parameterized_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_def_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_instance_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
@@ -470,6 +471,7 @@ assets/ok/instance_constructor_symbols.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_floordiv_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_index_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_parameter_overload.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/int_literal_parameter_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_value_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-scalar-entry-shape

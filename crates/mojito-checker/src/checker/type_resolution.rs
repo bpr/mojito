@@ -365,7 +365,7 @@ impl Checker {
     }
 
     /// The bare source spelling `name` of the literal type `ty`
-    /// (`StringLiteral`, `IntLiteral`, `FloatLiteral`): upstream
+    /// (`StringLiteral`): upstream
     /// parameterizes the type by the literal's value, so the bare spelling is
     /// concrete only as a whole parameter annotation, where the value infers
     /// per call.
@@ -1464,13 +1464,6 @@ impl Checker {
         if name == "StringLiteral" && args.is_empty() {
             return self
                 .bare_literal(Ty::string_literal(), name)
-                .map(|ty| Some((ty, Vec::new())));
-        }
-        if args.is_empty()
-            && let Some(literal) = super::declarations::numeric_literal_type(name)
-        {
-            return self
-                .bare_literal(literal, name)
                 .map(|ty| Some((ty, Vec::new())));
         }
         if args.is_empty()

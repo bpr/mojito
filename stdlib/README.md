@@ -104,7 +104,7 @@ point, as upstream's toolchain does.
   attribute (`__mlir_index__`, `__int__`, `__int_literal__`, `is_nan`,
   `is_neg_zero`) run as at the pin. A literal `4` is the application
   `IntLiteral[4]`, which the compiler holds as its literal type, and a bare
-  `IntLiteral` parameter is still a run-time register (roadmap R1780). The
+  `IntLiteral` parameter is upstream's per-call `IntLiteral[x.value]`. The
   prelude exports both.
 - `std/builtin/string_literal.mojo` — upstream's `StringLiteral[value]`
   struct, in part: the type of a string literal (`"ab"` is

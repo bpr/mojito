@@ -606,8 +606,8 @@ pub enum TyKind {
     /// [`CtValue::PopIntLiteral`] once the value is known or a
     /// [`CtValue::Expr`] of type `!pop.int_literal` while it is symbolic.
     /// `None` is the value-less literal upstream has no type for: the join
-    /// of differently valued literals, a bare `IntLiteral` parameter, or the
-    /// run-time register. R1780 and R1785 retire it.
+    /// of differently valued literals, or the run-time register. R1785
+    /// retires it.
     IntLiteral(Option<Box<CtValue>>),
     /// A float literal's type, upstream's `FloatLiteral[value]`, held as
     /// [`TyKind::IntLiteral`] is over a `!pop.float_literal` slot. It
@@ -3653,6 +3653,20 @@ pub const fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
     }
 }
 
+/// The float an integer literal of known value converts to.
+///
+/// It is the `FloatLiteral[v]` value an `IntLiteral[n]` argument binds at a
+/// float literal pattern: upstream's `@implicit
+/// FloatLiteral.__init__(IntLiteral[_])` (`#pop<int_to_float_literal>`)
+/// applied before deduction, so `g(3)` over `def g(x: FloatLiteral)` solves
+/// `x.value = 3.0`. `None` for any other type, a symbolic value included.
+pub fn int_literal_as_float(actual: &Ty) -> Option<CtValue> {
+    actual
+        .kind()
+        .int_literal_value()
+        .map(|value| CtValue::PopFloatLiteral(FloatLiteral::from_int(value)))
+}
+
 /// The value-less literal type of a literal type whose type carries its
 /// value (`IntLiteral[4]` is an `IntLiteral`, the pin's `IntLiteral[_]`);
 /// any other type as it is.
@@ -3731,8 +3745,8 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         // value-less string (R1657).
         (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(None)) => true,
         // A numeric literal of a known value is one of the value-less
-        // literals the join of different values and a bare parameter
-        // still are (R1780). Two carried values agree only when equal,
+        // literals the join of different values still is (R1785). Two
+        // carried values agree only when equal,
         // and an integer carries over to the float its
         // `#pop<int_to_float_literal>` is, upstream's
         // `@implicit FloatLiteral.__init__(IntLiteral[_])`.

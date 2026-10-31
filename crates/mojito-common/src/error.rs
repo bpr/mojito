@@ -387,6 +387,16 @@ pub enum TypeError {
         name: String,
         param: String,
     },
+    /// An argument of a bare parametric type leaves a binder its
+    /// auto-parameterization declared unsolved (`f(n)` over `def f(x:
+    /// IntLiteral)` with `n: Int`), spelled as the pin does (`x.value`).
+    UnresolvedArgumentParameter {
+        callee: String,
+        argument: String,
+        from: String,
+        to: String,
+        parameter: String,
+    },
     /// A solved type argument does not conform to a type parameter's declared
     /// trait bound (`f[T: Quackable](...)` called with a non-`Quackable` type).
     TraitNotSatisfied {
@@ -939,6 +949,17 @@ impl fmt::Display for TypeError {
             Self::CannotInferTypeParam { name, param } => write!(
                 f,
                 "cannot infer type parameter '{param}' of '{name}' from the arguments"
+            ),
+            Self::UnresolvedArgumentParameter {
+                callee,
+                argument,
+                from,
+                to,
+                parameter,
+            } => write!(
+                f,
+                "invalid call to '{callee}': value passed to '{argument}' cannot be converted \
+                 from '{from}' to '{to}', it depends on an unresolved parameter '{parameter}'"
             ),
             Self::TraitNotSatisfied {
                 param,

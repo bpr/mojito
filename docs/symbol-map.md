@@ -1792,7 +1792,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `print`, `repr`, and `$write_formatted` argument.
 - `comptime/auto_parameterize.rs` owns upstream's automatic
   parameterization (`parameterize_unbound_arguments`, upstream's
-  `addImplicitTypeParams`): an infer-only `$<param>_<argument>` binder per
+  `addImplicitTypeParams`): an infer-only `$<param>_<argument>` binder
+  (`mojito_ast::ast::auto_binder_name`; `auto_binder_owner` reads the
+  argument back for the pin's `x.v` spelling) per
   parameter an argument's struct type leaves unbound (bare, `_`, `...`, a
   bare partially bound alias), read off the program's own struct or the
   package's (`InstalledInterfaces::struct_parameters`), on a `def`, a
@@ -1801,7 +1803,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameterized `comptime` member.
   The check solves an infer-only value binder from a later bracket
   argument's type or its default's (`Checker::resolve_use_params`,
-  `with_earlier_arguments`), and closes a method's own value parameter
+  `with_earlier_arguments`), reports a binder no argument solves as
+  `TypeError::UnresolvedArgumentParameter` (`Checker::unsolved_binder`),
+  and closes a method's own value parameter
   types, callable contracts included, over the receiver's arguments
   (`Checker::method_decls_at_receiver`); both bind through
   `ParamBindings::bind_value_arguments`.
@@ -2803,8 +2807,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`literal_attribute_op`), built by
   `ParamContext::build_literal_attribute` and folded by
   `fold::fold_literal_attribute`. A bare `IntLiteral` or `FloatLiteral`
-  annotation keeps the compiler's literal register: `auto_parameterize.rs`
-  skips it.
+  parameter is auto-parameterized like any bare struct
+  (`auto_parameterize.rs`), and both unifiers (`generics.rs`'s
+  `solve_value_args`, `mono/unify.rs`) bind a `FloatLiteral[v]` binder
+  from an integer literal through `types::int_literal_as_float`.
 - Upstream's `` __mlir_type.`!kgen.string` `` is `TyKind::KgenString`
   (displayed `types::KGEN_STRING_TYPE_SPELLING`), the type of a
   `StringLiteral`'s `value` parameter, and its values are

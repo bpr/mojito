@@ -2285,6 +2285,20 @@ impl ParamContext {
                     self.shift(value, 0, depth)
                 };
             }
+            // A numeric literal bound to an `IntLiteral[v]` or
+            // `FloatLiteral[v]` parameter is likewise its literal (R1785).
+            (MetaTy::Value(ty), Some(CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)))
+                if value
+                    .meta()
+                    .as_value()
+                    .is_some_and(|found| *found == crate::types::value_less_literal(ty)) =>
+            {
+                return if depth == 0 {
+                    Ok(value.clone())
+                } else {
+                    self.shift(value, 0, depth)
+                };
+            }
             (MetaTy::Value(ty), Some(constant)) if *value.meta() != declared => {
                 self.constant_as(constant.clone(), ty)?
             }

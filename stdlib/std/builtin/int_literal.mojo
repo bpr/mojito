@@ -2,9 +2,8 @@
 # `IntLiteral[value]` struct with its default initializer, `__int__`,
 # `__ceil__`, `__floor__`, `__trunc__`, `write_to`, `write_repr_to`, and
 # `__mlir_index__`. A literal `4` is its application `IntLiteral[4]`, as
-# is an explicit one (`IntLiteral[(4).value]()`); a bare `IntLiteral`
-# parameter is a run-time register rather
-# than upstream's per-call `IntLiteral[_]` (R1780). The operator
+# is an explicit one (`IntLiteral[(4).value]()`), and a bare `IntLiteral`
+# parameter is upstream's per-call `IntLiteral[_]`. The operator
 # dunders, `__bool__` (which reads `self != 0`), and `__ceildiv__` are not
 # ported (R1753). `@__nonmaterializable(Int)` is not read (R1651). The
 # struct declares only the traits whose requirements are ported here.

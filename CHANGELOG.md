@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bare `IntLiteral` or `FloatLiteral` parameter is upstream's per-call
+  `IntLiteral[x.value]`, auto-parameterized like any bare struct (R1780), so
+  `def h(x: IntLiteral) -> IntLiteral[x.value]` runs and `g(3)` binds `def
+  g(x: FloatLiteral)` at `3.0`. An argument that leaves such a binder
+  unsolved is the pin's "value passed to 'x' cannot be converted from 'Int'
+  to 'IntLiteral[x.value]', it depends on an unresolved parameter
+  'x.value'", for any bare struct (`W[x.v]`). A builtin `@implicit`
+  initializer reading its own value binder through its argument (`w.v`)
+  now folds at compile time, which the bundled `SIMDLength.__init__(value:
+  IntLiteral)` needs. A bare `IntLiteral` local is rejected as a struct
+  with an unbound parameter, not yet in the pin's words (R1787).
+
 - A numeric literal's type is the application it names, `IntLiteral[4]` or
   `FloatLiteral[2.5]`, and a literal-only expression's type carries the
   value it folds to (R1779). `type_of(N + 2.5)` over `comptime N = 4` is

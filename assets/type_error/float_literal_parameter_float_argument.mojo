@@ -1,4 +1,4 @@
-# expect: type mismatch for argument 'x' to 'f'
+# expect: value passed to 'x' cannot be converted from 'Float64' to 'FloatLiteral[x.value]', it depends on an unresolved parameter 'x.value'
 # A `FloatLiteral` parameter takes only a literal: a `Float64` value has no
 # literal value for the parameter's type to carry.
 def f(x: FloatLiteral) -> Float64:

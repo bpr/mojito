@@ -365,6 +365,13 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         {
             bind_value(binder, value, bindings)
         }
+        TyKind::FloatLiteral(Some(slot))
+            if let CtValue::Expr(expr) = slot.as_ref()
+                && let Some(binder) = expr.as_decl_ref()
+                && let Some(value) = mojito_types::types::int_literal_as_float(actual) =>
+        {
+            bind_value(binder, &value, bindings)
+        }
         // A literal-typed register materializes into whatever concrete
         // storage the checker admitted (`MaterializeLiteral` converts the
         // value at the boundary); the pattern constrains nothing here.

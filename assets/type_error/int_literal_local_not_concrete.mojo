@@ -1,6 +1,9 @@
-# expect: 'IntLiteral[_]' is not concrete
-# The bare `IntLiteral` spelling is not concrete outside a parameter
-# annotation, where its value would infer per call.
+# expect: cannot infer type parameter 'value' of 'IntLiteral'
+# The bare `IntLiteral` spelling binds its value per call only as a
+# parameter annotation; on a local it is the struct with its parameter
+# unbound. The pin infers a bare local annotation's parameters from the
+# initializer and rejects this one as "cannot implicitly convert
+# 'IntLiteral[3]' value to 'IntLiteral[_]'" (R1787).
 def main():
     var x: IntLiteral = 3
     print(Int(x))

@@ -18,6 +18,22 @@ use mojito_common::token::Span;
 /// renaming.
 pub const CONTEXTUAL_SENTINEL: &str = "$contextual";
 
+/// The infer-only binder auto-parameterization declares for parameter
+/// `parameter` of argument `owner`'s bare parametric type: `$v_x` for `x: W`
+/// over `struct W[v: Int]`, which the pin spells `x.v`.
+pub fn auto_binder_name(parameter: &str, owner: &str) -> String {
+    format!("${parameter}_{owner}")
+}
+
+/// The argument `owner` that `name` is the [`auto_binder_name`] of
+/// `parameter` for, which the pin spells the binder after (`x.v`); `None`
+/// for any other name.
+pub fn auto_binder_owner<'a>(name: &'a str, parameter: &str) -> Option<&'a str> {
+    name.strip_prefix('$')?
+        .strip_prefix(parameter)?
+        .strip_prefix('_')
+}
+
 /// The derivation ordinal of a compiler-spelled value or type pack read.
 ///
 /// The `ParameterList[values.values]()` or `TypeList[Ts.values]()`

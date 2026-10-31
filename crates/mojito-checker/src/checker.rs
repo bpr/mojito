@@ -785,9 +785,8 @@ pub struct Checker {
     /// placeholder elsewhere as not concrete).
     resolving_parameter_annotation: std::cell::Cell<bool>,
     /// Set while resolving a parameter annotation that is exactly
-    /// `StringLiteral` or `IntLiteral`: upstream's value-parameterized
-    /// literal types infer their parameter there and are not concrete
-    /// anywhere else.
+    /// `StringLiteral`: upstream's value-parameterized literal type infers
+    /// its parameter there and is not concrete anywhere else (R1658).
     bare_literal_parameter: std::cell::Cell<bool>,
     /// Set while a subscript's getter is resolved only to learn its element
     /// type (upstream's `filterOverloadSet` in `emitGetterSetterAccess`):

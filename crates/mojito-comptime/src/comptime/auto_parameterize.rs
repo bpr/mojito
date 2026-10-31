@@ -3,7 +3,7 @@
 //! leaves unbound becomes an infer-only parameter of the declaration that
 //! takes the argument.
 
-use mojito_ast::ast::{FnParam, ParamArg};
+use mojito_ast::ast::{FnParam, ParamArg, auto_binder_name};
 use mojito_ast::visit::MutVisitor;
 use mojito_common::literal::IntLiteral;
 
@@ -206,11 +206,7 @@ impl<'a> Declared<'a> {
         let Type::Named(name, args) = ty else {
             return None;
         };
-        // A bare `IntLiteral` or `FloatLiteral` is still the compiler's
-        // literal register, not upstream's per-call application (R1780).
-        if in_scope.contains(name)
-            || (args.is_empty() && matches!(name.as_str(), "IntLiteral" | "FloatLiteral"))
-        {
+        if in_scope.contains(name) {
             return None;
         }
         let alias = args
@@ -254,12 +250,12 @@ impl<'a> Declared<'a> {
                 }
                 // A type pack's binder is a pack its argument spreads.
                 Slot::Unbound if let Some(pack) = parameter.name.strip_prefix('*') => {
-                    let binder = format!("*${pack}_{owner}");
+                    let binder = format!("*{}", auto_binder_name(pack, owner));
                     binders.push(binder_for(parameter, &binder, &arguments, span));
                     ParamArg::Type(Type::Named(binder, Vec::new()))
                 }
                 Slot::Unbound => {
-                    let binder = format!("${}_{owner}", parameter.name);
+                    let binder = auto_binder_name(&parameter.name, owner);
                     binders.push(binder_for(parameter, &binder, &arguments, span));
                     identifier(&binder, span)
                 }

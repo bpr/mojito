@@ -231,9 +231,11 @@ impl ApplicableFunction {
     /// ([`super::annotations::builtin_body_binder`]): a type parameter a type
     /// binder, and every other slot a value binder typed over them, `self`
     /// and a `Self` parameter typed `owner`: the struct template in its own
-    /// scope, the instance at a call. A method's struct parameters are no
-    /// slot: its body reads them as its struct's own binders, which a call
-    /// binds from the instance. `None` for a slot typed `Self` without an
+    /// scope, the instance at a call. A parameter type reading a value
+    /// binder (`w: W[k]`, or an auto-parameterized `w: W`) reads its slot,
+    /// so `w.v` in the body folds to the call's argument. A method's struct
+    /// parameters are no slot: its body reads them as its struct's own
+    /// binders, which a call binds from the instance. `None` for a slot typed `Self` without an
     /// `owner`, or a callable whose parameters have not classified.
     pub(in crate::checker) fn argument_slots(&self, owner: Option<&Ty>) -> Option<Vec<ParamDecl>> {
         let signature = self.signature.as_ref()?;
@@ -262,6 +264,24 @@ impl ApplicableFunction {
                 Some((id.clone(), ty.into()))
             })
             .collect();
+        let context = mojito_types::param_expr::ParamContext::detached();
+        let mut values = mojito_types::param_expr::ParamBindings::new();
+        for (slot, decl) in signature.decls.iter().enumerate() {
+            if let ParamDecl::Value { id, name, ty, .. } = decl {
+                values.bind(
+                    id.clone(),
+                    context.decl_ref(
+                        binder(slot, name).id,
+                        name.trim_start_matches('*'),
+                        mojito_types::param_expr::MetaTy::value(substitute(ty, &subst)),
+                    ),
+                );
+            }
+        }
+        let slot_ty = |ty: &Ty| {
+            let ty = substitute(ty, &subst);
+            mojito_types::types::replace_parameters(&context, &ty, &values, 0).unwrap_or(ty)
+        };
         let receiver = self
             .takes_self()
             .then(|| Some(("self", Some(owner?.clone()), false)));
@@ -298,7 +318,7 @@ impl ApplicableFunction {
                         return ParamDecl::Value {
                             id,
                             name: name.to_string(),
-                            ty: ParamDecl::value_list_ty(substitute(&ty, &subst), variadic),
+                            ty: ParamDecl::value_list_ty(slot_ty(&ty), variadic),
                             default: None,
                             callable_default: None,
                             infer_only: false,
@@ -1620,22 +1640,48 @@ impl Checker {
                 .get(owner)
                 .is_none_or(|info| !info.methods.contains_key("__init__")) =>
             {
-                let Some(function) = overloads.and_then(|overloads| {
-                    overloads.iter().find(|function| {
-                        function.constructs()
-                            && function.implicit
-                            && function.refined_self.is_none()
-                            && function.collector.is_none()
-                            && matches!(function.params.as_slice(),
-                            [param] if param.ty.resolved(Some(ty)).is_some_and(|param| {
-                                *param == *source
-                                    || *param == mojito_types::types::value_less_literal(source)
-                            }))
-                    })
+                // Its own parameters solve from `source` (`IntLiteral[4]`
+                // binds `value: IntLiteral`'s `$value_value`).
+                let converts = |function: &&ApplicableFunction| {
+                    let [param] = function.params.as_slice() else {
+                        return None;
+                    };
+                    let param = param.ty.resolved(Some(ty))?;
+                    if *param == *source
+                        || *param == mojito_types::types::value_less_literal(source)
+                    {
+                        return Some(Vec::new());
+                    }
+                    let decls = &function.signature.as_ref()?.decls;
+                    let bound = self
+                        .resolve_use_params(
+                            &name,
+                            decls,
+                            &[],
+                            std::slice::from_ref(param),
+                            std::slice::from_ref(source),
+                        )
+                        .ok()?;
+                    let values = Self::value_argument_environment(decls, &bound.arguments);
+                    let solved = self
+                        .resolve_dependent_ty(&substitute(param, &bound.subst), &values)
+                        .ok()?;
+                    (solved == *source).then_some(bound.arguments)
+                };
+                let Some((function, own_arguments)) = overloads.and_then(|overloads| {
+                    overloads
+                        .iter()
+                        .filter(|function| {
+                            function.constructs()
+                                && function.implicit
+                                && function.refined_self.is_none()
+                                && function.collector.is_none()
+                        })
+                        .find_map(|function| Some((function, converts(&function)?)))
                 }) else {
                     return Ok(None);
                 };
-                (function, Vec::new())
+                (function, own_arguments)
             }
             None => return Ok(None),
         };
@@ -1652,10 +1698,31 @@ impl Checker {
         let Some(param) = function.params.first() else {
             return Ok(None);
         };
+        // The constructor's own parameters lead, as the conversion solved
+        // them from the source (`length` of `Array[Self.T, _]`), and the
+        // argument builds at its parameter's type under them
+        // (`IntLiteral[4]` for `value: IntLiteral`).
+        let own = function
+            .signature
+            .as_ref()
+            .filter(|_| !own_arguments.is_empty())
+            .map(|signature| {
+                (
+                    struct_subst(&signature.decls, &own_arguments),
+                    Self::value_argument_environment(&signature.decls, &own_arguments),
+                    &signature.decls,
+                )
+            });
+        let resolve = |declared: &Ty| match &own {
+            Some((subst, values, _)) => self
+                .resolve_dependent_ty(&substitute(&at_instance(declared), subst), values)
+                .ok(),
+            None => Some(at_instance(declared)),
+        };
         let Some(argument) = param
             .ty
             .resolved(Some(ty))
-            .map(at_instance)
+            .and_then(resolve)
             .as_ref()
             .and_then(argument)
         else {
@@ -1669,24 +1736,14 @@ impl Checker {
         } else {
             argument
         };
-        // The constructor's own parameters lead, as the conversion solved
-        // them from the source (`length` of `Array[Self.T, _]`).
-        let mut arguments = match function.signature.as_ref() {
-            Some(signature) if !own_arguments.is_empty() => {
-                let subst = struct_subst(&signature.decls, &own_arguments);
-                let values = Self::value_argument_environment(&signature.decls, &own_arguments);
-                let resolve = |declared: &Ty| {
-                    self.resolve_dependent_ty(&substitute(&at_instance(declared), &subst), &values)
-                        .ok()
-                };
-                let Some(own) =
-                    self.own_parameter_arguments(&signature.decls, &own_arguments, resolve)
-                else {
+        let mut arguments = match &own {
+            Some((_, _, decls)) => {
+                let Some(own) = self.own_parameter_arguments(decls, &own_arguments, resolve) else {
                     return Ok(None);
                 };
                 own
             }
-            _ => Vec::new(),
+            None => Vec::new(),
         };
         arguments.push(argument);
         let selected = Selected {
@@ -2821,12 +2878,19 @@ impl Checker {
         for (slot, argument) in typed_by_declaration {
             if let SlotType::Declared(_, declared) = slot {
                 patterns.push(at_owner(declared.as_ref()?));
+                // A literal constant is of the literal type carrying its
+                // value, which a bare `IntLiteral` parameter binds (R1785).
                 actuals.push(
                     argument
-                        .meta()
-                        .as_value()
-                        .filter(|ty| parameter_value_type(ty))?
-                        .clone(),
+                        .as_constant()
+                        .and_then(Ty::of_literal_value)
+                        .or_else(|| {
+                            argument
+                                .meta()
+                                .as_value()
+                                .filter(|ty| parameter_value_type(ty))
+                                .cloned()
+                        })?,
                 );
             }
         }
@@ -5744,9 +5808,6 @@ impl ApplicableShape<'_> {
             }
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
-            ty if let Some(literal) = super::declarations::numeric_literal_annotation(ty) => {
-                Some(SlotType::Scalar(literal))
-            }
             SourceType::Named(..) | SourceType::SelfParam(_) | SourceType::Assoc { .. } => {
                 Some(SlotType::Declared(ty.clone(), None))
             }
