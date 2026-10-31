@@ -2079,7 +2079,7 @@ fn lower_function(
 /// the struct at its own binders, which parametric MIR spells by the bare
 /// name and each instance replaces. `SIMD` and the literal structs are the
 /// exceptions while the `Ty::new` bridge holds their applications as the
-/// compiler's `TyKind::Simd` (R1557), `TyKind::StringLiteral` (R1660),
+/// compiler's `TyKind::Simd` (R1558), `TyKind::StringLiteral` (R1660),
 /// `TyKind::IntLiteral`, and `TyKind::FloatLiteral` (R1785):
 /// the receiver is that type at the binders, which an instance substitutes
 /// as any other type.

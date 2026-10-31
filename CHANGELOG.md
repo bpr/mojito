@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD[...]` binds its brackets through the declared struct, so a keyword
+  `length=` or `dtype=` works in a signature, a binding, a construction,
+  and a partial alias (R1557). `Scalar`, `Byte`, and the sized aliases are
+  `std.simd`'s `comptime` aliases in the prelude, importable by name and
+  shadowed by a program's own declaration. Module aliases register in
+  dependency order, a partial alias applied to `_` (`S[_]`) and an imported
+  one auto-parameterize, `Width[Self.e.rows]` binds, a run-time variable in
+  a parameter list is the pin's "cannot use a dynamic value in a parameter
+  list", and the unroller no longer trips on a span naming a retired slot
+  (R933). `Int`, `UInt`, and `Float64` annotations stay parser types
+  (R1792), and alias constructions stay checker rules (R1791).
+
 - `SIMD` declares upstream's `@implicit __init__(value: IntLiteral)` and
   `__init__(value: FloatLiteral)` over `#pop.int_literal_convert<v> : T` and
   `#pop<float_literal_convert<v>> : T`, which now read at any `!kgen.simd`

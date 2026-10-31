@@ -799,6 +799,7 @@ assets/ok/parameterized_assoc_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_setitem_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_static_methods.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/partial_alias_hole_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_explicit_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_move_mut_parameter_reinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_move_reinit_sibling_use.mojo	-	ineligible	no-scalar-entry-shape
@@ -986,6 +987,7 @@ assets/ok/reversed_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/runtime_pack_dunder_len.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/same_arity_generic_method_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/same_spelled_type_params.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/scalar_alias_shadowed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_conversion_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_dtype_construction.mojo	-	ineligible	no-scalar-entry-shape
@@ -1013,6 +1015,7 @@ assets/ok/signature_application_same_module_struct_default.mojo	-	ineligible	no-
 assets/ok/signature_builtin_select_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/signature_generic_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_abi_crossings.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_alias_imports.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_any_all.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_arithmetic_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bitwise_dunders.mojo	-	ineligible	no-scalar-entry-shape
@@ -1044,6 +1047,7 @@ assets/ok/simd_inferred_width_from_argument.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/simd_init_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_int_width_binder_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_int_wrap_native_int.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_keyword_bracket.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_binders_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_dynamic.mojo	compute	differential	ret=Int
 assets/ok/simd_lane_dynamic_widths.mojo	-	ineligible	no-scalar-entry-shape
@@ -1170,6 +1174,7 @@ assets/ok/struct_parameter_comptime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_parameter_instance_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_slot_fields_split.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_type_param_construction_clone.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_value_field_bracket.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_member_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_pack_method_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_application.mojo	-	ineligible	no-scalar-entry-shape

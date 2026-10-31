@@ -471,7 +471,7 @@ impl Checker {
                 }
                 let instance = match constructed {
                     Some(constructed) => Some(constructed.clone()),
-                    None => self.simd_type(param_args).ok().map(|(ty, _)| ty),
+                    None => self.simd_application(param_args).ok().map(|(ty, _)| ty),
                 };
                 return instance
                     .and_then(|instance| simd_slots(&instance))
@@ -1041,7 +1041,7 @@ impl Checker {
         param_args: &[mojito_ast::ast::ParamArg],
     ) -> Option<(Ty, BracketAttributes)> {
         match name {
-            "SIMD" => self.simd_type(param_args).ok(),
+            "SIMD" => self.simd_application(param_args).ok(),
             "Scalar" if param_args.len() == 1 => {
                 let dtype = self.dtype_from_arg(&param_args[0]).ok()?;
                 let attribute = dtype_attribute(&param_args[0], &dtype);

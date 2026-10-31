@@ -304,6 +304,31 @@ impl InstalledInterfaces {
         }
     }
 
+    /// The struct and bracket arguments the reached module's alias `name`
+    /// applies, its own parameters spelled as the `_` holes they leave
+    /// unbound: `comptime Scalar = SIMD[_, length=1]`, which its check
+    /// holds as a generator over `dtype`, is `SIMD[_, length=1]`. Decodes
+    /// its declaration's record on first use.
+    pub fn alias_application(
+        &self,
+        name: &str,
+    ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
+        let aliases = &self.declaration(Table::Aliases, name)?.aliases;
+        let position = aliases
+            .binary_search_by(|(alias, _)| alias.as_str().cmp(name))
+            .ok()?;
+        let alias = &aliases[position].1;
+        let ExprKind::TypeApply { name, args } = &alias.value.kind else {
+            return None;
+        };
+        let binders: Vec<&str> = alias.decls.iter().map(ParamDecl::name).collect();
+        let args = args
+            .iter()
+            .map(|argument| alias_binder_hole(argument, &binders))
+            .collect();
+        Some((name.clone(), args))
+    }
+
     /// The parents the reached trait `name` declares, decoding its
     /// declaration's record on first use.
     pub fn trait_parents(&self, name: &str) -> Option<&[String]> {
@@ -1933,6 +1958,29 @@ fn refuse_unplaced(mut unplaced: Vec<String>) -> Result<(), String> {
         "no library module declares {}",
         unplaced.join(", ")
     ))
+}
+
+/// `argument` with a bare reference to one of `binders` respelled as the
+/// `_` hole it leaves unbound.
+fn alias_binder_hole(
+    argument: &mojito_ast::ast::ParamArg,
+    binders: &[&str],
+) -> mojito_ast::ast::ParamArg {
+    use mojito_ast::ast::ParamArg;
+    match argument {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(binder),
+            span,
+            ..
+        }) if binders.contains(&binder.as_str()) => {
+            ParamArg::Value(Expr::new(ExprKind::Identifier("_".to_string()), *span))
+        }
+        ParamArg::Named { name, value } => ParamArg::Named {
+            name: name.clone(),
+            value: Box::new(alias_binder_hole(value, binders)),
+        },
+        _ => argument.clone(),
+    }
 }
 
 #[cfg(test)]

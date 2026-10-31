@@ -1245,7 +1245,7 @@ impl Checker {
                 return None;
             }
             return mojito_types::types::simd_shape(
-                &self.simd_type(param_args).ok()?.0.into_kind(),
+                &self.simd_application(param_args).ok()?.0.into_kind(),
             );
         }
         if !param_args.is_empty() {

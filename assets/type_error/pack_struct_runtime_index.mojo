@@ -1,4 +1,4 @@
-# expect: expected a compile-time Int index
+# expect: cannot use a dynamic value in a parameter list
 @fieldwise_init
 struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
     var storage: Tuple[*Self.Ts]

@@ -1637,7 +1637,7 @@ impl Checker {
             ),
             // A builtin body folds before the struct's initializers
             // register, and the `SIMD` bridge's run-time conversions do not
-            // select its declared ones (R1557): its `@implicit` one taking
+            // select its declared ones (R1789): its `@implicit` one taking
             // `source` converts (`2.0` at `Scalar[dtype]` is
             // `SIMD.__init__(FloatLiteral)`).
             None if ty.is_simd()

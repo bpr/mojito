@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1790**.
+Next free ID: **R1794**.
 
 ## Ordered Work
 
@@ -926,22 +926,6 @@ which names the upstream pass each one follows. Each is measured by the
     in concrete `f`, where the pin keeps `b` behind its pointer argument
     and loads the field through it.
   - Found while landing R1268 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R933 A span origin can name a slot no instruction addresses**
-
-  `mir::addressed_slots`, the guard before `retire_slots`, ignores the
-  slots that `function.spans` origins name, but `renumber_slots` renumbers
-  them, so retiring a slot only a span names trips its debug assertion.
-  - The unroller retires slots typed over a loop binder
-    (`crates/mojito-native/src/native/mono/unroll.rs`), past its own "used
-    outside its loop" check.
-  - R837's probe hit it on `comptime_for_index_typed_local.mojo` when an
-    erased marker kept its span. `lower-lit` now drops those spans.
-  - Fix either side: the verifier refuses a span for a register no
-    instruction defines, or `retire_slots` clears a retired slot's span
-    origins, as `mem_2_reg` does.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11261,46 +11245,101 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1557 `SIMD` and its aliases are compiler types in the checker,
-  where upstream's are the declared struct and `comptime` aliases**
+- [ ] **R1791 A construction spelled through `Scalar` or a sized alias
+  reaches `SIMD`'s initializers through checker rules keyed by the name**
 
-  Once every member is a library body, the `Ty::new` bridge and
-  `type_resolution.rs`'s `"SIMD"`/`"Scalar"` name rules are all that keep
-  `SIMD` a compiler type.
-  - Delete the bridge: `SIMD[...]` resolves to `TyKind::Struct("SIMD",
-    …)` through the declaration.
-  - `Scalar`, `Int`, `UInt`, `Float64`, `Byte`, and the sized aliases come
-    from `std/simd.mojo`'s `comptime` aliases, in the pin's prelude list.
-  - Delete what the bridge needed beside it: `self_receiver_ty`'s `SIMD`
-    arm (`mojito-mir`), and `types::nominal_parts`'s `Simd` arm, which the
-    elaborator, the checker, and the VM's `declared_owner` read `SIMD`'s
-    identity through.
-  - Delete the rule fallback of `SIMD` construction once the initializer
-    entries empty it: `Checker::{declared_simd_construction,
-    binds_undeclared_overload, simd_alias_instance}` and the rule arms of
-    `infer_unbound_call` (`checker/call_inference.rs`).
-  - The checker's implicit conversions into `SIMD` (`coerces`, `splats_to`)
-    stand in for the `@implicit` overloads until the bridge goes.
-  - `comptime Scalar = SIMD[_, length=1]` is spelled by
-    `auto_parameterize.rs`'s `Declared::partial_alias` while `Scalar` is a
-    compiler name. Delete it once the prelude declares the alias.
-  - Probe: the bridge reads `SIMD`'s bracket by position (`simd_dims`), so
-    `def f[dt: DType, //](x: SIMD[dt, length=1])` and `comptime Sc =
-    SIMD[_, length=1]` stop with "SIMD width must be a positive power of
-    two, got a named argument", where the pin prints `6` for `f(Int32(3))`.
-  - Probe: a program's own `struct Scalar` with `def f(x: Scalar)` stops
-    with "type 'Scalar' expects 1 type argument(s), got 0", where the pin
-    prints `8` for `f(Scalar(4))`.
-  - Depends on R1555, R1662, R1671, R1683, R1673, R1675, R1556, R1591, R1592,
-    R1593, R1595, and R1399.
-  - Model: Fable, Planned.
+  `Int32(x)`, `Scalar[dt](x)`, and `SIMD[...](x)` select the declared
+  initializers through rules that match the spelling, where upstream's
+  call through an alias constructs the type the alias names.
+  - The rules: `call_inference.rs`'s `"SIMD"` and `"Scalar"` arms and its
+    `Dtype::from_scalar_alias` arm, `infer_scalar_construction`,
+    `simd_alias_instance`, and `declared_simd_spelling`.
+  - Also `operators.rs::infer_simd_alias_construction`, `inference.rs`'s
+    `Scalar` and `from_scalar_alias` dimension arms, and
+    `comptime_requests.rs`'s `"SIMD"` constructibility.
+  - Lever: once a call through any alias constructs the type it names
+    (R60), a `SIMD` construction is a struct construction whose instance is
+    the resolved alias.
+  - Then `declared_simd_construction` keys off the instance, not the name.
+  - Probe: a program's own `struct Int8` constructs its own type only
+    because the linker renames it, and `Scalar[dt](x)` never reads
+    `std.simd`'s alias.
+  - Depends on R60.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1792 `Int`, `UInt`, and `Float64` are parser types, where
+  upstream's are the prelude's `comptime` aliases**
+
+  A program's own `struct Float64` is shadowed in annotations: `def f(x:
+  Float64)` over it stops with "type 'Float64' has no field 'v'", where the
+  pin reads the program's struct.
+  - The parser maps the three names to `Type::Int`, `Type::UInt`, and
+    `Type::Float64` (`mojito-parser/src/parser/types.rs`), and
+    `peek_starts_type` classifies `Dtype::from_scalar_alias` names as
+    types.
+  - Since R1557 the other sized aliases and `Scalar` resolve as
+    `std.simd`'s `comptime` aliases, so only these three still bypass the
+    alias lookup.
+  - Lever: parse them as `Type::Named`, then delete the variants and the
+    `"Int"`/`"UInt"`/`"Float64"` arm of `builtin_applied_type`.
+  - Teach `symbol.rs::simd_annotation_spelling`,
+    `comptime.rs::scalar_type_name`, and `mojito-types::ffi` to read the
+    resolved type instead of the spelling.
+  - `comptime/rewrite.rs` and `synth.rs` respell a bound vector as the bare
+    `SIMD`, which a program's own `struct SIMD` would capture.
+  - Update `docs/grammar.md` first.
+  - Probe: `struct Float64` with a field `v` and `def f(x: Float64) -> Int:
+    return x.v`, `f(Float64(4))`, prints `4` at the pin.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1790 A `_` in a binding's annotation is not solved by its
+  initializer**
+
+  `var v: V[DType.int32, _] = V[DType.int32, 4](7)` over a user struct
+  stops with "type mismatch for value parameter 'length': expected Int,
+  found a non-materializable compile-time value", where the pin prints
+  `7 4`.
+  - `SIMD[dt, _]` is accepted only through the positional reader
+    (`Checker::simd_dims`'s `SimdWidth::inferred`) and `coerces`'
+    `to_width.is_inferred()` arm, which `simd_declared_application` keeps
+    for a bracket holding `_`.
+  - Lever: resolve an annotation's `_` slot as an inference variable the
+    initializer's type solves, as a parameter pattern's is.
+  - Then delete `SimdWidth::inferred`, its `coerces` arm, and the
+    positional reader's hole case.
+  - Probe: `assets/ok/simd_inferred_width_binding.mojo` and
+    `simd_inferred_width_from_argument.mojo` over `V` instead of `SIMD`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1793 `SIMD(copy=x)` is the checker's builtin copy, where upstream's
+  is the `TrivialRegisterPassable` copy initializer**
+
+  `declared_simd_construction`'s rule fallback and
+  `infer_instance_construction` serve a `copy=` keyword by
+  `infer_builtin_copy_construction`, not by selecting a declared
+  initializer.
+  - Upstream's `copy=` over a `TrivialRegisterPassable` struct is the
+    synthesized copy initializer, as for any other such struct.
+  - Lever: let a `SIMD` construction with `copy=` select that initializer
+    and delete the `kwargs.iter().all(|keyword| keyword.name == "copy")`
+    arm of `rule_served`.
+  - Probe: `Int32(copy=x)` and `SIMD[DType.int8, 4](copy=v)` run the
+    builtin copy rather than a selected initializer.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1558 MIR and the backends hold a `SIMD` value as a vector type,
   where upstream holds the struct as its `!kgen.simd` field**
 
-  `TyKind::Simd` stays below the checker after R1557, and the MIR verifier
+  The `Ty::new` bridge (`types::bridged_simd`) interns the declared
+  struct's `SIMD[...]` application as `TyKind::Simd`, and the MIR verifier
   compares it with `TyKind::KgenSimd` as one held representation
   (`verify/types.rs`, `types::held_simd_ty`).
+  - Delete the bridge, `nominal_parts`' `Simd` arm and
+    `simd_struct_arguments`, and `self_receiver_ty`'s `SIMD` arm
+    (`mojito-mir`), which read `SIMD`'s identity through it.
   - Delete the nominal `TyKind::Simd`. `KgenSimd` is the only vector type.
   - A `SIMD` register is a held one-field struct (R1396's rule,
     `MirDeclarations::translated_type` for Pliron).
@@ -11310,7 +11349,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     R1556. Only four exhaustive walks still name it: `mir::text`'s
     `type_spelling`, `text/write.rs`'s type record, `verify/scope.rs`'s
     walk, and the checker's `type_is_symbolic`.
-  - Depends on R1557.
+  - Depends on R1557, R1791, and R1792.
   - Model: Fable, Planned.
 
 - [ ] **R1618 A compile-time argument computed by an inlined dunder keeps

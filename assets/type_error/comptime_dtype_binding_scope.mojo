@@ -1,4 +1,4 @@
-# expect: 'lane' does not name a DType in scope
+# expect: Undefined variable 'lane'
 # A local `comptime` binding is visible to the rest of its own block only: a
 # `comptime lane` in `first` is not in scope in `second`.
 def first():

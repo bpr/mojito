@@ -137,6 +137,16 @@ impl Checker {
         }
         // A shell typed by a later struct (`struct H[w: W]` above `W`).
         self.settle_deferred_shells(stmts, &mut deferred_shells);
+        // An alias over a later struct's shell (`comptime Scalar =
+        // SIMD[_, length=1]` above `struct SIMD`) registers once the shell
+        // does, before a builtin body reads it, as the pin resolves it on
+        // demand.
+        for index in alias_dependency_order(stmts) {
+            if waiting_aliases.contains(&index) && self.register_module_alias(&stmts[index]).is_ok()
+            {
+                waiting_aliases.retain(|waiting| *waiting != index);
+            }
+        }
         drop(phase);
         // A builtin body folds before any signature or field type calls it,
         // and over the callable's classified parameters.
@@ -199,11 +209,14 @@ impl Checker {
         // signatures: a field annotation or a synthesized conditional-method
         // availability (e.g. `copy()` gated on a `Copyable where MyPred[T]`
         // condition) may reference an alias regardless of declaration order.
-        // The pre-pass keeps source order, so an alias body still sees only
-        // earlier aliases.
+        // The pass registers an alias after the aliases its body names, in
+        // dependency order, as the pin resolves declarations on demand
+        // (`comptime c_int = Int32` in `std.ffi` above `std.simd`'s
+        // `Int32`).
         drop(phase);
         let phase = timing::span("declarations.aliases");
-        for (index, statement) in stmts.iter().enumerate() {
+        for index in alias_dependency_order(stmts) {
+            let statement = &stmts[index];
             if self.register_module_alias_when_declared(statement)?
                 && !waiting_aliases.contains(&index)
             {
@@ -4302,4 +4315,63 @@ fn def_shape(params: &[FnParam]) -> DefShape<'_> {
         out_results: regular.iter().filter(|p| is_out(p)).count(),
         regular,
     }
+}
+
+/// The indices of `stmts`' `comptime` declarations, each after the ones
+/// its body names (a name read or a type applied), else in source order.
+fn alias_dependency_order(stmts: &[Stmt]) -> Vec<usize> {
+    struct Names(Vec<String>);
+    impl mojito_ast::visit::Visitor for Names {
+        fn visit_expr(&mut self, expr: &Expr) {
+            match &expr.kind {
+                ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. } => {
+                    self.0.push(name.clone());
+                }
+                _ => {}
+            }
+        }
+        fn visit_type(&mut self, ty: &SourceType) {
+            if let SourceType::Named(name, _) = ty {
+                self.0.push(name.clone());
+            }
+        }
+    }
+    fn visit(
+        index: usize,
+        stmts: &[Stmt],
+        declared: &HashMap<&str, usize>,
+        placed: &mut Vec<bool>,
+        order: &mut Vec<usize>,
+    ) {
+        if placed[index] {
+            return;
+        }
+        placed[index] = true;
+        if let StmtKind::Comptime { value, .. } = &stmts[index].kind {
+            let mut names = Names(Vec::new());
+            mojito_ast::visit::walk_expr(&mut names, value);
+            for name in names.0 {
+                if let Some(&dependency) = declared.get(name.as_str()) {
+                    visit(dependency, stmts, declared, placed, order);
+                }
+            }
+        }
+        order.push(index);
+    }
+    let declared: HashMap<&str, usize> = stmts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, statement)| match &statement.kind {
+            StmtKind::Comptime { name, .. } => Some((name.as_str(), index)),
+            _ => None,
+        })
+        .collect();
+    let mut placed = vec![false; stmts.len()];
+    let mut order = Vec::new();
+    for (index, statement) in stmts.iter().enumerate() {
+        if matches!(statement.kind, StmtKind::Comptime { .. }) {
+            visit(index, stmts, &declared, &mut placed, &mut order);
+        }
+    }
+    order
 }

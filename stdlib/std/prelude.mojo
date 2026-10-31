@@ -33,7 +33,24 @@ from std.builtin.value import (
 )
 from std.builtin.int import Indexer, Intable, IntableRaising, index
 from std.builtin.simd_length import SIMDLength
-from std.simd import SIMD
+from std.simd import (
+    SIMD,
+    Byte,
+    Float16,
+    Float32,
+    Float64,
+    Int,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Scalar,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    UInt,
+)
 from std.builtin.string_literal import StringLiteral
 from std.builtin.int_literal import IntLiteral
 from std.builtin.float_literal import FloatLiteral

@@ -512,7 +512,7 @@ impl<'a> Specializer<'a> {
                 Some(name.clone())
             }
             // The `SIMD` bridge is no struct instance a member retargets to
-            // (R1557): its owner arguments lead the member's own, as a
+            // (R1558): its owner arguments lead the member's own, as a
             // generator's kept ones do, so `Int`'s and `UInt`'s instances
             // of one member are two.
             Some((owner_template, _)) => {

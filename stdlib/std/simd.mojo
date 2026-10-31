@@ -41,8 +41,10 @@
 # sub-byte float dtype (R65), and `__hash__` omits its `float8_e8m0fnu`
 # conjunct for the same reason. The struct declares
 # only the traits whose requirements are ported here; as upstream's, its
-# trait list has no `Floatable`. `Scalar`, `Int`, `UInt`, the sized aliases,
-# and `Byte` stay compiler names until R1557.
+# trait list has no `Floatable`. The type aliases omit `Int128`,
+# `UInt128`, `Int256`, `UInt256`, `BFloat16`, and the float4 and float8
+# ones (R65), and `Scalar` spells its length `1` through `SIMDLength`'s
+# implicit conversion, where upstream spells the `#lit.struct` attribute.
 # `cast` omits upstream's `bfloat16` branches on NVIDIA and AMD, and its
 # float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4` branches (R65):
 # Mojito has none of those dtypes.
@@ -123,6 +125,43 @@ from std.utils.numerics import max_or_inf as _max_or_inf
 from std.utils.numerics import min_finite as _min_finite
 from std.utils.numerics import min_or_neg_inf as _min_or_neg_inf
 from std.utils.numerics import nan as _nan
+
+# ===----------------------------------------------------------------------=== #
+# Type Aliases
+# ===----------------------------------------------------------------------=== #
+comptime Scalar = SIMD[_, length=1]
+"""Represents a scalar dtype."""
+
+comptime Int = Scalar[DType.int]
+"""Represents a signed integer suitable for indexing."""
+comptime Int8 = Scalar[DType.int8]
+"""Represents an 8-bit signed scalar integer."""
+comptime UInt8 = Scalar[DType.uint8]
+"""Represents an 8-bit unsigned scalar integer."""
+comptime Int16 = Scalar[DType.int16]
+"""Represents a 16-bit signed scalar integer."""
+comptime UInt16 = Scalar[DType.uint16]
+"""Represents a 16-bit unsigned scalar integer."""
+comptime Int32 = Scalar[DType.int32]
+"""Represents a 32-bit signed scalar integer."""
+comptime UInt32 = Scalar[DType.uint32]
+"""Represents a 32-bit unsigned scalar integer."""
+comptime Int64 = Scalar[DType.int64]
+"""Represents a 64-bit signed scalar integer."""
+comptime UInt64 = Scalar[DType.uint64]
+"""Represents a 64-bit unsigned scalar integer."""
+comptime Float16 = Scalar[DType.float16]
+"""Represents a 16-bit floating point value."""
+comptime Float32 = Scalar[DType.float32]
+"""Represents a 32-bit floating point value."""
+comptime Float64 = Scalar[DType.float64]
+"""Represents a 64-bit floating point value."""
+
+comptime Byte = UInt8
+"""Represents a byte (backed by an 8-bit unsigned integer)."""
+
+comptime UInt = Scalar[DType.uint]
+"""Represents an unsigned integer of platform-dependent bit-width."""
 
 
 # ===----------------------------------------------------------------------=== #

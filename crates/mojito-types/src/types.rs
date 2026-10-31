@@ -989,7 +989,7 @@ impl Ty {
     /// A `SIMD[dtype, length]` application of the declared struct is the
     /// compiler's [`TyKind::Simd`] ([`bridged_simd`]), so the declaration's
     /// `Self` and every substitution of it keep one representation until
-    /// R1557 makes the struct the only one. A `StringLiteral[value]`
+    /// R1558 makes the struct the only one. A `StringLiteral[value]`
     /// application is likewise a [`TyKind::StringLiteral(_)`]
     /// ([`bridged_string_literal`]) until R1660 deletes that bridge, and an
     /// `IntLiteral[value]` or `FloatLiteral[value]` one a

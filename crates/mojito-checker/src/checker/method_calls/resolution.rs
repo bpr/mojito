@@ -229,17 +229,16 @@ impl Checker {
                     Ok(instantiated) => instantiated,
                     // A runtime value where a subscript accessor takes a
                     // compile-time `Int` (`t[i]` over a runtime `i`) is the
-                    // reason the call reports.
-                    Err(TypeError::NotComptime(_))
+                    // reason the call reports, as at the pin.
+                    Err(TypeError::NotComptime(_) | TypeError::DynamicParameterValue)
                         if !overloaded
                             && matches!(method, "__getitem__" | "__getitem_param__")
                             && matches!(sig.decls.as_slice(),
                             [decl @ ParamDecl::Value { .. }]
                                 if decl.value_element_ty().is_some_and(|ty| ty.is_int())) =>
                     {
-                        availability_failure.get_or_insert_with(|| {
-                            "expected a compile-time Int index, found a runtime value".to_string()
-                        });
+                        availability_failure
+                            .get_or_insert_with(|| TypeError::DynamicParameterValue.to_string());
                         continue;
                     }
                     Err(failure) => {

@@ -1194,6 +1194,8 @@ pub fn renumber_slots(function: &mut MirFunction, renumber: &dyn Fn(VarId) -> Va
 /// still addressed: every slot above one moves down past it, and its name
 /// and type leave the tables.
 ///
+/// A span naming a retired slot names no slot.
+///
 /// # Panics
 ///
 /// In debug builds, when a retired slot is a parameter or still addressed.
@@ -1239,11 +1241,6 @@ pub fn retire_parameters(function: &mut MirFunction, retired: &BTreeSet<VarId>) 
         }
     }
     function.n_params -= retired.len();
-    for (_, origin) in function.spans.0.values_mut() {
-        if origin.is_some_and(|var| retired.contains(&var)) {
-            *origin = None;
-        }
-    }
     retire(function, retired);
 }
 
@@ -1284,8 +1281,14 @@ fn collector_operand(
     .copied()
 }
 
-/// The renumbering [`retire_slots`] and [`retire_parameters`] share.
+/// The renumbering [`retire_slots`] and [`retire_parameters`] share. A
+/// span naming a retired slot names no slot.
 fn retire(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
+    for (_, origin) in function.spans.0.values_mut() {
+        if origin.is_some_and(|var| retired.contains(&var)) {
+            *origin = None;
+        }
+    }
     let addressed = std::cell::Cell::new(false);
     let renumber = |var: VarId| {
         addressed.set(addressed.get() || retired.contains(&var));

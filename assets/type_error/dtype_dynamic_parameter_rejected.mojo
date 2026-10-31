@@ -1,4 +1,4 @@
-# expect: not a valid SIMD element type
+# expect: cannot use a dynamic value in a parameter list
 # A runtime `DType` value cannot key a `SIMD` type: parameter lists take
 # compile-time values only.
 def main():

@@ -5,7 +5,6 @@
 
 use mojito_ast::ast::{FnParam, ParamArg, auto_binder_name};
 use mojito_ast::visit::MutVisitor;
-use mojito_common::literal::IntLiteral;
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -21,7 +20,7 @@ use super::*;
 /// one of its parameters, a type pack as a pack binder), as `_` (`List[_]`,
 /// `Pair[n=_]`), or under `...` (`Pair[Int, ...]`, each remaining
 /// positional one). A module alias over a partially bound struct
-/// (`comptime I32 = SIMD[DType.int32, _]`, and the prelude's `Scalar`)
+/// (`comptime I32 = SIMD[DType.int32, _]`, the prelude's `Scalar`)
 /// spelled bare stands for its struct with its holes. A module alias with
 /// compile-time parameters spelled bare (`comptime Lane[dt: DType] =
 /// SIMD[dt, 1]`, `x: Lane`) leaves each one unbound, as a bare struct does.
@@ -116,31 +115,21 @@ impl<'a> Declared<'a> {
         self.installed?.struct_parameters(name)
     }
 
-    /// The struct and arguments the partial alias `name` applies: a module
-    /// alias's, or, unless the program declares its own `Scalar`, the
-    /// prelude's `comptime Scalar = SIMD[_, length=1]`, spelled here while
-    /// `Scalar` is a compiler name.
-    fn partial_alias(&self, name: &str, span: Span) -> Option<(String, Vec<ParamArg>)> {
+    /// The struct and arguments the partial alias `name` applies: the
+    /// program's own module alias, or, unless another declaration of the
+    /// program hides it, the `installed` package's
+    /// (`comptime Scalar = SIMD[_, length=1]`).
+    fn partial_alias(&self, name: &str) -> Option<(String, Vec<ParamArg>)> {
         if let Some(alias) = self.partial_aliases.get(name) {
             return Some(alias.clone());
         }
-        (name == "Scalar"
-            && !self.others.contains(name)
-            && !self.structs.contains_key(name)
-            && self.parameters("SIMD").is_some())
-        .then(|| {
-            let length = Expr::new(ExprKind::Int(IntLiteral::from(1_u64)), span);
-            (
-                "SIMD".to_string(),
-                vec![
-                    identifier("_", span),
-                    ParamArg::Named {
-                        name: "length".to_string(),
-                        value: Box::new(ParamArg::Value(length)),
-                    },
-                ],
-            )
-        })
+        if self.structs.contains_key(name) || self.others.contains(name) {
+            return None;
+        }
+        let (applied, args) = self.installed?.alias_application(name)?;
+        args.iter()
+            .any(|argument| hole(argument).is_some())
+            .then_some((applied, args))
     }
 
     /// Parameterize one declaration's compile-time parameters
@@ -209,10 +198,9 @@ impl<'a> Declared<'a> {
         if in_scope.contains(name) {
             return None;
         }
-        let alias = args
-            .is_empty()
-            .then(|| self.partial_alias(name, span))
-            .flatten();
+        let alias = self
+            .partial_alias(name)
+            .and_then(|(applied, alias_args)| Some((applied, fill_holes(&alias_args, args)?)));
         let (name, args) = alias
             .as_ref()
             .map_or((name, args), |(applied, alias_args)| (applied, alias_args));
@@ -400,6 +388,28 @@ enum Hole {
     One,
     /// `...`, every remaining positional parameter.
     Rest,
+}
+
+/// A partial alias's arguments `alias_args` applied to `args`
+/// (`comptime S = V[_, length=1]` spelled `S[_]` or `S[dt]`): each
+/// positional argument fills the alias's next hole. `None` when `args`
+/// spell a keyword or outnumber the holes.
+fn fill_holes(alias_args: &[ParamArg], args: &[ParamArg]) -> Option<Vec<ParamArg>> {
+    if args
+        .iter()
+        .any(|argument| matches!(argument, ParamArg::Named { .. }))
+    {
+        return None;
+    }
+    let mut applied = args.iter();
+    let filled = alias_args
+        .iter()
+        .map(|argument| match hole(argument) {
+            Some(Hole::One) => applied.next().unwrap_or(argument).clone(),
+            _ => argument.clone(),
+        })
+        .collect();
+    applied.next().is_none().then_some(filled)
 }
 
 fn hole(argument: &ParamArg) -> Option<Hole> {

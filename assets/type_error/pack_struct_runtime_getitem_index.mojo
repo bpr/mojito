@@ -1,4 +1,4 @@
-# expect: expected a compile-time Int index
+# expect: cannot use a dynamic value in a parameter list
 # A variadic struct's dependent accessor takes its index as a compile-time
 # parameter; a runtime value in that position is rejected, as the pinned Mojo
 # rejects it ("cannot use a dynamic value in a parameter list").

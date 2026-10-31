@@ -1092,8 +1092,9 @@ impl Checker {
         }
         // Relative package re-exports may retain only the sibling
         // module tail in a qualified comptime-alias reference. Resolve
-        // that spelling when it selects one unique registered alias.
-        if name.starts_with("__module$") {
+        // that spelling when it selects one unique registered alias, and
+        // no declared struct is spelled so (the program's own `Scalar`).
+        if name.starts_with("__module$") && !self.structs.contains_key(name) {
             let leaf = name.rsplit('$').next().unwrap_or(name);
             let mut matches = self
                 .comptime_aliases
@@ -1484,34 +1485,8 @@ impl Checker {
                 _ => {}
             }
         }
-        // SIMD vector types and their fixed-width scalar aliases.
-        if let Some(dtype) = Dtype::from_scalar_alias(name) {
-            if !args.is_empty() {
-                return Err(TypeError::WrongTypeArgCount {
-                    name: name.to_string(),
-                    expected: 0,
-                    got: args.len(),
-                });
-            }
-            return Ok(Some((simd_ty(dtype, 1), Vec::new())));
-        }
-        if name == "SIMD" {
+        if name == "SIMD" && !self.simd_declared_application(args) {
             return self.simd_type(args).map(Some);
-        }
-        if name == "Scalar" {
-            if args.len() != 1 {
-                return Err(TypeError::WrongTypeArgCount {
-                    name: name.to_string(),
-                    expected: 1,
-                    got: args.len(),
-                });
-            }
-            let dtype = self.dtype_from_arg(&args[0])?;
-            let attribute = dtype_attribute(&args[0], &dtype);
-            return Ok(Some((
-                simd_of(dtype, SimdWidth::Known(1))?,
-                vec![attribute],
-            )));
         }
         if name == "$pack" {
             return self
@@ -3041,7 +3016,7 @@ impl Checker {
                                 .filter(|expression| expression.as_constant().is_none())
                             {
                                 Some(expression) => CtValue::Expr(expression),
-                                None => return Err(error),
+                                None => return Err(self.unevaluated_argument(error, expr)),
                             },
                         },
                     };
@@ -3111,6 +3086,9 @@ impl Checker {
                                 self.applied_argument(expr, slot_ty)
                             })?;
                         let (Some(application), Some(slot)) = (converted, slot) else {
+                            if let Some(length) = self.unregistered_simd_length(&value, ty) {
+                                return Ok(TyArg::Val(length));
+                            }
                             return Err(TypeError::TypeMismatch {
                                 expected: ty.to_string(),
                                 found: actual.to_string(),
@@ -3198,7 +3176,9 @@ impl Checker {
                     })
                 }
                 ParamArg::Type(source)
-                    if let Some(read) = self.type_spelled_member_read(source) =>
+                    if let Some(read) = self
+                        .type_spelled_member_read(source)
+                        .or_else(|| self_field_read(source)) =>
                 {
                     self.resolve_param_arg(decl, &ParamArg::Value(read))
                 }
@@ -4408,9 +4388,36 @@ impl Checker {
         }
     }
 
-    /// Resolve `SIMD[DType.<dt>, width]` from its two parameter arguments to its
-    /// `(dtype, width)` slots (raw — not canonicalized).
+    /// Whether `SIMD[args]` resolves through the declared struct. It does
+    /// not before the bundled `SIMD` registers (a module alias registered
+    /// ahead of the structs, R1788), nor over a `_` width a binding's
+    /// initializer solves (R1790), which only the positional reader holds.
+    fn simd_declared_application(&self, args: &[mojito_ast::ast::ParamArg]) -> bool {
+        self.structs
+            .contains_key(mojito_types::types::SIMD_TYPE_NAME)
+            && !args.iter().any(is_hole_argument)
+    }
+
+    /// The `(dtype, width)` slots `SIMD[args]` names (raw — not
+    /// canonicalized), through [`Self::simd_application`]. An application
+    /// the vector type cannot hold (a width no power of two) reports the
+    /// positional reader's error.
     pub(super) fn simd_dims(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(SimdDtype, SimdWidth, BracketAttributes), TypeError> {
+        if self.simd_declared_application(args) {
+            let (ty, attributes) = self.simd_application(args)?;
+            if let Some((dtype, width)) = mojito_types::types::simd_slots(&ty) {
+                return Ok((dtype, width, attributes));
+            }
+        }
+        self.positional_simd_dims(args)
+    }
+
+    /// Resolve `SIMD[DType.<dt>, width]` from its two positional arguments
+    /// to its `(dtype, width)` slots.
+    fn positional_simd_dims(
         &self,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<(SimdDtype, SimdWidth, BracketAttributes), TypeError> {
@@ -4434,13 +4441,37 @@ impl Checker {
         Ok((dtype, width, attributes))
     }
 
-    /// The (canonicalized) `Ty` for `SIMD[DType.<dt>, width]` — a width-1 `float64`
-    /// resolves to `TyKind::FLOAT64` (the unification).
-    pub(super) fn simd_type(
+    /// The type `SIMD[args]` names and its bracket attributes: the declared
+    /// struct's application, which binds positional, keyword, and default
+    /// brackets as any struct's do, or the positional reader
+    /// ([`Self::simd_type`]) where the declaration cannot answer yet.
+    pub(super) fn simd_application(
         &self,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<(Ty, BracketAttributes), TypeError> {
-        let (dtype, width, attributes) = self.simd_dims(args)?;
+        if !self.simd_declared_application(args) {
+            return self.simd_type(args);
+        }
+        let name = mojito_types::types::SIMD_TYPE_NAME;
+        let info = &self.structs[name];
+        let decls = info.decls.clone();
+        let source_params = info.source_params.clone();
+        let BoundParameters {
+            arguments,
+            attributes,
+            ..
+        } = self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
+        Ok((Self::struct_instance_type(name, arguments), attributes))
+    }
+
+    /// The (canonicalized) `Ty` for `SIMD[DType.<dt>, width]` by the
+    /// positional reader — a width-1 `float64` resolves to
+    /// `TyKind::FLOAT64` (the unification).
+    fn simd_type(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
+        let (dtype, width, attributes) = self.positional_simd_dims(args)?;
         Ok((simd_of(dtype, width)?, attributes))
     }
 
@@ -4512,6 +4543,56 @@ impl Checker {
             .ok()
             .flatten()
             .or_else(by_symbol)
+    }
+
+    /// The error a value argument `expr` that did not evaluate reports: a
+    /// run-time variable is no parameter value, as at the pin, and a name
+    /// nothing declares is unknown.
+    fn unevaluated_argument(&self, error: TypeError, expr: &Expr) -> TypeError {
+        match (&error, &expr.kind) {
+            (TypeError::NotComptime(_), ExprKind::Identifier(variable))
+                if self.lookup(variable).is_some() =>
+            {
+                TypeError::DynamicParameterValue
+            }
+            (TypeError::NotComptime(_), ExprKind::Identifier(variable))
+                if !self.comptime_aliases.contains_key(variable)
+                    && !self.structs.contains_key(variable) =>
+            {
+                TypeError::UndefinedVariable(variable.clone())
+            }
+            _ => error,
+        }
+    }
+
+    /// The `SIMDLength` an integer `value` at the `SIMDLength` slot `ty`
+    /// converts to before that struct's initializers register (`comptime
+    /// Scalar = SIMD[_, length=1]` above the builtin bodies that read it):
+    /// `SIMDLength.__init__(Int)`'s folded body by symbol, the attribute
+    /// upstream spells there as a `#lit.struct`.
+    fn unregistered_simd_length(&self, value: &CtValue, ty: &Ty) -> Option<CtValue> {
+        if !is_simd_length(ty)
+            || self
+                .structs
+                .get(mojito_types::types::SIMD_LENGTH_TYPE_NAME)
+                .is_some_and(|info| info.methods.contains_key("__init__"))
+        {
+            return None;
+        }
+        let lanes = mojito_types::param_expr::fold::integer_value(value)?.to_i64()?;
+        let lanes = self.param_context.constant(CtValue::Int(lanes)).ok()?;
+        let length = mojito_types::types::simd_length_converted(
+            &self.param_context,
+            mojito_symbol::symbol::SIMD_LENGTH_FROM_INT,
+            &lanes,
+        )
+        .ok()?;
+        Some(
+            length
+                .as_constant()
+                .cloned()
+                .unwrap_or(CtValue::Expr(length)),
+        )
     }
 
     /// The value an index-valued bracket argument evaluates to: a
@@ -4942,5 +5023,28 @@ impl mojito_types::types::TyRewrite for BinderSearch<'_> {
             mojito_types::types::rewrite_ty(ty, self)?;
         }
         Ok(expr.clone())
+    }
+}
+
+/// `Self.e.rows`, a field of a struct-typed value parameter, which parses
+/// as an associated member of the parameter, read as the value it spells.
+fn self_field_read(source: &SourceType) -> Option<Expr> {
+    match source {
+        SourceType::Assoc { base, .. } if matches!(&**base, SourceType::SelfParam(_)) => {
+            source.expression_spelling(mojito_common::token::DUMMY_SPAN)
+        }
+        _ => None,
+    }
+}
+
+/// Whether a bracket argument is the `_` hole, positional or keyword.
+fn is_hole_argument(arg: &mojito_ast::ast::ParamArg) -> bool {
+    match arg {
+        mojito_ast::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) => name == "_",
+        mojito_ast::ast::ParamArg::Named { value, .. } => is_hole_argument(value),
+        _ => false,
     }
 }
