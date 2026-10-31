@@ -366,6 +366,7 @@ assets/ok/file_descriptor_stdout_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/file_handle_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/float16_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/float16_semantics.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/float_literal_parameter_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/for_destructuring_closure_capture.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/for_destructuring_lifetimes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/for_destructuring_targets.mojo	-	ineligible	no-scalar-entry-shape

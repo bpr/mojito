@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1002
+# swept-count	1004
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -413,6 +413,8 @@ assets/type_error/external_call_unknown_callee.mojo	runs	subset	the pin runs it;
 assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field 'a' has non-'Deinitable' type 'T'
 assets/type_error/fieldwise_unknown_keyword.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/float32_from_intable.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_local_not_concrete.mojo	compile-reject	agree	error: cannot implicitly convert 'FloatLiteral[0.5]' value to 'FloatLiteral[_]'
+assets/type_error/float_literal_parameter_float_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Float64' to 'FloatLiteral[x.value]', it depends on an unresolved parameter 'x.value'
 assets/type_error/float_literal_to_int.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/for_discard_target_read.mojo	compile-reject	agree	error: cannot read from discard pattern '_'
 assets/type_error/for_sequence_target_not_raising.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise

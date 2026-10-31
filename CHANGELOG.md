@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameter may be annotated `FloatLiteral`, as at the pin (R1752): a
+  float literal argument selects it over a `Float64` or generic `SIMD`
+  overload, while a `Float64` value selects the `Float64` one, so
+  `def f(x: FloatLiteral) -> Float64` prints `f(0.5)` as `0.5`.
 - A qualified `import` of a package still loading reads its re-exports
   on demand, as at the pin (R1751): a module on the package's import
   cycle that writes `import p.ma` (or `import p.ma as m`, at file or

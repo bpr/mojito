@@ -366,6 +366,7 @@ assets/ok/file_descriptor_stdout_order.mojo	main	exe-differential	sanitized
 assets/ok/file_handle_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/float16_display.mojo	main	exe-differential	sanitized
 assets/ok/float16_semantics.mojo	main	exe-differential	sanitized
+assets/ok/float_literal_parameter_overload.mojo	main	exe-differential	sanitized
 assets/ok/for_destructuring_closure_capture.mojo	main	exe-differential	sanitized
 assets/ok/for_destructuring_lifetimes.mojo	main	exe-differential	sanitized
 assets/ok/for_destructuring_targets.mojo	main	exe-differential	sanitized

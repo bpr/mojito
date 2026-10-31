@@ -307,15 +307,29 @@ pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
 }
 
 /// Whether a parameter annotation is a bare value-parameterized literal type
-/// ([`is_string_literal_annotation`], or exactly `IntLiteral`), whose value
-/// the parameter infers per call.
+/// ([`is_string_literal_annotation`], or exactly `IntLiteral` or
+/// `FloatLiteral`), whose value the parameter infers per call.
 pub(super) fn is_literal_annotation(annotation: &SourceType) -> bool {
-    is_string_literal_annotation(annotation) || is_int_literal_annotation(annotation)
+    is_string_literal_annotation(annotation) || numeric_literal_annotation(annotation).is_some()
 }
 
-/// Whether a parameter annotation is exactly the bare `IntLiteral`.
-pub(super) fn is_int_literal_annotation(annotation: &SourceType) -> bool {
-    matches!(annotation, SourceType::Named(name, args) if name == "IntLiteral" && args.is_empty())
+/// The literal type a parameter annotation spells when it is exactly the
+/// bare `IntLiteral` or `FloatLiteral`.
+pub(super) fn numeric_literal_annotation(annotation: &SourceType) -> Option<Ty> {
+    match annotation {
+        SourceType::Named(name, args) if args.is_empty() => numeric_literal_type(name),
+        _ => None,
+    }
+}
+
+/// The literal type the bare spelling `name` names: `IntLiteral` or
+/// `FloatLiteral`.
+pub(super) fn numeric_literal_type(name: &str) -> Option<Ty> {
+    match name {
+        "IntLiteral" => Some(Ty::int_literal()),
+        "FloatLiteral" => Some(Ty::float_literal()),
+        _ => None,
+    }
 }
 
 /// The names a method's arguments bind in its signature: its receiver

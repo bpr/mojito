@@ -5608,7 +5608,7 @@ impl SlotType {
 }
 
 /// Whether `ty` is a value a [`SlotType::Declared`] parameter takes, the
-/// types a parameter expression holds: a scalar, an `IntLiteral`, a
+/// types a parameter expression holds: a scalar, a numeric literal, a
 /// `StringLiteral`, a `DType`, a struct, or a SIMD vector. A reference, a
 /// pointer, an origin, or a function is no such value.
 fn parameter_value_type(ty: &Ty) -> bool {
@@ -5622,6 +5622,7 @@ fn parameter_value_type(ty: &Ty) -> bool {
             | TyKind::Index
             | TyKind::I1
             | TyKind::IntLiteral
+            | TyKind::FloatLiteral
             | TyKind::StringLiteral(_)
             | TyKind::Dtype
             | TyKind::Struct(..)
@@ -5679,8 +5680,8 @@ impl ApplicableShape<'_> {
             }
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
-            ty if super::declarations::is_int_literal_annotation(ty) => {
-                Some(SlotType::Scalar(Ty::int_literal()))
+            ty if let Some(literal) = super::declarations::numeric_literal_annotation(ty) => {
+                Some(SlotType::Scalar(literal))
             }
             SourceType::Named(..) | SourceType::SelfParam(_) | SourceType::Assoc { .. } => {
                 Some(SlotType::Declared(ty.clone(), None))

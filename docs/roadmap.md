@@ -3064,32 +3064,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1752 `FloatLiteral` is not a parameter type**
-
-  Problem: `def f(x: FloatLiteral)` reports "unknown type 'FloatLiteral'",
-  where the pin binds a float literal argument to it exactly.
-  - R1532 did this for `IntLiteral`; mirror it: `bare_literal` in
-    `type_resolution.rs`, `is_literal_annotation` in `declarations.rs`, the
-    parameter's slot type in `comptime_validation.rs`, an exact rank in
-    `overload_support.rs`'s `conversion_count` (so it outranks `Float64`
-    and a generic `SIMD[_, _]`), and a `KeyMode::Overload` key of its own
-    in `mojito-symbol`'s `ty_raw_in`.
-  - `Self(exp)` over the materialized `Float64` rounds twice for a
-    `float32` `Self`, where the pin rounds the literal once; note that
-    beside R1507, which owns value-carrying literals.
-  - Probe: `print(f(0.5))` over `def f(x: FloatLiteral) -> Float64:
-    return Float64(x)` prints `0.5` at the pin.
-  - Probe: upstream's `SIMD.__pow__(self, exp: FloatLiteral)` (R1567):
-    `SIMD[DType.float32, 4](1, 2, 3, 4) ** 0.5` prints `[1.0, 1.4142135,
-    1.7320508, 2.0]`, and `2 ** 0.5` fails its "a float literal exponent
-    requires a floating point SIMD type" constraint.
-  - Fixtures: `assets/ok/float_literal_parameter_overload.mojo`, mirroring
-    `int_literal_parameter_overload.mojo`, and a `type_error` for a bare
-    local `FloatLiteral`.
-  - Found while planning R1567 (2026-10-31).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1224 A sequence target inside a tuple target is rejected**
 
   Problem: `var ([a, b], c) = (values.copy(), 3)` is rejected ("a sequence
@@ -6657,8 +6631,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `SIMD`'s `IntLiteral` and `FloatLiteral` initializers
     (`simd.mojo:852`, `:972`) stay the checker's coercion until then: their
     bodies read `value.value` into `#pop.int_literal_convert` and
-    `#pop<float_literal_convert>`, and `FloatLiteral` is not even a
-    parameter type yet ("unknown type 'FloatLiteral'").
+    `#pop<float_literal_convert>`.
   - Porting either removes its literal from
     `Checker::binds_undeclared_overload` (`checker/call_inference.rs`)
     and from `Checker::staged_simd_construction` (`checker/constraints.rs`),
@@ -6678,7 +6651,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     rather than inferring `x.value` per call, so `f(n)` over `var n = 3`
     reports "expected Int, found Int" where the pin says "cannot be
     converted from 'Int' to 'IntLiteral[x.value]'"
-    (`assets/type_error/int_literal_parameter_int_argument.mojo`).
+    (`assets/type_error/int_literal_parameter_int_argument.mojo`). A
+    `FloatLiteral` parameter does the same with "expected Float64, found
+    Float64" (`assets/type_error/float_literal_parameter_float_argument.mojo`).
+  - Probe: a `def f(x: FloatLiteral) -> Float32: return Float32(x)` rounds
+    the literal to the run-time `Float64` register first and then to
+    `float32`, where the pin rounds the literal's exact value once, so a
+    literal halfway between two `float32` values after the first rounding
+    can print a different last digit (`SIMD.__pow__`'s `Self(exp)`, R1567).
   - Probe: `var a: Float32 = 3.5e38`, and `return 3.5e38` from a
     `Scalar[dtype]` function at `float32`, print `nan` at the pin; Mojito
     prints `inf`. The declared `FloatLiteral` initializer is that
