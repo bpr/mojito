@@ -1,4 +1,4 @@
-# Upstream's `std/utils/numerics.mojo`, in part: `nan`, `isnan`, `inf`,
+# Upstream's `std/utils/numerics.mojo`, in part: `FPUtils`, `nan`, `isnan`, `inf`,
 # `neg_inf`, `max_finite`, `min_finite`, `max_or_inf`, `min_or_neg_inf`,
 # `isinf`, and `isfinite`; `inf` through `min_or_neg_inf` are the
 # functions behind `SIMD`'s `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE`.
@@ -8,7 +8,7 @@
 # `dtype in (…)` tests are omitted: Mojito has none of those dtypes (R65).
 # The two `bool` arms spell `Scalar[DType.bool](...)` where upstream spells
 # `Scalar(...)`, since a `_` the selected initializer's `out self` binds is
-# not yet solved (R1544). `FPUtils`, `get_accum_type`, `nextafter`, and
+# not yet solved (R1544). `get_accum_type`, `nextafter`, and
 # `FlushDenormals` are not ported.
 """Defines utilities to work with numeric types.
 
@@ -20,7 +20,338 @@ from std.utils.numerics import FPUtils
 """
 
 from std.sys import llvm_intrinsic
-from std.builtin.dtype import _unsigned_integral_type_of
+
+from std.builtin.dtype import _integral_type_of, _unsigned_integral_type_of
+from std.memory import bitcast
+
+# ===----------------------------------------------------------------------=== #
+# FPUtils
+# ===----------------------------------------------------------------------=== #
+
+
+def _constrain_fp_type[dtype: DType]():
+    comptime assert (
+        dtype.is_floating_point()
+    ), "dtype must be a floating point type"
+
+
+struct FPUtils[
+    dtype: DType, *, _constraint: NoneType = _constrain_fp_type[dtype]()
+]:
+    """Collection of utility functions for working with FP values.
+
+    Constraints:
+        The dtype is floating point.
+
+    Parameters:
+        dtype: The concrete FP dtype (FP32/FP64/etc).
+        _constraint: Implements the constraint. Do not pass explicitly.
+    """
+
+    comptime integral_type = _integral_type_of[Self.dtype]()
+    """The equivalent integer dtype of the float type."""
+
+    comptime uint_type = _unsigned_integral_type_of[Self.dtype]()
+    """The equivalent uint dtype of the float type."""
+
+    @staticmethod
+    @inline(.nodebug)
+    def mantissa_width() -> Int:
+        """Returns the mantissa width of a floating point type.
+
+        Returns:
+            The mantissa width.
+        """
+        return DType.mantissa_width[Self.dtype]()
+
+    @staticmethod
+    @inline(.nodebug)
+    def max_exponent() -> Int:
+        """Returns the max exponent of a floating point dtype without accounting
+        for inf representations. This is not
+        the maximum representable exponent, which is generally equal to
+        the exponent_bias.
+
+        Returns:
+            The max exponent.
+        """
+        return DType.max_exponent[Self.dtype]()
+
+    @staticmethod
+    @inline(.nodebug)
+    def exponent_width() -> Int:
+        """Returns the exponent width of a floating point type.
+
+        Returns:
+            The exponent width.
+        """
+        return DType.exponent_width[Self.dtype]()
+
+    @staticmethod
+    @inline(.always)
+    def exponent_bias() -> Int:
+        """Returns the exponent bias of a floating point type.
+
+        Returns:
+            The exponent bias.
+        """
+        return DType.exponent_bias[Self.dtype]()
+
+    @staticmethod
+    @inline(.always)
+    def mantissa_mask() -> Int:
+        """Returns the mantissa mask of a floating point type.
+
+        Returns:
+            The mantissa mask.
+        """
+        return (1 << Self.mantissa_width()) - 1
+
+    @staticmethod
+    @inline(.always)
+    def sign_mask() -> Int:
+        """Returns the sign mask of a floating point type.
+
+        It is computed by `1 << (exponent_width + mantissa_width)`.
+
+        Returns:
+            The sign mask.
+        """
+        return 1 << (Self.exponent_width() + Self.mantissa_width())
+
+    @staticmethod
+    @inline(.always)
+    def exponent_mask() -> Int:
+        """Returns the exponent mask of a floating point type.
+
+        It is computed by `~(sign_mask | mantissa_mask)`.
+
+        Returns:
+            The exponent mask.
+        """
+        return ~(Self.sign_mask() | Self.mantissa_mask())
+
+    @staticmethod
+    @inline(.always)
+    def exponent_mantissa_mask() -> Int:
+        """Returns the exponent and mantissa mask of a floating point type.
+
+        It is computed by `exponent_mask | mantissa_mask`.
+
+        Returns:
+            The exponent and mantissa mask.
+        """
+        return Self.exponent_mask() | Self.mantissa_mask()
+
+    @staticmethod
+    @inline(.always)
+    def quiet_nan_mask() -> Int:
+        """Returns the quiet NaN mask for a floating point type.
+
+        The mask is defined by evaluating:
+
+        ```
+        (1<<exponent_width-1)<<mantissa_width + 1<<(mantissa_width-1)
+        ```
+
+        Returns:
+            The quiet NaN mask.
+        """
+        comptime mantissa_width_val = Self.mantissa_width()
+        return (1 << Self.exponent_width() - 1) << mantissa_width_val + (
+            1 << (mantissa_width_val - 1)
+        )
+
+    @staticmethod
+    @inline(.always)
+    def bitcast_to_integer(value: Scalar[Self.dtype]) -> Int:
+        """Bitcasts the floating-point value to an integer.
+
+        Args:
+            value: The floating-point type.
+
+        Returns:
+            An integer representation of the floating-point value.
+        """
+        return Int(bitcast[Self.integral_type, 1](value))
+
+    @staticmethod
+    @inline(.always)
+    def bitcast_to_uint(value: Scalar[Self.dtype]) -> Scalar[Self.uint_type]:
+        """Bitcasts the floating-point value to an integer.
+
+        Args:
+            value: The floating-point type.
+
+        Returns:
+            An integer representation of the floating-point value.
+        """
+        return bitcast[Self.uint_type, 1](value)
+
+    @staticmethod
+    @inline(.always)
+    def bitcast_from_integer(value: Int) -> Scalar[Self.dtype]:
+        """Bitcasts the floating-point value from an integer.
+
+        Args:
+            value: The int value.
+
+        Returns:
+            An floating-point representation of the Int.
+        """
+        return bitcast[Self.dtype, 1](Scalar[Self.integral_type](value))
+
+    @staticmethod
+    @inline(.always)
+    def get_sign(value: Scalar[Self.dtype]) -> Bool:
+        """Returns the sign of the floating point value.
+
+        Args:
+            value: The floating-point type.
+
+        Returns:
+            Returns True if the sign is set and False otherwise.
+        """
+        return (Self.bitcast_to_integer(value) & Self.sign_mask()) != 0
+
+    @staticmethod
+    @inline(.always)
+    def set_sign(value: Scalar[Self.dtype], sign: Bool) -> Scalar[Self.dtype]:
+        """Sets the sign of the floating point value.
+
+        Args:
+            value: The floating-point value.
+            sign: True to set the sign and false otherwise.
+
+        Returns:
+            Returns the floating point value with the sign set.
+        """
+        var bits = Self.bitcast_to_integer(value)
+        var sign_bits = Self.sign_mask()
+        bits &= ~sign_bits
+        if sign:
+            bits |= sign_bits
+        return Self.bitcast_from_integer(bits)
+
+    @staticmethod
+    @inline(.always)
+    def get_exponent(value: Scalar[Self.dtype]) -> Int:
+        """Returns the exponent bits of the floating-point value.
+
+        Args:
+            value: The floating-point value.
+
+        Returns:
+            Returns the exponent bits.
+        """
+        return (
+            Self.bitcast_to_integer(value) & Self.exponent_mask()
+        ) >> Self.mantissa_width()
+
+    @staticmethod
+    @inline(.always)
+    def get_exponent_biased(value: Scalar[Self.dtype]) -> Int:
+        """Returns the biased exponent of the floating-point value as an Int,
+        this is how the value is stored before subtracting the exponent bias.
+
+        Args:
+            value: The floating-point value.
+
+        Returns:
+            The biased exponent as an Int.
+        """
+        return Int(
+            Self.bitcast_to_uint(value)
+            >> Scalar[Self.uint_type](Self.mantissa_width())
+            & Scalar[Self.uint_type]((1 << Self.exponent_width()) - 1)
+        )
+
+    @staticmethod
+    @inline(.always)
+    def set_exponent(
+        value: Scalar[Self.dtype], exponent: Int
+    ) -> Scalar[Self.dtype]:
+        """Sets the exponent bits of the floating-point value.
+
+        Args:
+            value: The floating-point value.
+            exponent: The exponent bits.
+
+        Returns:
+            Returns the floating-point value with the exponent bits set.
+        """
+        var bits = Self.bitcast_to_integer(value)
+        bits &= ~Self.exponent_mask()
+        bits |= (exponent << Self.mantissa_width()) & Self.exponent_mask()
+        return Self.bitcast_from_integer(bits)
+
+    @staticmethod
+    @inline(.always)
+    def get_mantissa(value: Scalar[Self.dtype]) -> Int:
+        """Gets the mantissa bits of the floating-point value.
+
+        Args:
+            value: The floating-point value.
+
+        Returns:
+            The mantissa bits.
+        """
+        return Self.bitcast_to_integer(value) & Self.mantissa_mask()
+
+    @staticmethod
+    @inline(.always)
+    def get_mantissa_uint(value: Scalar[Self.dtype]) -> Scalar[Self.uint_type]:
+        """Gets the mantissa bits of the floating-point value.
+
+        Args:
+            value: The floating-point value.
+
+        Returns:
+            The mantissa bits.
+        """
+        return Self.bitcast_to_uint(value) & Scalar[Self.uint_type](
+            Self.mantissa_mask()
+        )
+
+    @staticmethod
+    @inline(.always)
+    def set_mantissa(
+        value: Scalar[Self.dtype], mantissa: Int
+    ) -> Scalar[Self.dtype]:
+        """Sets the mantissa bits of the floating-point value.
+
+        Args:
+            value: The floating-point value.
+            mantissa: The mantissa bits.
+
+        Returns:
+            Returns the floating-point value with the mantissa bits set.
+        """
+        var bits = Self.bitcast_to_integer(value)
+        bits &= ~Self.mantissa_mask()
+        bits |= mantissa & Self.mantissa_mask()
+        return Self.bitcast_from_integer(bits)
+
+    @staticmethod
+    @inline(.always)
+    def pack(sign: Bool, exponent: Int, mantissa: Int) -> Scalar[Self.dtype]:
+        """Construct a floating-point value from its constituent sign, exponent,
+        and mantissa.
+
+        Args:
+            sign: The sign of the floating-point value.
+            exponent: The exponent of the floating-point value.
+            mantissa: The mantissa of the floating-point value.
+
+        Returns:
+            Returns the floating-point value.
+        """
+        var res: Scalar[Self.dtype] = 0
+        res = Self.set_sign(res, sign)
+        res = Self.set_exponent(res, exponent)
+        res = Self.set_mantissa(res, mantissa)
+        return res
+
 
 # ===----------------------------------------------------------------------=== #
 # nan

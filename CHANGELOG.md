@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.utils.numerics` declares upstream's `FPUtils` with
+  `_constrain_fp_type` (R1721): `FPUtils[DType.float64].mantissa_width()`,
+  `FPUtils[DType.float32].exponent_mask()`, and
+  `FPUtils[DType.float64].pack(True, 1024, 0)` print the pin's `52
+  -2155872256 -2.0`, on the VM and natively. A compile-time argument over a
+  local `comptime` type alias (`F.p(F.k() + 1)` under `comptime F =
+  G[dtype]`) now lifts over the enclosing binders, where its lifted
+  function named a binder it did not bind.
 - A compile-time call of a `def` or static method returning `None` is an
   application, so a parameter default such as `FPUtils`' `_constraint:
   NoneType = _constrain_fp_type[dtype]()` declares on a `def` and a struct

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	994
+# swept-count	995
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -888,6 +888,7 @@ assets/type_error/static_tuple_nontrivial_element.mojo	compile-reject	agree	erro
 assets/type_error/static_tuple_register_passable_element.mojo	compile-reject	agree	error: 'StaticTuple' parameter 'element_type' has 'RegisterPassable & ImplicitlyCopyable & Deinitable' type, but value has type 'AnyStruct[String]'
 assets/type_error/static_tuple_replace_out_of_bounds.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/static_tuple_values_arity.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/std_numerics_fputils_non_float.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/string_grapheme_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/string_iadd_view_aliases_receiver.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'other' argument in '__iadd__' call
 assets/type_error/string_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.

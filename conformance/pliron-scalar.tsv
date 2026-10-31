@@ -1078,6 +1078,7 @@ assets/ok/static_string.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_tuple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/staticmethod_self_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/std_numerics_fputils.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_numerics_nan_classes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_plugin_hooks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape

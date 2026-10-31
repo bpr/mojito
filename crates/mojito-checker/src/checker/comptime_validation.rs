@@ -3077,9 +3077,11 @@ impl Checker {
                 read.extend(self.self_decls.iter().map(|decl| decl.id().clone()));
                 continue;
             }
-            // A bare type argument (`width[T]()`) names its binder.
-            let type_parameter = self.tparams.iter().rev().find_map(|scope| scope.get(name));
-            match type_parameter.map(Ty::kind) {
+            // A bare type argument (`width[T]()`) names its binder; a local
+            // type alias (`comptime F = G[dtype]`) is over binders unknown
+            // here.
+            let type_parameter = self.lookup_tparam(name);
+            match type_parameter.as_ref().map(Ty::kind) {
                 Some(TyKind::Param { binder, .. }) => {
                     read.insert(binder.id.clone());
                     continue;

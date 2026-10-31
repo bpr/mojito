@@ -10937,27 +10937,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1721 `std.utils.numerics` has no `FPUtils`**
-
-  `from std.utils.numerics import FPUtils` fails, where upstream's
-  `_floor`, `_ldexp_impl`, `frexp`, and `_is_subnormal_bits` read it.
-  - Port `_constrain_fp_type` and the whole struct verbatim
-    (`utils/numerics.mojo:33–354`), its keyword-only `_constraint:
-    NoneType = _constrain_fp_type[dtype]()` parameter included.
-  - Its `Scalar[Self.integral_type]` members already resolve (R1711).
-  - A 2026-10-30 prototype with `_constraint` dropped matched the pin on
-    every member over f64, f32, and f16, on both backends, except
-    `quiet_nan_mask`. That one is an over-wide shift, poison at the pin
-    (`defined-shift-overflow`), so the fixture does not print it.
-  - Probe: `print(FPUtils[DType.float64].mantissa_width(),
-    FPUtils[DType.float32].exponent_mask(),
-    FPUtils[DType.float64].pack(True, 1024, 0))` prints `52 -2155872256
-    -2.0` at the pin.
-  - Drop `FPUtils` from `std/utils/numerics.mojo`'s "not ported" header.
-  - Found while planning R1711 (2026-10-30).
-  - Depends on R1720.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1722 `std.simd` lacks upstream's `_modf_scalar`, `_modf`, and
   `_floor`**
 
