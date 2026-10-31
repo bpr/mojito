@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.math` re-exports upstream's `ldexp`, over `_ldexp_impl` verbatim
+  (R1713): an AVX-512 host computes `float32` at 16 lanes or more through
+  `llvm.x86.avx512.mask.scalef.ps.512`, now in the `llvm_intrinsic` table
+  on the VM and natively and refused by the comptime interpreter as at the
+  pin. `exp` waits on R393, R1741, and R1742 (R1743).
 - An annotated `comptime` binding converts its value through the
   annotation's `@implicit` constructor (R1538, R1705): `comptime w: L = 4`
   binds `L(4)`, and `comptime t: StaticString = "lit"`, `comptime g: W =

@@ -1220,7 +1220,7 @@ pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value
 ///
 /// Lanes are computed as `mojito_types::llvm_intrinsic` computes them: an
 /// elementwise intrinsic gives its first operand's type, `is.fpclass` a
-/// `bool` lane per operand lane, a reduction one
+/// `bool` lane per operand lane, `scalef` its masked lanes, a reduction one
 /// lane of it, a shuffle the lanes its sources name, `llvm.stepvector` the
 /// result's lane positions, and `llvm.donothing` `None`. `result` is the
 /// type LLVM translation sees (`MirDeclarations::translated_type`): a
@@ -1316,6 +1316,38 @@ pub fn llvm_intrinsic(
                     .collect(),
             ),
         ));
+    }
+    if intrinsic == LlvmIntrinsic::X86Avx512MaskScalefPs512 {
+        if !matches!(index, 4 | 8) {
+            return Err(RuntimeError::Unsupported(format!(
+                "'{}' rounding {index}: only rounding to nearest is supported",
+                intrinsic.name()
+            )));
+        }
+        let (src1, src2, passthrough, mask) = match parts.as_slice() {
+            [src1, src2, passthrough, (_, SimdLanes::Int(mask))] => (
+                float_lanes(&src1.1),
+                float_lanes(&src2.1),
+                float_lanes(&passthrough.1),
+                mask.first().copied(),
+            ),
+            _ => return Err(mismatch()),
+        };
+        let (Some(src1), Some(src2), Some(passthrough), Some(mask)) =
+            (src1, src2, passthrough, mask)
+        else {
+            return Err(mismatch());
+        };
+        let lanes = (0..width)
+            .map(|lane| {
+                if mask >> lane & 1 == 1 {
+                    llvm::scalef_lane(src1[lane], src2[lane])
+                } else {
+                    passthrough[lane]
+                }
+            })
+            .collect();
+        return Ok(simd_value(dtype, SimdLanes::Float(lanes)));
     }
     let lanes = match (intrinsic, &parts[0].1) {
         (LlvmIntrinsic::VectorReduce(reduction), SimdLanes::Int(lanes)) => SimdLanes::Int(vec![

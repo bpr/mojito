@@ -9,7 +9,8 @@
 //! ([`LlvmIntrinsic::index_operand`]) must hold a value
 //! [`LlvmIntrinsic::index_error`] admits. The VM computes a lane by
 //! [`int_lane`], [`float_lane`], [`reduce_ints`], [`reduce_floats`],
-//! [`LlvmIntrinsic::shuffle_sources`], and [`step_lanes`], and the native
+//! [`LlvmIntrinsic::shuffle_sources`], [`step_lanes`], and
+//! [`scalef_lane`], and the native
 //! backend calls the intrinsic, mangled by [`LlvmIntrinsic::overloads`].
 
 use crate::types::{SimdDtype, SimdWidth, Ty, TyKind, simd_slots};
@@ -36,6 +37,7 @@ pub enum LlvmIntrinsic {
     VectorInterleave2,
     VectorDeinterleave2,
     Stepvector,
+    X86Avx512MaskScalefPs512,
 }
 
 /// The end of `llvm.vector.splice.left`/`right`'s operands' concatenation
@@ -70,7 +72,7 @@ pub enum OverloadSlot {
 
 impl LlvmIntrinsic {
     /// Every intrinsic in the table.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::Ctlz,
         Self::Cttz,
         Self::Ctpop,
@@ -97,6 +99,7 @@ impl LlvmIntrinsic {
         Self::VectorInterleave2,
         Self::VectorDeinterleave2,
         Self::Stepvector,
+        Self::X86Avx512MaskScalefPs512,
     ];
 
     /// The intrinsic LLVM spells `name`, if it is in the table.
@@ -135,6 +138,7 @@ impl LlvmIntrinsic {
             Self::VectorInterleave2 => "llvm.vector.interleave2",
             Self::VectorDeinterleave2 => "llvm.vector.deinterleave2",
             Self::Stepvector => "llvm.stepvector",
+            Self::X86Avx512MaskScalefPs512 => "llvm.x86.avx512.mask.scalef.ps.512",
         }
     }
 
@@ -164,13 +168,14 @@ impl LlvmIntrinsic {
             | Self::VectorExtract
             | Self::VectorInterleave2 => 2,
             Self::Fshl | Self::Fshr | Self::VectorInsert | Self::VectorSplice(_) => 3,
+            Self::X86Avx512MaskScalefPs512 => 5,
         }
     }
 
     /// The types the intrinsic's LLVM name is mangled by, in order.
     pub const fn overloads(self) -> &'static [OverloadSlot] {
         match self {
-            Self::Donothing => &[],
+            Self::Donothing | Self::X86Avx512MaskScalefPs512 => &[],
             Self::VectorReduce(_) | Self::VectorDeinterleave2 | Self::IsFpclass => {
                 &[OverloadSlot::Operand(0)]
             }
@@ -194,25 +199,30 @@ impl LlvmIntrinsic {
     /// The position of the one-lane integer operand an intrinsic reads as
     /// an index or a mask rather than as lanes, with the bit width LLVM
     /// declares for it: the `i64` index of `vector.extract` and
-    /// `vector.insert`, the `i32` offset of a splice, and the `i32` class
-    /// test of `is.fpclass`.
+    /// `vector.insert`, the `i32` offset of a splice, the `i32` class
+    /// test of `is.fpclass`, and the `i32` rounding of `scalef`.
     pub const fn index_operand(self) -> Option<(usize, u32)> {
         match self {
             Self::VectorExtract => Some((1, 64)),
             Self::VectorInsert => Some((2, 64)),
             Self::VectorSplice(_) => Some((2, 32)),
             Self::IsFpclass => Some((1, 32)),
+            Self::X86Avx512MaskScalefPs512 => Some((4, 32)),
             _ => None,
         }
     }
 
     /// Whether the [`Self::index_operand`] is an `immarg`, which LLVM
-    /// translation requires a constant: an extract's or an insert's index
-    /// and an `is.fpclass` test, but not a splice's offset.
+    /// translation requires a constant: an extract's or an insert's index,
+    /// an `is.fpclass` test, and a `scalef` rounding, but not a splice's
+    /// offset.
     pub const fn index_is_immediate(self) -> bool {
         matches!(
             self,
-            Self::VectorExtract | Self::VectorInsert | Self::IsFpclass
+            Self::VectorExtract
+                | Self::VectorInsert
+                | Self::IsFpclass
+                | Self::X86Avx512MaskScalefPs512
         )
     }
 
@@ -410,6 +420,14 @@ impl LlvmIntrinsic {
                 );
                 return (!classified).then(mismatch).flatten();
             }
+            Self::X86Avx512MaskScalefPs512 => {
+                let vector = Some((Dtype::Float32, 16));
+                let scaled = lanes(result) == vector
+                    && operands[..3].iter().all(|operand| lanes(operand) == vector)
+                    && lanes(&operands[3]) == Some((Dtype::Int16, 1))
+                    && lanes(&operands[4]) == Some((Dtype::Int32, 1));
+                return (!scaled).then(mismatch).flatten();
+            }
             _ => {}
         }
         let Some((dtype, width)) = operands.first().and_then(lanes) else {
@@ -520,8 +538,9 @@ impl LlvmIntrinsic {
     /// Why the comptime interpreter cannot call the intrinsic, or `None`
     /// when it can: it calls only what LLVM's constant folder folds, which
     /// leaves out `llvm.donothing`, the float reductions, `vector.insert`,
-    /// the splices, and `llvm.stepvector`, and it types no struct result,
-    /// which leaves out `vector.deinterleave2`.
+    /// the splices, `llvm.stepvector`, and the target-specific `scalef`,
+    /// and it types no struct result, which leaves out
+    /// `vector.deinterleave2`.
     pub fn compile_time_error(self) -> Option<String> {
         if self.result_elements() > 1 {
             return Some("LLVM intrinsic has unknown result type".to_string());
@@ -534,7 +553,8 @@ impl LlvmIntrinsic {
             Self::VectorReduce(VectorReduction::Fmax | VectorReduction::Fmin)
             | Self::VectorInsert
             | Self::VectorSplice(_)
-            | Self::Stepvector => Some(format!(
+            | Self::Stepvector
+            | Self::X86Avx512MaskScalefPs512 => Some(format!(
                 "LLVM could not constant fold intrinsic: {}",
                 self.name()
             )),
@@ -550,6 +570,7 @@ impl LlvmIntrinsic {
                 | Self::Sqrt
                 | Self::IsFpclass
                 | Self::VectorReduce(VectorReduction::Fmax | VectorReduction::Fmin)
+                | Self::X86Avx512MaskScalefPs512
         )
     }
 }
@@ -631,6 +652,30 @@ pub fn fpclass_lane(dtype: Dtype, lane: f64, test: u32) -> bool {
         0x100
     };
     test & class != 0
+}
+
+/// One lane of AVX-512's `scalef` over `float32` lanes: `src1 ·
+/// 2^floor(src2)`, computed exactly and rounded once to nearest.
+///
+/// The special cases are `VSCALEFPS`'s: a NaN operand gives NaN, as do
+/// `±0 · 2^+inf` and `±inf · 2^-inf`; otherwise an infinite `src2` gives
+/// `src1`'s signed infinity or zero.
+pub fn scalef_lane(src1: f64, src2: f64) -> f64 {
+    if src1.is_nan() || src2.is_nan() {
+        return f64::NAN;
+    }
+    if src2.is_infinite() {
+        return match (src2 > 0.0, src1 == 0.0, src1.is_infinite()) {
+            (true, true, _) | (false, _, true) => f64::NAN,
+            (true, false, _) => f64::INFINITY.copysign(src1),
+            (false, _, false) => 0f64.copysign(src1),
+        };
+    }
+    // Beyond ±400 every `float32` lane overflows or vanishes, and inside it
+    // the product is an exact `f64`.
+    let exponent = src2.floor().clamp(-400.0, 400.0) as i64;
+    let scale = f64::from_bits(((exponent + 1023) as u64) << 52);
+    Dtype::Float32.round_lane(src1 * scale)
 }
 
 /// The lanes of `llvm.stepvector` over `width` lanes of `dtype`: each its
@@ -755,6 +800,34 @@ mod tests {
             float_lane(LlvmIntrinsic::Copysign, Dtype::Float64, &[2.0, -0.0]),
             Some(-2.0)
         );
+    }
+
+    #[test]
+    fn scalef_lanes_follow_the_pin() {
+        let f32 = |lane: f64| f64::from(lane as f32);
+        let cases = [
+            (1.5, 2.7, 6.0),
+            (0.0, 1.0, 0.0),
+            (1.0, 1e30, f64::INFINITY),
+            (1.0, -1e30, 0.0),
+            (1.0, -2.5, 0.125),
+            (0.0, 1e30, 0.0),
+            (3.0, -1.0e-40, 1.5),
+            (1.0, 0.5, 1.0),
+            (1.0, -0.5, 0.5),
+            (1.0, 200.0, f64::INFINITY),
+            (1.0, -200.0, 0.0),
+            (1.0, -149.0, f32(1e-45)),
+            (1.0, -150.0, 0.0),
+            (1.0, 127.0, 2f64.powi(127)),
+            (1.0, 128.0, f64::INFINITY),
+        ];
+        for (src1, src2, expected) in cases {
+            assert_eq!(scalef_lane(src1, f32(src2)), expected, "{src1}, {src2}");
+        }
+        assert!(scalef_lane(-0.0, 1.0).is_sign_negative());
+        assert!(scalef_lane(0.0, f64::INFINITY).is_nan());
+        assert!(scalef_lane(f64::INFINITY, f64::NEG_INFINITY).is_nan());
     }
 
     #[test]

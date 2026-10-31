@@ -547,6 +547,7 @@ assets/ok/match_sequence_custom_sized.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_sequence_fixed_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_struct_and_initializer_patterns.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_tuple_patterns.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/math_ldexp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_operation_traits_library.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_polynomial_evaluate.mojo	-	ineligible	no-scalar-entry-shape

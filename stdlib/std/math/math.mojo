@@ -1,7 +1,8 @@
 # Upstream's `std/math/math.mojo`, the `std.math` package's module, holding
 # its operation traits, the rounding helpers `floor`/`ceil`/`trunc`/
 # `ceildiv`, the plugin-hook signatures `_UnaryMathPluginHookFnType` and
-# `_BinaryMathPluginHookFnType`, `copysign`, the `SIMD` overload of `iota`,
+# `_BinaryMathPluginHookFnType`, `_ldexp_impl` and `ldexp` (with its
+# AVX-512 `scalef` arm), `copysign`, the `SIMD` overload of `iota`,
 # `fma`, `clamp`, both overloads each of `max` and `min`, `abs`, and the
 # libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
 # verbatim (the buffer overload of `iota` is omitted). `copysign` follows
@@ -9,9 +10,10 @@
 # visible only after its statement (R592). Upstream's `from . import pi,
 # inf, …` line is omitted, since nothing ported reads it, while its
 # `from .polynomial import polynomial_evaluate` is kept for the ports that
-# will (`exp`, `erf`, and the other polynomial approximations). The prelude
-# exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and `min`, as
-# upstream's does; `round`/`divmod` are still compiler builtins (R1458).
+# will (`exp`, R1743; `erf`; and the other polynomial approximations). The
+# prelude exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and
+# `min`, as upstream's does; `round`/`divmod` are still compiler builtins
+# (R1458).
 #
 # Each helper is generic over the trait that supplies its dunder. `SIMD`
 # declares `Absable`, `Ceilable`, `Floorable`, and `Truncable` in
@@ -20,7 +22,9 @@
 # values do not yet (R1623, R1567, R1582), and each answers a requirement
 # intrinsically.
 
-from std.sys import llvm_intrinsic
+from std.sys import CompilationTarget, llvm_intrinsic, simd_width_of
+
+from std.utils.numerics import FPUtils
 
 from .polynomial import polynomial_evaluate
 
@@ -102,6 +106,99 @@ comptime _BinaryMathPluginHookFnType = def[dtype: DType, width: SIMDLength, //](
     SIMD[dtype, width], SIMD[dtype, width]
 ) thin -> SIMD[dtype, width]
 """Plugin-hook signature for `PluginHooks.binary_math_fn`."""
+
+
+# ===----------------------------------------------------------------------=== #
+# ldexp
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def _ldexp_impl[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width], exp: SIMD[dtype, width]) -> SIMD[dtype, width]:
+    """Computes elementwise ldexp function.
+
+    The ldexp function multiplies a floating point value x by the number 2
+    raised to the exp power. I.e. $ldexp(x,exp)$ calculate the value of $x *
+    2^{exp}$ and is used within the $erf$ function.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        x: SIMD vector of floating point values.
+        exp: SIMD vector containing the exponents.
+
+    Returns:
+        Vector containing elementwise result of ldexp on x and exp.
+    """
+
+    comptime hardware_width = simd_width_of[dtype]()
+
+    comptime if (
+        CompilationTarget.has_avx512f()
+        and dtype == .float32
+        and width >= hardware_width
+    ):
+        var res: SIMD[dtype, width] = 0
+        var zero: SIMD[dtype, hardware_width] = 0
+
+        comptime for idx in range(width // hardware_width):
+            comptime i = idx * hardware_width
+            # On AVX512, we can use the scalef intrinsic to compute the ldexp
+            # function.
+            var part = llvm_intrinsic[
+                "llvm.x86.avx512.mask.scalef.ps.512",
+                SIMD[dtype, hardware_width],
+                has_side_effect=False,
+            ](
+                x.slice[hardware_width, offset=i](),
+                exp.slice[hardware_width, offset=i](),
+                zero,
+                Int16(-1),
+                Int32(4),
+            )
+            res = res.insert[offset=i](part)
+
+        return res
+
+    comptime integral_type = FPUtils[dtype].integral_type
+    var m = exp.cast[integral_type]() + SIMD[integral_type, width](
+        FPUtils[dtype].exponent_bias()
+    )
+
+    return x * type_of(x)(
+        from_bits=m
+        << SIMD[integral_type, width](FPUtils[dtype].mantissa_width())
+    )
+
+
+@inline(.always)
+def ldexp[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width], exp: SIMD[.int32, width]) -> SIMD[
+    dtype, width
+] where dtype.is_floating_point():
+    """Computes elementwise ldexp function.
+
+    The ldexp function multiplies a floating point value x by the number 2
+    raised to the exp power. I.e. $ldexp(x,exp)$ calculate the value of $x *
+    2^{exp}$ and is used within the $erf$ function.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        x: SIMD vector of floating point values.
+        exp: SIMD vector containing the exponents.
+
+    Returns:
+        Vector containing elementwise result of ldexp on x and exp.
+    """
+    return _ldexp_impl(x, exp.cast[dtype]())
 
 
 def iota[

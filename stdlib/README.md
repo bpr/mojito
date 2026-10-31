@@ -215,7 +215,8 @@ point, as upstream's toolchain does.
   `Powable`, `Roundable`, `DivModable`, `Ceilable`, `Floorable`,
   `Truncable`, `CeilDivable`, `CeilDivableRaising`), the rounding helpers
   `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait, `copysign`,
-  and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and
+  `ldexp` over `_ldexp_impl` (with its AVX-512 `scalef` arm), and the libm
+  constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and
   `_LN2_LO_F64`. `polynomial.mojo` holds `polynomial_evaluate` and
   `_horner_evaluate` over compile-time `Span` coefficients
   (`from std.math.polynomial import polynomial_evaluate`; the package does

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	995
+# swept-count	997
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -545,6 +545,7 @@ assets/type_error/llvm_intrinsic_immarg_not_constant.mojo	compile-reject	agree	e
 assets/type_error/llvm_intrinsic_insert_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/llvm_intrinsic_interleave_width.mojo	compile-reject	agree	error: call intrinsic signature <4 x i32> (<4 x i32>, <4 x i32>) to overloaded intrinsic "llvm.vector.interleave2" : !kgen.string does not match any of the overloads: intrinsic argument 0 type (1/nth (n=2) elements vector of overload type 0) expected <2 x i32> (overload type 0 is <4 x i32>), but got <4 x i32>
 assets/type_error/llvm_intrinsic_reduce_scalar.mojo	compile-reject	agree	error: call intrinsic signature i32 (i32) to overloaded intrinsic "llvm.vector.reduce.smax" : !kgen.string does not match any of the overloads: intrinsic argument 0 type (overload type 0) expected any integer vector, but got i32
+assets/type_error/llvm_intrinsic_scalef_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/llvm_intrinsic_stepvector_bool.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
 assets/type_error/llvm_intrinsic_unknown_name.mojo	compile-reject	agree	error: could not find LLVM intrinsic: "llvm.no.such.thing" : !kgen.string
 assets/type_error/loop_binding_consuming_non_implicit.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
@@ -592,6 +593,7 @@ assets/type_error/match_tuple_arity_mismatch.mojo	compile-reject	agree	error: ca
 assets/type_error/match_tuple_pattern_non_tuple.mojo	compile-reject	agree	error: expected a tuple type to match against, got 'Int'
 assets/type_error/match_var_binding_not_copyable.mojo	compile-reject	agree	error: value of type 'Big' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/math_copysign_bool_dtype.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/math_ldexp_integral_dtype.mojo	compile-reject	agree	error: invalid call to 'ldexp': violated constraint
 assets/type_error/math_trait_without_import.mojo	compile-reject	agree	error: use of unknown declaration 'Ceilable'; did you mean to import it from 'std.math'? Add 'from std.math import Ceilable'
 assets/type_error/max_literal_first_mismatch.mojo	compile-reject	agree	error: no matching function in call to 'max'
 assets/type_error/maybe_uninit_copy_nontrivial.mojo	compile-reject	agree	error: value of type 'MaybeUninit[String]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1741**.
+Next free ID: **R1744**.
 
 ## Ordered Work
 
@@ -4150,6 +4150,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     after `simd_width_of`, where upstream's precede `simd_bit_width`: above
     `size_of`, they stop the bundled library with "Undefined variable
     '__module$std$sys$info$size_of'".
+  - Probe: upstream's `std.math` `exp` calls `_exp_impl`, declared below
+    it, whose non-`float32`/`float64` arm calls `exp` back, so no order
+    compiles (R1743).
   - Found while landing a function applied in a signature (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -4613,6 +4616,59 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: declare the binding `Int` and record its folded value as an
     `Int` constant (`CtValue::Int`), so a compile-time read folds as
     `Int`'s methods do while a value parameter still reads the number.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1741 An unannotated float `comptime` binding is declared
+  `Float64`, where the pin's stays a `FloatLiteral`**
+
+  `comptime a = 1.5`, then `print(Float32(1) * a)`, fails with "operator
+  '*' is not defined for Float32 and Float64", where the pin prints `1.5`.
+  - The same happens local or module, and for an imported
+    `std.math.constants.log2e`: `print(Float32(1) * log2e)` prints
+    `1.442695` at the pin.
+  - Probe: `x.fma(log2e, 0.5)` over `x: SIMD[dtype, width]` in a generic
+    finds no `fma` overload, where the pin converts the literal to the
+    vector (upstream's `_exp_impl`).
+  - Probe: `comptime neg_ln2 = -0.693…` local, then `k.fma(neg_ln2, xc)`,
+    fails the same way.
+  - Cause: the unannotated arm of the `Comptime` statement
+    (`checker/statements.rs`) declares `inferred_binding_ty`, `Float64`,
+    and records a literal materialization; `fold_module_constants` does
+    the same for a module constant.
+  - Lever: declare the binding `FloatLiteral` and record its folded value,
+    so a run-time read materializes at the use as a literal does. `var b =
+    a; print(b, a / 4, a * 3)` must keep printing `1.5 0.375 4.5`.
+  - Found while landing R1713 (2026-10-30).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1742 A slice subscript is no compile-time application**
+
+  `g[c[:2]]()`, over `comptime c = List([Float64(1.0), 2.0, 3.0])` and
+  `def g[c: Span[Float64, _]]()`, fails with "not an associated comptime
+  expression", where the pin prints `2`.
+  - Probe: `comptime s = c[:2]; g[s]()` fails with "not a compile-time
+    Int constant: s": the binding is an ordinary run-time one.
+  - Probe: upstream's `_exp_taylor` passes `coefficients[:] if dtype ==
+    .float64 else coefficients[:8]` to `polynomial_evaluate`.
+  - Cause: `Checker::selected_application`
+    (`checker/comptime_validation.rs`) matches only calls, so
+    `ExprKind::Slice` finds no application, and `computes_value`
+    (`checker/comptime_requests.rs`) omits it.
+  - Lever: apply `object.__getitem__(<slice literal>)` with the receiver
+    through `applied_receiver`, choosing the slice type as
+    `slice_literal_construction` does (`checker/indexing.rs`).
+  - Probe: spelled out, `c.__getitem__(ContiguousSlice(Optional[Int](None),
+    Optional[Int](2), None))` as `g`'s argument fails with "expected
+    Span[Float64], found Span[T]", and bound to a `comptime`, `len` of it
+    fails MIR verification ("names parameter `T` of `List` that no
+    enclosing declaration binds"): the receiver's arguments are not
+    substituted into the applied method's result.
+  - Probe: `c.__getitem__(ContiguousSlice(None, 2, None))` in a
+    `comptime` finds no overload: a compile-time call's arguments do not
+    convert through `@implicit` constructors to `Optional[Int]`.
+  - Found while landing R1713 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -10956,32 +11012,33 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1713 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
+- [ ] **R1743 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
   Taylor polynomial and `_ldexp_impl`**
 
   `from std.math import exp` fails, and upstream's `_powf_scalar` takes its
   digits from it (R1567).
-  - Port `_Expable`, both `exp` overloads, `_exp_impl`, `_exp_taylor`,
-    `_ldexp_impl`, and `ldexp`.
-  - `_ldexp_impl`'s AVX-512 `scalef` arm is ported too: an AVX-512 host
-    takes it for `float32` at a width of 16 or more.
-  - The `is_gpu()` arm (`exp2`, PTX/AMDGCN intrinsics) is omitted under
-    R1635, as `SIMD.cast`'s GPU arms are; record it in the file header.
-  - `CurrentPlugin.unary_math_fn["exp", …]` is `None` on the default
+  - Port `_Expable`, both `exp` overloads, `_exp_impl`, and
+    `_exp_taylor` verbatim, in upstream's order after `ldexp`, and
+    re-export `exp` from `std/math/__init__.mojo`.
+  - Imports: `std._plugin`'s `CurrentPlugin` and `.constants`' `log2e`.
+    `CurrentPlugin.unary_math_fn["exp", …]` is `None` on the default
     plugin.
+  - The `is_gpu()` arm (`exp2`) is omitted under R1635, as `SIMD.cast`'s
+    GPU arms are; record it in the file header.
   - Probe: `print(exp(Float64(1)), exp(SIMD[DType.float32, 4](0, 1, 2,
-    -1)))` against the pin.
-  - Probe: `_exp_taylor`'s `coefficients[:]` and `coefficients[:8]` in a
-    parameter position: `g[coefficients[:2]]()` over a compile-time `List`
-    and `def g[c: Span[Scalar[dtype], _]]()` is "not an associated comptime
-    expression", where the pin prints `2`.
-    The `ref self` receiver of `List.__getitem__(ref self,
-    ContiguousSlice)` applies since R1643, and `comptime coefficients:
-    List[Float64] = [...]` is a `List` since R1538, but the slice's `Span`
-    is still no parameter expression.
-  - Found while planning R1567 (2026-10-30).
-  - Depends on R1711, R1712, R1593, R1634, R1673, R1661, R333, R1721,
-    R1154, R1643, and R1538.
+    -1)))` prints `2.718281828459813` and `[1.0, 2.7182817459106445,
+    7.389056205749512, 0.3678794503211975]` (widened) at Mojo 1.1.
+  - Probe: `comptime exp(Float64(2))` prints `7.389056098936909`;
+    `float16` goes through the `float32` arm (`[2.71875, 7.390625]`).
+  - Fixture: `assets/ok/math_exp.mojo` (a 16-lane `float32` input of
+    `0.5` keeps the AVX-512 arm's output host-independent), and
+    `assets/type_error/math_exp_integral_dtype.mojo`.
+  - Blockers: `exp` and `_exp_impl` call each other (R393), `_exp_impl`'s
+    `log2e` and `neg_ln2` are `Float64` (R1741), and `_exp_taylor`'s
+    `coefficients[:]` is no compile-time application (R1742).
+  - Plan: `R1713-std-math-has-no-exp-where-plan.md` (Slices 2 and 3; Slice
+    1 and `ldexp` landed with R1713).
+  - Depends on R393, R1741, and R1742.
   - Model: Fable, Not Planned.
 
 - [ ] **R1714 `std.math` has no `log`, where upstream's is `_log_accurate`
@@ -11046,8 +11103,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Removes `pliron_float_pow.mojo` from R171 and its
     `assets-mojo-output-diffs.tsv` row.
   - Plan: `R1567-simd-s-plan.md`, Part B.
-  - Depends on R333, R1661, R1708, R1709, R1710, R1711, R1713, R1714,
-    R1717, and R1722.
+  - Depends on R333, R1661, R1708, R1709, R1710, R1711, R1714, R1717,
+    R1722, and R1743.
   - Model: Fable, Planned.
 
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
