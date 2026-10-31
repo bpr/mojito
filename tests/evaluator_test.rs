@@ -949,8 +949,8 @@ fn simd_negation_select_and_reductions_execute() {
     assert_eq!(binding(&e, "product").to_string(), "24");
     // 200 + 100 wraps at the uint8 element width.
     assert_eq!(binding(&e, "wrapped").to_string(), "44");
-    assert_eq!(binding(&e, "all_set"), Value::Bool(false));
-    assert_eq!(binding(&e, "any_set"), Value::Bool(true));
+    assert_eq!(binding(&e, "all_set").to_string(), "False");
+    assert_eq!(binding(&e, "any_set").to_string(), "True");
     // A DType.int reduction is the canonical native Int.
     assert_eq!(binding(&e, "canon"), Value::Int(11));
 }

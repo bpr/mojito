@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1009
+# swept-count	1010
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -849,6 +849,7 @@ assets/type_error/simd_element_wider_float.mojo	compile-reject	agree	error: no m
 assets/type_error/simd_fill_non_bool_mask.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_float_bitwise_and.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_float_is_power_of_two.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_float_reduce_and.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_fma_bool_lanes.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_from_bits_float_source.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_from_bool_dtype_bool.mojo	compile-reject	agree	error: function instantiation failed

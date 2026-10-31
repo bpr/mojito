@@ -6225,6 +6225,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     drop its second `comptime assert`.
   - Restore `SIMD.__hash__`'s `and Self.dtype != DType.float8_e8m0fnu`
     conjunct and its comment in `stdlib/std/simd.mojo`.
+  - Probe: `SIMD[DType.bool, 4](fill=True).reduce_bit_count()` prints `4`
+    at the pin but fails `pack_bits`'s assert, as do bool widths 2, 128,
+    and 256 (found while landing R1586).
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -11027,24 +11030,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1763 (2026-10-31).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1586 `reduce_and` and `reduce_or` are checker rules and
-  `reduce_bit_count` is missing**
-
-  `infer_simd_method` types `reduce_and` and `reduce_or` as `Bool` through
-  `SemanticAdjustment::SimdReceiverOp`, where upstream's return
-  `SIMD[Self.dtype, size_out]`.
-  - Port both and `reduce_bit_count`, with `pack_bits` (R1578) and
-    `std.bit.pop_count`.
-  - Each body holds `self.reduce[size_out](…)` under `comptime if
-    size_out > 1`, which a template checks too, as the landed `reduce`
-    tree does.
-  - The result type needs `and`/`or` over a lane (R97); `__contains__`'s
-    `-> Bool` return then converts it.
-  - Retire `SemanticAdjustment::SimdReceiverOp` and
-    `record_simd_receiver_op`.
-  - Depends on R1764, R1578, and R97.
-  - Model: Fable, Planned.
 
 - [ ] **R1591 `SIMD`'s `mlir_value=` initializer is a checker rule that
   binds from a concrete storage type**

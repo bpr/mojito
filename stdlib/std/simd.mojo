@@ -106,7 +106,8 @@ from std.builtin.simd_length import SIMDLength
 from std.collections.optional import Optional
 from std.string import StaticString
 from std.builtin.enum_like import EnumLike
-from std.memory import bitcast
+from std.memory import bitcast, pack_bits
+from std.bit import pop_count
 from std.utils import StaticTuple
 from std.utils.numerics import FPUtils
 from std.builtin.dtype import (
@@ -2552,6 +2553,110 @@ struct SIMD[dtype: DType, length: SIMDLength](
             return lhs * rhs
 
         return self.reduce[size_out](mul_fn)
+
+    @inline(.always)
+    def reduce_and[size_out: Int = 1](self) -> SIMD[Self.dtype, size_out]:
+        """Reduces the vector using the bitwise `&` operator.
+
+        Parameters:
+            size_out: The width of the reduction.
+
+        Constraints:
+            `size_out` must not exceed width of the vector.
+            The element type of the vector must be integer or boolean.
+
+        Returns:
+            The reduced vector.
+        """
+        comptime assert (
+            size_out <= Self.length
+        ), "`size_out` must not exceed width of the vector."
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "The element type of the vector must be integer or boolean."
+
+        comptime if size_out > 1:
+
+            def and_fn[
+                width: SIMDLength
+            ](lhs: Self._T[width], rhs: Self._T[width]) -> Self._T[width]:
+                return lhs & rhs
+
+            return self.reduce[size_out](and_fn)
+
+        comptime if Self.length == 1:
+            return self[0]
+
+        return llvm_intrinsic[
+            "llvm.vector.reduce.and",
+            SIMD[Self.dtype, size_out],
+            has_side_effect=False,
+        ](self)
+
+    @inline(.always)
+    def reduce_or[size_out: Int = 1](self) -> SIMD[Self.dtype, size_out]:
+        """Reduces the vector using the bitwise `|` operator.
+
+        Parameters:
+            size_out: The width of the reduction.
+
+        Constraints:
+            `size_out` must not exceed width of the vector.
+            The element type of the vector must be integer or boolean.
+
+        Returns:
+            The reduced vector.
+        """
+        comptime assert (
+            size_out <= Self.length
+        ), "`size_out` must not exceed width of the vector."
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "The element type of the vector must be integer or boolean."
+
+        comptime if size_out > 1:
+
+            def or_fn[
+                width: SIMDLength
+            ](lhs: Self._T[width], rhs: Self._T[width]) -> Self._T[width]:
+                return lhs | rhs
+
+            return self.reduce[size_out](or_fn)
+
+        comptime if Self.length == 1:
+            return self[0]
+
+        return llvm_intrinsic[
+            "llvm.vector.reduce.or",
+            SIMD[Self.dtype, size_out],
+            has_side_effect=False,
+        ](self)
+
+    @inline(.always)
+    def reduce_bit_count(self) -> Int:
+        """Returns the total number of bits set in the SIMD vector.
+
+        Constraints:
+            Must be either an integral or a boolean type.
+
+        Returns:
+            Count of set bits across all elements of the vector.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "Expected either integral or bool type"
+
+        comptime if Self.dtype == DType.bool:
+            comptime if Self.length == 1:
+                return Int(self)
+            else:
+                var packed_mask = pack_bits(
+                    rebind[SIMD[.bool, Self.length]](self)
+                )
+                var count = pop_count(packed_mask)
+                return Int(count)
+        else:
+            return Int(pop_count(self).reduce_add())
 
     # ===------------------------------------------------------------------=== #
     # select

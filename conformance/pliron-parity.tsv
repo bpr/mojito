@@ -1008,6 +1008,7 @@ assets/ok/simd_abi_crossings.mojo	main	exe-differential	sanitized
 assets/ok/simd_any_all.mojo	main	exe-differential	sanitized
 assets/ok/simd_arithmetic_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_bitwise_dunders.mojo	main	exe-differential	sanitized
+assets/ok/simd_bitwise_reductions.mojo	main	exe-differential	sanitized
 assets/ok/simd_bool_fill_initializers.mojo	main	exe-differential	sanitized
 assets/ok/simd_bool_masks.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast.mojo	main	exe-differential	sanitized

@@ -45,8 +45,8 @@ impl Checker {
         // A name the compiler-known SIMD methods lack falls through to the
         // members every builtin scalar shares (`__hash__`, `write_to`,
         // `__abs__`, …).
-        if let TyKind::Simd { dtype, .. } = obj_ty.kind() {
-            match self.infer_simd_method(site, dtype) {
+        if matches!(obj_ty.kind(), TyKind::Simd { .. }) {
+            match self.infer_simd_method(site) {
                 Err(TypeError::NoSuchMethod { .. }) => {}
                 result => return result.map(Some),
             }

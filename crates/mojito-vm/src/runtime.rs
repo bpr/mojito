@@ -1353,6 +1353,12 @@ pub fn llvm_intrinsic(
         (LlvmIntrinsic::VectorReduce(reduction), SimdLanes::Int(lanes)) => SimdLanes::Int(vec![
             llvm::reduce_ints(reduction, dtype, lanes).ok_or_else(mismatch)?,
         ]),
+        (LlvmIntrinsic::VectorReduce(reduction), SimdLanes::Bool(lanes)) => {
+            let lanes: Vec<i128> = lanes.iter().map(|lane| i128::from(*lane)).collect();
+            SimdLanes::Bool(vec![
+                llvm::reduce_ints(reduction, dtype, &lanes).ok_or_else(mismatch)? != 0,
+            ])
+        }
         (LlvmIntrinsic::VectorReduce(reduction), SimdLanes::Float(lanes)) => {
             SimdLanes::Float(vec![
                 llvm::reduce_floats(reduction, lanes).ok_or_else(mismatch)?,

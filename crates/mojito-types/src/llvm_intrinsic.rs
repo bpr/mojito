@@ -332,7 +332,9 @@ impl LlvmIntrinsic {
     /// shuffles (`vector.extract`, `vector.insert`, the splices, and
     /// `vector.interleave2`) and `llvm.stepvector` a vector of at least two
     /// lanes, `vector.deinterleave2` a literal struct of two, and
-    /// `llvm.donothing` `NoneType`.
+    /// `llvm.donothing` `NoneType`. The integer intrinsics take no `bool`
+    /// lanes but `vector.reduce.and` and `vector.reduce.or`, which reduce a
+    /// `<N x i1>` mask as `SIMD.reduce_and` and `reduce_or` do.
     ///
     /// `result` is the type as LLVM translation sees it: a one-field
     /// register-passable struct is its field, as upstream's KGEN-to-LLVM
@@ -435,8 +437,13 @@ impl LlvmIntrinsic {
         };
         let admitted = if self.takes_floats() {
             dtype.is_float()
+        } else if dtype == Dtype::Bool {
+            matches!(
+                self,
+                Self::VectorReduce(VectorReduction::And | VectorReduction::Or)
+            )
         } else {
-            dtype != Dtype::Bool && !dtype.is_float()
+            !dtype.is_float()
         };
         if !admitted {
             return Some(format!(
@@ -868,6 +875,19 @@ mod tests {
                 width: SimdWidth::Known(width),
             })
         };
+        let mask = simd(Dtype::Bool, 4);
+        for reduction in [VectorReduction::And, VectorReduction::Or] {
+            assert_eq!(
+                LlvmIntrinsic::VectorReduce(reduction)
+                    .signature_error(&simd(Dtype::Bool, 1), std::slice::from_ref(&mask)),
+                None
+            );
+        }
+        assert!(
+            LlvmIntrinsic::VectorReduce(VectorReduction::Smax)
+                .signature_error(&simd(Dtype::Bool, 1), std::slice::from_ref(&mask))
+                .is_some()
+        );
         let test = simd(Dtype::UInt32, 1);
         assert_eq!(
             LlvmIntrinsic::IsFpclass.signature_error(

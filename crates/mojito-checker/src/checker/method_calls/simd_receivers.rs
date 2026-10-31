@@ -2,7 +2,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::mlir::MlirOp;
 
 impl Checker {
     /// `DType`'s `Bool` queries (`is_integral()`, `is_floating_point()`, …).
@@ -26,18 +25,16 @@ impl Checker {
         Ok(Ty::bool())
     }
 
-    /// The compiler-known methods of a `SIMD` value.
-    pub(super) fn infer_simd_method(
-        &self,
-        site: MethodCallSite<'_>,
-        dtype: &SimdDtype,
-    ) -> Result<Ty, TypeError> {
+    /// The compiler-known method of a `SIMD` value: `Copyable.copy` on a
+    /// scalar or vector is the value read itself (the builtin-copy rule of
+    /// the nominal resolver).
+    pub(super) fn infer_simd_method(&self, site: MethodCallSite<'_>) -> Result<Ty, TypeError> {
         let MethodCallSite {
-            span,
             object,
             method,
             call,
             obj_ty,
+            ..
         } = site;
         let MethodCallArguments {
             param_args,
@@ -45,60 +42,24 @@ impl Checker {
             kwargs,
             ..
         } = call;
-        let dtype = dtype.clone();
         // A name no compiler-known method answers falls through, keywords
         // and all, to the declared members (`__setitem__(i, val=…)`).
-        if !matches!(method, "copy" | "reduce_and" | "reduce_or") {
+        if method != "copy" {
             return Err(TypeError::NoSuchMethod {
                 object_type: obj_ty.to_string(),
                 method: method.to_string(),
             });
         }
         reject_kwargs(kwargs)?;
-        // Compiler-known SIMD methods: `copy` reads the value, and the
-        // bitwise reductions collapse to one lane (`Bool` for `bool` lanes).
-        // A symbolic dtype licenses every dtype-gated method, and a lane fact
-        // records the symbolic slot: both are the instantiation's to check.
-        match method {
-            // `Copyable.copy` on a scalar or vector is the value read
-            // itself (the builtin-copy rule of the nominal resolver).
-            "copy" if args.is_empty() && param_args.is_empty() => {
-                if is_place_expr(object) {
-                    self.record_at(object.source_span()).copy_place_value_use = true;
-                }
-                Ok(obj_ty.clone())
-            }
-            // Upstream's `bool` and integer reductions give one lane,
-            // which Mojito types `Bool` for `bool` lanes (and a symbolic
-            // dtype's), so the reduction combines with `and` and `or`.
-            "reduce_and" | "reduce_or" if dtype.licenses(|d| !d.is_float()) && args.is_empty() => {
-                self.record_simd_receiver_op(
-                    span,
-                    if method == "reduce_and" {
-                        MlirOp::PopSimdReduceAnd
-                    } else {
-                        MlirOp::PopSimdReduceOr
-                    },
-                );
-                match dtype.known() {
-                    Some(lanes) if lanes != Dtype::Bool => {
-                        simd_of(SimdDtype::Known(lanes), SimdWidth::Known(1))
-                    }
-                    _ => Ok(Ty::bool()),
-                }
-            }
-            _ => Err(TypeError::NoSuchMethod {
+        if !(args.is_empty() && param_args.is_empty()) {
+            return Err(TypeError::NoSuchMethod {
                 object_type: obj_ty.to_string(),
                 method: method.to_string(),
-            }),
+            });
         }
-    }
-
-    /// Record the method call at `span` as the `pop.simd` lane `op` over
-    /// its receiver and arguments.
-    fn record_simd_receiver_op(&self, span: &SourceSpan, op: MlirOp) {
-        self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::SimdReceiverOp(op),
-        ));
+        if is_place_expr(object) {
+            self.record_at(object.source_span()).copy_place_value_use = true;
+        }
+        Ok(obj_ty.clone())
     }
 }

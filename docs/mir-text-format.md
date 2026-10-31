@@ -1002,6 +1002,9 @@ spelled from its typed signature.
 It moves to `mojito-package 169` when a package's overloaded methods are
 declared under the symbol the check spells from their typed signatures.
 
+It moves to `mojito-package 170` when the checked `SimdReceiverOp` adjustment
+is removed: `SIMD`'s `reduce_and` and `reduce_or` are library bodies.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

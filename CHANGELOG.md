@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD`'s `reduce_and`, `reduce_or`, and `reduce_bit_count` are upstream's
+  declared bodies, verbatim (R1586): `m.reduce_and[2]()` and
+  `v.reduce_bit_count()` run, and `reduce_and`/`reduce_or` give
+  `SIMD[dtype, size_out]` as at the pin, where a `bool` mask's was typed
+  `Bool`. `llvm.vector.reduce.and`/`or` now take `bool` lanes, a float
+  `reduce_and` fails its instance's `comptime assert`, and the checker rule
+  and `SimdReceiverOp` adjustment are gone (`mojito-package 170`).
 - `SIMD`'s reductions are upstream's declared `reduce` tree, verbatim
   (R1764): both `reduce` overloads, so `v.reduce(add)`, `v.reduce[2](add)`,
   and `v.reduce[addi]()` run, and `reduce_add`, `reduce_mul`, `reduce_min`,

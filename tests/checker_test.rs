@@ -2489,17 +2489,12 @@ fn rejects_simd_mask_negation_and_shape_misuse() {
         )
         .is_err()
     );
-    // The bitwise reductions take integer or bool lanes, as upstream's
-    // `reduce_and` constrains them.
-    ok(
+    // The bitwise reductions take integer or bool lanes; a float one fails
+    // the declared `reduce_and`'s `comptime assert` in the instance
+    // (`assets/type_error/simd_float_reduce_and.mojo`).
+    ok_std(
         "def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bits: Int32 = v.reduce_and()\n",
     );
-    assert!(matches!(
-        err(
-            "def main():\n    var v = SIMD[DType.float32, 2](1, 2)\n    var bad = v.reduce_and()\n"
-        ),
-        TypeError::NoSuchMethod { .. }
-    ));
 }
 
 #[test]
