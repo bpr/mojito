@@ -1330,7 +1330,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   family (`place`, `try_place`, `simple_place`, `pure_field_place` in
   `lower_stmt.rs`, `name_place_root` in `mir.rs`), `reference_handle`, the
   compile-time argument slots (`param_arg_regs` over the op's
-  `CheckedParamArg`s), and `mir/calls.rs`'s argument, receiver, anchor, and
+  `CheckedParamArg`s; `indirect_param_arg_regs` for a `CallIndirect`, with
+  `inferred_param_args` appending the value parameters the check inferred), and `mir/calls.rs`'s argument, receiver, anchor, and
   invalidation lowering take a `Node`, and so do statement lowering
   (`lower_stmt`, the subscript-store and augmented-subscript family,
   `lower_bind`, `bind_comptime_value`) and `mir/calls.rs`'s

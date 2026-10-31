@@ -11013,27 +11013,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     time.
   - Model: Fable, Not Planned.
 
-- [ ] **R1761 A call through a callable binder does not infer the
-  binder's own parameters from its arguments**
-
-  `func(a, b)` in `def apply[F: ImplicitlyCopyable & RegisterPassable &
-  def[width: SIMDLength](SIMD[DType.int32, width], SIMD[DType.int32,
-  width]) -> SIMD[DType.int32, width], //](a: SIMD[DType.int32, 4], b:
-  SIMD[DType.int32, 4], func: F)` passes the check, then fails MIR
-  verification with "required compile-time value parameter 'width' is
-  missing", where the pin infers `width = 4` as for a call to a generic
-  `def`.
-  - The explicit spelling `func[4](a, b)` runs (R1583).
-  - The lever: solve the binder's parameters from the argument types
-    (`checker/call_inference.rs`, `checker/generics.rs`) and record them on
-    the call as an explicit application is recorded, so MIR lowering
-    carries the parameter argument.
-  - Upstream's `SIMD.reduce` closure overload calls `func(lhs, rhs)` this
-    way (R1764).
-  - Found while planning R1585 (2026-10-31).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1762 A value of a callable-binder-bounded type parameter loses
   its callee when passed on to another generic call**
 
@@ -11098,7 +11077,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     which prints as the pin's `68104130000000.0` once R159 lands.
   - `assets/ok/simd_reductions_float.mojo` says reductions fold left to
     right; its outputs change with the tree.
-  - Depends on R1761, R1762, and R1763.
+  - Depends on R1762 and R1763.
   - Model: Fable, Planned.
 
 - [ ] **R1586 `reduce_and` and `reduce_or` are checker rules and

@@ -2291,6 +2291,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A call through a callable binder infers the binder's own value
+  parameters from its arguments, as a direct generic call does (R1761):
+  `func(a, b)` over `F: ... & def[width: SIMDLength](...)` binds
+  `width = 4` and runs, where MIR verification reported "required
+  compile-time value parameter 'width' is missing". A value binder, a
+  parenthesized callee, an argument typed by an enclosing binder, and the
+  partial spelling `func[3](a)` infer too.
 - A literal constant read at a vector or another sized type (`SIMD[DType.int32,
   2](1) * K` of `comptime K = 3`, a generic `x.fma(HALF, 0.25)`, `A.K` of a
   struct member) stays the literal and converts at its use, as at the pin

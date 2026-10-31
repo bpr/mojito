@@ -87,11 +87,11 @@ impl<'a> Flatten<'a> {
                 .get(&variable)
                 .cloned()
                 .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-            let param_arg_regs = self.indirect_param_arg_regs(call);
             let param_decls = callable_ty
                 .as_ref()
                 .map(generic_callable_param_decls)
                 .unwrap_or_default();
+            let param_arg_regs = self.indirect_param_arg_regs(call, &param_decls);
             let saved_anchor_permission = self.allow_argument_anchors;
             self.allow_argument_anchors = call.call_anchors_arguments();
             let lends_reads = call.lends_read_arguments();
@@ -575,7 +575,11 @@ impl<'a> Flatten<'a> {
             });
             callee_place = place.is_typed().then_some(place);
         }
-        let param_arg_regs = self.indirect_param_arg_regs(call);
+        let param_decls = callable_ty
+            .as_ref()
+            .map(generic_callable_param_decls)
+            .unwrap_or_default();
+        let param_arg_regs = self.indirect_param_arg_regs(call, &param_decls);
         let resolved = callable_target(&node.adjustments);
         let raises = call.raises();
         self.emit_indirect_invocation(
