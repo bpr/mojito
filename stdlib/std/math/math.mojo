@@ -7,10 +7,8 @@
 # libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
 # verbatim (the buffer overload of `iota` is omitted). `copysign` follows
 # `abs`, which it calls, where upstream's precedes `iota`: a module `def` is
-# visible only after its statement (R592). Upstream's `from . import pi,
-# inf, …` line is omitted, since nothing ported reads it, while its
-# `from .polynomial import polynomial_evaluate` is kept for the ports that
-# will (`exp`, R1743; `erf`; and the other polynomial approximations). The
+# visible only after its statement (R592). Upstream's `from . import`
+# line omits `nextafter`, which the package does not yet re-export. The
 # prelude exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and
 # `min`, as upstream's does; `round`/`divmod` are still compiler builtins
 # (R1458).
@@ -26,6 +24,7 @@ from std.sys import CompilationTarget, llvm_intrinsic, simd_width_of
 
 from std.utils.numerics import FPUtils
 
+from . import pi, inf, isfinite, isinf, isnan, nan
 from .polynomial import polynomial_evaluate
 
 

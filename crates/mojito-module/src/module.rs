@@ -891,7 +891,7 @@ struct PendingImports {
     /// `from X import *`, in source order: each source's level and path.
     wildcards: Vec<(usize, Vec<String>)>,
     /// `from . import a [as b]`, by the name it binds: the level and the
-    /// submodule's name.
+    /// package member, or else submodule, it names.
     submodules: HashMap<String, (usize, String)>,
 }
 
@@ -1427,6 +1427,20 @@ impl<'p> Linker<'p> {
                 return Err(ModuleError::EmptyModulePath);
             };
             for item in items {
+                if let Some(package) = self.relative_package(dir, level, importer)
+                    && self.package_member(&package, &item.name, &mut Vec::new())?
+                {
+                    self.bind_from_imports(
+                        &package,
+                        &ImportNames::Names(vec![item.clone()]),
+                        ImportScope {
+                            bindings: &mut *scope.bindings,
+                            namespaces: &mut *scope.namespaces,
+                            explicit_imports: &mut *scope.explicit_imports,
+                        },
+                    )?;
+                    continue;
+                }
                 let submodule = vec![item.name.clone()];
                 let module = self.resolve_module(dir, level, &submodule)?;
                 check_self_import(importer, &module)?;
@@ -1496,15 +1510,7 @@ impl<'p> Linker<'p> {
         let found = if let Some(entry) = named {
             self.publish_pending(key, name, &dir, &entry, visiting)?
         } else if let Some((level, submodule)) = submodule {
-            let module = self.resolve_module(&dir, level, &[submodule])?;
-            self.load_module(&module)?;
-            let mut children = HashMap::new();
-            self.bind_namespace_tree(&module.key, name, &mut children);
-            self.namespace_exports
-                .entry(key.to_path_buf())
-                .or_default()
-                .extend(children);
-            true
+            self.publish_relative(key, name, &dir, level, &submodule, visiting)?
         } else {
             let mut found = false;
             for (level, path) in wildcards {
@@ -1584,6 +1590,92 @@ impl<'p> Linker<'p> {
             .or_default()
             .insert(name.to_string(), target);
         Ok(true)
+    }
+
+    /// Publish `name` from the loading module `key`, which binds it by
+    /// `from <level dots> import member`: the package's member when its
+    /// `__init__` has one, as upstream looks the name up in the package
+    /// before its submodule, else the submodule `member` as a namespace.
+    fn publish_relative(
+        &mut self,
+        key: &Path,
+        name: &str,
+        dir: &Path,
+        level: usize,
+        member: &str,
+        visiting: &mut Vec<(PathBuf, String)>,
+    ) -> Result<bool, ModuleError> {
+        if let Some(package) = self.relative_package(dir, level, Some(key))
+            && self.package_member(&package, member, visiting)?
+        {
+            if let Some(target) = self.exports[&package.key].get(member).cloned() {
+                self.exports
+                    .entry(key.to_path_buf())
+                    .or_default()
+                    .insert(name.to_string(), target);
+            } else {
+                let mut children = HashMap::new();
+                for (path, exports) in &self.namespace_exports[&package.key] {
+                    if let Some(suffix) = path.strip_prefix(member)
+                        && (suffix.is_empty() || suffix.starts_with('.'))
+                    {
+                        children.insert(format!("{name}{suffix}"), exports.clone());
+                    }
+                }
+                self.namespace_exports
+                    .entry(key.to_path_buf())
+                    .or_default()
+                    .extend(children);
+            }
+            return Ok(true);
+        }
+        let module = self.resolve_module(dir, level, &[member.to_string()])?;
+        self.load_module(&module)?;
+        let mut children = HashMap::new();
+        self.bind_namespace_tree(&module.key, name, &mut children);
+        self.namespace_exports
+            .entry(key.to_path_buf())
+            .or_default()
+            .extend(children);
+        Ok(true)
+    }
+
+    /// The package `level` dots above `dir`, its `__init__.mojo`, unless it
+    /// has none or is `importer` itself, whose own names a `from .` import
+    /// does not reach.
+    fn relative_package(
+        &self,
+        dir: &Path,
+        level: usize,
+        importer: Option<&Path>,
+    ) -> Option<ResolvedModule> {
+        let mut base = dir.to_path_buf();
+        for _ in 1..level {
+            base.pop();
+        }
+        let init = base.join("__init__.mojo");
+        if !init.exists() {
+            return None;
+        }
+        let package = self.filesystem_module(init, &[".".repeat(level)]);
+        (importer != Some(package.key.as_path())).then_some(package)
+    }
+
+    /// Load `package` and resolve its member `name`; `true` once it
+    /// exports `name` as a declaration or a namespace.
+    fn package_member(
+        &mut self,
+        package: &ResolvedModule,
+        name: &str,
+        visiting: &mut Vec<(PathBuf, String)>,
+    ) -> Result<bool, ModuleError> {
+        self.load_module(package)?;
+        self.resolve_pending(&package.key, name, visiting)?;
+        Ok(self.exports[&package.key].contains_key(name)
+            || self
+                .namespace_exports
+                .get(&package.key)
+                .is_some_and(|children| children.contains_key(name)))
     }
 
     fn resolve_scoped_imports(

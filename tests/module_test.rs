@@ -748,6 +748,15 @@ fn aliased_and_wildcard_package_reexports_resolve_on_a_cycle() {
 }
 
 #[test]
+fn dots_only_import_binds_a_package_reexport_on_its_cycle() {
+    let output = run_package_cycle(
+        "from .b import fb\nfrom .a import fa\n",
+        "from . import fa\n\ndef fb() -> Int:\n    return fa() + 1\n",
+    );
+    assert_eq!(output.unwrap(), "2\n");
+}
+
+#[test]
 fn recursive_package_reexport_is_rejected() {
     let error = run_package_cycle(
         "from .b import fb, fa\n",

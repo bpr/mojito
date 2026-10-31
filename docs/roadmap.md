@@ -10982,25 +10982,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1721 and R1593.
   - Model: Opus, Not Planned.
 
-- [ ] **R1723 `from . import name` in a package module is read as a
-  submodule import**
-
-  A package module's `from . import pi`, a name its package's `__init__`
-  re-exports, reports "cannot load module 'mth.pi'", where the pin binds
-  the name.
-  - Upstream's `std/math/math.mojo` imports `pi`, `inf`, `isfinite`,
-    `isinf`, `isnan`, `nan`, and `nextafter` this way. The bundled port
-    omits that line until this lands.
-  - The import cycle (`__init__` imports `.math`, and `.math` imports
-    `.`) must resolve as the pin's does, through the loading package's
-    pending imports (`Linker::resolve_pending`).
-  - Probe: package `mth/` with `__init__` `from .constants import pi` and
-    `from .math import twice_pi`, and `math.mojo` `from . import pi`; the
-    pin prints `6.28`.
-  - Found while planning R1711 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1743 `std.math` has no `exp`, where upstream's is `_exp_impl` over a
   Taylor polynomial and `_ldexp_impl`**
 

@@ -865,7 +865,8 @@ Currently it supports:
 - relative imports such as `from .optional import Optional`
 - qualified `import module as alias` member access and selective member aliases
 - unaliased dotted namespaces, qualified exported types, and lexical block imports
-- dots-only relative sibling imports (`from . import sibling`)
+- dots-only relative imports (`from . import name`): the package `__init__`'s
+  member `name` when it has one, else the sibling submodule `name`
 - source packages identified by `__init__.mojo`, including package re-exports
 - ordinary namespace directories, every dotted-prefix binding, and lexical
   shadowing of an imported namespace tree
@@ -917,7 +918,11 @@ a wildcard import of a loading module resolves them all,
 `Linker::force_pending`), as upstream resolves a module's import declarations
 when a name is looked up, whatever their order. A lookup that leads back to
 itself is `ModuleError::RecursiveReference`, the pin's "attempt to resolve a
-recursive reference to declaration". A packaged link needs no pending table:
+recursive reference to declaration". A dots-only `from . import name` looks
+`name` up in the package `__init__` first (`Linker::{relative_package,
+package_member, publish_relative}`), resolving its pending imports the same
+way, and loads the submodule `name` only when the package has no such
+member. A packaged link needs no pending table:
 a record publishes its final exports before its loads. Linking binds names
 only; a peer that calls a loading module's own function still meets the
 check's source-order binding of module functions (R592).

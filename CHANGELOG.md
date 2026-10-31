@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A package module's `from . import name` binds the package `__init__`'s
+  member `name`, a re-export included and on the package's import cycle,
+  and loads the submodule `name` only when the package has none, as at
+  the pin (R1723). The bundled `std/math/math.mojo` now carries
+  upstream's `from . import pi, inf, …` line (less the unported
+  `nextafter`).
 - A package's re-exports are readable from a module on its import cycle
   while the package loads (R1724): the loading module's top-level imports
   (named, aliased, wildcard, and `from . import sub`) resolve on a peer's
