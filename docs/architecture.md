@@ -7738,7 +7738,7 @@ Runtime helpers implement:
 - list methods
 - SIMD construction and lane access
 - builtin functions such as `print`, `len`, `range`, numeric conversions,
-  `round`, and the `abs`/`min`/`max` that a module loaded while the
+  and the `abs`/`min`/`max`/`round` that a module loaded while the
   prelude bootstraps still calls (elsewhere they are `std.math`'s library
   functions)
 

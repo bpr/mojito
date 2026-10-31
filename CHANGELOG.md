@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares `Roundable` with upstream's two `__round__` members,
+  verbatim, and `round` is upstream's `std.math.round[T: Roundable, //]`,
+  both overloads, exported from the prelude (R1582): `round(v)` over a
+  `float32` vector prints its rounded lanes, `round(2.567, 2)` prints
+  `2.57`, `round(Int8(3))`, `round(UInt(5))`, and `Int(1234).__round__(-2)`
+  run, and `Float64(x).__round__(2)` no longer traps on the VM. The
+  checker's, VM's, and Pliron's own `__round__` arms are gone.
 - `**` and `**=` are upstream's `SIMD.__pow__` (three overloads),
   `__rpow__`, and `__ipow__` over `_pow`, `_powf_scalar`, `_powf`, and
   `_powi`, verbatim, on both backends and at compile time (R1567):

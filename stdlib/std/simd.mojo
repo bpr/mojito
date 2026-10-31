@@ -18,7 +18,7 @@
 # `__rtruediv__`, `__rfloordiv__`, `__rpow__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
 # `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
-# `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
+# `__abs__`, both `__round__` overloads, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
 # `_to_bits_signed`, `fma`, `_shuffle_variadic`, `_shuffle_list`, the two
 # variadic `shuffle` overloads, `slice`, `insert`, `join`, `interleave`,
 # `split`, `deinterleave`, `select`, `write_to`, and `write_repr_to`, with
@@ -26,7 +26,7 @@
 # `_write_scalar`, `_floor`, `_pow`, `_powf_scalar`, `_powf`, `_powi`,
 # `_modf_scalar`, and `_modf`. The other
 # members are still served by the compiler or undeclared (R1623,
-# R1581, R1582, R1585, R1586, R1675; the two `IndexList` `shuffle`
+# R1581, R1585, R1586, R1675; the two `IndexList` `shuffle`
 # overloads are R1675's), `write_padded` is not ported
 # (R1663), and the native backend's `print`, `String`, and `repr` of a value still
 # format in the compiler rather than calling `write_to` and
@@ -86,7 +86,16 @@ import std.math
 
 # `abs`, `all`, `max`, and `min` are upstream's prelude names, which
 # `std.simd` cannot see while the prelude bootstraps (R894).
-from std.math import Ceilable, Floorable, Powable, Truncable, abs, max, min
+from std.math import (
+    Ceilable,
+    Floorable,
+    Powable,
+    Roundable,
+    Truncable,
+    abs,
+    max,
+    min,
+)
 from std.builtin.bool import all
 from std._plugin import CurrentPlugin
 from std.sys import _RegisterPackType, llvm_intrinsic
@@ -322,6 +331,7 @@ struct SIMD[dtype: DType, length: SIMDLength](
     Indexer,
     Intable,
     Powable,
+    Roundable,
     Sized,
     TrivialRegisterPassable,
     Truncable,
@@ -1755,6 +1765,47 @@ struct SIMD[dtype: DType, length: SIMDLength](
             The absolute value of this SIMD vector.
         """
         return Self(mlir_value=__mlir_op.`pop.abs`(self._mlir_value))
+
+    @always_inline("builtin")
+    def __round__(self) -> Self:
+        """Performs elementwise rounding on the elements of a SIMD vector.
+
+        This rounding goes to the nearest integer with ties towards the nearest
+        even value ("banker's rounding"). This is the default rounding mode for
+        binary floating point in the IEEE 754 Standard for Floating Point
+        Arithmetic.
+
+        Returns:
+            The elementwise rounded value of this SIMD vector.
+        """
+        return Self(mlir_value=__mlir_op.`pop.round`(self._mlir_value))
+
+    @inline(.nodebug)
+    def __round__(self, ndigits: Int) -> Self:
+        """Performs elementwise rounding on the elements of a SIMD vector.
+
+        This rounding goes to the nearest integer with ties towards the nearest
+        even value ("banker's rounding"). This is the default rounding mode for
+        binary floating point in the IEEE 754 Standard for Floating Point
+        Arithmetic.
+
+        Args:
+            ndigits: The number of digits to round to.
+
+        Returns:
+            The elementwise rounded value of this SIMD vector.
+        """
+
+        comptime if Self.dtype == DType.bool:
+            return self
+
+        comptime if Self.dtype.is_integral():
+            if ndigits >= 0:
+                return self
+            return self - (self % Self(10) ** -(ndigits))
+
+        var exp = Self(10) ** ndigits
+        return (self * exp).__round__() / exp
 
     def __hash__[H: Hasher](self, mut hasher: H):
         """Updates hasher with this SIMD value.

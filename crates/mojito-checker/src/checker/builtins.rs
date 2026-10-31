@@ -594,7 +594,10 @@ impl Checker {
 
     /// Type `round(x)`: a `Float64` argument returning `Float64`, or an opaque
     /// `T: Roundable` returning the same type (`__round__(self) -> Self`; the
-    /// concrete impl runs after type erasure).
+    /// concrete impl runs after type erasure). A call reaches this rule only
+    /// where no `round` binding exists — a module loaded while the prelude
+    /// bootstraps, or a program linked without the prelude; elsewhere it
+    /// calls `std.math.round`.
     pub(super) fn infer_round(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("round", 1, args)?;
         if matches!((tys[0]).kind(), TyKind::FLOAT64 | TyKind::FloatLiteral) {

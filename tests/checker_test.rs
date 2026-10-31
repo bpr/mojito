@@ -6476,6 +6476,21 @@ fn any_type_bound_does_not_permit_numeric_operations() {
 }
 
 #[test]
+fn simd_declares_roundable() {
+    // `SIMD` lists `Roundable` with its two `__round__` members, so every
+    // scalar and vector binds the bound, as does the library `round`.
+    ok_std(
+        "def r[T: Roundable](x: T) -> T:\n    return x.__round__(1)\n\ndef main():\n    print(r(Float32(2.5)), r(SIMD[DType.float64, 2](0.4, 1.6)))\n    print(round(SIMD[DType.float32, 4](1.5, 2.5, -0.5, 3.7)), round(Int8(3), -1))\n",
+    );
+    assert!(matches!(
+        check_with_std(
+            "@fieldwise_init\nstruct S(ImplicitlyCopyable):\n    var v: Int\n\n    def __round__(self) -> Self:\n        return self\n\n    def __round__(self, ndigits: Int) -> Self:\n        return self\n\ndef main():\n    print(round(S(3)).v)\n"
+        ),
+        Err(TypeError::TraitNotSatisfied { .. })
+    ));
+}
+
+#[test]
 fn operator_traits_gate_generic_numeric_code() {
     // Generic arithmetic bounded by an operation trait type-checks.
     ok(

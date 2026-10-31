@@ -5,7 +5,7 @@
 # `atan`, `atan2`, `atanh`, `cbrt`, `cos`, `cosh`, `divmod`, `erf`, `erfc`,
 # `exp2`, `expm1`, `comb`, `factorial`, `gamma`, `gcd`, `hypot`,
 # `isclose`, `rsqrt`, `j0`, `j1`, `lcm`, `lgamma`, `log1p`, `log2`,
-# `log10`, `logb`, `perm`, `pow`, `recip`, `remainder`, `round`,
+# `log10`, `logb`, `perm`, `pow`, `recip`, `remainder`,
 # `scalb`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`, `ulp`, `y0`, and `y1`.
 # The `std.utils.numerics` import follows `.math`'s, where upstream's
 # leads: `std._plugin` is then still loading when `std.math.math` links,
@@ -53,6 +53,7 @@ from .math import (
     max,
     min,
     modf,
+    round,
     trunc,
 )
 

@@ -196,7 +196,6 @@ impl FnLowering<'_> {
                     return self.lower_ceildiv(ctx, dest, recv, args[0], &recv_ty);
                 }
                 ("__abs__", 0) => return self.lower_abs_builtin(ctx, dest, &[recv], &[]),
-                ("__round__", 0) => return self.lower_round_builtin(ctx, dest, &[recv], &[]),
                 ("__divmod__", 1) => {
                     return self.lower_divmod_builtin(ctx, dest, &[recv, args[0]], &[]);
                 }

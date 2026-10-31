@@ -24,9 +24,9 @@ command cannot use both.
    on 10-28 after R1188 for the overnight gate. Its remaining work order,
    which reruns from R1503 (R1566 landed `//` and R184 `/`; their `%`,
    `divmod`, and `ceildiv` half is R1623):
-   - R1503, R1561, R1562, R1671, R1673, R1675, R1623, R1567, R1582:
+   - R1503, R1561, R1562, R1671, R1673, R1675, R1623, R1567:
      initializers, the lane subscript, target queries, lane gathers, the rest of
-     division, `**`, and `__round__`.
+     division, and `**`.
    - R1583, R1584, R1585, R1586: the `reduce` tree and what it needs.
    - R1662 and R1664 (`SIMD`'s display through its members, which R276
      declared in Mojo), then R1398 (delete the dead `SIMD`

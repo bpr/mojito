@@ -9135,7 +9135,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   register, where upstream's library function reads it in place**
 
   `print`, `input`, `abort`'s `_mojito_abort`, `Error(...)`, `Int(...)`,
-  `divmod`, and `round` are checked and lowered as builtins
+  and `divmod` are checked and lowered as builtins
   (`checker/call_inference.rs`), so no argument binds a `read` parameter
   and MIR lowers each as a plain value.
   - So a memory-only argument is a register: a copy of a `read` parameter,
@@ -9161,10 +9161,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     into a register (`nominal_string_parse.mojo`,
     `nominal_string_parse_errors.mojo`, `nominal_string_atof_rounding.mojo`,
     `list_unsafe_uninit_length.mojo`).
-  - Probe: `divmod(a, b)` and `round(x)` over a generic `T` copy
-    their operands (`boolable_and_divmod.mojo`,
-    `numeric_operation_traits.mojo`), a struct's too since R1361
-    (`math_operation_traits_library.mojo`); R1458 closes it.
+  - Probe: `divmod(a, b)` over a generic `T` copies its operands
+    (`boolable_and_divmod.mojo`, `numeric_operation_traits.mojo`), a
+    struct's too since R1361 (`math_operation_traits_library.mojo`);
+    R1458 closes it.
   - Found while landing R1356 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9345,22 +9345,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1507 (the declared struct is `IntLiteral[value]`).
   - Model: Fable, Not Planned.
 
-- [ ] **R1458 `round` and `divmod` are compiler builtins, and `pow` is
-  missing, where upstream's `std/math` declares library functions**
+- [ ] **R1458 `divmod` is a compiler builtin, and `pow` is missing, where
+  upstream's `std/math` declares library functions**
 
-  `round(2.567, 2)` is rejected ("'round' expects 1 argument(s), got 2")
-  and `pow(2, 10)` is an undefined variable, where the pin prints `2.57`
-  and `1024`.
-  - Upstream declares `round[T: Roundable](number: T)` and its `ndigits`
-    overload, `divmod[T: DivModable]`, and `pow[T: Powable]` beside the
-    traits, each returning the requirement's result.
-  - Mojito checks the first two by name (`Checker::infer_round`,
-    `infer_divmod`), the backends run them as builtins, and the elaborator
-    rewrites a struct operand into the dunder call.
-  - Declare the three in `stdlib/std/math.mojo`, exported from the
-    prelude, as `abs` is since R66, and delete their builtins. The scalars
-    already answer each requirement as a method.
-  - Closes R1441's `divmod`/`round` probe: a `read` parameter binds the
+  `pow(2, 10)` is an undefined variable, where the pin prints `1024`, and
+  `divmod` is checked by name (`Checker::infer_divmod`).
+  - Upstream declares `divmod[T: DivModable]` and `pow[T: Powable]`
+    beside the traits, each returning the requirement's result.
+  - The backends run `divmod` as a builtin, and the elaborator rewrites a
+    struct operand into the dunder call.
+  - Declare both in `stdlib/std/math/math.mojo`, exported from the
+    prelude, as `abs` and `round` are, and delete the builtin.
+  - Delete the `round` builtin too (`Checker::infer_round`, the VM's
+    `dispatch.rs` arm, Pliron's `lower_round_builtin`, the elaborator's
+    `"round" => "__round__"` rewrite). Since R1582 only a module loaded
+    while the prelude bootstraps reaches it, as `abs`'s does.
+  - Closes R1441's `divmod` probe: a `read` parameter binds the
     argument in place.
   - Probe: `divmod(UInt8(7), 3)` is rejected ("'divmod' is not defined for
     UInt8 and Int"), where the pin prints `(2, 1)`: `builtin_args`
@@ -10947,22 +10947,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1630, which runs a function returning a flag at compile
     time.
   - Model: Fable, Not Planned.
-
-- [ ] **R1582 `SIMD.__round__` is a builtin rule and `SIMD` does not
-  declare `Roundable`**
-
-  `round(v)` over a `SIMD[DType.float32, 4]` is rejected ("does not
-  conform to trait"), where the pin prints the rounded lanes, and
-  `resolve_builtin_method` serves `__round__` on `Int`, `UInt`, and
-  `Float64` by name.
-  - Port both overloads together: once the declaration has a
-    `__round__`, every `__round__` call reads it, so a lone `__round__()`
-    breaks `Float64(x).__round__(2)`.
-  - The `ndigits` overload computes `Self(10) ** ndigits`.
-  - List `Roundable`, and drop its `modelled_conformance` arm for
-    `SIMD`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R1585 `SIMD`'s reductions are checker rules, where upstream's are
   a `reduce` tree**

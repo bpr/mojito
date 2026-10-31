@@ -5,7 +5,7 @@
 # AVX-512 `scalef` arm), `_Expable`, `_exp_taylor`, both overloads of
 # `exp`, `_exp_impl`, `copysign`, the `SIMD` overload of `iota`,
 # `fma`, `modf` over `std.simd`'s `_modf`, `clamp`, both overloads each of
-# `max` and `min`, `abs`, and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
+# `max` and `min`, `abs`, both overloads of `round`, and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
 # `_frexp_mask1`, `_frexp_mask2`, `frexp`, `_log_base`, `log`, and their
 # kernels `_assert_float64_supported`, `_log_kernel`, `_is_zero_bits`,
 # `_is_subnormal_bits`, `_frexp_bits`, `_log_reduce`, `_log_combine`, and
@@ -17,16 +17,16 @@
 # arm through `exp2` (R1635). The
 # `std.string` import is explicit, as bundled modules' are. Upstream's
 # `from . import` line omits `nextafter`, which the package does not yet
-# re-export. The prelude exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, and
-# `min`, as upstream's does; `round`/`divmod` are still compiler builtins
-# (R1458).
+# re-export. The prelude exports `Absable`, `Powable`, `Roundable`, `abs`, `max`,
+# `min`, and `round`, as upstream's does; `divmod` is still a compiler
+# builtin (R1458).
 #
 # Each helper is generic over the trait that supplies its dunder. `SIMD`
-# declares `Absable`, `Ceilable`, `Floorable`, and `Truncable` in
-# `std.simd`; for the other operation traits the compiler-modelled `Int`,
-# `UInt`, and `Float64` conform as upstream's `SIMD` declares, other `SIMD`
-# values do not yet (R1623, R1567, R1582), and each answers a requirement
-# intrinsically.
+# declares `Absable`, `Ceilable`, `Floorable`, `Powable`, `Roundable`, and
+# `Truncable` in `std.simd`; for the other operation traits the
+# compiler-modelled `Int`, `UInt`, and `Float64` conform as upstream's
+# `SIMD` declares, other `SIMD` values do not yet (R1623), and each answers
+# a requirement intrinsically.
 
 from std.sys import (
     CompilationTarget,
@@ -841,6 +841,45 @@ def min[T: Copyable & Comparable & Deinitable](x: T, *ys: T) -> T:
         if y < res:
             res = y.copy()
     return res.copy()
+
+
+# ===----------------------------------------------------------------------=== #
+# round
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def round[T: Roundable, //](number: T) -> T:
+    """Get the rounded value of the given object.
+
+    Parameters:
+        T: The type conforming to Roundable.
+
+    Args:
+        number: The object to get the rounded value of.
+
+    Returns:
+        The rounded value of the object.
+    """
+    return number.__round__()
+
+
+@inline(.always)
+def round[T: Roundable, //](number: T, ndigits: Int) -> T:
+    """Get the value of this object, rounded to a specified number of
+    digits after the decimal point.
+
+    Parameters:
+        T: The type conforming to Roundable.
+
+    Args:
+        number: The object to get the rounded value of.
+        ndigits: The number of digits to round to.
+
+    Returns:
+        The rounded value of the object.
+    """
+    return number.__round__(ndigits)
 
 
 # ===----------------------------------------------------------------------=== #

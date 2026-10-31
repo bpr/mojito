@@ -638,23 +638,15 @@ impl Checker {
         // A scalar's `std.math` operation dunders are the methods upstream's
         // `SIMD` and `IntLiteral` declare for the trait owning each; the
         // backends answer them intrinsically. A `SIMD`'s `__abs__`,
-        // `__floor__`, `__ceil__`, and `__trunc__` are its declared members
-        // and never reach here, so for those only `IntLiteral` does.
+        // `__floor__`, `__ceil__`, `__trunc__`, and `__round__` are its
+        // declared members and never reach here, so for the rounding ones
+        // only `IntLiteral` does.
         if kwargs.is_empty()
             && param_args.is_empty()
             && let Some(trait_name) = math_operation_requirement(method, args.len())
             && scalar_declares_math_trait(obj_ty, trait_name)
         {
-            let param_types: Vec<Ty> = args
-                .iter()
-                .map(|_| {
-                    if method == "__round__" {
-                        Ty::int()
-                    } else {
-                        obj_ty.clone()
-                    }
-                })
-                .collect();
+            let param_types = vec![obj_ty.clone(); args.len()];
             for (arg, expected) in args.iter().zip(&param_types) {
                 let found = self.builtin_args(method, 1, std::slice::from_ref(arg))?;
                 if !mojito_types::types::coerces(&found[0], expected) {
@@ -726,14 +718,13 @@ fn intrinsic_resolution(
 }
 
 /// The `std.math` trait whose requirement `method` with `argc` arguments
-/// is. Every parameter is `Self` but `__round__`'s `ndigits: Int`.
+/// is. Every parameter is `Self`.
 fn math_operation_requirement(method: &str, argc: usize) -> Option<&'static str> {
     Some(match (method, argc) {
         ("__abs__", 0) => "Absable",
         ("__ceil__", 0) => "Ceilable",
         ("__floor__", 0) => "Floorable",
         ("__trunc__", 0) => "Truncable",
-        ("__round__", 0 | 1) => "Roundable",
         ("__ceildiv__", 1) => "CeilDivable",
         ("__divmod__", 1) => "DivModable",
         _ => return None,

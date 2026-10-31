@@ -2289,6 +2289,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "abs",
     "max",
     "min",
+    "round",
     "Hashable",
     "EnumLike",
     "range",
