@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1747**.
+Next free ID: **R1749**.
 
 ## Ordered Work
 
@@ -1207,6 +1207,31 @@ change that needs a new `MJRT_ABI_VERSION`.
   - R541 is the same failure for an applied constant of a sized scalar
     type, so one fix may close both.
   - Found while landing R563 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1747 Natively, a module constant read as a vector, or at two
+  types in one function, miscompiles**
+
+  `comptime K = 3`, then `print(SIMD[DType.int32, 2](1) * K)`, stops
+  natively with "unsupported read of undefined aggregate register", where
+  the VM and the pin print `[3, 3]`.
+  - Cause: both reads share one unmaterialized literal register. The splat
+    stores the scalar literal into a vector-typed hidden slot with no
+    `literal.materialize`.
+  - Likely site, unverified: the module-constant hidden slot in
+    `Flatten::reference_handle` (`crates/mojito-mir/src/mir.rs`, `$mat_r…`)
+    and `materialize_borrow_slot` (`mir/calls.rs`) cache the slot per
+    owner in `owner_vars`, typed from the first read's register, and
+    `param_value_register` materializes at the constant's literal type,
+    not at the read's target.
+  - Probe: `show(K)` (a `[T: Writable & Copyable]` generic), then
+    `List[Float32]().append(K)`, stores `4.203895392974451e-45` natively,
+    where the VM and the pin store `3.0`.
+  - Probe: a float module constant is a `FloatLiteral` and fails the same
+    way: `x.fma(log2e, 0.5)` over `x: SIMD[dtype, width]` in a generic
+    (upstream's `_exp_impl` and `_log_base`) stops with the same error.
+  - Found while landing R1741 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4651,33 +4676,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1741 An unannotated float `comptime` binding is declared
-  `Float64`, where the pin's stays a `FloatLiteral`**
-
-  `comptime a = 1.5`, then `print(Float32(1) * a)`, fails with "operator
-  '*' is not defined for Float32 and Float64", where the pin prints `1.5`.
-  - The same happens local or module, and for an imported
-    `std.math.constants.log2e`: `print(Float32(1) * log2e)` prints
-    `1.442695` at the pin.
-  - Probe: `x.fma(log2e, 0.5)` over `x: SIMD[dtype, width]` in a generic
-    finds no `fma` overload, where the pin converts the literal to the
-    vector (upstream's `_exp_impl`).
-  - Probe: `comptime neg_ln2 = -0.693…` local, then `k.fma(neg_ln2, xc)`,
-    fails the same way.
-  - Probe: `fr[0].lt(_SQRT2 / 2)` over the module constant `_SQRT2`
-    (upstream's `_log_reduce`) finds no `lt` overload, and neither do
-    `_log_base`'s local `x1.lt(sqrt2_div_2)` and `exp.fma(ln2, y)` (R1714).
-  - Cause: the unannotated arm of the `Comptime` statement
-    (`checker/statements.rs`) declares `inferred_binding_ty`, `Float64`,
-    and records a literal materialization; `fold_module_constants` does
-    the same for a module constant.
-  - Lever: declare the binding `FloatLiteral` and record its folded value,
-    so a run-time read materializes at the use as a literal does. `var b =
-    a; print(b, a / 4, a * 3)` must keep printing `1.5 0.375 4.5`.
-  - Found while landing R1713 (2026-10-30).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1745 A lifted local `comptime` application omits the binders
   only its result type names**
 
@@ -7743,6 +7741,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R605 (2026-10-10).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1748 A conditional expression of two literal arms stays a
+  literal, where the pin's is `Float64` or `Int`**
+
+  `print(Float32(1) * (1.5 if True else 2.5))` prints `1.5`, where the pin
+  rejects it: "cannot be converted from 'Float64' to 'Float32'".
+  - Cause: the `ExprKind::IfExpr` arm of inference
+    (`checker/inference.rs`) returns the arms' coerced type, `FloatLiteral`
+    or `IntLiteral`; the pin materializes the result to its default type.
+  - Probe: `Int8(1) + (3 if True else 4)` prints `4`; the pin types the
+    conditional `Int`.
+  - Probe: `comptime f = 1.5 if True else 2.5`, then `Float32(1) * f`,
+    prints `1.5`: an unannotated `comptime` binding keeps its
+    initializer's type.
+  - Found while landing R1741 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R744 A conditional expression copies a place arm that is not
   `ImplicitlyCopyable`**
@@ -11060,12 +11075,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Fixture: `assets/ok/math_exp.mojo` (a 16-lane `float32` input of
     `0.5` keeps the AVX-512 arm's output host-independent), and
     `assets/type_error/math_exp_integral_dtype.mojo`.
-  - Blockers: `exp` and `_exp_impl` call each other (R393), `_exp_impl`'s
-    `log2e` and `neg_ln2` are `Float64` (R1741), and `_exp_taylor`'s
-    `coefficients[:]` is no compile-time application (R1742).
+  - Blockers: `exp` and `_exp_impl` call each other (R393), natively
+    `x.fma(log2e, …)` splats a module constant (R1747), and
+    `_exp_taylor`'s `coefficients[:]` is no compile-time application
+    (R1742).
   - Plan: `R1713-std-math-has-no-exp-where-plan.md` (Slices 2 and 3; Slice
     1 and `ldexp` landed with R1713).
-  - Depends on R393, R1741, and R1742.
+  - Depends on R393, R1742, and R1747.
   - Model: Fable, Not Planned.
 
 - [ ] **R1714 `std.math` has no `log`, where upstream's is `_log_accurate`
@@ -11093,7 +11109,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A verbatim port with the four blockers worked around printed the
     pin's values on the VM and natively (2026-10-30).
   - Found while planning R1567 (2026-10-30).
-  - Depends on R1653, R1741, R1744, and R1745.
+  - Depends on R1653, R1744, R1745, and R1747.
   - Model: Fable, Not Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is

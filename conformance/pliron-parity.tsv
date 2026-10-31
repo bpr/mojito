@@ -139,6 +139,7 @@ assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_alias.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_arguments.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_reads.mojo	main	exe-differential	sanitized
+assets/ok/comptime_float_literal_binding.mojo	main	exe-differential	sanitized
 assets/ok/comptime_floordiv_mod_zero_divisor.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_aggregate_binder.mojo	main	exe-differential	sanitized

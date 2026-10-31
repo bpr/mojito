@@ -392,6 +392,17 @@ impl Checker {
         }
     }
 
+    /// The type to declare for an unannotated `comptime` binding: its
+    /// initializer's type, as upstream's alias has. A float literal stays a
+    /// `FloatLiteral` that materializes at each read; any other value binds
+    /// as an inferred binding does.
+    pub(super) fn comptime_binding_ty(&self, value_ty: &Ty, name: &str) -> Result<Ty, TypeError> {
+        if matches!(value_ty.kind(), TyKind::FloatLiteral) {
+            return Ok(value_ty.clone());
+        }
+        self.inferred_binding_ty(value_ty, name)
+    }
+
     /// Look up `name`, walking outward through the scope chain (lexical lookup).
     /// A package module binding resolves below the module scope.
     pub(super) fn lookup(&self, name: &str) -> Option<&Ty> {

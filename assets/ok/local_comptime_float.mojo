@@ -1,5 +1,6 @@
-# A function-local `comptime` float is read at run time as a `Float64`,
-# whether it folds from a `Float64` construction, a literal, or arithmetic.
+# A function-local `comptime` float is read at run time, whether it binds a
+# `Float64` construction, a literal (a `FloatLiteral` that each read
+# materializes), or arithmetic.
 def show[T: Writable & Copyable](value: T):
     comptime quarter = 0.25
     print(value, quarter)

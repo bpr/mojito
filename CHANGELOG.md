@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An unannotated float `comptime` binding is a `FloatLiteral`, local or
+  module and imported or not, as at the pin (R1741): each read materializes
+  at its use, so `Float32(1) * a` and a vector's `fma(log2e, …)` run where
+  the binding was declared `Float64`. Natively, a module constant splatted
+  into a vector still miscompiles (R1747).
 - `StringLiteral`'s comparisons and `__add__` are upstream's dunders
   (R1653): `"ab" == s` and `"a" < "b"` call `StringLiteral.__eq__`/`__lt__`
   over `StringSlice`, two literals concatenate through `__add__` over the
