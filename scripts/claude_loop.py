@@ -25,6 +25,10 @@ entries it held back, and the command that reruns the loop. Chain runs with
 cuts off is not a bad task: the loop waits for the limit to reset and resumes
 that session with its context, and if the reset is more than six hours away it
 stops, leaving the session's work uncommitted and printing how to resume it.
+Nor is a network outage: a session that ends on a transient API error, or
+fails while `api.anthropic.com` is unreachable, is resumed once the host
+answers again (rerun from its prompt if it never started), and an outage
+longer than twelve hours stops the run the way a distant limit reset does.
 The other thing that does stop a run is three sessions in a row failing inside
 a minute, which means the environment is refusing to work (expired
 credentials, an exhausted rate limit) rather than the tasks being hard.
@@ -94,6 +98,7 @@ import json
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -112,6 +117,10 @@ MAX_SPLITS = 3
 SUMMARY_LINES = 15
 LIMIT_MAX_WAIT = 6 * 3600
 LIMIT_SLACK = 90
+API_HOST = ("api.anthropic.com", 443)
+OUTAGE_POLL = 30
+OUTAGE_MAX_WAIT = 12 * 3600
+OUTAGE_RESUMES = 20
 BUILD_FAILED = "<the build>"
 SMOKE_FIX_PROMPT = (
     "Your work on {task} is committed, and `scripts/smoke` now fails where it "
@@ -127,6 +136,12 @@ RESUME_PROMPT = (
     "Your session was cut off by a usage limit, which has now reset. Continue "
     "the task from where you stopped, under the same instructions, and finish "
     "it.\n"
+)
+OUTAGE_RESUME_PROMPT = (
+    "Your session was cut off by a network outage, which has now ended. A tool "
+    "call in flight may not have finished: check the tree's state before relying "
+    "on it. Continue the task from where you stopped, under the same "
+    "instructions, and finish it.\n"
 )
 
 MODELS = {
@@ -346,6 +361,8 @@ class Outcome:
     log: Path | None = None
     summary: str = ""
     """The session's last message."""
+    outage: bool = False
+    """Whether the session failed on the network rather than on the task."""
 
 
 def run_claude(args, task: Task, model: str, label: str, prompt: str,
@@ -375,6 +392,7 @@ def run_claude(args, task: Task, model: str, label: str, prompt: str,
     ]
     result: dict = {}
     rejected_until: list[float] = []
+    session_ids: list[str] = []
 
     def drain(stdout) -> None:
         with log_path.open("w") as log:
@@ -387,6 +405,8 @@ def run_claude(args, task: Task, model: str, label: str, prompt: str,
                     continue
                 if event.get("type") == "result":
                     result.update(event)
+                if event.get("session_id"):
+                    session_ids.append(event["session_id"])
                 info = event.get("rate_limit_info") or {}
                 if info.get("status") == "rejected" and info.get("resetsAt"):
                     rejected_until.append(float(info["resetsAt"]))
@@ -409,34 +429,60 @@ def run_claude(args, task: Task, model: str, label: str, prompt: str,
     limited = not ok and (result.get("api_error") == "usage_limit_reached"
                           or result.get("api_error_status") == 429)
     reset = (max(rejected_until) if rejected_until else time.time() + 3600) if limited else None
-    suffix = "" if ok else "  USAGE LIMIT" if limited else "  FAILED"
+    outage = not ok and not limited and (transient_api_error(result) or not api_reachable())
+    suffix = ("" if ok else "  USAGE LIMIT" if limited else "  NETWORK OUTAGE" if outage
+              else "  FAILED")
     show_progress(task, label, time.monotonic() - began, suffix)
     print(flush=True)
-    return Outcome(ok, result.get("session_id"), reset, log_path, result.get("result") or "")
+    session_id = result.get("session_id") or (session_ids[0] if session_ids else None)
+    return Outcome(ok, session_id, reset, log_path, result.get("result") or "", outage)
 
 
-def resume_through_limits(args, task: Task, model: str, label: str,
-                          outcome: Outcome, attempts: int = 3) -> Outcome:
-    """Wait out a usage limit that cut `outcome`'s session off, then resume it.
+def run_session(args, task: Task, model: str, label: str, prompt: str,
+                resume: str | None = None, limit_attempts: int = 3) -> Outcome:
+    """Run one session, carrying it through usage limits and network outages.
 
-    The session keeps its context, so the task carries on rather than starting
-    over on a tree holding half its work. A limit that resets more than
-    `LIMIT_MAX_WAIT` away, or one still in force after `attempts` resumptions,
-    is returned as it stands for the caller to stop on.
+    A session a limit or an outage cuts off is resumed with its context once
+    the limit resets or `API_HOST` answers again, so the task carries on
+    rather than starting over on a tree holding half its work; one an outage
+    stopped before it began is run again from `prompt`. A limit that resets
+    more than `LIMIT_MAX_WAIT` away, one still in force after
+    `limit_attempts` resumptions, an outage longer than `OUTAGE_MAX_WAIT`, or
+    more than `OUTAGE_RESUMES` outages, is returned as it stands for the
+    caller to stop on.
     """
-    for _ in range(attempts):
-        if outcome.limit_reset is None or not outcome.session_id:
+    outcome = run_claude(args, task, model, label, prompt, resume=resume)
+    limits = outages = 0
+    while True:
+        if outcome.outage and outages < OUTAGE_RESUMES:
+            outages += 1
+            if not wait_for_network(task):
+                return outcome
+            if outcome.session_id:
+                outcome = run_claude(args, task, model, f"{label} (resumed)",
+                                     OUTAGE_RESUME_PROMPT, resume=outcome.session_id)
+            else:
+                outcome = run_claude(args, task, model, label, prompt, resume=resume)
+        elif (outcome.limit_reset is not None and outcome.session_id
+              and limits < limit_attempts):
+            limits += 1
+            wait = outcome.limit_reset + LIMIT_SLACK - time.time()
+            if wait > LIMIT_MAX_WAIT:
+                return outcome
+            until = dt.datetime.fromtimestamp(time.time() + max(wait, 0)).strftime("%H:%M")
+            print(f"claude_loop: usage limit; resuming {task.id}'s session at {until}",
+                  file=sys.stderr, flush=True)
+            time.sleep(max(wait, 0))
+            outcome = run_claude(args, task, model, f"{label} (resumed)", RESUME_PROMPT,
+                                 resume=outcome.session_id)
+        else:
             return outcome
-        wait = outcome.limit_reset + LIMIT_SLACK - time.time()
-        if wait > LIMIT_MAX_WAIT:
-            return outcome
-        until = dt.datetime.fromtimestamp(time.time() + max(wait, 0)).strftime("%H:%M")
-        print(f"claude_loop: usage limit; resuming {task.id}'s session at {until}",
-              file=sys.stderr, flush=True)
-        time.sleep(max(wait, 0))
-        outcome = run_claude(args, task, model, f"{label} (resumed)", RESUME_PROMPT,
-                             resume=outcome.session_id)
-    return outcome
+
+
+def stopped(outcome: Outcome) -> bool:
+    """Whether a limit or an outage outlasted `run_session`'s patience, so the
+    run stops with the session's work uncommitted."""
+    return outcome.limit_reset is not None or outcome.outage
 
 
 def show_progress(task: Task, label: str, seconds: float, suffix: str = "") -> None:
@@ -445,6 +491,36 @@ def show_progress(task: Task, label: str, seconds: float, suffix: str = "") -> N
     if len(line) > width:
         line = line[: max(width - 3, 0)] + "..."
     print(f"\r\033[K{line}{suffix}", end="", flush=True)
+
+
+def transient_api_error(result: dict) -> bool:
+    """Whether the session ended on an API failure a retry may clear: a lost
+    connection, a timeout, or a server-side error, as opposed to a refusal."""
+    status = result.get("api_error_status")
+    return (result.get("terminal_reason") == "api_error"
+            and (status is None or status == 408 or status >= 500))
+
+
+def api_reachable() -> bool:
+    try:
+        socket.create_connection(API_HOST, timeout=10).close()
+        return True
+    except OSError:
+        return False
+
+
+def wait_for_network(task: Task) -> bool:
+    """Wait until `API_HOST` answers, up to `OUTAGE_MAX_WAIT`; whether it did."""
+    began = time.monotonic()
+    print(f"claude_loop: network outage during {task.id}; waiting for "
+          f"{API_HOST[0]} to answer", file=sys.stderr, flush=True)
+    while not api_reachable():
+        if time.monotonic() - began > OUTAGE_MAX_WAIT:
+            return False
+        time.sleep(OUTAGE_POLL)
+    print(f"claude_loop: network back after {time.monotonic() - began:.0f}s; "
+          f"resuming {task.id}", file=sys.stderr, flush=True)
+    return True
 
 
 def git(*argv: str, stdin: str | None = None) -> str:
@@ -560,10 +636,8 @@ class Smoke:
             untracked_before = untracked_files() if committing else set()
             msg_before = read_commit_msg()
             prompt = SMOKE_FIX_PROMPT.format(task=task.id, report=report)
-            outcome = resume_through_limits(
-                args, task, model, f"{label}, smoke fix",
-                run_claude(args, task, model, f"{label}, smoke fix", prompt,
-                           resume=outcome.session_id))
+            outcome = run_session(args, task, model, f"{label}, smoke fix", prompt,
+                                  resume=outcome.session_id)
             if committing:
                 commit_task(task, untracked_before, msg_before, True,
                             fallback=f"Fix the smoke failures {task.id} left")
@@ -707,7 +781,7 @@ def main() -> int:
     quick = 0
     splits: dict[str, int] = {}
     waited: dict[str, list[str]] = {}
-    stopped_by_limit: tuple[Task, Outcome] | None = None
+    stopped_by: tuple[Task, Outcome] | None = None
     while tasks := pending(args, done, troubled, fixed):
         current = tasks[0]
         modes = modes_for(args, current)
@@ -733,10 +807,9 @@ def main() -> int:
             msg_before = read_commit_msg()
             label = f"{current.id} {model_name(args, current)}, {mode}"
             began = time.time()
-            outcome = resume_through_limits(
-                args, current, model, label, run_claude(args, current, model, label, prompt))
-            if outcome.limit_reset is not None:
-                stopped_by_limit = (current, outcome)
+            outcome = run_session(args, current, model, label, prompt)
+            if stopped(outcome):
+                stopped_by = (current, outcome)
                 break
             ok = outcome.ok
             fast = time.time() - began < QUICK_FAIL
@@ -767,7 +840,7 @@ def main() -> int:
             if reasons:
                 break
 
-        if stopped_by_limit:
+        if stopped_by:
             break
         ran += 1
         if split and not reasons:
@@ -811,14 +884,19 @@ def main() -> int:
 
     if troubled:
         report_unfinished(args, troubled, fixed, ran)
-    if stopped_by_limit:
-        task, outcome = stopped_by_limit
-        reset = dt.datetime.fromtimestamp(outcome.limit_reset).strftime("%Y-%m-%d %H:%M")
-        print(f"claude_loop: a usage limit stopped {task.id}'s session until {reset}; "
-              "its work is left uncommitted in the tree. Continue that session with "
-              f"`claude --resume {outcome.session_id}`, or rerun the loop, which "
-              "commits the tree on its own first and starts the task afresh.",
-              file=sys.stderr)
+    if stopped_by:
+        task, outcome = stopped_by
+        if outcome.outage:
+            cause = (f"a network outage of over {OUTAGE_MAX_WAIT // 3600} hours, or "
+                     f"more than {OUTAGE_RESUMES} outages, stopped {task.id}'s session")
+        else:
+            reset = dt.datetime.fromtimestamp(outcome.limit_reset).strftime("%Y-%m-%d %H:%M")
+            cause = f"a usage limit stopped {task.id}'s session until {reset}"
+        resume = (f"Continue that session with `claude --resume {outcome.session_id}`, or "
+                  "rerun" if outcome.session_id else "Rerun")
+        print(f"claude_loop: {cause}; its work is left uncommitted in the tree. {resume} "
+              "the loop, which commits the tree on its own first and starts the task "
+              "afresh.", file=sys.stderr)
         return 1
     return 1 if troubled else 0
 
