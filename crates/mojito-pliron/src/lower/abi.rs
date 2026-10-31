@@ -365,7 +365,7 @@ impl FnLowering<'_> {
             LowerTy::Scalar(scalar) => {
                 // A pending literal entering literal-typed storage converts
                 // exactly (reject-never-wrap) rather than at the slot kind.
-                let value = if matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+                let value = if matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
                     && let Some(literal) = self.pending_literals.get(&src.0).cloned()
                 {
                     let constant = self.exact_literal_storage(ctx, &literal, ty, src)?;

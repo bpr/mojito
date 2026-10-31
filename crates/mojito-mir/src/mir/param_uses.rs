@@ -304,8 +304,8 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
             TyKind::Bool
                 | TyKind::StringLiteral(_)
                 | TyKind::None
-                | TyKind::IntLiteral
-                | TyKind::FloatLiteral
+                | TyKind::IntLiteral(_)
+                | TyKind::FloatLiteral(_)
                 | TyKind::Dtype
                 | TyKind::Index
                 | TyKind::I1

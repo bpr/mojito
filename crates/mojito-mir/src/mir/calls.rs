@@ -67,13 +67,13 @@ pub(super) struct SetupReference {
 /// literal at a scalar, or at a multi-lane vector it splats to.
 pub(super) fn literal_materializes_to(found: &Ty, target: &Ty) -> bool {
     let scalar = match found.kind() {
-        TyKind::IntLiteral => {
+        TyKind::IntLiteral(_) => {
             target.is_int()
                 || target.is_uint()
                 || target.is_float64()
                 || mojito_types::types::is_scalar_simd(target)
         }
-        TyKind::FloatLiteral => {
+        TyKind::FloatLiteral(_) => {
             target.is_float64()
                 || mojito_types::types::scalar_simd_dtype(target)
                     .is_some_and(mojito_ast::ast::Dtype::is_float)
@@ -83,7 +83,10 @@ pub(super) fn literal_materializes_to(found: &Ty, target: &Ty) -> bool {
     scalar
         || mojito_types::types::simd_shape(target).is_some_and(|(dtype, width)| {
             width > 1
-                && matches!(found.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+                && matches!(
+                    found.kind(),
+                    TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
+                )
                 && mojito_types::types::splats_to(
                     found,
                     &mojito_types::types::SimdDtype::Known(dtype),

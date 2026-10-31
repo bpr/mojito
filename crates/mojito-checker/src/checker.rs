@@ -1856,8 +1856,10 @@ impl Checker {
             })
             .collect::<Vec<_>>();
         // Several converting constructors may accept the source; one whose
-        // parameter is exactly the source type wins, and failing that one
-        // whose parameter is the literal's default type, as in current Mojo
+        // parameter is exactly the source type wins (a literal's
+        // value-less type, which the pin's `IntLiteral[_]` binds, is
+        // exactly it), and failing that one whose parameter is the
+        // literal's default type, as in current Mojo
         // (a literal selects an `IntLiteral` constructor over an `Int` one).
         // Within each tier a constructor without parameters of its own beats
         // a generic one, as an equal-cost overload with fewer parameters
@@ -1870,7 +1872,8 @@ impl Checker {
                 .collect::<Vec<_>>()
         };
         let default_literal = mojito_types::types::default_literal(from);
-        let tiers = [Some(from), Some(&default_literal), None].map(exactly);
+        let value_less = mojito_types::types::value_less_literal(from);
+        let tiers = [Some(from), Some(&value_less), Some(&default_literal), None].map(exactly);
         let matches = tiers
             .iter()
             .flat_map(|tier| {
@@ -2094,11 +2097,12 @@ impl Checker {
                 mojito_types::types::BOOL_MASK_CONVERSION_MESSAGE,
             );
         }
-        let scalar_boundary = matches!(from.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
-            && (to.is_int()
-                || to.is_uint()
-                || to.is_float64()
-                || to.as_simd().is_some_and(|(_, width)| !width.is_inferred()));
+        let scalar_boundary =
+            matches!(from.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+                && (to.is_int()
+                    || to.is_uint()
+                    || to.is_float64()
+                    || to.as_simd().is_some_and(|(_, width)| !width.is_inferred()));
 
         if scalar_boundary {
             if let Some(value) = self.exact_literal_value(expression)

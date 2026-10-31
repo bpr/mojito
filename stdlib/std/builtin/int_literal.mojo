@@ -1,9 +1,9 @@
 # Upstream's `std/builtin/int_literal.mojo`, in part: the
 # `IntLiteral[value]` struct with its default initializer, `__int__`,
 # `__ceil__`, `__floor__`, `__trunc__`, `write_to`, `write_repr_to`, and
-# `__mlir_index__`. An explicit application (`IntLiteral[(4).value]()`) is
-# this struct; a literal `4` is still the compiler's value-less literal type
-# (R1779), and a bare `IntLiteral` parameter is a run-time register rather
+# `__mlir_index__`. A literal `4` is its application `IntLiteral[4]`, as
+# is an explicit one (`IntLiteral[(4).value]()`); a bare `IntLiteral`
+# parameter is a run-time register rather
 # than upstream's per-call `IntLiteral[_]` (R1780). The operator
 # dunders, `__bool__` (which reads `self != 0`), and `__ceildiv__` are not
 # ported (R1753). `@__nonmaterializable(Int)` is not read (R1651). The

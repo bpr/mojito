@@ -483,7 +483,7 @@ fn select_result(
                 .to_string(),
         ));
     }
-    if matches!(case.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
+    if matches!(case.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) {
         return Err(PopTypeError::Subset(
             "over literal cases is outside the subset: the pin types each literal value apart"
                 .to_string(),

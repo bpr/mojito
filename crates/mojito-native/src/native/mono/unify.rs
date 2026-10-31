@@ -232,7 +232,7 @@ pub(super) fn apply_defaults(
                 // A literal default binds at its declared type, as a supplied
                 // argument's constant register reads.
                 let value = match eval_ct(default, bindings)? {
-                    CtValue::IntLiteral(literal) if **ty != TyKind::IntLiteral => literal
+                    CtValue::IntLiteral(literal) if !ty.is_int_literal() => literal
                         .to_i64()
                         .map_or(CtValue::IntLiteral(literal), CtValue::Int),
                     value => value,
@@ -347,7 +347,8 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 }
             }
         }
-        // A literal's text binds a `StringLiteral[v]` pattern's binder.
+        // A literal's text binds a `StringLiteral[v]` pattern's binder, and
+        // its value an `IntLiteral[v]` or `FloatLiteral[v]` one's.
         TyKind::StringLiteral(Some(slot))
             if let CtValue::Expr(expr) = slot.as_ref()
                 && let Some(binder) = expr.as_decl_ref()
@@ -355,12 +356,21 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         {
             bind_value(binder, text, bindings)
         }
+        TyKind::IntLiteral(Some(slot)) | TyKind::FloatLiteral(Some(slot))
+            if let CtValue::Expr(expr) = slot.as_ref()
+                && let Some(binder) = expr.as_decl_ref()
+                && let TyKind::IntLiteral(Some(value)) | TyKind::FloatLiteral(Some(value)) =
+                    actual.kind()
+                && pattern.is_int_literal() == actual.is_int_literal() =>
+        {
+            bind_value(binder, value, bindings)
+        }
         // A literal-typed register materializes into whatever concrete
         // storage the checker admitted (`MaterializeLiteral` converts the
         // value at the boundary); the pattern constrains nothing here.
         _ if matches!(
             actual.kind(),
-            TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral(_)
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::StringLiteral(_)
         ) && pattern != actual =>
         {
             Ok(())
@@ -700,7 +710,7 @@ pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> 
     let literal = |ty: &Ty| {
         matches!(
             ty.kind(),
-            TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral(_)
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::StringLiteral(_)
         )
     };
     match bindings.types.get(binder) {

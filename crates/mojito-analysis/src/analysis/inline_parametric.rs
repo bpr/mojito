@@ -693,13 +693,14 @@ impl Literal {
     fn of(default: &CheckedConst, ty: &Ty) -> Option<Self> {
         let scalar = is_scalar_simd(ty);
         let (k, own) = match (default, ty.kind()) {
-            (CheckedConst::Int(value), TyKind::IntLiteral) => {
+            (CheckedConst::Int(value), TyKind::IntLiteral(_)) => {
                 (Const::IntLiteral(value.clone()), None)
             }
-            (CheckedConst::Int(value), _) if scalar => {
-                (Const::IntLiteral(value.clone()), Some(TyKind::IntLiteral))
-            }
-            (CheckedConst::Float(value), TyKind::FloatLiteral) => {
+            (CheckedConst::Int(value), _) if scalar => (
+                Const::IntLiteral(value.clone()),
+                Some(Ty::int_literal_of(value)),
+            ),
+            (CheckedConst::Float(value), TyKind::FloatLiteral(_)) => {
                 (Const::FloatLiteral(value.clone()), None)
             }
             (CheckedConst::Float(value), _)
@@ -707,7 +708,7 @@ impl Literal {
             {
                 (
                     Const::FloatLiteral(value.clone()),
-                    Some(TyKind::FloatLiteral),
+                    Some(Ty::float_literal_of(value)),
                 )
             }
             (CheckedConst::Bool(value), TyKind::Bool) => (Const::Bool(*value), None),
@@ -721,7 +722,7 @@ impl Literal {
         Some(match own {
             Some(own) => Self {
                 k,
-                ty: own.into(),
+                ty: own,
                 materialized: Some(ty.clone()),
             },
             None => Self {

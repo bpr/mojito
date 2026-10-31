@@ -950,7 +950,7 @@ impl Checker {
                 self.parameter_value_ty(operand).is_some_and(|ty| {
                     ty.is_int()
                         || ty.is_uint()
-                        || matches!(ty.kind(), TyKind::Bool | TyKind::IntLiteral)
+                        || matches!(ty.kind(), TyKind::Bool | TyKind::IntLiteral(_))
                 })
             }
             ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Invert | PrefixOp::Pos, inner) => {
@@ -1139,7 +1139,7 @@ impl Checker {
                 |binder| ConstraintOperand::Param(binder.clone()),
             ),
         };
-        let integer = ty.is_int() || ty.is_uint() || matches!(ty.kind(), TyKind::IntLiteral);
+        let integer = ty.is_int() || ty.is_uint() || matches!(ty.kind(), TyKind::IntLiteral(_));
         let constraint = match ty.kind() {
             TyKind::Bool => {
                 structural()
@@ -1453,10 +1453,10 @@ impl Checker {
         }
         let ty = ty.ok()?;
         let ty = match ty.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => Ty::int(),
+            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => Ty::int(),
             kind if kind.is_uint() => Ty::uint(),
             TyKind::Bool => Ty::bool(),
-            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => Ty::float64(),
+            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => Ty::float64(),
             // A struct-, sized-scalar-, or attribute-valued call is an
             // application the elaborator below MIR runs and materializes
             // (an attribute only where an op's attribute takes it), and so
@@ -1627,7 +1627,10 @@ impl Checker {
                             && function.refined_self.is_none()
                             && function.collector.is_none()
                             && matches!(function.params.as_slice(),
-                                [param] if param.ty.resolved(Some(ty)) == Some(source))
+                            [param] if param.ty.resolved(Some(ty)).is_some_and(|param| {
+                                *param == *source
+                                    || *param == mojito_types::types::value_less_literal(source)
+                            }))
                     })
                 }) else {
                     return Ok(None);
@@ -3023,7 +3026,13 @@ impl Checker {
                 .materialize_as(ty)
                 .and_then(|closed| self.param_context.constant(closed).ok()),
         };
-        if let Some(argument) = argument.filter(|argument| argument.meta().as_value() == Some(ty)) {
+        // A literal constant's value type is the value-less literal, which
+        // the literal type carrying its value names (R1785).
+        if let Some(argument) = argument.filter(|argument| {
+            argument.meta().as_value().is_some_and(|found| {
+                found == ty || *found == mojito_types::types::value_less_literal(ty)
+            })
+        }) {
             return Some(argument);
         }
         if let Some(splat) = self.symbolic_literal_splat(&value, ty) {
@@ -3249,8 +3258,8 @@ impl Checker {
                 || matches!(
                     ty.kind(),
                     TyKind::Bool
-                        | TyKind::IntLiteral
-                        | TyKind::FloatLiteral
+                        | TyKind::IntLiteral(_)
+                        | TyKind::FloatLiteral(_)
                         | TyKind::StringLiteral(_)
                 ))
                 || matches!(ty.kind(), TyKind::Struct(name, args)
@@ -5677,8 +5686,8 @@ fn parameter_value_type(ty: &Ty) -> bool {
                 | TyKind::None
                 | TyKind::Index
                 | TyKind::I1
-                | TyKind::IntLiteral
-                | TyKind::FloatLiteral
+                | TyKind::IntLiteral(_)
+                | TyKind::FloatLiteral(_)
                 | TyKind::StringLiteral(_)
                 | TyKind::Dtype
                 | TyKind::Struct(..)
@@ -5894,8 +5903,8 @@ fn template_name(name: &str) -> &str {
 fn materialized_collection_spelling(ty: &Ty) -> String {
     fn scalar(element: &Ty) -> String {
         match element.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => "Int".to_string(),
-            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => {
+            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => "Int".to_string(),
+            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
                 "Float64".to_string()
             }
             TyKind::StringLiteral(_) => "String".to_string(),

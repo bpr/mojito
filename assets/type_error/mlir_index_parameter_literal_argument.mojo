@@ -1,6 +1,6 @@
 # An integer literal is not an `index`: a parameter of type
 # `__mlir_type.index` takes only an `index` value, as at the pin.
-# expect: type mismatch for value parameter 'n': expected __mlir_type.index, found Int
+# expect: type mismatch for value parameter 'n': expected __mlir_type.index, found IntLiteral[3]
 def f[n: __mlir_type.index]():
     pass
 

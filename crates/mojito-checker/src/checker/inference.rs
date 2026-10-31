@@ -488,16 +488,15 @@ impl Checker {
             .infer_impl(expr)
             .and_then(|ty| self.apply_rebind_target(expr, ty))
             .map(|ty| self.read_through_call_reference(expr, ty))
-            .and_then(|ty| self.reject_runtime_deferred_call(expr, ty));
+            .and_then(|ty| self.reject_runtime_deferred_call(expr, ty))
+            .map(|ty| self.carry_literal_value(expr, ty));
         if let Ok(ty) = &result {
             if is_scalar_simd(ty)
-                && let Some(value) = self.exact_literal_value(expr)
+                && let Some(literal_ty) = self
+                    .exact_literal_value(expr)
+                    .as_ref()
+                    .and_then(Ty::of_literal_value)
             {
-                let literal_ty = match value {
-                    CtValue::IntLiteral(_) => Ty::int_literal(),
-                    CtValue::FloatLiteral(_) => Ty::float_literal(),
-                    _ => unreachable!("exact_literal_value only returns literal values"),
-                };
                 self.record_literal_materializations(expr, &literal_ty, ty)?;
             }
             self.record_at(expr.source_span()).ty = Some(ty.clone());
@@ -935,8 +934,8 @@ impl Checker {
             return read;
         }
         match &expr.kind {
-            ExprKind::Int(_) => Ok(Ty::int_literal()),
-            ExprKind::Float(_) => Ok(Ty::float_literal()),
+            ExprKind::Int(value) => Ok(Ty::int_literal_of(value)),
+            ExprKind::Float(value) => Ok(Ty::float_literal_of(value)),
             ExprKind::Bool(_) | ExprKind::IsRunInComptimeInterpreter => Ok(Ty::bool()),
             ExprKind::Str(text) => Ok(Ty::string_literal_of(text)),
             ExprKind::None => Ok(Ty::none()),
@@ -2039,6 +2038,25 @@ impl Checker {
         })())
     }
 
+    /// The type of `expr` once a value-less numeric literal type `ty`
+    /// carries the value the expression folds to (`N + 2.5` over
+    /// `comptime N = 4` is `FloatLiteral[6.5]`), as upstream's operator
+    /// dunders over `#pop<int_literal_bin<…>>` type it. The checker's
+    /// evaluator stands in for those dunders until R1753 ports them.
+    fn carry_literal_value(&self, expr: &Expr, ty: Ty) -> Ty {
+        if !matches!(
+            ty.kind(),
+            TyKind::IntLiteral(None) | TyKind::FloatLiteral(None)
+        ) {
+            return ty;
+        }
+        self.exact_literal_value(expr)
+            .as_ref()
+            .and_then(Ty::of_literal_value)
+            .filter(|carried| carried.is_int_literal() == ty.is_int_literal())
+            .unwrap_or(ty)
+    }
+
     /// `Variant.set` implicitly destroys the previous payload under a
     /// statically unknown tag, so every alternative must be `Deinitable`
     /// (§6's conditional lifecycle contract for in-place replacement).
@@ -2608,12 +2626,14 @@ impl Checker {
 
     /// The element type a tuple infers for one argument: its own type, with
     /// a string literal materialized to the nominal `String`, as upstream's
-    /// `Tuple.__init__(var *args: *Ts)` infers `Ts`.
+    /// `Tuple.__init__(var *args: *Ts)` infers `Ts`. A numeric literal is
+    /// its value-less literal type, which materializes where the tuple is
+    /// bound, where upstream's deduction materializes it at once (R1786).
     pub(super) fn tuple_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
         let ty = self.infer(element)?;
         match ty.kind() {
             TyKind::StringLiteral(_) => self.nominal_string_wrap(element.source_span()),
-            _ => Ok(ty),
+            _ => Ok(mojito_types::types::value_less_literal(&ty)),
         }
     }
 

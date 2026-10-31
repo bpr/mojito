@@ -344,7 +344,7 @@ pub fn is_c_string_slice_struct(name: &str) -> bool {
 fn is_integer_scalar(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::INT | TyKind::UINT | TyKind::Bool | TyKind::IntLiteral
+        TyKind::INT | TyKind::UINT | TyKind::Bool | TyKind::IntLiteral(_)
     ) || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
 }
 

@@ -16,6 +16,7 @@ use crate::param_expr::{
     ParamRef,
 };
 use mojito_ast::ast::{ArgConvention, Dtype};
+use mojito_common::literal::{FloatLiteral, IntLiteral};
 
 /// A loan-transfer effect inferred from a callable's body: an accepted store
 /// into an outliving destination (`self` or a parameter) whose loan roots at
@@ -595,11 +596,23 @@ pub enum TyKind {
     None,
     /// Bottom type: no runtime value can inhabit it.
     Never,
-    /// The flexible type of an integer literal: coerces to `Int`, `UInt`, or
-    /// `Float64` (materializing to `Int` if nothing forces a choice).
-    IntLiteral,
-    /// The flexible type of a float literal: coerces to `Float64`.
-    FloatLiteral,
+    /// An integer literal's type, upstream's `IntLiteral[value]`: the
+    /// application of the struct `std.builtin.int_literal` declares, which
+    /// the [`Ty::new`] bridge holds as this variant. It coerces to `Int`,
+    /// `UInt`, or `Float64`, materializing to `Int` if nothing forces a
+    /// choice.
+    ///
+    /// Its slot is the struct's `value` argument, a
+    /// [`CtValue::PopIntLiteral`] once the value is known or a
+    /// [`CtValue::Expr`] of type `!pop.int_literal` while it is symbolic.
+    /// `None` is the value-less literal upstream has no type for: the join
+    /// of differently valued literals, a bare `IntLiteral` parameter, or the
+    /// run-time register. R1780 and R1785 retire it.
+    IntLiteral(Option<Box<CtValue>>),
+    /// A float literal's type, upstream's `FloatLiteral[value]`, held as
+    /// [`TyKind::IntLiteral`] is over a `!pop.float_literal` slot. It
+    /// coerces to `Float64`.
+    FloatLiteral(Option<Box<CtValue>>),
     /// A direct initializer-inference hole written `_`. It is legal only in a
     /// type application whose constructor participates in literal inference and
     /// must be solved before checked HIR is produced.
@@ -848,6 +861,8 @@ macro_rules! dataless_types {
                 match kind {
                     $(TyKind::$variant => Some(Self::$name()),)*
                     TyKind::StringLiteral(None) => Some(Self::string_literal()),
+                    TyKind::IntLiteral(None) => Some(Self::int_literal()),
+                    TyKind::FloatLiteral(None) => Some(Self::float_literal()),
                     TyKind::INT => Some(Self::int()),
                     TyKind::UINT => Some(Self::uint()),
                     TyKind::FLOAT64 => Some(Self::float64()),
@@ -876,6 +891,10 @@ macro_rules! shared_scalar_types {
 shared_scalar_types! {
     /// The value-less `StringLiteral` ([`TyKind::StringLiteral(_)`]).
     string_literal => STRING_LITERAL,
+    /// The value-less `IntLiteral` ([`TyKind::IntLiteral(_)`]).
+    int_literal => INT_LITERAL,
+    /// The value-less `FloatLiteral` ([`TyKind::FloatLiteral(_)`]).
+    float_literal => FLOAT_LITERAL,
     /// `Int`, `Scalar[DType.int]`.
     int => INT,
     /// `UInt`, `Scalar[DType.uint]`.
@@ -891,10 +910,6 @@ dataless_types! {
     none => None,
     /// `Never`.
     never => Never,
-    /// An integer literal's flexible type.
-    int_literal => IntLiteral,
-    /// A float literal's flexible type.
-    float_literal => FloatLiteral,
     /// An inference hole, `_`.
     infer => Infer,
     /// The `DType` value-parameter type.
@@ -928,6 +943,46 @@ impl Ty {
         self.kind().is_string_literal()
     }
 
+    /// The type of the integer literal `value`, `IntLiteral[value]`.
+    pub fn int_literal_of(value: &IntLiteral) -> Self {
+        Self::new(TyKind::IntLiteral(Some(Box::new(CtValue::PopIntLiteral(
+            value.clone(),
+        )))))
+    }
+
+    /// The type of the float literal `value`, `FloatLiteral[value]`.
+    pub fn float_literal_of(value: &FloatLiteral) -> Self {
+        Self::new(TyKind::FloatLiteral(Some(Box::new(
+            CtValue::PopFloatLiteral(value.clone()),
+        ))))
+    }
+
+    /// The type of the literal compile-time value `value`, the
+    /// `IntLiteral[v]` or `FloatLiteral[v]` it carries, or `None` for any
+    /// other value.
+    pub fn of_literal_value(value: &CtValue) -> Option<Self> {
+        match value {
+            CtValue::IntLiteral(value) => Some(Self::int_literal_of(value)),
+            CtValue::FloatLiteral(value) => Some(Self::float_literal_of(value)),
+            _ => None,
+        }
+    }
+
+    /// Whether this is an integer literal's type, value-less or not.
+    pub fn is_int_literal(&self) -> bool {
+        self.kind().is_int_literal()
+    }
+
+    /// Whether this is a float literal's type, value-less or not.
+    pub fn is_float_literal(&self) -> bool {
+        self.kind().is_float_literal()
+    }
+
+    /// Whether this is a numeric literal's type, value-less or not.
+    pub fn is_numeric_literal(&self) -> bool {
+        self.kind().is_numeric_literal()
+    }
+
     /// The type of variant `kind`. A variant that carries no data shares one
     /// node per compilation.
     ///
@@ -936,11 +991,15 @@ impl Ty {
     /// `Self` and every substitution of it keep one representation until
     /// R1557 makes the struct the only one. A `StringLiteral[value]`
     /// application is likewise a [`TyKind::StringLiteral(_)`]
-    /// ([`bridged_string_literal`]) until R1660 deletes that bridge.
+    /// ([`bridged_string_literal`]) until R1660 deletes that bridge, and an
+    /// `IntLiteral[value]` or `FloatLiteral[value]` one a
+    /// [`TyKind::IntLiteral(_)`] or [`TyKind::FloatLiteral(_)`]
+    /// ([`bridged_numeric_literal`]) until R1785 deletes that one.
     pub fn new(kind: TyKind) -> Self {
         Self::dataless(&kind)
             .or_else(|| bridged_simd(&kind))
             .or_else(|| bridged_string_literal(&kind))
+            .or_else(|| bridged_numeric_literal(&kind))
             .unwrap_or_else(|| Self(Arc::new(TyNode::new(kind))))
     }
 
@@ -1045,6 +1104,10 @@ impl TyKind {
     };
     /// The value-less `StringLiteral` ([`TyKind::StringLiteral(_)`]).
     pub const STRING_LITERAL: &'static Self = &Self::StringLiteral(None);
+    /// The value-less `IntLiteral` ([`TyKind::IntLiteral(_)`]).
+    pub const INT_LITERAL: &'static Self = &Self::IntLiteral(None);
+    /// The value-less `FloatLiteral` ([`TyKind::FloatLiteral(_)`]).
+    pub const FLOAT_LITERAL: &'static Self = &Self::FloatLiteral(None);
 
     /// A `SIMD[dtype, width]` vector over slots as given: ones read off
     /// another vector or a MIR instruction, already canonical. New slots go
@@ -1107,6 +1170,43 @@ impl TyKind {
     /// Whether this is a string literal's type, value-less or not.
     pub const fn is_string_literal(&self) -> bool {
         matches!(self, Self::StringLiteral(_))
+    }
+
+    /// Whether this is an integer literal's type, value-less or not.
+    pub const fn is_int_literal(&self) -> bool {
+        matches!(self, Self::IntLiteral(_))
+    }
+
+    /// Whether this is a float literal's type, value-less or not.
+    pub const fn is_float_literal(&self) -> bool {
+        matches!(self, Self::FloatLiteral(_))
+    }
+
+    /// Whether this is a numeric literal's type, value-less or not.
+    pub const fn is_numeric_literal(&self) -> bool {
+        matches!(self, Self::IntLiteral(_) | Self::FloatLiteral(_))
+    }
+
+    /// The value of an integer literal whose type carries it.
+    pub fn int_literal_value(&self) -> Option<&IntLiteral> {
+        match self {
+            Self::IntLiteral(Some(value)) => match value.as_ref() {
+                CtValue::PopIntLiteral(value) => Some(value),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The value of a float literal whose type carries it.
+    pub fn float_literal_value(&self) -> Option<&FloatLiteral> {
+        match self {
+            Self::FloatLiteral(Some(value)) => match value.as_ref() {
+                CtValue::PopFloatLiteral(value) => Some(value),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// The text of a string literal whose value is known.
@@ -1379,6 +1479,14 @@ pub const SIMD_TYPE_NAME: &str = "SIMD";
 /// The name `std.builtin.string_literal` declares a string literal's struct
 /// under; its applications are [`TyKind::StringLiteral(_)`]s.
 pub const STRING_LITERAL_TYPE_NAME: &str = "StringLiteral";
+
+/// The name `std.builtin.int_literal` declares an integer literal's struct
+/// under; its applications are [`TyKind::IntLiteral(_)`]s.
+pub const INT_LITERAL_TYPE_NAME: &str = "IntLiteral";
+
+/// The name `std.builtin.float_literal` declares a float literal's struct
+/// under; its applications are [`TyKind::FloatLiteral(_)`]s.
+pub const FLOAT_LITERAL_TYPE_NAME: &str = "FloatLiteral";
 
 /// The bound of a type binder whose type is upstream's `!kgen.type`
 /// ([`TyKind::TypeType`]), the name the pin prints for it: every type
@@ -1885,8 +1993,8 @@ pub fn unqualified_value_argument(value: &CtValue) -> String {
 /// that decodes the baked arguments at every nesting level.
 pub fn unqualified_type_name(ty: &Ty) -> String {
     match ty.kind() {
-        TyKind::IntLiteral => "SIMD[DType.int, 1]".to_string(),
-        TyKind::FloatLiteral => "SIMD[DType.float64, 1]".to_string(),
+        TyKind::IntLiteral(_) => "SIMD[DType.int, 1]".to_string(),
+        TyKind::FloatLiteral(_) => "SIMD[DType.float64, 1]".to_string(),
         TyKind::Bool => "Bool".to_string(),
         TyKind::Simd { dtype, width } => format!("SIMD[{dtype}, {width}]"),
         TyKind::StringLiteral(_) => "StringLiteral".to_string(),
@@ -2863,11 +2971,18 @@ impl fmt::Display for Ty {
 impl fmt::Display for TyKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::IntLiteral => write!(f, "Int"),
+            Self::IntLiteral(None) => write!(f, "Int"),
+            Self::IntLiteral(Some(value)) => write!(f, "IntLiteral[{value}]"),
             Self::Bool => write!(f, "Bool"),
             Self::StringLiteral(None) => write!(f, "StringLiteral"),
             Self::StringLiteral(Some(value)) => write!(f, "StringLiteral[{value}]"),
-            Self::FloatLiteral => write!(f, "Float64"),
+            Self::FloatLiteral(None) => write!(f, "Float64"),
+            Self::FloatLiteral(Some(value)) => match value.as_ref() {
+                CtValue::PopFloatLiteral(value) => {
+                    write!(f, "FloatLiteral[{}]", value.pop_attribute_spelling())
+                }
+                value => write!(f, "FloatLiteral[{value}]"),
+            },
             Self::Infer => write!(f, "_"),
             Self::Dtype => write!(f, "DType"),
             Self::None => write!(f, "None"),
@@ -3403,8 +3518,8 @@ pub fn hash_leaf_ty(ty: &Ty) -> Ty {
 /// `Scalar[DType.bool]` is the vector).
 pub const fn simd_shape(ty: &TyKind) -> Option<(Dtype, i64)> {
     Some(match ty {
-        TyKind::IntLiteral => (Dtype::Int, 1),
-        TyKind::FloatLiteral => (Dtype::Float64, 1),
+        TyKind::IntLiteral(_) => (Dtype::Int, 1),
+        TyKind::FloatLiteral(_) => (Dtype::Float64, 1),
         TyKind::Simd {
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(width),
@@ -3445,9 +3560,9 @@ pub fn simd_struct_arguments(ty: &TyKind) -> Option<Vec<TyArg>> {
 ///
 /// A struct answers its own, a [`TyKind::Simd`] answers `SIMD`'s
 /// ([`simd_struct_arguments`]), and a string literal whose value the type
-/// carries answers `StringLiteral[value]`. A numeric literal's flexible
-/// type and the value-less `StringLiteral` are no instance: they
-/// materialize only where a conversion asks for it.
+/// carries answers `StringLiteral[value]`, as a numeric literal's answers
+/// `IntLiteral[value]` or `FloatLiteral[value]`. A value-less literal type
+/// is no instance: it materializes only where a conversion asks for it.
 ///
 /// Nominal identity is read through this, never by matching
 /// `TyKind::Struct`, while the [`Ty::new`] bridge holds `SIMD` and
@@ -3461,6 +3576,14 @@ pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
         )),
         TyKind::StringLiteral(Some(value)) => Some((
             STRING_LITERAL_TYPE_NAME,
+            std::borrow::Cow::Owned(vec![TyArg::Val(value.as_ref().clone())]),
+        )),
+        TyKind::IntLiteral(Some(value)) => Some((
+            INT_LITERAL_TYPE_NAME,
+            std::borrow::Cow::Owned(vec![TyArg::Val(value.as_ref().clone())]),
+        )),
+        TyKind::FloatLiteral(Some(value)) => Some((
+            FLOAT_LITERAL_TYPE_NAME,
             std::borrow::Cow::Owned(vec![TyArg::Val(value.as_ref().clone())]),
         )),
         _ => None,
@@ -3530,13 +3653,25 @@ pub const fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
     }
 }
 
+/// The value-less literal type of a literal type whose type carries its
+/// value (`IntLiteral[4]` is an `IntLiteral`, the pin's `IntLiteral[_]`);
+/// any other type as it is.
+pub fn value_less_literal(ty: &Ty) -> Ty {
+    match ty.kind() {
+        TyKind::IntLiteral(Some(_)) => Ty::int_literal(),
+        TyKind::FloatLiteral(Some(_)) => Ty::float_literal(),
+        TyKind::StringLiteral(Some(_)) => Ty::string_literal(),
+        _ => ty.clone(),
+    }
+}
+
 /// The runtime type an exact literal materializes to when no context selects
 /// another (`IntLiteral` → `Int`, `FloatLiteral` → `Float64`), applied through
 /// struct arguments, packs, and variants.
 pub fn default_literal(ty: &Ty) -> Ty {
     match ty.kind() {
-        TyKind::IntLiteral => Ty::int(),
-        TyKind::FloatLiteral => Ty::float64(),
+        TyKind::IntLiteral(_) => Ty::int(),
+        TyKind::FloatLiteral(_) => Ty::float64(),
         TyKind::Struct(..) if ty.is_closed() => ty.clone(),
         TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
@@ -3595,6 +3730,25 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         // A literal whose type carries its text is still the compiler's
         // value-less string (R1657).
         (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(None)) => true,
+        // A numeric literal of a known value is one of the value-less
+        // literals the join of different values and a bare parameter
+        // still are (R1780). Two carried values agree only when equal,
+        // and an integer carries over to the float its
+        // `#pop<int_to_float_literal>` is, upstream's
+        // `@implicit FloatLiteral.__init__(IntLiteral[_])`.
+        (TyKind::IntLiteral(Some(_)), TyKind::IntLiteral(None))
+        | (TyKind::FloatLiteral(Some(_)) | TyKind::IntLiteral(_), TyKind::FloatLiteral(None)) => {
+            true
+        }
+        (TyKind::IntLiteral(Some(_)), TyKind::FloatLiteral(Some(_))) => {
+            match (
+                from.kind().int_literal_value(),
+                to.kind().float_literal_value(),
+            ) {
+                (Some(int), Some(float)) => FloatLiteral::from_int(int) == *float,
+                _ => false,
+            }
+        }
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
@@ -3684,7 +3838,6 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                     .all(|(from, to)| from == to)
                 && from_ret == to_ret
         }
-        (TyKind::IntLiteral, TyKind::FloatLiteral) => true,
         (
             _,
             TyKind::Simd {
@@ -3705,7 +3858,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         // Upstream's `@implicit SIMD.__init__(IntLiteral)` and
         // `(FloatLiteral)` splat an exact literal across every lane, a
         // symbolic lane count included.
-        (TyKind::IntLiteral | TyKind::FloatLiteral, TyKind::Simd { dtype, width })
+        (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), TyKind::Simd { dtype, width })
             if !width.is_inferred() && splats_to(from, dtype) =>
         {
             true
@@ -3743,9 +3896,9 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
 /// scalar never does, and a width-one vector of the same expression does.
 pub fn splats_to(ty: &TyKind, dtype: &SimdDtype) -> bool {
     match (ty, dtype) {
-        (TyKind::IntLiteral, SimdDtype::Known(dtype)) => *dtype != Dtype::Bool,
-        (TyKind::FloatLiteral, SimdDtype::Known(dtype)) => dtype.is_float(),
-        (TyKind::IntLiteral | TyKind::FloatLiteral, SimdDtype::Expr(_)) => true,
+        (TyKind::IntLiteral(_), SimdDtype::Known(dtype)) => *dtype != Dtype::Bool,
+        (TyKind::FloatLiteral(_), SimdDtype::Known(dtype)) => dtype.is_float(),
+        (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), SimdDtype::Expr(_)) => true,
         (TyKind::Bool, SimdDtype::Known(dtype)) => *dtype == Dtype::Bool,
         (
             TyKind::Simd {
@@ -3770,7 +3923,10 @@ pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
         to.kind(),
         TyKind::Simd { dtype, width }
             if width.known().is_none_or(|width| width > 1)
-                && !matches!(from.kind(), TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral)
+                && !matches!(
+                    from.kind(),
+                    TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
+                )
                 && splats_to(from, dtype)
     )
 }
@@ -3899,8 +4055,8 @@ pub const fn copy_is_identity(ty: &TyKind) -> bool {
             | TyKind::Dtype
             | TyKind::Index
             | TyKind::I1
-            | TyKind::IntLiteral
-            | TyKind::FloatLiteral
+            | TyKind::IntLiteral(_)
+            | TyKind::FloatLiteral(_)
             | TyKind::None
             | TyKind::Pointer { .. }
             | TyKind::KgenPointer(_)
@@ -4577,6 +4733,8 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
         | TyKind::Simd { .. }
         | TyKind::KgenSimd { .. }
         | TyKind::StringLiteral(Some(_))
+        | TyKind::IntLiteral(Some(_))
+        | TyKind::FloatLiteral(Some(_))
             if is_symbolic(ty) =>
         {
             replace_parameters(&ParamContext::detached(), ty, &type_bindings(subst), 0)
@@ -4924,12 +5082,20 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             STRING_LITERAL_TYPE_NAME.to_string(),
             vec![TyArg::Val(rewrite_value(value, rewrite)?)],
         )),
+        TyKind::IntLiteral(Some(value)) => Ty::new(TyKind::Struct(
+            INT_LITERAL_TYPE_NAME.to_string(),
+            vec![TyArg::Val(rewrite_value(value, rewrite)?)],
+        )),
+        TyKind::FloatLiteral(Some(value)) => Ty::new(TyKind::Struct(
+            FLOAT_LITERAL_TYPE_NAME.to_string(),
+            vec![TyArg::Val(rewrite_value(value, rewrite)?)],
+        )),
         TyKind::Bool
         | TyKind::StringLiteral(None)
         | TyKind::None
         | TyKind::Never
-        | TyKind::IntLiteral
-        | TyKind::FloatLiteral
+        | TyKind::IntLiteral(None)
+        | TyKind::FloatLiteral(None)
         | TyKind::Infer
         | TyKind::Dtype
         | TyKind::AnyTrait(_)
@@ -5524,7 +5690,9 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Tuple(types)
         | TyKind::RuntimePack(types)
         | TyKind::Variant(types) => types.iter().any(is_symbolic),
-        TyKind::StringLiteral(Some(value)) => ct_value_is_symbolic(value),
+        TyKind::StringLiteral(Some(value))
+        | TyKind::IntLiteral(Some(value))
+        | TyKind::FloatLiteral(Some(value)) => ct_value_is_symbolic(value),
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
@@ -5551,8 +5719,8 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::StringLiteral(None)
         | TyKind::None
         | TyKind::Never
-        | TyKind::IntLiteral
-        | TyKind::FloatLiteral
+        | TyKind::IntLiteral(None)
+        | TyKind::FloatLiteral(None)
         | TyKind::Error => false,
     }
 }
@@ -5780,7 +5948,9 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
                 || mentions(element, predicate)
         }
         TyKind::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
-        TyKind::StringLiteral(Some(value)) => match value.as_ref() {
+        TyKind::StringLiteral(Some(value))
+        | TyKind::IntLiteral(Some(value))
+        | TyKind::FloatLiteral(Some(value)) => match value.as_ref() {
             CtValue::Expr(expr) => expr_mentions(expr, predicate),
             _ => false,
         },
@@ -6149,7 +6319,11 @@ fn expand_packs<S: std::hash::BuildHasher>(
         }
         // A lane dtype or width naming a folded value binder closes and
         // re-canonicalizes (`Scalar[dt]` at `dt = DType.int` is `Int`).
-        TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral(Some(_))
+        TyKind::Simd { .. }
+        | TyKind::KgenSimd { .. }
+        | TyKind::StringLiteral(Some(_))
+        | TyKind::IntLiteral(Some(_))
+        | TyKind::FloatLiteral(Some(_))
             if !values.is_empty() && is_symbolic(ty) =>
         {
             let context = ParamContext::detached();
@@ -6412,6 +6586,50 @@ fn bridged_string_literal(kind: &TyKind) -> Option<Ty> {
     Some(Ty(Arc::new(TyNode::new(TyKind::StringLiteral(Some(
         Box::new(value),
     ))))))
+}
+
+/// The [`TyKind::IntLiteral(_)`] or [`TyKind::FloatLiteral(_)`] an
+/// `IntLiteral[value]` or `FloatLiteral[value]` application is: a known
+/// `#pop.int_literal`/`#pop.float_literal` attribute, or a symbolic
+/// expression of that attribute's type. Any other shape (the bare
+/// template, an erased or deferred argument) stays the struct.
+fn bridged_numeric_literal(kind: &TyKind) -> Option<Ty> {
+    let TyKind::Struct(name, args) = kind else {
+        return None;
+    };
+    let [TyArg::Val(value)] = args.as_slice() else {
+        return None;
+    };
+    let float = match name.as_str() {
+        INT_LITERAL_TYPE_NAME => false,
+        FLOAT_LITERAL_TYPE_NAME => true,
+        _ => return None,
+    };
+    let known = |value: &CtValue| {
+        matches!(
+            (value, float),
+            (CtValue::PopIntLiteral(_), false) | (CtValue::PopFloatLiteral(_), true)
+        )
+    };
+    let value = match value {
+        value if known(value) => value.clone(),
+        CtValue::Expr(expr) => match expr.as_constant() {
+            Some(value) if known(value) => value.clone(),
+            _ => match (expr.meta().as_value().map(Ty::kind), float) {
+                (Some(TyKind::PopIntLiteral), false) | (Some(TyKind::PopFloatLiteral), true) => {
+                    value.clone()
+                }
+                _ => return None,
+            },
+        },
+        _ => return None,
+    };
+    let value = Some(Box::new(value));
+    Some(Ty(Arc::new(TyNode::new(if float {
+        TyKind::FloatLiteral(value)
+    } else {
+        TyKind::IntLiteral(value)
+    }))))
 }
 
 /// The pieces of an MLIR bracket spelling, each text piece through `piece`
@@ -7135,5 +7353,42 @@ mod value_pack_decl_tests {
     #[test]
     fn a_value_pack_displays_its_element_type() {
         assert_eq!(Decls(vec![value_pack()]).to_string(), "[*vs: Int]");
+    }
+}
+
+#[cfg(test)]
+mod numeric_literal_bridge_tests {
+    use super::*;
+
+    fn application(name: &str, value: CtValue) -> Ty {
+        Ty::new(TyKind::Struct(name.to_string(), vec![TyArg::Val(value)]))
+    }
+
+    #[test]
+    fn an_int_literal_application_is_the_literal_type_carrying_its_value() {
+        let four = application(INT_LITERAL_TYPE_NAME, CtValue::PopIntLiteral(4.into()));
+        assert_eq!(four, Ty::int_literal_of(&4.into()));
+        let (name, args) = nominal_parts(&four).expect("a carried literal is an instance");
+        let [TyArg::Val(value)] = args.as_ref() else {
+            panic!("`IntLiteral` takes one value argument");
+        };
+        assert_eq!(application(name, value.clone()), four);
+        assert!(!coerces(&four, &Ty::int_literal_of(&7.into())));
+        assert!(coerces(&four, &Ty::int_literal()));
+        assert!(coerces(
+            &four,
+            &Ty::float_literal_of(&FloatLiteral::from_int(&4.into()))
+        ));
+        assert_eq!(four.to_string(), "IntLiteral[4]");
+    }
+
+    #[test]
+    fn a_float_literal_type_spells_its_value_as_the_pin() {
+        let tenth = FloatLiteral::parse_decimal("0.1").expect("a decimal literal");
+        assert_eq!(
+            Ty::float_literal_of(&tenth).to_string(),
+            "FloatLiteral[0.10000000000000001]"
+        );
+        assert_eq!(Ty::float_literal().to_string(), "Float64");
     }
 }

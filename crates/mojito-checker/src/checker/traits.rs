@@ -1934,8 +1934,8 @@ impl Checker {
             CtValue::UInt(_) => Some(Ty::uint()),
             CtValue::Index(_) => Some(Ty::index()),
             CtValue::Float(_) => Some(Ty::float64()),
-            CtValue::IntLiteral(_) => Some(Ty::int_literal()),
-            CtValue::FloatLiteral(_) => Some(Ty::float_literal()),
+            CtValue::IntLiteral(value) => Some(Ty::int_literal_of(value)),
+            CtValue::FloatLiteral(value) => Some(Ty::float_literal_of(value)),
             CtValue::Bool(_) => Some(Ty::bool()),
             CtValue::None => Some(Ty::none()),
             // Against a `StringLiteral[v]` slot the value is the literal of

@@ -393,11 +393,15 @@ impl Checker {
     }
 
     /// The type to declare for an unannotated `comptime` binding: its
-    /// initializer's type, as upstream's alias has. A float literal stays a
-    /// `FloatLiteral` that materializes at each read; any other value binds
-    /// as an inferred binding does.
+    /// initializer's type, as upstream's alias has. A float literal, and an
+    /// integer literal whose type carries its value, stays the literal
+    /// type that materializes at each read; any other value binds as an
+    /// inferred binding does.
     pub(super) fn comptime_binding_ty(&self, value_ty: &Ty, name: &str) -> Result<Ty, TypeError> {
-        if matches!(value_ty.kind(), TyKind::FloatLiteral) {
+        if matches!(
+            value_ty.kind(),
+            TyKind::FloatLiteral(_) | TyKind::IntLiteral(Some(_))
+        ) {
             return Ok(value_ty.clone());
         }
         self.inferred_binding_ty(value_ty, name)

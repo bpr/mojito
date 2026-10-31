@@ -30,8 +30,10 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
                 // (`Pair[Float64](0.5, 1)`) materializes to the binding, as
                 // it does against a concrete parameter type.
                 Some(existing)
-                    if matches!(actual.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
-                        && coerces(actual, existing) => {}
+                    if matches!(
+                        actual.kind(),
+                        TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
+                    ) && coerces(actual, existing) => {}
                 Some(existing) => {
                     return Err(TypeError::TypeMismatch {
                         expected: existing.to_string(),
@@ -399,8 +401,11 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
             }
         }
         // A literal's text binds a `StringLiteral[v]` pattern's binder (`g("ab")`
-        // over `s: StringLiteral[v]` solves `v = "ab"`).
-        (TyKind::StringLiteral(Some(pattern)), TyKind::StringLiteral(Some(actual))) => {
+        // over `s: StringLiteral[v]` solves `v = "ab"`), as its value an
+        // `IntLiteral[v]` or `FloatLiteral[v]` one's.
+        (TyKind::StringLiteral(Some(pattern)), TyKind::StringLiteral(Some(actual)))
+        | (TyKind::IntLiteral(Some(pattern)), TyKind::IntLiteral(Some(actual)))
+        | (TyKind::FloatLiteral(Some(pattern)), TyKind::FloatLiteral(Some(actual))) => {
             if let CtValue::Expr(expr) = pattern.as_ref() {
                 if let Some(reference) = expr.as_decl_ref() {
                     out.entry(reference.name.to_string())
@@ -704,11 +709,15 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         }
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
-        // A symbolic literal text closes the same way.
+        // A symbolic literal value closes the same way.
         kind if (kind.is_simd()
             || matches!(
                 kind,
-                TyKind::KgenSimd { .. } | TyKind::StringLiteral(Some(_)) | TyKind::PopArray { .. }
+                TyKind::KgenSimd { .. }
+                    | TyKind::StringLiteral(Some(_))
+                    | TyKind::IntLiteral(Some(_))
+                    | TyKind::FloatLiteral(Some(_))
+                    | TyKind::PopArray { .. }
             ))
             && mojito_types::types::is_symbolic(ty) =>
         {

@@ -89,7 +89,7 @@ impl FnLowering<'_> {
             && self.func.reg_types.get(&recv.0).is_some_and(|ty| {
                 matches!(
                     ty.kind(),
-                    TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
+                    TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
                 )
             })
             && let Some(target) = match method {
@@ -185,13 +185,13 @@ impl FnLowering<'_> {
             && (recv_ty.is_int()
                 || recv_ty.is_uint()
                 || recv_ty.is_float64()
-                || matches!(recv_ty.kind(), TyKind::IntLiteral))
+                || matches!(recv_ty.kind(), TyKind::IntLiteral(_)))
         {
             match (method, args.len()) {
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {
                     return self.lower_round_dir(ctx, dest, recv, &recv_ty, method);
                 }
-                _ if recv_ty == TyKind::IntLiteral => {}
+                _ if recv_ty.is_int_literal() => {}
                 ("__ceildiv__", 1) => {
                     return self.lower_ceildiv(ctx, dest, recv, args[0], &recv_ty);
                 }
@@ -403,8 +403,8 @@ impl FnLowering<'_> {
             return Ok(());
         }
         if let Some(literal_scalar) = match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(TyKind::IntLiteral) => Some(ScalarTy::Int),
-            Some(TyKind::FloatLiteral) => Some(ScalarTy::Float64),
+            Some(TyKind::IntLiteral(_)) => Some(ScalarTy::Int),
+            Some(TyKind::FloatLiteral(_)) => Some(ScalarTy::Float64),
             _ => None,
         } {
             let value = self.reg_value(ctx, arg, literal_scalar)?;

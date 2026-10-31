@@ -1057,10 +1057,10 @@ impl Checker {
     /// `type_of(operand)`, upstream's `MagicFunctionNode::emitTypeOf`: the
     /// type of the operand, which is typed without being evaluated (inside a
     /// probe, as upstream emits it into a block it then erases). A trait or a
-    /// trait composition gives the trait metatype. A type operand's metatype
-    /// and a numeric literal value's value-parameterized literal type have
-    /// no `Ty`, so each is rejected; a string literal's type carries its
-    /// value. In a signature the operand reads the parameters
+    /// trait composition gives the trait metatype. A literal's type carries
+    /// its value (`IntLiteral[4]`, `StringLiteral["ab"]`). A type operand's
+    /// metatype and a value-less literal type have no `Ty` upstream, so each
+    /// is rejected. In a signature the operand reads the parameters
     /// declared before it ([`Self::in_signature_scope`]).
     pub(super) fn type_of_operand(&self, operand: &Expr) -> Result<Ty, TypeError> {
         if let Some(traits) = self.trait_value(operand) {
@@ -1086,23 +1086,17 @@ impl Checker {
             return Ok(ty);
         }
         let depth = self.annotation_depth.replace(0);
-        let typed = self.probe(|| {
-            self.infer(operand)
-                .map(|ty| (ty, self.exact_literal_value(operand).is_some()))
-        });
+        let typed = self.probe(|| self.infer(operand));
         self.annotation_depth.set(depth);
-        let (ty, literal) = typed?;
-        // A string literal's type carries its value: `type_of("ab")` is
-        // `StringLiteral["ab"]`.
-        if matches!(ty.kind(), TyKind::StringLiteral(Some(_))) {
-            return Ok(ty);
-        }
-        if literal
-            || matches!(
-                ty.kind(),
-                TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral(None)
-            )
-        {
+        let ty = typed?;
+        // A literal's type carries its value: `type_of("ab")` is
+        // `StringLiteral["ab"]`, `type_of(N + 2.5)` over `comptime N = 4`
+        // `FloatLiteral[6.5]`, and `type_of(M)` over `comptime M: Int = 4`
+        // the `Int` it materialized as.
+        if matches!(
+            ty.kind(),
+            TyKind::IntLiteral(None) | TyKind::FloatLiteral(None) | TyKind::StringLiteral(None)
+        ) {
             return Err(TypeError::Unsupported(
                 "'type_of' of a literal value is not supported yet".to_string(),
             ));
@@ -1329,12 +1323,8 @@ impl Checker {
         ty: &Ty,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let (dtype, _) = ty.as_simd()?;
-        let literal = match value {
-            CtValue::IntLiteral(_) => TyKind::IntLiteral,
-            CtValue::FloatLiteral(_) => TyKind::FloatLiteral,
-            _ => return None,
-        };
-        (dtype.known().is_none() && mojito_types::types::splats_to(&literal, dtype))
+        let literal = Ty::of_literal_value(value)?;
+        (dtype.known().is_none() && mojito_types::types::splats_to(literal.kind(), dtype))
             .then(|| self.literal_splat(ty, value.clone()))
     }
 
@@ -1447,7 +1437,7 @@ impl Checker {
         let declared = |value: CtValue| {
             let context = &self.param_context;
             match self.lookup(name) {
-                Some(ty) if !matches!(ty.kind(), TyKind::IntLiteral) => context
+                Some(ty) if !matches!(ty.kind(), TyKind::IntLiteral(_)) => context
                     .constant_as(value.clone(), ty)
                     .or_else(|_| context.constant(value)),
                 _ => context.constant(value),
@@ -2209,7 +2199,7 @@ impl Checker {
             built
                 .meta()
                 .as_value()
-                .is_some_and(|ty| ty.is_simd() || matches!(ty.kind(), TyKind::IntLiteral))
+                .is_some_and(|ty| ty.is_simd() || matches!(ty.kind(), TyKind::IntLiteral(_)))
         };
         let right_built = if is_simd_length_value(&right_built) && numeric(&left_built) {
             mojito_types::types::simd_length_image(&self.param_context, &right_built)
@@ -2287,7 +2277,7 @@ impl Checker {
             [left_ty, right_ty]
                 .into_iter()
                 .flatten()
-                .find(|ty| !matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral))
+                .find(|ty| !matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
         };
         let materialized = |value: &ParamExpr| match (value.as_constant(), common) {
             (Some(constant), Some(ty)) => constant.clone().materialize_as(ty),
@@ -2493,7 +2483,7 @@ impl Checker {
                 if !value
                     .meta()
                     .as_value()
-                    .is_some_and(|ty| ty.is_int() || *ty == TyKind::IntLiteral)
+                    .is_some_and(|ty| ty.is_int() || ty.is_int_literal())
                 {
                     return None;
                 }

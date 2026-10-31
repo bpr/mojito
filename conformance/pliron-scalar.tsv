@@ -471,6 +471,7 @@ assets/ok/int_floordiv_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_index_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_parameter_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_struct.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/int_literal_value_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/invert_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/is_run_in_comptime_interpreter.mojo	-	ineligible	no-scalar-entry-shape

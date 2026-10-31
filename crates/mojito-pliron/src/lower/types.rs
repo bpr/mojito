@@ -151,8 +151,8 @@ pub fn lower_ty(
         // Literal-typed storage holds the default materialized value; a
         // constant that exceeds it rejects at the storage boundary rather
         // than wrapping (the VM keeps arbitrary precision).
-        TyKind::IntLiteral => Ok(LowerTy::Scalar(ScalarTy::Int)),
-        TyKind::FloatLiteral => Ok(LowerTy::Scalar(ScalarTy::Float64)),
+        TyKind::IntLiteral(_) => Ok(LowerTy::Scalar(ScalarTy::Int)),
+        TyKind::FloatLiteral(_) => Ok(LowerTy::Scalar(ScalarTy::Float64)),
         // Origins and ownership facts erase after validation; a pointer is
         // one opaque target pointer regardless of its element type.
         TyKind::Pointer { .. }

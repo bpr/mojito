@@ -400,6 +400,53 @@ impl FloatLiteral {
         }
     }
 
+    /// The value as the pin spells a `#pop.float_literal` attribute in a
+    /// type (`FloatLiteral[0.10000000000000001]`): LLVM's
+    /// `APFloat::toString` of the nearest binary64 at seventeen
+    /// significant digits and a padding of three zeros, so trailing zeros
+    /// drop and an exponent past the padding is written `1.0E+4`. A
+    /// negative zero is `-0.0`, as the pin prints it.
+    pub fn pop_attribute_spelling(&self) -> String {
+        const PRECISION: usize = 17;
+        const MAX_PADDING: i64 = 3;
+        if self.is_zero() {
+            return if self.negative_zero { "-0.0" } else { "0" }.to_string();
+        }
+        let Some(value) = self.to_f64().filter(|value| value.is_finite()) else {
+            return self.to_string();
+        };
+        let scientific = format!("{:.*e}", PRECISION - 1, value.abs());
+        let Some((mantissa, msd)) = scientific
+            .split_once('e')
+            .and_then(|(mantissa, exponent)| Some((mantissa, exponent.parse::<i64>().ok()?)))
+        else {
+            return self.to_string();
+        };
+        let digits = mantissa.replace('.', "");
+        let digits = digits.trim_end_matches('0');
+        let count = digits.len() as i64;
+        let exp = msd - (count - 1);
+        let use_scientific = if exp >= 0 {
+            exp > MAX_PADDING || count + exp > PRECISION as i64
+        } else {
+            msd < 0 && -msd > MAX_PADDING
+        };
+        let sign = if value < 0.0 { "-" } else { "" };
+        let body = if use_scientific {
+            let fraction = if count == 1 { "0" } else { &digits[1..] };
+            let exponent_sign = if msd < 0 { '-' } else { '+' };
+            format!("{}.{fraction}E{exponent_sign}{}", &digits[..1], msd.abs())
+        } else if exp >= 0 {
+            format!("{digits}{}", "0".repeat(exp as usize))
+        } else if msd >= 0 {
+            let whole = (msd + 1) as usize;
+            format!("{}.{}", &digits[..whole], &digits[whole..])
+        } else {
+            format!("0.{}{digits}", "0".repeat((-msd - 1) as usize))
+        };
+        format!("{sign}{body}")
+    }
+
     /// Correctly round an exact literal directly to IEEE binary32.  Going via
     /// binary64 can double-round values immediately beside an f32 midpoint, so
     /// choose between the cast's neighboring f32 values using exact rational
@@ -560,6 +607,34 @@ impl fmt::Display for FloatLiteral {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pop_attribute_spelling_is_llvm_apfloat_to_string() {
+        let spell = |text: &str| {
+            let literal = |digits| FloatLiteral::parse_decimal(digits).unwrap();
+            text.strip_prefix('-')
+                .map_or_else(|| literal(text), |digits| literal(digits).neg())
+                .pop_attribute_spelling()
+        };
+        for (text, spelled) in [
+            ("4.0", "4"),
+            ("2.25", "2.25"),
+            ("0.1", "0.10000000000000001"),
+            ("0.0", "0"),
+            ("-0.0", "-0.0"),
+            ("1000.0", "1000"),
+            ("10000.0", "1.0E+4"),
+            ("123456.5", "123456.5"),
+            ("0.001", "0.001"),
+            ("0.00012", "1.2E-4"),
+            ("1e20", "1.0E+20"),
+            ("1e-7", "9.9999999999999995E-8"),
+            ("1.5e300", "1.5000000000000001E+300"),
+            ("-2.5", "-2.5"),
+        ] {
+            assert_eq!(spell(text), spelled, "{text}");
+        }
+    }
 
     #[test]
     fn integer_materialization_wraps_after_exact_arithmetic() {

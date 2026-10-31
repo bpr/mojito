@@ -592,18 +592,12 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             },
         )
         .into(),
-        // A string literal's symbolic text closes as the literal it
-        // names; one the bindings do not close stays as spelled, for the
-        // concreteness check to name.
-        TyKind::StringLiteral(Some(value)) => match value.as_ref() {
-            CtValue::Expr(expr) => match eval_ct(expr, bindings) {
-                Ok(text @ CtValue::KgenString(_)) => {
-                    TyKind::StringLiteral(Some(Box::new(text))).into()
-                }
-                _ => ty.clone(),
-            },
-            _ => ty.clone(),
-        },
+        // A literal's symbolic value closes as the literal it names; one
+        // the bindings do not close stays as spelled, for the concreteness
+        // check to name.
+        TyKind::StringLiteral(Some(value))
+        | TyKind::IntLiteral(Some(value))
+        | TyKind::FloatLiteral(Some(value)) => closed_literal(ty, value, bindings),
         // A vector's storage closes as the vector it stores.
         TyKind::KgenSimd { dtype, width } => {
             let vector =
@@ -618,6 +612,24 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
 /// [`sub_types`] over an element list that may be one spread of a bound
 /// pack (`__RuntimeTuple[*Self.Ts]`): the spread is the pack's elements, as
 /// `expand_pack_spread` spells it.
+/// The literal type `ty` (`StringLiteral[v]`, `IntLiteral[v]`,
+/// `FloatLiteral[v]`) at its `value` closed under `bindings`, through the
+/// [`Ty::new`] bridge; `ty` itself while the value stays symbolic.
+fn closed_literal(ty: &Ty, value: &CtValue, bindings: &Bindings) -> Ty {
+    let CtValue::Expr(expr) = value else {
+        return ty.clone();
+    };
+    eval_ct(expr, bindings)
+        .ok()
+        .filter(|closed| !matches!(closed, CtValue::Expr(_)))
+        .and_then(|closed| {
+            let (name, _) = mojito_types::types::nominal_parts(ty)?;
+            let closed = Ty::new(TyKind::Struct(name.to_string(), vec![TyArg::Val(closed)]));
+            (!matches!(closed.kind(), TyKind::Struct(..))).then_some(closed)
+        })
+        .unwrap_or_else(|| ty.clone())
+}
+
 fn sub_spread_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {
     match (mojito_types::types::pack_spread(types)).map(Ty::kind) {
         Some(TyKind::Param { binder, .. })

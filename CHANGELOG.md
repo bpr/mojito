@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A numeric literal's type is the application it names, `IntLiteral[4]` or
+  `FloatLiteral[2.5]`, and a literal-only expression's type carries the
+  value it folds to (R1779). `type_of(N + 2.5)` over `comptime N = 4` is
+  `FloatLiteral[6.5]`, `var y: type_of(N) = 7` is "cannot implicitly
+  convert 'IntLiteral[7]' value to 'IntLiteral[4]'" as at the pin, a float's
+  value is spelled as the pin spells it (`FloatLiteral[0.10000000000000001]`),
+  and `comptime M: Int = 4` is an `Int`. Literals of different values join
+  the value-less literal, so `[1, 2, 3]` and `1 if c else 2` are still
+  `Int` (`mojito-mir 1.152`, `mojito-package 172`).
+
 - The prelude exports upstream's `IntLiteral[value: !pop.int_literal]` and
   `FloatLiteral[value: !pop.float_literal]` structs (`std/builtin/int_literal.mojo`,
   `float_literal.mojo`), in part (R1507, in part). A literal's `.value` is

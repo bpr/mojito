@@ -444,8 +444,12 @@ impl Checker {
             let ty = applied.meta().as_value().cloned();
             self.comptime_applied.insert(name.clone(), applied);
             ty
-        } else if self.program_constants.own(name).is_some() {
-            Some(Ty::int_literal())
+        } else if let Some(folded) = self.program_constants.own(name) {
+            Some(if matches!(ty, Some(SourceType::Int)) {
+                Ty::int()
+            } else {
+                Ty::int_literal_of(folded)
+            })
         } else if let Some(applied) = self.applied_constant_expr(value) {
             let ty = applied.meta().as_value().cloned();
             self.comptime_applied.insert(name.clone(), applied);
@@ -2143,10 +2147,13 @@ impl Checker {
                             super::StorageStrictness::AllowBare,
                         )
                     })
-                    .transpose()?
-                    .filter(|expected| {
-                        !(expected.is_int() || matches!(expected.kind(), TyKind::IntLiteral))
-                    });
+                    .transpose()?;
+                // `comptime M: Int = 4` is an `Int`, a bare literal binding
+                // the `IntLiteral[4]` its value types.
+                let int_annotated = annotated.as_ref().is_some_and(|ty| ty.is_int());
+                let annotated = annotated.filter(|expected| {
+                    !(expected.is_int() || matches!(expected.kind(), TyKind::IntLiteral(_)))
+                });
                 // A module constant was folded before any declaration; only a
                 // body's own constant folds here.
                 let folded = if self.function_bases.is_empty() && self.scopes.len() == 1 {
@@ -2178,8 +2185,13 @@ impl Checker {
                     }
                     self.declare_immutable(name, expected)?;
                 } else if let Ok(v) = folded {
+                    let ty = if int_annotated {
+                        Ty::int()
+                    } else {
+                        Ty::int_literal_of(&v)
+                    };
                     self.comptimes.insert(name.clone(), v);
-                    self.declare_immutable(name, Ty::int_literal())?;
+                    self.declare_immutable(name, ty)?;
                 } else {
                     let ty = self.infer(value)?;
                     // A compile-time result is a value of its own, copied
@@ -2191,7 +2203,7 @@ impl Checker {
                     // materializes; an unfolded integer literal is read as
                     // its `Int` storage type, so it crosses here.
                     if declared != ty
-                        && matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+                        && matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
                     {
                         self.record_literal_materializations(value, &ty, &declared)?;
                     }

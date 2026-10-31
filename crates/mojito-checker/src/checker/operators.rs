@@ -27,7 +27,7 @@ impl Checker {
         }
         match (op, t.kind()) {
             // A literal's negation and unary plus are literals.
-            (PrefixOp::Neg | PrefixOp::Pos, TyKind::IntLiteral | TyKind::FloatLiteral) => {
+            (PrefixOp::Neg | PrefixOp::Pos, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) => {
                 return Ok(t);
             }
             (PrefixOp::Not, TyKind::Bool) => return Ok(Ty::bool()),
@@ -38,7 +38,7 @@ impl Checker {
             }
             // A literal's and a `Bool`'s inversion keep their type; a
             // `SIMD`'s is its `__invert__` above.
-            (PrefixOp::Invert, TyKind::IntLiteral | TyKind::Bool) => {
+            (PrefixOp::Invert, TyKind::IntLiteral(_) | TyKind::Bool) => {
                 return Ok(t);
             }
             _ => {}
@@ -220,7 +220,7 @@ impl Checker {
         }
         if let TyKind::Pointer { element, .. } = lt.kind() {
             match (op, rt.kind()) {
-                (Add | Sub, kind) if kind.is_int() || matches!(kind, TyKind::IntLiteral) => {
+                (Add | Sub, kind) if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => {
                     return Ok(lt.clone());
                 }
                 (Sub, TyKind::Pointer { element: other, .. }) if element == other => {
@@ -276,7 +276,10 @@ impl Checker {
                 if let Some((dtype, width)) = lane.as_simd()
                     && *width == SimdWidth::Known(1)
                     && dtype.is_symbolic()
-                    && matches!(literal_ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+                    && matches!(
+                        literal_ty.kind(),
+                        TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
+                    )
                     && splats_to(literal_ty, dtype)
                 {
                     self.record_literal_materializations(literal, literal_ty, lane)?;
@@ -288,7 +291,7 @@ impl Checker {
         // none; only an `IntLiteral` pair stays a literal power.
         if let Some(span) = &span
             && matches!(op, Pow)
-            && matches!(common.as_ref().map(Ty::kind), Some(TyKind::FloatLiteral))
+            && matches!(common.as_ref().map(Ty::kind), Some(TyKind::FloatLiteral(_)))
             && self.structs.contains_key("SIMD")
         {
             let receiver = mojito_types::types::default_literal(&lt);
@@ -325,25 +328,25 @@ impl Checker {
             // type; the same operators beside a `SIMD` are its dunders above.
             Add | Sub | Mul | FloorDiv
                 if common.as_ref().is_some_and(|ty| {
-                    matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+                    matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
                 }) =>
             {
                 common
             }
             Shl | Shr | BitAnd | BitOr | BitXor
-                if common.as_ref().is_some_and(|ty| *ty == TyKind::IntLiteral) =>
+                if common.as_ref().is_some_and(Ty::is_int_literal) =>
             {
                 common
             }
             // `%` keeps the common type until its `SIMD` dunder lands
             // (R1623); an `IntLiteral` pair's `**` is the literal's own.
             Mod => common,
-            Pow if common.as_ref().is_some_and(|ty| *ty == TyKind::IntLiteral) => common,
+            Pow if common.as_ref().is_some_and(Ty::is_int_literal) => common,
             // A literal pair divides exactly into a `FloatLiteral`, as
             // upstream's `IntLiteral.__truediv__` does; concrete operands
             // keep their common type.
             Div => common.map(|ty| {
-                if matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
+                if matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) {
                     Ty::float_literal()
                 } else {
                     ty
@@ -452,7 +455,7 @@ impl Checker {
             self.expect_bool(right, &context)?;
             return Ok(Ty::bool());
         };
-        if ty != lt && !matches!(lt.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
+        if ty != lt && !matches!(lt.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) {
             return Err(TypeError::Unsupported(format!(
                 "a left operand of '{}' converted to the right operand's type '{ty}' is \
                  not supported yet (roadmap R1602)",
@@ -492,7 +495,7 @@ impl Checker {
         }
         let target = match lt.kind() {
             kind if kind.is_simd() => lt.clone(),
-            TyKind::IntLiteral => Ty::int(),
+            TyKind::IntLiteral(_) => Ty::int(),
             _ => return Ok(rt),
         };
         Ok(if self.record_implicit_conversion(right, &rt, &target)? {
@@ -515,7 +518,7 @@ impl Checker {
         rt: Ty,
     ) -> Result<Ty, TypeError> {
         if !mojito_types::types::is_simd_length(lt)
-            || rt != TyKind::IntLiteral
+            || !rt.is_int_literal()
             || op.reflected_dunder().is_none()
             || op
                 .dunder()
@@ -669,7 +672,7 @@ impl Checker {
         }
         let materialized = mojito_types::types::default_literal(lt);
         if let Some(dunder) = op.dunder()
-            && matches!(lt.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+            && matches!(lt.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
         {
             let before = self.record_at(left.source_span()).adjustment.clone();
             self.record_literal_materializations(left, lt, &materialized)?;
@@ -1243,7 +1246,7 @@ impl Checker {
         };
         let aty = self.infer(arg)?;
         match aty.kind() {
-            TyKind::IntLiteral | TyKind::FloatLiteral => Ok(SimdWidth::Known(1)),
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => Ok(SimdWidth::Known(1)),
             kind if let Some((_, width)) = kind.as_simd()
                 && !width.is_inferred() =>
             {
@@ -1368,7 +1371,7 @@ fn is_bound_archetype(ty: &Ty) -> bool {
 /// reports: a float literal binds `@implicit __init__(FloatLiteral)` and
 /// fails its float-dtype assert, anything else matches no overload.
 fn simd_argument_error(dtype: &SimdDtype, width: &SimdWidth, aty: &Ty) -> TypeError {
-    if *aty == TyKind::FloatLiteral && dtype.known().is_some_and(|dtype| !dtype.is_float()) {
+    if aty.is_float_literal() && dtype.known().is_some_and(|dtype| !dtype.is_float()) {
         let target = Ty::from(TyKind::simd(dtype.clone(), width.clone()));
         return super::builtins::float_literal_conversion_error(&target);
     }

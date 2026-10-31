@@ -151,7 +151,7 @@ impl LayoutCx<'_> {
             TyKind::KgenSimd { .. } => self.layout_of(&mojito_types::types::held_simd_ty(ty)),
             // Literal-typed storage holds the value at its default
             // materialized width; a value that exceeds it rejects at lowering.
-            TyKind::IntLiteral | TyKind::FloatLiteral => Ok(Layout::new(8, 8)),
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => Ok(Layout::new(8, 8)),
             unsupported => Err(LayoutError::Unsupported(format!(
                 "type has no native layout yet: {unsupported}"
             ))),

@@ -110,7 +110,7 @@ impl Checker {
             && args.is_empty()
             && kwargs.is_empty()
             && param_args.is_empty()
-            && *obj_ty.kind() == TyKind::IntLiteral
+            && obj_ty.is_int_literal()
         {
             return Ok(Ty::index());
         }
@@ -161,7 +161,7 @@ impl Checker {
             && param_args.is_empty()
             && matches!(
                 obj_ty.kind(),
-                TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::Bool
+                TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Bool
             )
             && mojito_types::conformance::modelled_declares(&obj_ty, trait_name, &mut |_, _| true)
         {

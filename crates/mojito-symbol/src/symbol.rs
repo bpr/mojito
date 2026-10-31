@@ -1448,11 +1448,24 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // An `IntLiteral` (`FloatLiteral`) parameter is an overload of its
         // own beside an `Int` (`Float64`) one, as upstream's `IntLiteral[_]`
         // is; an instance argument materializes the literal.
-        TyKind::IntLiteral if mode == KeyMode::Overload => "IntLiteral".to_string(),
-        TyKind::FloatLiteral if mode == KeyMode::Overload => "FloatLiteral".to_string(),
-        kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => "Int".to_string(),
+        TyKind::IntLiteral(_) if mode == KeyMode::Overload => "IntLiteral".to_string(),
+        TyKind::FloatLiteral(_) if mode == KeyMode::Overload => "FloatLiteral".to_string(),
+        // A literal whose type carries its value is the application
+        // `IntLiteral[value]` (`FloatLiteral[value]`) it bridges, an
+        // instance of its own.
+        TyKind::IntLiteral(Some(value)) => format!(
+            "{}$V{value}",
+            encode_identifier(mojito_types::types::INT_LITERAL_TYPE_NAME)
+        ),
+        TyKind::FloatLiteral(Some(value)) => format!(
+            "{}$V{value}",
+            encode_identifier(mojito_types::types::FLOAT_LITERAL_TYPE_NAME)
+        ),
+        kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(None)) => "Int".to_string(),
         kind if kind.is_uint() => "UInt".to_string(),
-        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => "Float64".to_string(),
+        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(None)) => {
+            "Float64".to_string()
+        }
         TyKind::Bool => "Bool".to_string(),
         TyKind::StringLiteral(None) => "StringLiteral".to_string(),
         // A literal whose type carries its value spells as the application
@@ -3353,8 +3366,8 @@ impl TypeNameSpeller<'_> {
             return self.simd(dtype, width);
         }
         match ty.kind() {
-            TyKind::IntLiteral => self.simd(&"DType.int", &1),
-            TyKind::FloatLiteral => self.simd(&"DType.float64", &1),
+            TyKind::IntLiteral(_) => self.simd(&"DType.int", &1),
+            TyKind::FloatLiteral(_) => self.simd(&"DType.float64", &1),
             TyKind::Bool => self.qualify("std.builtin.bool", "Bool"),
             TyKind::None => self.qualify("std.builtin.none", "NoneType"),
             TyKind::Dtype => self.qualify("std.builtin.dtype", "DType"),
@@ -3477,7 +3490,9 @@ impl TypeNameSpeller<'_> {
 /// name, without module or parameters.
 fn reflected_base_name(ty: &Ty) -> String {
     match ty.kind() {
-        kind if kind.is_simd() || matches!(kind, TyKind::IntLiteral | TyKind::FloatLiteral) => {
+        kind if kind.is_simd()
+            || matches!(kind, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) =>
+        {
             "SIMD"
         }
 

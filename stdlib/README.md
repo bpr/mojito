@@ -102,9 +102,10 @@ point, as upstream's toolchain does.
   part: an explicit application over a literal's `.value` constructs one,
   and the members that read its `!pop.int_literal` or `!pop.float_literal`
   attribute (`__mlir_index__`, `__int__`, `__int_literal__`, `is_nan`,
-  `is_neg_zero`) run as at the pin. A literal `4` is still the compiler's
-  value-less literal type (roadmap R1779), and a bare `IntLiteral`
-  parameter its run-time register (R1780). The prelude exports both.
+  `is_neg_zero`) run as at the pin. A literal `4` is the application
+  `IntLiteral[4]`, which the compiler holds as its literal type, and a bare
+  `IntLiteral` parameter is still a run-time register (roadmap R1780). The
+  prelude exports both.
 - `std/builtin/string_literal.mojo` — upstream's `StringLiteral[value]`
   struct, in part: the type of a string literal (`"ab"` is
   `StringLiteral["ab"]`) and of an explicit application, with the members

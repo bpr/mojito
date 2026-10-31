@@ -454,11 +454,7 @@ impl<'a> Flatten<'a> {
         // `n.__mlir_index__()` on an integer literal is upstream's
         // conversion of the literal, materialized as an `Int`, to the
         // builtin `index`; a `SIMD`'s is its declared member.
-        if method == "__mlir_index__"
-            && object
-                .ty()
-                .is_some_and(|ty| *ty.kind() == mojito_types::types::TyKind::IntLiteral)
-        {
+        if method == "__mlir_index__" && object.ty().is_some_and(|ty| ty.is_int_literal()) {
             let value = self.expr(object);
             let value = self.materialize_literal(value, &Ty::int(), call.location());
             return Some(self.builtin_cast(call.location(), value, Ty::index()));

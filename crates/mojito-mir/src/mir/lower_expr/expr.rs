@@ -45,7 +45,7 @@ pub(in crate::mir) fn struct_operator_method(
             ty.is_simd()
                 || matches!(
                     ty.kind(),
-                    TyKind::Struct(..) | TyKind::IntLiteral | TyKind::FloatLiteral
+                    TyKind::Struct(..) | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
                 )
         })
     })

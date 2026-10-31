@@ -448,7 +448,7 @@ impl<'a> FnLowering<'a> {
             // A runtime FloatLiteral value rejects: the VM displays its
             // exact rational (`1/10`), which f64 storage cannot reproduce.
             None => match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-                Some(TyKind::FloatLiteral) => {
+                Some(TyKind::FloatLiteral(_)) => {
                     if !self.pending_literals.contains_key(&arg.0) {
                         return Err(self.unsupported_reg(
                             "display of a runtime FloatLiteral value".into(),

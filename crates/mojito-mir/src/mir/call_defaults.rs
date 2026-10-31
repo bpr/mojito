@@ -1724,8 +1724,8 @@ fn evaluate_constant(
 /// The type a literal default's constant has before conversion.
 fn literal_type(literal: &CheckedConst) -> Ty {
     match literal {
-        CheckedConst::Int(_) => Ty::int_literal(),
-        CheckedConst::Float(_) => Ty::float_literal(),
+        CheckedConst::Int(value) => Ty::int_literal_of(value),
+        CheckedConst::Float(value) => Ty::float_literal_of(value),
         CheckedConst::Bool(_) => Ty::bool(),
         CheckedConst::String(text) => Ty::string_literal_of(text),
         CheckedConst::None => Ty::none(),

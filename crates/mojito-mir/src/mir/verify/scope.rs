@@ -711,8 +711,8 @@ impl ScopeCx<'_> {
             | TyKind::StringLiteral(_)
             | TyKind::None
             | TyKind::Never
-            | TyKind::IntLiteral
-            | TyKind::FloatLiteral
+            | TyKind::IntLiteral(_)
+            | TyKind::FloatLiteral(_)
             | TyKind::Infer
             | TyKind::Dtype
             | TyKind::AnyTrait(_)

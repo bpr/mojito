@@ -46,16 +46,24 @@ impl Checker {
 
     /// The declaration a compiler-typed receiver's member `method` is read
     /// from before the compiler's rule: `SIMD`'s, for a `TyKind::Simd`
-    /// receiver whose struct declares it, and `StringLiteral`'s, for a
-    /// string literal whose type carries its value. A numeric literal
-    /// receiver is no instance (`(5).__len__()` has no such attribute at
-    /// the pin), and neither is the value-less `StringLiteral`.
+    /// receiver whose struct declares it, and `StringLiteral`'s,
+    /// `IntLiteral`'s, or `FloatLiteral`'s, for a literal whose type
+    /// carries its value. A value-less literal is no instance. A member the
+    /// literal's struct does not declare yet falls through to the
+    /// compiler's rule (R1753, R1781).
     pub(in crate::checker) fn declared_receiver_member<'t>(
         &self,
         ty: &'t Ty,
         method: &str,
     ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
-        if !(ty.is_simd() || matches!(ty.kind(), TyKind::StringLiteral(Some(_)))) {
+        if !(ty.is_simd()
+            || matches!(
+                ty.kind(),
+                TyKind::StringLiteral(Some(_))
+                    | TyKind::IntLiteral(Some(_))
+                    | TyKind::FloatLiteral(Some(_))
+            ))
+        {
             return None;
         }
         self.nominal_struct(ty).filter(|(name, _)| {
@@ -733,8 +741,8 @@ fn math_operation_requirement(method: &str, argc: usize) -> Option<&'static str>
 /// `Floorable`, and `Truncable`, and `FloatLiteral` none.
 fn scalar_declares_math_trait(ty: &Ty, trait_name: &str) -> bool {
     match ty.kind() {
-        TyKind::IntLiteral => matches!(trait_name, "Ceilable" | "Floorable" | "Truncable"),
-        TyKind::FloatLiteral => false,
+        TyKind::IntLiteral(_) => matches!(trait_name, "Ceilable" | "Floorable" | "Truncable"),
+        TyKind::FloatLiteral(_) => false,
         _ => mojito_types::conformance::modelled_declares(ty, trait_name, &mut |_, _| true),
     }
 }

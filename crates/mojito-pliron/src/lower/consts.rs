@@ -528,7 +528,7 @@ impl FnLowering<'_> {
             ty if let Some(dtype) = scalar_simd_dtype(ty) => ScalarTy::of_dtype(dtype),
             // Literal-typed storage holds the exact value at its default
             // width, rejecting what i64/f64 cannot represent.
-            TyKind::IntLiteral | TyKind::FloatLiteral => {
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => {
                 let Some(literal) = self.pending_literals.get(&value.0).cloned() else {
                     if let Some(materialized) = self.reg_values.get(&value.0).copied() {
                         self.reg_values.insert(dest.0, materialized);
@@ -579,7 +579,7 @@ impl FnLowering<'_> {
         span_reg: Reg,
     ) -> Result<Value, PlironError> {
         match (literal, target.kind()) {
-            (PendingLiteral::Int(literal), TyKind::IntLiteral) => {
+            (PendingLiteral::Int(literal), TyKind::IntLiteral(_)) => {
                 let value = literal.to_i64().ok_or_else(|| {
                     self.literal_out_of_range(
                         literal.as_bigint().to_string(),
@@ -599,7 +599,7 @@ impl FnLowering<'_> {
                 })?;
                 Ok(self.float_constant(ctx, value))
             }
-            (PendingLiteral::Float(literal), TyKind::FloatLiteral) => {
+            (PendingLiteral::Float(literal), TyKind::FloatLiteral(_)) => {
                 let value = literal.to_f64().ok_or_else(|| {
                     self.literal_out_of_range(
                         literal.to_string(),

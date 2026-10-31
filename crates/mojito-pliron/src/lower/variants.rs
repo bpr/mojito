@@ -64,8 +64,8 @@ impl FnLowering<'_> {
             // A runtime literal-typed value converts at its storage kind
             // (its constant was range-checked when it entered storage).
             None => match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-                Some(TyKind::FloatLiteral) => ScalarTy::Float64,
-                Some(TyKind::IntLiteral) => ScalarTy::Int,
+                Some(TyKind::FloatLiteral(_)) => ScalarTy::Float64,
+                Some(TyKind::IntLiteral(_)) => ScalarTy::Int,
                 _ => return Err(self.unsupported_reg("untyped conversion operand".into(), dest)),
             },
         };

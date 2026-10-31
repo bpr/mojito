@@ -111,7 +111,7 @@ impl Checker {
                 constructed
             }
             _ if let Some(constructed) =
-                self.string_literal_construction(&span, name, param_args, args, kwargs) =>
+                self.literal_construction(&span, name, param_args, args, kwargs) =>
             {
                 constructed
             }
@@ -498,14 +498,15 @@ impl Checker {
         }))
     }
 
-    /// A construction of a `StringLiteral[value]` instance (`Self` in its
-    /// own members), or `None` for any other call. Upstream's struct has no
-    /// fields, so its default initializer and its copy each build the one
-    /// value the type names: the elaborator writes the closed type's
-    /// default construction, the literal of its text, while the
-    /// [`Ty::new`] bridge holds the instance as the compiler's literal
-    /// type (R1660).
-    fn string_literal_construction(
+    /// A construction of a `StringLiteral[value]`, `IntLiteral[value]`, or
+    /// `FloatLiteral[value]` instance (`Self` in its own members), or
+    /// `None` for any other call. Upstream's structs have no fields, so
+    /// their default initializer and their copy each build the one value
+    /// the type names: the elaborator writes the closed type's default
+    /// construction, the literal of its value, while the [`Ty::new`]
+    /// bridge holds the instance as the compiler's literal type (R1660,
+    /// R1785).
+    fn literal_construction(
         &self,
         span: &SourceSpan,
         name: &str,
@@ -517,7 +518,12 @@ impl Checker {
         if !args.is_empty() || !(kwargs.is_empty() || copy) {
             return None;
         }
-        let spelled = name == mojito_types::types::STRING_LITERAL_TYPE_NAME
+        let spelled = [
+            mojito_types::types::STRING_LITERAL_TYPE_NAME,
+            mojito_types::types::INT_LITERAL_TYPE_NAME,
+            mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
+        ]
+        .contains(&name)
             && !param_args.is_empty()
             && self.structs.contains_key(name);
         let instance = match name {
@@ -527,7 +533,14 @@ impl Checker {
                 .ok(),
             _ => None,
         }
-        .filter(|ty| matches!(ty.kind(), TyKind::StringLiteral(Some(_))))?;
+        .filter(|ty| {
+            matches!(
+                ty.kind(),
+                TyKind::StringLiteral(Some(_))
+                    | TyKind::IntLiteral(Some(_))
+                    | TyKind::FloatLiteral(Some(_))
+            )
+        })?;
         let construct = || {
             // The application's arguments are typed as the instance's.
             if spelled {
@@ -596,10 +609,14 @@ impl Checker {
                     }
                     _ => constructed,
                 }),
-            // A literal's default construction is the literal of its text,
+            // A literal's default construction is the literal of its value,
             // symbolic until the instance is elaborated
             // (`StringLiteral.__add__`'s `{}`).
-            TyKind::StringLiteral(Some(_)) if args.is_empty() && kwargs.is_empty() => {
+            TyKind::StringLiteral(Some(_))
+            | TyKind::IntLiteral(Some(_))
+            | TyKind::FloatLiteral(Some(_))
+                if args.is_empty() && kwargs.is_empty() =>
+            {
                 self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::ConstructType {
                         ty: instance.clone(),
@@ -708,7 +725,7 @@ impl Checker {
             return false;
         };
         self.probe(|| self.infer(argument))
-            .is_ok_and(|ty| matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral))
+            .is_ok_and(|ty| matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
     }
 
     /// Check every member of a free-function overload set against the

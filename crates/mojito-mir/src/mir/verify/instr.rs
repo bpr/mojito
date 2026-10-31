@@ -562,8 +562,8 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 .is_some_and(|(dtype, _)| dtype.is_symbolic());
             if let Some(found) = cx.reg_ty(*value) {
                 let valid_source = match found.kind() {
-                    TyKind::IntLiteral => valid_target,
-                    TyKind::FloatLiteral => {
+                    TyKind::IntLiteral(_) => valid_target,
+                    TyKind::FloatLiteral(_) => {
                         target.is_float64()
                             || symbolic_lane
                             || mojito_types::types::scalar_simd_dtype(target)
@@ -1076,7 +1076,7 @@ fn verify_simd_lane_instruction(
         cx.reg_ty(register).is_none_or(|ty| {
             types_compatible(ty, &Ty::int())
                 || ty.is_uint()
-                || matches!(ty.kind(), TyKind::IntLiteral | TyKind::Index)
+                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::Index)
         })
     };
     match *instruction {

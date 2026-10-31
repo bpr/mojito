@@ -889,6 +889,10 @@ impl Checker {
             TyKind::StringLiteral(Some(_)) => {
                 mojito_types::types::STRING_LITERAL_TYPE_NAME.to_string()
             }
+            TyKind::IntLiteral(Some(_)) => mojito_types::types::INT_LITERAL_TYPE_NAME.to_string(),
+            TyKind::FloatLiteral(Some(_)) => {
+                mojito_types::types::FLOAT_LITERAL_TYPE_NAME.to_string()
+            }
             TyKind::Dependent(_) => instance.to_string(),
             _ => return None,
         };

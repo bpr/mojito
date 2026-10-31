@@ -119,7 +119,7 @@ impl FnLowering<'_> {
         expected: ScalarTy,
     ) -> Result<Value, PlironError> {
         if let Some(ty) = self.func.var_tys.get(&var).cloned()
-            && matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+            && matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
             && let Some(literal) = self.pending_literals.get(&src.0).cloned()
         {
             let constant = self.exact_literal_storage(ctx, &literal, &ty, src)?;

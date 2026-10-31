@@ -820,7 +820,7 @@ impl<'a> Node<'a> {
     pub(super) fn literal_materialization(self) -> Option<Ty> {
         if !matches!(
             self.ty().as_ref().map(Ty::kind),
-            Some(TyKind::IntLiteral | TyKind::FloatLiteral)
+            Some(TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
         ) {
             // Checker fact tables are still keyed by source span while HIR owns
             // stable node identities. Comptime expansion can produce several

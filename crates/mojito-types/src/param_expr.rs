@@ -3559,7 +3559,7 @@ impl MetaTy {
     pub fn is_integer(&self) -> bool {
         matches!(
             self.as_value().map(Ty::kind),
-            Some(TyKind::INT | TyKind::UINT | TyKind::IntLiteral)
+            Some(TyKind::INT | TyKind::UINT | TyKind::IntLiteral(_))
         )
     }
 
@@ -3578,7 +3578,7 @@ impl MetaTy {
     fn is_literal(&self) -> bool {
         matches!(
             self.as_value().map(Ty::kind),
-            Some(TyKind::IntLiteral | TyKind::FloatLiteral)
+            Some(TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
         )
     }
 
@@ -4311,7 +4311,7 @@ impl IntDomain {
             Some(TyKind::INT) => Some(Self::Int),
             Some(TyKind::UINT) => Some(Self::UInt),
             Some(TyKind::Index) => Some(Self::Index),
-            Some(TyKind::IntLiteral) => Some(Self::Literal),
+            Some(TyKind::IntLiteral(_)) => Some(Self::Literal),
             _ => None,
         }
     }
@@ -4574,9 +4574,9 @@ fn is_scalar_domain(ty: &Ty) -> bool {
         TyKind::INT
             | TyKind::UINT
             | TyKind::Index
-            | TyKind::IntLiteral
+            | TyKind::IntLiteral(_)
             | TyKind::FLOAT64
-            | TyKind::FloatLiteral
+            | TyKind::FloatLiteral(_)
             | TyKind::Bool
             | TyKind::I1
             | TyKind::StringLiteral(_)

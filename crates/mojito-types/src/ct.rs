@@ -444,8 +444,8 @@ impl ScalarConversion {
             TyKind::INT
                 | TyKind::UINT
                 | TyKind::FLOAT64
-                | TyKind::IntLiteral
-                | TyKind::FloatLiteral
+                | TyKind::IntLiteral(_)
+                | TyKind::FloatLiteral(_)
                 | TyKind::Bool
         ) || crate::types::is_scalar_simd(ty.kind())
             || (self == Self::Bool && *ty.kind() == TyKind::I1)
@@ -1309,8 +1309,8 @@ impl CtValue {
             | (value @ Self::UInt(_), TyKind::UINT)
             | (value @ Self::Index(_), TyKind::Index)
             | (value @ Self::Float(_), TyKind::FLOAT64)
-            | (value @ Self::IntLiteral(_), TyKind::IntLiteral)
-            | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral)
+            | (value @ Self::IntLiteral(_), TyKind::IntLiteral(_))
+            | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral(_))
             | (value @ Self::Bool(_), TyKind::Bool | TyKind::I1)
             | (value @ Self::None, TyKind::None)
             | (value @ Self::Str(_), TyKind::StringLiteral(_)) => Some(value),
@@ -1745,11 +1745,13 @@ impl CtValue {
 /// it. Origin arguments and callables have no spelling here.
 pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
     Some(match ty.kind() {
-        TyKind::INT | TyKind::IntLiteral => Type::Int,
+        // A literal whose type carries its value has no closed spelling:
+        // `IntLiteral[v]`'s attribute is no source expression.
+        TyKind::INT | TyKind::IntLiteral(None) => Type::Int,
         TyKind::UINT => Type::UInt,
         TyKind::Bool => Type::Bool,
         TyKind::StringLiteral(_) => Type::StringLiteral,
-        TyKind::FLOAT64 | TyKind::FloatLiteral => Type::Float64,
+        TyKind::FLOAT64 | TyKind::FloatLiteral(None) => Type::Float64,
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::Simd {

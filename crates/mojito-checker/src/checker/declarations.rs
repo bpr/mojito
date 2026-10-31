@@ -4303,7 +4303,10 @@ impl Checker {
     /// unless the type it materializes to fails a bound its own type meets
     /// (`FloatLiteral` is `Floatable`, `Float64` is not).
     fn binds_unmaterialized_literal(&self, literal: &Ty, bounds: &[String]) -> bool {
-        matches!(literal.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) && {
+        matches!(
+            literal.kind(),
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
+        ) && {
             let materialized = default_literal(literal);
             !bounds
                 .iter()

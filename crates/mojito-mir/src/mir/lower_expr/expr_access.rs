@@ -33,11 +33,10 @@ impl<'a> Flatten<'a> {
         value: mojito_types::param_expr::ParamExpr,
     ) -> Reg {
         let value = self.param_value_register_at(e.location(), e.ty(), value);
-        let literal = self
-            .f
-            .reg_types
-            .get(&value.0)
-            .is_some_and(|ty| matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral));
+        let literal =
+            self.f.reg_types.get(&value.0).is_some_and(|ty| {
+                matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+            });
         match e.param_literal_target().filter(|_| literal) {
             Some(target) => self.materialize_literal(value, &target, e.location()),
             None => value,

@@ -118,7 +118,7 @@ impl FnLowering<'_> {
             .as_ref()
             .map(Ty::kind)
         {
-            Some(kind) if kind.is_int() || matches!(kind, TyKind::IntLiteral) => {
+            Some(kind) if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::Int)?;
                 let zero = self.int_constant(ctx, 0);
                 let negated = SubOp::new_with_overflow_flag(ctx, zero, value, no_overflow_flags());
@@ -138,7 +138,7 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, value);
                 Ok(())
             }
-            Some(kind) if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => {
+            Some(kind) if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::Float64)?;
                 let result = self.float_unary(ctx, "llvm.fabs.f64", value, dest);
                 self.reg_values.insert(dest.0, result);
@@ -175,9 +175,9 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("`min`/`max` call contract".into(), dest));
         }
         let rank = |ty: &Ty| match ty.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => Some(0),
+            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => Some(0),
             kind if kind.is_uint() => Some(1),
-            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => Some(2),
+            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => Some(2),
             _ => None,
         };
         let ty_of = |this: &Self, reg: Reg| this.func.reg_types.get(&reg.0).cloned();
@@ -262,7 +262,7 @@ impl FnLowering<'_> {
             }
             Some(kind)
                 if kind.is_float64()
-                    || matches!(kind, TyKind::FloatLiteral | TyKind::IntLiteral) =>
+                    || matches!(kind, TyKind::FloatLiteral(_) | TyKind::IntLiteral(_)) =>
             {
                 self.reg_value(ctx, arg, ScalarTy::Float64)?
             }
@@ -337,7 +337,7 @@ impl FnLowering<'_> {
         };
         let element = element.clone();
         let (quotient, remainder) = match element.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => {
+            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => {
                 let lhs = self.reg_value(ctx, args[0], ScalarTy::Int)?;
                 let rhs = self.reg_value(ctx, args[1], ScalarTy::Int)?;
                 self.emit_div_zero_guard(ctx, rhs, dest)?;
@@ -356,7 +356,7 @@ impl FnLowering<'_> {
                 self.append(ctx, rem.get_operation(), Some(dest));
                 (div.get_result(ctx), rem.get_result(ctx))
             }
-            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral) => {
+            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
                 let lhs = self.reg_value(ctx, args[0], ScalarTy::Float64)?;
                 let rhs = self.reg_value(ctx, args[1], ScalarTy::Float64)?;
                 let flags = FastmathFlagsAttr::default;
@@ -502,7 +502,7 @@ impl FnLowering<'_> {
         method: &str,
     ) -> Result<(), PlironError> {
         let scalar = match recv_ty.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral) => ScalarTy::Int,
+            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => ScalarTy::Int,
             kind if kind.is_uint() => ScalarTy::UInt,
             _ => {
                 return Err(

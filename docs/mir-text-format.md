@@ -1009,6 +1009,14 @@ Schema 1.151 adds the types `PopIntLiteral` and `PopFloatLiteral` and their
 values `ct_pop_int_literal` and `ct_pop_float_literal`. The package format
 moves to `mojito-package 171`.
 
+Schema 1.152 types a numeric literal by its value, as 1.134 did a string
+literal by its text: a literal register is spelled as the application
+`struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(4))] }`
+(`FloatLiteral` over `ct_pop_float_literal`), which the reader bridges back
+to the literal type, and a symbolic value as its `ct_expr`. The value-less
+`IntLiteral` and `FloatLiteral` keep their atoms. The package format moves
+to `mojito-package 172`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

@@ -312,23 +312,26 @@ pub fn modelled_conformance(
     {
         "Boolable" => matches!(
             ty.kind(),
-            TyKind::Bool | TyKind::StringLiteral(_) | TyKind::IntLiteral | TyKind::FloatLiteral
+            TyKind::Bool
+                | TyKind::StringLiteral(_)
+                | TyKind::IntLiteral(_)
+                | TyKind::FloatLiteral(_)
         ),
         "Intable" => matches!(
             ty.kind(),
-            TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::Pointer { .. }
+            TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Pointer { .. }
         ),
-        "Floatable" => matches!(ty.kind(), TyKind::Bool | TyKind::FloatLiteral),
-        "Indexer" => *ty == TyKind::IntLiteral,
+        "Floatable" => matches!(ty.kind(), TyKind::Bool | TyKind::FloatLiteral(_)),
+        "Indexer" => ty.is_int_literal(),
         "Equatable" => matches!(
             ty.kind(),
-            TyKind::Bool | TyKind::Dtype | TyKind::IntLiteral | TyKind::FloatLiteral
+            TyKind::Bool | TyKind::Dtype | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
         ),
         "Comparable" => matches!(
             ty.kind(),
-            TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
+            TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
         ),
-        "Ceilable" | "Floorable" | "Truncable" => *ty == TyKind::IntLiteral,
+        "Ceilable" | "Floorable" | "Truncable" => ty.is_int_literal(),
         "Absable" | "Powable" | "Roundable" => false,
         "DivModable" | "CeilDivable" => is_numeric_like(ty),
         "Hashable" => builtin_hashable_ty(ty),
@@ -406,7 +409,11 @@ pub fn is_scalar(ty: &Ty) -> bool {
 pub fn is_numeric(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::IntLiteral | TyKind::FloatLiteral
+        TyKind::INT
+            | TyKind::UINT
+            | TyKind::FLOAT64
+            | TyKind::IntLiteral(_)
+            | TyKind::FloatLiteral(_)
     )
 }
 

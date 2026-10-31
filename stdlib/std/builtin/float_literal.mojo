@@ -1,8 +1,8 @@
 # Upstream's `std/builtin/float_literal.mojo`, in part: the
 # `FloatLiteral[value]` struct with its default initializer, `is_nan`,
-# `is_neg_zero`, `_is_normal`, `__int_literal__`, and `__int__`. An
-# explicit application (`FloatLiteral[(2.5).value]()`) is this struct; a
-# literal `2.5` is still the compiler's value-less literal type (R1779).
+# `is_neg_zero`, `_is_normal`, `__int_literal__`, and `__int__`. A
+# literal `2.5` is its application `FloatLiteral[2.5]`, as is an explicit
+# one (`FloatLiteral[(2.5).value]()`).
 # Not ported: the implicit initializer from `IntLiteral[_]`, whose
 # declaration has no `out self` (R1784); the `nan`, `infinity`,
 # `negative_infinity`, and `negative_zero` members, whose attributes the

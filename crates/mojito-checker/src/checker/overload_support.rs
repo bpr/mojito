@@ -852,14 +852,15 @@ impl ArgumentBinding {
 pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
     match actual.kind() {
         TyKind::StringLiteral(_) => CONVERSION_UNIT,
-        TyKind::IntLiteral | TyKind::FloatLiteral => 1,
+        TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => 1,
         _ => 0,
     }
 }
 
 /// The conversion cost of one argument, in `CONVERSION_UNIT`s: 0 for an
-/// exact match (a literal against the value-less `StringLiteral` is one,
-/// as the pin's literal is the `StringLiteral[_]` it binds), one unit for a numeric literal at its contextual default
+/// exact match (a literal against its value-less literal type is one, as
+/// the pin's literal is the `StringLiteral[_]` or `IntLiteral[_]` it
+/// binds), one unit for a numeric literal at its contextual default
 /// type, and one whole conversion for an implicit conversion. A string
 /// literal converting to anything but the nominal `String` costs two:
 /// `String` is the literal's contextual default type, so it ranks above the
@@ -870,11 +871,13 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
         || matches!(
             (actual.kind(), expected.kind()),
             (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(None))
+                | (TyKind::IntLiteral(Some(_)), TyKind::IntLiteral(None))
+                | (TyKind::FloatLiteral(Some(_)), TyKind::FloatLiteral(None))
         )
     {
         0
-    } else if matches!(actual.kind(), TyKind::IntLiteral) && expected.is_int()
-        || matches!(actual.kind(), TyKind::FloatLiteral) && expected.is_float64()
+    } else if matches!(actual.kind(), TyKind::IntLiteral(_)) && expected.is_int()
+        || matches!(actual.kind(), TyKind::FloatLiteral(_)) && expected.is_float64()
     {
         1
     } else if matches!(actual.kind(), TyKind::StringLiteral(_))

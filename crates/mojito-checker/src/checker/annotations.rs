@@ -204,7 +204,7 @@ pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {
     match dtype.known() {
         // Upstream's `IntLiteral` initializer converts a literal into a
         // mask lane by `value != 0`.
-        Some(Dtype::Bool) => *ty.kind() == TyKind::IntLiteral,
+        Some(Dtype::Bool) => ty.is_int_literal(),
         Some(dtype) if dtype.is_float() => float_source || integer_source,
         Some(_) => integer_source,
         None => float_source || integer_source,

@@ -334,10 +334,10 @@ impl FnLowering<'_> {
         }
         let float = matches!(
             self.func.reg_types.get(&a.0).map(Ty::kind),
-            Some(TyKind::FloatLiteral)
+            Some(TyKind::FloatLiteral(_))
         ) || matches!(
             self.func.reg_types.get(&b.0).map(Ty::kind),
-            Some(TyKind::FloatLiteral)
+            Some(TyKind::FloatLiteral(_))
         );
         Ok(if float {
             ScalarTy::Float64
@@ -352,7 +352,7 @@ impl FnLowering<'_> {
         let Some(ty) = self.func.reg_types.get(&reg.0) else {
             return Err(self.unsupported(format!("untyped register %r{}", reg.0), None));
         };
-        if matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
+        if matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) {
             return Ok(None);
         }
         scalar_type(self.name, ty, self.reg_span(reg)).map(Some)

@@ -228,6 +228,9 @@ impl<'a> Flatten<'a> {
         if let Some(zero) = self.default_scalar_construction(node) {
             return Some(zero);
         }
+        if let Some(literal) = self.materialized_literal_construction(node) {
+            return Some(literal);
+        }
         if let Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param }) =
             node.adjustments
                 .iter()

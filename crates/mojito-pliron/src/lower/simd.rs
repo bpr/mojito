@@ -113,7 +113,7 @@ impl FnLowering<'_> {
         let source = match self.concrete_scalar_ty(elem)? {
             Some(ty) => ty,
             None => match self.func.reg_types.get(&elem.0).map(Ty::kind) {
-                Some(TyKind::FloatLiteral) => ScalarTy::Float64,
+                Some(TyKind::FloatLiteral(_)) => ScalarTy::Float64,
                 _ => ScalarTy::Int,
             },
         };

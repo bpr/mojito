@@ -2077,15 +2077,18 @@ fn lower_function(
 
 /// The type of `self` in a member of struct `name` declaring `parameters`:
 /// the struct at its own binders, which parametric MIR spells by the bare
-/// name and each instance replaces. `SIMD` and `StringLiteral` are the
+/// name and each instance replaces. `SIMD` and the literal structs are the
 /// exceptions while the `Ty::new` bridge holds their applications as the
-/// compiler's `TyKind::Simd` (R1557) and `TyKind::StringLiteral` (R1660):
+/// compiler's `TyKind::Simd` (R1557), `TyKind::StringLiteral` (R1660),
+/// `TyKind::IntLiteral`, and `TyKind::FloatLiteral` (R1785):
 /// the receiver is that type at the binders, which an instance substitutes
 /// as any other type.
 fn self_receiver_ty(name: &str, parameters: &[ParamDecl]) -> Ty {
     let arguments = if [
         mojito_types::types::SIMD_TYPE_NAME,
         mojito_types::types::STRING_LITERAL_TYPE_NAME,
+        mojito_types::types::INT_LITERAL_TYPE_NAME,
+        mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
     ]
     .contains(&name)
     {
@@ -4333,10 +4336,9 @@ impl<'a> Flatten<'a> {
         if displays.is_empty() {
             return None;
         }
-        if !expression
-            .ty()
-            .is_some_and(|ty| ty.is_int() || matches!(ty.kind(), TyKind::IntLiteral | TyKind::Bool))
-        {
+        if !expression.ty().is_some_and(|ty| {
+            ty.is_int() || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::Bool)
+        }) {
             for display in &displays {
                 self.build_display(display);
             }
@@ -5143,8 +5145,8 @@ fn close_register_types(
                                 Some(Ty::int())
                             }
                             Const::Float(_) => Some(Ty::float64()),
-                            Const::IntLiteral(_) => Some(Ty::int_literal()),
-                            Const::FloatLiteral(_) => Some(Ty::float_literal()),
+                            Const::IntLiteral(value) => Some(Ty::int_literal_of(value)),
+                            Const::FloatLiteral(value) => Some(Ty::float_literal_of(value)),
                             Const::Bool(_) => Some(Ty::bool()),
                             Const::Str(text) => Some(Ty::string_literal_of(text)),
                             Const::None => Some(Ty::none()),

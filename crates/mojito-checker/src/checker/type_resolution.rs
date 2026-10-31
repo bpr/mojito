@@ -2154,6 +2154,8 @@ impl Checker {
                     kind,
                     TyKind::KgenSimd { .. }
                         | TyKind::StringLiteral(Some(_))
+                        | TyKind::IntLiteral(Some(_))
+                        | TyKind::FloatLiteral(Some(_))
                         | TyKind::PopArray { .. }
                 ))
                 && !parameters.is_empty()
@@ -4232,11 +4234,15 @@ impl Checker {
     /// The upstream-worded rejection of a struct value flowing into a
     /// destination of the same struct whose origin arguments differ (`p =
     /// P(Pointer(to=ys))` over `P[origin_of(xs)]`), or of a string literal
-    /// into a `StringLiteral` of another text; `None` when the two differ
-    /// in anything but their origin tails or their texts.
+    /// into a `StringLiteral` of another text, or a numeric literal into a
+    /// literal type of another value; `None` when the two differ in
+    /// anything but their origin tails or their values.
     pub(super) fn struct_origin_mismatch(&self, found: &Ty, expected: &Ty) -> Option<TypeError> {
-        if let (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(Some(_))) =
-            (found.kind(), expected.kind())
+        if let (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(Some(_)))
+        | (
+            TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)),
+            TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)),
+        ) = (found.kind(), expected.kind())
         {
             return (found != expected).then(|| TypeError::OriginIdentityMismatch {
                 found: found.to_string(),
@@ -4651,8 +4657,8 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::StringLiteral(_)
         | TyKind::None
         | TyKind::Never
-        | TyKind::IntLiteral
-        | TyKind::FloatLiteral
+        | TyKind::IntLiteral(_)
+        | TyKind::FloatLiteral(_)
         | TyKind::Dtype
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)

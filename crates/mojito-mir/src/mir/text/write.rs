@@ -2153,7 +2153,9 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::StringLiteral(None) => "StringLiteral".into(),
         // A literal whose type carries its value is spelled as the struct
         // application the decoder's `Ty::new` bridges back.
-        TyKind::StringLiteral(Some(_)) => mojito_types::types::nominal_parts(ty).map_or_else(
+        TyKind::StringLiteral(Some(_))
+        | TyKind::IntLiteral(Some(_))
+        | TyKind::FloatLiteral(Some(_)) => mojito_types::types::nominal_parts(ty).map_or_else(
             || "StringLiteral".into(),
             |(name, args)| {
                 record(
@@ -2168,8 +2170,8 @@ fn ty_value(ty: &Ty) -> String {
         kind if kind.is_float64() => "Float64".into(),
         TyKind::None => "None".into(),
         TyKind::Never => "Never".into(),
-        TyKind::IntLiteral => "IntLiteral".into(),
-        TyKind::FloatLiteral => "FloatLiteral".into(),
+        TyKind::IntLiteral(_) => "IntLiteral".into(),
+        TyKind::FloatLiteral(_) => "FloatLiteral".into(),
         TyKind::Infer => "Infer".into(),
         TyKind::Dtype => "DType".into(),
         TyKind::TypeType => "TypeType".into(),

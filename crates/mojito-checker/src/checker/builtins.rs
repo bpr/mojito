@@ -145,8 +145,8 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         TyKind::Bool
         | TyKind::StringLiteral(_)
         | TyKind::None
-        | TyKind::IntLiteral
-        | TyKind::FloatLiteral
+        | TyKind::IntLiteral(_)
+        | TyKind::FloatLiteral(_)
         | TyKind::Struct(_, _)
         | TyKind::Dtype
         | TyKind::Error
@@ -230,10 +230,10 @@ pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
     match (a.kind(), b.kind()) {
         (TyKind::StringLiteral(_), _) if is_nominal_string(b) => Some(b.clone()),
         (_, TyKind::StringLiteral(_)) if is_nominal_string(a) => Some(a.clone()),
-        (TyKind::IntLiteral | TyKind::FloatLiteral, _) if b.is_simd() && coerces(a, b) => {
+        (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), _) if b.is_simd() && coerces(a, b) => {
             Some(b.clone())
         }
-        (_, TyKind::IntLiteral | TyKind::FloatLiteral) if a.is_simd() && coerces(b, a) => {
+        (_, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) if a.is_simd() && coerces(b, a) => {
             Some(a.clone())
         }
         (TyKind::Struct(..), TyKind::Struct(..)) if a != b => {
@@ -275,7 +275,21 @@ pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
     } else if coerces(b, a) {
         Some(a.clone())
     } else {
-        None
+        common_literal(a, b)
+    }
+}
+
+/// The common type of two numeric literals of different values: the
+/// value-less `IntLiteral`, or `FloatLiteral` beside any float, which
+/// materializes where it is bound (`1 if c else 2` is an `Int`).
+fn common_literal(a: &Ty, b: &Ty) -> Option<Ty> {
+    match (a.kind(), b.kind()) {
+        (TyKind::IntLiteral(_), TyKind::IntLiteral(_)) => Some(Ty::int_literal()),
+        (
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_),
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_),
+        ) => Some(Ty::float_literal()),
+        _ => None,
     }
 }
 
@@ -597,7 +611,7 @@ impl Checker {
     /// calls `std.math.round`.
     pub(super) fn infer_round(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("round", 1, args)?;
-        if tys[0].is_float64() || matches!(tys[0].kind(), TyKind::FloatLiteral) {
+        if tys[0].is_float64() || matches!(tys[0].kind(), TyKind::FloatLiteral(_)) {
             Ok(Ty::float64())
         } else if self.param_has_bound(&tys[0], "Roundable") {
             Ok(tys[0].clone())
@@ -744,7 +758,7 @@ impl Checker {
                 }
                 kind if kind.is_int() => Some(Dtype::Int),
                 kind if kind.is_uint() => Some(Dtype::UInt),
-                TyKind::IntLiteral | TyKind::FloatLiteral => None,
+                TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => None,
                 // Not a scalar-range shape at all (a symbolic lane included);
                 // the ordinary no-matching-overload diagnostic stands.
                 _ => match scalar_simd_dtype(ty) {
@@ -898,8 +912,8 @@ impl Checker {
         // upstream's builtin-inline `SIMD.__init__(IntLiteral)` is
         // `pop.int_literal_convert`.
         if match arg_ty.kind() {
-            TyKind::IntLiteral => target.is_int() || target.is_uint() || target.is_float64(),
-            TyKind::FloatLiteral => target.is_float64(),
+            TyKind::IntLiteral(_) => target.is_int() || target.is_uint() || target.is_float64(),
+            TyKind::FloatLiteral(_) => target.is_float64(),
             _ => false,
         } {
             self.record_literal_materializations(&args[0], &arg_ty, &target)?;
@@ -912,7 +926,7 @@ impl Checker {
         // outranks the generic `Intable` overload, and its `comptime assert`
         // fails for an integer dtype. A generic `Int(x)` instantiated at a
         // `FloatLiteral` still binds `Intable` inside its body.
-        if *arg_ty == TyKind::FloatLiteral && (target.is_int() || target.is_uint()) {
+        if arg_ty.is_float_literal() && (target.is_int() || target.is_uint()) {
             return Err(float_literal_conversion_error(&target));
         }
         let mismatch = || TypeError::TypeMismatch {

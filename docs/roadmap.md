@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1786**.
+Next free ID: **R1787**.
 
 ## Ordered Work
 
@@ -3658,6 +3658,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `FloatLiteral`'s implicit initializer from `IntLiteral[_]` uses it
     (`#pop<int_to_float_literal>`, read as `ParamOp::IntToFloatLiteral`),
     so the bundled `float_literal.mojo` omits it.
+  - Until it lands, `types::coerces` admits `IntLiteral[4]` into
+    `FloatLiteral[4.0]` by rule, and the native backend stores the integer
+    register unconverted. Probe: `var f: type_of(4.0) = 4; print(f)` prints
+    `4.0` at the pin and on the VM, and fails Pliron's IR verification
+    ("expected builtin.fp64 , got builtin.integer i64").
   - Found while landing R1507 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6692,34 +6697,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1779 A numeric literal's type does not carry its value**
-
-  Problem: a literal `4` is typed by the value-less `TyKind::IntLiteral`,
-  and `2.5` by `TyKind::FloatLiteral`, where upstream types them as the
-  applications `IntLiteral[4]` and `FloatLiteral[2.5]` of the declared
-  structs (`stdlib/std/builtin/int_literal.mojo`, `float_literal.mojo`).
-  - Probe: `var y: type_of(N) = 4` over `comptime N = 4` prints `4` at the
-    pin, `= {}` prints `4`, and `= 7` is "cannot implicitly convert
-    'IntLiteral[7]' value to 'IntLiteral[4]'". Mojito rejects every
-    `type_of` of a literal value as unsupported (`type_of(3)`, a module
-    `FloatLiteral` constant in a field's type).
-  - Probe: `comptime M: Int = 4` then `var z: type_of(M) = 9` prints `9` at
-    the pin. `Checker::comptime_binding_ty` (`checker/scopes.rs`) types
-    `comptime N = 4` as `Int` too, so Mojito rejects both.
-  - Probe: `comptime S = N + 2.5; var s: type_of(S) = {}` prints `6.5`,
-    and `var y: type_of(4.0) = 4` prints `4.0`, at the pin.
-  - Probe: `IntLiteral[4]()` is rejected with "found Int"
-    (`assets/type_error/int_literal_parameter_attribute_type.mojo`), where
-    the pin names the argument's type `IntLiteral[4]`.
-  - Lever: payload `TyKind::IntLiteral`/`FloatLiteral` with the struct's
-    `value`, bridged from the application in `Ty::new` as R1652 bridged
-    `StringLiteral` (`bridged_string_literal`, `nominal_parts`,
-    `rewrite_ty`), and fold a literal-only infix into the result's value.
-  - `[1, 2, 3]` and `1 if c else 2` must still materialize to `Int`.
-  - Plan: `R1507-a-literal-s-type-does-not-plan.md`, slice 2.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1780 A bare `IntLiteral` or `FloatLiteral` parameter is a run-time
   register, where upstream auto-parameterizes it**
 
@@ -6824,9 +6801,37 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     Pliron's `i64`/`f64` (`lower/types.rs`), and an 8-byte layout
     (`mojito-native-core/src/layout.rs`).
   - This is the numeric half of R1657, R1659, and R1660.
+  - The bridge's stand-ins go with it: `bridged_numeric_literal`
+    (`types.rs`), `literal_construction`'s numeric arms, and MIR's
+    `materialized_literal_construction`, which reads a materialized
+    `IntLiteral[v]()` off its type because a node carries one adjustment.
+  - A literal constant's `MetaTy` (`MetaTy::of_value`, `param_expr.rs`)
+    is the value-less type too, so `applied_value`
+    (`checker/comptime_validation.rs`) matches it against a carried type
+    through `value_less_literal`.
   - Done when an `IntLiteral[v]` application is the declared struct, with
     no bridge onto a compiler kind.
   - Depends on R1780.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1786 A tuple display's numeric literal elements stay literal
+  types, where upstream's deduction materializes them**
+
+  Problem: `(1, 2.5)` is typed `Tuple[IntLiteral, FloatLiteral]` with
+  value-less elements (`Checker::tuple_element_ty`,
+  `checker/inference.rs`), where upstream's `Tuple.__init__(var *args:
+  *Ts)` deduces `Ts` and `@__nonmaterializable` materializes each literal,
+  so the pin's display is `Tuple[Int, Float64]`.
+  - Probe: `var t: type_of((1, 2.5)) = (3, 4.5); print(t[0])` prints `3` at
+    the pin; Mojito fails in the VM ("`SIMD$mono$VDType$int$VSIMDLength$1$`
+    has no `write_to` instance").
+  - Probe: `(1, 2) < (1, 3)` compares through `Tuple.__lt__(self, other:
+    Self)` only because both elements erase to the value-less literal;
+    carried values would make the two `Self`s differ.
+  - Lever: type each element by its deduction (`default_literal`) and let
+    a tuple-typed context convert element-wise, as `coerces` already does
+    for `Tuple[Float64, Float64]` over `(1, 2.0)`.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R137 Checking a deeply nested generic struct type takes time
@@ -9595,6 +9600,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `(2.5).__pow__(2.0)` likewise, since `FloatLiteral` declares no
     `__pow__`.
   - Found while landing R1567 (2026-10-31).
+  - The ported dunders also retire `Checker::carry_literal_value`
+    (`checker/inference.rs`), which types a literal-only expression's
+    result by the value the checker's evaluator folds it to.
   - Depends on R1779 (a literal's type is the declared `IntLiteral[value]`).
   - Model: Fable, Not Planned.
 
