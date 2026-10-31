@@ -295,6 +295,18 @@ pub fn fold_data_to_str(string: &CtValue, rest: &CtValue) -> Result<CtValue, Par
         .map_err(|_| unsupported("'data_to_str' reads bytes that are not UTF-8"))
 }
 
+/// `#pop.string_concat` over two concrete `!kgen.string`s.
+pub fn fold_string_concat(left: &CtValue, right: &CtValue) -> Result<CtValue, ParamError> {
+    match (left, right) {
+        (CtValue::KgenString(left), CtValue::KgenString(right)) => {
+            Ok(CtValue::KgenString(format!("{left}{right}")))
+        }
+        _ => Err(unsupported(
+            "'#pop.string_concat' expects two '!kgen.string' values",
+        )),
+    }
+}
+
 /// KGEN's `target_get_field` over a concrete target and field name.
 pub fn fold_target_get_field(target: &CtValue, name: &CtValue) -> Result<CtValue, ParamError> {
     let (target, name) = target_operands("target_get_field", target, name)?;

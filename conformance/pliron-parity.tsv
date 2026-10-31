@@ -1095,6 +1095,7 @@ assets/ok/string_format_declared.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
 assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized
+assets/ok/string_literal_dunders.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_overload.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_struct.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_value_type.mojo	main	exe-differential	sanitized

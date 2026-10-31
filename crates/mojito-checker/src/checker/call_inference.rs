@@ -618,6 +618,17 @@ impl Checker {
                     }
                     _ => constructed,
                 }),
+            // A literal's default construction is the literal of its text,
+            // symbolic until the instance is elaborated
+            // (`StringLiteral.__add__`'s `{}`).
+            TyKind::StringLiteral(Some(_)) if args.is_empty() && kwargs.is_empty() => {
+                self.record_at(span.clone()).adjustment = Some(Box::new(
+                    mojito_checked::checked::SemanticAdjustment::ConstructType {
+                        ty: instance.clone(),
+                    },
+                ));
+                Ok(instance.clone())
+            }
             // A reflected field type's default construction.
             TyKind::Dependent(_) if args.is_empty() && kwargs.is_empty() => {
                 self.construct_dependent(span.clone(), instance.clone())

@@ -3137,13 +3137,34 @@ impl Checker {
                 }
                 Ok(context.identical(&left, &right))
             }
+            // Two `!kgen.string`s' texts, concatenated
+            // (`StringLiteral.__add__`).
+            ("#pop.string_concat<{},{}>:!kgen.string", [left, right]) => {
+                let kgen_string = MetaTy::value(TyKind::KgenString.into());
+                let left = self.bracket_operand(left, recording)?;
+                let right = self.bracket_operand(right, recording)?;
+                if let Some(operand) = [&left, &right]
+                    .into_iter()
+                    .find(|operand| *operand.meta() != kgen_string)
+                {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a '!kgen.string' value".to_string(),
+                        found: operand.meta().to_string(),
+                        context: "the operands of '#pop.string_concat'".to_string(),
+                    });
+                }
+                context
+                    .op(ParamOp::StringConcat, &[left, right])
+                    .map_err(param_error)
+            }
             _ => Err(TypeError::Unsupported(format!(
                 "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
                  attribute, '#kgen.param_list.size', '#kgen.param_list.get', \
                  '#kgen.param.expr<data_to_str>', '#kgen.param.expr<target_has_feature>', \
                  '#kgen.param.expr<target_get_field>' of a known field, \
                  '#kgen.param.expr<rebind>', '#kgen.param.expr<get_sizeof>', \
-                 '#kgen.param.expr<get_alignof>', and '#kgen.param.identical' are read"
+                 '#kgen.param.expr<get_alignof>', '#kgen.param.identical', and \
+                 '#pop.string_concat' are read"
             ))),
         }
     }

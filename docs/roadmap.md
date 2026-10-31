@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1746**.
+Next free ID: **R1747**.
 
 ## Ordered Work
 
@@ -5991,6 +5991,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1746 A `comptime` alias of an unapplied parametric struct is
+  not that struct's generator**
+
+  `comptime Q = P` over `struct P[n: Int]` is rejected at its declaration
+  with "cannot infer type parameter 'n' of 'P' from the arguments", where
+  the pin binds `Q` to the unapplied `P`, applicable as `Q[2]` and `Q[_]`.
+  - The alias's body is read as a value of `P`, so a struct whose
+    parameters cannot be inferred fails there.
+  - A struct whose parameters are all infer-only binds, but as the
+    struct with no parameters: the bundled `comptime StringSlice =
+    StringSpan` applied as `StringSlice[_]` or
+    `StringSlice[ImmStaticOrigin]` is rejected with "type
+    '__module$std$string$StringSlice' expects 0 type argument(s), got 1".
+  - Probe: `def f(x: Q[_])` and `def g(x: Q[2])` over `comptime Q = P`,
+    called with `P[2]()`, print `2 2`, here and at the pin.
+  - Probe: `def f(x: StringSlice[_])` called with `StaticString("a")`
+    prints `a`.
+  - Probe: the bundled `String.__radd__` takes upstream's `other:
+    StringSlice[_]` (`stdlib/std/string.mojo`), where it now takes the
+    bare `StringSlice`.
+  - Found while landing R1653 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1704 A parametric function type spelled inline in a type does
   not resolve**
 
@@ -10831,35 +10855,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     struct).
   - Model: Opus, Not Planned.
 
-- [ ] **R1653 `StringLiteral`'s comparisons and concatenation are checker
-  rules, where upstream's are its dunders**
-
-  `"x" + s` and `"ab" == s` over a `String` `s` convert the literal to
-  `String` and call `String`'s dunder (`infer_infix`'s literal-left arm,
-  `checker/operators.rs`).
-  - Upstream calls `StringLiteral.__eq__(self, rhs: StringSlice)` and its
-    `__ne__`, `__lt__`, `__le__`, `__gt__`, and `__ge__`.
-  - For `+` it calls the reflected `String.__radd__(self, other:
-    StringSlice)`, which `stdlib/std/string.mojo` lacks.
-  - Port those members and `__add__` (over `#pop.string_concat`), and
-    delete the arm.
-  - Probe: `print("x" + s, "ab" == s, "ab" != s)` over `s = String("ab")`
-    prints `xab True False`, here and at the pin.
-  - Probe: `String("a") + t` over a `StaticString` `t` is rejected
-    ("operator '+' is not defined for String and StringSpan"), since the
-    bundled `String.__add__` takes `Self` where upstream's takes
-    `StringSlice`; the `comptime assert` message `String("bad: ") +
-    reflect[T].name()` fails the same way.
-  - Probe: `"`" + name + "` y"` over `name: StaticString` fails with
-    "operator '+' is not defined for StringLiteral["`"] and StringSpan",
-    where the pin prints `` `log` y ``: the bundled `StringSpan` lacks
-    upstream's `__add__(self, rhs: StringSpan) -> String` and `__radd__`
-    (`collections/string/string_span.mojo`, over `String._add`).
-    Upstream's `_assert_float64_supported` (R1714) builds its message this
-    way.
-  - Depends on R1652 (a literal receiver is the struct).
-  - Model: Opus, Not Planned.
-
 - [ ] **R1654 `StringLiteral`'s hash is a compiler leaf, where upstream's
   is its `__hash__`**
 
@@ -10889,8 +10884,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     StringLiteral)`, whose body is `StaticString(lit.value)`: a run-time
     `!kgen.string` (R1190).
   - The bundled `write_to` and `write_repr_to` read `as_string_slice()`
-    for that reason. Respell them as upstream's when this lands, and add
-    `FloatableRaising`, `IntableRaising`, and `PathLike`.
+    for that reason, and so do `__ne__` and `__lt__`. Respell them as
+    upstream's when this lands, and add `FloatableRaising`,
+    `IntableRaising`, and `PathLike`.
   - Depends on R1190 (a run-time `!kgen.string`) and R1658 (the bare
     `lit: StringLiteral` parameter).
   - Model: Opus, Not Planned.

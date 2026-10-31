@@ -849,7 +849,8 @@ pub enum SemanticAdjustment {
     ImplicitlyCopyConsumingReceiver,
     /// `a OP b` answered by the right operand's reflected dunder (`1 + m`
     /// → `m.__radd__(1)`): MIR swaps the operands and `BinOp.resolved`
-    /// names the reflected method.
+    /// names the reflected method. A node flag, so the result may also be
+    /// a materialized borrow source.
     ReflectedOperator,
     /// The dunder each link of a chained comparison (`a < b < c`) selected,
     /// in link order: MIR lowers every link as its lone operator's call.
@@ -6678,6 +6679,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.implicitly_copied_consuming_receiver {
         adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
     }
+    if facts.reflected_operator {
+        adjustments.push(SemanticAdjustment::ReflectedOperator);
+    }
     if facts.truthiness_condition {
         adjustments.push(SemanticAdjustment::Truthiness);
     }
@@ -7031,6 +7035,8 @@ node_facts! {
         read_temporary_argument,
         forwarded_argument,
         implicitly_copied_consuming_receiver,
+        /// See [`SemanticAdjustment::ReflectedOperator`].
+        reflected_operator,
         truthiness_condition,
         register_passable_result,
         /// See [`SemanticAdjustment::RegisterPassableRead`].

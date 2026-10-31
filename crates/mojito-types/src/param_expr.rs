@@ -244,6 +244,7 @@ impl ParamContext {
             ParamOp::Cond => self.build_cond(operands),
             ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin => self.build_cast(op, &operands[0]),
             ParamOp::DataToStr => self.build_data_to_str(operands),
+            ParamOp::StringConcat => self.build_string_concat(operands),
             ParamOp::StringSize | ParamOp::StringAddress => self.build_string_read(op, operands),
             ParamOp::SimdSplat | ParamOp::Cast => self.build_lane_op(op, operands),
             ParamOp::TargetGetField | ParamOp::TargetHasFeature => {
@@ -1659,6 +1660,22 @@ impl ParamContext {
         ))
     }
 
+    /// `#pop.string_concat` over two `!kgen.string`s: the string of both
+    /// texts once both are constant, and otherwise the node.
+    fn build_string_concat(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        if let [Some(left), Some(right)] = [operands[0].as_constant(), operands[1].as_constant()] {
+            self.count_fold();
+            return self.constant(fold_primitive(ParamOp::StringConcat, &[left, right])?);
+        }
+        Ok(self.make(
+            MetaTy::value(TyKind::KgenString.into()),
+            ParamKind::Op {
+                op: ParamOp::StringConcat,
+                operands,
+            },
+        ))
+    }
+
     /// KGEN's `target_get_field` or `target_has_feature` over a target and
     /// a `!kgen.string` name: the field's value or the feature's presence
     /// once both are constant, and otherwise the node. A field is a
@@ -2948,6 +2965,9 @@ pub enum ParamOp {
     /// compile-time string view addresses, then those of each view in a
     /// list, concatenated (upstream's `_get_kgen_string`).
     DataToStr,
+    /// `#pop.string_concat`: the `!kgen.string` of two `!kgen.string`s'
+    /// texts, the left's first (upstream's `StringLiteral.__add__`).
+    StringConcat,
     /// `pop.string.size`: the byte length of a `!kgen.string`, as an
     /// `index` (upstream's `StringLiteral.byte_length`).
     StringSize,
@@ -3009,6 +3029,7 @@ impl ParamOp {
             Self::CastToBuiltin => "cast_to_builtin",
             Self::CastFromBuiltin => "cast_from_builtin",
             Self::DataToStr => "data_to_str",
+            Self::StringConcat => "string_concat",
             Self::StringSize => "string_size",
             Self::StringAddress => "string_address",
             Self::SimdSplat => "simd_splat",
@@ -3061,7 +3082,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 31] = [
+    const ALL: [Self; 32] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -3085,6 +3106,7 @@ impl ParamOp {
         Self::CastToBuiltin,
         Self::CastFromBuiltin,
         Self::DataToStr,
+        Self::StringConcat,
         Self::StringSize,
         Self::StringAddress,
         Self::SimdSplat,
@@ -3134,6 +3156,7 @@ impl ParamOp {
             | Self::CastToBuiltin
             | Self::CastFromBuiltin
             | Self::DataToStr
+            | Self::StringConcat
             | Self::StringSize
             | Self::StringAddress
             | Self::SimdSplat
@@ -4367,6 +4390,7 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::CastToBuiltin, [operand]) => fold::fold_cast_to_builtin(operand),
         (ParamOp::CastFromBuiltin, [operand]) => fold::fold_cast_from_builtin(operand),
         (ParamOp::DataToStr, [string, rest]) => fold::fold_data_to_str(string, rest),
+        (ParamOp::StringConcat, [left, right]) => fold::fold_string_concat(left, right),
         (ParamOp::StringSize, [string]) => fold::fold_string_size(string),
         (ParamOp::StringAddress, [string]) => fold::fold_string_address(string),
         (ParamOp::TargetGetField, [target, name]) => fold::fold_target_get_field(target, name),
@@ -4478,6 +4502,7 @@ const fn precedence(op: ParamOp) -> u8 {
         ParamOp::CastToBuiltin
         | ParamOp::CastFromBuiltin
         | ParamOp::DataToStr
+        | ParamOp::StringConcat
         | ParamOp::StringSize
         | ParamOp::StringAddress
         | ParamOp::SimdSplat
@@ -4513,6 +4538,7 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::CastToBuiltin => ".__mlir_index__()",
         ParamOp::CastFromBuiltin => "Int(mlir_value=)",
         ParamOp::DataToStr => "data_to_str",
+        ParamOp::StringConcat => "pop.string_concat",
         ParamOp::StringSize => "pop.string.size",
         ParamOp::StringAddress => "pop.string.address",
         ParamOp::SimdSplat => "pop.simd.splat",

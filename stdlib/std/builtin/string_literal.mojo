@@ -1,16 +1,17 @@
 # Upstream's `std/builtin/string_literal.mojo`, in part: the
 # `StringLiteral[value]` struct with its default initializer, `__bool__`,
-# `byte_length`, `ptr`, `unsafe_ptr`, `as_string_slice`, `as_bytes`,
-# `_is_identical`, `write_to`, and `write_repr_to`. A literal `"ab"` is a
-# `StringLiteral["ab"]`, whose members are these bodies. The compiler holds
-# an application as its literal type (R1660), and builds one by rule, so
-# the default initializer's empty body constructs nothing. A bare run-time
+# `__add__`, the comparisons, `byte_length`, `ptr`, `unsafe_ptr`,
+# `as_string_slice`, `as_bytes`, `_is_identical`, `write_to`, and
+# `write_repr_to`. A literal `"ab"` is a `StringLiteral["ab"]`, whose
+# members are these bodies. The compiler holds an application as its
+# literal type (R1660), and builds one by rule, so the default
+# initializer's empty body constructs nothing. A bare run-time
 # `StringLiteral` argument is still a value-less compiler type rather than
-# upstream's `StringLiteral[_]` (R1658), which is why `_is_identical` spells
-# its `rhs` as `StringLiteral[_]`. The comparisons and
-# `__add__` (R1653), `__hash__` (R1654), and the members whose bodies read
-# `StringSlice(self)` (R1655) are not ported, and for that reason
-# `write_to` and `write_repr_to` read `as_string_slice()`.
+# upstream's `StringLiteral[_]` (R1658), which is why `_is_identical` and
+# `__add__` spell their `rhs` as `StringLiteral[_]`. `__hash__` (R1654)
+# and the members whose bodies read `StringSlice(self)` (R1655) are not
+# ported, and for that reason the comparisons, `write_to`, and
+# `write_repr_to` read `as_string_slice()`.
 # `@__nonmaterializable(String)` is not read (R1651). The struct declares
 # only the traits whose requirements are ported here. `ptr` takes
 # `pop.string.address` as the `Pointer` itself, where upstream's wraps the
@@ -22,7 +23,7 @@ These are Mojo built-ins, so you don't need to import them.
 
 from std.collections.string.string_span import _get_kgen_string
 from std.span import Span
-from std.string import StaticString
+from std.string import StaticString, StringSlice
 
 
 struct StringLiteral[value: __mlir_type.`!kgen.string`](
@@ -70,6 +71,99 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
             True if the string is not empty.
         """
         return self.byte_length() != 0
+
+    def __add__(
+        self, rhs: StringLiteral[_]
+    ) -> StringLiteral[
+        __mlir_attr[
+            `#pop.string_concat<`,
+            self.value,
+            `,`,
+            rhs.value,
+            `> : !kgen.string`,
+        ]
+    ]:
+        """Concatenate two string literals.
+
+        Args:
+            rhs: The string to concat.
+
+        Returns:
+            The concatenated string.
+        """
+        return {}
+
+    @inline(.nodebug)
+    def __eq__(self, rhs: StringSlice) -> Bool:
+        """Compare two string literals for equality.
+
+        Args:
+            rhs: The string to compare.
+
+        Returns:
+            True if they are equal.
+        """
+        return not (self != rhs)
+
+    @inline(.nodebug)
+    def __ne__(self, rhs: StringSlice) -> Bool:
+        """Compare two string literals for inequality.
+
+        Args:
+            rhs: The string to compare.
+
+        Returns:
+            True if they are not equal.
+        """
+        return self.as_string_slice() != rhs
+
+    @inline(.nodebug)
+    def __lt__(self, rhs: StringSlice) -> Bool:
+        """Compare this value to the RHS using lesser than (LT) comparison.
+
+        Args:
+            rhs: The other value to compare against.
+
+        Returns:
+            True if this is strictly less than the RHS and False otherwise.
+        """
+        return self.as_string_slice() < rhs
+
+    @inline(.nodebug)
+    def __le__(self, rhs: StringSlice) -> Bool:
+        """Compare this value to the RHS using lesser than or equal to (LE) comparison.
+
+        Args:
+            rhs: The other value to compare against.
+
+        Returns:
+            True if this is less than or equal to the RHS and False otherwise.
+        """
+        return not (rhs < self)
+
+    @inline(.nodebug)
+    def __gt__(self, rhs: StringSlice) -> Bool:
+        """Compare this value to the RHS using greater than (GT) comparison.
+
+        Args:
+            rhs: The other value to compare against.
+
+        Returns:
+            True if this is strictly greater than the RHS and False otherwise.
+        """
+        return rhs < self
+
+    @inline(.nodebug)
+    def __ge__(self, rhs: StringSlice) -> Bool:
+        """Compare this value to the RHS using greater than or equal to (GE) comparison.
+
+        Args:
+            rhs: The other value to compare against.
+
+        Returns:
+            True if this is greater than or equal to the RHS and False otherwise.
+        """
+        return not (self < rhs)
 
     # ===-------------------------------------------------------------------===#
     # Methods

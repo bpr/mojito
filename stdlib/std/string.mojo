@@ -842,21 +842,28 @@ struct String(
     def __ge__(self, other: Self) -> Bool:
         return not (self < other)
 
-    def __add__(self, other: Self) -> Self:
-        var result = String("")
-        result.data.unsafe_free()
-        result.data = unsafe_alloc[Byte](self.size + other.size)
-        result.size = self.size + other.size
-        result.cap = result.size
+    @staticmethod
+    def _add(lhs: Span[Byte, _], rhs: Span[Byte, _]) -> String:
+        var lhs_len = len(lhs)
+        var rhs_len = len(rhs)
+        var result = String(unsafe_uninit_length=lhs_len + rhs_len)
         var i = 0
-        while i < self.size:
-            result.data[i] = self.data[i]
+        while i < lhs_len:
+            result.data[i] = lhs[i]
             i += 1
         var j = 0
-        while j < other.size:
-            result.data[self.size + j] = other.data[j]
+        while j < rhs_len:
+            result.data[lhs_len + j] = rhs[j]
             j += 1
         return result^
+
+    def __add__(self, other: StringSlice) -> String:
+        return Self._add(self.as_bytes(), other.as_bytes())
+
+    # Upstream's `other` is a `StringSlice[_]`; an application through the
+    # `StringSlice` alias is rejected here (R1746).
+    def __radd__(self, other: StringSlice) -> String:
+        return Self._add(other.as_bytes(), self.as_bytes())
 
     def __iadd__(mut self, other: StringSpan):
         var data = unsafe_alloc[Byte](self.size + other._size)
@@ -1545,8 +1552,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return self._size > 0
 
     # Equality is bytewise against another view or an owned String (upstream's
-    # `__eq__` overloads); the operator selects by the right operand's type,
-    # and a literal converts to `String`.
+    # `__eq__` overloads); the operator selects by the right operand's type.
     def __eq__(self, rhs: StringSpan) -> Bool:
         if self._size != rhs._size:
             return False
@@ -1571,6 +1577,49 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     @inline(.always)
     def __ne__(self, rhs: StringSpan) -> Bool:
         return not (self == rhs)
+
+    # Bytewise over the overlapping content, then by length.
+    @inline(.always)
+    def __lt__(self, rhs: StringSpan) -> Bool:
+        var len1 = self._size
+        var len2 = rhs._size
+        var shared = len1 if len1 < len2 else len2
+        var i = 0
+        while i < shared:
+            if Int(self._data[i]) != Int(rhs._data[i]):
+                return Int(self._data[i]) < Int(rhs._data[i])
+            i += 1
+        return len1 < len2
+
+    @inline(.always)
+    def __gt__(self, rhs: StringSpan) -> Bool:
+        return not (self <= rhs)
+
+    @inline(.always)
+    def __le__(self, rhs: StringSpan) -> Bool:
+        return not (rhs < self)
+
+    @inline(.always)
+    def __lt__(self, rhs: String) -> Bool:
+        return self < StringSpan(rhs)
+
+    @inline(.always)
+    def __le__(self, rhs: String) -> Bool:
+        return self <= StringSpan(rhs)
+
+    @inline(.always)
+    def __gt__(self, rhs: String) -> Bool:
+        return self > StringSpan(rhs)
+
+    @inline(.always)
+    def __ge__(self, rhs: String) -> Bool:
+        return StringSpan(rhs) <= self
+
+    def __add__(self, rhs: StringSpan) -> String:
+        return String._add(self.as_bytes(), rhs.as_bytes())
+
+    def __radd__(self, lhs: StringSpan) -> String:
+        return lhs + self
 
     def __contains__(self, substr: StringSpan) -> Bool:
         return self._find_from(substr, 0) >= 0

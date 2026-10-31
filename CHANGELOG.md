@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `StringLiteral`'s comparisons and `__add__` are upstream's dunders
+  (R1653): `"ab" == s` and `"a" < "b"` call `StringLiteral.__eq__`/`__lt__`
+  over `StringSlice`, two literals concatenate through `__add__` over the
+  new `#pop.string_concat` attribute, and `"x" + s` over a `String` is the
+  reflected `String.__radd__`. `String.__add__` takes a `StringSlice`, and
+  `StringSpan` gains upstream's `__add__`, `__radd__`, and ordering, so
+  `String("a") + t` and `"`" + name + "` y"` over a `StaticString` run.
+  The checker's literal-before-`String` conversion arm is gone, and a
+  reflected operator's result now binds to a `ref` parameter.
 - A package module's `from . import name` binds the package `__init__`'s
   member `name`, a re-export included and on the package's import cycle,
   and loads the submodule `name` only when the package has none, as at

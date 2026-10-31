@@ -305,17 +305,27 @@ impl Checker {
         let result = match op {
             // Upstream's `Bool.__and__`/`__or__`/`__xor__`: the eager `i1` op.
             BitAnd | BitOr | BitXor if lt == TyKind::Bool && rt == TyKind::Bool => Some(Ty::bool()),
-            // `+` concatenates String, or adds numbers (result = common type).
-            // Two known texts concatenate to the literal of both.
-            Add if lt.is_string_literal() && rt.is_string_literal() => Some(
-                match (
-                    lt.kind().string_literal_text(),
-                    rt.kind().string_literal_text(),
-                ) {
-                    (Some(left), Some(right)) => Ty::string_literal_of(&format!("{left}{right}")),
-                    _ => Ty::string_literal(),
-                },
-            ),
+            // Two literals concatenate through `StringLiteral.__add__`, except
+            // in an unlinked program (a phase test's), whose two texts
+            // concatenate here, and beside the value-less `StringLiteral`,
+            // which declares no members.
+            Add if lt.is_string_literal()
+                && rt.is_string_literal()
+                && !(matches!(rt.kind(), TyKind::StringLiteral(Some(_)))
+                    && self.declared_receiver_member(&lt, "__add__").is_some()) =>
+            {
+                Some(
+                    match (
+                        lt.kind().string_literal_text(),
+                        rt.kind().string_literal_text(),
+                    ) {
+                        (Some(left), Some(right)) => {
+                            Ty::string_literal_of(&format!("{left}{right}"))
+                        }
+                        _ => Ty::string_literal(),
+                    },
+                )
+            }
             // Literal arithmetic, bitwise logic, and shifts keep the literal
             // type; the same operators beside a `SIMD` are its dunders above.
             Add | Sub | Mul | FloorDiv
@@ -349,11 +359,16 @@ impl Checker {
                 Some(Ty::bool())
             }
             // Equality: between numbers (any common type), or equal non-numeric
-            // scalars (Bool/String/None).
+            // scalars (`Bool`, `None`). A string literal compares through
+            // `StringLiteral`'s dunders, except in an unlinked program (a
+            // phase test's) or for the value-less `StringLiteral`, neither
+            // of which declares them.
             Eq | Ne
                 if common.is_some()
-                    || (lt == rt && is_scalar(&lt))
-                    || (lt.is_string_literal() && rt.is_string_literal()) =>
+                    || (lt == rt && is_scalar(&lt) && !lt.is_string_literal())
+                    || (lt.is_string_literal()
+                        && rt.is_string_literal()
+                        && self.declared_receiver_member(&lt, "__eq__").is_none()) =>
             {
                 Some(Ty::bool())
             }
@@ -365,17 +380,6 @@ impl Checker {
         let Some(span) = span else {
             return Err(bad_infix_operator(op, &lt, &rt));
         };
-        // A string literal before a nominal `String` converts to `String`
-        // through the `@implicit` literal constructor, whose dunder the
-        // operator then calls.
-        if lt.is_string_literal()
-            && self.is_nominal_string(&rt)
-            && op.dunder().is_some()
-            && self.record_implicit_conversion(left, &lt, &rt)?
-            && let Some(ty) = self.infer_operator_call(&span, op, left, right, &rt, None)?
-        {
-            return Ok(ty);
-        }
         if let Some(ty) = self.infer_operator_call(&span, op, left, right, &lt, Some(&rt))? {
             return Ok(ty);
         }
@@ -680,8 +684,7 @@ impl Checker {
             std::slice::from_ref(left),
         )?;
         if ty.is_some() {
-            self.record_at(span.clone()).adjustment =
-                Some(Box::new(SemanticAdjustment::ReflectedOperator));
+            self.record_at(span.clone()).reflected_operator = true;
         }
         Ok(ty)
     }
@@ -1312,14 +1315,6 @@ impl Checker {
     /// requirements.
     fn has_operator_methods(&self, ty: &Ty) -> bool {
         self.is_checked_struct(ty) || is_bound_archetype(ty)
-    }
-
-    /// Whether `ty` is the declared nominal `String`.
-    fn is_nominal_string(&self, ty: &Ty) -> bool {
-        matches!(ty.kind(), TyKind::Struct(name, args)
-            if args.is_empty()
-                && mojito_symbol::symbol::is_stdlib_string_struct(name)
-                && self.structs.contains_key(name))
     }
 
     /// The type an inferred chain operand takes at its link, as
