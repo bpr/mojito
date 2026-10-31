@@ -10924,32 +10924,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1751 A qualified `import` of a package still loading binds none
-  of its re-exports**
-
-  Problem: a module on a package's import cycle that writes `import p.ma`
-  and calls `p.ma.ex(x)` reports "Undefined variable 'p'", where the pin
-  resolves the re-export on demand and runs.
-  - `Linker::apply_import` → `bind_namespace_tree`
-    (`crates/mojito-module/src/module.rs`) copies `self.exports[canon]`
-    while the package is still loading, before its `__init__`'s pending
-    re-exports are published, so `rewrite_program` finds no `ex` under
-    `p.ma`.
-  - R1724 already resolves the `from p.ma import ex` spelling on demand
-    (`resolve_pending`). Extend that mechanism to the `import` form: keep
-    the canonical module key beside each namespace, and when the qualified
-    rewrite misses a name of a module with pending imports, resolve it and
-    read the export again. Test beside R1724's in `tests/module_test.rs`.
-  - Probe: package `p` with `p/ma/__init__.mojo` = `from .mm import ex`,
-    `p/ma/mm.mojo` importing `from p.sim import helper`, and `p/sim.mojo`
-    doing `import p.ma` and calling `p.ma.ex(x) + 1`; a `main` importing
-    `p.ma` first prints `102 103` at the pin.
-  - Probe: upstream's `std.simd` writes `import std.math` and calls
-    `std.math.exp`/`std.math.log` in `_powf_scalar` (R1567).
-  - Found while planning R1567 (2026-10-31).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
   `__pow__` over `_pow`**
 

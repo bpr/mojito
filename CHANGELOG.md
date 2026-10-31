@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A qualified `import` of a package still loading reads its re-exports
+  on demand, as at the pin (R1751): a module on the package's import
+  cycle that writes `import p.ma` (or `import p.ma as m`, at file or
+  function scope) and calls `p.ma.ex(x)` resolves `ex` from `p.ma`'s
+  pending `from .mm import ex` instead of reporting "Undefined variable
+  'p'".
 - `std.math` re-exports upstream's `exp`, verbatim (R1743): `_Expable`,
   both `exp` overloads, `_exp_impl`, and `_exp_taylor`'s Taylor
   polynomial over `polynomial_evaluate` and `_ldexp_impl`, so `exp` over

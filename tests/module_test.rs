@@ -757,6 +757,25 @@ fn dots_only_import_binds_a_package_reexport_on_its_cycle() {
 }
 
 #[test]
+fn qualified_import_reads_a_package_reexport_on_its_cycle() {
+    let output = run_package_cycle(
+        "from .b import fb\nfrom .a import fa\n",
+        "import pkg\nimport pkg as p\n\ndef fb() -> Int:\n    return pkg.fa() + p.fa()\n",
+    );
+    assert_eq!(output.unwrap(), "2\n");
+}
+
+#[test]
+fn qualified_import_of_a_missing_member_on_a_cycle_is_rejected() {
+    let error = run_package_cycle(
+        "from .b import fb\nfrom .a import fa\n",
+        "import pkg\n\ndef fb() -> Int:\n    return pkg.fz()\n",
+    )
+    .unwrap_err();
+    assert!(error.contains("pkg"), "{error}");
+}
+
+#[test]
 fn recursive_package_reexport_is_rejected() {
     let error = run_package_cycle(
         "from .b import fb, fa\n",

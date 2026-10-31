@@ -916,7 +916,10 @@ peer's lookup that misses the provisional exports resolves the one binding the
 name, loading its source first, and publishes it (`Linker::resolve_pending`;
 a wildcard import of a loading module resolves them all,
 `Linker::force_pending`), as upstream resolves a module's import declarations
-when a name is looked up, whatever their order. A lookup that leads back to
+when a name is looked up, whatever their order. A qualified `import p.ma` of a
+loading module keeps the module's key beside its namespace, and each
+`p.ma.name` the importer reads that the namespace lacks resolves the same way
+before the qualified rewrite (`Linker::resolve_namespace_members`). A lookup that leads back to
 itself is `ModuleError::RecursiveReference`, the pin's "attempt to resolve a
 recursive reference to declaration". A dots-only `from . import name` looks
 `name` up in the package `__init__` first (`Linker::{relative_package,

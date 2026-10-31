@@ -12,6 +12,7 @@ use crate::package::{
     ModuleIdentity, ModuleRecords, PackageModule, PackageModules, PackagedModule,
 };
 use mojito_ast::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
+use mojito_ast::visit::{Visitor, walk_block};
 use mojito_common::error::ParseError;
 use mojito_common::timing;
 use std::borrow::Cow;
@@ -1023,6 +1024,7 @@ impl<'p> Linker<'p> {
         let importer = importer.as_deref();
         let mut bindings = self.prelude_bindings.clone().unwrap_or_default();
         let mut namespaces = HashMap::new();
+        let mut loading = Vec::new();
         let mut explicit_imports = HashSet::new();
         if program_uses_kwargs(&program) {
             self.bind_kwargs_runtime(&mut bindings)?;
@@ -1045,7 +1047,14 @@ impl<'p> Linker<'p> {
                     )?;
                 }
                 StmtKind::Import { path, alias } => {
-                    self.apply_import(dir, importer, path, alias.as_deref(), &mut namespaces)?;
+                    self.apply_import(
+                        dir,
+                        importer,
+                        path,
+                        alias.as_deref(),
+                        &mut namespaces,
+                        &mut loading,
+                    )?;
                 }
                 _ => body.push(stmt),
             }
@@ -1062,6 +1071,7 @@ impl<'p> Linker<'p> {
             }
             bindings.remove(name);
         }
+        self.resolve_namespace_members(&body, &loading, &mut namespaces)?;
         self.resolve_scoped_imports(&mut body, dir, importer, &bindings, &namespaces)?;
         // A declaration lives in its module's namespace: one whose name a
         // loaded module links bare, a compiler builtin identity, or a
@@ -1152,6 +1162,7 @@ impl<'p> Linker<'p> {
         let implicit_bindings = self.prelude_bindings.clone().unwrap_or_default();
         let mut bindings = implicit_bindings.clone();
         let mut namespaces = HashMap::new();
+        let mut loading = Vec::new();
         let mut explicit_exports = HashSet::new();
         let mut explicit_imports = HashSet::new();
         if module_name != "std.collections.string_dict" && program_uses_kwargs(&program) {
@@ -1185,7 +1196,14 @@ impl<'p> Linker<'p> {
                     }
                 }
                 StmtKind::Import { path: mpath, alias } => {
-                    self.apply_import(dir, importer, mpath, alias.as_deref(), &mut namespaces)?;
+                    self.apply_import(
+                        dir,
+                        importer,
+                        mpath,
+                        alias.as_deref(),
+                        &mut namespaces,
+                        &mut loading,
+                    )?;
                 }
                 _ => {}
             }
@@ -1195,6 +1213,7 @@ impl<'p> Linker<'p> {
             .into_iter()
             .filter(|stmt| declared_name(stmt).is_some_and(|name| name != "main"))
             .collect();
+        self.resolve_namespace_members(&declarations, &loading, &mut namespaces)?;
         self.resolve_scoped_imports(&mut declarations, dir, importer, &bindings, &namespaces)?;
         rewrite_program(&mut declarations, &bindings, &namespaces);
         mojito_ast::ast::stamp_source(&mut declarations, &display(path));
@@ -1303,7 +1322,9 @@ impl<'p> Linker<'p> {
     /// Bind an ordinary `import a.b.c` namespace. Current Mojo binds every
     /// prefix for an unaliased dotted import; an aliased import binds only the
     /// alias. Prefixes which are ordinary directories are still valid namespace
-    /// objects even when they do not contain an `__init__.mojo` file.
+    /// objects even when they do not contain an `__init__.mojo` file. Each
+    /// namespace bound to a module still loading goes to `loading` beside
+    /// that module's key, for [`Self::resolve_namespace_members`].
     fn apply_import(
         &mut self,
         dir: &Path,
@@ -1311,12 +1332,23 @@ impl<'p> Linker<'p> {
         path: &[String],
         alias: Option<&str>,
         namespaces: &mut HashMap<String, HashMap<String, String>>,
+        loading: &mut Vec<(String, PathBuf)>,
     ) -> Result<(), ModuleError> {
         let module = self.resolve_module(dir, 0, path)?;
         check_self_import(importer, &module)?;
         self.load_module(&module)?;
+        let mut bind =
+            |linker: &Self,
+             key: &Path,
+             local: String,
+             namespaces: &mut HashMap<String, HashMap<String, String>>| {
+                linker.bind_namespace_tree(key, &local, namespaces);
+                if linker.pending.contains_key(key) {
+                    loading.push((local, key.to_path_buf()));
+                }
+            };
         if let Some(alias) = alias {
-            self.bind_namespace_tree(&module.key, alias, namespaces);
+            bind(self, &module.key, alias.to_string(), namespaces);
             return Ok(());
         }
 
@@ -1324,12 +1356,44 @@ impl<'p> Linker<'p> {
             let prefix = &path[..end];
             if let Some(prefix_module) = self.find_module(dir, prefix) {
                 self.load_module(&prefix_module)?;
-                self.bind_namespace_tree(&prefix_module.key, &prefix.join("."), namespaces);
+                bind(self, &prefix_module.key, prefix.join("."), namespaces);
             } else {
                 namespaces.entry(prefix.join(".")).or_default();
             }
         }
-        self.bind_namespace_tree(&module.key, &path.join("."), namespaces);
+        bind(self, &module.key, path.join("."), namespaces);
+        Ok(())
+    }
+
+    /// Resolve on demand each member `body` reads through a namespace in
+    /// `loading`, bound to a module whose imports are still pending, and
+    /// bind that namespace again with it, as upstream resolves an import
+    /// declaration when a qualified name is looked up.
+    fn resolve_namespace_members(
+        &mut self,
+        body: &[Stmt],
+        loading: &[(String, PathBuf)],
+        namespaces: &mut HashMap<String, HashMap<String, String>>,
+    ) -> Result<(), ModuleError> {
+        if loading.is_empty() {
+            return Ok(());
+        }
+        let mut uses = NamespaceUses::default();
+        walk_block(&mut uses, body);
+        uses.0.sort();
+        uses.0.dedup();
+        for (namespace, member) in uses.0 {
+            let Some((_, key)) = loading.iter().find(|(local, _)| *local == namespace) else {
+                continue;
+            };
+            if namespaces
+                .get(&namespace)
+                .is_some_and(|exports| !exports.contains_key(&member))
+                && self.resolve_pending(key, &member, &mut Vec::new())?
+            {
+                self.bind_namespace_tree(key, &namespace, namespaces);
+            }
+        }
         Ok(())
     }
 
@@ -1688,6 +1752,7 @@ impl<'p> Linker<'p> {
     ) -> Result<(), ModuleError> {
         let mut bindings = inherited_bindings.clone();
         let mut namespaces = inherited_namespaces.clone();
+        let mut loading = Vec::new();
         let mut explicit_imports = HashSet::new();
         let mut resolved = Vec::with_capacity(body.len());
         for mut statement in std::mem::take(body) {
@@ -1707,9 +1772,21 @@ impl<'p> Linker<'p> {
                     )?;
                 }
                 StmtKind::Import { path, alias } => {
-                    self.apply_import(dir, importer, path, alias.as_deref(), &mut namespaces)?;
+                    self.apply_import(
+                        dir,
+                        importer,
+                        path,
+                        alias.as_deref(),
+                        &mut namespaces,
+                        &mut loading,
+                    )?;
                 }
                 _ => {
+                    self.resolve_namespace_members(
+                        std::slice::from_ref(&statement),
+                        &loading,
+                        &mut namespaces,
+                    )?;
                     self.resolve_imports_in_statement(
                         &mut statement,
                         dir,
@@ -2315,6 +2392,37 @@ fn expression_path(expr: &Expr) -> Option<String> {
             Some(format!("{}.{}", expression_path(object)?, field))
         }
         _ => None,
+    }
+}
+
+/// The `(namespace, member)` pairs a walk reads as qualified names
+/// (`ns.member`, `ns.member(...)`, `ns.Member` in a type).
+#[derive(Default)]
+struct NamespaceUses(Vec<(String, String)>);
+
+impl Visitor for NamespaceUses {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let ExprKind::Member {
+            object,
+            field: member,
+        }
+        | ExprKind::MethodCall {
+            object,
+            method: member,
+            ..
+        } = &expr.kind
+            && let Some(namespace) = expression_path(object)
+        {
+            self.0.push((namespace, member.clone()));
+        }
+    }
+
+    fn visit_type(&mut self, ty: &Type) {
+        if let Type::Assoc { base, name, .. } = ty
+            && let Some(namespace) = type_path(base)
+        {
+            self.0.push((namespace, name.clone()));
+        }
     }
 }
 
