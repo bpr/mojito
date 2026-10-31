@@ -2291,6 +2291,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An overload bounded by a generic callable contract (`F: … &
+  def[width: SIMDLength](SIMD[DType.int32, width], …) -> …`) declares
+  the symbol its call names, spelled as the checked contract displays
+  rather than from the AST's `Debug` form with source spans and paths
+  (R1766). The free-function pair `red(v, func: F)` beside `red[func:
+  …](v)`, which failed "vm backend does not support the built-in or
+  callee", and a method pair whose parameter overload holds a nested
+  `def`, which "keeps compile-time parameter `F`", now run; no overload
+  symbol embeds a source position.
 - A generic nested `def` passed as a value names its generator under the
   enclosing instance, so a `body[width]` calling the enclosing compile-time
   `func[width]` (or reading `k` or `Self.k`) runs when handed to a

@@ -369,7 +369,7 @@ impl TypeKey {
         Self(sanitize(&ast_raw(
             ty,
             &NoModuleNames,
-            &binder_spellings(type_params),
+            &binder_spellings(type_params, &NoModuleNames),
             None,
         )))
     }
@@ -1769,33 +1769,14 @@ fn ast_raw(
         // Mirror `ty_raw`: the `NoneType` annotation resolves to `TyKind::None`,
         // which mangles as `None`.
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
-        // A scalar alias (`Byte`, `UInt8`) mangles as the width-1 vector it
-        // names, as `ty_raw` spells the resolved `TyKind::Simd`.
+        // A scalar alias (`Byte`), a `Scalar`/`SIMD` application over
+        // concrete or binder arguments, spells as `ty_raw` displays the
+        // resolved `TyKind::Simd`.
         Type::Named(name, args)
-            if args.is_empty()
-                && !type_bounds.contains_key(name)
-                && let Some(dtype) = mojito_ast::ast::Dtype::from_scalar_alias(name) =>
+            if let Some(spelling) =
+                simd_annotation_spelling(name, args, type_bounds, comptimes) =>
         {
-            simd_annotation_raw(dtype, 1)
-        }
-        // `Scalar[DType.x]` / `SIMD[DType.x, N]` annotations mangle as their
-        // canonical checked spelling (`Scalar[DType.float32]` is the width-1
-        // `Float32`), matching `ty_raw`'s display of the resolved `TyKind::Simd`.
-        Type::Named(name, args)
-            if name == "Scalar" && args.len() == 1 && param_arg_dtype(&args[0]).is_some() =>
-        {
-            let dtype = param_arg_dtype(&args[0]).expect("guard established a dtype");
-            simd_annotation_raw(dtype, 1)
-        }
-        Type::Named(name, args)
-            if name == "SIMD"
-                && args.len() == 2
-                && param_arg_dtype(&args[0]).is_some()
-                && param_arg_width(&args[1], comptimes).is_some() =>
-        {
-            let dtype = param_arg_dtype(&args[0]).expect("guard established a dtype");
-            let width = param_arg_width(&args[1], comptimes).expect("guard established a width");
-            simd_annotation_raw(dtype, width)
+            spelling
         }
         // Mirror `ty_raw`: every pointer annotation (`UnsafePointer[T]`,
         // `Pointer[T, origin]`, the `ImmPointer`/`MutPointer` permission
@@ -1815,39 +1796,6 @@ fn ast_raw(
                 "UnsafePointer${}",
                 ast_raw(element, comptimes, type_bounds, self_spelling)
             )
-        }
-        // A vector over a binder of the signature (`Scalar[dt]`,
-        // `SIMD[dt, width]`) spells as the checker displays the symbolic
-        // `TyKind::Simd`.
-        Type::Named(name, args)
-            if (name == "Scalar" && args.len() == 1 || name == "SIMD" && args.len() == 2)
-                && args
-                    .iter()
-                    .any(|arg| simd_binder_slot(arg, type_bounds).is_some())
-                && args.iter().all(|arg| {
-                    simd_binder_slot(arg, type_bounds).is_some()
-                        || param_arg_dtype(arg).is_some()
-                        || param_arg_width(arg, comptimes).is_some()
-                }) =>
-        {
-            let slots: Vec<String> = args
-                .iter()
-                .map(|arg| {
-                    simd_binder_slot(arg, type_bounds)
-                        .map(str::to_string)
-                        .or_else(|| {
-                            param_arg_dtype(arg).map(|dtype| format!("DType.{}", dtype.name()))
-                        })
-                        .or_else(|| param_arg_width(arg, comptimes).map(|width| width.to_string()))
-                        .unwrap_or_default()
-                })
-                .collect();
-            match slots.as_slice() {
-                [dtype, width] if width == "1" => format!("Scalar[{dtype}]"),
-                [dtype, width] => format!("SIMD[{dtype}, {width}]"),
-                [dtype] => format!("Scalar[{dtype}]"),
-                _ => unreachable!("guard established one or two slots"),
-            }
         }
         // Mirror the checker's synthetic binder for an existential
         // `Some[Trait]` parameter, which `ty_raw` spells as its binder name
@@ -1949,8 +1897,32 @@ fn ast_raw(
             encode_identifier(name)
         ),
         Type::SelfType => "Self".to_string(),
-        Type::Func { .. } => func_annotation_raw(ty),
-        other => format!("{other:?}"),
+        Type::Func { .. } => func_annotation_raw(ty, comptimes, type_bounds),
+        Type::Ref { referent, .. } => format!(
+            "Ref${}",
+            ast_raw(referent, comptimes, type_bounds, self_spelling)
+        ),
+        Type::IndexedProjection { base, index } => format!(
+            "{}[{}]",
+            ast_raw(base, comptimes, type_bounds, self_spelling),
+            value_expr_raw(index, comptimes)
+        ),
+        Type::TypeOf(value) => format!("TypeOf${}", value_expr_raw(value, comptimes)),
+        Type::Generator { params, result } => format!(
+            "Generator${}${}",
+            params
+                .iter()
+                .map(|param| encode_identifier(&param.name))
+                .collect::<Vec<_>>()
+                .join("$"),
+            ast_raw(
+                result,
+                comptimes,
+                &binders_in_scope(type_bounds, params),
+                self_spelling
+            )
+        ),
+        Type::Value(value) => format!("V{}", value_expr_raw(value, comptimes)),
     };
     // Canonicalize the enclosing struct type to `Self`, however it is spelled.
     // `self_spelling` is that struct's `ty_raw` mangling (e.g. `Pair`,
@@ -1980,19 +1952,6 @@ fn mlir_simd_annotation(args: &[ParamArg]) -> Option<Type> {
     Some(Type::Named("SIMD".to_string(), vec![dtype, length]))
 }
 
-/// Mirror `ty_raw`'s Display-based encoding of a resolved callable type
-/// (`def(T) capturing[_] -> U`) for a source `def(...)` annotation, so a
-/// callable-typed parameter produces the same overload suffix from the
-/// declaration (AST) side and the call (checked `Ty`) side. Inner types render
-/// as the checked Display does: bare parameter names without bounds and
-/// bracketed argument lists. Annotations this cannot mirror (value arguments,
-/// nominal names the linker qualifies) keep a stable source spelling that a
-/// qualified call-site type will not match — no worse than the previous
-/// Debug-format fallback, which embedded spans and never matched anything.
-#[allow(
-    clippy::format_push_string,
-    reason = "TODO: write! into the buffer instead"
-)]
 /// A value operand that applies a type (`Pair[Int]`, `Box[1]`) as the type
 /// argument it spells; any other argument unchanged. A bare name keeps its
 /// value spelling.
@@ -2012,7 +1971,18 @@ fn spelled_type_argument(arg: &ParamArg) -> Cow<'_, ParamArg> {
     }
 }
 
-fn func_annotation_raw(ty: &Type) -> String {
+/// A source `def[...](...)` annotation spelled as the checked callable type
+/// displays (`write_callable`): its own binders as `write_param_decls` prints
+/// the `GenericFuncTy` decls the check keeps (origin binders erase), then
+/// its parameter and result types as [`annotation_display`] prints them, in
+/// the scope of the enclosing signature's binders and the contract's own.
+/// The declaration and the call of a callable-bounded overload then spell
+/// one symbol.
+fn func_annotation_raw(
+    ty: &Type,
+    comptimes: &dyn ModuleNames,
+    outer: &HashMap<String, BinderSpelling>,
+) -> String {
     let Type::Func {
         type_params,
         params,
@@ -2025,12 +1995,36 @@ fn func_annotation_raw(ty: &Type) -> String {
     else {
         unreachable!("func_annotation_raw takes a Type::Func");
     };
-    let mut s = String::from("def(");
+    let scope = binders_in_scope(outer, type_params);
+    let decls: Vec<&TypeParam> = type_params
+        .iter()
+        .filter(|param| !param.is_erased_origin_param(type_params))
+        .collect();
+    let mut s = String::from("def");
+    if !decls.is_empty() {
+        s.push('[');
+        for (index, param) in decls.iter().enumerate() {
+            if index > 0 {
+                s.push_str(", ");
+            }
+            s.push_str(&param.name);
+            let bounds = &scope[&param.name].bounds;
+            let declared = param.value_type.as_ref().map_or_else(
+                || bounds.join(" & "),
+                |value_type| annotation_display(value_type, comptimes, &scope),
+            );
+            if !declared.is_empty() {
+                let _ = write!(s, ": {declared}");
+            }
+        }
+        s.push(']');
+    }
+    s.push('(');
     for (index, param) in params.iter().enumerate() {
         if index > 0 {
             s.push_str(", ");
         }
-        s.push_str(&annotation_display(&param.ty));
+        s.push_str(&annotation_display(&param.ty, comptimes, &scope));
     }
     s.push(')');
     if *thin {
@@ -2066,18 +2060,19 @@ fn func_annotation_raw(ty: &Type) -> String {
         s.push_str(" raises");
     }
     s.push_str(" -> ");
-    s.push_str(&annotation_display(ret));
+    s.push_str(&annotation_display(ret, comptimes, &scope));
     s
 }
 
 /// Render one annotation as the checked `Ty` Display would, for use inside
-/// [`func_annotation_raw`] only: parameters print bare (no bounds), nominal
-/// arguments print bracketed and comma-separated.
-#[allow(
-    clippy::format_push_string,
-    reason = "TODO: write! into the buffer instead"
-)]
-fn annotation_display(ty: &Type) -> String {
+/// [`func_annotation_raw`] only: binders in `scope` print bare (no bounds),
+/// nominal arguments print bracketed and comma-separated, and a vector
+/// prints as its `TyKind::Simd` does.
+fn annotation_display(
+    ty: &Type,
+    comptimes: &dyn ModuleNames,
+    scope: &HashMap<String, BinderSpelling>,
+) -> String {
     match ty {
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
@@ -2085,10 +2080,22 @@ fn annotation_display(ty: &Type) -> String {
         Type::Float64 => "Float64".to_string(),
         Type::StringLiteral | Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
+        Type::Named(name, args)
+            if args.is_empty()
+                && !scope.contains_key(name)
+                && let Some(aliased) = comptimes.type_alias(name) =>
+        {
+            annotation_display(&aliased, comptimes, scope)
+        }
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             "String".to_string()
         }
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
+        Type::Named(name, args)
+            if let Some(spelling) = simd_annotation_spelling(name, args, scope, comptimes) =>
+        {
+            spelling
+        }
         Type::Named(name, args) => {
             let mut s = name.clone();
             if !args.is_empty() {
@@ -2097,10 +2104,7 @@ fn annotation_display(ty: &Type) -> String {
                     if index > 0 {
                         s.push_str(", ");
                     }
-                    match argument {
-                        ParamArg::Type(t) => s.push_str(&annotation_display(t)),
-                        other => s.push_str(&format!("{other:?}")),
-                    }
+                    s.push_str(&argument_display(argument, comptimes, scope));
                 }
                 s.push(']');
             }
@@ -2108,8 +2112,110 @@ fn annotation_display(ty: &Type) -> String {
         }
         Type::SelfParam(name) => name.clone(),
         Type::SelfType => "Self".to_string(),
-        func @ Type::Func { .. } => func_annotation_raw(func),
-        other => format!("{other:?}"),
+        func @ Type::Func { .. } => func_annotation_raw(func, comptimes, scope),
+        Type::Assoc { base, name, .. } => {
+            format!("{}.{name}", annotation_display(base, comptimes, scope))
+        }
+        Type::Ref { referent, .. } => {
+            format!("ref {}", annotation_display(referent, comptimes, scope))
+        }
+        Type::IndexedProjection { base, index } => format!(
+            "{}[{}]",
+            annotation_display(base, comptimes, scope),
+            value_display(index, comptimes, scope)
+        ),
+        Type::TypeOf(value) => format!("type_of({})", value_display(value, comptimes, scope)),
+        Type::Generator { params, result } => format!(
+            "__generator_type[{}] {}",
+            params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            annotation_display(result, comptimes, &binders_in_scope(scope, params))
+        ),
+        Type::Value(value) => value_display(value, comptimes, scope),
+    }
+}
+
+/// One `[...]` argument of a nominal annotation as [`annotation_display`]
+/// prints it: a type as its display, an applied value operand as the type
+/// it spells, any other value as [`value_display`] prints it.
+fn argument_display(
+    argument: &ParamArg,
+    comptimes: &dyn ModuleNames,
+    scope: &HashMap<String, BinderSpelling>,
+) -> String {
+    match spelled_type_argument(argument).as_ref() {
+        ParamArg::Type(ty) => annotation_display(ty, comptimes, scope),
+        ParamArg::Value(value) => value_display(value, comptimes, scope),
+        ParamArg::Named { name, value } => {
+            format!("{name}={}", argument_display(value, comptimes, scope))
+        }
+    }
+}
+
+/// A compile-time value in a callable annotation as the checked type
+/// displays it: a binder in `scope` bare, as `TyKind::Param` displays,
+/// anything else as [`value_expr_raw`] spells it.
+fn value_display(
+    value: &Expr,
+    comptimes: &dyn ModuleNames,
+    scope: &HashMap<String, BinderSpelling>,
+) -> String {
+    match &value.kind {
+        ExprKind::Identifier(name) if scope.contains_key(name) => name.clone(),
+        _ => value_expr_raw(value, comptimes),
+    }
+}
+
+/// A vector annotation as the checker displays the resolved `TyKind::Simd`:
+/// a scalar alias (`Byte`) or a concrete `Scalar`/`SIMD` application in its
+/// canonical spelling, and one over binders of the signature (`Scalar[dt]`,
+/// `SIMD[dt, width]`, `Self.width`) symbolically; `None` for any other
+/// annotation.
+fn simd_annotation_spelling(
+    name: &str,
+    args: &[ParamArg],
+    scope: &HashMap<String, BinderSpelling>,
+    comptimes: &dyn ModuleNames,
+) -> Option<String> {
+    match (name, args) {
+        (_, []) if !scope.contains_key(name) => mojito_ast::ast::Dtype::from_scalar_alias(name)
+            .map(|dtype| simd_annotation_raw(dtype, 1)),
+        ("Scalar", [dtype]) if let Some(dtype) = param_arg_dtype(dtype) => {
+            Some(simd_annotation_raw(dtype, 1))
+        }
+        ("SIMD", [dtype, width])
+            if let Some(dtype) = param_arg_dtype(dtype)
+                && let Some(width) = param_arg_width(width, comptimes) =>
+        {
+            Some(simd_annotation_raw(dtype, width))
+        }
+        ("Scalar", [_]) | ("SIMD", [_, _])
+            if args
+                .iter()
+                .any(|arg| simd_binder_slot(arg, scope).is_some()) =>
+        {
+            let slots = args
+                .iter()
+                .map(|arg| {
+                    simd_binder_slot(arg, scope)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            param_arg_dtype(arg).map(|dtype| format!("DType.{}", dtype.name()))
+                        })
+                        .or_else(|| param_arg_width(arg, comptimes).map(|width| width.to_string()))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(match slots.as_slice() {
+                [dtype, width] if width == "1" => format!("Scalar[{dtype}]"),
+                [dtype, width] => format!("SIMD[{dtype}, {width}]"),
+                [dtype] => format!("Scalar[{dtype}]"),
+                _ => unreachable!("the pattern matched one or two slots"),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -2246,13 +2352,15 @@ fn simd_binder_slot<'a>(
 /// A declared compile-time parameter as its annotation spells in an overload
 /// key: its trait bounds, and a callable bound (`F: def(Int) -> Int`) as the
 /// checker's `TyKind::Param` spells its `callable_bound`.
+#[derive(Clone)]
 struct BinderSpelling {
     bounds: Vec<String>,
     callable: Option<String>,
 }
 
 impl BinderSpelling {
-    fn of(param: &TypeParam) -> Self {
+    /// The parameter's trait bounds, without its callable bound.
+    fn bounded(param: &TypeParam) -> Self {
         Self {
             bounds: param
                 .bounds
@@ -2260,20 +2368,49 @@ impl BinderSpelling {
                 .filter(|bound| bound.as_str() != "<function type>")
                 .cloned()
                 .collect(),
-            callable: param
-                .callable_bound
-                .as_ref()
-                .filter(|callable| matches!(callable, Type::Func { .. }))
-                .map(func_annotation_raw),
+            callable: None,
         }
     }
 }
 
-fn binder_spellings(type_params: &[TypeParam]) -> HashMap<String, BinderSpelling> {
-    type_params
+/// Every binder of one signature, each callable bound spelled in the scope
+/// of all of them.
+fn binder_spellings(
+    type_params: &[TypeParam],
+    comptimes: &dyn ModuleNames,
+) -> HashMap<String, BinderSpelling> {
+    let mut spellings = binders_in_scope(&HashMap::new(), type_params);
+    let callables: Vec<_> = type_params
         .iter()
-        .map(|param| (param.name.clone(), BinderSpelling::of(param)))
-        .collect()
+        .map(|param| {
+            param
+                .callable_bound
+                .as_ref()
+                .filter(|callable| matches!(callable, Type::Func { .. }))
+                .map(|callable| func_annotation_raw(callable, comptimes, &spellings))
+        })
+        .collect();
+    for (param, callable) in type_params.iter().zip(callables) {
+        if let Some(binder) = spellings.get_mut(&param.name) {
+            binder.callable = callable;
+        }
+    }
+    spellings
+}
+
+/// `outer` with `params` declared over it, each shadowing an outer binder of
+/// its name.
+fn binders_in_scope(
+    outer: &HashMap<String, BinderSpelling>,
+    params: &[TypeParam],
+) -> HashMap<String, BinderSpelling> {
+    let mut scope = outer.clone();
+    scope.extend(
+        params
+            .iter()
+            .map(|param| (param.name.clone(), BinderSpelling::bounded(param))),
+    );
+    scope
 }
 
 fn parameter_raw(name: &str, type_bounds: &HashMap<String, BinderSpelling>) -> String {
@@ -2405,7 +2542,7 @@ fn signature_from_ast<P: AnnotatedParam>(
     comptimes: &dyn ModuleNames,
     self_spelling: Option<&str>,
 ) -> SignatureKey {
-    let type_bounds = binder_spellings(type_params);
+    let type_bounds = binder_spellings(type_params, comptimes);
     let key = |param: &P| {
         TypeKey(sanitize(&ast_raw(
             denoted_annotation(params, param.annotation()),
@@ -2488,7 +2625,7 @@ fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<St
     }
     let type_bounds: HashMap<String, BinderSpelling> = retained
         .iter()
-        .map(|param| (param.name.clone(), BinderSpelling::of(param)))
+        .map(|param| (param.name.clone(), BinderSpelling::bounded(param)))
         .collect();
     let mut spelling = encode_identifier(type_name);
     for param in retained {

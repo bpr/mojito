@@ -2177,6 +2177,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value by what it denotes (`Checker::denoted_type`). An overload key spells
   an application operand (`List[Pair[Int]]`) as the type it names
   (`Expr::type_spelling`, read by `symbol::ast_raw`).
+  A callable bound (`F: def[width: SIMDLength](...) -> ...`) spells
+  through `symbol::func_annotation_raw`/`annotation_display`, which mirror
+  the checked contract's `write_callable`/`write_param_decls` display, its
+  own binders included, and both printers spell a vector annotation
+  through `symbol::simd_annotation_spelling`; no overload key embeds a
+  span or source path.
   `ComptimeThunks::request_applications` (`mir.rs`, from `lower_fn_nested`,
   the nested-`def` lowering, and the top level once the body is lowered,
   over the body's statement ids `Cfg::body`, and from a module constant's

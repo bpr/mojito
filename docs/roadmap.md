@@ -9568,6 +9568,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `…__init__$ov$$pop$array$size…$kw$mlir_value` are not supported", and
     `t._replace[0](9)` keeps compile-time argument slots; the pin prints
     the element. `assets/ok/static_tuple.mojo` leaves both out.
+  - Probe: a struct with `comptime _T = SIMD[DType.int32, _]` and two
+    `red` overloads, one `red[F: ImplicitlyCopyable & RegisterPassable &
+    def[width: SIMDLength](Self._T[width], Self._T[width]) ->
+    Self._T[width], //](self, func: F)` and one `red[func:
+    def[width: SIMDLength](Self._T[width], …) thin -> Self._T[width]](self)`
+    holding a nested `def helper(a: Int, b: Int) -> Int`, fails
+    `x.red(add)` with "in `main`: … keeps compile-time parameter `F`"; the
+    pin prints `2`. The declaration spells the bound's `Self._T[width]` as
+    `_T[width]`, the call as `SIMD[DType.int32, width]`, and the arity
+    fallback sees the lifted `V.red$ov$$ct$func$helper` as a third
+    overload. Upstream's `SIMD.reduce` pair is this shape (R1764; found
+    while landing R1766, 2026-10-31).
+  - `symbol::value_expr_raw` spells any annotation value it does not
+    recognize as `expr`, so two same-arity overloads differing only in
+    such a value would share one symbol; spelling a declaration from its
+    resolved signature removes that too.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11037,38 +11053,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1766 A callable-bounded overload's symbol spells its bound from
-  the AST's `Debug` form, source spans included**
-
-  An overload `red[F: ImplicitlyCopyable & RegisterPassable &
-  def[width: SIMDLength](SIMD[DType.int32, width], …) -> …, //](self,
-  func: F)` declares as `V.red$ov$F$…$Callable$def$SIMD$Value$Expr$$$kind…$span$$$468$$473…`,
-  while its call names `V.red$ov$F$…$Callable$def$width$$SIMDLength$$SIMD$DType$int32…`.
-  - Callable identity must not depend on byte offsets or source paths
-    (invariant 6); only an arity fallback reconciles the two spellings,
-    so the plain method pair runs and the probes below do not.
-  - Cause: `BinderSpelling::of` → `func_annotation_raw` →
-    `annotation_display` (`mojito-symbol/src/symbol.rs`) prints a value
-    argument with `{:?}` and drops the bound's own binders, where the doc
-    comment promises the checker's `TyKind::Param` spelling (`ty_raw_in`).
-  - Probe: `emit-mir` of a struct with two `red` overloads, one taking
-    `func: F` under that bound and one `[func: def[width: Int](…) thin ->
-    …]`, called as `x.red(add)`.
-  - Probe: the same pair where the parameter overload only declares an
-    unrelated nested `def helper(a: Int, b: Int) -> Int` fails `x.red(add)`
-    with "in `main`: … keeps compile-time parameter `F`"; without `helper`
-    it runs. `resolve_method_symbol`'s arity fallback reconciles the two
-    spellings only while no other declaration shares the `V.red$ov$`
-    prefix, and the nested def's `V.red$ov$$ct$func$helper` does.
-  - Probe: the free-function pair (`red(v, func: F)` beside
-    `red[func: …](v)`) fails outright with "vm backend does not support
-    the built-in or callee `red$ov$SIMD$DType$int32$$4$$F$…`": nothing
-    reconciles a free overload's spellings.
-  - Upstream's `SIMD.reduce` has exactly that overload pair (R1764).
-  - Found while planning R1762 (2026-10-31).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1764 `SIMD`'s reductions are checker rules, where upstream's are
   a `reduce` tree**
 
@@ -11088,7 +11072,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     which prints as the pin's `68104130000000.0` once R159 lands.
   - `assets/ok/simd_reductions_float.mojo` says reductions fold left to
     right; its outputs change with the tree.
-  - Depends on R1766 and R1767.
+  - Depends on R600 and R1767.
   - Model: Fable, Planned.
 
 - [ ] **R1768 An anonymous callable contract's own binders are named

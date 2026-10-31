@@ -457,6 +457,101 @@ fn self_typed_overload_keys_agree_between_declaration_and_call() {
     }
 }
 
+/// The program's own recorded callees: the bundled library's are its package's.
+fn own_call_targets(program: &[mojito::Stmt]) -> Vec<String> {
+    resolve_overload_targets(program)
+        .expect("check error")
+        .into_iter()
+        .filter(|(site, _)| {
+            !site
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains("/stdlib/std/"))
+        })
+        .map(|(_, target)| target)
+        .collect()
+}
+
+const CALLABLE_BOUND_PAIRS: &str = "\
+def add[width: SIMDLength](a: SIMD[DType.int32, width], b: SIMD[DType.int32, width]) -> SIMD[DType.int32, width]:
+    return a + b
+
+@fieldwise_init
+struct V(Copyable):
+    var v: SIMD[DType.int32, 4]
+
+    def red[F: ImplicitlyCopyable & RegisterPassable & def[width: SIMDLength](SIMD[DType.int32, width], SIMD[DType.int32, width]) -> SIMD[DType.int32, width], //](self, func: F) -> Int32:
+        return func(self.v, self.v)[0]
+
+    def red[func: def[width: SIMDLength](SIMD[DType.int32, width], SIMD[DType.int32, width]) thin -> SIMD[DType.int32, width]](self) -> Int32:
+        return func(self.v, self.v)[0]
+
+def red[F: ImplicitlyCopyable & RegisterPassable & def[width: SIMDLength](SIMD[DType.int32, width], SIMD[DType.int32, width]) -> SIMD[DType.int32, width], //](v: SIMD[DType.int32, 4], func: F) -> Int32:
+    return func(v, v)[0]
+
+def red[func: def[width: SIMDLength](SIMD[DType.int32, width], SIMD[DType.int32, width]) thin -> SIMD[DType.int32, width]](v: SIMD[DType.int32, 4]) -> Int32:
+    return func(v, v)[0]
+
+def main():
+    var x = V(SIMD[DType.int32, 4](1, 2, 3, 4))
+    print(x.red(add))
+    print(red(x.v, add))
+    print(red[add](x.v))
+";
+
+#[test]
+fn callable_bound_overload_keys_agree_between_declaration_and_call() {
+    // A callable-bounded overload's declaration spells its bound as the
+    // checked `def[width: SIMDLength](...)` displays, so the method pair and
+    // the free pair each name the symbol their calls record.
+    let program = linked_program(CALLABLE_BOUND_PAIRS);
+    let names = lowered_names(CALLABLE_BOUND_PAIRS);
+    let bounded = "F$ImplicitlyCopyable$RegisterPassable$Callable$def$width$$SIMDLength$$SIMD$DType$int32$$width$";
+    let targets = own_call_targets(&program);
+    for owner in ["V.red$ov$", "red$ov$SIMD$DType$int32$$4$$"] {
+        assert!(
+            names.iter().any(|name| name
+                .strip_prefix(owner)
+                .is_some_and(|rest| rest.starts_with(bounded))),
+            "no `{owner}{bounded}…` declaration; emitted: {names:?}"
+        );
+    }
+    for target in &targets {
+        assert!(
+            names.contains(target),
+            "checker target '{target}' names no MIR function; emitted: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn overload_keys_carry_no_source_positions() {
+    // No overload symbol embeds a span, a syntax id, or the source path,
+    // however its annotation is spelled.
+    let projected = CALLABLE_BOUND_PAIRS
+        .replace(
+            "    var v: SIMD[DType.int32, 4]\n",
+            "    comptime _T = SIMD[DType.int32, _]\n    var v: SIMD[DType.int32, 4]\n",
+        )
+        .replace(
+            "def[width: SIMDLength](SIMD[DType.int32, width], SIMD[DType.int32, width]) -> SIMD[DType.int32, width], //](self",
+            "def[width: SIMDLength](Self._T[width], Self._T[width]) -> Self._T[width], //](self",
+        );
+    for src in [CALLABLE_BOUND_PAIRS, projected.as_str()] {
+        for name in lowered_names(src)
+            .into_iter()
+            .filter(|name| name.contains("$ov$"))
+        {
+            assert!(
+                !["$span$", "SyntaxId", "symbol$test$mojo"]
+                    .iter()
+                    .any(|fragment| name.contains(fragment)),
+                "'{name}' spells a source position"
+            );
+        }
+    }
+}
+
 #[test]
 fn mlir_typed_overload_keys_agree_between_declaration_and_call() {
     // An overload over `__mlir_type.index` keys by the type the annotation
