@@ -280,21 +280,7 @@ impl Checker {
                     &*self.overload_sets,
                     &*self.program_constants,
                 );
-                let mut decls = self.classify_params(&owner, &m.type_params)?;
-                for condition in &m.where_clauses {
-                    let constraint = self
-                        .compile_where_clause(condition)
-                        .map(|constraint| self.bind_constraint(&constraint, &decls))?;
-                    let Some(last) = decls.last_mut() else {
-                        return Err(TypeError::Unsupported(
-                            "a where clause requires compile-time parameters".to_string(),
-                        ));
-                    };
-                    match last {
-                        ParamDecl::Type { constraints, .. }
-                        | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
-                    }
-                }
+                let decls = self.classify_params(&owner, &m.type_params)?;
                 self.push_param_scope(&decls);
                 let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
                     if let Some(annotation) = &m.self_type {
@@ -305,30 +291,38 @@ impl Checker {
                             )));
                         }
                     }
-                    Ok((
-                        m.params
-                            .iter()
-                            .map(|param| {
-                                param
-                                    .default
-                                    .as_ref()
-                                    .map(|default| this.requirement_default(default, &decls))
-                                    .transpose()
-                            })
-                            .collect::<Result<Vec<_>, _>>()?,
-                        this.param_tys(&m.params)?,
-                        match &m.ret {
-                            Some(SourceType::Ref { referent, .. }) => {
-                                this.ty_from_anno(referent)?
-                            }
-                            Some(t) => this.ty_from_anno(t)?,
-                            None => Ty::none(),
-                        },
-                        this.declared_error(m.raises, m.raises_type.as_ref())?,
-                    ))
+                    let defaults = m
+                        .params
+                        .iter()
+                        .map(|param| {
+                            param
+                                .default
+                                .as_ref()
+                                .map(|default| this.requirement_default(default, &decls))
+                                .transpose()
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let all_types = this.param_tys(&m.params)?;
+                    let ret = match &m.ret {
+                        Some(SourceType::Ref { referent, .. }) => this.ty_from_anno(referent)?,
+                        Some(t) => this.ty_from_anno(t)?,
+                        None => Ty::none(),
+                    };
+                    let error = this.declared_error(m.raises, m.raises_type.as_ref())?;
+                    // The clauses read the arguments, which upstream emits
+                    // before them (`where x.dtype.is_floating_point()`).
+                    let compiled = m
+                        .where_clauses
+                        .iter()
+                        .map(|condition| {
+                            this.compile_where_clause(condition)
+                                .map(|constraint| this.bind_constraint(&constraint, &decls))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok((defaults, all_types, ret, error, compiled))
                 });
                 self.tparams.pop();
-                let (defaults, all_types, ret, error) = signature?;
+                let (defaults, all_types, ret, error, availability) = signature?;
                 self.check_result_origins(
                     m.ret.as_ref(),
                     &m.params,
@@ -364,7 +358,7 @@ impl Checker {
                 };
                 let sig = MethodSig {
                     decls,
-                    availability: Vec::new(),
+                    availability,
                     has_self: true,
                     params: regular
                         .iter()
@@ -915,7 +909,11 @@ impl Checker {
             // The method's own `where` clause refines its signature exactly as
             // it refines its body: a conditionally available method may name
             // types its receiver's bare bounds do not admit.
-            let signature = match self.method_where_assumptions(&m.where_clauses, &method_decls) {
+            let signature = match self.method_where_assumptions(
+                &m.where_clauses,
+                &super::declarations::method_arguments(m),
+                &method_decls,
+            ) {
                 Ok(assumptions) => {
                     self.push_assumptions(assumptions);
                     let receiver = self.self_ty.clone().filter(|_| m.has_self);

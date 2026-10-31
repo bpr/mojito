@@ -4815,11 +4815,12 @@ impl Checker {
             .collect()
     }
 
-    /// [`Self::declared_propositions`] for a method: its own `where`
-    /// clauses, over the struct's parameters (`Self.n`) and its own.
+    /// [`Self::declared_propositions`] for a method: its own compiled,
+    /// bound `where` clauses, over the struct's parameters (`Self.n`) and
+    /// its own.
     pub(super) fn method_propositions(
         &self,
-        where_clauses: &[mojito_ast::ast::Expr],
+        constraints: &[GenericConstraint],
         method_decls: &[ParamDecl],
     ) -> Vec<ParamExpr> {
         let struct_decls = self.self_decls.clone();
@@ -4827,12 +4828,10 @@ impl Checker {
         let method_arguments = params_as_args(method_decls);
         let mut environment = ConstraintEnvironment::declared(&struct_decls, &struct_arguments);
         environment.bind_declared(method_decls, &method_arguments);
-        where_clauses
+        constraints
             .iter()
-            .filter_map(|condition| self.compile_where_clause(condition).ok())
-            .map(|constraint| self.bind_constraint(&constraint, method_decls))
             .filter_map(
-                |constraint| match self.constraint_verdict(&constraint, &environment) {
+                |constraint| match self.constraint_verdict(constraint, &environment) {
                     Ok(ConstraintVerdict::Residual(proposition)) => Some(conjuncts(&proposition)),
                     _ => None,
                 },

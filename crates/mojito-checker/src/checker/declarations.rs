@@ -318,6 +318,22 @@ pub(super) fn is_int_literal_annotation(annotation: &SourceType) -> bool {
     matches!(annotation, SourceType::Named(name, args) if name == "IntLiteral" && args.is_empty())
 }
 
+/// The names a method's arguments bind in its signature: its receiver
+/// (`self`) and each parameter, which a `where` clause may read.
+pub(super) fn method_arguments(method: &Method) -> Vec<&str> {
+    method
+        .has_self
+        .then_some("self")
+        .into_iter()
+        .chain(
+            method
+                .params
+                .iter()
+                .map(|param| param.name.trim_start_matches('*')),
+        )
+        .collect()
+}
+
 /// The collector part of a method signature — its `*args` and `**kwargs`
 /// collectors and the keyword-only boundary a `*args` collector sets — built
 /// alike for a struct method and a trait requirement, so a witness compares
@@ -1361,14 +1377,22 @@ impl Checker {
     /// The conformance atoms a method's `where` clauses guarantee, assumed
     /// while checking its body and, in `register_struct_method_signatures`,
     /// while resolving its own signature (`-> Need[Self.T] where
-    /// conforms_to(Self.T, Copyable)` on a `T: Movable` struct).
+    /// conforms_to(Self.T, Copyable)` on a `T: Movable` struct). A clause
+    /// reading one of `arguments` (`where self.dtype.is_integral()`)
+    /// compiles with them in scope, in [`Self::method_sig`], and refines no
+    /// binder here.
     pub(super) fn method_where_assumptions(
         &self,
         where_clauses: &[Expr],
+        arguments: &[&str],
         method_decls: &[ParamDecl],
     ) -> Result<Vec<ParamExpr>, TypeError> {
         let mut facts = Vec::new();
-        for condition in where_clauses {
+        for condition in where_clauses.iter().filter(|condition| {
+            !super::comptime_validation::names_read(condition)
+                .iter()
+                .any(|name| arguments.contains(&name.as_str()))
+        }) {
             let constraint = self.compile_where_clause(condition)?;
             self.guaranteed_facts(&self.bind_constraint(&constraint, method_decls), &mut facts);
         }
@@ -1430,10 +1454,18 @@ impl Checker {
         let saved = self.enclosing_type_params.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
-        let assumptions = self.method_where_assumptions(&m.where_clauses, &decls);
+        let assumptions =
+            self.method_where_assumptions(&m.where_clauses, &method_arguments(m), &decls);
+        let availability = self
+            .structs
+            .get(declaration)
+            .and_then(|info| info.methods.get(lifecycle_method_name(m)))
+            .and_then(|methods| methods.get(overload_index))
+            .map(|signature| signature.availability.clone())
+            .unwrap_or_default();
         let result = match assumptions {
             Ok(mut assumptions) => {
-                assumptions.extend(self.method_propositions(&m.where_clauses, &decls));
+                assumptions.extend(self.method_propositions(&availability, &decls));
                 self.push_assumptions(assumptions);
                 let result = (|| {
                     for param in 0..m.params.len() {

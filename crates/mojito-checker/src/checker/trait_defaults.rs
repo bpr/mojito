@@ -770,9 +770,14 @@ impl Checker {
             .enclosing_struct_type_params
             .replace(self.enclosing_type_params.len());
         let where_clauses: Vec<Expr> = wrapper.condition.iter().cloned().collect();
-        let assumptions = self.method_where_assumptions(&where_clauses, &signature.decls);
+        let assumptions = self.method_where_assumptions(&where_clauses, &[], &signature.decls);
         let result = assumptions.and_then(|mut assumptions| {
-            assumptions.extend(self.method_propositions(&where_clauses, &signature.decls));
+            let conditions: Vec<_> = where_clauses
+                .iter()
+                .filter_map(|condition| self.compile_where_clause(condition).ok())
+                .map(|constraint| self.bind_constraint(&constraint, &signature.decls))
+                .collect();
+            assumptions.extend(self.method_propositions(&conditions, &signature.decls));
             self.push_assumptions(assumptions);
             let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
             self.pop_assumptions();

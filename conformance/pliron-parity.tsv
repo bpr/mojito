@@ -1473,6 +1473,7 @@ assets/ok/waypoints.mojo	main	exe-differential	sanitized
 assets/ok/where_conformance_disjunction_assumed.mojo	main	exe-differential	sanitized
 assets/ok/where_dtype_predicate.mojo	main	exe-differential	sanitized
 assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized
+assets/ok/where_reads_arguments.mojo	main	exe-differential	sanitized
 assets/ok/where_refined_bound_members.mojo	main	exe-differential	sanitized
 assets/ok/where_refined_bound_requirement_order.mojo	main	exe-differential	sanitized
 assets/ok/where_repeated_clauses.mojo	main	exe-differential	sanitized

@@ -4566,32 +4566,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1717 A function's `where` clause cannot read its arguments,
-  where upstream emits the clause after them**
-
-  `def p[dtype: DType](base: Scalar[dtype]) -> Int where base.dtype ==
-  DType.float32` stops with "unsupported generic constraint operand", where
-  the pin runs `p(Float32(1.5))`.
-  - A `def`'s clauses compile before `in_signature_scope` declares its
-    arguments (`checker/statements.rs`), and a method's in `method_sig`
-    (`checker/declarations.rs`) outside that scope, so an argument name in
-    a clause is unbound.
-  - Upstream's `Signatures.cpp` emits a clause with the arguments in scope,
-    as `-> type_of(base)` already reads them here; `base.dtype` then reads
-    through `type_of(base)` (R333).
-  - Probe: `where base.dtype.is_floating_point()` and `where
-    self.dtype.is_integral()` stop with "unsupported generic where
-    proposition"; `where Self.dtype.is_integral()` runs.
-  - Probe: upstream's `SIMD.write_padded` declares `where
-    self.dtype.is_integral()` (R1663).
-  - Probe: upstream's `_powf_scalar(base: Scalar, exponent: Scalar) ->
-    type_of(base) where base.dtype.is_floating_point()` (R1567) and
-    `_atanh_float32(x: SIMD) -> type_of(x) where
-    x.dtype.is_floating_point()` read the predicate off a bare argument.
-  - Found while landing R1661 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1120 `Tuple[]` is the empty tuple's type**
 
   Problem: `def f() -> Tuple[]:` fails to parse ("Unexpected token

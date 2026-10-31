@@ -1707,7 +1707,10 @@ second expression tree.
   (`ParamRef::unbound`), `Checker::bind_constraint` binds it at the
   declaration — its own binders, then the open scopes, then the enclosing
   struct's — and a clause is judged under a `ConstraintEnvironment` keyed by
-  `ParamId`. An operand no classified declaration binds (an origin's
+  `ParamId`. A function's, method's, or trait requirement's clauses compile
+  inside `in_signature_scope` after its arguments, as upstream's
+  `Signatures.cpp` emits them, so a clause reads an argument (`where
+  x.dtype.is_floating_point()`) through its type. An operand no classified declaration binds (an origin's
   mutability parameter, an associated member's own parameter) stays unbound
   and is identified by its spelling. A deferred slot (`CtValue::Deferred`)
   carries the `ParamRef` of the binder whose slot it fills, taken from the

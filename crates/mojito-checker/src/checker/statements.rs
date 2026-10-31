@@ -2931,41 +2931,6 @@ impl Checker {
             name.clone()
         };
         let mut decls = self.classify_params(&owner, type_params)?;
-        let mut function_assumptions = Vec::new();
-        let mut erased_origin_constraints = Vec::new();
-        // An arithmetic `where` operand names the declaration's own value
-        // parameters, so their scope is open while the clauses compile.
-        self.push_param_scope(&decls);
-        let compiled = where_clauses
-            .iter()
-            .map(|condition| {
-                self.compile_where_clause(condition)
-                    .map(|constraint| self.bind_constraint(&constraint, &decls))
-            })
-            .collect::<Result<Vec<_>, _>>();
-        self.tparams.pop();
-        for constraint in compiled? {
-            self.guaranteed_facts(&constraint, &mut function_assumptions);
-            if let Some(last) = decls.last_mut() {
-                match last {
-                    ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                        constraints.push(constraint);
-                    }
-                }
-            } else if type_params.is_empty() {
-                self.validate_declaration_constraint(name, &constraint)?;
-            } else {
-                erased_origin_constraints.push(constraint);
-            }
-        }
-        self.generic_parameters.borrow_mut().insert(
-            mojito_checked::checked::GenericSite::Function {
-                module: stmt.module.clone(),
-                declaration: stmt.span,
-                syntax: stmt.syntax_id,
-            },
-            decls.clone(),
-        );
         // Type parameters are in scope while resolving the signature and
         // checking the body (as bare `T`), and value parameters as the typed
         // references a dependent parameter expression names (`Buf[n + 1]`).
@@ -2992,15 +2957,52 @@ impl Checker {
             if !name.contains('$') {
                 this.check_result_origins(ret_anno.as_ref(), params, &param_tys, None)?;
             }
-            Ok((param_tys, ret_ty))
+            // Upstream's `Signatures.cpp` emits the `where` clauses after the
+            // arguments, so a clause reads them (`where base.dtype ==
+            // DType.float32`) as the result annotation does.
+            let compiled = where_clauses
+                .iter()
+                .map(|condition| {
+                    this.compile_where_clause(condition)
+                        .map(|constraint| this.bind_constraint(&constraint, &decls))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((param_tys, ret_ty, compiled))
         });
-        let (param_tys, ret_ty) = match signature {
+        let (param_tys, ret_ty, compiled) = match signature {
             Ok(sig) => sig,
             Err(e) => {
                 self.tparams.pop();
                 return Err(e);
             }
         };
+        let mut function_assumptions = Vec::new();
+        let mut erased_origin_constraints = Vec::new();
+        for constraint in compiled {
+            self.guaranteed_facts(&constraint, &mut function_assumptions);
+            if let Some(last) = decls.last_mut() {
+                match last {
+                    ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                        constraints.push(constraint);
+                    }
+                }
+            } else if type_params.is_empty() {
+                if let Err(error) = self.validate_declaration_constraint(name, &constraint) {
+                    self.tparams.pop();
+                    return Err(error);
+                }
+            } else {
+                erased_origin_constraints.push(constraint);
+            }
+        }
+        self.generic_parameters.borrow_mut().insert(
+            mojito_checked::checked::GenericSite::Function {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            decls.clone(),
+        );
         let ref_params = lower_ref_param_sigs(type_params, &caller_regular, 0)?;
         let ref_return = match ret_anno {
             Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(

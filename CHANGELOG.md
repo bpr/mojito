@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `where` clause reads the declaration's arguments, as at the pin
+  (R1717): `def p[dtype: DType](base: Scalar[dtype]) -> Int where
+  base.dtype == DType.float32`, `where x.dtype.is_floating_point()` over a
+  bare `x: SIMD`, and a method's or trait requirement's `where
+  self.dtype.is_integral()` compile after the arguments and decide at each
+  call. A struct method now witnesses a requirement declaring the same
+  clause over its own binders.
 - `std.math` gains upstream's `log` and `frexp` (R1714), verbatim over
   `_log_accurate` for `float64` and `_log_base[27]` otherwise: `from
   std.math import log` runs on both backends and at compile time, with the

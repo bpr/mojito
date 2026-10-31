@@ -134,8 +134,11 @@ pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig
 }
 
 /// A method's availability clauses with its own binders named by their
-/// position, as [`canonical_method_shape`] names them in its signature.
+/// position, as [`canonical_method_shape`] names them in its signature: a
+/// binder an operand's expression reads (`d.is_floating_point()`) as well
+/// as a bare one.
 pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstraint> {
+    let canonical_id = |index| ParamId::new(mojito_types::types::CONTRACT_BINDER_OWNER, index);
     let canonical = |reference: &ParamRef| {
         method
             .decls
@@ -144,15 +147,35 @@ pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstrain
             .map_or_else(
                 || reference.clone(),
                 |index| ParamRef {
-                    id: ParamId::new(mojito_types::types::CONTRACT_BINDER_OWNER, index),
+                    id: canonical_id(index),
                     name: format!("${index}").into(),
                 },
             )
     };
+    let context = ParamContext::detached();
+    let mut renamed = mojito_types::param_expr::ParamBindings::new();
+    for (index, decl) in method.decls.iter().enumerate() {
+        renamed.bind(
+            decl.id().clone(),
+            context.decl_ref(
+                canonical_id(index),
+                &format!("${index}"),
+                decl.binder_meta(),
+            ),
+        );
+    }
+    let operand = |operand: &ConstraintOperand| match operand {
+        ConstraintOperand::Expr(expr) => ConstraintOperand::Expr(
+            context
+                .replace(expr, &renamed)
+                .unwrap_or_else(|_| expr.clone()),
+        ),
+        other => other.clone(),
+    };
     method
         .availability
         .iter()
-        .map(|constraint| constraint.map(&canonical, &ConstraintOperand::clone))
+        .map(|constraint| constraint.map(&canonical, &operand))
         .collect()
 }
 
