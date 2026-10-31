@@ -11042,7 +11042,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Retire the VM's `__ceildiv__`/`__divmod__` arms
     (`backend/vm/invoke.rs`), Pliron's (`lower/methods.rs`,
     `lower_ceildiv`), the checker's `math_operation_requirement` rows, and
-    `simd_infix`'s `Mod` arm; `builtin_fold.rs` reads `__mod__`'s inline
+    `simd_infix` (`checker/operators.rs`), whose `Mod` arm is the last
+    `SIMD` operator rule; `builtin_fold.rs` reads `__mod__`'s inline
     level as it reads `__floordiv__`'s.
   - `assets/runtime_error/pliron_trap_mod_zero.mojo` then runs: move it to
     `assets/ok` with a `print(x)`, drop its ledger and manifest rows, and
@@ -11323,20 +11324,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `implicit_conversion_own_parameters`) fails with the pipeline off, in
     the CTFE of `_get_type_index`, with this message.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1398 The checker, VM, and Pliron keep `SIMD` member rules no
-  program reaches**
-
-  Once every `SIMD` member is a library body,
-  `checker/method_calls/simd_receivers.rs`, the SIMD arms of
-  `checker/operators.rs`, `runtime::simd_method`, and
-  Pliron's per-method SIMD lowering serve no program.
-  - Delete what the member entries left of them.
-  - Done when `rg simd_method crates` finds nothing.
-  - Depends on R1555, R1589, R1579, R1580, R1581, R1582, R1764, R1586,
-    R1671, R1683, R1673, R1675, and R276, which port the last members, and R1561, which retires
-    the lane subscript.
   - Model: Opus, Not Planned.
 
 - [ ] **R1407 An `enum`'s `__Enum` members are generated on each enum,

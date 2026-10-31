@@ -11575,6 +11575,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Removed
 
+- A `SIMD` value's `copy()` is the builtin `Copyable.copy` value read, and a
+  comparison beside a `SIMD` operand in a compile-time position is its
+  declared dunder folded, so the checker's `SIMD` method rule, its
+  compile-time comparison arm, and the VM's and Pliron's scalar `__abs__`
+  and comparison-dunder arms are gone (R1398). `%` is the last `SIMD`
+  operator the checker types itself (R1623).
+
 - The fork hashing surface: `std.hashing` (`IncrementalHasher`,
   `bucket_index`) and its flat `hashing` facade, the value-returning
   `__hash__(self) -> UInt` shape (now a `Hashable` conformance error), the

@@ -9,6 +9,7 @@ use super::*;
 
 mod builtin_types;
 mod call_contract;
+mod dtype_receivers;
 mod intrinsic_receivers;
 mod llvm_intrinsic;
 mod mc_infer;
@@ -18,7 +19,6 @@ mod pop_ops;
 mod receiver_effects;
 mod resolution;
 mod selection;
-mod simd_receivers;
 mod statics;
 mod type_receivers;
 

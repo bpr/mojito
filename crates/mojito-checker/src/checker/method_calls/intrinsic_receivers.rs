@@ -6,7 +6,7 @@ use mojito_types::types::TyKind;
 
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
-    /// the compiler-known collections, `SIMD` and `DType`, the inverted
+    /// the compiler-known collections, `DType`, the inverted
     /// `write_to`, string literals, tuples, packs, pointers, and uninit
     /// storage. `None` leaves the call to
     /// signature resolution.
@@ -41,15 +41,6 @@ impl Checker {
         }
         if *obj_ty == TyKind::Dtype && mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
             return self.infer_dtype_predicate(site).map(Some);
-        }
-        // A name the compiler-known SIMD methods lack falls through to the
-        // members every builtin scalar shares (`__hash__`, `write_to`,
-        // `__abs__`, …).
-        if matches!(obj_ty.kind(), TyKind::Simd { .. }) {
-            match self.infer_simd_method(site) {
-                Err(TypeError::NoSuchMethod { .. }) => {}
-                result => return result.map(Some),
-            }
         }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.

@@ -352,21 +352,9 @@ impl VmBackend {
                 }
                 // `CeilDivable` — `x.__ceildiv__(y)`.
                 ("__ceildiv__", 1) => return crate::runtime::builtin_ceildiv(&recv, &args[0]),
-                // `Absable` and `DivModable` on a scalar: its
-                // builtin (the elaborator makes `__pow__` its `**`).
-                ("__abs__", 0) => return crate::runtime::builtin_abs(recv),
+                // `DivModable` on a scalar: its builtin.
                 ("__divmod__", 1) => {
                     return crate::runtime::builtin_divmod(recv, args[0].clone());
-                }
-                // `Equatable` and `Comparable` on a scalar: its operator.
-                ("__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__", 1) if !matches!(&recv, Value::Simd { lanes, .. } if lanes.width() != 1) =>
-                {
-                    use mojito_ast::ast::InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
-                    let op = [Eq, Ne, Lt, Le, Gt, Ge]
-                        .into_iter()
-                        .find(|op| op.dunder() == Some(method))
-                        .unwrap_or(Ge);
-                    return crate::runtime::apply_infix(op, recv, args[0].clone());
                 }
                 // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a
                 // `Bool` or a numeric literal: its conversion; a `SIMD`'s are

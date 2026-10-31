@@ -177,7 +177,7 @@ impl FnLowering<'_> {
         }
         // Unresolved scalar-receiver dunders are the VM's non-struct
         // intrinsic dispatch (`builtin_round_dir`, `builtin_ceildiv`, and
-        // the `abs`/`round`/`divmod` builtins), and an integer literal's
+        // the `divmod` builtin), and an integer literal's
         // rounding dunders; a struct receiver with its own method arrives
         // resolved instead.
         if resolved.is_none()
@@ -195,34 +195,11 @@ impl FnLowering<'_> {
                 ("__ceildiv__", 1) => {
                     return self.lower_ceildiv(ctx, dest, recv, args[0], &recv_ty);
                 }
-                ("__abs__", 0) => return self.lower_abs_builtin(ctx, dest, &[recv], &[]),
                 ("__divmod__", 1) => {
                     return self.lower_divmod_builtin(ctx, dest, &[recv, args[0]], &[]);
                 }
                 _ => {}
             }
-        }
-        // `Equatable` and `Comparable` on a scalar: its operator, as the VM
-        // dispatches it.
-        if resolved.is_none()
-            && args.len() == 1
-            && kwargs.is_empty()
-            && matches!(
-                self.func.reg_types.get(&recv.0).map(Ty::kind),
-                Some(TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Bool)
-            )
-            && let Some(op) = [
-                InfixOp::Eq,
-                InfixOp::Ne,
-                InfixOp::Lt,
-                InfixOp::Le,
-                InfixOp::Gt,
-                InfixOp::Ge,
-            ]
-            .into_iter()
-            .find(|op| op.dunder() == Some(method))
-        {
-            return self.lower_binop(ctx, op, dest, recv, args[0], None);
         }
         let Some(resolved) = resolved else {
             let receiver = self.func.reg_types.get(&recv.0).map_or_else(

@@ -167,8 +167,8 @@ impl Checker {
         // `b.__radd__(a)`, as upstream's `emitBinOpCall` resolves them. A
         // comparison has no reflected dunder, so a literal left operand
         // materializes to its default type (`Int`, `Float64`), whose dunder
-        // takes the right one. In a compile-time position a comparison is
-        // the dunder folded instead (`infix_value`), which asserts nothing.
+        // takes the right one. In a compile-time position the comparison's
+        // value is that dunder folded (`infix_value`), which asserts nothing.
         // An unlinked program (a phase test's) declares no `SIMD`, so its
         // scalar comparisons stay the built-in ones below.
         let pointer_or_archetype =
@@ -178,9 +178,7 @@ impl Checker {
             && (matches!(
                 op,
                 Add | Sub | Mul | Div | FloorDiv | Pow | BitAnd | BitOr | BitXor | Shl | Shr
-            ) || (comparison
-                && self.comptime_positions.get() == 0
-                && self.structs.contains_key("SIMD")))
+            ) || (comparison && self.structs.contains_key("SIMD")))
             && (matches!(lt.kind(), TyKind::Simd { .. })
                 || matches!(rt.kind(), TyKind::Simd { .. }))
             && !pointer_or_archetype(&lt)
@@ -198,9 +196,9 @@ impl Checker {
                 .infer_operator_call(span, op, left, right, &receiver, Some(&rt))?
                 .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
         }
-        // The other SIMD operators are elementwise (handled before the
-        // scalar-numeric path, which `Int`, `UInt`, and `Float64` operands
-        // keep).
+        // `%` beside a vector is the one SIMD operator still typed here
+        // (before the scalar-numeric path, which `Int`, `UInt`, and
+        // `Float64` operands keep).
         let vector = |ty: &Ty| {
             matches!(ty.kind(), TyKind::Simd { .. })
                 && !mojito_types::types::has_host_scalar_value(ty.kind())
@@ -1451,13 +1449,12 @@ fn union_subtree_place(
     })
 }
 
-/// Type a SIMD operator that is not yet a declared dunder (`%`, R1623),
-/// or a comparison in a compile-time position,
-/// which is the dunder folded, a `Bool`. Both operands must be the same
-/// SIMD type, except a numeric *literal* splats to the other operand's
-/// type. Arithmetic is elementwise and keeps the operand type.
+/// Type `%` beside a SIMD vector, not yet a declared dunder (R1623). Both
+/// operands must be the same SIMD type, except a numeric *literal* splats
+/// to the other operand's type; the remainder is elementwise and keeps the
+/// operand type.
 fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
-    use InfixOp::{Eq, Ge, Gt, Le, Lt, Mod, Ne};
+    use InfixOp::Mod;
     let bad = || TypeError::BadOperator {
         op: op.symbol().to_string(),
         operands: format!("{lt} and {rt}"),
@@ -1488,9 +1485,6 @@ fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
         // Remainder on integer lanes (upstream defines it on float lanes
         // too, R850).
         Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
-        // A comparison in a compile-time position is the dunder folded
-        // ([`Checker::record_folded_comparison`]), a `Bool`.
-        Eq | Ne | Lt | Gt | Le | Ge => Ok(Ty::bool()),
         _ => Err(bad()),
     }
 }
