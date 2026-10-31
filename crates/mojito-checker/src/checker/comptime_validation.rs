@@ -3052,7 +3052,8 @@ impl Checker {
     /// The binders `expr` reads through the `names` it spells: each binder
     /// it names, those a local display binding or a local `comptime`
     /// parameter expression it names is over, and the enclosing struct's
-    /// for `Self`. `None` when the binders are not known (a type-shaped
+    /// for `Self`. A type alias or type parameter it calls as a
+    /// constructor (`TInt(…)`) counts as one it names. `None` when the binders are not known (a type-shaped
     /// argument, a local value that denotes no parameter expression), where
     /// every binder in scope stands in, as for a call of a nested `def`.
     fn binders_read(
@@ -3076,8 +3077,12 @@ impl Checker {
         {
             return None;
         }
+        let aliases: Vec<String> = callees_read(expr)
+            .into_iter()
+            .filter(|callee| self.lookup_tparam(callee).is_some())
+            .collect();
         let mut read = HashSet::new();
-        for name in names {
+        for name in names.iter().chain(&aliases) {
             if name == "Self" {
                 read.extend(self.self_decls.iter().map(|decl| decl.id().clone()));
                 continue;

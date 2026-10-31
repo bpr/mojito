@@ -4656,33 +4656,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1745 A lifted local `comptime` application omits the binders
-  only its result type names**
-
-  In a `def` generic over `dtype` and `width: SIMDLength`, `comptime TInt =
-  SIMD[_integral_type_of[dtype](), width]` then `comptime m = TInt((1 <<
-  (bit_width_of[dtype]() - 1)) - 1)` fails MIR verification: the lifted
-  `$comptime$f$c0` "names parameter `width` of `f` that no enclosing
-  declaration binds". The pin runs it.
-  - Cause: `Checker::lifted_application`
-    (`checker/comptime_validation.rs`) applies the lifted function to the
-    binders the expression's syntax reads (`names_read`), while its
-    result type, `SIMD[_integral_type_of(dtype), width]`, also names
-    `width`.
-  - `SIMD[DType.int32, width](…bit_width_of…)`,
-    `SIMD[_integral_type_of[dtype](), width](7)`, and a `var` all run.
-  - Probe: upstream's `_is_zero_bits` and `_is_subnormal_bits` bind
-    `magnitude` this way (R1714); `(x._to_bits_signed() & m).eq(0)` prints
-    `[True, True, False, False]` at the pin for `float32 × 4` input `0,
-    -0.0, 1, 2`.
-  - Probe: spelled inline, `comptime m = SIMD[_integral_type_of[dtype](),
-    width]((1 << (bit_width_of[dtype]() - 1)) - 1)` instead "keeps the
-    parameter constant … in elaborated MIR after monomorphization"; the
-    pin prints `[2147483647, …]` at `float32 × 4`.
-  - Found while landing R1714 (2026-10-30).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1742 A slice subscript is no compile-time application**
 
   `g[c[:2]]()`, over `comptime c = List([Float64(1.0), 2.0, 3.0])` and
@@ -11089,7 +11062,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A verbatim port with the four blockers worked around printed the
     pin's values on the VM and natively (2026-10-30).
   - Found while planning R1567 (2026-10-30).
-  - Depends on R1653, R1744, R1745, and R1747.
+  - Depends on R1747.
   - Model: Fable, Not Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is

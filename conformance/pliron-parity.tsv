@@ -204,9 +204,11 @@ assets/ok/comptime_if_struct_equality.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_symbolic_conditional_conformance.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_untaken_arm_unevaluated.mojo	main	exe-differential	sanitized
+assets/ok/comptime_inline_simd_type_application.mojo	main	exe-differential	sanitized
 assets/ok/comptime_int_truediv.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized
 assets/ok/comptime_layout_constant.mojo	main	exe-differential	sanitized
+assets/ok/comptime_local_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_application_per_read.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_binder_alias.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_display_applications.mojo	main	exe-differential	sanitized

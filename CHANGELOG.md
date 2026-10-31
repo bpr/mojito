@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A local `comptime` binding constructed through a local type alias over
+  the function's binders (`comptime m = TInt(…)` over `comptime TInt =
+  SIMD[_integral_type_of[dtype](), width]`) and a parameter constant whose
+  type embeds a compile-time application (`SIMD[_integral_type_of[dtype](),
+  width](…)`, `.MAX`) run as at the pin (R1745), where the first failed MIR
+  verification and the second elaboration.
 - A `SIMDLength` binder passed in a call's brackets to an `Int` value
   parameter (`mask[dtype, width]()` inside a `def` whose `width:
   SIMDLength`) carries its lane count to the callee, as at the pin (R1744),

@@ -1417,6 +1417,15 @@ impl ParamContext {
                     &spelling,
                 ));
             }
+            // A parametric type is canonicalized with the parameter
+            // expressions it embeds.
+            ParamKind::TypeShape(ty) => {
+                let mut answering = Answering {
+                    context: self,
+                    answer,
+                };
+                return Ok(self.type_shape(crate::types::rewrite_ty(ty, &mut answering)?));
+            }
             _ => return Ok(expr.clone()),
         };
         match answer(&rebuilt)? {
@@ -4876,6 +4885,19 @@ fn write_operands(f: &mut fmt::Formatter<'_>, operands: &[&ParamExpr]) -> fmt::R
         write!(f, "{operand}")?;
     }
     Ok(())
+}
+
+/// Answers the queries in each parameter expression a type embeds
+/// (`ParamContext::answer_queries`).
+struct Answering<'a> {
+    context: &'a ParamContext,
+    answer: &'a mut dyn FnMut(&ParamExpr) -> Result<Option<CtValue>, ParamError>,
+}
+
+impl crate::types::TyRewrite for Answering<'_> {
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.context.answer_queries(expr, self.answer)
+    }
 }
 
 #[cfg(test)]
