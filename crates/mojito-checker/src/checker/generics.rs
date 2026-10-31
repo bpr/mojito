@@ -705,6 +705,12 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
                 _ => recur(&resolved),
             }
         }
+        // A callable contract closes over the parameters its signature
+        // names, its own binders excepted (`def(Scalar[Self.dtype])`).
+        TyKind::Func(_) | TyKind::GenericFunc(_) => {
+            mojito_types::types::replace_parameters(&context, ty, bindings, 0)
+                .unwrap_or_else(|_| ty.clone())
+        }
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
         // A symbolic literal text closes the same way.
@@ -1413,8 +1419,9 @@ impl Checker {
 
     /// `signature` with each own value parameter's type closed under the
     /// receiver's arguments, when one names a pack element of the struct's
-    /// (`elt_handler: def[index: Int](var element: Self.Ts[index])`); `None`
-    /// when no declaration does.
+    /// (`elt_handler: def[index: Int](var element: Self.Ts[index])`) or a
+    /// callable contract names its parameters (`h: def(Scalar[Self.dtype])`);
+    /// `None` when no declaration does.
     pub(super) fn method_decls_at_receiver(
         &self,
         signature: &MethodSig,
@@ -1769,15 +1776,6 @@ fn owner_value_bindings(
 ) -> mojito_types::param_expr::ParamBindings {
     let context = mojito_types::param_expr::ParamContext::detached();
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
-    for (decl, argument) in decls.iter().zip(targs) {
-        if let (ParamDecl::Value { id, .. }, TyArg::Val(value)) = (decl, argument)
-            && let Some(value) = match value {
-                CtValue::Expr(expr) => Some(expr.clone()),
-                value => context.constant(value.clone()).ok(),
-            }
-        {
-            bindings.bind(id.clone(), value);
-        }
-    }
+    bindings.bind_value_arguments(&context, decls, targs);
     bindings
 }

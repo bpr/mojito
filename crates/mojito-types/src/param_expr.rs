@@ -3848,6 +3848,28 @@ impl ParamBindings {
         self.by_id.insert(id, value);
     }
 
+    /// Bind each value parameter of `decls` to its positional argument, as
+    /// its residual expression or its constant. A type, origin, or deferred
+    /// argument binds nothing.
+    pub fn bind_value_arguments(
+        &mut self,
+        context: &ParamContext,
+        decls: &[crate::types::ParamDecl],
+        arguments: &[crate::types::TyArg],
+    ) {
+        for (decl, argument) in decls.iter().zip(arguments) {
+            if let (crate::types::ParamDecl::Value { id, .. }, crate::types::TyArg::Val(value)) =
+                (decl, argument)
+                && let Some(value) = match value {
+                    CtValue::Expr(expr) => Some(expr.clone()),
+                    value => context.constant(value.clone()).ok(),
+                }
+            {
+                self.bind(id.clone(), value);
+            }
+        }
+    }
+
     pub fn bind_name(&mut self, name: &str, value: ParamExpr) {
         self.by_name
             .insert(name.trim_start_matches('*').to_string(), value);

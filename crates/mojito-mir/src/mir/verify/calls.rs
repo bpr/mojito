@@ -65,6 +65,7 @@ pub(super) fn verify_call_instruction(
             capture_accesses,
             param_arg_regs,
             instantiated_args,
+            receiver,
             spread,
             ..
         } => {
@@ -96,6 +97,9 @@ pub(super) fn verify_call_instruction(
                     &declaration.param_decls,
                     param_arg_regs,
                     instantiated_args,
+                    receiver
+                        .as_ref()
+                        .and_then(|receiver| owner_arguments(cx.declarations, receiver)),
                     errors,
                 );
             }
@@ -108,6 +112,7 @@ pub(super) fn verify_call_instruction(
         MirInstr::MethodCall {
             dest,
             method,
+            recv,
             receiver_convention,
             resolved: Some(callee),
             reference_result,
@@ -218,6 +223,8 @@ pub(super) fn verify_call_instruction(
                     &declaration.param_decls,
                     param_arg_regs,
                     instantiated_args,
+                    cx.reg_ty(*recv)
+                        .and_then(|receiver| owner_arguments(cx.declarations, receiver)),
                     errors,
                 );
             }
@@ -239,6 +246,23 @@ pub(super) fn verify_call_instruction(
         MirInstr::CallIndirect { .. } => verify_indirect_call(cx, instruction, errors),
         _ => {}
     }
+}
+
+/// The receiver struct's parameter declarations beside its arguments, for
+/// a call whose callee's declarations name them (`Self.dtype`); a
+/// reference receiver answers for its referent.
+fn owner_arguments<'a>(
+    declarations: &'a MirDeclarations,
+    receiver: &'a Ty,
+) -> Option<(&'a [mojito_types::types::ParamDecl], &'a [TyArg])> {
+    let receiver = match receiver.kind() {
+        TyKind::Ref(reference) => &reference.referent,
+        _ => receiver,
+    };
+    let TyKind::Struct(name, arguments) = receiver.kind() else {
+        return None;
+    };
+    Some((&declarations.structure(name)?.param_decls, arguments))
 }
 
 /// The operand a call passes its callee's positional collector as: the
@@ -969,6 +993,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             checked_decls,
             param_arg_regs,
             instantiated_args,
+            None,
             errors,
         );
     } else if !param_decls.is_empty() {

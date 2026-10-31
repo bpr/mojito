@@ -4528,6 +4528,23 @@ fn callable_contract_binders_belong_to_their_own_contract() {
 }
 
 #[test]
+fn callable_contract_closes_over_receiver_parameters() {
+    // `h`'s contract names `Self.dtype`, so at `C[DType.int32]` it is
+    // `def(Int32)`: `show` matches it, and an `Int64` handler does not.
+    let source = |handler: &str| {
+        format!(
+            "struct C[dtype: DType]:\n    def __init__(out self):\n        pass\n\n    def run[h: def(Scalar[Self.dtype]) capturing -> None](self):\n        h(Scalar[Self.dtype](3))\n\ndef show(v: Scalar[DType.{handler}]):\n    print(v)\n\ndef main():\n    C[DType.int32]().run[show]()\n"
+        )
+    };
+    ok_std(&source("int32"));
+    let error = err_std(&source("int64"));
+    assert!(
+        matches!(&error, TypeError::BadCall { func, .. } if func == "run"),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn generic_anonymous_callable_contracts_preserve_binder_shape_and_bounds() {
     let wrong_bounds = err(
         "def identity[U: ImplicitlyCopyable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & Deinitable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",

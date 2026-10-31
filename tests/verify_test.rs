@@ -1466,6 +1466,37 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
 }
 
 #[test]
+fn verifier_checks_compile_time_arguments_under_the_call_and_receiver_arguments() {
+    // `h`'s declared contract names the earlier parameter `d` (free) or the
+    // receiver's `Self.dtype` (method): each register is checked against it
+    // closed under those arguments.
+    const FREE: &str = "def run[d: DType, h: def(SIMD[d, 2]) capturing -> None]():\n    h(SIMD[d, 2](1, 2))\n\ndef show(v: SIMD[DType.int32, 2]):\n    print(v)\n\ndef main():\n    run[DType.int32, show]()\n";
+    const METHOD: &str = "struct C[dtype: DType]:\n    def __init__(out self):\n        pass\n\n    def run[h: def(Scalar[Self.dtype]) capturing -> None](self):\n        h(Scalar[Self.dtype](3))\n\ndef show(v: Scalar[DType.int32]):\n    print(v)\n\ndef main():\n    C[DType.int32]().run[show]()\n";
+    let mut free = lower_linked_source(FREE);
+    assert_eq!(verify(&free), Vec::<String>::new());
+    assert_eq!(verify(&lower_linked_source(METHOD)), Vec::<String>::new());
+
+    for (_, function) in &mut free.functions {
+        for instr in function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instrs)
+        {
+            if let MirInstr::Call {
+                func,
+                instantiated_args,
+                ..
+            } = instr
+                && func.0.starts_with("run")
+            {
+                instantiated_args[0] = TyArg::Val(CtValue::Dtype(mojito::Dtype::Int64));
+            }
+        }
+    }
+    expect_finding(&free, "declared def(SIMD[DType.int64, 2])");
+}
+
+#[test]
 fn verifier_rejects_malformed_indirect_compile_time_arguments() {
     let declarations = vec![value_parameter("n", Ty::int())];
     let callable = generic_callable(declarations.clone());

@@ -5227,16 +5227,7 @@ fn with_earlier_arguments(
     };
     let context = mojito_types::param_expr::ParamContext::detached();
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
-    for (sibling, argument) in decls.iter().zip(arguments) {
-        if let (ParamDecl::Value { .. }, TyArg::Val(value)) = (sibling, argument)
-            && let Some(value) = match value {
-                CtValue::Expr(expr) => Some(expr.clone()),
-                value => context.constant(value.clone()).ok(),
-            }
-        {
-            bindings.bind(sibling.id().clone(), value);
-        }
-    }
+    bindings.bind_value_arguments(&context, decls, arguments);
     let solved = mojito_types::types::replace_parameters(&context, ty, &bindings, 0).ok()?;
     (solved != **ty).then(|| decl.with_value_type(solved))
 }

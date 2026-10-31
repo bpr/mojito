@@ -437,6 +437,7 @@ pub(super) fn verify_subscript_call(
         &call.param_decls,
         &call.param_arg_regs,
         &[],
+        None,
         errors,
     );
     match declared(declarations, &call.target) {
@@ -653,12 +654,20 @@ pub(super) fn verify_subscript_call(
 /// arguments carry the closed value it was folded to, and a value parameter
 /// the call leaves to inference has no slot at all: the call carries each
 /// value as compile-time data, as Mojo's carries a parameter attribute.
+/// Each supplied value is checked against its declared type closed under
+/// the call's `instantiated` arguments and the receiver struct's `owner`
+/// arguments (`h: def(SIMD[d, 2])` at `d = DType.int32`), as the pin
+/// substitutes the whole parameter list before converting an argument.
 pub(super) fn verify_param_arguments(
     prefix: &str,
     function: &MirFunction,
     declarations: &[mojito_types::types::ParamDecl],
     arguments: &[crate::mir::MirParamArg],
     instantiated: &[mojito_types::types::TyArg],
+    owner: Option<(
+        &[mojito_types::types::ParamDecl],
+        &[mojito_types::types::TyArg],
+    )>,
     errors: &mut Vec<String>,
 ) {
     if declarations.is_empty() {
@@ -681,6 +690,12 @@ pub(super) fn verify_param_arguments(
                 | mojito_types::types::ParamDecl::Value { variadic: true, .. }
         )
     };
+    let context = mojito_types::param_expr::ParamContext::detached();
+    let mut bindings = mojito_types::param_expr::ParamBindings::new();
+    if let Some((owner_decls, owner_arguments)) = owner {
+        bindings.bind_value_arguments(&context, owner_decls, owner_arguments);
+    }
+    bindings.bind_value_arguments(&context, declarations, instantiated);
     let mut occupied = vec![false; declarations.len()];
     let mut next_positional = 0;
     for argument in arguments {
@@ -753,6 +768,8 @@ pub(super) fn verify_param_arguments(
                 // Each argument to a pack binds one value of its element; a
                 // value pack spread whole binds the pack of its element.
                 let ty = declaration.value_element_ty().unwrap_or(ty);
+                let ty = &mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
+                    .unwrap_or_else(|_| ty.clone());
                 let spread = pack(index)
                     && matches!(function.reg_types.get(&register.0).map(Ty::kind),
                         Some(TyKind::VariadicPack(element)) if types_compatible(element, ty));

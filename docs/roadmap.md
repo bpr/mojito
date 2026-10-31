@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1772**.
+Next free ID: **R1773**.
 
 ## Ordered Work
 
@@ -8708,6 +8708,32 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1772 A bare `def(...)` run-time parameter type is a concrete
+  function type, where the pin's is a closure trait**
+
+  The pin reads a run-time parameter annotated `def(...)` with no `thin`
+  or `capturing` as a trait, as it reads one on a field or an element;
+  Mojito checks it as a function type and calls through it.
+  - Probe: `def run(h: def(Int32) -> None)` called `run(show)` over `def
+    show(v: Int32)` prints `3` here; the pin rejects the argument ("cannot
+    be converted from 'def show(v: Int32) thin -> None' to 'def(Int32) ->
+    None'") and the call in the body ("value cannot be converted from type
+    value '$0' to an instance of '$0'").
+  - Probe: the same parameter over a binder, `def run[d: DType](h:
+    def(Scalar[d]) -> None)` called `run[DType.int32](show)`, passes the
+    check and fails MIR verification ("argument 0 of 'run' has type
+    def(Int32) thin -> None, declared def(Scalar[d]) -> None"), as does a
+    method's `h: def(Scalar[Self.dtype]) -> None` on `C[DType.int32]`.
+  - The `capturing` spelling of the method probe is R176's leniency: the
+    pin reports "capturing closures cannot be materialized as runtime
+    values".
+  - Reject the annotation at the parameter, as fields and elements are
+    rejected; do not close `verify_direct_call`'s declared types under
+    the call's arguments, which would make the binder shapes run.
+  - Found while landing R1767 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1433 The bundled handler APIs take run-time `def(...)
   capturing[_]` arguments, where upstream's take closure-trait arguments**
 
@@ -10994,30 +11020,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1580 (2026-10-28).
   - Depends on R1630, which runs a function returning a flag at compile
     time.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1767 A compile-time callable parameter's contract is matched
-  before the parameters it names are substituted**
-
-  Upstream substitutes a call's other compile-time arguments into a
-  parameter's declared type before converting the argument to it; Mojito
-  compares the argument with the contract as declared.
-  - Probe: `struct C[dtype: DType]` with `def run[h: def(Scalar[Self.dtype])
-    capturing -> None](self)`, called `C[DType.int32]().run[show]()` over
-    `def show(v: Scalar[DType.int32])`, fails "invalid call to 'run': no
-    overload matches"; a contract that does not name `Self.dtype` runs.
-  - Probe: `def run[d: DType, h: def(SIMD[d, 2]) capturing -> None]()`,
-    called `run[DType.int32, show]()`, passes the check and fails MIR
-    verification ("compile-time value parameter 'h' has register type
-    def(SIMD[DType.int32, 2]) thin -> None, declared def(SIMD[d, 2])
-    capturing[] -> None"): the call-argument rule in
-    `mir/verify/subscripts.rs` reads the callee's declared `ty` without the
-    call's instantiated arguments.
-  - Probe: the same two shapes with a `def[k: Int](SIMD[Self.dtype, k])`
-    contract; upstream's `SIMD.reduce` parameter overload declares one over
-    `Self._T[width]` (R1764).
-  - Found while landing R1763 (2026-10-31).
-  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1764 `SIMD`'s reductions are checker rules, where upstream's are

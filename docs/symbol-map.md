@@ -1797,7 +1797,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameterized `comptime` member.
   The check solves an infer-only value binder from a later bracket
   argument's type or its default's (`Checker::resolve_use_params`,
-  `with_earlier_arguments`).
+  `with_earlier_arguments`), and closes a method's own value parameter
+  types, callable contracts included, over the receiver's arguments
+  (`Checker::method_decls_at_receiver`); both bind through
+  `ParamBindings::bind_value_arguments`.
 - `comptime/synth.rs` also owns the vector-alias bound fold, and the value reading
   of a `Self.`-spelled `materialize` operand
   (`read_materialize_self_operands`: `materialize[Self.n]()`,
@@ -1896,7 +1899,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SemanticAdjustment::FoldedParameterArguments`; `Flatten::param_arg_regs`
   (`Flatten::param_arg_has_no_runtime_form`, `mir.rs`) lowers no code for
   them; `verify_param_arguments` (`verify/subscripts.rs`) accepts the absent
-  register against the call's `instantiated_args`.
+  register against the call's `instantiated_args`, and checks a present one
+  against its declared type closed under those arguments and the receiver
+  struct's (`owner_arguments`, `verify/calls.rs`), bound by
+  `ParamBindings::bind_value_arguments` (`mojito-types/src/param_expr.rs`).
 
 ## Change Routing
 

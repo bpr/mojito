@@ -2291,6 +2291,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time callable parameter's contract is matched under the
+  call's other arguments, as the pin substitutes them (R1767): a method's
+  `h: def(Scalar[Self.dtype])` or `def[k: Int](Self._T[k])` contract,
+  which reported "no overload matches", and a free function's `h:
+  def(SIMD[d, 2])` after `d`, which failed MIR verification, run, on
+  static methods too. The checker closes a method's callable contract
+  over the receiver's arguments, and the verifier checks each
+  compile-time register against its declared type closed under the
+  call's and the receiver's arguments.
 - An overloaded method or initializer is declared under the symbol the
   check spells from its registered `MethodSig`, the key its call spells,
   instead of re-spelling its annotations' syntax (R1769). Initializers
