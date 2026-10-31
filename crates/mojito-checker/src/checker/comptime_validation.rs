@@ -1633,10 +1633,26 @@ impl Checker {
             }
             None => return Ok(None),
         };
+        // A slot declared over the struct's parameters (`Optional`'s
+        // `Self.T`) takes the instance's arguments (`Int`).
+        let at_instance = |declared: &Ty| {
+            mojito_types::types::nominal_parts(ty)
+                .and_then(|(owner, args)| {
+                    let info = self.structs.get(template_name(owner))?;
+                    Some(substitute_at(declared, info, &args))
+                })
+                .unwrap_or_else(|| declared.clone())
+        };
         let Some(param) = function.params.first() else {
             return Ok(None);
         };
-        let Some(argument) = param.ty.resolved(Some(ty)).and_then(argument) else {
+        let Some(argument) = param
+            .ty
+            .resolved(Some(ty))
+            .map(at_instance)
+            .as_ref()
+            .and_then(argument)
+        else {
             return Ok(None);
         };
         // A `ref` source is passed as the compile-time memory holding it.
@@ -1654,13 +1670,7 @@ impl Checker {
                 let subst = struct_subst(&signature.decls, &own_arguments);
                 let values = Self::value_argument_environment(&signature.decls, &own_arguments);
                 let resolve = |declared: &Ty| {
-                    let declared = mojito_types::types::nominal_parts(ty)
-                        .and_then(|(owner, args)| {
-                            let info = self.structs.get(template_name(owner))?;
-                            Some(substitute_at(declared, info, &args))
-                        })
-                        .unwrap_or_else(|| declared.clone());
-                    self.resolve_dependent_ty(&substitute(&declared, &subst), &values)
+                    self.resolve_dependent_ty(&substitute(&at_instance(declared), &subst), &values)
                         .ok()
                 };
                 let Some(own) =
@@ -2013,7 +2023,9 @@ impl Checker {
     /// under the spelled name the arguments bind and type, whose `where`
     /// clauses have compiled. `Self(...)` in a struct's member is the
     /// construction of the struct over its own parameters, as the check
-    /// spells it ([`Self::self_instance_spelling`]).
+    /// spells it ([`Self::self_instance_spelling`]), and a slice subscript
+    /// is its receiver's `__getitem__` of the slice literal's construction
+    /// ([`Self::slice_literal_spelling`]).
     fn selected_application(&self, expr: &Expr) -> Option<Selected<'_>> {
         let self_spelling;
         // The construction bracket of an initializer called by name
@@ -2021,7 +2033,24 @@ impl Checker {
         // initializer's own parameters, as its run-time call's does
         // ([`Self::infer_initializer_call`]).
         let mut explicit_initializer = None;
+        let slice_spelling: Vec<Expr>;
+        let no_kwargs: Vec<mojito_ast::ast::KwArg> = Vec::new();
         let (name, instance, receiver, param_args, args, kwargs) = match &expr.kind {
+            // A slice subscript (`c[:2]`) is `c.__getitem__` of its slice
+            // literal's construction, as upstream's parser desugars it.
+            ExprKind::Slice { object, .. } => {
+                let (name, instance, receiver) = self.applied_receiver(object, "__getitem__")?;
+                self.run_time_type(expr)?;
+                slice_spelling = vec![self.slice_literal_spelling(expr)?];
+                (
+                    name,
+                    Some(instance),
+                    receiver,
+                    [].as_slice(),
+                    &slice_spelling,
+                    &no_kwargs,
+                )
+            }
             ExprKind::Invoke {
                 callee,
                 param_args,
@@ -2842,7 +2871,7 @@ impl Checker {
         arguments.extend(applied_run);
         arguments.extend(after);
         let result = match &signature.result {
-            Some(result) => Some(resolve(result)?),
+            Some(result) => Some(resolve(&at_owner(result))?),
             None => None,
         };
         Some((arguments, result))

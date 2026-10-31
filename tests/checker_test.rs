@@ -3721,6 +3721,26 @@ fn applies_defaulted_compile_time_value_parameters() {
 }
 
 #[test]
+fn applies_a_slice_subscript_of_a_compile_time_value() {
+    ok_std(
+        "def g[c: Span[Float64, _]]():\n    print(len(c))\n\ndef main():\n    comptime c = List([Float64(1.0), 2.0, 3.0])\n    g[c[:2]]()\n",
+    );
+}
+
+#[test]
+fn rejects_a_slice_subscript_at_a_mismatched_span_parameter() {
+    let error = err_std(
+        "def g[c: Span[Int, _]]():\n    print(len(c))\n\ndef main():\n    comptime c = List([Float64(1.0), 2.0, 3.0])\n    g[c[:2]]()\n",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("expected Span[Int], found Span[Float64]"),
+        "{error}"
+    );
+}
+
+#[test]
 fn binds_named_and_defaulted_compile_time_parameters() {
     ok(
         "@fieldwise_init\nstruct Matrix[rows: Int = 2, columns: Int = 3]:\n    var value: Int\n\nvar a: Matrix[columns=4, rows=1] = Matrix[columns=4, rows=1](7)\nvar b: Matrix = Matrix(8)\n",

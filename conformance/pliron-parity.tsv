@@ -223,6 +223,7 @@ assets/ok/comptime_self_member_applied.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_simd_initializer_applications.mojo	main	exe-differential	sanitized
 assets/ok/comptime_sized_scalar_constant.mojo	main	exe-differential	sanitized
+assets/ok/comptime_slice_application.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_string_field.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_values.mojo	main	exe-differential	sanitized

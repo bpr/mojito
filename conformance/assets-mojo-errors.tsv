@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1000
+# swept-count	1001
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -326,6 +326,7 @@ assets/type_error/comptime_module_constant_annotation_mismatch.mojo	compile-reje
 assets/type_error/comptime_module_display_subscript_crossing.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(3)]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_module_struct_constant_crossing.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Q' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_not_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Flag[(n <= Int(9))]' value to 'Flag[not (n > Int(9)).__bool__()]'
+assets/type_error/comptime_slice_element_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'c' cannot be converted from 'Span[Float64, origin_of(ComptimeOrigin["element"])]' to 'Span[Int, c.origin]'
 assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'missing'
 assets/type_error/comptime_template_binding_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Bool' value to 'Int'
 assets/type_error/comptime_type_ordering_rejected.mojo	compile-reject	agree	error: 'Movable' does not implement the '__lt__' method

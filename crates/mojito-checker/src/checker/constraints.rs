@@ -2185,10 +2185,27 @@ impl Checker {
         right: &Expr,
         recording: Recording,
     ) -> Result<ParamExpr, TypeError> {
-        let (left_built, right_built) = (
-            self.build_ct(left, recording)?,
-            self.build_ct(right, recording)?,
-        );
+        let left_built = self.build_ct(left, recording)?;
+        // `DType`'s `__eq__` and `__ne__` take `rhs: Self`, so beside a
+        // `DType` that parameter roots a leading-dot operand
+        // (`dtype == .float64`), as the run-time operator check does.
+        let rooted;
+        let right = if matches!(op, InfixOp::Eq | InfixOp::Ne)
+            && left_built
+                .meta()
+                .as_value()
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::Dtype))
+            && super::inference::contextual_root_span(right).is_some()
+        {
+            rooted = super::inference::with_contextual_root(
+                right,
+                &ExprKind::Identifier("DType".to_string()),
+            );
+            &rooted
+        } else {
+            right
+        };
+        let right_built = self.build_ct(right, recording)?;
         // A `SIMDLength` after a vector or a literal converts to the left
         // operand's type, as it does at run time (`2 * w` is `2 * Int(w)`):
         // its lane count, upstream's `SIMD.__init__(SIMDLength)` folded.

@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A slice subscript of a compile-time value applies, as at the pin
+  (R1742): `g[c[:2]]()` over a `comptime c = List(...)`, a `comptime s =
+  c[1:]` passed as a parameter, a module `comptime S = C[1:]`, and
+  upstream's `_exp_taylor` spelling `coefficients[:] if dtype == .float64
+  else coefficients[:2]` are `__getitem__` of the slice literal's
+  construction. A compile-time method's result now takes its receiver's
+  arguments, an `@implicit` conversion's argument its target's
+  (`Optional[Int]` from `2`), and `dtype == .float64` builds in a
+  compile-time conditional (`assets/ok/comptime_slice_application.mojo`,
+  `assets/type_error/comptime_slice_element_mismatch.mojo`).
 - File-scope functions resolve in any order, as at the pin (R393, R127):
   the check declares every module `def` before any body, so a body, a
   method, a body's `comptime` binding or `comptime assert`, and a module

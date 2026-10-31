@@ -526,6 +526,59 @@ impl Checker {
         self.slice_literal_construction(&target, &operands, record)
     }
 
+    /// The slice subscript `subscript`'s slice literal as upstream's parser
+    /// desugars it, `T(lower, upper, stride, __slice_literal__=None)`, an
+    /// omitted operand passing `None`. `T` is the type the subscript's
+    /// selected `__getitem__` bound the literal to, read from its
+    /// `subscript_descriptor` fact, and is named by its linked name, which
+    /// resolves without the source importing it. `None` until the subscript
+    /// is typed.
+    pub(super) fn slice_literal_spelling(&self, subscript: &Expr) -> Option<Expr> {
+        let ExprKind::Slice {
+            lower, upper, step, ..
+        } = &subscript.kind
+        else {
+            return None;
+        };
+        let span = subscript.source_span();
+        let (descriptors, _) = self.fact(&span, |facts| facts.subscript_descriptor.as_ref())?;
+        let target = descriptors.into_iter().next()??.target;
+        let TyKind::Struct(name, _) = target.kind() else {
+            return None;
+        };
+        // Identities past every position `synthetic_slice_descriptor`
+        // derives, so no synthetic operand is taken for the descriptor.
+        let synthetic = |kind: ExprKind, ordinal: u32| {
+            let mut expression = Expr::new(kind, subscript.span);
+            expression.source.clone_from(&subscript.source);
+            if let Some(parent) = span.syntax {
+                expression.syntax_id =
+                    mojito_common::token::SyntaxId::derived(parent, u32::MAX - ordinal);
+            }
+            expression
+        };
+        let operand = |operand: &Option<Box<Expr>>, ordinal: u32| {
+            operand
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| synthetic(ExprKind::None, ordinal))
+        };
+        Some(synthetic(
+            ExprKind::Call {
+                name: mojito_symbol::symbol::specialization_template(name)
+                    .unwrap_or(name)
+                    .to_string(),
+                param_args: Vec::new(),
+                args: vec![operand(lower, 1), operand(upper, 2), operand(step, 3)],
+                kwargs: vec![mojito_ast::ast::KwArg {
+                    name: "__slice_literal__".to_string(),
+                    value: synthetic(ExprKind::None, 4),
+                }],
+            },
+            0,
+        ))
+    }
+
     /// The nominal subscript `target` as an assignment target, as upstream's
     /// `emitGetterSetterAccess` forms it. `None` for a receiver that is not a
     /// declared struct and for a type-keyed projection (upstream's

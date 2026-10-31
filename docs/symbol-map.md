@@ -429,7 +429,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameter type through that type's `__slice_literal__` constructor, each
   viable type at one cost, and
   the selected binding is recorded as a
-  `mojito_checked::checked::CheckedSliceLiteral` in `SliceDescriptors`),
+  `mojito_checked::checked::CheckedSliceLiteral` in `SliceDescriptors`; at
+  a compile-time position `slice_literal_spelling` spells that binding as
+  upstream's `T(lower, upper, stride, __slice_literal__=None)` call, which
+  `selected_application` applies as the receiver's `__getitem__`),
   pointer offset/write checks (the single-place
   rule and its multi-element interior-domain lift), the pointer-write
   capability (`pointer_write_capability`, the per-binding resolution of a

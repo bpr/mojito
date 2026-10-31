@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1749**.
+Next free ID: **R1751**.
 
 ## Ordered Work
 
@@ -4404,6 +4404,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1750 An unknown name in an overloaded call's argument reports no
+  matching overload**
+
+  `h(Foo(1))` over two `h` overloads, with `Foo` undeclared, reports
+  "invalid call to 'h': no overload matches the supplied arguments", where
+  the pin reports "use of unknown declaration 'Foo'".
+  - Cause: overload resolution judges each candidate's arguments and
+    folds an argument's own error into the candidate's rejection, so an
+    error no candidate can avoid reaches the user as a mismatch.
+  - Probe: `c.append(Foo(1))` over a `List` reports the same mismatch.
+  - Probe: `c.__getitem__(ContiguousSlice(None, 2, None))` without
+    importing `ContiguousSlice` reports it, in a `comptime` binding and
+    at run time alike.
+  - Found while landing R1742 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -4546,35 +4563,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: declare the binding `Int` and record its folded value as an
     `Int` constant (`CtValue::Int`), so a compile-time read folds as
     `Int`'s methods do while a value parameter still reads the number.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1742 A slice subscript is no compile-time application**
-
-  `g[c[:2]]()`, over `comptime c = List([Float64(1.0), 2.0, 3.0])` and
-  `def g[c: Span[Float64, _]]()`, fails with "not an associated comptime
-  expression", where the pin prints `2`.
-  - Probe: `comptime s = c[:2]; g[s]()` fails with "not a compile-time
-    Int constant: s": the binding is an ordinary run-time one.
-  - Probe: upstream's `_exp_taylor` passes `coefficients[:] if dtype ==
-    .float64 else coefficients[:8]` to `polynomial_evaluate`.
-  - Cause: `Checker::selected_application`
-    (`checker/comptime_validation.rs`) matches only calls, so
-    `ExprKind::Slice` finds no application, and `computes_value`
-    (`checker/comptime_requests.rs`) omits it.
-  - Lever: apply `object.__getitem__(<slice literal>)` with the receiver
-    through `applied_receiver`, choosing the slice type as
-    `slice_literal_construction` does (`checker/indexing.rs`).
-  - Probe: spelled out, `c.__getitem__(ContiguousSlice(Optional[Int](None),
-    Optional[Int](2), None))` as `g`'s argument fails with "expected
-    Span[Float64], found Span[T]", and bound to a `comptime`, `len` of it
-    fails MIR verification ("names parameter `T` of `List` that no
-    enclosing declaration binds"): the receiver's arguments are not
-    substituted into the applied method's result.
-  - Probe: `c.__getitem__(ContiguousSlice(None, 2, None))` in a
-    `comptime` finds no overload: a compile-time call's arguments do not
-    convert through `@implicit` constructors to `Optional[Int]`.
-  - Found while landing R1713 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -7253,6 +7241,30 @@ retained on purpose and re-probed rather than fixed; they are listed in
     error: `SIMD.__floordiv__`'s mask makes the `Int` form `0`, and this
     entry makes the literal form follow `int_literal_bin`.
   - Found while landing R1566 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1749 A compile-time `Span` into compile-time memory materializes
+  at run time, where the pin rejects it**
+
+  `comptime s = c[1:]` over `comptime c = List([Float64(1.0), 2.0, 3.0])`,
+  then `print(len(s))`, prints `2`, where the pin reports "use of a
+  never-initialized interior reference 'ComptimeOrigin["element"]'".
+  - Cause: `reject_display_crossing` (`checker/comptime_validation.rs`)
+    rejects a crossing only for a collection or a non-`ImplicitlyCopyable`
+    type, never for a value whose type's origin is compile-time memory
+    (upstream's `ComptimeOrigin`).
+  - Probe: `for x in s: print(x)` over the same `s` prints `2.0`, `3.0`,
+    where the pin rejects it alike.
+  - Probe: a module `comptime S = C[1:]` read as `print(len(S), S[0])`
+    prints `2 2.0`, where the pin rejects it alike.
+  - Probe: `comptime s = Span(c)` then `print(len(s))` prints `3`, where
+    the pin reports "cannot materialize compile-time value of type
+    'Span[Float64, ComptimeOrigin]' to a runtime value".
+  - Passing the same value as a parameter (`g[s]()` over `def g[c:
+    Span[Float64, _]]()`) and reading `c` in `g` runs at the pin, so the
+    rule is the crossing's, not the type's.
+  - Found while landing R1742 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
