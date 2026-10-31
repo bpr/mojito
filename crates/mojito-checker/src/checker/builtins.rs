@@ -870,7 +870,7 @@ impl Checker {
 
     /// Type the conversions `std.simd` does not declare yet: `Bool(x)`
     /// (R1609), and `Int(x)`, `UInt(x)`, and `Float64(x)` over an
-    /// `IntLiteral` or a `FloatLiteral` (R1507), the only arguments
+    /// `IntLiteral` or a `FloatLiteral` (R1781), the only arguments
     /// [`Self::binds_undeclared_overload`] leaves to this rule. `Bool(x)`
     /// takes exactly one argument of a numeric or `Bool` type, recorded as
     /// the `ScalarCast` upstream's inlined `pop.cast` is, or a value whose

@@ -181,6 +181,8 @@ pub fn reflects_no_conformance(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
         TyKind::KgenString
+            | TyKind::PopIntLiteral
+            | TyKind::PopFloatLiteral
             | TyKind::KgenDeferred
             | TyKind::KgenTarget
             | TyKind::Index

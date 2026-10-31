@@ -347,6 +347,12 @@ pub fn type_name(value: &Value) -> String {
         Value::Attribute(mojito_types::ct::CtValue::KgenString(_)) => {
             mojito_types::types::KGEN_STRING_TYPE_SPELLING.to_string()
         }
+        Value::Attribute(mojito_types::ct::CtValue::PopIntLiteral(_)) => {
+            mojito_types::types::POP_INT_LITERAL_TYPE_SPELLING.to_string()
+        }
+        Value::Attribute(mojito_types::ct::CtValue::PopFloatLiteral(_)) => {
+            mojito_types::types::POP_FLOAT_LITERAL_TYPE_SPELLING.to_string()
+        }
         Value::Attribute(_) => mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING.to_string(),
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),

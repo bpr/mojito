@@ -21,7 +21,7 @@
 //! is `pop.cmp`, which gives a `bool` mask under the ordered predicates
 //! (a NaN lane is unequal to nothing).
 
-use super::ParamError;
+use super::{ParamError, ParamOp};
 use crate::ct::{
     CtLane, CtValue, bool_lane_binop, float_lane_binop, int_lane_binop, lane_compare, wrap_lane,
 };
@@ -331,6 +331,39 @@ pub fn fold_dtype_to_ui8(dtype: &CtValue) -> Result<CtValue, ParamError> {
         _ => Err(unsupported(
             "'pop.dtype.to_ui8' expects a compile-time 'DType'",
         )),
+    }
+}
+
+/// A `#pop` attribute over a concrete `!pop.int_literal` or
+/// `!pop.float_literal`.
+///
+/// `int_literal_convert` wraps the integer to an `Int` as the pin does,
+/// `int_to_float_literal` and `float_to_int_literal` (which truncates toward
+/// zero) change the literal's kind, and the `float_literal_isa` predicates
+/// test a finite literal, which is never not a number or infinite.
+pub fn fold_literal_attribute(op: ParamOp, literal: &CtValue) -> Result<CtValue, ParamError> {
+    match (op, literal) {
+        (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value)) => value
+            .wrapping_signed(64)
+            .map(CtValue::Int)
+            .ok_or_else(|| unsupported("'#pop.int_literal_convert' cannot wrap the literal")),
+        (ParamOp::IntToFloatLiteral, CtValue::PopIntLiteral(value)) => {
+            Ok(CtValue::PopFloatLiteral(FloatLiteral::from_int(value)))
+        }
+        (ParamOp::FloatToIntLiteral, CtValue::PopFloatLiteral(value)) => {
+            Ok(CtValue::PopIntLiteral(value.trunc_to_int()))
+        }
+        (ParamOp::FloatLiteralIsNan, CtValue::PopFloatLiteral(_)) => Ok(CtValue::Bool(false)),
+        (ParamOp::FloatLiteralIsNegZero, CtValue::PopFloatLiteral(value)) => {
+            Ok(CtValue::Bool(value.is_negative_zero()))
+        }
+        (ParamOp::FloatLiteralIsNormal, CtValue::PopFloatLiteral(value)) => {
+            Ok(CtValue::Bool(!value.is_negative_zero()))
+        }
+        _ => Err(unsupported(&format!(
+            "'{}' expects a compile-time literal attribute, found '{literal}'",
+            op.name()
+        ))),
     }
 }
 
@@ -743,10 +776,11 @@ fn target_operands<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        fold_comparison, fold_data_to_str, fold_infix, fold_string_address, fold_string_size,
-        fold_target_get_field, fold_target_has_feature,
+        fold_comparison, fold_data_to_str, fold_infix, fold_literal_attribute, fold_string_address,
+        fold_string_size, fold_target_get_field, fold_target_has_feature,
     };
     use crate::ct::{CtLane, CtValue, KgenTarget};
+    use crate::param_expr::ParamOp;
     use mojito_ast::ast::{Dtype, InfixOp};
     use mojito_common::literal::{FloatLiteral, IntLiteral};
 
@@ -969,5 +1003,44 @@ mod tests {
         );
         assert_eq!(KgenTarget::parse("triple = \"\""), None);
         assert_eq!(KgenTarget::parse(&format!("{body}, arch = \"x\"")), None);
+    }
+
+    #[test]
+    fn literal_attributes_wrap_truncate_and_test_the_literal() {
+        let int = |text: &str| CtValue::PopIntLiteral(IntLiteral::parse_radix(text, 10).unwrap());
+        let float = |text: &str, negative: bool| {
+            let value = FloatLiteral::parse_decimal(text).unwrap();
+            CtValue::PopFloatLiteral(if negative { value.neg() } else { value })
+        };
+        let fold = |op, value: &CtValue| fold_literal_attribute(op, value).ok();
+        assert_eq!(
+            fold(
+                ParamOp::IntLiteralConvert,
+                &int("1000000000000000000000000000000")
+            ),
+            Some(CtValue::Int(5_076_944_270_305_263_616))
+        );
+        assert_eq!(
+            fold(ParamOp::FloatToIntLiteral, &float("3.7", true)),
+            Some(int("-3"))
+        );
+        assert_eq!(
+            fold(ParamOp::IntToFloatLiteral, &int("2")),
+            Some(float("2", false))
+        );
+        let negative_zero = float("0", true);
+        assert_eq!(
+            fold(ParamOp::FloatLiteralIsNegZero, &negative_zero),
+            Some(CtValue::Bool(true))
+        );
+        assert_eq!(
+            fold(ParamOp::FloatLiteralIsNormal, &negative_zero),
+            Some(CtValue::Bool(false))
+        );
+        assert_eq!(
+            fold(ParamOp::FloatLiteralIsNan, &float("2.5", false)),
+            Some(CtValue::Bool(false))
+        );
+        assert!(fold(ParamOp::IntLiteralConvert, &float("2.5", false)).is_none());
     }
 }

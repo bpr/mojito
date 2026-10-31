@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The prelude exports upstream's `IntLiteral[value: !pop.int_literal]` and
+  `FloatLiteral[value: !pop.float_literal]` structs (`std/builtin/int_literal.mojo`,
+  `float_literal.mojo`), in part (R1507, in part). A literal's `.value` is
+  its POP attribute (`comptime v = (4).value`), and `IntLiteral[v]()` prints,
+  converts with `Int(…)`, and answers `ceil`, `floor`, and `trunc`, wrapping
+  through `#pop.int_literal_convert` as the pin does. `FloatLiteral[v]()`
+  answers `__int_literal__`, `__int__`, `is_nan`, `is_neg_zero`, and
+  `_is_normal`. A literal's own type carrying its value is R1779, the bare
+  parameter R1780, and `SIMD`'s literal initializers R1781
+  (`mojito-mir 1.151`, `mojito-package 171`).
+
 - `SIMD` declares upstream's `rotate_left`, `rotate_right`, `shift_left`,
   `shift_right`, `reversed`, and the two `shuffle[mask: IndexList[…]]`
   overloads, over `_rotate_mask` and `_shift_mask` (R1675). A method now

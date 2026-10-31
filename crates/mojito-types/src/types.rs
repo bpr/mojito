@@ -698,6 +698,17 @@ pub enum TyKind {
     /// one is the VM's attribute value and a native backend's string-literal
     /// descriptor, which `pop.string.size` and `pop.string.address` read.
     KgenString,
+    /// Upstream's `!pop.int_literal`, the type of an `IntLiteral`'s `value`
+    /// parameter, displayed ``__mlir_type.`!pop.int_literal` ``. Its values
+    /// are [`CtValue::PopIntLiteral`](crate::ct::CtValue::PopIntLiteral).
+    /// It is compile-time only; no runtime register holds one.
+    PopIntLiteral,
+    /// Upstream's `!pop.float_literal`, the type of a `FloatLiteral`'s
+    /// `value` parameter, displayed ``__mlir_type.`!pop.float_literal` ``.
+    /// Its values are
+    /// [`CtValue::PopFloatLiteral`](crate::ct::CtValue::PopFloatLiteral).
+    /// It is compile-time only; no runtime register holds one.
+    PopFloatLiteral,
     /// Upstream's `!kgen.deferred`, the type of an untyped `__mlir_attr`
     /// and of a function result that returns one (`FastMathFlag._mlir_attr`),
     /// displayed ``__mlir_type.`!kgen.deferred` ``. Its values are
@@ -1378,6 +1389,14 @@ pub const TYPE_OF_ALL_TYPES: &str = "__TypeOfAllTypes";
 /// as the pin prints it.
 pub const KGEN_STRING_TYPE_SPELLING: &str = "__mlir_type.`!kgen.string`";
 
+/// The spelling of upstream's `!pop.int_literal` type
+/// ([`TyKind::PopIntLiteral`]), as the pin prints it.
+pub const POP_INT_LITERAL_TYPE_SPELLING: &str = "__mlir_type.`!pop.int_literal`";
+
+/// The spelling of upstream's `!pop.float_literal` type
+/// ([`TyKind::PopFloatLiteral`]), as the pin prints it.
+pub const POP_FLOAT_LITERAL_TYPE_SPELLING: &str = "__mlir_type.`!pop.float_literal`";
+
 /// The spelling of upstream's `!kgen.deferred` type
 /// ([`TyKind::KgenDeferred`]), as the pin prints it.
 pub const KGEN_DEFERRED_TYPE_SPELLING: &str = "__mlir_type.`!kgen.deferred`";
@@ -1415,14 +1434,17 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 /// ([`TyKind::Index`]) and `i1` ([`TyKind::I1`]), a scalar's `!kgen.scalar<dtype>` storage
 /// ([`TyKind::KgenSimd`], `!kgen.scalar<index>` for an `Int`), or the
 /// compile-time-only `!kgen.type` ([`TyKind::TypeType`]), `!kgen.string`
-/// ([`TyKind::KgenString`]), `!kgen.deferred` ([`TyKind::KgenDeferred`]),
-/// and `!kgen.target` ([`TyKind::KgenTarget`]).
+/// ([`TyKind::KgenString`]), `!pop.int_literal` ([`TyKind::PopIntLiteral`]),
+/// `!pop.float_literal` ([`TyKind::PopFloatLiteral`]), `!kgen.deferred`
+/// ([`TyKind::KgenDeferred`]), and `!kgen.target` ([`TyKind::KgenTarget`]).
 pub fn mlir_type_named(name: &str) -> Option<Ty> {
     match name {
         "index" => Some(Ty::index()),
         "i1" => Some(Ty::i1()),
         "!kgen.type" => Some(TyKind::TypeType.into()),
         "!kgen.string" => Some(TyKind::KgenString.into()),
+        "!pop.int_literal" => Some(TyKind::PopIntLiteral.into()),
+        "!pop.float_literal" => Some(TyKind::PopFloatLiteral.into()),
         "!kgen.deferred" => Some(TyKind::KgenDeferred.into()),
         "!kgen.target" => Some(TyKind::KgenTarget.into()),
         _ => name
@@ -2910,6 +2932,8 @@ impl fmt::Display for TyKind {
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
+            Self::PopIntLiteral => f.write_str(POP_INT_LITERAL_TYPE_SPELLING),
+            Self::PopFloatLiteral => f.write_str(POP_FLOAT_LITERAL_TYPE_SPELLING),
             Self::KgenDeferred => f.write_str(KGEN_DEFERRED_TYPE_SPELLING),
             Self::KgenTarget => f.write_str(KGEN_TARGET_TYPE_SPELLING),
             Self::Index => f.write_str(MLIR_INDEX_TYPE_SPELLING),
@@ -3577,6 +3601,8 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::Trait(a), TyKind::Trait(b)) => a == b,
         (TyKind::TypeType, TyKind::TypeType)
         | (TyKind::KgenString, TyKind::KgenString)
+        | (TyKind::PopIntLiteral, TyKind::PopIntLiteral)
+        | (TyKind::PopFloatLiteral, TyKind::PopFloatLiteral)
         | (TyKind::KgenDeferred, TyKind::KgenDeferred)
         | (TyKind::KgenTarget, TyKind::KgenTarget)
         | (TyKind::Index, TyKind::Index)
@@ -3907,7 +3933,10 @@ pub const fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
 /// type converter has no type for them, so translation rejects one that
 /// survives the post-elaboration pipeline.
 pub const fn has_no_llvm_type(ty: &TyKind) -> bool {
-    matches!(ty, TyKind::KgenDeferred | TyKind::KgenTarget)
+    matches!(
+        ty,
+        TyKind::KgenDeferred | TyKind::KgenTarget | TyKind::PopIntLiteral | TyKind::PopFloatLiteral
+    )
 }
 
 /// Recover the monomorphic or generic callable contract carried either directly
@@ -4907,6 +4936,8 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::PopIntLiteral
+        | TyKind::PopFloatLiteral
         | TyKind::KgenDeferred
         | TyKind::KgenTarget
         | TyKind::Index
@@ -5019,6 +5050,8 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::Dtype(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::PopIntLiteral(_)
+        | CtValue::PopFloatLiteral(_)
         | CtValue::MlirAttr(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
@@ -5508,6 +5541,8 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::PopIntLiteral
+        | TyKind::PopFloatLiteral
         | TyKind::KgenDeferred
         | TyKind::KgenTarget
         | TyKind::Index
@@ -5624,6 +5659,8 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Str(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::PopIntLiteral(_)
+        | CtValue::PopFloatLiteral(_)
         | CtValue::MlirAttr(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)

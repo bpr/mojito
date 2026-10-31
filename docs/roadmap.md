@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1779**.
+Next free ID: **R1786**.
 
 ## Ordered Work
 
@@ -3646,6 +3646,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1784 An `__init__` without `out self` that declares its result type
+  is rejected**
+
+  Problem: upstream's `@implicit def __init__(x: W[_]) -> W[x.n + 1]:
+  return {}` is "@implicit requires a single-argument '__init__(out self,
+  value: T)'", where the pin prints `3` for `show(W[2]())` over `def
+  show(w: W[3])`.
+  - The form constructs another instance of the struct, whose type the
+    signature computes from the argument.
+  - `FloatLiteral`'s implicit initializer from `IntLiteral[_]` uses it
+    (`#pop<int_to_float_literal>`, read as `ParamOp::IntToFloatLiteral`),
+    so the bundled `float_literal.mojo` omits it.
+  - Found while landing R1507 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1541 A compound value-parameter pattern solves no binder**
 
   Problem: `g[w: Int](x: B[w * 2])` called as `g(B[n * 2]())` in `def
@@ -6676,56 +6692,141 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1507 A literal's type does not carry its value**
+- [ ] **R1779 A numeric literal's type does not carry its value**
 
-  Problem: `TyKind::IntLiteral`, `FloatLiteral`, and `StringLiteral` hold no
-  value, and a `comptime N = 4` binding is typed `Int`, where upstream's
-  literal types are value-parameterized (`IntLiteral[4]`).
+  Problem: a literal `4` is typed by the value-less `TyKind::IntLiteral`,
+  and `2.5` by `TyKind::FloatLiteral`, where upstream types them as the
+  applications `IntLiteral[4]` and `FloatLiteral[2.5]` of the declared
+  structs (`stdlib/std/builtin/int_literal.mojo`, `float_literal.mojo`).
   - Probe: `var y: type_of(N) = 4` over `comptime N = 4` prints `4` at the
     pin, `= {}` prints `4`, and `= 7` is "cannot implicitly convert
     'IntLiteral[7]' value to 'IntLiteral[4]'". Mojito rejects every
     `type_of` of a literal value as unsupported (`type_of(3)`, a module
     `FloatLiteral` constant in a field's type).
   - Probe: `comptime M: Int = 4` then `var z: type_of(M) = 9` prints `9` at
-    the pin. Mojito cannot tell the annotated binding from `comptime N = 4`
-    and rejects it too.
-  - `SIMD`'s `IntLiteral` and `FloatLiteral` initializers
-    (`simd.mojo:852`, `:972`) stay the checker's coercion until then: their
-    bodies read `value.value` into `#pop.int_literal_convert` and
-    `#pop<float_literal_convert>`.
-  - Porting either removes its literal from
-    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`)
-    and from `Checker::staged_simd_construction` (`checker/constraints.rs`),
-    whose `literal_splat` builds the `pop.simd.splat` of the `pop.cast`
-    those bodies fold to, as `Checker::literal_vector_construction`
-    (`Scalar[dtype](1.0)`) and `Checker::symbolic_literal_splat` (`2.0` at
-    a `Scalar[dtype]` parameter) build it at a symbolic dtype,
-    and with both the `IntLiteral`/`FloatLiteral` arms of
-    `Checker::infer_conversion` (`checker/builtins.rs`) and the `"Int"`,
-    `"UInt"`, and `"Float64"` arms of `infer_unbound_call`, which serve
-    only a literal argument now.
-  - Probe: `min(3, 2.5)` is rejected at overload resolution ("no overload
-    matches"). The pin binds `std.math`'s `SIMD` overload at `Int` and fails
-    the instance on the `FloatLiteral` initializer's assert ("the SIMD type
-    must be floating point").
-  - Probe: `def f(x: IntLiteral)` binds a run-time `IntLiteral` register
-    rather than inferring `x.value` per call, so `f(n)` over `var n = 3`
-    reports "expected Int, found Int" where the pin says "cannot be
-    converted from 'Int' to 'IntLiteral[x.value]'"
+    the pin. `Checker::comptime_binding_ty` (`checker/scopes.rs`) types
+    `comptime N = 4` as `Int` too, so Mojito rejects both.
+  - Probe: `comptime S = N + 2.5; var s: type_of(S) = {}` prints `6.5`,
+    and `var y: type_of(4.0) = 4` prints `4.0`, at the pin.
+  - Probe: `IntLiteral[4]()` is rejected with "found Int"
+    (`assets/type_error/int_literal_parameter_attribute_type.mojo`), where
+    the pin names the argument's type `IntLiteral[4]`.
+  - Lever: payload `TyKind::IntLiteral`/`FloatLiteral` with the struct's
+    `value`, bridged from the application in `Ty::new` as R1652 bridged
+    `StringLiteral` (`bridged_string_literal`, `nominal_parts`,
+    `rewrite_ty`), and fold a literal-only infix into the result's value.
+  - `[1, 2, 3]` and `1 if c else 2` must still materialize to `Int`.
+  - Plan: `R1507-a-literal-s-type-does-not-plan.md`, slice 2.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1780 A bare `IntLiteral` or `FloatLiteral` parameter is a run-time
+  register, where upstream auto-parameterizes it**
+
+  Problem: `def f(x: IntLiteral)` binds a run-time `IntLiteral` register
+  rather than inferring `x.value` per call, so `f(n)` over `var n = 3`
+  reports "expected Int, found Int".
+  - The pin says "cannot be converted from 'Int' to
+    'IntLiteral[x.value]'"
     (`assets/type_error/int_literal_parameter_int_argument.mojo`). A
     `FloatLiteral` parameter does the same with "expected Float64, found
-    Float64" (`assets/type_error/float_literal_parameter_float_argument.mojo`).
+    Float64" (`float_literal_parameter_float_argument.mojo`).
+  - Probe: `def h(x: IntLiteral) -> IntLiteral[x.value]: return x` then
+    `print(h(6))` prints `6` at the pin and is rejected here.
   - Probe: a `def f(x: FloatLiteral) -> Float32: return Float32(x)` rounds
-    the literal to the run-time `Float64` register first and then to
-    `float32`, where the pin rounds the literal's exact value once, so a
-    literal halfway between two `float32` values after the first rounding
-    can print a different last digit (`SIMD.__pow__`'s `Self(exp)`, R1567).
-  - Probe: `var a: Float32 = 3.5e38`, and `return 3.5e38` from a
-    `Scalar[dtype]` function at `float32`, print `nan` at the pin; Mojito
-    prints `inf`. The declared `FloatLiteral` initializer is that
-    conversion.
-  - Found while landing R1369 (2026-10-27).
+    the literal to a `Float64` register first where it is stored as one
+    (Pliron), where the pin rounds the exact value once
+    (`SIMD.__pow__`'s `Self(exp)`, R1567).
+  - Cause: `auto_parameterize.rs` skips the bare names, and the checker's
+    `bare_literal_parameter` flag with `numeric_literal_annotation` and
+    `numeric_literal_type` (`checker/declarations.rs`) types them.
+  - Lever: drop the skip and the numeric half of those rules, so the
+    bundled `SIMDLength.__init__(value: IntLiteral)` and `SIMD.__pow__`'s
+    `exp: FloatLiteral` instantiate per literal. Measure the `std` build
+    with a fresh `MOJITO_CACHE_DIR`.
+  - Plan: `R1507-a-literal-s-type-does-not-plan.md`, slice 3.
+  - Depends on R1779.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1781 `SIMD`'s `IntLiteral` and `FloatLiteral` initializers are
+  checker rules**
+
+  Problem: `min(3, 2.5)` is rejected at overload resolution ("no overload
+  matches"), where the pin binds `std.math`'s `SIMD` overload at `Int` and
+  fails the instance on the `FloatLiteral` initializer's assert ("the SIMD
+  type must be floating point").
+  - Probe: `Int(FloatLiteral[(-3.7).value]())` prints `-3` through
+    `Intable`, where the pin selects the `FloatLiteral` initializer and
+    fails the same assert.
+  - Port upstream's `simd.mojo:850-866` and `:970-986`, over a
+    `#pop.int_literal_convert` and `#pop<float_literal_convert>` to
+    `Self._mlir_type` (`mlir_bracket_attribute` reads only the `index`
+    form, `ParamOp::IntLiteralConvert`).
+  - Then port `FloatLiteral.__float__`, `write_to`, and `write_repr_to`,
+    whose `Float64(self)` would recurse through `Floatable` without it.
+  - Delete the rules the bodies replace: the literal arm of
+    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`),
+    `staged_simd_construction`'s literal arm, `literal_splat`,
+    `symbolic_literal_splat`, and `literal_vector_construction`
+    (`checker/constraints.rs`), the `IntLiteral`/`FloatLiteral` arms of
+    `Checker::infer_conversion` (`checker/builtins.rs`), and the `"Int"`,
+    `"UInt"`, and `"Float64"` arms of `infer_unbound_call`.
+  - Done when `rg 'literal_splat|literal_vector_construction|binds_undeclared_overload' crates`
+    is empty.
+  - Plan: `R1507-a-literal-s-type-does-not-plan.md`, slice 4.
+  - Depends on R1780.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1782 A float literal narrowed past its format's range is `inf`,
+  where the pin's `float_literal_convert` gives `nan`**
+
+  Problem: `var a: Float32 = 3.5e38` prints `inf`, where the pin prints
+  `nan`.
+  - Probe: at the pin, `Float32(-3.5e38)` and
+    `Scalar[DType.float16](70000.0)` are `nan`, while `var b: Float64 =
+    -1e400` is `-inf`, `bfloat16` of `1e39` is `inf`, and `Float32` of
+    `1e-50` is `0.0`. Mojito prints `inf`, `-inf`, `inf`, and `0.0` for the
+    first four.
+  - `return 3.5e38` from a `Scalar[dtype]` function at `float32` does the
+    same.
+  - Lever: the rule belongs in `CtLane::of_float_literal` (`ct.rs`), which
+    MIR's `MaterializeLiteral` and the literal coercions share. Probe more
+    values at the pin before stating it.
+  - Found while landing R1507 (2026-10-31).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1783 A compile-time float literal cannot be `nan` or infinite**
+
+  Problem: upstream's `FloatLiteral.nan`, `infinity`, `negative_infinity`,
+  and `negative_zero` are not ported, because their attributes
+  (`#pop.float_literal<nan>`, `<inf>`, `<neg_inf>`, `<neg_zero>`) have no
+  `CtValue::PopFloatLiteral`.
+  - Cause: `mojito_common::literal::FloatLiteral` is an exact rational
+    with a negative-zero flag, with no special values.
+  - Probe: `print(FloatLiteral.nan.is_nan(),
+    FloatLiteral.infinity._is_normal())` prints `True False` at the pin.
+  - The `float_literal_isa` folds (`fold::fold_literal_attribute`) answer
+    `nan` as always false until then.
+  - Found while landing R1507 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1785 The value-less numeric literal type and its run-time register
+  remain**
+
+  Problem: once a literal's type carries its value (R1779) and a bare
+  parameter instantiates per call (R1780), `TyKind::IntLiteral`/
+  `FloatLiteral` without a value still types a join of differently valued
+  literals and a run-time register, where upstream's struct is empty and
+  register-passable.
+  - The register is the VM's exact `Value::IntLiteral`/`FloatLiteral`,
+    Pliron's `i64`/`f64` (`lower/types.rs`), and an 8-byte layout
+    (`mojito-native-core/src/layout.rs`).
+  - This is the numeric half of R1657, R1659, and R1660.
+  - Done when an `IntLiteral[v]` application is the declared struct, with
+    no bridge onto a compiler kind.
+  - Depends on R1780.
   - Model: Fable, Not Planned.
 
 - [ ] **R137 Checking a deeply nested generic struct type takes time
@@ -9494,7 +9595,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `(2.5).__pow__(2.0)` likewise, since `FloatLiteral` declares no
     `__pow__`.
   - Found while landing R1567 (2026-10-31).
-  - Depends on R1507 (the declared struct is `IntLiteral[value]`).
+  - Depends on R1779 (a literal's type is the declared `IntLiteral[value]`).
   - Model: Fable, Not Planned.
 
 - [ ] **R1458 `divmod` is a compiler builtin, and `pow` is missing, where
@@ -10682,7 +10783,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     early returns, `mlir_conversion`'s `__mlir_bool__`/`__mlir_i1__` arms,
     the VM `invoke.rs` and Pliron `methods.rs` conversion arms on a `Bool`
     (`runtime::builtin_convert` and `lower_convert` keep their `Int`,
-    `UInt`, and `Float64` targets for a literal receiver's dunders, R1507),
+    `UInt`, and `Float64` targets for a literal receiver's dunders, R1781),
     `modelled_conformance`'s `Bool` arms for the declared traits, and the
     `Bool` hash leaf (`builtin_hashable_ty`, both `hash_leaf_ty`s, the VM
     `__hash__` arm, `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
@@ -10716,7 +10817,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     checker rejects outside an initializer today.
   - Delete the two `"Bool"` arms of `infer_unbound_call` and the `Bool`
     arms of `Checker::infer_conversion` (`builtins.rs`), which `Int`,
-    `UInt`, and `Float64` leave only for a literal (R1507), and narrow the
+    `UInt`, and `Float64` leave only for a literal (R1781), and narrow the
     elaborator's `Bool` rewrite in `Specializer::rewrite_blocks`.
   - The `@implicit` stand-ins in `Checker::record_implicit_conversion`
     (`i1` and `Scalar[DType.bool]` to `Bool`) stay until R1612.
@@ -10922,6 +11023,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     ("expected Optional[String], found StringLiteral"), where the pin
     accepts both. `CompilationTarget.unsupported_target_error[operation="EBOGUS"]()`
     is rejected for the same reason.
+  - Probe: `IntLiteral` and `FloatLiteral` declare `@__nonmaterializable(Int)`
+    and `(Float64)` upstream, so `var f = FloatLiteral[(2.5).value]()`
+    then `f.__int_literal__()` is "'Float64' value has no attribute
+    '__int_literal__'" at the pin. Mojito keeps the struct and prints `2`.
   - Depends on R1652 (`String`'s constructor from the literal takes the
     struct).
   - Model: Opus, Not Planned.
@@ -11158,7 +11263,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     with "type 'Scalar' expects 1 type argument(s), got 0", where the pin
     prints `8` for `f(Scalar(4))`.
   - Depends on R1555, R1662, R1671, R1683, R1673, R1675, R1556, R1591, R1592,
-    R1593, R1595, R1399, and R1507.
+    R1593, R1595, R1399, and R1781.
   - Model: Fable, Planned.
 
 - [ ] **R1558 MIR and the backends hold a `SIMD` value as a vector type,

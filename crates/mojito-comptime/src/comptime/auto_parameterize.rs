@@ -206,7 +206,11 @@ impl<'a> Declared<'a> {
         let Type::Named(name, args) = ty else {
             return None;
         };
-        if in_scope.contains(name) {
+        // A bare `IntLiteral` or `FloatLiteral` is still the compiler's
+        // literal register, not upstream's per-call application (R1780).
+        if in_scope.contains(name)
+            || (args.is_empty() && matches!(name.as_str(), "IntLiteral" | "FloatLiteral"))
+        {
             return None;
         }
         let alias = args

@@ -1257,7 +1257,7 @@ impl Checker {
     /// applies its upstream initializer. `None` for any other construction.
     ///
     /// - One exact literal is upstream's `IntLiteral`/`FloatLiteral`
-    ///   initializer, not yet declared (R1507): the `pop.simd.splat` of its
+    ///   initializer, not yet declared (R1781): the `pop.simd.splat` of its
     ///   `pop.cast` that body folds to.
     /// - `width > 1` elements are the `*elems` initializer, whose collector
     ///   is no compile-time application yet: one lane per element.
@@ -1977,12 +1977,12 @@ impl Checker {
             {
                 built
             }
-            // A compile-time `StringLiteral`'s `value` parameter
-            // (`comptime none = "None".value`), or a `StringLiteral` value
+            // A compile-time literal's `value` parameter (`comptime none =
+            // "None".value`, `(4).value`), or a `StringLiteral` value
             // parameter's (`s.value`), which each instance closes.
             ExprKind::Member { object, field }
                 if field == mojito_types::ct::LITERAL_VALUE_MEMBER
-                    && let Some(literal) = self.string_literal_operand(object, recording) =>
+                    && let Some(literal) = self.literal_operand(object, recording) =>
             {
                 context
                     .field(&literal, field, MetaTy::Value(TyKind::KgenString.into()))
@@ -2553,9 +2553,10 @@ impl Checker {
         mojito_types::types::storage_simd(&self.mlir_result_type(attribute).ok()?)
     }
 
-    /// The `StringLiteral` whose `value` parameter `object.value` reads: a
-    /// closed literal, or a `StringLiteral` value parameter.
-    fn string_literal_operand(&self, object: &Expr, recording: Recording) -> Option<ParamExpr> {
+    /// The literal whose `value` parameter `object.value` reads: a closed
+    /// string, integer, or float literal, or a `StringLiteral` value
+    /// parameter.
+    fn literal_operand(&self, object: &Expr, recording: Recording) -> Option<ParamExpr> {
         let literal = self.build_ct(object, recording).ok()?;
         let closed = literal
             .as_constant()
@@ -3171,14 +3172,32 @@ impl Checker {
                     .op(ParamOp::StringConcat, &[left, right])
                     .map_err(param_error)
             }
+            // An `IntLiteral`'s value as an `index`, wrapped
+            // (`IntLiteral.__mlir_index__`).
+            (
+                "#kgen.cast_to_builtin<#pop.int_literal_convert<{}>:!kgen.scalar<index>>:index",
+                [literal],
+            ) => {
+                let literal = self.bracket_operand(literal, recording)?;
+                context
+                    .op(ParamOp::IntLiteralConvert, &[literal])
+                    .and_then(|storage| context.cast_to_builtin(&storage))
+                    .map_err(param_error)
+            }
+            (shape, [literal]) if let Some(op) = literal_attribute_op(shape) => {
+                let literal = self.bracket_operand(literal, recording)?;
+                context.op(op, &[literal]).map_err(param_error)
+            }
             _ => Err(TypeError::Unsupported(format!(
                 "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
                  attribute, '#kgen.param_list.size', '#kgen.param_list.get', \
                  '#kgen.param.expr<data_to_str>', '#kgen.param.expr<target_has_feature>', \
                  '#kgen.param.expr<target_get_field>' of a known field, \
                  '#kgen.param.expr<rebind>', '#kgen.param.expr<get_sizeof>', \
-                 '#kgen.param.expr<get_alignof>', '#kgen.param.identical', and \
-                 '#pop.string_concat' are read"
+                 '#kgen.param.expr<get_alignof>', '#kgen.param.identical', \
+                 '#pop.string_concat', the 'IntLiteral' index conversion, \
+                 '#pop<int_to_float_literal>', '#pop<float_to_int_literal>', and \
+                 '#pop<float_literal_isa>' are read"
             ))),
         }
     }
@@ -4177,14 +4196,17 @@ impl Checker {
         }
     }
 
-    /// Whether `expr` reads a compile-time `StringLiteral`'s `value`
-    /// parameter (`"None".value`, or `s.value` over a value parameter `s`),
-    /// a KGEN string with no run-time form.
+    /// Whether `expr` reads a compile-time literal's `value` parameter
+    /// (`"None".value`, `(4).value`, or `s.value` over a value parameter
+    /// `s`), a KGEN string or POP literal attribute with no run-time form.
     pub(super) fn reads_literal_value(&self, expr: &Expr) -> bool {
         matches!(&expr.kind, ExprKind::Member { field, .. }
             if field == mojito_types::ct::LITERAL_VALUE_MEMBER)
             && self.compile_dependent_ct_expr(expr).is_ok_and(|value| {
-                matches!(value.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::KgenString))
+                matches!(value.meta(), MetaTy::Value(ty) if matches!(
+                    ty.kind(),
+                    TyKind::KgenString | TyKind::PopIntLiteral | TyKind::PopFloatLiteral
+                ))
             })
     }
 
@@ -6376,6 +6398,20 @@ impl mojito_ast::visit::Visitor for NamesSpelled {
             self.0.insert(name.clone());
         }
     }
+}
+
+/// The literal attribute a whitespace-free `#pop<…>` shape over one
+/// operand applies: a kind change between `!pop.int_literal` and
+/// `!pop.float_literal`, or a `float_literal_isa` predicate.
+fn literal_attribute_op(shape: &str) -> Option<ParamOp> {
+    Some(match shape {
+        "#pop<int_to_float_literal<{}>>:!pop.float_literal" => ParamOp::IntToFloatLiteral,
+        "#pop<float_to_int_literal<{}>>:!pop.int_literal" => ParamOp::FloatToIntLiteral,
+        "#pop<float_literal_isa<nan{}>>:i1" => ParamOp::FloatLiteralIsNan,
+        "#pop<float_literal_isa<neg_zero{}>>:i1" => ParamOp::FloatLiteralIsNegZero,
+        "#pop<float_literal_isa<normal{}>>:i1" => ParamOp::FloatLiteralIsNormal,
+        _ => return None,
+    })
 }
 
 /// The field a whitespace-free `#kgen.param.expr<target_get_field, {},

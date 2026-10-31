@@ -34,7 +34,7 @@
 # format in the compiler rather than calling `write_to` and
 # `write_repr_to` as the VM's do (R1664). So are the
 # other initializers:
-# `IntLiteral` and `FloatLiteral` (R1507); `py=` is not ported. Until
+# `IntLiteral` and `FloatLiteral` (R1781); `py=` is not ported. Until
 # then a construction takes a declared overload only where its arguments
 # select one at the pin. The element list omits upstream's
 # `assert Self.length == len(elems)`, which the pin's default `-D ASSERT`

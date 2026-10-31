@@ -1005,6 +1005,10 @@ declared under the symbol the check spells from their typed signatures.
 It moves to `mojito-package 170` when the checked `SimdReceiverOp` adjustment
 is removed: `SIMD`'s `reduce_and` and `reduce_or` are library bodies.
 
+Schema 1.151 adds the types `PopIntLiteral` and `PopFloatLiteral` and their
+values `ct_pop_int_literal` and `ct_pop_float_literal`. The package format
+moves to `mojito-package 171`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1597,6 +1601,12 @@ backend lays out as a string literal's `{ data, len }` descriptor.
 `KgenDeferred` (schema 1.132) is upstream's `!kgen.deferred`, the type of
 an untyped MLIR attribute and of a function result returning one, whose
 values are `ct_mlir_attr`. It is compile-time only, as `any_trait` is.
+
+`PopIntLiteral` and `PopFloatLiteral` (schema 1.151) are upstream's
+`!pop.int_literal` and `!pop.float_literal`, the types of an `IntLiteral`'s
+and a `FloatLiteral`'s `value` parameter, whose values are
+`ct_pop_int_literal(4)` and `ct_pop_float_literal(2.5)`, spelled as the
+exact literal. Like `KgenDeferred`, they have no LLVM type.
 
 `KgenTarget` (schema 1.136) is upstream's `!kgen.target`, the type of a
 compilation target's attribute (`CompilationTarget._mlir_value`), whose

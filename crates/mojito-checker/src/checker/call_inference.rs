@@ -370,7 +370,7 @@ impl Checker {
             "input" => self.infer_input(span, args),
             "len" => self.infer_len(args),
             "range" => self.infer_range(args),
-            // An `IntLiteral` or `FloatLiteral` argument (R1507); every
+            // An `IntLiteral` or `FloatLiteral` argument (R1781); every
             // other argument binds `SIMD`'s declared overloads above.
             "Int" => self.infer_conversion(&span, Ty::int(), args),
             "UInt" => self.infer_conversion(&span, Ty::uint(), args),
@@ -700,7 +700,7 @@ impl Checker {
 
     /// Whether a `SIMD` construction's positional arguments select, at the
     /// pin, an overload `std.simd` does not declare yet, which the checker's
-    /// rule serves instead: one `IntLiteral` or `FloatLiteral` (R1507),
+    /// rule serves instead: one `IntLiteral` or `FloatLiteral` (R1781),
     /// which would otherwise reach a declared overload through an implicit
     /// conversion the pin never takes.
     fn binds_undeclared_overload(&self, args: &[Expr]) -> bool {

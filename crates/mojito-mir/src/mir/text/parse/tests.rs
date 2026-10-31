@@ -2633,6 +2633,47 @@ fn kgen_deferred_attribute_round_trips() {
     assert!(text.contains("KgenDeferred") && text.contains("ct_mlir_attr(\"#pop.fmf<fast>\")"));
 }
 
+/// Schema 1.151 spells upstream's `!pop.int_literal` and
+/// `!pop.float_literal` types `PopIntLiteral` and `PopFloatLiteral`, and
+/// their attributes `ct_pop_int_literal(…)` and `ct_pop_float_literal(…)`.
+#[test]
+fn pop_literal_attributes_round_trip() {
+    use mojito_common::literal::{FloatLiteral, IntLiteral};
+    let int = Ty::new(TyKind::PopIntLiteral);
+    let float = Ty::new(TyKind::PopFloatLiteral);
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![int.clone(), float.clone(), int.clone(), float.clone()],
+            vec![
+                MirInstr::ConstructType {
+                    dest: Reg(0),
+                    ty: int,
+                },
+                MirInstr::ConstructType {
+                    dest: Reg(1),
+                    ty: float,
+                },
+                MirInstr::Const {
+                    dest: Reg(2),
+                    k: Const::Value(mojito_types::ct::CtValue::PopIntLiteral(
+                        IntLiteral::parse_radix("100000000000000000000", 10).unwrap(),
+                    )),
+                },
+                MirInstr::Const {
+                    dest: Reg(3),
+                    k: Const::Value(mojito_types::ct::CtValue::PopFloatLiteral(
+                        FloatLiteral::parse_decimal("2.5").unwrap(),
+                    )),
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("PopIntLiteral") && text.contains("ct_pop_float_literal("));
+}
+
 /// Schema 1.136 spells upstream's `!kgen.target` type `KgenTarget`, and a
 /// target attribute `ct_kgen_target("#kgen.target<...>")`.
 #[test]

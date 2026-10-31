@@ -598,6 +598,15 @@ pub enum CtValue {
     /// is [`TyKind::KgenString`]. It displays as `"text"`, as the pin prints
     /// `Tag["Some"]`.
     KgenString(String),
+    /// An integer literal attribute — upstream's `#pop.int_literal`, the
+    /// `value` parameter of an `IntLiteral` ([`Self::literal_value`]),
+    /// whose type is [`TyKind::PopIntLiteral`]. It displays as the integer.
+    PopIntLiteral(IntLiteral),
+    /// A float literal attribute — upstream's `#pop.float_literal`, the
+    /// `value` parameter of a `FloatLiteral` ([`Self::literal_value`]),
+    /// whose type is [`TyKind::PopFloatLiteral`]. It displays as the exact
+    /// decimal.
+    PopFloatLiteral(FloatLiteral),
     /// An untyped MLIR attribute — upstream's `` __mlir_attr.`#pop.fmf<fast>` ``,
     /// held as its text after the backtick, whose type is
     /// [`TyKind::KgenDeferred`]. It displays as its text.
@@ -871,12 +880,15 @@ impl fmt::Display for CtMarker {
 }
 
 impl CtValue {
-    /// The `value` parameter of the `StringLiteral` this compile-time value
-    /// is, as upstream's `StringLiteral[value: __mlir_type.`!kgen.string`]`
-    /// reads it: the literal's KGEN string. `None` for any other value.
+    /// The `value` parameter of the literal this compile-time value is, as
+    /// upstream's `StringLiteral`, `IntLiteral`, and `FloatLiteral` read it:
+    /// the literal's `!kgen.string`, `!pop.int_literal`, or
+    /// `!pop.float_literal` attribute. `None` for any other value.
     pub fn literal_value(&self) -> Option<Self> {
         match self {
             Self::Str(text) => Some(Self::KgenString(text.clone())),
+            Self::IntLiteral(value) => Some(Self::PopIntLiteral(value.clone())),
+            Self::FloatLiteral(value) => Some(Self::PopFloatLiteral(value.clone())),
             _ => None,
         }
     }
@@ -1112,13 +1124,16 @@ impl CtValue {
 
     /// Whether this value is compile-time data no run-time value holds, so a
     /// bracket argument of it is an attribute like a type: a
-    /// [metatype-valued](Self::is_metatype_valued) value, a KGEN string, a
+    /// [metatype-valued](Self::is_metatype_valued) value, a KGEN string or
+    /// POP literal attribute, a
     /// raw list or pack of them or of types (`TypeList.of[Trait=AnyType,
     /// Int].values`), or a parameter expression of such a type.
     pub fn is_compile_time_only(&self) -> bool {
         self.is_metatype_valued()
             || match self {
                 Self::KgenString(_)
+                | Self::PopIntLiteral(_)
+                | Self::PopFloatLiteral(_)
                 | Self::MlirAttr(_)
                 | Self::KgenTarget(_)
                 | Self::Generator(_) => true,
@@ -1130,6 +1145,8 @@ impl CtValue {
                         matches!(
                             ty.kind(),
                             TyKind::KgenString
+                                | TyKind::PopIntLiteral
+                                | TyKind::PopFloatLiteral
                                 | TyKind::KgenDeferred
                                 | TyKind::KgenTarget
                                 | TyKind::Generator(_)
@@ -1235,6 +1252,8 @@ impl CtValue {
             | Self::Type(_)
             | Self::Trait(_)
             | Self::KgenString(_)
+            | Self::PopIntLiteral(_)
+            | Self::PopFloatLiteral(_)
             | Self::MlirAttr(_)
             | Self::KgenTarget(_)
             | Self::Generator(_)
@@ -1310,6 +1329,8 @@ impl CtValue {
             // list of that trait whose conversion the checker proved.
             (value @ Self::Type(_), TyKind::Trait(_)) => Some(value),
             (value @ Self::KgenString(_), TyKind::KgenString) => Some(value),
+            (value @ Self::PopIntLiteral(_), TyKind::PopIntLiteral)
+            | (value @ Self::PopFloatLiteral(_), TyKind::PopFloatLiteral) => Some(value),
             (value @ Self::MlirAttr(_), TyKind::KgenDeferred) => Some(value),
             (value @ Self::KgenTarget(_), TyKind::KgenTarget) => Some(value),
             (value @ Self::PopArray { .. }, TyKind::PopArray { .. })
@@ -1578,6 +1599,15 @@ impl CtValue {
                     source: None,
                     syntax_id: mojito_common::token::SyntaxId::fresh(),
                 }),
+                field: LITERAL_VALUE_MEMBER.to_string(),
+            },
+            // The literal's parameter read, `(4).value` or `(2.5).value`.
+            Self::PopIntLiteral(value) => ExprKind::Member {
+                object: Box::new(literal(ExprKind::Int(value.clone()), span)),
+                field: LITERAL_VALUE_MEMBER.to_string(),
+            },
+            Self::PopFloatLiteral(value) => ExprKind::Member {
+                object: Box::new(literal(ExprKind::Float(value.clone()), span)),
                 field: LITERAL_VALUE_MEMBER.to_string(),
             },
             // The attribute's own spelling, `` __mlir_attr.`text` ``.
@@ -1883,6 +1913,8 @@ impl fmt::Display for CtValue {
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::KgenString(text) => write!(f, "{text:?}"),
+            Self::PopIntLiteral(value) => write!(f, "{value}"),
+            Self::PopFloatLiteral(value) => write!(f, "{value}"),
             Self::MlirAttr(text) => f.write_str(text),
             Self::KgenTarget(target) => write!(f, "{target}"),
             Self::PopArray { elements, .. } => {

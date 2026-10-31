@@ -2174,6 +2174,8 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::Dtype => "DType".into(),
         TyKind::TypeType => "TypeType".into(),
         TyKind::KgenString => "KgenString".into(),
+        TyKind::PopIntLiteral => "PopIntLiteral".into(),
+        TyKind::PopFloatLiteral => "PopFloatLiteral".into(),
         TyKind::KgenDeferred => "KgenDeferred".into(),
         TyKind::KgenTarget => "KgenTarget".into(),
         TyKind::Index => "index".into(),
@@ -3011,6 +3013,8 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::Type(v) => positional("ct_type", &ty_value(v)),
         CtValue::Trait(traits) => positional("ct_trait", &list(traits.iter().map(|v| symbol(v)))),
         CtValue::KgenString(v) => positional("ct_kgen_string", &quote(v)),
+        CtValue::PopIntLiteral(v) => positional("ct_pop_int_literal", &v.to_string()),
+        CtValue::PopFloatLiteral(v) => positional("ct_pop_float_literal", &v.to_string()),
         CtValue::MlirAttr(v) => positional("ct_mlir_attr", &quote(v)),
         CtValue::KgenTarget(target) => positional("ct_kgen_target", &quote(&target.to_string())),
         CtValue::PopArray { element, elements } => record(

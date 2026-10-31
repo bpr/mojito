@@ -252,6 +252,12 @@ impl ParamContext {
             }
             ParamOp::DtypeToUi8 => self.build_dtype_code(operands),
             ParamOp::StoreToMem => self.build_store_to_mem(operands),
+            ParamOp::IntLiteralConvert
+            | ParamOp::IntToFloatLiteral
+            | ParamOp::FloatToIntLiteral
+            | ParamOp::FloatLiteralIsNan
+            | ParamOp::FloatLiteralIsNegZero
+            | ParamOp::FloatLiteralIsNormal => self.build_literal_attribute(op, operands),
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -1669,6 +1675,41 @@ impl ParamContext {
         ))
     }
 
+    /// A `#pop` attribute over one `!pop.int_literal` or `!pop.float_literal`
+    /// operand ([`ParamOp::IntLiteralConvert`] through
+    /// [`ParamOp::FloatLiteralIsNormal`]): its fold once the operand is
+    /// constant, and otherwise the node, whose type the attribute spells.
+    fn build_literal_attribute(
+        &self,
+        op: ParamOp,
+        operands: Vec<ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        let (operand, result) = match op {
+            ParamOp::IntLiteralConvert => (TyKind::PopIntLiteral, MetaTy::int()),
+            ParamOp::IntToFloatLiteral => (
+                TyKind::PopIntLiteral,
+                MetaTy::value(TyKind::PopFloatLiteral.into()),
+            ),
+            ParamOp::FloatToIntLiteral => (
+                TyKind::PopFloatLiteral,
+                MetaTy::value(TyKind::PopIntLiteral.into()),
+            ),
+            _ => (TyKind::PopFloatLiteral, MetaTy::bool()),
+        };
+        if *operands[0].meta() != MetaTy::value(operand.clone().into()) {
+            return Err(ParamError::TypeMismatch {
+                operation: op.name().to_string(),
+                expected: operand.to_string(),
+                found: operands[0].meta().to_string(),
+            });
+        }
+        if let Some(value) = operands[0].as_constant() {
+            self.count_fold();
+            return self.constant(fold_primitive(op, &[value])?);
+        }
+        Ok(self.make(result, ParamKind::Op { op, operands }))
+    }
+
     /// `#pop.string_concat` over two `!kgen.string`s: the string of both
     /// texts once both are constant, and otherwise the node.
     fn build_string_concat(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
@@ -3009,6 +3050,28 @@ pub enum ParamOp {
     /// Over a constant it is the frozen reference
     /// ([`CtValue::StoreToMem`]).
     StoreToMem,
+    /// `#pop.int_literal_convert` to `!kgen.scalar<index>`: a
+    /// `!pop.int_literal` as the `Int` storage it wraps to (upstream's
+    /// `IntLiteral.__mlir_index__`, under `#kgen.cast_to_builtin`).
+    IntLiteralConvert,
+    /// `#pop<int_to_float_literal>`: a `!pop.int_literal` as the
+    /// `!pop.float_literal` of the same value (upstream's implicit
+    /// `FloatLiteral` initializer from an `IntLiteral`).
+    IntToFloatLiteral,
+    /// `#pop<float_to_int_literal>`: a `!pop.float_literal` truncated toward
+    /// zero to a `!pop.int_literal` (upstream's
+    /// `FloatLiteral.__int_literal__`).
+    FloatToIntLiteral,
+    /// `#pop<float_literal_isa<nan>>`: whether a `!pop.float_literal` is
+    /// not a number, an `i1`.
+    FloatLiteralIsNan,
+    /// `#pop<float_literal_isa<neg_zero>>`: whether a `!pop.float_literal`
+    /// is negative zero, an `i1`.
+    FloatLiteralIsNegZero,
+    /// `#pop<float_literal_isa<normal>>`: whether a `!pop.float_literal` is
+    /// no special value (neither not a number, an infinity, nor negative
+    /// zero), an `i1`.
+    FloatLiteralIsNormal,
 }
 
 impl ParamOp {
@@ -3047,6 +3110,12 @@ impl ParamOp {
             Self::TargetHasFeature => "target_has_feature",
             Self::DtypeToUi8 => "dtype_to_ui8",
             Self::StoreToMem => "store_to_mem",
+            Self::IntLiteralConvert => "int_literal_convert",
+            Self::IntToFloatLiteral => "int_to_float_literal",
+            Self::FloatToIntLiteral => "float_to_int_literal",
+            Self::FloatLiteralIsNan => "float_literal_isa_nan",
+            Self::FloatLiteralIsNegZero => "float_literal_isa_neg_zero",
+            Self::FloatLiteralIsNormal => "float_literal_isa_normal",
         }
     }
 
@@ -3091,7 +3160,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 32] = [
+    const ALL: [Self; 38] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -3124,6 +3193,12 @@ impl ParamOp {
         Self::TargetHasFeature,
         Self::DtypeToUi8,
         Self::StoreToMem,
+        Self::IntLiteralConvert,
+        Self::IntToFloatLiteral,
+        Self::FloatToIntLiteral,
+        Self::FloatLiteralIsNan,
+        Self::FloatLiteralIsNegZero,
+        Self::FloatLiteralIsNormal,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
@@ -3134,7 +3209,13 @@ impl ParamOp {
             | Self::StringSize
             | Self::StringAddress
             | Self::DtypeToUi8
-            | Self::StoreToMem => arity == 1,
+            | Self::StoreToMem
+            | Self::IntLiteralConvert
+            | Self::IntToFloatLiteral
+            | Self::FloatToIntLiteral
+            | Self::FloatLiteralIsNan
+            | Self::FloatLiteralIsNegZero
+            | Self::FloatLiteralIsNormal => arity == 1,
             Self::Cond => arity == 3,
             Self::Add | Self::Mul | Self::BoolAnd | Self::BoolOr | Self::BoolXor => arity >= 2,
             _ => arity == 2,
@@ -3173,7 +3254,13 @@ impl ParamOp {
             | Self::TargetGetField
             | Self::TargetHasFeature
             | Self::DtypeToUi8
-            | Self::StoreToMem => return None,
+            | Self::StoreToMem
+            | Self::IntLiteralConvert
+            | Self::IntToFloatLiteral
+            | Self::FloatToIntLiteral
+            | Self::FloatLiteralIsNan
+            | Self::FloatLiteralIsNegZero
+            | Self::FloatLiteralIsNormal => return None,
         })
     }
 
@@ -3444,6 +3531,8 @@ impl MetaTy {
             CtValue::Type(_) => Self::Type,
             CtValue::Trait(traits) => Self::value(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Self::value(TyKind::KgenString.into()),
+            CtValue::PopIntLiteral(_) => Self::value(TyKind::PopIntLiteral.into()),
+            CtValue::PopFloatLiteral(_) => Self::value(TyKind::PopFloatLiteral.into()),
             CtValue::MlirAttr(_) => Self::value(TyKind::KgenDeferred.into()),
             CtValue::KgenTarget(_) => Self::value(TyKind::KgenTarget.into()),
             CtValue::PopArray { element, elements } => Self::value(
@@ -4428,6 +4517,15 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::TargetHasFeature, [target, name]) => fold::fold_target_has_feature(target, name),
         (ParamOp::DtypeToUi8, [dtype]) => fold::fold_dtype_to_ui8(dtype),
         (ParamOp::StoreToMem, [referent]) => Ok(CtValue::StoreToMem(Box::new((*referent).clone()))),
+        (
+            ParamOp::IntLiteralConvert
+            | ParamOp::IntToFloatLiteral
+            | ParamOp::FloatToIntLiteral
+            | ParamOp::FloatLiteralIsNan
+            | ParamOp::FloatLiteralIsNegZero
+            | ParamOp::FloatLiteralIsNormal,
+            [literal],
+        ) => fold::fold_literal_attribute(op, literal),
         (ParamOp::SimdSplat | ParamOp::Cast, [CtValue::Type(ty), value]) => {
             fold::fold_lane_op(op, ty, value)
         }
@@ -4541,7 +4639,13 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::TargetGetField
         | ParamOp::TargetHasFeature
         | ParamOp::DtypeToUi8
-        | ParamOp::StoreToMem => 14,
+        | ParamOp::StoreToMem
+        | ParamOp::IntLiteralConvert
+        | ParamOp::IntToFloatLiteral
+        | ParamOp::FloatToIntLiteral
+        | ParamOp::FloatLiteralIsNan
+        | ParamOp::FloatLiteralIsNegZero
+        | ParamOp::FloatLiteralIsNormal => 14,
     }
 }
 
@@ -4578,6 +4682,12 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::TargetHasFeature => "target_has_feature",
         ParamOp::DtypeToUi8 => "pop.dtype.to_ui8",
         ParamOp::StoreToMem => "store_to_mem",
+        ParamOp::IntLiteralConvert => "pop.int_literal_convert",
+        ParamOp::IntToFloatLiteral => "pop.int_to_float_literal",
+        ParamOp::FloatToIntLiteral => "pop.float_to_int_literal",
+        ParamOp::FloatLiteralIsNan => "pop.float_literal_isa<nan>",
+        ParamOp::FloatLiteralIsNegZero => "pop.float_literal_isa<neg_zero>",
+        ParamOp::FloatLiteralIsNormal => "pop.float_literal_isa<normal>",
     }
 }
 

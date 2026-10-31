@@ -2937,7 +2937,7 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
         // string or a literal spelling reads back exactly; a type or a
         // reflected type renders a `Ty`, so the walk reports where the value
         // ends and leaves rebuilding to a phase that can parse one.
-        b'y' | b'r' | b'I' | b'F' | b's' | b'k' | b'a' | b'K' | b'A' => {
+        b'y' | b'r' | b'I' | b'F' | b'J' | b'G' | b's' | b'k' | b'a' | b'K' | b'A' => {
             let (digits, after) = until(b':')?;
             let length: usize = digits.parse().ok()?;
             let end = after.checked_add(length)?;
@@ -2953,6 +2953,8 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
                     .map(|target| CtValue::KgenTarget(Box::new(target))),
                 b'I' => IntLiteral::parse_radix(spelling, 10).map(CtValue::IntLiteral),
                 b'F' => FloatLiteral::parse_exact(spelling).map(CtValue::FloatLiteral),
+                b'J' => IntLiteral::parse_radix(spelling, 10).map(CtValue::PopIntLiteral),
+                b'G' => FloatLiteral::parse_exact(spelling).map(CtValue::PopFloatLiteral),
                 _ => None,
             };
             (value, end)
@@ -3193,6 +3195,8 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         | CtValue::Simd { .. }
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::PopIntLiteral(_)
+        | CtValue::PopFloatLiteral(_)
         | CtValue::MlirAttr(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
@@ -3264,6 +3268,14 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::FloatLiteral(value) => {
             let rendered = value.to_string();
             out.push_str(&format!("F{}:{rendered}", rendered.len()));
+        }
+        CtValue::PopIntLiteral(value) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("J{}:{rendered}", rendered.len()));
+        }
+        CtValue::PopFloatLiteral(value) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("G{}:{rendered}", rendered.len()));
         }
         CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
         CtValue::None => out.push_str("n;"),

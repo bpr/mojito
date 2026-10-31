@@ -1948,6 +1948,8 @@ impl Checker {
             CtValue::Dtype(_) => Some(Ty::dtype()),
             CtValue::Trait(traits) => Some(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Some(TyKind::KgenString.into()),
+            CtValue::PopIntLiteral(_) => Some(TyKind::PopIntLiteral.into()),
+            CtValue::PopFloatLiteral(_) => Some(TyKind::PopFloatLiteral.into()),
             CtValue::MlirAttr(_) => Some(TyKind::KgenDeferred.into()),
             CtValue::KgenTarget(_) => Some(TyKind::KgenTarget.into()),
             CtValue::PopArray { .. } => value.pop_array_type(),

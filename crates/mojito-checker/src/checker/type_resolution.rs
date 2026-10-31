@@ -4658,6 +4658,8 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::PopIntLiteral
+        | TyKind::PopFloatLiteral
         | TyKind::KgenDeferred
         | TyKind::KgenTarget
         | TyKind::Index

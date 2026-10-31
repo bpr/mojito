@@ -23,6 +23,8 @@ impl Decoder {
                 "DType" => Ty::dtype(),
                 "TypeType" => TyKind::TypeType.into(),
                 "KgenString" => TyKind::KgenString.into(),
+                "PopIntLiteral" => TyKind::PopIntLiteral.into(),
+                "PopFloatLiteral" => TyKind::PopFloatLiteral.into(),
                 "KgenDeferred" => TyKind::KgenDeferred.into(),
                 "KgenTarget" => TyKind::KgenTarget.into(),
                 "index" => Ty::index(),
@@ -1297,6 +1299,8 @@ impl Decoder {
                 "ct_type" => self.ty(inner).map(CtValue::Type),
                 "ct_trait" => Some(CtValue::Trait(self.strings(inner))),
                 "ct_kgen_string" => self.string(inner).map(CtValue::KgenString),
+                "ct_pop_int_literal" => self.int_literal(inner).map(CtValue::PopIntLiteral),
+                "ct_pop_float_literal" => self.float_literal(inner).map(CtValue::PopFloatLiteral),
                 "ct_mlir_attr" => self.string(inner).map(CtValue::MlirAttr),
                 "ct_kgen_target" => self
                     .string(inner)
