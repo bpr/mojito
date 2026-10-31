@@ -739,7 +739,12 @@ impl Checker {
         let (Some(annotation), Some(self_ty)) = (&method.self_type, &self.self_ty) else {
             return Ok(None);
         };
-        let refined = self.ty_from_anno(annotation)?;
+        // An annotation may name an earlier argument's place only the body
+        // can resolve (`origin_of(iterable)`), as a return annotation may.
+        let saved = self.signature_origin_leniency.replace(true);
+        let refined = self.ty_from_anno(annotation);
+        self.signature_origin_leniency.set(saved);
+        let refined = refined?;
         if refined == *self_ty {
             return Ok(None);
         }
@@ -1737,18 +1742,12 @@ impl Checker {
             m.self_origin.as_deref(),
             &reference_type_params,
         );
-        if m.has_self {
-            // A refined initializer's `self` has its refined type, while
-            // `Self` stays the struct at its own binders, as at the pin.
-            let receiver = match &m.self_type {
-                Some(annotation) if m.self_convention == Some(ArgConvention::Out) => {
-                    self.ty_from_anno(annotation)?
-                }
-                _ => self_ty.clone(),
-            };
-            self.bind_receiver(&receiver, self_writable)?;
-        }
-        for p in &m.params {
+        // An initializer's `out self` follows the arguments its refined
+        // annotation may read (`origin_of(iterable)`).
+        for (index, p) in m.params.iter().enumerate() {
+            if index == m.receiver_index {
+                self.bind_method_receiver(self_ty, m, self_writable)?;
+            }
             // Parameter annotations follow the initialized-local rule
             // (pin-attested): a bare origin-slotted generic infers per call,
             // a partial application that omits an origin slot rejects, and a
@@ -1789,6 +1788,9 @@ impl Checker {
                 writable,
                 binder,
             )?;
+        }
+        if m.receiver_index >= m.params.len() {
+            self.bind_method_receiver(self_ty, m, self_writable)?;
         }
         self.check_method_body(MethodBody {
             name: &m.name,
@@ -2077,6 +2079,27 @@ impl Checker {
                 },
             ));
         }
+    }
+
+    /// Declare method `m`'s receiver, if it has one: a refined
+    /// initializer's `self` has its refined type, while `Self` stays the
+    /// struct at its own binders, as at the pin.
+    fn bind_method_receiver(
+        &mut self,
+        self_ty: &Ty,
+        m: &Method,
+        writable: bool,
+    ) -> Result<(), TypeError> {
+        if !m.has_self {
+            return Ok(());
+        }
+        let receiver = match &m.self_type {
+            Some(annotation) if m.self_convention == Some(ArgConvention::Out) => {
+                self.ty_from_anno(annotation)?
+            }
+            _ => self_ty.clone(),
+        };
+        self.bind_receiver(&receiver, writable)
     }
 
     /// A construction is its `__init__`'s call: its arguments bind and

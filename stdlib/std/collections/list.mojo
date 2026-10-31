@@ -194,6 +194,23 @@ struct List[T: AnyType](
         for var value in values^:
             self.append(value^)
 
+    # Upstream's clause, `where conforms_to(IterableType.IteratorType[
+    # origin_of(iterable)].Element, Copyable)`, takes a projection subject
+    # (R792). Its body sizes the list by `iter(iterable).bounds()` (R670,
+    # R669) and moves each element in with `rebind_var` from a loop that
+    # yields the iterator's element (R178); this one copies the iterable's
+    # `Element` and rebinds it.
+    def __init__[
+        IterableType: Iterable,
+    ](
+        ref iterable: IterableType,
+        out self: List[IterableType.IteratorType[origin_of(iterable)].Element],
+    ):
+        self = type_of(self)()
+        for value in iterable:
+            var element = value.copy()
+            self.append(rebind[type_of(self).T](element)^)
+
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self.cap = copy.cap
         self.size = copy.size

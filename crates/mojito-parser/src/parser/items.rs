@@ -12,7 +12,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `var **kwargs`, and the `/`/`*` markers — all **parsed** (the checker flags the
     /// advanced ones as unsupported). Parsing is lenient about argument ordering.
     pub(super) fn parse_params(&mut self) -> Result<ParamList, ParseError> {
-        self.parse_param_list(false)
+        self.parse_param_list(false, false)
     }
 
     /// The optional argument convention (`read`/`mut`/`var`/`out`) prefixing a
@@ -635,11 +635,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "self");
         let first_is_convention = matches!(self.peek_token()?, Some(Token::Identifier(id)) if convention_word(id).is_some())
             || matches!(self.peek_token()?, Some(Token::Var));
-        let (has_self, self_convention, self_origin) = if is_static {
-            (false, None, None)
+        let is_initializer = name == "__init__";
+        let (receiver, list) = if is_static {
+            (None, self.parse_param_list(true, false)?)
         } else if first_is_self {
             self.next_token()?; // consume 'self'
-            (true, None, None)
+            self.parse_leading_receiver(None, None)?
         } else if first_is_convention {
             let conv = match self.peek_token()? {
                 Some(Token::Identifier(id)) => convention_word(id),
@@ -653,44 +654,56 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             } else {
                 None
             };
-            let self_name =
+            let first_name =
                 self.expect_identifier("Expected 'self' after the receiver convention")?;
-            if self_name != "self" {
+            if first_name == "self" {
+                self.parse_leading_receiver(conv, origin)?
+            } else if is_initializer {
+                // An initializer's `out self` may follow other arguments,
+                // whose names its annotation then reads.
+                let leading = self.finish_param(first_name, ParamKind::Regular, conv, origin)?;
+                let mut list = if matches!(self.peek_token()?, Some(Token::Comma)) {
+                    self.next_token()?; // consume ','
+                    self.parse_param_list(false, true)?
+                } else {
+                    ParamList {
+                        params: Vec::new(),
+                        positional_only: None,
+                        keyword_only: None,
+                    }
+                };
+                list.params.insert(0, leading);
+                list.positional_only = list.positional_only.map(|index| index + 1);
+                list.keyword_only = list.keyword_only.map(|index| index + 1);
+                split_initializer_receiver(list)?
+            } else {
                 return Err(ParseError::UnexpectedToken(
-                    Token::Identifier(self_name),
+                    Token::Identifier(first_name),
                     "a receiver convention must be followed by 'self'".into(),
                 ));
             }
-            (true, conv, origin)
+        } else if is_initializer {
+            let list = self.parse_param_list(false, true)?;
+            split_initializer_receiver(list)?
         } else {
             // No receiver — a static method.
-            (false, None, None)
+            (None, self.parse_param_list(false, false)?)
         };
-        let self_type = if has_self {
-            self.parse_optional_receiver_type()?
-        } else {
-            None
-        };
-        // Parameters: for an instance method they follow an optional comma after
-        // `self`; for a static method they are the whole list.
         let ParamList {
             params,
             positional_only,
             keyword_only,
-        } = if has_self {
-            if matches!(self.peek_token()?, Some(Token::Comma)) {
-                self.next_token()?; // consume ','
-                self.parse_params()?
-            } else {
-                ParamList {
-                    params: Vec::new(),
-                    positional_only: None,
-                    keyword_only: None,
-                }
-            }
-        } else {
-            self.parse_param_list(is_static)?
-        };
+        } = list;
+        let (has_self, self_convention, self_origin, self_type, receiver_index) =
+            receiver.map_or((false, None, None, None, 0), |receiver| {
+                (
+                    true,
+                    receiver.convention,
+                    receiver.origin,
+                    receiver.ty,
+                    receiver.index,
+                )
+            });
         self.expect(&Token::RParen, "Expected ')' after the parameters")?;
 
         let (raises, raises_type) = self.parse_callable_effects()?;
@@ -713,6 +726,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             self_convention,
             self_origin,
             self_type,
+            receiver_index,
             decorators,
             params,
             positional_only,
@@ -762,8 +776,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// A parameter list whose leading `self` may omit its annotation, as a
     /// `@staticmethod`'s may: upstream types a method's first `self`
     /// argument `Self` whether or not it is a receiver. An `out self` names
-    /// the result, so it still needs one outside an `__init__`.
-    fn parse_param_list(&mut self, self_typed_leading: bool) -> Result<ParamList, ParseError> {
+    /// the result, so it still needs one outside an `__init__`; with
+    /// `initializer`, an `out self` anywhere in the list may omit it.
+    fn parse_param_list(
+        &mut self,
+        self_typed_leading: bool,
+        initializer: bool,
+    ) -> Result<ParamList, ParseError> {
         let mut params = Vec::new();
         let mut positional_only = None;
         let mut keyword_only = None;
@@ -845,7 +864,24 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     } else {
                         self.parse_convention_and_name()?
                     };
-                    params.push(self.finish_leading_param(name, convention, origin, self_typed)?);
+                    // An unannotated `out self` is typed `Self`.
+                    if initializer
+                        && name == "self"
+                        && convention == Some(ArgConvention::Out)
+                        && !matches!(self.peek_token()?, Some(Token::Colon))
+                    {
+                        params.push(FnParam {
+                            name,
+                            ty: Type::SelfType,
+                            default: None,
+                            kind: ParamKind::Regular,
+                            convention,
+                            origin,
+                        });
+                    } else {
+                        params
+                            .push(self.finish_leading_param(name, convention, origin, self_typed)?);
+                    }
                 }
             }
             if matches!(self.peek_token()?, Some(Token::Comma)) {
@@ -897,6 +933,34 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         self.next_token()?;
         self.parse_type().map(Some)
+    }
+
+    /// The rest of a method's argument list after its leading receiver
+    /// (`[convention] self`, already consumed): the receiver's optional
+    /// annotation and the parameters following an optional comma.
+    fn parse_leading_receiver(
+        &mut self,
+        convention: Option<ArgConvention>,
+        origin: Option<mojito_ast::ast::OriginSpec>,
+    ) -> Result<(Option<Receiver>, ParamList), ParseError> {
+        let ty = self.parse_optional_receiver_type()?;
+        let list = if matches!(self.peek_token()?, Some(Token::Comma)) {
+            self.next_token()?; // consume ','
+            self.parse_params()?
+        } else {
+            ParamList {
+                params: Vec::new(),
+                positional_only: None,
+                keyword_only: None,
+            }
+        };
+        let receiver = Receiver {
+            convention,
+            origin,
+            ty,
+            index: 0,
+        };
+        Ok((Some(receiver), list))
     }
 
     /// A method of a struct or enum body. An enum method whose body is only
@@ -995,4 +1059,49 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             span: (start, self.last_significant_end),
         })
     }
+}
+
+/// A method's receiver: its convention, `ref` origin, annotation, and the
+/// number of parameters declared before it.
+struct Receiver {
+    convention: Option<ArgConvention>,
+    origin: Option<mojito_ast::ast::OriginSpec>,
+    ty: Option<Type>,
+    index: usize,
+}
+
+/// Takes an initializer's `self` out of its parameter list, wherever it is
+/// declared: upstream's `out self` is the result, which binds no call
+/// argument, so its position only scopes the arguments its annotation reads.
+/// A receiver declared after other arguments must be `out self`, as at
+/// the pin.
+fn split_initializer_receiver(
+    mut list: ParamList,
+) -> Result<(Option<Receiver>, ParamList), ParseError> {
+    let Some(index) = list.params.iter().position(|param| param.name == "self") else {
+        return Ok((None, list));
+    };
+    let param = list.params.remove(index);
+    if param.convention != Some(ArgConvention::Out) {
+        return Err(ParseError::UnexpectedToken(
+            Token::Identifier(param.name),
+            "__init__ method must return Self type with 'out' argument".into(),
+        ));
+    }
+    if list.params.iter().any(|other| other.name == "self") {
+        return Err(ParseError::UnexpectedToken(
+            Token::Identifier(param.name),
+            "an initializer declares one 'self'".into(),
+        ));
+    }
+    let shift = |marker: usize| if marker > index { marker - 1 } else { marker };
+    list.positional_only = list.positional_only.map(shift);
+    list.keyword_only = list.keyword_only.map(shift);
+    let receiver = Receiver {
+        convention: param.convention,
+        origin: param.origin,
+        ty: Some(param.ty),
+        index,
+    };
+    Ok((Some(receiver), list))
 }

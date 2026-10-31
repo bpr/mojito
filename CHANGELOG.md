@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `List` declares upstream's constructor from an iterable (R1154):
+  `List(xs[1:3])`, `List[Int](span)`, and `List(dict)` copy the elements
+  into a new list, at the run time and the compile time, on the VM and
+  natively. An initializer's `out self` may now follow the arguments its
+  refined type reads, a struct's type parameter is a member of its
+  application (`List[Int].T`, `type_of(self).T`), and a projection through
+  an applied member (`C.IteratorType[o].Element`) is a type in a bracket
+  argument.
 - `std.utils.numerics` declares upstream's `FPUtils` with
   `_constrain_fp_type` (R1721): `FPUtils[DType.float64].mantissa_width()`,
   `FPUtils[DType.float32].exponent_mask()`, and

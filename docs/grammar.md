@@ -611,6 +611,7 @@ field: 'var' NAME ':' type NEWLINE
 struct_comptime: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression NEWLINE
 method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' type] where_clause* ':' block
 receiver: [convention] 'self' [':' type]    # instance method or any __init__; absent ⇒ a @staticmethod (no self)
+                                            # an __init__'s params may hold 'out' 'self' [':' type] after other parameters
 ```
 
 An optional `params_decl` list after the name makes the struct generic
@@ -711,7 +712,13 @@ least one member; fields and methods may interleave.
   self: W[2], *, two: Int)` on `struct W[n: Int]`), an instance of the
   enclosing struct whose arguments define the struct parameters it spells, so
   `W(two=7)` infers `n = 2` and `W[3](two=7)` is no candidate; on any other
-  receiver, and on a trait requirement's, the annotation must be `Self`. By default `self` is **read-only** (a method may read `self.field`
+  receiver, and on a trait requirement's, the annotation must be `Self`. An
+  initializer's `out self` may instead follow other parameters, whose places
+  its annotation then reads (upstream's `__init__[IterableType: Iterable](ref
+  iterable: IterableType, out self: List[IterableType.IteratorType[
+  origin_of(iterable)].Element])`); it is no parameter, so the `/` and `*`
+  markers keep indexing the parameters, and a `self` after other parameters
+  with any other convention is rejected, as at the pin. By default `self` is **read-only** (a method may read `self.field`
   and call `self.method(...)` but not assign a field). Declaring the receiver **`mut self`**
   makes `self` writable: the method may do `self.field = e` (and call other `mut self`
   methods), and those mutations are **written back** to the receiver — so `c.increment()`

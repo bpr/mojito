@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1737**.
+Next free ID: **R1738**.
 
 ## Ordered Work
 
@@ -3360,6 +3360,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime if conforms_to(T.E, Writable):` over a projection is
     rejected as "conforms_to takes a type as its first argument"; the pin
     accepts it, as it does the `where` spelling.
+  - The bundled `List.__init__` from an iterable
+    (`stdlib/std/collections/list.mojo`) omits upstream's `where
+    conforms_to(IterableType.IteratorType[origin_of(iterable)].Element,
+    Copyable)`. Restore it when this lands.
   - Once a projection subject enters the assumption store,
     `Checker::refined_bound` must refine a projection by a fact stated of
     it, not only by its base's refined bound (`binder_fact` matches a
@@ -4906,6 +4910,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: a struct field of type `Tuple[*Self.Ts]` now needs a pack bound proving `Deinitable`, as at the pin, but a field of any other struct whose `Deinitable` conformance depends on its arguments is not checked.
   - The rule lives in `checker/traits.rs`.
   - Generalize it to the field type's conditional `Deinitable` conformance.
+  - Probe: `struct Bag[T: AnyType]` holding `var items: List[Self.T]` is
+    accepted, where the pin reports "field 'items' has non-'Deinitable'
+    type 'List[T]'".
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -8200,6 +8207,14 @@ retained on purpose and re-probed rather than fixed; they are listed in
     where the pin reports "'Iterable' value has no attribute 'Element'".
     Snippets in `tests/vm_test.rs` and `tests/mir_test.rs` use that
     signature.
+  - The bundled `List.__init__` from an iterable copies the iterable's
+    `Element` and `rebind`s it to `type_of(self).T`, where upstream's
+    `for var value in iterable` moves the iterator's element in with
+    `rebind_var` (R1737). Restore upstream's body when both land.
+  - Probe: the same copying body in a user initializer, `for value in
+    iterable: var element = value.copy()`, runs in Mojito, where the pin
+    reports "'IterableType.IteratorType[...].Element' value has no
+    attribute 'copy'".
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -11013,7 +11028,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `_exp_taylor`'s `coefficients[:]` and `coefficients[:8]` in a
     parameter position: `g[coefficients[:2]]()` over a compile-time `List`
     and `def g[c: Span[Scalar[dtype], _]]()` is "not an associated comptime
-    expression", where the pin prints `2`. `List([...])` is R1154, and
+    expression", where the pin prints `2`.
     `List.__getitem__(ref self, ContiguousSlice)` as an application is
     R1643's `ref self` receiver.
   - Found while planning R1567 (2026-10-30).
@@ -12501,24 +12516,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1154 `List` has no constructor from an iterable**
-
-  Problem: `List(xs[1:3])` is rejected ("no constructor overload matches
-  the supplied arguments"), where the pin copies the iterable's elements
-  into a new list, the way Mojo owns a slice.
-  - Upstream's overload is `__init__[IterableType: Iterable](ref iterable:
-    IterableType, out self: List[IterableType.IteratorType[
-    origin_of(iterable)].Element])`.
-  - The parser takes a method's receiver only as its first parameter
-    (`parser/items.rs`: "a receiver convention must be followed by
-    'self'"), so the overload does not parse. Its refined `out self`
-    annotation itself is supported (R1594 landed); only the position
-    after another parameter, whose type the refinement reads, remains.
-  - Probe: `conformance/probes/list_from_iterable.mojo`.
-  - Found while landing R190 (2026-10-19).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1127 `RawFileDescriptor` holds a `c_int` with `-1` as its niche**
 
   Problem: the bundled `RawFileDescriptor` keeps `_value: Int`, an
@@ -12562,6 +12559,9 @@ residue found inside a task moves to the task that owns its fix.
   - The bundled trait (`stdlib/std/iter.mojo`) refines nothing and has no
     `bounds`.
   - Every bundled conformer must still conform once the refinement lands.
+  - The bundled `List.__init__` from an iterable starts at the default
+    capacity, where upstream's sizes it by `iter(iterable).bounds()`
+    (with R670).
   - Found while landing R665 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -12577,7 +12577,27 @@ residue found inside a task moves to the task that owns its fix.
   - The borrowed overload's body is `return iterable.__iter__()`, which
     checks since R665 (`assets/ok/generic_iterable_explicit_iter.mojo`).
   - Add both to `stdlib/std/iter.mojo` beside `next`.
+  - `List.__init__` from an iterable reads `iter(iterable).bounds()`
+    upstream (R669).
   - Found while landing R665 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1737 `rebind_var` is undeclared**
+
+  Problem: `rebind_var[type_of(self).T](value^)` is rejected ("Undefined
+  variable 'rebind_var'"), where the pin moves an owned value into the
+  type a parameter refinement names.
+  - Mojito's `rebind` is a checker builtin (`checker/rebind.rs`), and the
+    bundled library has no `std.builtin.rebind` module, so upstream's
+    library `rebind_var` has no home.
+  - Upstream's body takes `ref dest_ref = rebind[dest_type](src)`, moves
+    it out with `Pointer(to=dest_ref).unsafe_take_pointee()`, and ends
+    `src` with `std.memory.forget_deinit`, which is also missing.
+  - Probe: the bundled `List.__init__` from an iterable copies and
+    `rebind`s each element where upstream's moves it with `rebind_var`
+    (with R178).
+  - Found while landing R1154 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -12833,6 +12853,9 @@ residue found inside a task moves to the task that owns its fix.
     declare `Iterator where conforms_to(T, Copyable)`, where upstream's
     take a `Copyable` element and are unconditionally `ImplicitlyCopyable`,
     `Iterable`, and `Iterator`.
+  - Probe: `List(d.keys())` over a `Dict[String, Int]` matches no
+    `List` constructor ("'_DictKeyIter[...]' ... does not conform to
+    trait 'Iterable'"), where the pin copies the keys.
   - An unconditional `Iterable` also needs R178: the bundled `Iterable`
     requires `comptime Element: Copyable & Movable`.
   - Probe: `downcast[Self.Plugins._get_type_at_index[idx], Self.Trait]`,

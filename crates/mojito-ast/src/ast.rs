@@ -978,8 +978,9 @@ pub struct Decorator {
     pub kwargs: Vec<KwArg>,
 }
 
-/// A `def` method inside a `struct`. `self` (the implicit first parameter)
-/// is not stored in `params`.
+/// A `def` method inside a `struct`. `self` (the receiver, first except
+/// where an initializer's `out self` follows other arguments) is not stored
+/// in `params`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Method {
     pub name: String,
@@ -997,6 +998,11 @@ pub struct Method {
     /// unannotated. On `out self` it is the initializer's refined result
     /// type; on any other receiver the checker accepts only `Self`.
     pub self_type: Option<Type>,
+    /// How many of `params` an initializer declares before its `out self`
+    /// (`__init__[T: Iterable](ref iterable: T, out self: List[...])`): the
+    /// arguments the receiver's annotation may read. `0` on every other
+    /// receiver, which comes first.
+    pub receiver_index: usize,
     /// Decorators preceding the method (`@staticmethod`, …), validated by the
     /// checker.
     pub decorators: Vec<Decorator>,

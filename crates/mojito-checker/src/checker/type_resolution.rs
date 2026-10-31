@@ -2430,6 +2430,17 @@ impl Checker {
             let decls = info.decls.clone();
             return self.resolve_parameterized_member(base, name, &member, &decls, targs, args);
         }
+        // A type parameter of the struct is a member of its application
+        // (`List[Int].T`).
+        if args.is_empty()
+            && let Some(TyArg::Ty(argument)) = info
+                .decls
+                .iter()
+                .position(|decl| decl.name() == name)
+                .and_then(|index| targs.get(index))
+        {
+            return Ok(argument.clone());
+        }
         let value = info
             .associated
             .get(name)

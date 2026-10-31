@@ -5872,8 +5872,23 @@ pub(super) fn member_source_type(expr: &Expr) -> Option<SourceType> {
         else {
             return None;
         };
+        // An applied member (`C.IteratorType[o].Element`) projects from
+        // the member application it reads, and `type_of(x).T` from the
+        // type of `x`.
         let base = base.type_spelling().or_else(|| match &base.kind {
             ExprKind::Identifier(name) => Some(SourceType::Named(name.clone(), Vec::new())),
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. } => member_source_type(base),
+            ExprKind::Call {
+                name,
+                args,
+                kwargs,
+                param_args,
+            } if name == "type_of" && kwargs.is_empty() && param_args.is_empty() => {
+                match args.as_slice() {
+                    [operand] => Some(SourceType::TypeOf(Box::new(operand.clone()))),
+                    _ => None,
+                }
+            }
             _ => None,
         })?;
         Some(match base {

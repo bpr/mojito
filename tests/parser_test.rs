@@ -287,6 +287,7 @@ fn parses_struct_with_field_and_method() {
                 self_convention: None,
                 self_origin: None,
                 self_type: None,
+                receiver_index: 0,
                 decorators: vec![],
                 params: vec![],
                 positional_only: None,
@@ -3672,6 +3673,37 @@ fn parses_an_annotated_self_receiver() {
         panic!("expected a trait");
     };
     assert!(matches!(&methods[0].self_type, Some(Type::SelfType)));
+}
+
+#[test]
+fn parses_an_initializer_receiver_after_other_arguments() {
+    // An `out self` may follow the arguments its refined type reads; it is
+    // no parameter, and the markers keep indexing the parameters.
+    let stmts = parse(
+        "struct W[T: AnyType]:\n    def __init__[I: Iterable](ref it: I, /, out self: W[I.E], *, k: Int):\n        pass\n    def __init__(n: Int, out self):\n        pass\n",
+    );
+    let StmtKind::Struct { methods, .. } = &stmts[0].kind else {
+        panic!("expected a struct");
+    };
+    assert!(methods[0].has_self);
+    assert_eq!(methods[0].self_convention, Some(ArgConvention::Out));
+    assert!(matches!(&methods[0].self_type, Some(Type::Named(name, _)) if name == "W"));
+    assert_eq!(methods[0].receiver_index, 1);
+    let names: Vec<_> = methods[0].params.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["it", "k"]);
+    assert_eq!(methods[0].positional_only, Some(1));
+    assert_eq!(methods[0].keyword_only, Some(1));
+    assert!(methods[1].has_self);
+    assert_eq!(methods[1].receiver_index, 1);
+    assert!(matches!(&methods[1].self_type, Some(Type::SelfType)));
+}
+
+#[test]
+fn rejects_an_initializer_receiver_after_other_arguments_unless_out() {
+    let mut parser = Parser::new(Lexer::new(
+        "struct W:\n    def __init__(n: Int, mut self: Self):\n        pass\n",
+    ));
+    assert!(parser.parse_program().is_err());
 }
 
 #[test]
