@@ -273,12 +273,16 @@ point, as upstream's toolchain does.
   builtin's import home, `CStringSlice` (declared in `std/string.mojo`, which
   loads first) and `get_errno` re-exports.
 - `std/sys/info.mojo` — upstream's `CompilationTarget` (`current`,
-  `_unknown`, `_has_feature`, the `has_*` x86 queries), `simd_bit_width`,
-  `simd_byte_width`, `is_32bit`, `is_64bit`, and the layout queries
-  `size_of`, `align_of`, `bit_width_of`, and `simd_width_of` over KGEN's
-  `get_sizeof` and `get_alignof`. The queries read the `!kgen.target`
-  attribute the elaborator answers `_current_target()` with; the
-  string-field predicates are roadmap R1635.
+  `_unknown`, `_has_feature`, the `has_*` x86, Neon, and RISC-V queries,
+  the string-field getters `_arch`, `_os`, `__triple`, and
+  `__triple_arch`, and the platform, Apple, accelerator, GPU, and OS
+  predicates), the free `is_gpu`, `is_nvidia_gpu`, `is_amd_gpu`,
+  `is_apple_gpu`, and AMD families, `simd_bit_width`, `simd_byte_width`,
+  `is_32bit`, `is_64bit`, and the layout queries `size_of`, `align_of`,
+  `bit_width_of`, and `simd_width_of` over KGEN's `get_sizeof` and
+  `get_alignof`. The queries read the `!kgen.target` attribute the
+  elaborator answers `_current_target()` with; the file's header lists
+  what is still omitted and the roadmap entries that own it.
 - `std/sys/_libc_errno.mojo` — `ErrNo` (`String(err)` renders glibc's
   `strerror` text), `get_errno`, `set_errno`. `std/stat/` — the `S_IF*`
   mode constants and `S_ISDIR`/`S_ISREG`/`S_ISLNK`. `std/time/time.mojo` —

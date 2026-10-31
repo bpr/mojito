@@ -2852,7 +2852,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `NativeTarget::kgen_target` (`mojito-native-core/src/target.rs`): in
   `symbolic::eval_ct_at` beside the layout queries through `LayoutOracle`, and in
   `Specializer::resolve_application` through `demand_current_target`.
-  The library side is `stdlib/std/sys/info.mojo`'s `CompilationTarget`.
+  The library side is `stdlib/std/sys/info.mojo`'s `CompilationTarget`,
+  whose string getters (`__triple`, `__triple_arch`, `__arch`, `_os`) read
+  `KgenTarget::field` (`triple_arch` through `canonical_triple_arch`), and
+  whose predicates and the free `is_gpu`/`is_nvidia_gpu`/`is_amd_gpu`/
+  `is_apple_gpu` compare those fields as `StringLiteral` values.
   `ct::KgenTarget::stdlib_plugin` is the optional `stdlib_plugin` field
   (`ct::DEFAULT_STDLIB_PLUGIN` when omitted, `KgenTarget::OPTIONAL_FIELDS`),
   which the free `stdlib_plugin()` reads.

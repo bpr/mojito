@@ -681,6 +681,18 @@ struct String(
             self.data, data.ptr(), UInt(self.size)
         )
 
+    # Upstream's `StaticString` constructor. Upstream's borrows the static
+    # bytes without allocating; this `String` owns its buffer, so it copies.
+    @inline(.nodebug)
+    @implicit
+    def __init__(out self, data: StaticString, /):
+        self.size = data.byte_length()
+        self.cap = self.size if self.size > 0 else 1
+        self.data = unsafe_alloc[Byte](self.cap)
+        var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
+            self.data, data._data, UInt(self.size)
+        )
+
     @inline(.nodebug)
     def __init__(out self):
         self.size = 0

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `CompilationTarget`'s string-field predicates are upstream's, verbatim
+  (R1635): `is_x86()`, `is_linux()`, and `_os()` print `True`, `True`,
+  and `linux` on this host, as at the pin, with `is_triple`, `_arch`,
+  `default_compile_options`, `unsupported_target_error`, the Neon,
+  RISC-V, Apple, accelerator, and OS queries, and the free `is_gpu`,
+  `is_nvidia_gpu`, `is_amd_gpu`, `is_apple_gpu`, and AMD families, which
+  answer `False` on a CPU target. `bitcast`'s float16 asserts sit under
+  upstream's GPU guard again, `String` has upstream's implicit
+  `StaticString` constructor, so `s in ["darwin", "macosx"]` over a
+  `StaticString` runs, and `triple_arch` reads the canonical
+  architecture name.
 - `SIMD` declares `Roundable` with upstream's two `__round__` members,
   verbatim, and `round` is upstream's `std.math.round[T: Roundable, //]`,
   both overloads, exported from the prelude (R1582): `round(v)` over a

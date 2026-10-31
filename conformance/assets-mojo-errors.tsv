@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1008
+# swept-count	1009
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -259,6 +259,7 @@ assets/type_error/closure_storage_not_trivially_register_passable.mojo	compile-r
 assets/type_error/closure_storage_parameter_argument.mojo	compile-reject	agree	error: invalid call to 'invoke': cannot use a dynamic value in a parameter list
 assets/type_error/closure_storage_reference_parameter_argument.mojo	compile-reject	agree	error: invalid call to 'apply': cannot use a dynamic value in a parameter list
 assets/type_error/collection_display_default_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/compilation_target_riscv_extension_case.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comprehension_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/comptime_alias_constraint_message.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/comptime_alias_struct_value_opaque.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'B[L]' to 'B[W(k)]', it depends on an unresolved parameter 'k'

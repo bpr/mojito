@@ -43,9 +43,9 @@
 # only the traits whose requirements are ported here; as upstream's, its
 # trait list has no `Floatable`. `Scalar`, `Int`, `UInt`, the sized aliases,
 # and `Byte` stay compiler names until R1557.
-# `cast` omits upstream's `is_nvidia_gpu()` and `bfloat16`-on-AMD branches
-# (R1635), and its float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4`
-# branches (R65): Mojito has none of those targets or dtypes.
+# `cast` omits upstream's `bfloat16` branches on NVIDIA and AMD, and its
+# float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4` branches (R65):
+# Mojito has none of those dtypes.
 # `_scalar_repr_alias` omits the `int128`, `uint128`, `int256`, `uint256`,
 # `bfloat16`, `float4`, and `float8` cases (R65). `Optional` and
 # `StaticString` are imported, which upstream's prelude provides (R894).

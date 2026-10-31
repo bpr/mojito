@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1754**.
+Next free ID: **R1761**.
 
 ## Ordered Work
 
@@ -7203,6 +7203,90 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1754 A compile-time `List + List` over two `comptime` values is
+  rejected**
+
+  `f[A + B]()` over `comptime A: List[StaticString] = ["sm_80", "sm_86"]`,
+  `comptime B: List[StaticString] = ["sm_90"]`, and `def
+  f[archs: List[StaticString]]()` counting its `comptime for` stops with
+  "value of type 'List[StringSpan]' cannot be implicitly copied …
+  (argument 1 to method '__add__')", where the pin prints `3`.
+  - A `comptime C = A + B` binding fails the same way, and so does a body
+    holding the sum that is never called: the checker applies run-time
+    copy rules to a compile-time operand.
+  - The run-time `g(L)` over `def g(var x: List[Int])` is rejected at the
+    pin too ("cannot materialize comptime value"). Only the compile-time
+    read is the gap.
+  - Probe: `std.sys.info`'s `CompilationTarget._has_blackwell_tcgen05`
+    (`_SM_100X_ARCHS + _SM_101X_ARCHS + _SM_103X_ARCHS`), then the
+    `_is_sm_100x_or_newer`, `_is_sm_9x_or_newer`, and `_is_sm_8x_or_newer`
+    chain and the free `_is_sm_9x_or_newer` and `_is_sm_100x_or_newer`
+    over it, which the bundled module omits.
+  - Found while landing R1635 (2026-10-31).
+  - Depends on R1756 (the Nvidia methods it restores need it).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1755 A type applied through a struct-valued parameter's static
+  call keeps a symbolic type after elaboration**
+
+  `StringLiteral[t.__triple()]()._is_identical("x86_64-unknown-linux-gnu")`
+  in `def g[t: CompilationTarget]() -> Bool`, called as
+  `g[CompilationTarget.current()]()`, stops with "register r0 keeps
+  symbolic type `StringLiteral[$comptime$g$c0($_mlir_value_t, t)]` in
+  elaborated MIR", where the pin prints `True`.
+  - The lifted `$c0` thunk reads `t`'s inferred `_mlir_value`, and the
+    elaborator does not resolve the application once `t` is closed.
+  - `comptime s = t.__triple()` fails the same way.
+    `StaticString(t.__triple())` at run time works, and
+    `Self.__triple()` inside the struct works.
+  - Probe: port `CompilationTarget._eq_triple_and_arch[other]`, which
+    `std.sys.info` omits for this reason.
+  - Found while landing R1635 (2026-10-31).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1756 The bundled library rejects a lifted `comptime if` that
+  reads `Self()` in a struct with an infer-only parameter**
+
+  Splicing upstream's Nvidia section into `std.sys.info` makes
+  `comptime if not Self().is_nvidia_gpu():` in
+  `CompilationTarget._is_nvidia_gpu_any` lift to a `$c0` thunk that
+  "names parameter `_mlir_value` of
+  `__module$std$sys$info$CompilationTarget` that no enclosing declaration
+  binds", so the bundled library cannot be packaged.
+  - The failure shows when the whole library is verified
+    (`src/package.rs`), and then on every program, called or not.
+  - The planning session saw the same struct run as a user module (`-I`);
+    the first step is to find why the lifted thunk keeps the struct's
+    parameter unbound only there.
+  - Probe: port `_is_nvidia_gpu_any`, the `_is_sm_8x` … `_is_sm_121x`
+    methods, `_is_sm_110x_or_newer`, `_is_sm_120x_or_newer`, the free
+    `_SM_*X_ARCHS` lists, and the free `_is_sm_9x`, `_is_sm_100x`,
+    `_is_sm_110x`, and `_is_sm_120x_or_newer`, then
+    `print(CompilationTarget.current()._is_sm_9x())` prints `False`.
+  - Restores `SIMD`'s `_is_sm_9x_or_newer` guards with R1754.
+  - Found while landing R1635 (2026-10-31).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1757 `__get_current_function_name()` is undefined**
+
+  `var s = __get_current_function_name(); s += "!"; print(s)` in `main`
+  stops with "Undefined variable '__get_current_function_name'", where the
+  pin prints `main!`.
+  - At the pin it is the enclosing function's short name: `m` for a static
+    method, `g` for `g[3]`. It is usable in `comptime`.
+  - Check with the pin whether its type is `StringLiteral` or `String`:
+    `type_of` prints `String` for both it and a literal, so that probe
+    does not settle it.
+  - Probe: port `std.sys.info.current_accelerator` and its `std.sys`
+    re-export. On a CPU target its `comptime assert` fails with upstream's
+    "current_accelerator() requires an accelerator compilation target"
+    text.
+  - Found while landing R1635 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -10760,6 +10844,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: the bundled struct declares `@__nonmaterializable(String)` and
     `rg 'TyKind::StringLiteral' crates/mojito-checker/src/checker/generics.rs`
     finds no materialization arm.
+  - Probe: a literal does not materialize before an implicit constructor
+    of the parameter type, so `g("a")` over `def g(x: Optional[String])`
+    and `f["a"]()` over `def f[x: Optional[String] = None]()` are rejected
+    ("expected Optional[String], found StringLiteral"), where the pin
+    accepts both. `CompilationTarget.unsupported_target_error[operation="EBOGUS"]()`
+    is rejected for the same reason.
   - Depends on R1652 (`String`'s constructor from the literal takes the
     struct).
   - Model: Opus, Not Planned.
@@ -10854,32 +10944,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1396 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1635 `CompilationTarget`'s string-field predicates are
-  undeclared**
-
-  `CompilationTarget.is_x86()`, `is_linux()`, and `_os()` are undefined,
-  where the pin prints `True`, `True`, and `linux` on this host.
-  - Each body reads a `!kgen.string` field through `target_get_field` and
-    compares it as `StringLiteral[Self.__triple_arch()]()._is_identical(…)`,
-    so it needs `StringLiteral`'s `value` parameter (R1652) and a
-    compile-time `StaticString` (R1641).
-  - Port `is_triple`, `_arch`, `__arch`, `_is_arch`, `__triple_arch`,
-    `__triple`, `_is_triple_arch`, `_eq_triple_and_arch`, `_os`, `is_x86`,
-    `is_arm`, the RISC-V, Apple, and Neon queries, `is_linux`, `is_macos`,
-    `is_cpu`, `is_accelerator`, `is_gpu`, `default_compile_options`,
-    `unsupported_target_error`, and `current_accelerator` (with `_ANY`).
-  - Port the free functions over them too: `is_gpu`, `is_nvidia_gpu`,
-    `is_amd_gpu`, `is_apple_gpu` and their `_is_sm_*` and `_is_amd_*`
-    families, `is_little_endian`, `is_big_endian`, `Endian`, and
-    `platform_map`.
-  - The GPU predicates answer `False` on a CPU target, so `bitcast`'s and
-    `SIMD.cast`'s GPU guards (`std/memory/unsafe.mojo`, `std/simd.mojo`)
-    can be restored.
-  - `_arch()` is `StaticString(Self.__arch())`, a run-time call of a
-    function returning `!kgen.string`, which needs R1190's run-time form.
-  - Depends on R1562, R1652, R1641, and R1190.
-  - Model: Opus, Planned.
 
 - [ ] **R1623 `SIMD`'s `%`, `divmod`, and `ceildiv` are checker rules
   and a trap, where upstream's are `__mod__`, `__divmod__`, and
@@ -13021,6 +13085,48 @@ residue found inside a task moves to the task that owns its fix.
   - Header-list the rest of the 1977-line file with the entries that own
     each part.
   - Depends on R1674.
+  - Model: Opus, Planned.
+
+- [ ] **R1758 `std.sys.info.platform_map` is not ported**
+
+  `comptime EDEADLK = platform_map["EDEADLK", linux=35, macos=11]()`
+  fails, where the pin's value is `35` on Linux.
+  - Its `else` arm ends in the `-> Never` call
+    `CompilationTarget.unsupported_target_error[operation=operation]()`,
+    which Mojito reports as "does not return a value on every path"
+    (R50).
+  - Its string-literal `operation` argument binds an `Optional[String]`
+    parameter, which needs R1651.
+  - Probe `platform_type_map` (`downcast`, a type-level conditional,
+    `_UnsupportedTarget`) in the same session, and split it off if it
+    needs more.
+  - Depends on R50 and R1651.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1759 `std.sys.info`'s `Endian`, `is_little_endian`, and
+  `is_big_endian` are not ported**
+
+  `from std.sys.info import Endian` fails, where the pin prints `True` for
+  `Endian.native() == .little`.
+  - `Endian` declares `EnumLike` over `TypeList.splat` (R1181).
+  - `KgenTarget::field` (`crates/mojito-types/src/ct.rs`) does not answer
+    `target_get_field`'s `endianness` field. Add it, read from the data
+    layout's leading `e`/`E`, together with `reads_field`.
+  - Restore the `std.sys` re-exports of all three.
+  - Depends on R1181.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1760 `std.math` has no `exp2` or `log2`**
+
+  `from std.math import exp2, log2` fails, where upstream's `math.mojo`
+  declares both.
+  - `exp`'s `is_gpu()` arm returns `exp2(x * log2e)`, and `log`'s
+    `is_nvidia_gpu()` arm calls `log2`. With the target predicates ported,
+    those arms are omitted only for the missing functions.
+  - Port both verbatim, then restore the two arms. A CPU target takes
+    neither, so `assets/ok/math_exp.mojo` and `assets/ok/math_log.mojo`
+    keep their output.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 ### Packaging, Artifacts, And Developer Tooling

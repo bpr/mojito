@@ -14,7 +14,7 @@
 # `_Expable`, which keeps upstream's position. The
 # masks' `bfloat16` cases are omitted (R65), and so
 # are `log`'s `is_nvidia_gpu()` arm through `log2` and `exp`'s `is_gpu()`
-# arm through `exp2` (R1635). The
+# arm through `exp2`, which are not ported (R1760). The
 # `std.string` import is explicit, as bundled modules' are. Upstream's
 # `from . import` line omits `nextafter`, which the package does not yet
 # re-export. The prelude exports `Absable`, `Powable`, `Roundable`, `abs`, `max`,

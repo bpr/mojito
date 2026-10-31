@@ -1,7 +1,5 @@
 # Upstream's `std/memory/unsafe.mojo`: `bitcast`, `_llvm_bitwidth`, and
-# `pack_bits`. `bitcast`'s float16 asserts are not under upstream's
-# `comptime if not is_nvidia_gpu() and not is_amd_gpu():` guard, which is
-# the host's branch (R1635). `_llvm_bitwidth` omits its `_uint1`, `_uint2`,
+# `pack_bits`. `_llvm_bitwidth` omits its `_uint1`, `_uint2`,
 # `_uint4`, `uint128`, and `uint256` arms until R65 admits those dtypes.
 """Provides utility functions for unsafe manipulation of SIMD values.
 
@@ -12,7 +10,7 @@ from std.memory import bitcast
 ```
 """
 
-from std.sys import bit_width_of
+from std.sys import bit_width_of, is_amd_gpu, is_nvidia_gpu
 from std.builtin.simd_length import SIMDLength
 from std.builtin.dtype import _uint_type_of_width
 
@@ -71,31 +69,32 @@ def bitcast[
 
     # TODO(MOCO-2179): Change this to be more precise check for Arm devices, or
     # generate different ops on Arm.
-    # Arm doesn't support casting between float16 and two ints.
-    comptime assert not (
-        src_dtype == .float16
-        and src_width == 1
-        and dtype == .int8
-        and width == 2
-    ), "Can't cast a float16 directly to a 2 x i8"
-    comptime assert not (
-        src_dtype == .float16
-        and src_width == 1
-        and dtype == .uint8
-        and width == 2
-    ), "Can't cast a float16 directly to a 2 x ui8"
-    comptime assert not (
-        src_dtype == .int8
-        and src_width == 2
-        and dtype == .float16
-        and width == 1
-    ), "Can't cast a 2 x i8 directly to a float16"
-    comptime assert not (
-        src_dtype == .uint8
-        and src_width == 2
-        and dtype == .float16
-        and width == 1
-    ), "Can't cast a 2 x ui8 directly to a float16"
+    comptime if not is_nvidia_gpu() and not is_amd_gpu():
+        # Arm doesn't support casting between float16 and two ints.
+        comptime assert not (
+            src_dtype == .float16
+            and src_width == 1
+            and dtype == .int8
+            and width == 2
+        ), "Can't cast a float16 directly to a 2 x i8"
+        comptime assert not (
+            src_dtype == .float16
+            and src_width == 1
+            and dtype == .uint8
+            and width == 2
+        ), "Can't cast a float16 directly to a 2 x ui8"
+        comptime assert not (
+            src_dtype == .int8
+            and src_width == 2
+            and dtype == .float16
+            and width == 1
+        ), "Can't cast a 2 x i8 directly to a float16"
+        comptime assert not (
+            src_dtype == .uint8
+            and src_width == 2
+            and dtype == .float16
+            and width == 1
+        ), "Can't cast a 2 x ui8 directly to a float16"
 
     comptime if dtype == src_dtype:
         return val._refine[dtype, width]()

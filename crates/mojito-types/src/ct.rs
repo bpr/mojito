@@ -689,7 +689,9 @@ impl KgenTarget {
     /// The value `target_get_field` reads for `name`: a `!kgen.string`
     /// for `triple`, `arch`, and the triple's `triple_arch` and `os`
     /// components (`unknown` where the triple has none), and an `index`
-    /// for the bit widths. `None` for any other name.
+    /// for the bit widths. `None` for any other name. `triple_arch` is
+    /// the canonical architecture name, so `arm64` reads `aarch64` and
+    /// `i686` reads `i386`.
     pub fn field(&self, name: &str) -> Option<CtValue> {
         let component = |at: usize| {
             self.triple
@@ -703,7 +705,7 @@ impl KgenTarget {
             "triple" => CtValue::KgenString(self.triple.clone()),
             "stdlib_plugin" => CtValue::KgenString(self.stdlib_plugin.clone()),
             "arch" => CtValue::KgenString(self.arch.clone()),
-            "triple_arch" => CtValue::KgenString(component(0)),
+            "triple_arch" => CtValue::KgenString(canonical_triple_arch(&component(0)).to_string()),
             "os" => CtValue::KgenString(component(2)),
             "index_bit_width" => CtValue::Index(self.index_bit_width),
             "simd_bit_width" => CtValue::Index(self.simd_bit_width),
@@ -1940,11 +1942,32 @@ impl fmt::Display for CtValue {
     }
 }
 
+/// LLVM's canonical name for a triple's architecture spelling, as the
+/// pin's `triple_arch` field reads it.
+fn canonical_triple_arch(arch: &str) -> &str {
+    match arch {
+        "arm64" => "aarch64",
+        "arm64_32" => "aarch64_32",
+        "amd64" => "x86_64",
+        "i486" | "i586" | "i686" | "i786" | "i886" | "i986" => "i386",
+        "amdgcn" => "amdgpu",
+        _ => arch,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::CtLane;
+    use super::{CtLane, canonical_triple_arch};
     use mojito_ast::ast::Dtype;
     use mojito_common::literal::{FloatLiteral, IntLiteral};
+
+    #[test]
+    fn triple_arch_reads_the_canonical_architecture_name() {
+        assert_eq!(canonical_triple_arch("x86_64"), "x86_64");
+        assert_eq!(canonical_triple_arch("arm64"), "aarch64");
+        assert_eq!(canonical_triple_arch("i686"), "i386");
+        assert_eq!(canonical_triple_arch("amdgcn"), "amdgpu");
+    }
 
     #[test]
     fn literal_lanes_materialize_as_the_vm_does() {
