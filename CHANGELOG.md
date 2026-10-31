@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `SIMDLength` binder passed in a call's brackets to an `Int` value
+  parameter (`mask[dtype, width]()` inside a `def` whose `width:
+  SIMDLength`) carries its lane count to the callee, as at the pin (R1744),
+  where MIR verification rejected the `SIMDLength` register.
 - An unannotated float `comptime` binding is a `FloatLiteral`, local or
   module and imported or not, as at the pin (R1741): each read materializes
   at its use, so `Float32(1) * a` and a vector's `fma(log2e, …)` run where

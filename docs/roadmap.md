@@ -2986,31 +2986,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     where the pin prints `4`. A parameter default and an explicit argument
     convert through `Checker::simd_length_lanes`, which both these sites
     should call.
+  - Probe: `count[Self.n]()` over `def count[width: Int]()`, in a static
+    method of `struct Lanes[n: SIMDLength]`, reports "type mismatch for
+    value parameter 'width': expected Int, found SIMDLength"; a `def`
+    binder in the same bracket converts (R1744).
   - Found while planning R1671 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1744 A `SIMDLength` binder passed to an `Int` value parameter
-  reaches MIR as the `SIMDLength` register**
-
-  `mask[dtype, width]()` over `def mask[dtype: DType, width: Int]()`,
-  called from a `def` whose `width: SIMDLength`, passes the check and then
-  fails MIR verification: "compile-time value parameter 'width' has
-  register type SIMDLength, declared Int". The pin converts it and runs.
-  - The checker converts the argument (`Checker::simd_length_lanes`,
-    `checker/comptime_validation.rs`), but `param_arg_regs`
-    (`crates/mojito-mir/src/mir.rs`) passes the caller's binder register
-    unconverted; the verifier's check is in `mir/verify/subscripts.rs`.
-  - Lever: lower the argument through `types::simd_length_image`, as
-    `value_binder_operand` does for a recorded `SimdFromLength`
-    adjustment.
-  - Probe: `def f[dtype: DType, width: SIMDLength, //](x: SIMD[dtype,
-    width])` returning `x + mask[dtype, width]()` prints `[2.0, 3.0, 4.0,
-    5.0]` at the pin for `f(SIMD[DType.float32, 4](1, 2, 3, 4))`.
-  - Probe: upstream's `frexp` and `_frexp_bits` call `_frexp_mask1[dtype,
-    width]()` this way (R1714).
-  - Related: R1687 (the checker's `Self.n` arm of the same conversion).
-  - Found while landing R1714 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

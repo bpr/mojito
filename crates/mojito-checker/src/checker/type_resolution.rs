@@ -3210,7 +3210,9 @@ impl Checker {
     /// [`Self::resolve_param_arg`] bound it to `bound`
     /// ([`bracket_attribute`]): a value argument an `@implicit` constructor
     /// converted is the constructor's application it recorded, the one
-    /// struct-valued application recorded as an argument's attribute.
+    /// struct-valued application recorded as an argument's attribute, and
+    /// a `SIMDLength` at an `Int` slot is its lane count, upstream's folded
+    /// `SIMD.__init__(SIMDLength)`, never the binder's own register.
     pub(super) fn bound_bracket_attribute(
         &self,
         argument: &mojito_ast::ast::ParamArg,
@@ -3229,7 +3231,7 @@ impl Checker {
                         && matches!(attribute, TyArg::Val(CtValue::Expr(application))
                         if application.meta().as_value().is_some_and(|ty| {
                             matches!(ty.kind(), TyKind::Struct(..))
-                        }))
+                        }) || mojito_types::types::simd_length_of_image(application).is_some())
                 }),
             ParamArg::Type(_) => None,
         })
