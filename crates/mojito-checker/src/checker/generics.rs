@@ -374,13 +374,28 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
         // against `SIMDLength(n)`, as at the pin. A known width, or a length
         // no conversion spells (`m`, `m + 1`, an alias), solves no `Int`
         // binder.
-        // `!kgen.simd` storage solves its slots as the vector it stores.
+        // `!kgen.simd` storage solves its slots as the vector it stores, but
+        // only from a slot a binder spells (`!kgen.simd<width._mlir_value,
+        // dtype._mlir_value>` in a body generic over them), as the pin's
+        // unifier does: a concrete or literal slot binds nothing, so
+        // `SIMD(mlir_value=v._mlir_value)` over a concrete `v` infers no
+        // `dtype` or `length`. A template's selection is the one every
+        // instance runs; no instance re-solves its storage patterns.
         (TyKind::KgenSimd { .. }, TyKind::KgenSimd { .. }) => {
-            if let (Some(pattern), Some(actual)) = (
-                mojito_types::types::storage_simd(pattern),
-                mojito_types::types::storage_simd(actual),
-            ) {
-                solve_value_args(&pattern, &actual, out);
+            let slots = |ty: &Ty| {
+                mojito_types::types::storage_simd(ty)
+                    .and_then(|vector| mojito_types::types::simd_slots(vector.kind()))
+            };
+            if let (Some((dtype, width)), Some((actual_dtype, actual_width))) =
+                (slots(pattern), slots(actual))
+            {
+                solve_simd_slot_values(
+                    &dtype,
+                    &width,
+                    actual_dtype.is_symbolic().then_some(actual_dtype),
+                    actual_width.is_symbolic().then_some(actual_width),
+                    out,
+                );
             }
         }
         // A literal's text binds a `StringLiteral[v]` pattern's binder (`g("ab")`
@@ -400,32 +415,8 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
                 _ => simd_slots(actual),
             };
-            let Some((actual_dtype, actual_width)) = actual_slots else {
-                return;
-            };
-            if let SimdDtype::Expr(lane) = dtype
-                && let Some(reference) = lane.as_decl_ref()
-            {
-                let value = match actual_dtype {
-                    SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
-                    SimdDtype::Expr(expr) => expr.require_constant().unwrap_or(CtValue::Expr(expr)),
-                };
-                out.entry(reference.name.to_string()).or_insert(value);
-            }
-            let SimdWidth::Expr(length) = width else {
-                return;
-            };
-            if let Some(reference) = length.as_decl_ref() {
-                let value = match actual_width {
-                    SimdWidth::Known(count) => mojito_types::types::simd_length_value(count),
-                    SimdWidth::Expr(actual) => actual
-                        .as_constant()
-                        .cloned()
-                        .unwrap_or(CtValue::Expr(actual)),
-                };
-                out.entry(reference.name.to_string()).or_insert(value);
-            } else if let SimdWidth::Expr(actual) = &actual_width {
-                solve_applied_args(length, actual, out);
+            if let Some((actual_dtype, actual_width)) = actual_slots {
+                solve_simd_slot_values(dtype, width, Some(actual_dtype), Some(actual_width), out);
             }
         }
         // A spread of a pack that is still a parameter (`Tuple[*Self.Ts]`
@@ -771,6 +762,42 @@ fn solve_applied_args(pattern: &ParamExpr, actual: &ParamExpr, out: &mut HashMap
             ) => solve_value_args(pattern, actual, out),
             _ => solve_applied_args(arg, actual, out),
         }
+    }
+}
+
+/// Solve a SIMD pattern's `dtype` and `length` binders from the actual's
+/// slots; a slot given as `None` binds nothing.
+fn solve_simd_slot_values(
+    dtype: &SimdDtype,
+    width: &SimdWidth,
+    actual_dtype: Option<SimdDtype>,
+    actual_width: Option<SimdWidth>,
+    out: &mut HashMap<String, CtValue>,
+) {
+    if let SimdDtype::Expr(lane) = dtype
+        && let Some(reference) = lane.as_decl_ref()
+        && let Some(actual_dtype) = actual_dtype
+    {
+        let value = match actual_dtype {
+            SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
+            SimdDtype::Expr(expr) => expr.require_constant().unwrap_or(CtValue::Expr(expr)),
+        };
+        out.entry(reference.name.to_string()).or_insert(value);
+    }
+    let (SimdWidth::Expr(length), Some(actual_width)) = (width, actual_width) else {
+        return;
+    };
+    if let Some(reference) = length.as_decl_ref() {
+        let value = match actual_width {
+            SimdWidth::Known(count) => mojito_types::types::simd_length_value(count),
+            SimdWidth::Expr(actual) => actual
+                .as_constant()
+                .cloned()
+                .unwrap_or(CtValue::Expr(actual)),
+        };
+        out.entry(reference.name.to_string()).or_insert(value);
+    } else if let SimdWidth::Expr(actual) = &actual_width {
+        solve_applied_args(length, actual, out);
     }
 }
 

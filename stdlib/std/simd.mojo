@@ -3,7 +3,7 @@
 # initializers `__init__(out self)`, the `Intable` and `IntableRaising`
 # conversions, the cast from `SIMD[other_dtype, Self.length]`, the
 # `SIMDLength` splat, `from_int=`, the `Floatable` and `FloatableRaising`
-# conversions, `Bool`, `fill=`, `Int` from an `index`, the
+# conversions, `Bool`, `fill=`, `mlir_value=`, `Int` from an `index`, the
 # `Scalar[Self.dtype]` splat, the element list, and `from_bits=`, and its instance
 # `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
 # `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, the three `__pow__`
@@ -34,7 +34,7 @@
 # format in the compiler rather than calling `write_to` and
 # `write_repr_to` as the VM's do (R1664). So are the
 # other initializers:
-# `mlir_value=` (R1591) and `IntLiteral` and `FloatLiteral` (R1507); `py=` is not ported. Until
+# `IntLiteral` and `FloatLiteral` (R1507); `py=` is not ported. Until
 # then a construction takes a declared overload only where its arguments
 # select one at the pin. The element list omits upstream's
 # `assert Self.length == len(elems)`, which the pin's default `-D ASSERT`
@@ -733,6 +733,12 @@ struct SIMD[dtype: DType, length: SIMDLength](
         self._mlir_value = __mlir_op.`pop.simd.splat`[
             _type=Self._Mask._mlir_type
         ](fill._mlir_value)
+
+    @doc_hidden
+    @always_inline("builtin")
+    def __init__(out self, *, mlir_value: Self._mlir_type):
+        _simd_construction_checks[Self.dtype, Self.length]()
+        self._mlir_value = mlir_value
 
     @doc_hidden
     @always_inline("builtin")

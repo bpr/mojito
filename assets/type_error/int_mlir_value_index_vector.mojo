@@ -1,4 +1,4 @@
-# expect: argument 'mlir_value'
+# expect: no constructor overload matches
 # The initializer from an `index` refines `out self` to `Int`, a one-lane
 # vector, so a two-lane vector takes only its own `!kgen.simd` storage.
 def main():

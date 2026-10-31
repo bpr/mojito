@@ -212,19 +212,6 @@ impl Checker {
                 self.record_bracket_attributes(span.clone(), attributes);
                 self.infer_builtin_copy_construction(span, name, &ty, &kwargs[0])
             }
-            // `SIMD[dt, n](mlir_value=v)`: upstream's storage initializer.
-            _ if args.is_empty()
-                && matches!(kwargs, [keyword] if keyword.name == "mlir_value")
-                && let Some((ty, attributes)) = self.builtin_copy_constructed(name, param_args)
-                && simd_slots(&ty).is_some() =>
-            {
-                self.record_bracket_attributes(span.clone(), attributes);
-                self.infer_storage_construction(span, name, &ty, &kwargs[0])
-            }
-            // `SIMD(mlir_value=v)`, both parameters inferred from `v`.
-            "SIMD" if let Some(storage) = lone_storage_keyword(param_args, args, kwargs) => {
-                self.infer_inferred_storage_construction(span, name, storage)
-            }
             // `Bool(value=i)`: upstream's initializer from an `i1`, or its
             // `Boolable` initializer at a `Bool`, the overload the keyword
             // also names.
@@ -459,7 +446,7 @@ impl Checker {
     /// declares, or `None` when it is the checker's rule's: its arguments
     /// select an overload not declared yet
     /// ([`Self::binds_undeclared_overload`]), or no declared one matches
-    /// and a rule serves its keywords (`mlir_value=`, `copy=`) or its one
+    /// and a rule serves its keyword (`copy=`) or its one
     /// positional argument into a width not known here (`SIMD[dt, _]`,
     /// R1544); any other miss is the declared selection's error, so
     /// `Int8(x)` over a struct whose `__int__` raises but which does not
@@ -498,9 +485,7 @@ impl Checker {
                     .and_then(|instance| simd_slots(&instance))
                     .is_none_or(|(_, width)| width.known().is_none());
             }
-            kwargs
-                .iter()
-                .all(|keyword| matches!(keyword.name.as_str(), "mlir_value" | "copy"))
+            kwargs.iter().all(|keyword| keyword.name == "copy")
         };
         // An explicit initializer list binds only a declared initializer.
         let explicit_own = self.spelled_initializer_args.borrow().contains_key(span);
@@ -575,22 +560,15 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match instance.kind() {
-            // `copy=` and an undeclared `mlir_value=` are the checker's
-            // rules for the instance, as for a spelled `SIMD[dt, n]`.
+            // `copy=` is the checker's rule for the instance, as for a
+            // spelled `SIMD[dt, n]`.
             kind if kind.is_simd()
                 && args.is_empty()
                 && let [keyword] = kwargs
-                && matches!(keyword.name.as_str(), "mlir_value" | "copy") =>
+                && keyword.name == "copy" =>
             {
                 let name = mojito_types::types::SIMD_TYPE_NAME;
-                if keyword.name == "copy" {
-                    self.infer_builtin_copy_construction(span.clone(), name, instance, keyword)
-                } else {
-                    self.declared_simd_construction(span, Some(instance), &[], args, kwargs)
-                        .unwrap_or_else(|| {
-                            self.infer_storage_construction(span.clone(), name, instance, keyword)
-                        })
-                }
+                self.infer_builtin_copy_construction(span.clone(), name, instance, keyword)
             }
             kind if let Some((dtype, width)) = kind.as_simd() => self
                 .declared_simd_construction(span, Some(instance), &[], args, kwargs)
@@ -1023,29 +1001,12 @@ impl Checker {
         Ok(ty.clone())
     }
 
-    /// `SIMD(mlir_value=v)`: the storage construction whose type is the
-    /// vector of `v`'s `!kgen.simd` type.
-    fn infer_inferred_storage_construction(
-        &self,
-        span: SourceSpan,
-        name: &str,
-        storage: &mojito_ast::ast::KwArg,
-    ) -> Result<Ty, TypeError> {
-        let found = self.infer(&storage.value)?;
-        let ty =
-            mojito_types::types::storage_simd(&found).ok_or_else(|| TypeError::TypeMismatch {
-                expected: "`!kgen.simd` storage".to_string(),
-                found: found.to_string(),
-                context: format!("argument 'mlir_value' of '{name}'"),
-            })?;
-        self.infer_storage_construction(span, name, &ty, storage)
-    }
-
-    /// `Name(mlir_value=v)` on a SIMD type, or `Bool(value=i)` at `ty` the
-    /// `i1` or `Bool` it takes: upstream's initializer from the
-    /// `!kgen.simd` storage of the type, or from the `i1` both backends hold
-    /// as a `Bool`, so the argument must already be that storage, never a
-    /// literal, a value of the type, or another width or dtype.
+    /// `Bool(mlir_value=s)` at the one-lane `bool` vector, or
+    /// `Bool(value=i)` at `ty` the `i1` or `Bool` it takes: upstream's
+    /// initializer from the `!kgen.scalar<bool>` storage, or from the `i1`
+    /// both backends hold as a `Bool`, so the argument must already be that
+    /// storage, never a literal, a value of the type, or another width or
+    /// dtype.
     fn infer_storage_construction(
         &self,
         span: SourceSpan,
@@ -1093,12 +1054,6 @@ impl Checker {
             "Int" | "UInt" | "Bool" | "Float64" if param_args.is_empty() => {
                 scalar_type_name(name).map(|ty| (ty, Vec::new()))
             }
-            // `Self(mlir_value=v)` inside `SIMD`'s own members.
-            "Self" if param_args.is_empty() && self.lookup("Self").is_none() => self
-                .self_ty
-                .clone()
-                .filter(|ty| simd_slots(ty).is_some())
-                .map(|ty| (ty, Vec::new())),
             _ if param_args.is_empty() => {
                 Dtype::from_scalar_alias(name).map(|dtype| (simd_ty(dtype, 1), Vec::new()))
             }
@@ -2831,19 +2786,4 @@ fn reject_generic_function_value(
         });
     }
     Ok(())
-}
-
-/// The lone `mlir_value=` keyword of a bracketless storage construction
-/// (`SIMD(mlir_value=v)`).
-fn lone_storage_keyword<'a>(
-    param_args: &[mojito_ast::ast::ParamArg],
-    args: &[Expr],
-    kwargs: &'a [mojito_ast::ast::KwArg],
-) -> Option<&'a mojito_ast::ast::KwArg> {
-    match kwargs {
-        [keyword] if keyword.name == "mlir_value" && args.is_empty() && param_args.is_empty() => {
-            Some(keyword)
-        }
-        _ => None,
-    }
 }

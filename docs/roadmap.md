@@ -11105,36 +11105,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1591 `SIMD`'s `mlir_value=` initializer is a checker rule that
-  binds from a concrete storage type**
-
-  `SIMD(mlir_value=v._mlir_value)` over a concrete `v: SIMD[DType.int32,
-  4]` prints the vector in Mojito, where the pin rejects it ("no matching
-  function in initialization"). An annotated `var`, a `return`, and an
-  argument position are rejected at the pin too.
-  - Upstream's `__init__(out self, *, mlir_value: Self._mlir_type)` binds
-    `dtype` and `length` only where the argument's storage type spells both
-    through binders (`!kgen.simd<width._mlir_value, dtype._mlir_value>` in a
-    body generic over them, as upstream's `cast` and `select` build it).
-    A concrete slot binds nothing, and neither does a literal width inside
-    a generic body (`SIMD[dtype, 2]._mlir_type`).
-  - Mojito's stand-ins: `lone_storage_keyword` and
-    `infer_inferred_storage_construction`, the `SIMD[dt, n](mlir_value=v)`
-    arm of `infer_unbound_call`, and `builtin_copy_constructed` for
-    `Self(mlir_value=…)` (`checker/call_inference.rs`).
-  - Declaring the overload once broke the inlined `cast` body's
-    per-instance re-check, its call and declaration spelling the
-    parameter differently; an overloaded method is now named from its
-    typed signature at both ends, so recheck that body first.
-  - Then a `!kgen.simd` parameter pattern unifies a slot only with a
-    binder-valued slot, the stand-ins retire, and the concrete-`v` program
-    becomes a `type_error` fixture.
-  - Keep the template's selection in a per-instance re-check, where the
-    slots are concrete.
-  - Found while landing R1555 (2026-10-28).
-  - Depends on R1769.
-  - Model: Fable, Planned.
-
 - [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a
   lifted thunk, where upstream folds their `pop.cmp` bodies**
 

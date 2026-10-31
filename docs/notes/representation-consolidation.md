@@ -40,7 +40,7 @@ command cannot use both.
 2. **`SIMD` as the declared struct everywhere** (the port's end).
    - R1557 makes `SIMD` and its aliases the declared struct in the
      checker, after R1556 (no `TyKind::Simd` pattern matches outside
-     `mojito-types`), R1591 (after R240), R1593, R1399,
+     `mojito-types`), R1593, R1399,
      R1507, R1662, R1671, R1673, and R1675.
    - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
      both backends.

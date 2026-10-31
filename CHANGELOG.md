@@ -2327,6 +2327,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `SIMD`'s `mlir_value=` initializer is upstream's declared overload, and a
+  bracketless `SIMD(mlir_value=s)` infers `dtype` and `length` only from
+  storage a binder spells, as the pin's unifier does (R1591). Over a
+  concrete vector's storage, or a literal width in a generic body, it is
+  now a type error, as at the pin, where Mojito used to accept it.
 - A `SIMD` construction no longer checks its declared initializers twice
   when the checker's rule cannot serve it, which made nested constructions
   such as `Int(f(Scalar[dt](x)))` cost twice per level; the bundled
