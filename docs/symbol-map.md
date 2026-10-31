@@ -140,7 +140,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   of that parameter expression (`local_comptime_parameters`, and the
   block-scoped `Checker.comptime_dtypes` read through
   `Checker::comptime_dtype` for a `DType`). `check_def` checks one function declaration — the
-  `StmtKind::Def` arm delegates to it, and lambda mode (`lambda = true`)
+  `StmtKind::Def` arm delegates to it, resolving the signature
+  (`def_signature`) and binding the name (`bind_def`) before the body;
+  `Checker::declare_module_functions`, `check_program`'s
+  `declarations.functions` phase, binds every module function's signature
+  ahead of any body (`predeclared_functions`), and its statement re-resolves
+  the signature without binding again, and lambda mode (`lambda = true`)
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
   A trait member (`checking_trait_member`) may take a `deinit` receiver,
   and a parameter named `self` is writable by its own convention.
@@ -2855,8 +2860,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   The two modules import each other, as upstream's do, so the link hoists
   `_plugin`'s declarations ahead of `CompilationTarget`, which the check's
   order-independent passes (`Checker::check_program`'s
-  `settle_deferred_shells`, `settle_deferred_traits`, and
-  `types_await_declarations`) resolve. The elaborator decides a
+  `settle_deferred_shells`, `settle_deferred_traits`,
+  `types_await_declarations`, and `declare_module_functions`) resolve. The elaborator decides a
   `conforms_to` over a type that nests the current target
   (`Specializer::answer_conformance_subjects`, `decided_conformance`).
 - Upstream's MLIR builtin `__mlir_type.index` is `TyKind::Index`

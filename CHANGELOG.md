@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- File-scope functions resolve in any order, as at the pin (R393, R127):
+  the check declares every module `def` before any body, so a body, a
+  method, a body's `comptime` binding or `comptime assert`, and a module
+  constant call a `def` declared below them, functions recurse mutually,
+  and an overload set completed below a call selects among all its
+  overloads (`assets/ok/def_calls_later_def.mojo`). A nested `def` still
+  binds at its statement, as at the pin. The bundled library takes
+  upstream's declaration order in `std.simd`, `std.sys.info`,
+  `std.math.math`, and `std.math.polynomial`, `std.range` calls
+  `std.math.fma` as upstream's does, and `std.math` gains upstream's
+  `modf` (`assets/ok/math_modf.mojo`).
 - `std.simd` gains upstream's `_floor`, `_modf_scalar`, and `_modf`
   (R1722), verbatim over `FPUtils` and `from_bits=`: they run on both
   backends and at compile time with the pin's output, `_floor`'s bit-mask

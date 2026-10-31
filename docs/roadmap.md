@@ -3363,45 +3363,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R592 A module function is visible only after its statement**
+- [ ] **R592 A module `comptime` alias read from a module still loading is
+  undefined**
 
-  Problem: a struct method calling a module `def` declared after the
-  struct stops with "Undefined variable 'later'", where the pin prints `2`.
-  - Probe: `struct S` whose `go` returns `later(self.x)`, with
-    `def later(x: Int) -> Int` declared after it.
-  - The check binds a module `def` at its statement in the source-order
-    walk, and nothing predeclares one, as structs' and traits' signatures
-    are.
-  - A trait default reads every module function (R551), since the check
-    checks it after the walk.
-  - Probe: `stdlib/std/range.mojo`'s float `__next__` calls the
-    `SIMD.fma` method where upstream imports `std.math.fma`. The import
-    closes the cycle `std.range` → `std.math` → `std.sys` → … →
-    `std.collections.list` → `std.range`, and either module's methods then
-    precede the other's `def`.
-  - Probe: `from std.math import max` in `builtin/builtin_slice.mojo` or
-    `os/path/path.mojo` stops with "Undefined variable
-    '__module$std$math$math$max'", since `std.math` links after them.
-  - Probe: `std/math/math.mojo` declares `copysign` after `abs`, which it
-    calls, where upstream's precedes `iota`: declared first, it stops with
-    "Undefined variable '__module$std$math$math$abs'".
+  Problem: when a module reads a `comptime` alias of a module that is
+  still loading (an import cycle), the alias is undefined, where the pin
+  resolves it.
+  - Linking binds the name, but the check binds a module constant at its
+    statement in the source-order walk. A module function is declared
+    ahead of every body; a constant is not.
   - Probe: moving `std/math/__init__.mojo`'s `from std.utils.numerics
     import …` ahead of `.constants`, upstream's position, stops packaging
-    with "Undefined variable '__module$std$sys$info$simd_width_of'":
-    `std.sys.info` is loading when `std.math.math` links, so `ldexp`
-    precedes `simd_width_of`. Restore upstream's order when this lands.
-  - Probe: package `pkg` whose `__init__` imports `.b` and declares `def
-    fa`, where `b.mojo` calls `fa` through `from pkg import fa`, stops with
-    "Undefined variable '__module$pkg$fa'", where the pin prints `2`.
-  - Probe: `std.math.modf`, upstream's `return _modf(x)` with `from
-    std.simd import _modf` in `std/math/math.mojo`, stops packaging with
-    "Undefined variable '__module$std$simd$_modf'": `std.simd` imports
-    `std.math` first, so `std.math.math` links before `_modf`. Any import
-    moved ahead of `std.math` in `std.simd` instead stops at
-    `std/sys/_io.mojo`'s `comptime stdin = RawFileDescriptor(0)`, "not an
-    associated comptime expression", since `std.io` is then still loading.
-    Port `modf` and re-export it from `std/math/__init__.mojo` when this
-    lands.
+    with "Undefined variable '__module$std$$plugin$$impl$CurrentPlugin'":
+    `std.math.math` reads `CurrentPlugin` while `std._plugin` is loading.
+    Restore upstream's order when this lands.
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4137,46 +4112,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (2026-10-01).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R127 A method cannot call a generic `def` declared after its
-  struct**
-
-  Problem: `def size(self) -> Int: return tally(self.items)` with
-  `def tally[T: Copyable & Deinitable](items: List[T]) -> Int` declared below
-  the struct prints `1` at the pin and stops in Mojito with "Undefined
-  variable 'tally'".
-  - The struct may be generic or plain.
-  - The same `def` declared above the struct runs.
-  - Probe: `conformance/probes/method_calls_later_generic_def.mojo`.
-  - Probe: `simd.mojo` declares `_scalar_repr_alias` and `_write_scalar`
-    above `SIMD`, where upstream's follow it; below it, `write_to` stops
-    with "Undefined variable '__module$std$simd$_write_scalar'".
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R393 A `def` cannot call a `def` declared below it**
-
-  Problem: `def a() -> Int: return b(2)` above `def b(n: Int) -> Int` stops
-  with "Undefined variable 'b'", where the pin runs it.
-  - Module functions are declared in source order, each as its body is
-    checked (`check_block`, `checker/statements.rs`).
-  - A signature or a field type that applies a function declared below it
-    already runs, since the functions a compile-time call applies are
-    collected before any declaration (`applicable_functions`,
-    `checker/comptime_validation.rs`).
-  - Probe: a body's compile-time call stops the same way: `comptime s =
-    describe(n)` or `comptime assert n > 0, describe(n)` in `def f[n:
-    Int]()` above `def describe(n: Int) -> String`, which the pin runs.
-  - Probe: `stdlib/std/sys/info.mojo` declares `is_32bit` and `is_64bit`
-    after `simd_width_of`, where upstream's precede `simd_bit_width`: above
-    `size_of`, they stop the bundled library with "Undefined variable
-    '__module$std$sys$info$size_of'".
-  - Probe: upstream's `std.math` `exp` calls `_exp_impl`, declared below
-    it, whose non-`float32`/`float64` arm calls `exp` back, so no order
-    compiles (R1743).
-  - Found while landing a function applied in a signature (2026-10-06).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R394 A requirement with its own value parameter cannot be called
   through a bound**
@@ -10308,7 +10243,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `lower_min_max_builtin` and `lower_abs_builtin` with their `calls.rs`
     arms. `abs`'s elaborator rewrite (`mono/specializer.rs`) goes with it.
   - Found while landing R791 (2026-10-14).
-  - Depends on R592 (the `max` callers only: `std.math` links after them).
+  - `from std.math import max` in `builtin/builtin_slice.mojo` and
+    `os/path/path.mojo` packages, so `std.math` links ahead of them.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R492 `ParameterList.get_span` addresses its elements through a
@@ -10966,12 +10903,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Fixture: `assets/ok/math_exp.mojo` (a 16-lane `float32` input of
     `0.5` keeps the AVX-512 arm's output host-independent), and
     `assets/type_error/math_exp_integral_dtype.mojo`.
-  - Blockers: `exp` and `_exp_impl` call each other (R393), and
-    `_exp_taylor`'s `coefficients[:]` is no compile-time application
-    (R1742).
+  - Blocker: `_exp_taylor`'s `coefficients[:]` is no compile-time
+    application (R1742).
   - Plan: `R1713-std-math-has-no-exp-where-plan.md` (Slices 2 and 3; Slice
     1 and `ldexp` landed with R1713).
-  - Depends on R393, R1742, and R1747.
+  - Depends on R1742 and R1747.
   - Model: Fable, Not Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
@@ -10981,8 +10917,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Float64(0.5)` prints the host's `powf` (`1.4142135623730951`), where the
   pin prints `1.4142135623734946` through `_powf_scalar`'s `exp(log)`.
   - Port the three `__pow__` overloads, `__rpow__`, `__ipow__` (`rhs:
-    Int`), `_pow`, `_powf`, `_powf_scalar`, and `_powi` verbatim, above
-    `struct SIMD` in callee-first order (R127, R393).
+    Int`), `_pow`, `_powf`, `_powf_scalar`, and `_powi` verbatim, in
+    upstream's positions below `struct SIMD`.
   - Route `**` to `a.__pow__(b)` else `b.__rpow__(a)`, and `**=` to
     `__ipow__`, as `+` and `+=` are routed.
   - `FloatLiteral` has no `__pow__`: `4.0 ** 0.5` materializes both to

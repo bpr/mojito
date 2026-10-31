@@ -9,6 +9,7 @@
 # subset's debug asserts.
 
 from std.iter import Iterable, Iterator, StopIteration
+from std.math import fma
 
 def _range_length(start: Int, stop: Int, step: Int) -> Int:
     if step == 0:
@@ -200,9 +201,7 @@ struct _FloatStridedRange[dtype: DType = DType.float64](
     def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
         if self.idx >= self.count:
             raise StopIteration()
-        # Upstream calls `std.math.fma` here, whose body is this call; the
-        # import cycle it closes needs R592.
-        var result = Scalar[Self.dtype](self.idx).fma(self.step, self.start)
+        var result = fma(Scalar[Self.dtype](self.idx), self.step, self.start)
         self.idx += 1
         return result
 

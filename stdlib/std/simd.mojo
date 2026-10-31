@@ -22,9 +22,7 @@
 # variadic `shuffle` overloads, `slice`, `insert`, `join`, `interleave`,
 # `split`, `deinterleave`, `select`, `write_to`, and `write_repr_to`, with
 # the `FastMathFlag` enum `fma` takes, and the module's `_scalar_repr_alias`,
-# `_write_scalar`, `_floor`, `_modf_scalar`, and `_modf`, the last three
-# above the struct and callee first, where upstream's follow it (R127,
-# R393). The other
+# `_write_scalar`, `_floor`, `_modf_scalar`, and `_modf`. The other
 # members are still served by the compiler or undeclared (R1623, R1567,
 # R1581, R1582, R1585, R1586, R1675; the two `IndexList` `shuffle`
 # overloads are R1675's), `write_padded` is not ported
@@ -47,9 +45,7 @@
 # (R1635), and its float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4`
 # branches (R65): Mojito has none of those targets or dtypes.
 # `_scalar_repr_alias` omits the `int128`, `uint128`, `int256`, `uint256`,
-# `bfloat16`, `float4`, and `float8` cases (R65). It and `_write_scalar`
-# precede the struct, where upstream's follow it, since a method cannot
-# call a function declared below its struct (R127). `Optional` and
+# `bfloat16`, `float4`, and `float8` cases (R65). `Optional` and
 # `StaticString` are imported, which upstream's prelude provides (R894).
 # Omitted: the `@lldb_formatter_wrapping_type` decorator
 # (`std.utils._visualizers`) and `CoordLike`'s static `__len__`
@@ -160,111 +156,6 @@ def _simd_construction_checks[dtype: DType, size: SIMDLength]():
     # comptime assert (
     #     size <= 2**15
     # ), "simd size is too large and must be less than 2^15"
-
-
-def _scalar_repr_alias[dtype: DType]() -> Optional[StaticString]:
-    """Returns the scalar type alias name for a `dtype`, or `None`.
-
-    This is used by `SIMD.write_repr_to` to print scalars using their friendly
-    alias (e.g. `UInt32(4)`) instead of the verbose `SIMD[.uint32, 1](4)`
-    form.
-
-    The set of `dtype`s handled here must stay in sync with the `Scalar`
-    aliases defined near the top of this file (e.g. `Int32 = Scalar[...]`), and
-    parallels `DType.write_to`, the other exhaustive per-`dtype` chain that must
-    be updated when a `dtype` is added. A `dtype` with no scalar alias returns
-    `None` and keeps the verbose form: `DType.bool` is excluded because
-    `SIMD[.bool, 1]` is distinct from the `Bool` struct, and
-    `DType.float8_e3m4` has no `Scalar` alias. A `dtype` matching none of these
-    cases fails a `comptime` assertion, so a newly added `dtype` is caught here
-    rather than silently losing its alias.
-
-    Parameters:
-        dtype: The `DType` to look up the scalar alias name for.
-
-    Returns:
-        The scalar type alias name for `dtype`, or `None` when the `dtype` has
-        no scalar alias.
-    """
-    comptime match dtype:
-        case .int:
-            return StaticString("Int")
-        case .uint:
-            return StaticString("UInt")
-        case .int8:
-            return StaticString("Int8")
-        case .uint8:
-            return StaticString("UInt8")
-        case .int16:
-            return StaticString("Int16")
-        case .uint16:
-            return StaticString("UInt16")
-        case .int32:
-            return StaticString("Int32")
-        case .uint32:
-            return StaticString("UInt32")
-        case .int64:
-            return StaticString("Int64")
-        case .uint64:
-            return StaticString("UInt64")
-        case .float16:
-            return StaticString("Float16")
-        case .float32:
-            return StaticString("Float32")
-        case .float64:
-            return StaticString("Float64")
-        case .bool:
-            return None
-        case _:
-            comptime assert False, (
-                "unhandled dtype in `_scalar_repr_alias`: add a `Scalar` alias"
-                " branch or an explicit `None` case"
-            )
-
-
-def _write_scalar[
-    dtype: DType,
-    W: Writer,
-    //,
-](mut writer: W, value: Scalar[dtype]):
-    comptime if dtype == DType.bool:
-        if value:
-            writer.write_string("True")
-        else:
-            writer.write_string("False")
-
-    elif dtype.is_half_float():
-        # `_write_float` widens everything but `float64` and the `float8`
-        # variants to `Float32` before running dragonbox, so a half float and
-        # its `Float32` widening already format to identical text. Widening here
-        # instead lets `float16` and `bfloat16` share one `_write_float`
-        # instantiation with `float32` rather than each getting their own copy of
-        # the formatter, which dominates the compile cost of printing SIMD
-        # values. `test_simd.test_write_half_float_matches_float32` pins the
-        # equivalence.
-        _write_float(writer, value.cast[DType.float32]())
-
-    elif dtype.is_half_float():
-        # `_write_float` widens everything but `float64` and the `float8`
-        # variants to `Float32` before running dragonbox, so a half float and
-        # its `Float32` widening already format to identical text. Widening here
-        # instead lets `float16` and `bfloat16` share one `_write_float`
-        # instantiation with `float32` rather than each getting their own copy of
-        # the formatter, which dominates the compile cost of printing SIMD
-        # values. `test_simd.test_write_half_float_matches_float32` pins the
-        # equivalence.
-        _write_float(writer, value.cast[DType.float32]())
-
-    elif dtype.is_floating_point():
-        _write_float(writer, value)
-
-    # TODO(MSTDL-1039): bring in performant integer to string formatter
-    elif dtype.is_integral():
-        _ = _write_int(writer, value)
-    else:
-        comptime assert (
-            False
-        ), "unable to write dtype, only integral/float/bool supported"
 
 
 # ===----------------------------------------------------------------------=== #
@@ -405,66 +296,6 @@ struct FastMathFlag(EnumLike, Equatable, ImplicitlyCopyable, RegisterPassable):
             return __mlir_attr.`#pop.fmf<fast>`
 
         return __mlir_attr.`#pop.fmf<none>`
-
-
-# ===----------------------------------------------------------------------=== #
-# floor
-# ===----------------------------------------------------------------------=== #
-def _floor(x: SIMD) -> type_of(x):
-    comptime if x.dtype.is_integral():
-        return x
-
-    comptime integral_type = FPUtils[x.dtype].integral_type
-    comptime bitwidth = bit_width_of[x.dtype]()
-    comptime exponent_width = FPUtils[x.dtype].exponent_width()
-    comptime mantissa_width = FPUtils[x.dtype].mantissa_width()
-    comptime mask = FPUtils[x.dtype].exponent_mask()
-    comptime bias = FPUtils[x.dtype].exponent_bias()
-    comptime shift_factor = bitwidth - exponent_width - 1
-
-    var bits = x._to_bits_signed()
-    comptime BitsType = type_of(bits)
-    var e = ((bits & BitsType(mask)) >> BitsType(mantissa_width)) - BitsType(
-        bias
-    )
-    bits = e.lt(BitsType(shift_factor)).select(
-        bits & type_of(bits)(~((1 << (BitsType(shift_factor) - e)) - 1)),
-        bits,
-    )
-    return type_of(x)(from_bits=bits)
-
-
-def _modf_scalar(x: Scalar) -> Tuple[type_of(x), type_of(x)]:
-    comptime assert (
-        x.dtype.is_floating_point()
-    ), "the type must be floating point"
-    if x < 1:
-        if x < 0:
-            var res = _modf_scalar(-x)
-            return (-res[0], -res[1])
-        if x == 0:
-            return (x, x)
-        return (Scalar[x.dtype](0), x)
-
-    var f = _floor(x)
-    return (f, x - f)
-
-
-def _modf(x: SIMD) -> Tuple[type_of(x), type_of(x)]:
-    comptime assert x.dtype.is_numeric(), "the type must be numeric"
-
-    comptime if x.dtype.is_integral():
-        return (x, {0})
-
-    var result_int: type_of(x) = {}
-    var result_frac: type_of(x) = {}
-
-    comptime for i in range(x.length):
-        var tup = _modf_scalar(x[i])
-        result_int[i] = tup[0]
-        result_frac[i] = tup[1]
-
-    return (result_int, result_frac)
 
 
 # ===----------------------------------------------------------------------=== #
@@ -2393,3 +2224,173 @@ struct SIMD[dtype: DType, length: SIMDLength](
             false_case._mlir_value,
         )
         return SIMD(mlir_value=res)
+
+
+# ===----------------------------------------------------------------------=== #
+# modf
+# ===----------------------------------------------------------------------=== #
+
+
+def _modf_scalar(x: Scalar) -> Tuple[type_of(x), type_of(x)]:
+    comptime assert (
+        x.dtype.is_floating_point()
+    ), "the type must be floating point"
+    if x < 1:
+        if x < 0:
+            var res = _modf_scalar(-x)
+            return (-res[0], -res[1])
+        if x == 0:
+            return (x, x)
+        return (Scalar[x.dtype](0), x)
+
+    var f = _floor(x)
+    return (f, x - f)
+
+
+def _modf(x: SIMD) -> Tuple[type_of(x), type_of(x)]:
+    comptime assert x.dtype.is_numeric(), "the type must be numeric"
+
+    comptime if x.dtype.is_integral():
+        return (x, {0})
+
+    var result_int: type_of(x) = {}
+    var result_frac: type_of(x) = {}
+
+    comptime for i in range(x.length):
+        var tup = _modf_scalar(x[i])
+        result_int[i] = tup[0]
+        result_frac[i] = tup[1]
+
+    return (result_int, result_frac)
+
+
+# ===----------------------------------------------------------------------=== #
+# floor
+# ===----------------------------------------------------------------------=== #
+def _floor(x: SIMD) -> type_of(x):
+    comptime if x.dtype.is_integral():
+        return x
+
+    comptime integral_type = FPUtils[x.dtype].integral_type
+    comptime bitwidth = bit_width_of[x.dtype]()
+    comptime exponent_width = FPUtils[x.dtype].exponent_width()
+    comptime mantissa_width = FPUtils[x.dtype].mantissa_width()
+    comptime mask = FPUtils[x.dtype].exponent_mask()
+    comptime bias = FPUtils[x.dtype].exponent_bias()
+    comptime shift_factor = bitwidth - exponent_width - 1
+
+    var bits = x._to_bits_signed()
+    comptime BitsType = type_of(bits)
+    var e = ((bits & BitsType(mask)) >> BitsType(mantissa_width)) - BitsType(
+        bias
+    )
+    bits = e.lt(BitsType(shift_factor)).select(
+        bits & type_of(bits)(~((1 << (BitsType(shift_factor) - e)) - 1)),
+        bits,
+    )
+    return type_of(x)(from_bits=bits)
+
+
+def _scalar_repr_alias[dtype: DType]() -> Optional[StaticString]:
+    """Returns the scalar type alias name for a `dtype`, or `None`.
+
+    This is used by `SIMD.write_repr_to` to print scalars using their friendly
+    alias (e.g. `UInt32(4)`) instead of the verbose `SIMD[.uint32, 1](4)`
+    form.
+
+    The set of `dtype`s handled here must stay in sync with the `Scalar`
+    aliases defined near the top of this file (e.g. `Int32 = Scalar[...]`), and
+    parallels `DType.write_to`, the other exhaustive per-`dtype` chain that must
+    be updated when a `dtype` is added. A `dtype` with no scalar alias returns
+    `None` and keeps the verbose form: `DType.bool` is excluded because
+    `SIMD[.bool, 1]` is distinct from the `Bool` struct, and
+    `DType.float8_e3m4` has no `Scalar` alias. A `dtype` matching none of these
+    cases fails a `comptime` assertion, so a newly added `dtype` is caught here
+    rather than silently losing its alias.
+
+    Parameters:
+        dtype: The `DType` to look up the scalar alias name for.
+
+    Returns:
+        The scalar type alias name for `dtype`, or `None` when the `dtype` has
+        no scalar alias.
+    """
+    comptime match dtype:
+        case .int:
+            return StaticString("Int")
+        case .uint:
+            return StaticString("UInt")
+        case .int8:
+            return StaticString("Int8")
+        case .uint8:
+            return StaticString("UInt8")
+        case .int16:
+            return StaticString("Int16")
+        case .uint16:
+            return StaticString("UInt16")
+        case .int32:
+            return StaticString("Int32")
+        case .uint32:
+            return StaticString("UInt32")
+        case .int64:
+            return StaticString("Int64")
+        case .uint64:
+            return StaticString("UInt64")
+        case .float16:
+            return StaticString("Float16")
+        case .float32:
+            return StaticString("Float32")
+        case .float64:
+            return StaticString("Float64")
+        case .bool:
+            return None
+        case _:
+            comptime assert False, (
+                "unhandled dtype in `_scalar_repr_alias`: add a `Scalar` alias"
+                " branch or an explicit `None` case"
+            )
+
+
+def _write_scalar[
+    dtype: DType,
+    W: Writer,
+    //,
+](mut writer: W, value: Scalar[dtype]):
+    comptime if dtype == DType.bool:
+        if value:
+            writer.write_string("True")
+        else:
+            writer.write_string("False")
+
+    elif dtype.is_half_float():
+        # `_write_float` widens everything but `float64` and the `float8`
+        # variants to `Float32` before running dragonbox, so a half float and
+        # its `Float32` widening already format to identical text. Widening here
+        # instead lets `float16` and `bfloat16` share one `_write_float`
+        # instantiation with `float32` rather than each getting their own copy of
+        # the formatter, which dominates the compile cost of printing SIMD
+        # values. `test_simd.test_write_half_float_matches_float32` pins the
+        # equivalence.
+        _write_float(writer, value.cast[DType.float32]())
+
+    elif dtype.is_half_float():
+        # `_write_float` widens everything but `float64` and the `float8`
+        # variants to `Float32` before running dragonbox, so a half float and
+        # its `Float32` widening already format to identical text. Widening here
+        # instead lets `float16` and `bfloat16` share one `_write_float`
+        # instantiation with `float32` rather than each getting their own copy of
+        # the formatter, which dominates the compile cost of printing SIMD
+        # values. `test_simd.test_write_half_float_matches_float32` pins the
+        # equivalence.
+        _write_float(writer, value.cast[DType.float32]())
+
+    elif dtype.is_floating_point():
+        _write_float(writer, value)
+
+    # TODO(MSTDL-1039): bring in performant integer to string formatter
+    elif dtype.is_integral():
+        _ = _write_int(writer, value)
+    else:
+        comptime assert (
+            False
+        ), "unable to write dtype, only integral/float/bool supported"

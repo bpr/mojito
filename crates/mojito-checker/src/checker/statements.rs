@@ -79,8 +79,8 @@ impl Checker {
         // Same-module declarations resolve order-independently: every
         // top-level struct registers its shell (name and parameters), then
         // every trait, then every struct's field/associated types, then every
-        // struct's method signatures — all before the source-order walk below
-        // checks conformance and method bodies. A struct field or method
+        // struct's method signatures, then every module function — all before
+        // the source-order walk below checks conformance and bodies. A struct field or method
         // signature may therefore reference a struct declared later in its
         // module (an iterator holding `ref[o] List[T]` above `List` itself).
         // Trait names predeclare before the shells: a struct parameter's
@@ -312,6 +312,9 @@ impl Checker {
             }
         }
         drop(phase);
+        let phase = timing::span("declarations.functions");
+        self.declare_module_functions(stmts);
+        drop(phase);
         let phase = timing::span("bodies");
         let result = self.check_module_block(stmts);
         drop(phase);
@@ -355,7 +358,7 @@ impl Checker {
 
     /// Bind the module constant `statement` declares ahead of it when the
     /// check lifts its initializer and the initializer types here: `true`
-    /// once the constant is bound. An initializer naming what is not
+    /// once the constant is bound. An initializer naming a constant not
     /// declared yet waits for a later declaration, and its own statement
     /// reports one that never is; any other rejection of the initializer is
     /// the constant's, reported here.
@@ -2782,27 +2785,58 @@ impl Checker {
     /// exactly as a method's do (`enclosing_origin_param`), indexed after any
     /// enclosing struct and method binders.
     pub(super) fn check_def(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
+        self.in_def_context(stmt, |this| this.check_def_inner(stmt, lambda))
+    }
+
+    /// Run `check` with `stmt`'s own parameters as the enclosing ones, and
+    /// a parameter named `self` as an ordinary binding, whose own convention
+    /// decides whether it is writable.
+    fn in_def_context<R>(&mut self, stmt: &Stmt, check: impl FnOnce(&mut Self) -> R) -> R {
         let StmtKind::Def {
             type_params,
             params,
             ..
         } = &stmt.kind
         else {
-            return self.check_def_inner(stmt, lambda);
+            return check(self);
         };
         let enclosing = self.enclosing_type_params.len();
         self.enclosing_type_params
             .extend(type_params.iter().cloned());
-        // A parameter named `self` is an ordinary binding, whose own
-        // convention decides whether it is writable.
         let saved_self_mutable = self.self_mutable;
         if params.iter().any(|param| param.name == "self") {
             self.self_mutable = true;
         }
-        let result = self.check_def_inner(stmt, lambda);
+        let result = check(self);
         self.self_mutable = saved_self_mutable;
         self.enclosing_type_params.truncate(enclosing);
         result
+    }
+
+    /// Declare every module-level `def` of `stmts` before any body is
+    /// checked, as the pin resolves file-scope declarations in any order: a
+    /// body calls a function declared below it, and two call each other. A
+    /// signature that does not resolve here is left to its statement, which
+    /// reports it; so is every later overload of its name, keeping an
+    /// overload set's candidates in source order.
+    fn declare_module_functions(&mut self, stmts: &[Stmt]) {
+        let mut deferred = HashSet::new();
+        for stmt in stmts {
+            let StmtKind::Def { name, .. } = &stmt.kind else {
+                continue;
+            };
+            if deferred.contains(name) {
+                continue;
+            }
+            let declared = self
+                .in_def_context(stmt, |this| this.def_signature(stmt, false))
+                .and_then(|signature| self.bind_def(stmt, false, &signature));
+            if declared.is_ok() {
+                self.predeclared_functions.insert(stmt.source_span());
+            } else {
+                deferred.insert(name.clone());
+            }
+        }
     }
 
     #[allow(
@@ -2815,364 +2849,51 @@ impl Checker {
             name,
             type_params,
             params,
-            positional_only,
-            keyword_only,
             captures,
             ret: ret_anno,
             body,
-            raises,
-            raises_type,
             decorators,
-            where_clauses,
+            ..
         } = &stmt.kind
         else {
             return Err(TypeError::InvariantViolation(
                 "check_def requires a function declaration".to_string(),
             ));
         };
-        if lambda && self.function_bases.is_empty() {
-            return Err(TypeError::Unsupported(
-                "lambda expressions outside a function body".to_string(),
-            ));
+        // A predeclared function's signature resolves again here, where the
+        // module constants above the statement have recorded the
+        // conversions their reads take; its binding stays the
+        // predeclaration's, and the body's finalized type replaces it.
+        let predeclared = !lambda
+            && self.function_bases.is_empty()
+            && self.predeclared_functions.remove(&stmt.source_span());
+        let signature = self.def_signature(stmt, lambda)?;
+        if !predeclared {
+            self.bind_def(stmt, lambda, &signature)?;
         }
-        reject_default_lambdas(params)?;
-        if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
-            return Err(TypeError::ReservedName(name.clone()));
-        }
-        if self.structs.contains_key(name) {
-            return Err(TypeError::Redeclaration(name.clone()));
-        }
-        // Current Mojo restricts the `deinit` convention to struct method
-        // arguments; free functions, nested functions, and lambdas take
-        // ownership with `var` instead. A trait member is a method of its
-        // trait, whose receiver may be `deinit`.
-        let trait_member = std::mem::take(&mut self.checking_trait_member);
-        let unavailable = if trait_member {
-            None
-        } else {
-            self.check_decorators(DecoratorSite::Function, decorators)?
-                .unavailable
-                .map(|unavailable| unavailable.message(name))
-        };
-        // An unavailable function declares a signature only: its body is
-        // the one `...` upstream requires.
-        if unavailable.is_some()
-            && body
-                .iter()
-                .any(|statement| !matches!(statement.kind, StmtKind::Pass))
-        {
-            return Err(TypeError::InvalidDecorator(
-                "unexpected function body in @unavailable function declaration, use '...'"
-                    .to_string(),
-            ));
-        }
-        if let Some(param) = params
-            .iter()
-            .skip(usize::from(trait_member))
-            .find(|p| p.convention == Some(mojito_ast::ast::ArgConvention::Deinit))
-        {
-            return Err(TypeError::Unsupported(format!(
-                "the 'deinit' convention on parameter '{}' is only valid on struct \
-                 method arguments; take ownership with 'var' instead",
-                param.name
-            )));
-        }
-        // Free functions, including generic functions, share one binder
-        // for regular, `*args`, and homogeneous `**kwargs` parameters.
-        // A `*args` variadic is supported on non-generic functions; any
-        // regular parameters after it are keyword-only.
-        let variadic_idx = params
-            .iter()
-            .position(|p| p.kind == mojito_ast::ast::ParamKind::Variadic);
-        let kw_variadic_idx = params
-            .iter()
-            .position(|p| p.kind == mojito_ast::ast::ParamKind::KwVariadic);
-        // Regular (non-variadic) parameters, over which arity is computed.
-        let regular: Vec<&mojito_ast::ast::FnParam> = params
-            .iter()
-            .filter(|p| p.kind == mojito_ast::ast::ParamKind::Regular)
-            .collect();
-        let out_params: Vec<_> = regular
-            .iter()
-            .copied()
-            .filter(|p| matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Out)))
-            .collect();
-        if out_params.len() > 1 {
-            return Err(TypeError::Unsupported(
-                "multiple named 'out' results".to_string(),
-            ));
-        }
-        let named_result = out_params.first().copied();
-        if named_result.is_some() && ret_anno.is_some() {
-            return Err(TypeError::Unsupported(
-                "a function cannot declare both a named result and '->' return type".to_string(),
-            ));
-        }
-        let caller_regular: Vec<_> = regular
-            .iter()
-            .copied()
-            .filter(|p| !matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Out)))
-            .collect();
-        let pos_only = regular_marker_index(params, *positional_only);
-        let kw_only = effective_keyword_only_index(params, *keyword_only, variadic_idx);
-        let required = required_mask(&caller_regular, kw_only)?;
-        self.validate_origin_signature(type_params, params, None)?;
-        // Two overloads of one name are two declarations, so each owns its
-        // binders under the symbol it lowers to.
-        let owner = if self.function_bases.is_empty() {
-            mojito_symbol::symbol::lowered_def_name(
-                name,
-                type_params,
-                params,
-                &*self.overload_sets,
-                &*self.program_constants,
-            )
-        } else {
-            name.clone()
-        };
-        let mut decls = self.classify_params(&owner, type_params)?;
-        // Type parameters are in scope while resolving the signature and
-        // checking the body (as bare `T`), and value parameters as the typed
-        // references a dependent parameter expression names (`Buf[n + 1]`).
-        self.push_param_scope(&decls);
-
-        let signature = self.in_signature_scope(None, |this| {
-            let generated = this.generated_declaration.replace(name.contains('$'));
-            let param_tys = this.param_tys(params);
-            this.generated_declaration.set(generated);
-            let param_tys = param_tys?;
-            let ret_ty = match (ret_anno, named_result) {
-                (Some(SourceType::Ref { referent, .. }), _) => this.ty_from_anno(referent)?,
-                // A compiler-generated specialization (`$`-mangled) rebinds
-                // already-checked annotations whose origin identity is
-                // legitimately erased; signature concreteness applies to
-                // user-spelled declarations only.
-                (Some(t), _) if name.contains('$') => {
-                    this.resolve_generated_return_annotation(t)?
-                }
-                (Some(t), _) => this.resolve_return_annotation(t)?,
-                (None, Some(result)) => this.ty_from_anno(&result.ty)?,
-                (None, None) => Ty::none(),
-            };
-            if !name.contains('$') {
-                this.check_result_origins(ret_anno.as_ref(), params, &param_tys, None)?;
-            }
-            // Upstream's `Signatures.cpp` emits the `where` clauses after the
-            // arguments, so a clause reads them (`where base.dtype ==
-            // DType.float32`) as the result annotation does.
-            let compiled = where_clauses
-                .iter()
-                .map(|condition| {
-                    this.compile_where_clause(condition)
-                        .map(|constraint| this.bind_constraint(&constraint, &decls))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok((param_tys, ret_ty, compiled))
-        });
-        let (param_tys, ret_ty, compiled) = match signature {
-            Ok(sig) => sig,
-            Err(e) => {
-                self.tparams.pop();
-                return Err(e);
-            }
-        };
-        let mut function_assumptions = Vec::new();
-        let mut erased_origin_constraints = Vec::new();
-        for constraint in compiled {
-            self.guaranteed_facts(&constraint, &mut function_assumptions);
-            if let Some(last) = decls.last_mut() {
-                match last {
-                    ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                        constraints.push(constraint);
-                    }
-                }
-            } else if type_params.is_empty() {
-                if let Err(error) = self.validate_declaration_constraint(name, &constraint) {
-                    self.tparams.pop();
-                    return Err(error);
-                }
-            } else {
-                erased_origin_constraints.push(constraint);
-            }
-        }
-        self.generic_parameters.borrow_mut().insert(
-            mojito_checked::checked::GenericSite::Function {
-                module: stmt.module.clone(),
-                declaration: stmt.span,
-                syntax: stmt.syntax_id,
-            },
-            decls.clone(),
-        );
-        let ref_params = lower_ref_param_sigs(type_params, &caller_regular, 0)?;
-        let ref_return = match ret_anno {
-            Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
-                origin.as_ref().ok_or_else(|| {
-                    TypeError::Unsupported("reference return requires an origin".to_string())
-                })?,
-                type_params,
-                &regular,
-                0,
-            )?),
-            _ => None,
-        };
-        for (param, ty) in param_tys.iter().enumerate() {
-            self.declaration_types.borrow_mut().insert(
-                mojito_checked::checked::AnnotationSite::FunctionParam {
-                    module: stmt.module.clone(),
-                    declaration: stmt.span,
-                    syntax: stmt.syntax_id,
-                    param,
-                },
-                ty.clone(),
-            );
-        }
-        self.declaration_types.borrow_mut().insert(
-            mojito_checked::checked::AnnotationSite::FunctionReturn {
-                module: stmt.module.clone(),
-                declaration: stmt.span,
-                syntax: stmt.syntax_id,
-            },
-            ret_ty.clone(),
-        );
-        if let Err(error) = self.check_parameter_defaults(params, &param_tys, &decls) {
-            self.tparams.pop();
-            return Err(error);
-        }
-
-        // Bind the function in the enclosing scope before checking its
-        // body, so it can call itself (recursion). A generic `def`
-        // becomes a `GenericFunc` (its call sites infer/supply parameters).
-        let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
-        let effect_raises = declared_error
-            .as_ref()
-            .is_some_and(|ty| *ty != TyKind::Never);
+        let DefSignature {
+            owner,
+            decls,
+            param_tys,
+            ret_ty,
+            function_assumptions,
+            ref_return,
+            declared_error,
+            unavailable,
+            fn_ty,
+            ..
+        } = signature;
+        let DefShape {
+            regular,
+            caller_regular,
+            named_result,
+            ..
+        } = def_shape(params);
         let parameter_closure = mojito_ast::ast::is_parameter_closure(decorators);
-        let initial_environment = if parameter_closure {
-            mojito_types::origin::CallableEnvironment::Capturing(
-                mojito_types::origin::CaptureOriginSet::Infer,
-            )
-        } else if self.function_bases.is_empty() {
-            mojito_types::origin::CallableEnvironment::Thin
-        } else {
-            mojito_types::origin::CallableEnvironment::Default
-        };
-        self.declaration_effects.borrow_mut().insert(
-            mojito_checked::checked::AnnotationSite::FunctionReturn {
-                module: stmt.module.clone(),
-                declaration: stmt.span,
-                syntax: stmt.syntax_id,
-            },
-            mojito_checked::checked::DeclarationEffect {
-                raises: effect_raises,
-                error: effect_raises.then(|| declared_error.clone()).flatten(),
-                returns_reference: ref_return.is_some(),
-                param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
-                    &caller_regular
-                        .iter()
-                        .map(|parameter| parameter.convention)
-                        .collect::<Vec<_>>(),
-                    &ref_params,
-                ),
-                availability: Vec::new(),
-            },
-        );
-        let fn_ty = if decls.is_empty() {
-            let regular_tys: Vec<Ty> = params
-                .iter()
-                .zip(&param_tys)
-                .filter(|(p, _)| {
-                    p.kind == mojito_ast::ast::ParamKind::Regular
-                        && !matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Out))
-                })
-                .map(|(_, ty)| ty.clone())
-                .collect();
-            TyKind::Func(Box::new(FuncTy {
-                environment: initial_environment,
-                params: regular_tys,
-                names: caller_regular.iter().map(|p| p.name.clone()).collect(),
-                ret: ret_ty.clone(),
-                required,
-                variadic: variadic_idx.map(|vi| param_tys[vi].clone()),
-                kw_variadic: kw_variadic_idx.map(|index| param_tys[index].clone()),
-                positional_only: pos_only,
-                keyword_only: kw_only,
-                raises: effect_raises,
-                error: declared_error.clone(),
-                conventions: caller_regular.iter().map(|p| p.convention).collect(),
-                ref_params,
-                ref_return: ref_return.clone().map(Box::new),
-                transfers: TransferSet::default(),
-            }))
-        } else {
-            let regular_tys: Vec<Ty> = params
-                .iter()
-                .zip(&param_tys)
-                .filter(|(p, _)| {
-                    p.kind == mojito_ast::ast::ParamKind::Regular
-                        && !matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Out))
-                })
-                .map(|(_, ty)| ty.clone())
-                .collect();
-            TyKind::GenericFunc(Box::new(GenericFuncTy {
-                decls: decls.clone(),
-                func: FuncTy {
-                    environment: initial_environment,
-                    params: regular_tys,
-                    names: caller_regular.iter().map(|p| p.name.clone()).collect(),
-                    ret: ret_ty.clone(),
-                    required,
-                    variadic: variadic_idx.map(|vi| param_tys[vi].clone()),
-                    kw_variadic: kw_variadic_idx.map(|index| param_tys[index].clone()),
-                    positional_only: pos_only,
-                    keyword_only: kw_only,
-                    raises: effect_raises,
-                    error: declared_error.clone(),
-                    conventions: caller_regular.iter().map(|p| p.convention).collect(),
-                    ref_params,
-                    ref_return: ref_return.clone().map(Box::new),
-                    transfers: TransferSet::default(),
-                },
-            }))
-        };
-        let fn_ty = Ty::new(fn_ty);
-        self.declaration_types.borrow_mut().insert(
-            mojito_checked::checked::AnnotationSite::FunctionType {
-                module: stmt.module.clone(),
-                declaration: stmt.span,
-                syntax: stmt.syntax_id,
-            },
-            fn_ty.clone(),
-        );
-        // A function's name is not a variable: assigning it is rejected.
-        if let Err(e) = self.declare_immutable(name, fn_ty.clone()) {
-            self.tparams.pop();
-            return Err(e);
-        }
-        if !lambda
-            && !self.function_bases.is_empty()
-            && let Some(owner) = self.lookup_owner(name)
-        {
-            self.nested_function_owners.insert(owner);
-        }
-        self.record_positional_collector(
-            name,
-            variadic_idx.map(|index| {
-                (
-                    params[index].name.as_str(),
-                    matches!(
-                        params[index].convention,
-                        Some(mojito_ast::ast::ArgConvention::Var)
-                    ),
-                )
-            }),
-        );
-        self.record_statement_binding(stmt, name);
-        let mut origin_signature =
-            callable_origin_signature(type_params, &caller_regular, erased_origin_constraints);
-        origin_signature.view_return =
-            self.view_return_origins(ret_anno.as_ref(), type_params, &regular, 0, None);
-        origin_signature.unavailable.clone_from(&unavailable);
-        self.register_callable_origins(name, origin_signature);
+        // Type parameters are in scope while checking the body (as bare
+        // `T`), and value parameters as the typed references a dependent
+        // parameter expression names (`Buf[n + 1]`).
+        self.push_param_scope(&decls);
         let capture_policy = if self.function_bases.is_empty() {
             if captures.is_some() {
                 self.tparams.pop();
@@ -3505,7 +3226,7 @@ impl Checker {
                 // A nested `def` or a lambda lifts under its enclosing
                 // declaration.
                 let enclosing = if module_level {
-                    self.lifting_owner.replace(owner.clone())
+                    self.lifting_owner.replace(owner)
                 } else {
                     self.lifting_owner.clone()
                 };
@@ -3658,6 +3379,372 @@ impl Checker {
         self.pop_assumptions();
         self.tparams.pop();
         result
+    }
+
+    /// Resolve a function declaration's signature: its parameters, result,
+    /// `where` clauses, raised error, and the callable type a call site
+    /// binds. The binders' scope is pushed while the signature resolves and
+    /// popped before this returns.
+    fn def_signature(&mut self, stmt: &Stmt, lambda: bool) -> Result<DefSignature, TypeError> {
+        let StmtKind::Def {
+            name,
+            type_params,
+            params,
+            ret: ret_anno,
+            keyword_only,
+            body,
+            decorators,
+            ..
+        } = &stmt.kind
+        else {
+            return Err(TypeError::InvariantViolation(
+                "check_def requires a function declaration".to_string(),
+            ));
+        };
+        if lambda && self.function_bases.is_empty() {
+            return Err(TypeError::Unsupported(
+                "lambda expressions outside a function body".to_string(),
+            ));
+        }
+        reject_default_lambdas(params)?;
+        if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
+            return Err(TypeError::ReservedName(name.clone()));
+        }
+        if self.structs.contains_key(name) {
+            return Err(TypeError::Redeclaration(name.clone()));
+        }
+        // Current Mojo restricts the `deinit` convention to struct method
+        // arguments; free functions, nested functions, and lambdas take
+        // ownership with `var` instead. A trait member is a method of its
+        // trait, whose receiver may be `deinit`.
+        let trait_member = std::mem::take(&mut self.checking_trait_member);
+        let unavailable = if trait_member {
+            None
+        } else {
+            self.check_decorators(DecoratorSite::Function, decorators)?
+                .unavailable
+                .map(|unavailable| unavailable.message(name))
+        };
+        // An unavailable function declares a signature only: its body is
+        // the one `...` upstream requires.
+        if unavailable.is_some()
+            && body
+                .iter()
+                .any(|statement| !matches!(statement.kind, StmtKind::Pass))
+        {
+            return Err(TypeError::InvalidDecorator(
+                "unexpected function body in @unavailable function declaration, use '...'"
+                    .to_string(),
+            ));
+        }
+        if let Some(param) = params
+            .iter()
+            .skip(usize::from(trait_member))
+            .find(|p| p.convention == Some(mojito_ast::ast::ArgConvention::Deinit))
+        {
+            return Err(TypeError::Unsupported(format!(
+                "the 'deinit' convention on parameter '{}' is only valid on struct \
+                 method arguments; take ownership with 'var' instead",
+                param.name
+            )));
+        }
+        let shape = def_shape(params);
+        if shape.out_results > 1 {
+            return Err(TypeError::Unsupported(
+                "multiple named 'out' results".to_string(),
+            ));
+        }
+        if shape.named_result.is_some() && ret_anno.is_some() {
+            return Err(TypeError::Unsupported(
+                "a function cannot declare both a named result and '->' return type".to_string(),
+            ));
+        }
+        let required = required_mask(
+            &shape.caller_regular,
+            effective_keyword_only_index(params, *keyword_only, shape.variadic_idx),
+        )?;
+        self.validate_origin_signature(type_params, params, None)?;
+        // Two overloads of one name are two declarations, so each owns its
+        // binders under the symbol it lowers to.
+        let owner = if self.function_bases.is_empty() {
+            mojito_symbol::symbol::lowered_def_name(
+                name,
+                type_params,
+                params,
+                &*self.overload_sets,
+                &*self.program_constants,
+            )
+        } else {
+            name.clone()
+        };
+        let decls = self.classify_params(&owner, type_params)?;
+        // Type parameters are in scope while resolving the signature (as
+        // bare `T`), and value parameters as the typed references a
+        // dependent parameter expression names (`Buf[n + 1]`).
+        self.push_param_scope(&decls);
+        let signature =
+            self.def_signature_in_scope(stmt, &shape, owner, decls, unavailable, required);
+        self.tparams.pop();
+        signature
+    }
+
+    /// The part of [`Self::def_signature`] that resolves under the
+    /// declaration's binders.
+    fn def_signature_in_scope(
+        &mut self,
+        stmt: &Stmt,
+        shape: &DefShape<'_>,
+        owner: String,
+        mut decls: Vec<ParamDecl>,
+        unavailable: Option<String>,
+        required: Vec<bool>,
+    ) -> Result<DefSignature, TypeError> {
+        let StmtKind::Def {
+            name,
+            type_params,
+            params,
+            positional_only,
+            keyword_only,
+            ret: ret_anno,
+            raises,
+            raises_type,
+            decorators,
+            where_clauses,
+            ..
+        } = &stmt.kind
+        else {
+            return Err(TypeError::InvariantViolation(
+                "check_def requires a function declaration".to_string(),
+            ));
+        };
+        let DefShape {
+            variadic_idx,
+            kw_variadic_idx,
+            regular,
+            caller_regular,
+            named_result,
+            ..
+        } = shape;
+        let pos_only = regular_marker_index(params, *positional_only);
+        let kw_only = effective_keyword_only_index(params, *keyword_only, *variadic_idx);
+        let (param_tys, ret_ty, compiled) = self.in_signature_scope(None, |this| {
+            let generated = this.generated_declaration.replace(name.contains('$'));
+            let param_tys = this.param_tys(params);
+            this.generated_declaration.set(generated);
+            let param_tys = param_tys?;
+            let ret_ty = match (ret_anno, named_result) {
+                (Some(SourceType::Ref { referent, .. }), _) => this.ty_from_anno(referent)?,
+                // A compiler-generated specialization (`$`-mangled) rebinds
+                // already-checked annotations whose origin identity is
+                // legitimately erased; signature concreteness applies to
+                // user-spelled declarations only.
+                (Some(t), _) if name.contains('$') => {
+                    this.resolve_generated_return_annotation(t)?
+                }
+                (Some(t), _) => this.resolve_return_annotation(t)?,
+                (None, Some(result)) => this.ty_from_anno(&result.ty)?,
+                (None, None) => Ty::none(),
+            };
+            if !name.contains('$') {
+                this.check_result_origins(ret_anno.as_ref(), params, &param_tys, None)?;
+            }
+            // Upstream's `Signatures.cpp` emits the `where` clauses after the
+            // arguments, so a clause reads them (`where base.dtype ==
+            // DType.float32`) as the result annotation does.
+            let compiled = where_clauses
+                .iter()
+                .map(|condition| {
+                    this.compile_where_clause(condition)
+                        .map(|constraint| this.bind_constraint(&constraint, &decls))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((param_tys, ret_ty, compiled))
+        })?;
+        let mut function_assumptions = Vec::new();
+        let mut erased_origin_constraints = Vec::new();
+        for constraint in compiled {
+            self.guaranteed_facts(&constraint, &mut function_assumptions);
+            if let Some(last) = decls.last_mut() {
+                match last {
+                    ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                        constraints.push(constraint);
+                    }
+                }
+            } else if type_params.is_empty() {
+                self.validate_declaration_constraint(name, &constraint)?;
+            } else {
+                erased_origin_constraints.push(constraint);
+            }
+        }
+        self.generic_parameters.borrow_mut().insert(
+            mojito_checked::checked::GenericSite::Function {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            decls.clone(),
+        );
+        let ref_params = lower_ref_param_sigs(type_params, caller_regular, 0)?;
+        let ref_return = match ret_anno {
+            Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
+                origin.as_ref().ok_or_else(|| {
+                    TypeError::Unsupported("reference return requires an origin".to_string())
+                })?,
+                type_params,
+                regular,
+                0,
+            )?),
+            _ => None,
+        };
+        for (param, ty) in param_tys.iter().enumerate() {
+            self.declaration_types.borrow_mut().insert(
+                mojito_checked::checked::AnnotationSite::FunctionParam {
+                    module: stmt.module.clone(),
+                    declaration: stmt.span,
+                    syntax: stmt.syntax_id,
+                    param,
+                },
+                ty.clone(),
+            );
+        }
+        self.declaration_types.borrow_mut().insert(
+            mojito_checked::checked::AnnotationSite::FunctionReturn {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            ret_ty.clone(),
+        );
+        self.check_parameter_defaults(params, &param_tys, &decls)?;
+        let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
+        let effect_raises = declared_error
+            .as_ref()
+            .is_some_and(|ty| *ty != TyKind::Never);
+        let initial_environment = if mojito_ast::ast::is_parameter_closure(decorators) {
+            mojito_types::origin::CallableEnvironment::Capturing(
+                mojito_types::origin::CaptureOriginSet::Infer,
+            )
+        } else if self.function_bases.is_empty() {
+            mojito_types::origin::CallableEnvironment::Thin
+        } else {
+            mojito_types::origin::CallableEnvironment::Default
+        };
+        self.declaration_effects.borrow_mut().insert(
+            mojito_checked::checked::AnnotationSite::FunctionReturn {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            mojito_checked::checked::DeclarationEffect {
+                raises: effect_raises,
+                error: effect_raises.then(|| declared_error.clone()).flatten(),
+                returns_reference: ref_return.is_some(),
+                param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
+                    &caller_regular
+                        .iter()
+                        .map(|parameter| parameter.convention)
+                        .collect::<Vec<_>>(),
+                    &ref_params,
+                ),
+                availability: Vec::new(),
+            },
+        );
+        let func = FuncTy {
+            environment: initial_environment,
+            params: params
+                .iter()
+                .zip(&param_tys)
+                .filter(|(p, _)| {
+                    p.kind == mojito_ast::ast::ParamKind::Regular
+                        && !matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Out))
+                })
+                .map(|(_, ty)| ty.clone())
+                .collect(),
+            names: caller_regular.iter().map(|p| p.name.clone()).collect(),
+            ret: ret_ty.clone(),
+            required,
+            variadic: variadic_idx.map(|vi| param_tys[vi].clone()),
+            kw_variadic: kw_variadic_idx.map(|index| param_tys[index].clone()),
+            positional_only: pos_only,
+            keyword_only: kw_only,
+            raises: effect_raises,
+            error: declared_error.clone(),
+            conventions: caller_regular.iter().map(|p| p.convention).collect(),
+            ref_params,
+            ref_return: ref_return.clone().map(Box::new),
+            transfers: TransferSet::default(),
+        };
+        let fn_ty = Ty::new(if decls.is_empty() {
+            TyKind::Func(Box::new(func))
+        } else {
+            TyKind::GenericFunc(Box::new(GenericFuncTy {
+                decls: decls.clone(),
+                func,
+            }))
+        });
+        self.declaration_types.borrow_mut().insert(
+            mojito_checked::checked::AnnotationSite::FunctionType {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            fn_ty.clone(),
+        );
+        let mut origin_signature =
+            callable_origin_signature(type_params, caller_regular, erased_origin_constraints);
+        origin_signature.view_return =
+            self.view_return_origins(ret_anno.as_ref(), type_params, regular, 0, None);
+        origin_signature.unavailable.clone_from(&unavailable);
+        Ok(DefSignature {
+            owner,
+            decls,
+            param_tys,
+            ret_ty,
+            function_assumptions,
+            ref_return,
+            declared_error,
+            unavailable,
+            fn_ty,
+            origin_signature,
+        })
+    }
+
+    /// Bind a function declaration's name in the enclosing scope, before
+    /// its body is checked, so the body calls it (recursion).
+    fn bind_def(
+        &mut self,
+        stmt: &Stmt,
+        lambda: bool,
+        signature: &DefSignature,
+    ) -> Result<(), TypeError> {
+        let StmtKind::Def { name, params, .. } = &stmt.kind else {
+            return Err(TypeError::InvariantViolation(
+                "check_def requires a function declaration".to_string(),
+            ));
+        };
+        // A function's name is not a variable: assigning it is rejected.
+        self.declare_immutable(name, signature.fn_ty.clone())?;
+        if !lambda
+            && !self.function_bases.is_empty()
+            && let Some(owner) = self.lookup_owner(name)
+        {
+            self.nested_function_owners.insert(owner);
+        }
+        self.record_positional_collector(
+            name,
+            def_shape(params).variadic_idx.map(|index| {
+                (
+                    params[index].name.as_str(),
+                    matches!(
+                        params[index].convention,
+                        Some(mojito_ast::ast::ArgConvention::Var)
+                    ),
+                )
+            }),
+        );
+        self.record_statement_binding(stmt, name);
+        self.register_callable_origins(name, signature.origin_signature.clone());
+        Ok(())
     }
 
     /// A default value must fit its parameter's type. A default may name a
@@ -4092,5 +4179,55 @@ fn capture_referent(ty: &Ty) -> &Ty {
     match ty.kind() {
         TyKind::Ref(reference) => &reference.referent,
         _ => ty,
+    }
+}
+
+/// A function declaration's resolved signature: what binding its name and
+/// checking its body read.
+struct DefSignature {
+    owner: String,
+    decls: Vec<ParamDecl>,
+    param_tys: Vec<Ty>,
+    ret_ty: Ty,
+    function_assumptions: Vec<ParamExpr>,
+    ref_return: Option<mojito_types::origin::RefSig>,
+    declared_error: Option<Ty>,
+    unavailable: Option<String>,
+    fn_ty: Ty,
+    origin_signature: CallableOriginSignature,
+}
+
+/// The syntactic partition of a function's parameters.
+struct DefShape<'a> {
+    variadic_idx: Option<usize>,
+    kw_variadic_idx: Option<usize>,
+    /// The regular (non-variadic) parameters, over which arity is computed.
+    regular: Vec<&'a FnParam>,
+    /// The regular parameters a caller passes: all but an `out` result.
+    caller_regular: Vec<&'a FnParam>,
+    named_result: Option<&'a FnParam>,
+    out_results: usize,
+}
+
+/// Free functions, including generic functions, share one binder for
+/// regular, `*args`, and homogeneous `**kwargs` parameters. Any regular
+/// parameters after a `*args` variadic are keyword-only.
+fn def_shape(params: &[FnParam]) -> DefShape<'_> {
+    let regular: Vec<&FnParam> = params
+        .iter()
+        .filter(|p| p.kind == mojito_ast::ast::ParamKind::Regular)
+        .collect();
+    let is_out = |p: &&FnParam| matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Out));
+    DefShape {
+        variadic_idx: params
+            .iter()
+            .position(|p| p.kind == mojito_ast::ast::ParamKind::Variadic),
+        kw_variadic_idx: params
+            .iter()
+            .position(|p| p.kind == mojito_ast::ast::ParamKind::KwVariadic),
+        caller_regular: regular.iter().copied().filter(|p| !is_out(p)).collect(),
+        named_result: regular.iter().copied().find(is_out),
+        out_results: regular.iter().filter(|p| is_out(p)).count(),
+        regular,
     }
 }

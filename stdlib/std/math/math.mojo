@@ -3,16 +3,14 @@
 # `ceildiv`, the plugin-hook signatures `_UnaryMathPluginHookFnType` and
 # `_BinaryMathPluginHookFnType`, `_ldexp_impl` and `ldexp` (with its
 # AVX-512 `scalef` arm), `copysign`, the `SIMD` overload of `iota`,
-# `fma`, `clamp`, both overloads each of `max` and `min`, `abs`, and the
-# libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
+# `fma`, `modf` over `std.simd`'s `_modf`, `clamp`, both overloads each of
+# `max` and `min`, `abs`, and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
 # `_frexp_mask1`, `_frexp_mask2`, `frexp`, `_log_base`, `log`, and their
 # kernels `_assert_float64_supported`, `_log_kernel`, `_is_zero_bits`,
 # `_is_subnormal_bits`, `_frexp_bits`, `_log_reduce`, `_log_combine`, and
 # `_log_accurate`, verbatim (the buffer overload of `iota` is omitted).
-# `copysign` follows `abs`, which it calls, where upstream's precedes
-# `iota`, and `_log_base` and `log` follow the kernels they call, where
-# upstream's precede them: a module `def` is visible only after its
-# statement (R592). The masks' `bfloat16` cases are omitted (R65), and so
+# The traits precede the functions, where upstream interleaves them. The
+# masks' `bfloat16` cases are omitted (R65), and so
 # is `log`'s `is_nvidia_gpu()` arm through `log2` (R1635). The
 # `std.string` import is explicit, as bundled modules' are. Upstream's
 # `from . import` line omits `nextafter`, which the package does not yet
@@ -39,6 +37,7 @@ from std.builtin.dtype import _integral_type_of
 from std.string import StaticString
 
 from std.utils.numerics import FPUtils
+from std.simd import _modf
 from std.memory import bitcast
 from std.utils.static_tuple import StaticTuple
 
@@ -221,6 +220,251 @@ def ldexp[
     return _ldexp_impl(x, exp.cast[dtype]())
 
 
+# ===----------------------------------------------------------------------=== #
+# frexp
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def _frexp_mask1[
+    dtype: DType, width: Int
+]() -> SIMD[_integral_type_of[dtype](), width]:
+    comptime match dtype:
+        case .float16:
+            return 0x7C00
+        case .float32:
+            return 0x7F800000
+        case _:
+            comptime assert dtype == .float64, "unhandled fp type"
+            return 0x7FF0000000000000
+
+
+@inline(.always)
+def _frexp_mask2[
+    dtype: DType, width: Int
+]() -> SIMD[_integral_type_of[dtype](), width]:
+    comptime match dtype:
+        case .float16:
+            return 0x3800
+        case .float32:
+            return 0x3F000000
+        case _:
+            comptime assert dtype == .float64, "unhandled fp type"
+            return 0x3FE0000000000000
+
+
+def frexp[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> StaticTuple[
+    SIMD[dtype, width], 2
+] where dtype.is_floating_point():
+    """Breaks floating point values into a fractional part and an exponent part.
+    This follows C and Python in increasing the exponent by 1 and normalizing the
+    fraction from 0.5 to 1.0 instead of 1.0 to 2.0.
+
+    Constraints:
+        The input must be a floating-point type.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        x: The input values.
+
+    Returns:
+        A tuple of two SIMD vectors containing the fractional and exponent parts
+        of the input floating point values.
+    """
+
+    # Based on the implementation in boost/simd/arch/common/simd/function/ifrexp.hpp
+
+    comptime T = SIMD[dtype, width]
+    comptime TInt = SIMD[_integral_type_of[dtype](), width]
+    comptime zero = T(0)
+    # Add one to the resulting exponent up by subtracting 1 from the bias
+    comptime exponent_bias = FPUtils[dtype].exponent_bias() - 1
+    comptime mantissa_width = FPUtils[dtype].mantissa_width()
+    comptime subnorm_scale = T(
+        from_bits=TInt(
+            (mantissa_width + FPUtils[dtype].exponent_bias()) << mantissa_width
+        )
+    )
+
+    var mask1 = _frexp_mask1[dtype, width]()
+    var mask2 = _frexp_mask2[dtype, width]()
+
+    var subnorm_test = (x._to_bits_signed() & mask1).eq(0) & x.ne(0)
+    var t = subnorm_test.select(TInt(mantissa_width), TInt(0))
+    var x0 = subnorm_test.select(subnorm_scale * x, x)
+
+    var x_int = x0._to_bits_signed()
+    var selector = x0.ne(zero)
+    var r1 = mask1 & x_int
+    var mb = x_int & ~mask1
+    r1 = (r1 >> TInt(mantissa_width)) - TInt(exponent_bias)
+
+    var r0 = mb | mask2
+
+    var test1 = r1.gt(TInt(FPUtils[dtype].max_exponent()))
+    r1 = (~test1 & selector).select(r1, TInt(0))
+
+    r1 -= t
+    return StaticTuple[size=2](
+        selector.select(
+            bitcast[dtype, width](r0) + test1.select(x0, zero), zero
+        ),
+        T(r1),
+    )
+
+
+# ===----------------------------------------------------------------------=== #
+# log
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def _log_base[
+    dtype: DType, width: SIMDLength, //, base: Int
+](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
+    """Performs elementwise log of a SIMD vector with a specific base.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+        base: The logarithm base.
+
+    Args:
+        x: Vector to perform logarithm operation on.
+
+    Returns:
+        Vector containing result of performing logarithm on x.
+    """
+    # Based on the Cephes approximation.
+    comptime sqrt2_div_2 = 0.70710678118654752440
+
+    comptime assert base == 2 or base == 27, "input base must be either 2 or 27"
+
+    var frexp_result = frexp(x)
+    var x1 = frexp_result[0]
+    var exp = frexp_result[1]
+    exp = x1.lt(sqrt2_div_2).select(exp - 1, exp)
+    x1 = x1.lt(sqrt2_div_2).select(x1 + x1, x1) - 1
+
+    var x2 = x1 * x1
+    var x3 = x2 * x1
+
+    var y = (
+        polynomial_evaluate[
+            [
+                Scalar[dtype](3.3333331174e-1),
+                -2.4999993993e-1,
+                2.0000714765e-1,
+                -1.6668057665e-1,
+                1.4249322787e-1,
+                -1.2420140846e-1,
+                1.1676998740e-1,
+                -1.1514610310e-1,
+                7.0376836292e-2,
+            ],
+        ](x1)
+        * x3
+    )
+    y = x1 + x2.fma(-0.5, y)
+
+    # TODO: fix this hack
+    comptime if base == 27:  # Natural log
+        comptime ln2 = 0.69314718055994530942
+        y = exp.fma(ln2, y)
+    else:
+        y = y.fma(log2e, exp)
+    y = x.eq(inf[dtype]()).select(x, y)
+    return x.eq(0).select(Scalar[dtype].MIN, x.gt(0).select(y, nan[dtype]()))
+
+
+@inline(.always)
+def log[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> type_of(x) where dtype.is_floating_point():
+    """Performs elementwise natural log (base E) of a SIMD vector.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        x: Vector to perform logarithm operation on.
+
+    Returns:
+        Vector containing result of performing natural log base E on x.
+    """
+
+    _assert_float64_supported[dtype, "log"]()
+
+    comptime if dtype == .float64:
+        var r = _log_accurate(x)
+        r = x.eq(inf[dtype]()).select(x, r)
+        return x.eq(0).select(-inf[dtype](), x.gt(0).select(r, nan[dtype]()))
+    elif size_of[dtype]() < size_of[DType.float32]():
+        return log(x.cast[.float32]()).cast[dtype]()
+
+    if __is_run_in_comptime_interpreter:
+        return _log_base[27](x)
+
+    comptime if CurrentPlugin.flushes_subnormals[dtype]:
+        # Subnormals read as zero in comparisons and `frexp`, so reduce from
+        # the bits instead.
+        var r = _log_accurate(x)
+        r = x.eq(inf[dtype]()).select(x, r)
+        var positive = x.gt(0) | (
+            _is_subnormal_bits(x) & x._to_bits_signed().gt(0)
+        )
+        return _is_zero_bits(x).select(
+            -inf[dtype](), positive.select(r, nan[dtype]())
+        )
+
+    return _log_base[27](x)
+
+# ===----------------------------------------------------------------------=== #
+# copysign
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def copysign[
+    dtype: DType, width: SIMDLength, //
+](magnitude: SIMD[dtype, width], sign: SIMD[dtype, width]) -> SIMD[
+    dtype, width
+]:
+    """Returns a value with the magnitude of the first operand and the sign of
+    the second operand.
+
+    Constraints:
+        The type of the input must be numeric.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        magnitude: The magnitude to use.
+        sign: The sign to copy.
+
+    Returns:
+        Copies the sign from sign to magnitude.
+    """
+    comptime assert dtype.is_numeric(), "operands must be a numeric type"
+
+    comptime if dtype.is_unsigned():
+        return magnitude
+    elif dtype.is_integral():
+        var mag_abs = abs(magnitude)
+        return sign.lt(0).select(-mag_abs, mag_abs)
+    return llvm_intrinsic[
+        "llvm.copysign", SIMD[dtype, width], has_side_effect=False
+    ](magnitude, sign)
+
+
 def iota[
     dtype: DType, width: Int
 ](offset: Scalar[dtype] = Scalar[dtype](0)) -> SIMD[dtype, width]:
@@ -291,6 +535,30 @@ def fma[
 
 
 # ===----------------------------------------------------------------------=== #
+# modf
+# ===----------------------------------------------------------------------=== #
+
+
+def modf[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> Tuple[type_of(x), type_of(x)]:
+    """Computes the integral and fractional part of the value.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        x: The input value.
+
+    Returns:
+        A tuple containing the integral and fractional part of the value.
+    """
+    return _modf(x)
+
+
+
+# ===----------------------------------------------------------------------=== #
 # clamp
 # ===----------------------------------------------------------------------=== #
 
@@ -322,6 +590,27 @@ def clamp[
         upper_bound.
     """
     return val.clamp(lower_bound, upper_bound)
+
+
+# ===----------------------------------------------------------------------=== #
+# abs
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.always)
+def abs[T: Absable](value: T) -> T:
+    """Get the absolute value of the given object.
+
+    Parameters:
+        T: The type conforming to Absable.
+
+    Args:
+        value: The object to get the absolute value of.
+
+    Returns:
+        The absolute value of the object.
+    """
+    return value.__abs__()
 
 
 # ===----------------------------------------------------------------------=== #
@@ -433,67 +722,6 @@ def min[T: Copyable & Comparable & Deinitable](x: T, *ys: T) -> T:
 
 
 # ===----------------------------------------------------------------------=== #
-# abs
-# ===----------------------------------------------------------------------=== #
-
-
-@inline(.always)
-def abs[T: Absable](value: T) -> T:
-    """Get the absolute value of the given object.
-
-    Parameters:
-        T: The type conforming to Absable.
-
-    Args:
-        value: The object to get the absolute value of.
-
-    Returns:
-        The absolute value of the object.
-    """
-    return value.__abs__()
-
-
-# ===----------------------------------------------------------------------=== #
-# copysign
-# ===----------------------------------------------------------------------=== #
-
-
-@inline(.always)
-def copysign[
-    dtype: DType, width: SIMDLength, //
-](magnitude: SIMD[dtype, width], sign: SIMD[dtype, width]) -> SIMD[
-    dtype, width
-]:
-    """Returns a value with the magnitude of the first operand and the sign of
-    the second operand.
-
-    Constraints:
-        The type of the input must be numeric.
-
-    Parameters:
-        dtype: The `dtype` of the input and output SIMD vector.
-        width: The width of the input and output SIMD vector.
-
-    Args:
-        magnitude: The magnitude to use.
-        sign: The sign to copy.
-
-    Returns:
-        Copies the sign from sign to magnitude.
-    """
-    comptime assert dtype.is_numeric(), "operands must be a numeric type"
-
-    comptime if dtype.is_unsigned():
-        return magnitude
-    elif dtype.is_integral():
-        var mag_abs = abs(magnitude)
-        return sign.lt(0).select(-mag_abs, mag_abs)
-    return llvm_intrinsic[
-        "llvm.copysign", SIMD[dtype, width], has_side_effect=False
-    ](magnitude, sign)
-
-
-# ===----------------------------------------------------------------------=== #
 # Pure-Mojo libm implementations
 # ===----------------------------------------------------------------------=== #
 
@@ -505,104 +733,6 @@ comptime _LN2 = 0.69314718055994530941723212145817656807550013436026
 # (21 trailing zero bits), so k * _LN2_HI_F64 is exact for |k| < 2^21.
 comptime _LN2_HI_F64 = 6.93147180369123816490e-01
 comptime _LN2_LO_F64 = 1.90821492927058770002e-10
-
-
-# ===----------------------------------------------------------------------=== #
-# frexp
-# ===----------------------------------------------------------------------=== #
-
-
-@inline(.always)
-def _frexp_mask1[
-    dtype: DType, width: Int
-]() -> SIMD[_integral_type_of[dtype](), width]:
-    comptime match dtype:
-        case .float16:
-            return 0x7C00
-        case .float32:
-            return 0x7F800000
-        case _:
-            comptime assert dtype == .float64, "unhandled fp type"
-            return 0x7FF0000000000000
-
-
-@inline(.always)
-def _frexp_mask2[
-    dtype: DType, width: Int
-]() -> SIMD[_integral_type_of[dtype](), width]:
-    comptime match dtype:
-        case .float16:
-            return 0x3800
-        case .float32:
-            return 0x3F000000
-        case _:
-            comptime assert dtype == .float64, "unhandled fp type"
-            return 0x3FE0000000000000
-
-
-def frexp[
-    dtype: DType, width: SIMDLength, //
-](x: SIMD[dtype, width]) -> StaticTuple[
-    SIMD[dtype, width], 2
-] where dtype.is_floating_point():
-    """Breaks floating point values into a fractional part and an exponent part.
-    This follows C and Python in increasing the exponent by 1 and normalizing the
-    fraction from 0.5 to 1.0 instead of 1.0 to 2.0.
-
-    Constraints:
-        The input must be a floating-point type.
-
-    Parameters:
-        dtype: The `dtype` of the input and output SIMD vector.
-        width: The width of the input and output SIMD vector.
-
-    Args:
-        x: The input values.
-
-    Returns:
-        A tuple of two SIMD vectors containing the fractional and exponent parts
-        of the input floating point values.
-    """
-
-    # Based on the implementation in boost/simd/arch/common/simd/function/ifrexp.hpp
-
-    comptime T = SIMD[dtype, width]
-    comptime TInt = SIMD[_integral_type_of[dtype](), width]
-    comptime zero = T(0)
-    # Add one to the resulting exponent up by subtracting 1 from the bias
-    comptime exponent_bias = FPUtils[dtype].exponent_bias() - 1
-    comptime mantissa_width = FPUtils[dtype].mantissa_width()
-    comptime subnorm_scale = T(
-        from_bits=TInt(
-            (mantissa_width + FPUtils[dtype].exponent_bias()) << mantissa_width
-        )
-    )
-
-    var mask1 = _frexp_mask1[dtype, width]()
-    var mask2 = _frexp_mask2[dtype, width]()
-
-    var subnorm_test = (x._to_bits_signed() & mask1).eq(0) & x.ne(0)
-    var t = subnorm_test.select(TInt(mantissa_width), TInt(0))
-    var x0 = subnorm_test.select(subnorm_scale * x, x)
-
-    var x_int = x0._to_bits_signed()
-    var selector = x0.ne(zero)
-    var r1 = mask1 & x_int
-    var mb = x_int & ~mask1
-    r1 = (r1 >> TInt(mantissa_width)) - TInt(exponent_bias)
-
-    var r0 = mb | mask2
-
-    var test1 = r1.gt(TInt(FPUtils[dtype].max_exponent()))
-    r1 = (~test1 & selector).select(r1, TInt(0))
-
-    r1 -= t
-    return StaticTuple[size=2](
-        selector.select(
-            bitcast[dtype, width](r0) + test1.select(x0, zero), zero
-        ),
-        T(r1),
-    )
 
 
 # ===----------------------------------------------------------------------=== #
@@ -758,113 +888,3 @@ def _log_accurate[
     """Computes the natural log of positive finite `x` to within about 1 ulp."""
     var exponent, fraction = _log_reduce(x)
     return _log_combine(exponent, fraction, 0)
-
-
-
-
-# ===----------------------------------------------------------------------=== #
-# log
-# ===----------------------------------------------------------------------=== #
-
-
-@inline(.always)
-def _log_base[
-    dtype: DType, width: SIMDLength, //, base: Int
-](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
-    """Performs elementwise log of a SIMD vector with a specific base.
-
-    Parameters:
-        dtype: The `dtype` of the input and output SIMD vector.
-        width: The width of the input and output SIMD vector.
-        base: The logarithm base.
-
-    Args:
-        x: Vector to perform logarithm operation on.
-
-    Returns:
-        Vector containing result of performing logarithm on x.
-    """
-    # Based on the Cephes approximation.
-    comptime sqrt2_div_2 = 0.70710678118654752440
-
-    comptime assert base == 2 or base == 27, "input base must be either 2 or 27"
-
-    var frexp_result = frexp(x)
-    var x1 = frexp_result[0]
-    var exp = frexp_result[1]
-    exp = x1.lt(sqrt2_div_2).select(exp - 1, exp)
-    x1 = x1.lt(sqrt2_div_2).select(x1 + x1, x1) - 1
-
-    var x2 = x1 * x1
-    var x3 = x2 * x1
-
-    var y = (
-        polynomial_evaluate[
-            [
-                Scalar[dtype](3.3333331174e-1),
-                -2.4999993993e-1,
-                2.0000714765e-1,
-                -1.6668057665e-1,
-                1.4249322787e-1,
-                -1.2420140846e-1,
-                1.1676998740e-1,
-                -1.1514610310e-1,
-                7.0376836292e-2,
-            ],
-        ](x1)
-        * x3
-    )
-    y = x1 + x2.fma(-0.5, y)
-
-    # TODO: fix this hack
-    comptime if base == 27:  # Natural log
-        comptime ln2 = 0.69314718055994530942
-        y = exp.fma(ln2, y)
-    else:
-        y = y.fma(log2e, exp)
-    y = x.eq(inf[dtype]()).select(x, y)
-    return x.eq(0).select(Scalar[dtype].MIN, x.gt(0).select(y, nan[dtype]()))
-
-
-@inline(.always)
-def log[
-    dtype: DType, width: SIMDLength, //
-](x: SIMD[dtype, width]) -> type_of(x) where dtype.is_floating_point():
-    """Performs elementwise natural log (base E) of a SIMD vector.
-
-    Parameters:
-        dtype: The `dtype` of the input and output SIMD vector.
-        width: The width of the input and output SIMD vector.
-
-    Args:
-        x: Vector to perform logarithm operation on.
-
-    Returns:
-        Vector containing result of performing natural log base E on x.
-    """
-
-    _assert_float64_supported[dtype, "log"]()
-
-    comptime if dtype == .float64:
-        var r = _log_accurate(x)
-        r = x.eq(inf[dtype]()).select(x, r)
-        return x.eq(0).select(-inf[dtype](), x.gt(0).select(r, nan[dtype]()))
-    elif size_of[dtype]() < size_of[DType.float32]():
-        return log(x.cast[.float32]()).cast[dtype]()
-
-    if __is_run_in_comptime_interpreter:
-        return _log_base[27](x)
-
-    comptime if CurrentPlugin.flushes_subnormals[dtype]:
-        # Subnormals read as zero in comparisons and `frexp`, so reduce from
-        # the bits instead.
-        var r = _log_accurate(x)
-        r = x.eq(inf[dtype]()).select(x, r)
-        var positive = x.gt(0) | (
-            _is_subnormal_bits(x) & x._to_bits_signed().gt(0)
-        )
-        return _is_zero_bits(x).select(
-            -inf[dtype](), positive.select(r, nan[dtype]())
-        )
-
-    return _log_base[27](x)

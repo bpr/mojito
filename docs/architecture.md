@@ -924,8 +924,8 @@ package_member, publish_relative}`), resolving its pending imports the same
 way, and loads the submodule `name` only when the package has no such
 member. A packaged link needs no pending table:
 a record publishes its final exports before its loads. Linking binds names
-only; a peer that calls a loading module's own function still meets the
-check's source-order binding of module functions (R592).
+only; the check declares every module function before any body, so a
+peer calls a loading module's function wherever it is declared.
 
 Package directories resolve through `__init__.mojo`. Imports in that file become
 package re-exports. Mojo forbids executable file-scope statements, so package
@@ -2409,7 +2409,9 @@ It is responsible for:
 - names and local scopes
 - builtin scalar types
 - struct declarations and field layouts
-- function and method signatures
+- function and method signatures, every module function's declared ahead of
+  any body (after struct method signatures), so file-scope functions
+  resolve in any order; a nested function binds at its statement
 - overload sets and selected overload targets
 - trait declarations and a limited trait-conformance model
 - trait receiver conventions and associated compile-time facts

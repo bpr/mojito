@@ -280,6 +280,7 @@ assets/ok/dead_code_after_terminators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorator_unavailable_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/def_aggregate_value_binder_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/def_calls_later_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_converting_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_reads_binder.mojo	-	ineligible	no-scalar-entry-shape
@@ -552,6 +553,7 @@ assets/ok/match_struct_and_initializer_patterns.mojo	-	ineligible	no-scalar-entr
 assets/ok/match_tuple_patterns.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_ldexp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_log.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/math_modf.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_operation_traits_library.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_polynomial_evaluate.mojo	-	ineligible	no-scalar-entry-shape

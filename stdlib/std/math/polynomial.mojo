@@ -1,7 +1,4 @@
-# Upstream's `std/math/polynomial.mojo`, verbatim but for order:
-# `_horner_evaluate` precedes `polynomial_evaluate`, which calls it, where
-# upstream's follows, since a `def` cannot yet call one declared below it
-# (R393).
+# Upstream's `std/math/polynomial.mojo`, verbatim.
 """Provides two implementations for evaluating polynomials.
 
 You can import these APIs from the `math` package. For example:
@@ -10,6 +7,35 @@ You can import these APIs from the `math` package. For example:
 from std.math.polynomial import polynomial_evaluate
 ```
 """
+
+
+# ===-----------------------------------------------------------------------===#
+# polynomial_evaluate
+# ===-----------------------------------------------------------------------===#
+
+
+@inline(.always)
+def polynomial_evaluate[
+    dtype: DType,
+    width: SIMDLength,
+    //,
+    coefficients: Span[Scalar[dtype], _],
+](x: SIMD[dtype, width]) -> SIMD[dtype, width]:
+    """Evaluates the polynomial.
+
+    Parameters:
+        dtype: The dtype of the value.
+        width: The width of the computed value.
+        coefficients: The coefficients.
+
+    Args:
+        x: The value to compute the polynomial with.
+
+    Returns:
+        The polynomial evaluation results using the specified value and the
+        constant coefficients.
+    """
+    return _horner_evaluate[coefficients](x)
 
 
 # ===-----------------------------------------------------------------------===#
@@ -68,32 +94,3 @@ def _horner_evaluate[
             result = result.fma(x, c)
 
         return result
-
-
-# ===-----------------------------------------------------------------------===#
-# polynomial_evaluate
-# ===-----------------------------------------------------------------------===#
-
-
-@inline(.always)
-def polynomial_evaluate[
-    dtype: DType,
-    width: SIMDLength,
-    //,
-    coefficients: Span[Scalar[dtype], _],
-](x: SIMD[dtype, width]) -> SIMD[dtype, width]:
-    """Evaluates the polynomial.
-
-    Parameters:
-        dtype: The dtype of the value.
-        width: The width of the computed value.
-        coefficients: The coefficients.
-
-    Args:
-        x: The value to compute the polynomial with.
-
-    Returns:
-        The polynomial evaluation results using the specified value and the
-        constant coefficients.
-    """
-    return _horner_evaluate[coefficients](x)

@@ -9,9 +9,6 @@
 # the Neon and RISC-V queries, which read `is_apple_silicon` (R1635), and
 # `_first_conforming_plugin`, with the `TargetPluginSelector` import
 # (R1694).
-# `is_32bit` and `is_64bit` follow `simd_width_of`, where upstream's precede
-# `simd_bit_width`, since a `def` cannot yet call one declared below it
-# (R393).
 # The `stdlib_plugin` member is `DefaultPlugin.HookFor[Self()]`, where
 # upstream's is `Self._first_conforming_plugin[StdPlugin,
 # default=DefaultPlugin].HookFor[Self()]`. The two agree on every target
@@ -200,6 +197,32 @@ struct CompilationTarget[_mlir_value: _TargetType = _current_target(), //](
         return (
             Self._has_feature["avx512vnni"]() or Self._has_feature["avxvnni"]()
         )
+
+
+@inline(.nodebug)
+def is_32bit[target: CompilationTarget = CompilationTarget.current()]() -> Bool:
+    """Returns True if the maximum integral value is 32 bit.
+
+    Parameters:
+        target: The target architecture.
+
+    Returns:
+        True if the maximum integral value is 32 bit, False otherwise.
+    """
+    return size_of[DType.int, target]() == size_of[DType.int32, target]()
+
+
+@inline(.nodebug)
+def is_64bit[target: CompilationTarget = CompilationTarget.current()]() -> Bool:
+    """Returns True if the maximum integral value is 64 bit.
+
+    Parameters:
+        target: The target architecture.
+
+    Returns:
+        True if the maximum integral value is 64 bit, False otherwise.
+    """
+    return size_of[DType.int, target]() == size_of[DType.int64, target]()
 
 
 @inline(.nodebug)
@@ -461,29 +484,3 @@ def simd_width_of[
         The vector size of the dtype on the host system.
     """
     return simd_width_of[Scalar[dtype]._mlir_type, target]()
-
-
-@inline(.nodebug)
-def is_32bit[target: CompilationTarget = CompilationTarget.current()]() -> Bool:
-    """Returns True if the maximum integral value is 32 bit.
-
-    Parameters:
-        target: The target architecture.
-
-    Returns:
-        True if the maximum integral value is 32 bit, False otherwise.
-    """
-    return size_of[DType.int, target]() == size_of[DType.int32, target]()
-
-
-@inline(.nodebug)
-def is_64bit[target: CompilationTarget = CompilationTarget.current()]() -> Bool:
-    """Returns True if the maximum integral value is 64 bit.
-
-    Parameters:
-        target: The target architecture.
-
-    Returns:
-        True if the maximum integral value is 64 bit, False otherwise.
-    """
-    return size_of[DType.int, target]() == size_of[DType.int64, target]()

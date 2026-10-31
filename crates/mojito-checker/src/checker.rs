@@ -557,6 +557,9 @@ pub struct Checker {
     /// statements, which a body before the statement reads; the statement's
     /// own binding replaces the pre-bound one.
     predeclared_constants: HashSet<String>,
+    /// The module functions the declaration pass bound ahead of every body,
+    /// by statement, whose statement does not bind them again.
+    predeclared_functions: HashSet<SourceSpan>,
     /// The module constants whose initializer applies a callable, or reads
     /// such a constant: a parameter expression, never a type, so
     /// `comptime E = A` over one is a value binding and not an alias.
@@ -1074,6 +1077,7 @@ impl Checker {
             predeclared_structs: HashSet::new(),
             shells_awaiting_defaults: Vec::new(),
             predeclared_constants: HashSet::new(),
+            predeclared_functions: HashSet::new(),
             applied_module_constants: declaration_table::DeclarationSet::default(),
             projected_object: RefCell::new(None),
             predeclared_traits: HashSet::new(),
