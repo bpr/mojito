@@ -880,52 +880,6 @@ impl Checker {
         Ok(ty)
     }
 
-    /// The closed dimensions of a module vector alias
-    /// (`comptime U256 = SIMD[DType.uint64, 4]`), which a call constructs
-    /// as the spelled `SIMD[DType.uint64, 4](...)` does. The elaborator
-    /// writes that spelling in every clone; source validation meets the
-    /// alias itself.
-    pub(super) fn vector_alias(&self, name: &str) -> Option<(Dtype, i64)> {
-        let alias = self.comptime_aliases.get(name)?;
-        let AliasBody::Type(ty) = &alias.body else {
-            return None;
-        };
-        ty.known_simd().filter(|_| alias.decls.is_empty())
-    }
-
-    /// Type a vector alias's construction `U256(a, b, c, d)` as the spelled
-    /// `SIMD[DType.uint64, 4](a, b, c, d)` ([`Self::vector_alias`]).
-    pub(super) fn infer_vector_alias_construction(
-        &self,
-        name: &str,
-        args: &[Expr],
-    ) -> Result<Ty, TypeError> {
-        let (dtype, width) = self
-            .vector_alias(name)
-            .ok_or_else(|| TypeError::UndefinedVariable(name.to_string()))?;
-        let (dtype, width) = (SimdDtype::Known(dtype), SimdWidth::Known(width));
-        self.check_simd_args(&dtype, &width, args)?;
-        simd_of(dtype, width)
-    }
-
-    /// Type a scalar-alias construction `Int32(x)` = `SIMD[DType.int32, 1](x)`.
-    pub(super) fn infer_simd_alias_construction(
-        &self,
-        dtype: Dtype,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-    ) -> Result<Ty, TypeError> {
-        if !param_args.is_empty() {
-            return Err(TypeError::WrongTypeArgCount {
-                name: dtype.scalar_alias().unwrap_or("SIMD").to_string(),
-                expected: 0,
-                got: param_args.len(),
-            });
-        }
-        self.check_simd_args(&SimdDtype::Known(dtype), &SimdWidth::Known(1), args)?;
-        Ok(mojito_types::types::canonical_simd_ty(dtype, 1))
-    }
-
     /// Check the arguments of a SIMD construction against upstream's
     /// one-value `SIMD.__init__` overloads `std.simd` does not serve yet:
     /// none (all lanes zero) or exactly one. A symbolic width and a symbolic

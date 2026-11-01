@@ -252,8 +252,8 @@ impl<'a> Flatten<'a> {
     }
 
     /// If `name(...)` is a SIMD construction the checker's rule serves — a
-    /// nullary construction, a literal splat, or a `_`-width or scalar-alias
-    /// conversion (`SIMD[DType.<dt>, _](x)`, `Int32(x)`) — resolve its
+    /// nullary construction, a literal splat, or a `_`-width or instance
+    /// conversion (`SIMD[DType.<dt>, _](x)`) — resolve its
     /// dtype/width and emit a [`MirInstr::MakeSimd`], returning its result
     /// register. Otherwise `None`, and the caller lowers it as an ordinary
     /// call.

@@ -4678,6 +4678,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     attribute `SIMD.__init__(IntLiteral)`'s body folds to, rather than
     applying the declared initializer through the alias (found while
     landing R1781).
+  - `comptime_requests.rs`'s `CalleeOracle::callee` answers `Other` for a
+    call through any struct alias (`P(2)` over `comptime P = Pt`,
+    `Int32(5)`), so `applies_callable` never lifts it; it must resolve a
+    type alias to its struct too, as `SIMD[...](x)` and `Pt(1)` already
+    lift (found while landing R1791).
   - Found while landing R1641 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11258,30 +11263,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1553 (2026-10-28).
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R1791 A construction spelled through `Scalar` or a sized alias
-  reaches `SIMD`'s initializers through checker rules keyed by the name**
-
-  `Int32(x)`, `Scalar[dt](x)`, and `SIMD[...](x)` select the declared
-  initializers through rules that match the spelling, where upstream's
-  call through an alias constructs the type the alias names.
-  - The rules: `call_inference.rs`'s `"SIMD"` and `"Scalar"` arms and its
-    `Dtype::from_scalar_alias` arm, `infer_scalar_construction`,
-    `simd_alias_instance`, and `declared_simd_spelling`.
-  - Also `operators.rs::infer_simd_alias_construction`, `inference.rs`'s
-    `Scalar` and `from_scalar_alias` dimension arms, and
-    `comptime_requests.rs`'s `"SIMD"` constructibility.
-  - A call through `Scalar` or a closed `SIMD` alias (`Int(x)`,
-    `Int32(x)`) already constructs the resolved instance
-    (`initializer_list.rs::simd_instance_construction`), so the
-    `"Scalar"` arms are reachable only where the alias is not resolved.
-  - What remains: `declared_simd_construction` keys off the instance, not
-    the name, and the name-keyed rules above go.
-  - Probe: a program's own `struct Int8` constructs its own type only
-    because the linker renames it, and `Scalar[dt](x)` never reads
-    `std.simd`'s alias.
-  - Depends on R60.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1792 `Int`, `UInt`, and `Float64` are parser types, where
   upstream's are the prelude's `comptime` aliases**

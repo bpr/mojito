@@ -3304,6 +3304,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker no longer keys a `SIMD` construction on an alias's name: the
+  `Scalar`, sized-alias, vector-alias, and `Self` construction and
+  dimension rules are gone, since a call through any alias already
+  constructs the instance the alias names (R1791). A compile-time
+  `SIMD[...](x)` is now lifted as an application of its initializer like
+  any other struct construction. No behavior changes.
+
 - Code outside `mojito-types` reads a `SIMD` type through `TyKind`'s accessors
   (`as_simd`, `known_simd`, `as_held_simd`, `is_simd`, `is_int`, `is_uint`,
   `is_float64`) rather than matching `TyKind::Simd` or `TyKind::INT`/`UINT`/

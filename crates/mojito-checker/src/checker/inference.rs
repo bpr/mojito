@@ -541,25 +541,8 @@ impl Checker {
                         };
                         (dtype, width)
                     })
-                } else if name == "Self"
-                    && param_args.is_empty()
-                    && self.lookup(name).is_none()
-                    && let Some((dtype, width)) = ty.as_simd()
-                    && self.self_ty.as_ref().is_some_and(|ty| ty.is_simd())
-                {
-                    Some((dtype.clone(), width.clone()))
-                } else if name == "Scalar" && param_args.len() == 1 {
-                    // `Scalar[DType.x](arg)` is width-1 SIMD construction; the
-                    // VM canonicalizes width-1 int/float64 back to the native
-                    // scalars, matching `simd_ty`.
-                    self.dtype_from_arg(&param_args[0])
-                        .ok()
-                        .map(|dtype| (dtype, SimdWidth::Known(1)))
                 } else {
-                    Dtype::from_scalar_alias(name)
-                        .map(|dtype| (dtype, 1))
-                        .or_else(|| param_args.is_empty().then(|| self.vector_alias(name))?)
-                        .map(|(dtype, width)| (SimdDtype::Known(dtype), SimdWidth::Known(width)))
+                    None
                 };
                 if let Some(dimensions) = dimensions {
                     self.record_at(expr.source_span()).simd_construction = Some(dimensions);

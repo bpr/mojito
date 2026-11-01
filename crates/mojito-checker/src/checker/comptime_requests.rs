@@ -58,7 +58,7 @@ pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
                         "len" | "range" | "reflect" | "conforms_to" | "materialize"
                     ) && match self.oracle.callee(name) {
                         Callee::Function => true,
-                        Callee::Struct => !matches!(name.as_str(), "SIMD" | "Dict" | "Set"),
+                        Callee::Struct => !matches!(name.as_str(), "Dict" | "Set"),
                         Callee::Other => false,
                     }
                 }
@@ -169,8 +169,7 @@ fn is_literal(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
         | ExprKind::TupleLit(_)
         | ExprKind::BraceLit(_) => true,
         ExprKind::Call { name, .. } => {
-            matches!(name.as_str(), "SIMD" | "Dict" | "Set")
-                && oracle.callee(name) == Callee::Struct
+            matches!(name.as_str(), "Dict" | "Set") && oracle.callee(name) == Callee::Struct
         }
         _ => false,
     }

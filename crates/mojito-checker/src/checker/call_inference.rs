@@ -373,18 +373,6 @@ impl Checker {
             "Bool" => self.infer_bool_conversion(&span, args),
             "divmod" => self.infer_divmod(args),
             "SIMD" => self.infer_simd_construction(&span, param_args, args),
-            // `Self(...)` in `SIMD`'s own body constructs by the rule too.
-            "Self"
-                if param_args.is_empty()
-                    && let Some((dtype, width)) =
-                        self.self_ty.as_ref().and_then(|ty| ty.as_simd()) =>
-            {
-                self.construct_simd(&span, dtype, width, args)
-            }
-            _ if param_args.is_empty() && self.vector_alias(name).is_some() => {
-                self.infer_vector_alias_construction(name, args)
-            }
-            "Scalar" => self.infer_scalar_construction(&span, param_args, args),
             "List" => self.infer_list_construction(&span, param_args, args),
             "Set" => {
                 let (collection, attributes) = self.set_type(param_args)?;
@@ -428,11 +416,6 @@ impl Checker {
                 Ok(tuple)
             }
             "Error" => self.infer_error_construction(args),
-            _ if Dtype::from_scalar_alias(name).is_some() => {
-                let dtype =
-                    Dtype::from_scalar_alias(name).expect("match guard established a scalar alias");
-                self.infer_simd_alias_construction(dtype, param_args, args)
-            }
             _ => Err(TypeError::UndefinedVariable(name.to_string())),
         }
     }
@@ -444,8 +427,8 @@ impl Checker {
     /// R1544); any other miss is the declared selection's error, so
     /// `Int8(x)` over a struct whose `__int__` raises but which does not
     /// declare `IntableRaising` is rejected as at the pin. `constructed` is
-    /// the instance an alias (`Int`, `Int32`, `Scalar[dt]`, a vector alias,
-    /// `Self` in `SIMD`'s body) names without brackets.
+    /// the instance a construction spelled through an alias is bound to,
+    /// or `None` for `SIMD`'s own bracket.
     fn declared_simd_construction(
         &self,
         span: &SourceSpan,
@@ -627,37 +610,11 @@ impl Checker {
         }
     }
 
-    /// `Scalar[dt](...)` by the checker's rule: a one-lane `SIMD`
-    /// construction.
-    fn infer_scalar_construction(
-        &self,
-        span: &SourceSpan,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-    ) -> Result<Ty, TypeError> {
-        let [dtype_arg] = param_args else {
-            return Err(TypeError::WrongTypeArgCount {
-                name: "Scalar".to_string(),
-                expected: 1,
-                got: param_args.len(),
-            });
-        };
-        let dtype = self.dtype_from_arg(dtype_arg)?;
-        self.record_bracket_attributes(span.clone(), vec![dtype_attribute(dtype_arg, &dtype)]);
-        let ty = simd_of(dtype.clone(), SimdWidth::Known(1))?;
-        if let [arg] = args
-            && self.simd_length_construction(span, &ty, arg, &self.infer(arg)?)?
-        {
-            return Ok(ty);
-        }
-        self.check_simd_args(&dtype, &SimdWidth::Known(1), args)?;
-        Ok(ty)
-    }
-
-    /// A `SIMD` construction however it is spelled (`SIMD[...]`,
-    /// `Scalar[dt]`, a sized or vector alias, `Self` in `SIMD`'s body)
-    /// through its declared initializers, or `None` for any other call or
-    /// one the checker's rule serves ([`Self::declared_simd_construction`]).
+    /// `SIMD`'s own bracket construction (`SIMD[dt, n](x)`) through its
+    /// declared initializers, or `None` for any other call or one the
+    /// checker's rule serves ([`Self::declared_simd_construction`]). A call
+    /// through an alias arrives as the construction of the instance it
+    /// names ([`Self::infer_instance_construction`]).
     fn declared_simd_spelling(
         &self,
         span: &SourceSpan,
@@ -666,45 +623,8 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Result<Ty, TypeError>> {
-        match (name, param_args) {
-            (mojito_types::types::SIMD_TYPE_NAME, _) => {
-                self.declared_simd_construction(span, None, param_args, args, kwargs)
-            }
-            (_, []) => {
-                let alias = self.simd_alias_instance(name)?;
-                self.declared_simd_construction(span, Some(&alias), &[], args, kwargs)
-            }
-            ("Scalar", [dtype_arg]) => {
-                let dtype = self.dtype_from_arg(dtype_arg).ok()?;
-                let alias = simd_of(dtype.clone(), SimdWidth::Known(1)).ok()?;
-                let constructed =
-                    self.declared_simd_construction(span, Some(&alias), &[], args, kwargs)?;
-                Some(constructed.and_then(|constructed| {
-                    self.type_runtime_param_args(param_args)?;
-                    self.record_bracket_attributes(
-                        span.clone(),
-                        vec![dtype_attribute(dtype_arg, &dtype)],
-                    );
-                    Ok(constructed)
-                }))
-            }
-            _ => None,
-        }
-    }
-
-    /// The `SIMD` instance a bracketless alias names: a scalar alias
-    /// (`Int`, `Int32`), a vector alias, or `Self` in `SIMD`'s own body.
-    fn simd_alias_instance(&self, name: &str) -> Option<Ty> {
-        match name {
-            "Int" | "UInt" | "Float64" => scalar_type_name(name),
-            "Self" if self.lookup(name).is_none() => self.self_ty.clone().filter(|ty| ty.is_simd()),
-            _ => Dtype::from_scalar_alias(name)
-                .map(|dtype| simd_ty(dtype, 1))
-                .or_else(|| {
-                    self.vector_alias(name)
-                        .map(|(dtype, width)| simd_ty(dtype, width))
-                }),
-        }
+        (name == mojito_types::types::SIMD_TYPE_NAME)
+            .then(|| self.declared_simd_construction(span, None, param_args, args, kwargs))?
     }
 
     /// Check every member of a free-function overload set against the
@@ -1042,17 +962,7 @@ impl Checker {
     ) -> Option<(Ty, BracketAttributes)> {
         match name {
             "SIMD" => self.simd_application(param_args).ok(),
-            "Scalar" if param_args.len() == 1 => {
-                let dtype = self.dtype_from_arg(&param_args[0]).ok()?;
-                let attribute = dtype_attribute(&param_args[0], &dtype);
-                Some((simd_of(dtype, SimdWidth::Known(1)).ok()?, vec![attribute]))
-            }
-            "Int" | "UInt" | "Bool" | "Float64" if param_args.is_empty() => {
-                scalar_type_name(name).map(|ty| (ty, Vec::new()))
-            }
-            _ if param_args.is_empty() => {
-                Dtype::from_scalar_alias(name).map(|dtype| (simd_ty(dtype, 1), Vec::new()))
-            }
+            "Bool" if param_args.is_empty() => scalar_type_name(name).map(|ty| (ty, Vec::new())),
             _ => None,
         }
     }
