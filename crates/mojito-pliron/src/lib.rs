@@ -961,13 +961,6 @@ fn visit_call_edges<'p>(
                 structs,
                 targets: Vec::new(),
             };
-            // `**` on integers and every scalar display call bundled bodies
-            // without naming them in an instruction. `format_scalar`
-            // rejects a display whose digit bodies were not declared, so a
-            // formatting shape missing from the rule fails loudly.
-            for callee in mojito_mir::mir::implicit_callees(instr) {
-                edges.push_named(callee);
-            }
             edges.dispatch_edges(instr);
             edges.lifecycle_edges(instr);
             for callee in edges.targets {
@@ -1010,6 +1003,36 @@ impl<'p> CallEdges<'p, '_> {
         }
     }
 
+    /// The display member `method` a lowered expansion calls for a value
+    /// of type `ty`: a nominal struct's, the nominal String's excepted,
+    /// or a `SIMD` value's ([`Self::push_simd_members`]).
+    fn push_display_members(&mut self, ty: &Ty, method: &str) {
+        match ty.kind() {
+            TyKind::Struct(name, _) if !mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+                self.push_members(name, method);
+            }
+            TyKind::Struct(..) => {}
+            _ => self.push_simd_members(ty, method),
+        }
+    }
+
+    /// The display member `method` of the `SIMD` type that displays a
+    /// value of type `ty`: its own, its referent's, the vector its
+    /// `!kgen.simd` storage holds, or the type a literal materializes to,
+    /// found in that type's member table.
+    fn push_simd_members(&mut self, ty: &Ty, method: &str) {
+        let ty = match ty.kind() {
+            TyKind::Ref(reference) => &reference.referent,
+            _ => ty,
+        };
+        let ty = mojito_types::types::default_literal(&mojito_types::types::held_simd_ty(ty));
+        if ty.kind().is_simd()
+            && let Some(table) = mojito_symbol::symbol::member_table_name(&ty)
+        {
+            self.push_members(&table, method);
+        }
+    }
+
     /// The edges of a call, a method call, or an operator: the callee it
     /// names, and the members its lowered expansion dispatches to.
     fn dispatch_edges(&mut self, instr: &'p MirInstr) {
@@ -1018,34 +1041,20 @@ impl<'p> CallEdges<'p, '_> {
             // intrinsics; their element-erased stdlib bodies must not
             // be declared.
             MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => {}
-            // `print` or `String(...)` of a nominal struct calls its
-            // `write_to` instance in the lowered expansion. The nominal
-            // String displays through its own bytes instead: its
-            // `write_to` is there for the VM, never an edge here.
+            // `print` or `String(...)` of a nominal struct or a `SIMD`
+            // value calls its `write_to` instance in the lowered
+            // expansion. The nominal String displays through its own
+            // bytes instead: its `write_to` is there for the VM, never an
+            // edge here.
             MirInstr::Call { func, args, .. } if matches!(func.0.as_str(), "print" | "String") => {
                 for arg in args {
-                    let Some(ty) = self.function.reg_types.get(&arg.0) else {
-                        continue;
-                    };
-                    match ty.kind() {
-                        TyKind::Struct(name, _)
-                            if !mojito_symbol::symbol::is_stdlib_string_struct(name) =>
-                        {
-                            self.push_members(name, "write_to");
-                        }
-                        // `print` of a `SIMD` value calls the `write_to`
-                        // its type's member table names.
-                        kind if kind.is_simd() && func.0 == "print" => {
-                            if let Some(table) = mojito_symbol::symbol::member_table_name(ty) {
-                                self.push_members(&table, "write_to");
-                            }
-                        }
-                        _ => {}
+                    if let Some(ty) = self.function.reg_types.get(&arg.0) {
+                        self.push_display_members(ty, "write_to");
                     }
                 }
             }
-            // `repr` of a nominal struct calls its `write_repr_to`
-            // instance in the lowered expansion.
+            // `repr` of a nominal struct or a `SIMD` value calls its
+            // `write_repr_to` instance in the lowered expansion.
             MirInstr::Call { func, args, .. } if func.0 == "repr" => {
                 for arg in args {
                     match self.function.reg_types.get(&arg.0).map(Ty::kind) {
@@ -1056,7 +1065,11 @@ impl<'p> CallEdges<'p, '_> {
                             mojito_symbol::symbol::STDLIB_STRING_STRUCT,
                             "write_repr_to",
                         ),
-                        _ => {}
+                        _ => {
+                            if let Some(ty) = self.function.reg_types.get(&arg.0) {
+                                self.push_simd_members(ty, "write_repr_to");
+                            }
+                        }
                     }
                 }
             }
@@ -1115,11 +1128,8 @@ impl<'p> CallEdges<'p, '_> {
                     self.push_members(name, "write_string");
                 }
                 for arg in args {
-                    if let Some(TyKind::Struct(name, _)) =
-                        self.function.reg_types.get(&arg.0).map(Ty::kind)
-                        && !mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    {
-                        self.push_members(name, "write_to");
+                    if let Some(ty) = self.function.reg_types.get(&arg.0) {
+                        self.push_display_members(ty, "write_to");
                     }
                 }
             }

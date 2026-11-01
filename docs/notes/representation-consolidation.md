@@ -21,14 +21,13 @@ command cannot use both.
 1. **Finish the library `SIMD`** (conformance). The work order of 10-28
    has landed: initializers, the lane subscript, target queries, lane
    gathers, `//` and `/`, `**`, `%`/`divmod`/`ceildiv` (R1623), the `reduce` tree, display through
-   `write_to` on the VM, R1398 (the dead member rules), and R1399
+   `write_to` on both backends (R1664), R1398 (the dead member rules), and R1399
    (`Int(x)`, `UInt(x)`, and `Float64(x)` as `SIMD.__init__` overloads).
    What is left:
-   - R1664: Pliron's display through `write_to` and `write_repr_to`.
    - R1777 (`_dynamic_shuffle`).
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1664 --only R1777 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1777 -n 0
    ```
 
 2. **`SIMD` as the declared struct everywhere** (the port's end).
@@ -310,7 +309,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 | block | core | members |
 |---|---|---|
 | Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | steps 1–4 (R1798, R1799 → R1800 → R1801, R1608 → R1612, R1785, R1657 → R1660), R160 | R1408, R850, R1019, R423, R1352, R851, R171, R1189, R427, R1681 (`Pointer`) |
-| `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R275, R18, R159, R937 |
+| `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R18, R159 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R77, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
 | The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768 |

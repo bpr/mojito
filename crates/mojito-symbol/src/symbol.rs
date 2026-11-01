@@ -57,19 +57,6 @@ impl ModuleNames for NoModuleNames {
     }
 }
 
-/// The lowered symbols of `std._intrinsics._int_digits`/`_uint_digits`.
-///
-/// They are the Mojo bodies the native backend calls for an integer's
-/// decimal text, where the VM runs `SIMD.write_to` (R1664). Each writes the digits (with a leading `-` for a negative `Int`)
-/// into a caller-owned buffer of at least 21 bytes and returns how many it
-/// wrote; there is no NUL terminator.
-pub const INT_DIGITS_SYMBOL: &str = "__module$std$$intrinsics$_int_digits";
-pub const UINT_DIGITS_SYMBOL: &str = "__module$std$$intrinsics$_uint_digits";
-
-/// The buffer every `_int_digits`/`_uint_digits` caller must supply: 20
-/// digits of `UInt.MAX` plus a sign, rounded up.
-pub const DIGITS_BUFFER_BYTES: u64 = 32;
-
 /// The receiver of a method symbol selected through a trait bound, which the
 /// concrete type replaces at run time (`__trait_dispatch.copy$ov$`).
 pub const TRAIT_DISPATCH: &str = "__trait_dispatch";

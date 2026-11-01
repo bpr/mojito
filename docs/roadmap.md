@@ -1194,19 +1194,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R275 Native `repr` of a `SIMD` vector wider than one lane is
-  unsupported**
-
-  Problem: `repr(SIMD[DType.int32, 2](1, 2))` prints
-  `SIMD[DType.int32, 2](1, 2)` at the pin and on the VM, but the native
-  backend stops with "unsupported type `Simd { … width: Known(2) }`".
-  - Pliron's `lower_repr_builtin` (`lower/methods.rs`) labels only scalar
-    registers; a vector register reaches no arm.
-  - The text is upstream's `SIMD.write_repr_to`: `SIMD[`, the dtype's repr,
-    the width, then the lanes as `print_simd` writes them.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R987 Native code drops every function's inline level**
 
   A `nodebug`, `builtin`, or `always` callee the elaborator leaves as a
@@ -11002,8 +10989,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   StaticString("False")` and `StaticString` is undefined (R432).
   - Declare both members and `Writable`, and delete `Writable`'s `Bool`
     arm in `modelled_conformance`.
-  - `print(b)`'s builtin path stays only while Pliron's `SIMD` one does
-    (R1664).
+  - Pliron's `print`, `String`, `repr`, and `Writer.write` keep their
+    `Bool` text (`format_scalar`) only until then.
   - Depends on R1608 and R432.
   - Model: Opus, Not Planned.
 
@@ -11360,8 +11347,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   register-passable `SIMD` struct to its `!pop.simd` field.
   - Sites: `verify/instr.rs` (about fifteen `held_simd_*` comparisons),
     `verify/types.rs`'s `held_ty`, `verify/concrete.rs`,
-    `verify/calls.rs`, `mono/gather.rs`, `mono/symbolic.rs`, and
-    `mir/ir.rs`'s constant folder.
+    `verify/calls.rs`, `mono/gather.rs`, `mono/symbolic.rs`,
+    `mono/instances.rs`'s `enqueue_format_ty_instance`, Pliron's
+    `simd_display_ty` and `push_simd_members`, and `mir/ir.rs`'s constant
+    folder.
+  - Probe: natively, `repr(Scalar[DType.bool](True))`'s argument is the
+    inlined initializer's result, typed `KgenSimd`, so the display reads
+    its `SIMD` type back through `held_simd_ty`.
   - Lever: `MirDeclarations::translated_type` translates a vector to its
     storage (one transitional arm, which R1800 deletes), and the verifier
     compares translated types, threading `&MirDeclarations` into the
@@ -11601,39 +11593,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `checker/reflection.rs`).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1664 Pliron formats a `SIMD` value's display in the lowering,
-  where upstream calls its `write_to` and `write_repr_to`**
-
-  Native `String`, `repr`, and `Writer.write` of a `SIMD` value emit its
-  text inline, and `repr` of a vector `Bool` is unsupported. Native
-  `print` already calls the `write_to` instance (`print_simd_via_write_to`).
-  - The host text is `print_simd` and `format_scalar`'s numeric arms (now
-    reached only by the paths below), the `SIMD` text inside
-    `lower_str_writer_write` (`lower/print.rs`), `lower_repr_builtin`'s
-    `SIMD` arms, and `lower_writer_write` (`lower/methods.rs`).
-  - Find a `SIMD` value's display instance as `print` does: in the member
-    table `symbol::member_table_name` names from its static type, which
-    the elaborator declares and fills (`declare_simd_instance`).
-  - `CallEdges::dispatch_edges` (`lib.rs`) pushes that table's `write_to`
-    for a `print` argument of a `SIMD` type; it must push the display
-    members for every `repr`, `String`, and `$write_formatted` argument
-    too, or the instances stay unreachable natively.
-  - Then retire `std._intrinsics._int_digits`/`_uint_digits`,
-    `INT_DIGITS_SYMBOL` and `UINT_DIGITS_SYMBOL`, and their keep-alive in
-    `mir/symbols.rs`.
-  - Probe: native `String(v)`, `repr(v)`, and `s.write(v)` over a
-    `SIMD[DType.int32, 4]` stop with "unsupported type `Simd { dtype:
-    Known(Int32), width: Known(4) }`", where the VM and the pin give
-    `[1, 2, 3, 4]` and `SIMD[DType.int32, 4](1, 2, 3, 4)`: only
-    `print_simd` lowers a vector's lanes, straight to stdout.
-  - Probe: native `repr(SIMD[DType.bool, 2](True, False))` stops with
-    "unsupported type `Simd { dtype: Known(Bool), width: Known(2) }`", and
-    native `repr(Scalar[DType.bool](True))` prints `True`, where the VM and
-    the pin print `SIMD[DType.bool, 2](True, False)` and
-    `SIMD[DType.bool, 1](True)`.
-  - Depends on R1662.
-  - Model: Opus, Not Planned.
 
 - [ ] **R359 `Tuple`'s private storage destroys its elements, where
   upstream's storage is trivially destructible**
@@ -12305,20 +12264,6 @@ follow-ups the landed producer stages filed come last.
   - Found while landing R880 (2026-10-21).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R937 Native scalar displays call bundled bodies that no
-  instruction names**
-
-  The native backend's scalar display calls the digit bodies, but the MIR
-  instruction does not name them, where upstream calls `write_to`, whose
-  callees are ordinary symbol uses.
-  - The elaborator, Pliron's reachable set, and `eliminate-dead-symbols`
-    each read the edge from `mir::implicit_callees`, a rule outside the
-    symbol walk.
-  - The fix lowers it to a call that names its callee, then deletes
-    `implicit_callees`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1491 A variadic value parameter is one binder where upstream
   declares two**

@@ -2894,13 +2894,6 @@ impl<'a> Specializer<'a> {
                         refined_bound: None,
                     };
                 }
-                // The expansions that display a scalar call bundled bodies
-                // without naming them, so the instruction is a use of each.
-                for symbol in mojito_mir::mir::implicit_callees(instruction) {
-                    if self.functions.contains_key(symbol) {
-                        self.enqueue(symbol, self.base_bindings(), Vec::new())?;
-                    }
-                }
                 match instruction {
                     MirInstr::Call {
                         dest,

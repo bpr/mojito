@@ -14,12 +14,8 @@
 //! whose encoding needs a compilation's context (a check-local binding
 //! owner, a source location) names no symbol and is skipped.
 
-use crate::mir::{
-    Const, MirBlock, MirFunction, MirInstr, instruction_regions, instruction_regions_mut,
-};
-use mojito_symbol::symbol::{
-    INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL, WRITE_FORMATTED, member_table_name,
-};
+use crate::mir::{Const, MirBlock, MirFunction, MirInstr, instruction_regions_mut};
+use mojito_symbol::symbol::member_table_name;
 use mojito_types::symbol_ref::SYMBOL_REF;
 use mojito_types::types::{Ty, mentions};
 use serde::Serialize;
@@ -97,7 +93,6 @@ impl<'t> SymbolTable<'t> {
             lowered_calls: _,
         } = function;
         let mut uses = self.uses(blocks);
-        uses.extend(self.implicit_uses(blocks));
         let types = param_types
             .iter()
             .chain(var_tys.values())
@@ -106,23 +101,6 @@ impl<'t> SymbolTable<'t> {
             .chain(reg_types.values());
         for ty in types {
             uses.extend(self.type_uses(ty));
-        }
-        uses
-    }
-
-    /// The table's symbols the instructions of `blocks`, in their regions
-    /// too, call without naming ([`implicit_callees`]).
-    fn implicit_uses(&self, blocks: &[MirBlock]) -> Vec<&'t str> {
-        let mut uses = Vec::new();
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-            uses.extend(
-                implicit_callees(instruction)
-                    .iter()
-                    .filter_map(|name| self.lookup(name)),
-            );
-            for region in instruction_regions(instruction) {
-                uses.extend(self.implicit_uses(region));
-            }
         }
         uses
     }
@@ -166,29 +144,6 @@ impl<'t> SymbolTable<'t> {
             return None;
         }
         self.names.get(name).copied()
-    }
-}
-
-/// The bundled bodies `instruction` calls without naming them.
-///
-/// The elaborator and the backends reach them from the instruction alone:
-/// the native backend's expansions that display a scalar — `print`,
-/// `String(...)`, `repr`, `os.abort`, and a `Writer.write` — call the digit
-/// bodies (R1664).
-pub fn implicit_callees(instruction: &MirInstr) -> &'static [&'static str] {
-    match instruction {
-        MirInstr::Call { func, .. }
-            if matches!(
-                func.0.as_str(),
-                "print" | "String" | "repr" | "_mojito_abort"
-            ) =>
-        {
-            &[INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL]
-        }
-        MirInstr::MethodCall { method, .. } if method == "write" || method == WRITE_FORMATTED => {
-            &[INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL]
-        }
-        _ => &[],
     }
 }
 

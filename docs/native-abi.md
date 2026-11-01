@@ -397,10 +397,10 @@ order layout rule above matching glibc's x86-64 `struct stat`.
 
 `mjrt_write_stdout(data, len)` writes exactly the given bytes (interrupt
 retries included) and traps on failure — byte-exact output parity with the VM
-is the differential contract. Integer display text comes from the bundled
-Mojo bodies `std._intrinsics._int_digits`/`_uint_digits`, which the VM runs
-too, so there is one implementation rather than a matched pair;
-`mjrt_fmt_f64` still produces the VM's float text (Rust's `{:?}` shortest
+is the differential contract. A `SIMD` value's display text comes from its
+declared `write_to`/`write_repr_to` instances, which the VM runs too, so
+there is one implementation rather than a matched pair; `mjrt_fmt_f64`,
+behind `_write_float`'s staged leaf, still produces the VM's float text (Rust's `{:?}` shortest
 round trip — `3.0`, `1e300`, `NaN`, `inf`). Print parity is therefore
 structural rather than re-implemented: `print` lowers to one write per piece — each
 argument's display bytes, a single `" "` between arguments, and a trailing
@@ -434,7 +434,7 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_pointer_status(ptr) -> u32` | Borrows pointer identity; returns 0 for live/ordinary, 1 for a dangling sentinel, and 2 for an address within a freed allocation. Generated dereferences map those states to categories 8 and 9. |
 | `mjrt_dealloc(ptr, size, align)` | Consumes a live nonzero `mjrt_alloc` allocation, validating `size`/`align` against its header (mismatch traps, category 3); null and zero-size sentinels are no-ops; a repeated deallocation traps (category 10). |
 | `mjrt_write_stdout(data, len)` | Borrows; full write with interrupt retry; traps (category 4) on failure. |
-| `mjrt_fmt_i64/u64(value, out) -> u64` | Borrows `out` (≥ 20 bytes); returns bytes written; no NUL. **Unused by generated code** since integer display moved to the bundled `_int_digits`/`_uint_digits` Mojo bodies; the rows stay until the next `MJRT_ABI_VERSION` bump retires them. |
+| `mjrt_fmt_i64/u64(value, out) -> u64` | Borrows `out` (≥ 20 bytes); returns bytes written; no NUL. **Unused by generated code** since integer display moved to the stdlib's Mojo bodies; the rows stay until the next `MJRT_ABI_VERSION` bump retires them. |
 | `mjrt_fmt_f64(value, out) -> u64` | Borrows `out` (≥ 32 bytes); VM display text. |
 | `mjrt_repr_string(data, len, out) -> u64` | Borrows `data` and `out` (≥ `2 * len + 2` bytes); returns the VM's single-quoted, escaped string repr; no NUL. **Unused by generated code** since `repr` of a String moved to the compiled `String.write_repr_to`; the row stays until the next `MJRT_ABI_VERSION` bump retires it. |
 | `mjrt_trap(category) -> !` | Reports on stderr, exits `64 + category` (clamped to 127); runs no destructors. |

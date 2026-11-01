@@ -1034,6 +1034,7 @@ assets/ok/simd_comparison_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_comparison_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_conversion_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_declared_members.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_display_builtins.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtype_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtype_self_comptime_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtypes_int_lanes.mojo	-	ineligible	no-scalar-entry-shape

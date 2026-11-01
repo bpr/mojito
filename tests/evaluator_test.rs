@@ -1123,8 +1123,8 @@ fn print_displays_structs_and_simd() {
     assert_eq!(e, "P(1, 2)\n[1, 2, 3, 4]\n");
 }
 
-/// Integer display runs the bundled `_int_digits`/`_uint_digits` Mojo bodies,
-/// so the corners a hand-written digit loop gets wrong are pinned here: zero,
+/// Integer display runs `SIMD.write_to`'s stdlib `_write_int`, so the
+/// corners a hand-written digit loop gets wrong are pinned here: zero,
 /// the sign, `Int.MIN` (whose magnitude has no `Int` reading), and `UInt.MAX`.
 #[test]
 fn integer_display_covers_the_digit_loop_corners() {

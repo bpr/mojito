@@ -99,7 +99,7 @@ pub use struct_reads::{
     table_member,
 };
 mod symbols;
-pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
+pub use symbols::{SymbolTable, replace_symbol_uses};
 mod try_finally;
 use try_finally::TryParts;
 mod type_construction;

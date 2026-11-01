@@ -32,9 +32,7 @@
 # members are still served by the compiler or undeclared (R1581,
 # R1585, R1586; `_dynamic_shuffle` is R1777's),
 # `write_padded` is not ported
-# (R1663), and the native backend's `print`, `String`, and `repr` of a value still
-# format in the compiler rather than calling `write_to` and
-# `write_repr_to` as the VM's do (R1664). `py=` is not ported. The element
+# (R1663). `py=` is not ported. The element
 # list omits upstream's
 # `assert Self.length == len(elems)`, which the pin's default `-D ASSERT`
 # mode skips, so too few elements read past `elems` there as here (R1598).

@@ -283,7 +283,6 @@ pub fn lower_body(
         trap_blocks: HashMap::new(),
         region: None,
         entry: None,
-        scratch: None,
         sret_ptr: None,
         outcome_ptr: None,
         err_slot: None,
@@ -455,8 +454,6 @@ struct FnLowering<'a> {
     region: Option<Ptr<pliron::region::Region>>,
     /// The function's entry block (for prepending lazily created storage).
     entry: Option<Ptr<BasicBlock>>,
-    /// The lazily created 32-byte `mjrt_fmt_*` scratch buffer.
-    scratch: Option<Value>,
     /// The aggregate-return out-pointer (argument 0), when the function has
     /// one.
     sret_ptr: Option<Value>,

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The native backend's `String`, `repr`, and `Writer.write` of a `SIMD`
+  value call its declared `write_to` and `write_repr_to`, as `print` and
+  the VM already did (R1664). `String(v)`, `repr(v)`, and `s.write(v)` over
+  a vector and `repr` of a `Bool` vector run natively instead of stopping
+  with "unsupported type", `repr(Scalar[DType.bool](True))` prints
+  `SIMD[DType.bool, 1](True)` as at the pin, and a literal displays through
+  `Int`'s or `Float64`'s members (R275, R937). The backend's lane and digit
+  formatting, `std._intrinsics`, and `mir::implicit_callees` are gone.
 - A `SIMD` initializer the inliner does not reach, at snippet module scope
   or with the pre-elaboration pipeline off, constructs its `out self` on the
   VM (R1617): `Int32(Byte(200))` there no longer fails with "vm backend does

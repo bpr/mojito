@@ -178,22 +178,21 @@ impl FnLowering<'_> {
             self.reg_values.insert(dest.0, writer);
             return Ok(());
         }
-        let ty = match self.concrete_scalar_ty(arg)? {
-            Some(ty) => ty,
-            // A runtime FloatLiteral value rejects — the VM formats its
-            // exact rational, which f64 storage cannot reproduce.
-            None => match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-                Some(TyKind::FloatLiteral(_)) => {
-                    if !self.pending_literals.contains_key(&arg.0) {
-                        return Err(self.unsupported_reg(
-                            "String conversion of a runtime FloatLiteral value".into(),
-                            dest,
-                        ));
-                    }
-                    ScalarTy::Float64
-                }
-                _ => ScalarTy::Int,
-            },
+        // A `SIMD` value converts through its declared `write_to`.
+        if let Some((writer, data, len)) = self.simd_display_text(ctx, arg, "write_to", dest)? {
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+            self.reg_values.insert(dest.0, writer);
+            return Ok(());
+        }
+        let Some(ty) = self.concrete_scalar_ty(arg)? else {
+            return Err(self.unsupported_reg("String conversion of a literal".into(), dest));
         };
         let value = self.reg_value(ctx, arg, ty)?;
         let (text, len) = self.format_scalar(ctx, ty, value, dest)?;

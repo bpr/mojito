@@ -391,22 +391,8 @@ impl FnLowering<'_> {
             );
             return Ok(());
         }
-        if let Some(literal_scalar) = match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(TyKind::IntLiteral(_)) => Some(ScalarTy::Int),
-            Some(TyKind::FloatLiteral(_)) => Some(ScalarTy::Float64),
-            _ => None,
-        } {
-            let value = self.reg_value(ctx, arg, literal_scalar)?;
-            let (source, len) = self.format_scalar(ctx, literal_scalar, value, dest)?;
-            let label = match literal_scalar {
-                ScalarTy::Int => Some("Int("),
-                ScalarTy::Float64 => Some("Float64("),
-                _ => None,
-            };
-            let (data, len) = match label {
-                Some(label) => self.wrap_repr_scalar(ctx, source, len, label, dest),
-                None => self.owned_copy(ctx, source, len, dest),
-            };
+        // A `SIMD` value's repr is its declared `write_repr_to`'s.
+        if let Some((_, data, len)) = self.simd_display_text(ctx, arg, "write_repr_to", dest)? {
             self.str_runtime.insert(
                 dest.0,
                 RuntimeStr {
@@ -428,17 +414,7 @@ impl FnLowering<'_> {
             } else {
                 self.format_scalar(ctx, scalar, value, dest)?
             };
-            let label = match scalar {
-                ScalarTy::Int => Some("Int"),
-                ScalarTy::UInt => Some("UInt"),
-                ScalarTy::Float64 => Some("Float64"),
-                ScalarTy::Sized(dtype) => dtype.repr_alias(),
-                _ => None,
-            };
-            let (data, len) = match label {
-                Some(label) => self.wrap_repr_scalar(ctx, source, len, &format!("{label}("), dest),
-                None => self.owned_copy(ctx, source, len, dest),
-            };
+            let (data, len) = self.owned_copy(ctx, source, len, dest);
             self.str_runtime.insert(
                 dest.0,
                 RuntimeStr {
@@ -606,47 +582,6 @@ impl FnLowering<'_> {
         (data, len)
     }
 
-    fn wrap_repr_scalar(
-        &mut self,
-        ctx: &mut Context,
-        data: Value,
-        len: Value,
-        label: &str,
-        dest: Reg,
-    ) -> (Value, Value) {
-        let extra = self.uint_constant(ctx, (label.len() + 1) as u64);
-        let total = AddOp::new_with_overflow_flag(ctx, len, extra, no_overflow_flags());
-        self.append(ctx, total.get_operation(), Some(dest));
-        let output = self.emit_alloc(ctx, total.get_result(ctx), 1, dest);
-        let prefix = self.shared.intern_string(ctx, label.as_bytes());
-        let prefix = self.global_address(ctx, &prefix, dest);
-        let prefix_len = self.uint_constant(ctx, label.len() as u64);
-        self.mem_copy_dynamic(ctx, output, prefix, prefix_len, dest);
-        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-        let body = GetElementPtrOp::new(
-            ctx,
-            output,
-            vec![GepIndex::Constant(label.len() as u32)],
-            i8_ty,
-        );
-        self.append(ctx, body.get_operation(), Some(dest));
-        self.mem_copy_dynamic(ctx, body.get_result(ctx), data, len, dest);
-        let end = AddOp::new_with_overflow_flag(ctx, len, prefix_len, no_overflow_flags());
-        self.append(ctx, end.get_operation(), Some(dest));
-        let tail = GetElementPtrOp::new(
-            ctx,
-            output,
-            vec![GepIndex::Value(end.get_result(ctx))],
-            i8_ty,
-        );
-        self.append(ctx, tail.get_operation(), Some(dest));
-        let close = self.shared.intern_string(ctx, b")");
-        let close = self.global_address(ctx, &close, dest);
-        let one = self.uint_constant(ctx, 1);
-        self.mem_copy_dynamic(ctx, tail.get_result(ctx), close, one, dest);
-        (output, total.get_result(ctx))
-    }
-
     /// `_mojito_abort(message)` — the `std.os.abort` crossing: report the
     /// dynamic message with the distinct uncatchable abort category.
     pub(super) fn lower_abort_builtin(
@@ -734,6 +669,11 @@ impl FnLowering<'_> {
                     temporary = Some(parts.0);
                     parts
                 }
+            } else if let Some((_, data, len)) =
+                self.simd_display_text(ctx, *arg, "write_to", dest)?
+            {
+                temporary = Some(data);
+                (data, len)
             } else {
                 self.writer_argument_text(ctx, *arg, dest)?
             };

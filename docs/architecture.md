@@ -2744,8 +2744,9 @@ invariant violation. The VM displays a `SIMD` value (`Int`, `Float32`, a
 vector) the same way, through `SIMD.write_to`/`write_repr_to` bound to its
 builtin string writer and found from the value's dtype and width through
 its instance's member table (`symbol::member_table_name`), so it formats no
-lane itself; the native backend still formats `SIMD` text in the compiler
-(R1664).
+lane itself, and so does the native backend: its `print`, `String`, `repr`,
+and `Writer.write` expansions call those instances, and its reachable set
+takes them from the same table.
 `String.format` supports automatic/manual fields, repr selection, escaped braces,
 and accepts format-spec syntax; the scalar width/alignment mini-language remains
 representation-level work rather than a return to deprecated `__str__` hooks.
@@ -6206,10 +6207,7 @@ point where a slot declared in a loop is uninitialized again.
   a newtype every encoding passes through, so package bytes are unchanged.
   The walk visits a value's serialized form and looks up only those
   references (a type is walked once per table); a local, field, keyword,
-  literal, or parameter binder that spells a symbol is no use (R835). An
-  instruction that calls a bundled body without naming it — a scalar
-  display calls the digit bodies — uses it too, by `mir::implicit_callees`, the rule the elaborator enqueues those
-  bodies by. The pass's `--timings` counters are `dead_functions`,
+  literal, or parameter binder that spells a symbol is no use (R835). The pass's `--timings` counters are `dead_functions`,
   `dead_instructions`, and `dead_structs`. `emit-mir` and
   `drop_elaborated_mir` therefore omit every dead program function and
   struct.

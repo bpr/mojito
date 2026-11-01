@@ -312,6 +312,9 @@ impl<'a> FnLowering<'a> {
                 self.append_struct_via_write_to(ctx, *arg, name, descriptor, dest)?;
                 continue;
             }
+            if self.append_simd_display(ctx, *arg, "write_to", descriptor, dest)? {
+                continue;
+            }
             let (chunk, chunk_len) = self.writer_argument_text(ctx, *arg, dest)?;
             let data = LoadOp::new(ctx, descriptor, ptr_handle);
             self.append(ctx, data.get_operation(), Some(dest));
@@ -426,81 +429,26 @@ impl<'a> FnLowering<'a> {
         // A `SIMD` value displays through its declared `write_to`, the
         // instance its type's member table names — the VM's
         // `format_value` dispatch, as upstream's `print` calls it.
-        if let Some(ty) = self.func.reg_types.get(&arg.0).cloned()
-            && let Some(table) =
-                mojito_symbol::symbol::member_table_name(&ty).filter(|_| ty.kind().is_simd())
-            && let Some(symbol) = self.display_member(&table, "write_to", dest)?
-        {
-            return self.print_simd_via_write_to(ctx, arg, symbol, dest);
+        if let Some((_, data, len)) = self.simd_display_text(ctx, arg, "write_to", dest)? {
+            self.write_stdout(ctx, data, len, dest);
+            self.emit_free(ctx, data);
+            return Ok(());
         }
-        if let Some((dtype, width)) = self.func.reg_types.get(&arg.0).and_then(simd_dims)
-            && width > 1
-        {
-            return self.print_simd(ctx, arg, dtype, width as usize, dest);
+        if let Some(scalar) = self.referent_scalar_ty(arg)? {
+            let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
+            let handle = scalar.handle(ctx);
+            let load = LoadOp::new(ctx, pointer, handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            return self.print_scalar(ctx, scalar, load.get_result(ctx), dest);
         }
-        if let Some(TyKind::Ref(reference)) = (self.func.reg_types.get(&arg.0).cloned())
-            .as_ref()
-            .map(Ty::kind)
-        {
-            let referent = reference.referent.clone();
-            if let LowerTy::Scalar(scalar) =
-                lower_ty(self.name, &referent, &self.layout, self.reg_span(arg))?
-            {
-                let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
-                let handle = scalar.handle(ctx);
-                let load = LoadOp::new(ctx, pointer, handle);
-                self.append(ctx, load.get_operation(), Some(dest));
-                return self.print_scalar(ctx, scalar, load.get_result(ctx), dest);
-            }
-        }
-        let ty = match self.concrete_scalar_ty(arg)? {
-            Some(ty) => ty,
-            // A bare literal argument materializes at the VM's default kind.
-            // A runtime FloatLiteral value rejects: the VM displays its
-            // exact rational (`1/10`), which f64 storage cannot reproduce.
-            None => match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-                Some(TyKind::FloatLiteral(_)) => {
-                    if !self.pending_literals.contains_key(&arg.0) {
-                        return Err(self.unsupported_reg(
-                            "display of a runtime FloatLiteral value".into(),
-                            dest,
-                        ));
-                    }
-                    ScalarTy::Float64
-                }
-                _ => ScalarTy::Int,
-            },
+        let Some(ty) = self.concrete_scalar_ty(arg)? else {
+            return Err(self.unsupported_reg("display of a literal".into(), dest));
         };
         let value = self.reg_value(ctx, arg, ty)?;
         self.print_scalar(ctx, ty, value, dest)
     }
 
-    pub(super) fn print_simd(
-        &mut self,
-        ctx: &mut Context,
-        arg: Reg,
-        dtype: Dtype,
-        width: usize,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        let vector = self.simd_load_vector(ctx, arg, dtype, width, dest)?;
-        let lane_ty = ScalarTy::of_dtype(dtype);
-        self.write_literal_bytes(ctx, b"[", dest);
-        for lane in 0..width {
-            if lane > 0 {
-                self.write_literal_bytes(ctx, b", ", dest);
-            }
-            let value = self.simd_extract(ctx, vector, lane, dest);
-            self.print_scalar(ctx, lane_ty, value, dest)?;
-        }
-        self.write_literal_bytes(ctx, b"]", dest);
-        Ok(())
-    }
-
-    /// Emit the display bytes of one scalar value: the bundled integer-digit
-    /// bodies or `mjrt_fmt_f64` into the scratch buffer for the numeric kinds
-    /// (both produce exactly the VM's display text), pooled `True`/`False`
-    /// selection for Bool.
+    /// Emit the display bytes of one `Bool` or `DType` value.
     pub(super) fn print_scalar(
         &mut self,
         ctx: &mut Context,
@@ -513,9 +461,9 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// The display bytes of one scalar value as a `(data, len)` pair. The
-    /// numeric kinds live in the shared scratch buffer, valid until the next
-    /// formatting call.
+    /// The display bytes of one `Bool` or `DType` value as a `(data, len)`
+    /// pair over interned constants. A numeric value is a `SIMD` one, which
+    /// displays through its declared members ([`Self::simd_display_text`]).
     pub(super) fn format_scalar(
         &mut self,
         ctx: &mut Context,
@@ -523,33 +471,8 @@ impl<'a> FnLowering<'a> {
         value: Value,
         dest: Reg,
     ) -> Result<(Value, Value), PlironError> {
-        let (symbol, value) = match ty {
-            ScalarTy::Int => (mojito_symbol::symbol::INT_DIGITS_SYMBOL, value),
-            ScalarTy::UInt => (mojito_symbol::symbol::UINT_DIGITS_SYMBOL, value),
-            ScalarTy::Float64 => ("mjrt_fmt_f64", value),
-            // A narrow float displays as its f64 view (the VM formats the
-            // lane's stored f64 with the same shortest-round-trip rules).
-            ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
-                ("mjrt_fmt_f64", self.widen_float_lane(ctx, value, dest))
-            }
-            // Sized integers display their mathematical value.
-            ScalarTy::Sized(dtype) => {
-                let (_, signed) = mojito_vm::runtime::integer_dtype_bits(dtype)
-                    .expect("narrow floats are matched above");
-                let wide = self.sized_to_i64(ctx, value, dtype, dest);
-                (
-                    if signed {
-                        mojito_symbol::symbol::INT_DIGITS_SYMBOL
-                    } else {
-                        mojito_symbol::symbol::UINT_DIGITS_SYMBOL
-                    },
-                    wide,
-                )
-            }
-            ScalarTy::Ptr => {
-                return Err(self.unsupported_reg("display of a Pointer".into(), dest));
-            }
-            ScalarTy::Dtype => return Ok(self.dtype_text(ctx, value, false, dest)),
+        match ty {
+            ScalarTy::Dtype => Ok(self.dtype_text(ctx, value, false, dest)),
             ScalarTy::Bool => {
                 let true_global = self.shared.intern_string(ctx, b"True");
                 let false_global = self.shared.intern_string(ctx, b"False");
@@ -561,34 +484,13 @@ impl<'a> FnLowering<'a> {
                 let false_len = self.uint_constant(ctx, 5);
                 let len = SelectOp::new(ctx, value, true_len, false_len);
                 self.append(ctx, len.get_operation(), Some(dest));
-                return Ok((data.get_result(ctx), len.get_result(ctx)));
+                Ok((data.get_result(ctx), len.get_result(ctx)))
             }
-        };
-        let scratch = self.scratch_buffer(ctx);
-        // The integer digits come from the bundled Mojo bodies (compiled into
-        // this module, mangled); only the float text is still a runtime
-        // symbol.
-        let (callee, func_ty) = match self.signatures.get(symbol) {
-            Some(signature) => (signature.mangled.as_str(), signature.func_ty),
-            None if symbol.starts_with("mjrt_") => (symbol, self.shared.ensure_rt(ctx, symbol)),
-            None => {
-                return Err(self.unsupported_reg(
-                    format!("scalar display without the bundled `{symbol}` body"),
-                    dest,
-                ));
+            ScalarTy::Ptr => Err(self.unsupported_reg("display of a Pointer".into(), dest)),
+            ScalarTy::Int | ScalarTy::UInt | ScalarTy::Float64 | ScalarTy::Sized(_) => {
+                Err(self.unsupported_reg("display of a `SIMD` value without its type".into(), dest))
             }
-        };
-        let identifier: Identifier = callee
-            .try_into()
-            .expect("runtime and mangled names are identifier-safe");
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(identifier),
-            func_ty,
-            vec![value, scratch],
-        );
-        self.append(ctx, call.get_operation(), Some(dest));
-        Ok((scratch, call.get_result(ctx)))
+        }
     }
 
     /// A `DType`'s display text — its name, or with `repr` its `DType.<name>`
@@ -687,19 +589,6 @@ impl<'a> FnLowering<'a> {
         let address = AddressOfOp::new(ctx, global.clone(), 0);
         self.append(ctx, address.get_operation(), Some(dest));
         address.get_result(ctx)
-    }
-
-    /// The function's formatting buffer, created once at the top of the entry
-    /// block so loops reuse one slot. It is
-    /// [`DIGITS_BUFFER_BYTES`](mojito_symbol::symbol::DIGITS_BUFFER_BYTES)
-    /// wide, which is also what `mjrt_fmt_f64` asks for.
-    pub(super) fn scratch_buffer(&mut self, ctx: &mut Context) -> Value {
-        if let Some(scratch) = self.scratch {
-            return scratch;
-        }
-        let value = self.entry_alloca(ctx, mojito_symbol::symbol::DIGITS_BUFFER_BYTES, 8);
-        self.scratch = Some(value);
-        value
     }
 
     /// Compile-time folding of the string-literal operators the VM evaluates
@@ -948,16 +837,54 @@ impl<'a> FnLowering<'a> {
         }
     }
 
-    /// Display one `SIMD` value through its `write_to` instance `symbol`
-    /// into a fresh builtin-string accumulator, then write the accumulated
-    /// bytes to stdout and free them.
-    fn print_simd_via_write_to(
+    /// The display text of a `SIMD` value through its declared member
+    /// `method` (`write_to`, `write_repr_to`), accumulated into a fresh
+    /// builtin-string writer: the writer and its owned `(data, len)` bytes.
+    /// `None` when `arg` is no `SIMD` value ([`Self::append_simd_display`]).
+    pub(super) fn simd_display_text(
         &mut self,
         ctx: &mut Context,
         arg: Reg,
-        symbol: &str,
+        method: &str,
         dest: Reg,
-    ) -> Result<(), PlironError> {
+    ) -> Result<Option<(Value, Value, Value)>, PlironError> {
+        if self.simd_display_ty(arg).is_none() {
+            return Ok(None);
+        }
+        let writer = self.entry_alloca(ctx, 16, 8);
+        self.mem_zero(ctx, writer, 16);
+        self.append_simd_display(ctx, arg, method, writer, dest)?;
+        let (data, len) = self.string_parts(ctx, writer, dest);
+        Ok(Some((writer, data, len)))
+    }
+
+    /// Append the display text of a `SIMD` value into the builtin-string
+    /// `writer` through its declared member `method`: the instance the
+    /// member table of its type names, which the elaborator declares and
+    /// fills. A reference displays its referent, and an `IntLiteral` or
+    /// `FloatLiteral` displays as the `Int` or `Float64` it materializes
+    /// to, as upstream's literal `write_to` and `write_repr_to` do.
+    /// `Ok(false)` when `arg` is none of these.
+    pub(super) fn append_simd_display(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        method: &str,
+        writer: Value,
+        dest: Reg,
+    ) -> Result<bool, PlironError> {
+        let Some(ty) = self.simd_display_ty(arg) else {
+            return Ok(false);
+        };
+        let Some(table) = mojito_symbol::symbol::member_table_name(&ty) else {
+            return Err(self.unsupported_reg(format!("display of the open type `{ty}`"), dest));
+        };
+        let Some(symbol) = self.display_member(&table, method, dest)? else {
+            return Err(self.unsupported_reg(
+                format!("display of `{ty}` without a compiled `{method}`"),
+                dest,
+            ));
+        };
         let signature = &self.signatures[symbol];
         if signature.outcome.is_some() {
             return Err(self.unsupported_reg(format!("raising `{symbol}`"), dest));
@@ -971,9 +898,28 @@ impl<'a> FnLowering<'a> {
             .try_into()
             .expect("mangled names are identifier-safe");
         let func_ty = signature.func_ty;
-        let receiver = self.arg_value(ctx, arg, &receiver_ty, false, dest)?;
-        let writer = self.entry_alloca(ctx, 16, 8);
-        self.mem_zero(ctx, writer, 16);
+        let arg_ty = self.func.reg_types.get(&arg.0).cloned();
+        let receiver = match (arg_ty.as_ref().map(Ty::kind), &receiver_ty) {
+            (Some(TyKind::Ref(_)), LowerTy::Scalar(scalar)) => {
+                let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, pointer, handle);
+                self.append(ctx, load.get_operation(), Some(dest));
+                load.get_result(ctx)
+            }
+            (Some(TyKind::Ref(_)), _) => self.reg_value(ctx, arg, ScalarTy::Ptr)?,
+            // A runtime FloatLiteral value rejects: the VM displays its
+            // exact rational (`1/10`), which f64 storage cannot reproduce.
+            (Some(TyKind::FloatLiteral(_)), _) if !self.pending_literals.contains_key(&arg.0) => {
+                return Err(
+                    self.unsupported_reg("display of a runtime FloatLiteral value".into(), dest)
+                );
+            }
+            (Some(TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)), LowerTy::Scalar(scalar)) => {
+                self.reg_value(ctx, arg, *scalar)?
+            }
+            _ => self.arg_value(ctx, arg, &receiver_ty, false, dest)?,
+        };
         let call = CallOp::new(
             ctx,
             CallOpCallable::Direct(callee),
@@ -981,10 +927,21 @@ impl<'a> FnLowering<'a> {
             vec![receiver, writer],
         );
         self.append(ctx, call.get_operation(), Some(dest));
-        let (data, len) = self.string_parts(ctx, writer, dest);
-        self.write_stdout(ctx, data, len, dest);
-        self.emit_free(ctx, data);
-        Ok(())
+        Ok(true)
+    }
+
+    /// The closed `SIMD` type whose display members display `arg`: its
+    /// own, its referent's, the vector its `!kgen.simd` storage type holds
+    /// (an inlined initializer's result, R1798), or the type a literal
+    /// materializes to.
+    fn simd_display_ty(&self, arg: Reg) -> Option<Ty> {
+        let ty = self.func.reg_types.get(&arg.0)?;
+        let ty = match ty.kind() {
+            TyKind::Ref(reference) => &reference.referent,
+            _ => ty,
+        };
+        let ty = mojito_types::types::default_literal(&mojito_types::types::held_simd_ty(ty));
+        ty.kind().is_simd().then_some(ty)
     }
 }
 
