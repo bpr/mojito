@@ -11520,28 +11520,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1617 A `SIMD` initializer called without inlining has no receiver
-  in the VM**
-
-  `Int32(Byte(200))` at module scope in the snippet dialect, or anywhere
-  with the pre-elaboration pipeline off, fails with "vm backend does not
-  support default/keyword/variadic arguments yet (call passed 1 args to
-  2-parameter function 'SIMD.__init__$ov$SIMD$other…')".
-  - The instance takes its `out self` as parameter slot zero, as every
-    initializer does, but the VM prepends that slot only for a declared
-    struct (`Prog::lifecycle_constructor`, `Prog::declared_struct`), and a
-    `SIMD` result is the compiler's vector type.
-  - Every other call inlines the always-inline initializer first, which
-    hides it. `__toplevel__` takes no call-graph pass.
-  - `runtime_scalar_conversions_wrap_bit_accurately` in
-    `tests/evaluator_test.rs` runs in `main` until this lands.
-  - Probe: every `pre_elaboration::` corpus test over a `Variant` fixture
-    (`variant_duplicate_alternatives`,
-    `implicit_conversion_own_parameters`) fails with the pipeline off, in
-    the CTFE of `_get_type_index`, with this message.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1407 An `enum`'s `__Enum` members are generated on each enum,
   where upstream's are `__Enum`'s trait defaults**
 

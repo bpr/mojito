@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `SIMD` initializer the inliner does not reach, at snippet module scope
+  or with the pre-elaboration pipeline off, constructs its `out self` on the
+  VM (R1617): `Int32(Byte(200))` there no longer fails with "vm backend does
+  not support default/keyword/variadic arguments yet", and `Variant`'s
+  compile-time `_get_type_index` runs with the pipeline off.
 - `SIMD(copy=x)` is upstream's synthesized `TrivialRegisterPassable` copy
   initializer, selected as any struct's copy is, rather than the checker's
   builtin copy rule (R1793). `Int32(copy=x)`, `SIMD[DType.int8, 4](copy=v)`,

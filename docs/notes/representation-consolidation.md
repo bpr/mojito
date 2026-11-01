@@ -25,12 +25,10 @@ command cannot use both.
    (`Int(x)`, `UInt(x)`, and `Float64(x)` as `SIMD.__init__` overloads).
    What is left:
    - R1664: Pliron's display through `write_to` and `write_repr_to`.
-   - R1617 (an initializer called without inlining) and R1777
-     (`_dynamic_shuffle`).
+   - R1777 (`_dynamic_shuffle`).
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1664 --only R1617 \
-     --only R1777 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1664 --only R1777 -n 0
    ```
 
 2. **`SIMD` as the declared struct everywhere** (the port's end).
