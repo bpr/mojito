@@ -11351,23 +11351,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1793 `SIMD(copy=x)` is the checker's builtin copy, where upstream's
-  is the `TrivialRegisterPassable` copy initializer**
-
-  `declared_simd_construction`'s rule fallback and
-  `infer_instance_construction` serve a `copy=` keyword by
-  `infer_builtin_copy_construction`, not by selecting a declared
-  initializer.
-  - Upstream's `copy=` over a `TrivialRegisterPassable` struct is the
-    synthesized copy initializer, as for any other such struct.
-  - Lever: let a `SIMD` construction with `copy=` select that initializer
-    and delete the `kwargs.iter().all(|keyword| keyword.name == "copy")`
-    arm of `rule_served`.
-  - Probe: `Int32(copy=x)` and `SIMD[DType.int8, 4](copy=v)` run the
-    builtin copy rather than a selected initializer.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1798 The verifier and both backends treat a `SIMD` value and its
   `!kgen.simd` storage as one held type, where upstream lowers the struct to
   its storage field**
@@ -11443,6 +11426,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     instance symbols, and MIR-text fixtures do not change.
   - SROA's `splittable_type` must not split a struct `register_field`
     answers for, or every `Int` slot splits.
+  - Probe: `Int32(copy=x)` selects the synthesized copy initializer but
+    records `BuiltinCopyConstruction`, the value read, because the
+    instance is `TyKind::Simd`. As a struct, MIR's `struct_copy` serves it
+    and `infer_copy_construction`'s value-held arm goes.
   - The elaborator's `substitute_ty` renames a closed `SIMD` to the
     instance `declare_simd_instance` declares.
   - Depends on R1798 and R1799.

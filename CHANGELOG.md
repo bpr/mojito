@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `SIMD(copy=x)` is upstream's synthesized `TrivialRegisterPassable` copy
+  initializer, selected as any struct's copy is, rather than the checker's
+  builtin copy rule (R1793). `Int32(copy=x)`, `SIMD[DType.int8, 4](copy=v)`,
+  and a bracketless `SIMD(copy=v)`, which the pin infers from the source,
+  all run.
 - `SIMD`'s `%`, `%=`, `divmod`, and `ceildiv` are upstream's `__mod__`,
   `__rmod__`, `__imod__`, `__divmod__`, and `__ceildiv__` bodies, and every
   `SIMD` declares `DivModable` and `CeilDivable` (R1623). An integer `%` or

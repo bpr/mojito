@@ -203,14 +203,14 @@ impl Checker {
                 self.record_member_value(span, value);
                 Ok(Ty::bool())
             }
-            // `Int(copy=x)`: a built-in value type's `Copyable`
+            // `Bool(copy=b)`: the compiler's `Bool`'s `Copyable`
             // initializer.
-            _ if args.is_empty()
-                && matches!(kwargs, [keyword] if keyword.name == "copy")
-                && let Some((ty, attributes)) = self.builtin_copy_constructed(name, param_args) =>
+            "Bool"
+                if args.is_empty()
+                    && param_args.is_empty()
+                    && matches!(kwargs, [keyword] if keyword.name == "copy") =>
             {
-                self.record_bracket_attributes(span.clone(), attributes);
-                self.infer_builtin_copy_construction(span, name, &ty, &kwargs[0])
+                self.infer_builtin_copy_construction(span, name, &Ty::bool(), &kwargs[0])
             }
             // `Bool(value=i)`: upstream's initializer from an `i1`, or its
             // `Boolable` initializer at a `Bool`, the overload the keyword
@@ -460,7 +460,7 @@ impl Checker {
                     .and_then(|instance| simd_slots(&instance))
                     .is_none_or(|(_, width)| width.known().is_none());
             }
-            kwargs.iter().all(|keyword| keyword.name == "copy")
+            false
         };
         // An explicit initializer list binds only a declared initializer.
         let explicit_own = self.spelled_initializer_args.borrow().contains_key(span);
@@ -548,16 +548,6 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match instance.kind() {
-            // `copy=` is the checker's rule for the instance, as for a
-            // spelled `SIMD[dt, n]`.
-            kind if kind.is_simd()
-                && args.is_empty()
-                && let [keyword] = kwargs
-                && keyword.name == "copy" =>
-            {
-                let name = mojito_types::types::SIMD_TYPE_NAME;
-                self.infer_builtin_copy_construction(span.clone(), name, instance, keyword)
-            }
             kind if let Some((dtype, width)) = kind.as_simd() => self
                 .declared_simd_construction(span, Some(instance), &[], args, kwargs)
                 .unwrap_or_else(|| {
@@ -896,7 +886,7 @@ impl Checker {
 
     /// `Name(copy=x)` on a built-in value type: its `Copyable` initializer,
     /// which borrows a value of the type and copies it by the value read.
-    fn infer_builtin_copy_construction(
+    pub(super) fn infer_builtin_copy_construction(
         &self,
         span: SourceSpan,
         name: &str,
@@ -950,21 +940,6 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
         ));
         Ok(ty.clone())
-    }
-
-    /// The built-in value type a constructor head names (`Int`,
-    /// `SIMD[DType.float32, 4]`, `Scalar[DType.bool]`, `Float32`), whose
-    /// copy is the value read.
-    fn builtin_copy_constructed(
-        &self,
-        name: &str,
-        param_args: &[mojito_ast::ast::ParamArg],
-    ) -> Option<(Ty, BracketAttributes)> {
-        match name {
-            "SIMD" => self.simd_application(param_args).ok(),
-            "Bool" if param_args.is_empty() => scalar_type_name(name).map(|ty| (ty, Vec::new())),
-            _ => None,
-        }
     }
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
