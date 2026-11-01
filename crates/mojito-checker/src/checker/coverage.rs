@@ -236,7 +236,7 @@ impl Checker {
             }
             return Ok(true);
         }
-        let TyKind::Struct(name, arguments) = ty.kind() else {
+        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return Ok(false);
         };
         let Some(info) = self.structs.get(name) else {
@@ -274,7 +274,7 @@ impl Checker {
                 })
                 .collect()
         });
-        let TyKind::Struct(name, arguments) = ty.kind() else {
+        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return Ok(None);
         };
         let flag = match self.structs.get(name) {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1810**.
+Next free ID: **R1812**.
 
 ## Ordered Work
 
@@ -11335,50 +11335,102 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1810 The `TyKind::Struct` patterns `as_non_simd_struct` cannot
+  express still read "a struct" as "not a `SIMD`"**
+
+  Once R1800 makes a `SIMD` application `TyKind::Struct("SIMD", …)`,
+  every pattern that means a declared struct starts catching `Int` too.
+  - About 415 sites already read `TyKind::as_non_simd_struct` or
+    `is_non_simd_struct`, which agree with `TyKind::Struct` today and keep
+    excluding `SIMD` after the flip.
+  - About 70 remain, in shapes the accessor cannot replace mechanically:
+    alternations (`TyKind::Struct(..) | TyKind::Param { .. }` in the
+    checker's `indexing.rs`, `operators.rs`, `builtins.rs`, and
+    `comptime_validation.rs`, MIR's `calls.rs` and `lower_expr/expr.rs`,
+    Pliron's `support.rs` and `types.rs`), tuple scrutinees
+    (`(TyKind::Struct(..), TyKind::Struct(..))` in mono's `equiv.rs`, the
+    checker's `generics.rs`, `origins/solve.rs`, `origins/construct.rs`,
+    `method_calls/statics.rs`, and the verifier's `types.rs`), and
+    by-value or mutable matches (`equiv::erase_callable_environments`,
+    `call_inference.rs`'s callable contract).
+  - Each gets a `SIMD`-excluding guard or an accessor arm above it, so the
+    probe outputs stay byte-identical.
+  - The four exhaustive walks R1800 rewrites (`mir::text::type_spelling`,
+    `text/write.rs`'s `ty_value`, `verify/scope.rs`'s walk, the checker's
+    `type_is_symbolic`) are R1800's, since they name the variant.
+  - List: `rg -n 'TyKind::Struct\(' crates --glob '!crates/mojito-types/**'`,
+    less the constructors.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1800 Below the checker a `SIMD` application is the compiler's
   vector type `TyKind::Simd`, where upstream holds the declared struct**
 
   The `Ty::new` bridge (`types::bridged_simd`) interns the declared
-  struct's `SIMD[...]` application as `TyKind::Simd`, and `v._mlir_value`
-  is not a field read but the value's own register
-  (`SemanticAdjustment::SimdStorage`).
+  struct's `SIMD[...]` application as `TyKind::Simd`.
   - Constructors (`canonical_simd_ty`, `simd_ty_from_slots`, `Ty::simd`,
     `Ty::int()` and its siblings) build `TyKind::Struct("SIMD", …)`, and
     `TyKind`'s accessors (`as_simd`, `known_simd`, `is_simd`, `is_int`, …)
-    decode it. Code outside `mojito-types` already reads `SIMD` only
-    through them.
+    decode it. They and `as_non_simd_struct` lose `const`.
   - Replace the bridge with struct-argument canonicalization, so `Int`,
     `Scalar[DType.int]`, and `SIMD[DType.int, SIMDLength(1)]` stay one
-    type.
-  - Delete `TyKind::Simd`, `simd_struct_arguments`, `nominal_parts`'
-    `Simd` arm, `self_receiver_ty`'s `SIMD` arm, `SimdStorage`, and
-    `is_simd_storage`. `v._mlir_value` projects `Proj::Field`.
+    type. `closed_argument` must count a closed `SIMDLength` value.
+  - Delete `TyKind::Simd`, its `INT`, `UINT`, and `FLOAT64` constants,
+    `simd_struct_arguments`, `nominal_parts`' `Simd` arm, and
+    `self_receiver_ty`'s `SIMD` arm.
   - Delete `translated_type`'s transitional vector arm
-    (`types::storage_ty`): the declaration's `register_field` answers.
-  - Delete the identities `SimdStorage` forces below the check, where a
-    `SIMD` register is read as its own storage: `discharge_rebinds`'
-    arm giving a `!kgen.simd` root other instructions read the vector it
-    is rebound to, `types_compatible`'s storage-agrees-with-its-vector
-    arm, `verify_scalar_cast`'s one-lane storage source, and
-    `symbolic_simd_compatible`'s storage pattern.
-  - Probe: `assets/ok/mlir_builtin_casts.mojo`'s
-    `Int(mlir_value=storage)` over a `storage` another op reads displays
-    natively only through that `discharge_rebinds` arm.
-  - The exhaustive walks naming the variant: `mir::text`'s
+    (`types::storage_ty`) once `register_field` answers for `SIMD`.
+  - The four exhaustive walks naming the variant (`mir::text`'s
     `type_spelling`, `text/write.rs`'s type record, `verify/scope.rs`'s
-    walk, and the checker's `type_is_symbolic`. Each keeps its spelling
-    through an accessor arm above its `TyKind::Struct` arm, as do
-    `TyKind`'s `Display` and `symbol.rs`'s `ty_raw`, so diagnostics,
-    instance symbols, and MIR-text fixtures do not change.
+    walk, the checker's `type_is_symbolic`) keep their spelling through an
+    accessor arm above their `TyKind::Struct` arm, as `TyKind`'s `Display`
+    does, so diagnostics, instance symbols, and MIR-text fixtures do not
+    change.
+  - `coerces`' `SIMD` implicit-initializer arms must run before its
+    `(Struct, Struct)` arm.
+  - The elaborator keeps a closed `SIMD`'s name and arguments
+    (`substitute_ty`), as upstream names the application, so `Ty::int()`
+    stays one type below it. The discovered-types loop sends a `SIMD` to
+    `declare_simd_instance`.
   - SROA's `splittable_type` must not split a struct `register_field`
     answers for, or every `Int` slot splits.
-  - Probe: `Int32(copy=x)` selects the synthesized copy initializer but
-    records `BuiltinCopyConstruction`, the value read, because the
-    instance is `TyKind::Simd`. As a struct, MIR's `struct_copy` serves it
-    and `infer_copy_construction`'s value-held arm goes.
-  - The elaborator's `substitute_ty` renames a closed `SIMD` to the
-    instance `declare_simd_instance` declares.
-  - Depends on R1798 and R1799.
+  - The VM's `freeze_value` must freeze a `SIMD` register as the scalar or
+    `CtValue::Simd` it freezes to today, not as a boxed struct.
+  - Probe: `Int32(copy=x)` records `BuiltinCopyConstruction`. Following
+    the pin, MIR's `struct_copy` serves it once `expr_call.rs`'s
+    `copy_construction` stops excluding `SIMD`.
+  - Start from `target/r1800-flip.diff` if it survives (a draft of the
+    `mojito-types` half and the elaborator fixes, written before R1810's
+    conversion), else from the plan file. The probe set is the plan's;
+    stop on byte-identical VM, native, and `emit-mir` outputs.
+  - Depends on R1798, R1799, and R1810.
+  - Model: Fable, Planned.
+
+- [ ] **R1811 `v._mlir_value` on a `SIMD` is the vector's own register,
+  where upstream reads the struct's field**
+
+  The check records `SemanticAdjustment::SimdStorage`, so the access is
+  the value or place itself, and every pass below the check treats a
+  `SIMD` register as its own storage.
+  - Once R1800 makes `SIMD` a struct, the access projects
+    `Proj::Field("_mlir_value")`, which the VM's `hold_register_fields`
+    and Pliron's held-struct `places.rs` path already turn into the
+    struct's storage.
+  - Delete `SimdStorage`, its record in `checker/indexing.rs`,
+    `is_simd_storage`, and the early returns in `project_member`,
+    `member_expr`, and `lower_assignment_value`.
+  - `SIMD(mlir_value=s)`'s `self._mlir_value = mlir_value` becomes a field
+    initialization of `out self`.
+  - Delete the identities `SimdStorage` forces: `discharge_rebinds`' arm
+    giving a `!kgen.simd` root the vector it is rebound to,
+    `types_compatible`'s storage-agrees-with-its-vector arm,
+    `verify_scalar_cast`'s one-lane storage source, and
+    `symbolic_simd_compatible`'s storage pattern.
+  - Probe: `assets/ok/mlir_builtin_casts.mojo` natively.
+    `Int(mlir_value=storage)` over a `storage` another op reads displays
+    only through that `discharge_rebinds` arm today, and must print
+    `5 10 …` with it deleted.
+  - Depends on R1800.
   - Model: Fable, Planned.
 
 - [ ] **R1801 MIR's builtin `binary`, `MakeSimd`, lane, and cast
@@ -11399,7 +11451,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: lower compiler arithmetic as `pop` ops over `_mlir_value` field
     reads, and let canonicalization fold the `pop` chain without leaving
     the storage type. `vector_slots` then narrows to `KgenSimd`.
-  - Depends on R1800.
+  - Depends on R1800 and R1811.
   - Model: Fable, Not Planned.
 
 - [ ] **R1618 A compile-time argument computed by an inlined dunder keeps

@@ -296,7 +296,7 @@ impl Checker {
         let Ok(inferred) = self.infer(expression) else {
             return HashMap::new();
         };
-        let TyKind::Struct(name, _) = inferred.kind() else {
+        let Some((name, _)) = inferred.kind().as_non_simd_struct() else {
             return HashMap::new();
         };
         let Some(info) = self.structs.get(name) else {

@@ -11,8 +11,13 @@ impl FnLowering<'_> {
     pub(super) fn owns_heap(&self, ty: &Ty) -> bool {
         match ty.kind() {
             TyKind::Error => true,
-            TyKind::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => true,
-            TyKind::Struct(name, _) => self
+            struct_ty
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            {
+                true
+            }
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
                 .struct_decls
                 .get(name.as_str())
                 .is_some_and(|decl| decl.fields.iter().any(|(_, field)| self.owns_heap(field))),
@@ -60,14 +65,17 @@ impl FnLowering<'_> {
                 self.emit_free(ctx, data.get_result(ctx));
                 Ok(())
             }
-            TyKind::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+            struct_ty
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
                 self.emit_free(ctx, data.get_result(ctx));
                 Ok(())
             }
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let Some(decl) = self.struct_decls.get(name.as_str()).copied() else {
                     return Ok(());
                 };

@@ -194,7 +194,7 @@ impl Checker {
         // intrinsic protocol above: an unregistered bundled collection keeps
         // the historical `element` interior loan. Linked production programs
         // register the collections and never take this branch.
-        if let TyKind::Struct(name, _) = iter_ty.kind()
+        if let Some((name, _)) = iter_ty.kind().as_non_simd_struct()
             && !self.structs.contains_key(name)
             && (list_element(iter_ty).is_some()
                 || set_element(iter_ty).is_some()
@@ -331,7 +331,7 @@ impl Checker {
         // Preserve the old intrinsic proof only in that compatibility mode;
         // linked production programs have registered nominal declarations and
         // must resolve their ordinary `__iter__`/`__next__` contracts below.
-        if let TyKind::Struct(name, _) = ty.kind()
+        if let Some((name, _)) = ty.kind().as_non_simd_struct()
             && self.is_abstract_struct(name)
         {
             if mojito_types::types::is_range_type(ty) {
@@ -361,7 +361,9 @@ impl Checker {
         }
         match ty.kind() {
             TyKind::VariadicPack(element) => Ok(builtin((*element).clone())),
-            TyKind::Struct(..) => self.struct_iteration_protocol(ty, mode, raises),
+            struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {
+                self.struct_iteration_protocol(ty, mode, raises)
+            }
             TyKind::Param { .. } => {
                 let bounds = &self.refined_bound(ty).unwrap_or_default();
                 let owned = mode == IterationMode::Owned;
@@ -448,7 +450,7 @@ impl Checker {
             object_type: ty.to_string(),
             method: m.to_string(),
         };
-        let TyKind::Struct(cname, ctargs) = c_ty.kind() else {
+        let Some((cname, ctargs)) = c_ty.kind().as_non_simd_struct() else {
             return Err(no_method(c_ty, "__iter__"));
         };
         let cinfo = self.structs.get(cname).ok_or_else(|| {
@@ -531,7 +533,7 @@ impl Checker {
             found: it_ty.to_string(),
             context: "__iter__ return type".to_string(),
         };
-        let TyKind::Struct(iname, itargs) = it_ty.kind() else {
+        let Some((iname, itargs)) = it_ty.kind().as_non_simd_struct() else {
             return Err(bad_iter());
         };
         let iinfo = self.structs.get(iname).ok_or_else(bad_iter)?;
@@ -637,7 +639,7 @@ impl Checker {
     /// what each abandoned element still requires; empty when undeclared.
     pub(super) fn residual_obligation_suffix(&self, ty: &Ty) -> String {
         match ty.kind() {
-            TyKind::Struct(name, _) => self
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
                 .structs
                 .get(name)
                 .and_then(|info| info.explicit_destroy_message.clone())
@@ -847,7 +849,7 @@ impl Checker {
             other => other.clone(),
         };
         let resolved = match bound.kind() {
-            TyKind::Struct(name, args) => {
+            struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                 TyKind::Struct(name.clone(), args.iter().map(resolve).collect())
             }
             TyKind::Assoc { base, name, args } => TyKind::Assoc {
@@ -952,8 +954,11 @@ fn names_iteration_trait(bound: &str, trait_name: &str) -> bool {
 /// Whether a type is the argument-free nominal declaration `name`, in either
 /// spelling [`names_iteration_trait`] accepts.
 fn names_iteration_decl(ty: &Ty, name: &str) -> bool {
-    matches!(ty.kind(), TyKind::Struct(declared, arguments)
-        if arguments.is_empty() && names_iteration_trait(declared, name))
+    ty.kind()
+        .as_non_simd_struct()
+        .is_some_and(|(declared, arguments)| {
+            arguments.is_empty() && names_iteration_trait(declared, name)
+        })
 }
 
 /// Whether a value of the declared struct may refer to another place. Origin

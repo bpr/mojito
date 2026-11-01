@@ -151,8 +151,12 @@ impl FnLowering<'_> {
         // drop-inert literal-typed field leaks with no releasing owner.
         // Reject until a literal-ownership design lands.
         if method == "_as_string_literal"
-            && matches!(self.func.reg_types.get(&recv.0).map(Ty::kind), Some(TyKind::Struct(name, _))
-                if mojito_symbol::symbol::is_stdlib_string_struct(name))
+            && self
+                .func
+                .reg_types
+                .get(&recv.0)
+                .and_then(|ty| ty.kind().as_non_simd_struct())
+                .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
         {
             return Err(self.unsupported_reg("String struct-to-literal bridge".into(), dest));
         }
@@ -160,9 +164,8 @@ impl FnLowering<'_> {
         // and feed it through the receiver's compiled `write_string`.
         if resolved.is_none()
             && method == mojito_symbol::symbol::WRITE_FORMATTED
-            && let Some(TyKind::Struct(writer, _)) = (self.func.reg_types.get(&recv.0).cloned())
-                .as_ref()
-                .map(Ty::kind)
+            && let Some((writer, _)) = ((self.func.reg_types.get(&recv.0).cloned()).as_ref())
+                .and_then(|ty| ty.kind().as_non_simd_struct())
             && let Some(write_string) = self.struct_member(writer, "write_string", 1)
         {
             return self.lower_writer_write(ctx, dest, write_string, args, recv_place);
@@ -299,7 +302,7 @@ impl FnLowering<'_> {
         let write_back = !receiver_alias
             && !self.aliased_load_regs.contains(&recv.0)
             && match self.func.reg_types.get(&recv.0).map(Ty::kind) {
-                Some(TyKind::Struct(struct_name, _)) => {
+                Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
                     let is_mut = self
                         .struct_decls
                         .get(struct_name.as_str())
@@ -459,9 +462,8 @@ impl FnLowering<'_> {
             );
             return Ok(());
         }
-        if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
-            .as_ref()
-            .map(Ty::kind)
+        if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
+            .and_then(|ty| ty.kind().as_non_simd_struct())
         {
             if let Some(symbol) = self.display_member(name, "write_repr_to", dest)? {
                 let signature = &self.signatures[symbol];
@@ -638,8 +640,11 @@ impl FnLowering<'_> {
             .declarations
             .get(write_string)
             .and_then(|decl| decl.param_types.first());
-        if !matches!(payload_ty.map(Ty::kind), Some(TyKind::Struct(payload, _))
-            if mojito_symbol::symbol::is_stdlib_string_span_struct(payload))
+        if !payload_ty
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .is_some_and(|(payload, _)| {
+                mojito_symbol::symbol::is_stdlib_string_span_struct(payload)
+            })
         {
             return Err(self.unsupported_reg(
                 format!("`{write_string}` without a StringSpan payload"),
@@ -659,10 +664,9 @@ impl FnLowering<'_> {
         let writer_address = self.place_address(ctx, &place, dest)?.0;
         for arg in args {
             let mut temporary = None;
-            let (data, len) = if let Some(TyKind::Struct(name, _)) =
-                (self.func.reg_types.get(&arg.0).cloned())
-                    .as_ref()
-                    .map(Ty::kind)
+            let (data, len) = if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned())
+                .as_ref())
+            .and_then(|ty| ty.kind().as_non_simd_struct())
                 && !mojito_symbol::symbol::is_stdlib_string_struct(name)
             {
                 if mojito_symbol::symbol::is_stdlib_string_span_struct(name) {
@@ -723,14 +727,16 @@ impl FnLowering<'_> {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }
-            Some(TyKind::Struct(name, _))
-                if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            Some(struct_ty)
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }
-            Some(TyKind::Struct(name, _))
-                if mojito_symbol::symbol::is_stdlib_string_span_struct(name) =>
+            Some(struct_ty)
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && mojito_symbol::symbol::is_stdlib_string_span_struct(name) =>
             {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));

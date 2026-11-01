@@ -16,9 +16,7 @@ impl Specializer<'_> {
         field: &str,
         read: Option<&Ty>,
     ) -> Option<Const> {
-        let TyKind::Struct(name, type_args) = peel_refs(receiver).kind() else {
-            return None;
-        };
+        let (name, type_args) = peel_refs(receiver).kind().as_non_simd_struct()?;
         let struct_decl = self.structs.get(nominal_template(name))?;
         if struct_decl
             .fields
@@ -70,7 +68,7 @@ impl Specializer<'_> {
             return Ok(());
         };
         let hasher_ty = peel_refs(hasher_ty).clone();
-        if !matches!(hasher_ty.kind(), TyKind::Struct(..)) {
+        if !hasher_ty.kind().is_non_simd_struct() {
             return Ok(());
         }
         if matches!(receiver.kind(), TyKind::Bool | TyKind::Dtype) {
@@ -100,7 +98,7 @@ impl Specializer<'_> {
         }
         if let TyKind::Variant(alternatives) = receiver.kind() {
             for alternative in alternatives {
-                if matches!(alternative.kind(), TyKind::Struct(..)) {
+                if alternative.kind().is_non_simd_struct() {
                     self.enqueue_nominal_method_instance(
                         owner,
                         alternative,
@@ -146,7 +144,7 @@ impl Specializer<'_> {
         method_bindings: &[Ty],
         argument_types: &[Ty],
     ) -> Result<Option<String>, MonoError> {
-        let TyKind::Struct(name, arguments) = receiver.kind() else {
+        let Some((name, arguments)) = receiver.kind().as_non_simd_struct() else {
             return Ok(None);
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
@@ -305,7 +303,7 @@ impl Specializer<'_> {
         if mojito_types::types::simd_shape(ty.kind()).is_some() && ty.is_simd() {
             return self.enqueue_simd_format_instance(owner, ty, method);
         }
-        let TyKind::Struct(name, arguments) = ty.kind() else {
+        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return Ok(());
         };
         let exact = format!("{name}.{method}");
@@ -388,7 +386,7 @@ impl Specializer<'_> {
         let Some(ty) = function.reg_types.get(&arg.0) else {
             return Ok(());
         };
-        let TyKind::Struct(name, _) = ty.kind() else {
+        let Some((name, _)) = ty.kind().as_non_simd_struct() else {
             return Ok(());
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(

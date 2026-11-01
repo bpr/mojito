@@ -47,7 +47,7 @@ use mojito_mir::mir::{
 };
 use mojito_types::ct::ScalarConversion;
 use mojito_types::origin::{CaptureAccess, OriginSeg};
-use mojito_types::types::{Ty, TyKind, has_host_scalar_value};
+use mojito_types::types::{Ty, has_host_scalar_value};
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under MLIR's flag spelling.
@@ -435,9 +435,7 @@ impl StructFolds<'_> {
     /// The declaration position of the field `field` of the struct `base`
     /// holds.
     fn position(&self, base: Reg, field: &str) -> Option<usize> {
-        let TyKind::Struct(name, _) = self.reg_types.get(&base.0)?.kind() else {
-            return None;
-        };
+        let (name, _) = self.reg_types.get(&base.0)?.kind().as_non_simd_struct()?;
         self.declarations
             .structure(name)?
             .fields

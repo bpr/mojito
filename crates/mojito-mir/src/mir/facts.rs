@@ -192,15 +192,17 @@ impl<'a> Node<'a> {
         matches!(
             self.op(),
             CheckedOp::Identifier(_) | CheckedOp::Member { .. }
-        ) && (matches!(
-            self.checked.ty.as_ref().map(Ty::kind),
-            Some(TyKind::Struct(..))
-        ) || self.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::RetainCallPlace
-            )
-        }))
+        ) && (self
+            .checked
+            .ty
+            .as_ref()
+            .is_some_and(|ty| ty.kind().is_non_simd_struct())
+            || self.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::RetainCallPlace
+                )
+            }))
     }
 
     /// The operand and target types of the `rebind` this node is the
@@ -872,7 +874,10 @@ impl<'a> Node<'a> {
             // VM intrinsic boundary as compiler-private `Value::Tuple`
             // storage. A checker-selected public Tuple accessor carries a
             // call contract and therefore never consults this fallback.
-            TyKind::Struct(..) if tuple_elements(&ty).is_some() => {
+            struct_ty
+                if let Some(_) = struct_ty.as_non_simd_struct()
+                    && tuple_elements(&ty).is_some() =>
+            {
                 Some(MirIntrinsicSubscript::TupleStorage)
             }
             _ => None,
@@ -1675,11 +1680,13 @@ fn carries_references(ty: &Ty) -> bool {
         | TyKind::Dependent(_)
         | TyKind::SelfType
         | TyKind::Infer => true,
-        TyKind::Struct(_, args) => args.iter().any(|arg| match arg {
-            mojito_types::types::TyArg::Ty(ty) => carries_references(ty),
-            mojito_types::types::TyArg::Origin(_) => true,
-            mojito_types::types::TyArg::Val(_) => false,
-        }),
+        struct_ty if let Some((_, args)) = struct_ty.as_non_simd_struct() => {
+            args.iter().any(|arg| match arg {
+                mojito_types::types::TyArg::Ty(ty) => carries_references(ty),
+                mojito_types::types::TyArg::Origin(_) => true,
+                mojito_types::types::TyArg::Val(_) => false,
+            })
+        }
         TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
             items.iter().any(carries_references)
         }

@@ -181,13 +181,14 @@ impl FnLowering<'_> {
         let write_back = !receiver_alias
             && !self.aliased_load_regs.contains(&recv.0)
             && match self.func.reg_types.get(&recv.0).map(Ty::kind) {
-                Some(TyKind::Struct(struct_name, _)) => self
-                    .struct_decls
-                    .get(struct_name.as_str())
-                    .is_some_and(|d| {
-                        d.mut_self_methods.contains(resolved.as_str())
-                            || d.mut_self_methods.contains(method)
-                    }),
+                Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
+                    self.struct_decls
+                        .get(struct_name.as_str())
+                        .is_some_and(|d| {
+                            d.mut_self_methods.contains(resolved.as_str())
+                                || d.mut_self_methods.contains(method)
+                        })
+                }
                 _ => false,
             };
         if write_back && let Some(place) = recv_place {

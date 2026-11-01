@@ -813,15 +813,17 @@ impl Checker {
                     {
                         Some(binder.name.trim_start_matches('*').to_string())
                     }
-                    TyKind::Struct(name, arguments)
-                        if mojito_types::types::is_nominal_instance(
-                            name,
-                            mojito_types::types::TUPLE_TYPE_NAME,
-                        ) && matches!(
-                            (mojito_types::types::pack_spread_argument(arguments)).map(Ty::kind),
-                            Some(TyKind::Param { bounds, .. })
-                                if !self.bounds_prove_deinitable(bounds)
-                        ) =>
+                    struct_ty
+                        if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                            && mojito_types::types::is_nominal_instance(
+                                name,
+                                mojito_types::types::TUPLE_TYPE_NAME,
+                            )
+                            && matches!(
+                                (mojito_types::types::pack_spread_argument(arguments)).map(Ty::kind),
+                                Some(TyKind::Param { bounds, .. })
+                                    if !self.bounds_prove_deinitable(bounds)
+                            ) =>
                     {
                         Some(ty.to_string())
                     }
@@ -1209,7 +1211,7 @@ impl Checker {
             current: &Ty,
             visiting: &mut HashSet<String>,
         ) -> Result<(), TypeError> {
-            let TyKind::Struct(current_name, args) = current.kind() else {
+            let Some((current_name, args)) = current.kind().as_non_simd_struct() else {
                 return Ok(());
             };
             if current_name == root {
@@ -1630,7 +1632,7 @@ impl Checker {
                     })
             }
             TyKind::Assoc { .. } => self.archetype_conformance(ty, "Copyable").is_proven(),
-            TyKind::Struct(name, arguments) => {
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 let Some(info) = self.structs.get(name) else {
                     // A compatibility spelling may produce an opaque nominal
                     // type without registering its declaration. That is not a
@@ -1799,7 +1801,7 @@ impl Checker {
             };
             return assumption.is_some_and(|known| self.constraint_implies(known, &needed));
         }
-        let TyKind::Struct(name, args) = ty.kind() else {
+        let Some((name, args)) = ty.kind().as_non_simd_struct() else {
             return false;
         };
         let key = (name.clone(), required.to_string());
@@ -2063,7 +2065,9 @@ impl Checker {
         }
         let element = &mut |element: &Ty, tr: &str| self.conformance(element, tr);
         match ty.kind() {
-            TyKind::Struct(name, args) => self.struct_trait_conformance(ty, name, args, tr),
+            struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
+                self.struct_trait_conformance(ty, name, args, tr)
+            }
             // A `SIMD` answers a trait its declaration lists as the struct it
             // is; the traits `std.simd` does not declare yet keep the model.
             simd if simd.is_simd()
@@ -2671,7 +2675,7 @@ impl Checker {
     /// prevents fieldwise synthesis, while operation traits name the operation
     /// promised by the bound.
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
-        let TyKind::Struct(name, arguments) = ty.kind() else {
+        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return builtin_trait_operation(tr)
                 .map(|operation| format!("missing required operation '{operation}'"));
         };
@@ -2794,7 +2798,7 @@ impl Checker {
     /// a register.
     pub(super) fn call_read_is_independent_copy(&self, ty: &Ty) -> bool {
         self.is_implicitly_copyable(ty)
-            && (!matches!(ty.kind(), TyKind::Struct(..)) || self.is_trivial_register_passable(ty))
+            && (!ty.kind().is_non_simd_struct() || self.is_trivial_register_passable(ty))
     }
 
     /// Every initialized value of a concrete type is movable by default; only
@@ -2822,7 +2826,7 @@ impl Checker {
             )
             || super::builtins::simd_valued_ty(ty)
             || match ty.kind() {
-                TyKind::Struct(name, args) => {
+                struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                     self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
                 }
                 TyKind::Param { .. } => self.refined_bound(ty).is_some_and(|bounds| {
@@ -2858,7 +2862,7 @@ impl Checker {
                     (Proven, Proven) => Proven,
                 }
             }),
-            TyKind::Struct(name, args) => {
+            struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                 if self.struct_conformance_applies(name, args, "RegisterPassable") {
                     return Proven;
                 }
@@ -2930,7 +2934,7 @@ impl Checker {
         // consult only a declared conformance or a parameter bound;
         // primitives already prove triviality structurally below.
         let trp_conforms = match ty.kind() {
-            TyKind::Struct(name, args) => {
+            struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                 self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
             }
             TyKind::Param { .. } => self.refined_bound(ty).is_some_and(|bounds| {
@@ -2971,7 +2975,7 @@ impl Checker {
             TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.trivial_lifecycle(kind, alternative, visiting)),
-            TyKind::Struct(name, args) => {
+            struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                 if !visiting.insert(name.clone()) {
                     // A cycle can only occur through indirection; the pointer
                     // value itself is trivial.
@@ -3029,7 +3033,10 @@ impl Checker {
             TyKind::Param { binder, .. } if self.is_own_parameter(binder) => {
                 self.archetype_verdict(ty)
             }
-            TyKind::Struct(name, _) if !self.is_deinitable(ty) => {
+            struct_ty
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && !self.is_deinitable(ty) =>
+            {
                 let info = self.structs.get(name)?;
                 Some(Linear {
                     message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
@@ -3154,8 +3161,7 @@ impl Checker {
                     // `List[Int]`/`Tuple[*Ts]` field as an unregistered
                     // nominal spelling; the ordinary capability helper's
                     // compatibility default answers for it.
-                    || matches!(ty.kind(), TyKind::Struct(field_struct, _)
-                        if !self.structs.contains_key(field_struct) && self.is_copyable(ty))
+                    || ty.kind().as_non_simd_struct().is_some_and(|(field_struct, _)| !self.structs.contains_key(field_struct) && self.is_copyable(ty))
             })
     }
 

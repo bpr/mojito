@@ -106,7 +106,7 @@ impl Checker {
         let no_enter = || {
             TypeError::ContextManager(format!("'{ty}' does not implement the '__enter__' method"))
         };
-        let TyKind::Struct(name, _) = ty.kind() else {
+        let Some((name, _)) = ty.kind().as_non_simd_struct() else {
             return Err(no_enter());
         };
         let info = self.structs.get(name).ok_or_else(no_enter)?;

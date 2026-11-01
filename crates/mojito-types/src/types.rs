@@ -1138,6 +1138,24 @@ impl TyKind {
         matches!(self, Self::Simd { .. })
     }
 
+    /// The name and arguments of a struct application other than a `SIMD`
+    /// one. A rule written for a declared struct reads this rather than
+    /// matching [`TyKind::Struct`], since `SIMD`'s operators, copies, and
+    /// lanes are still the compiler's own rules (R1575, R1801): it keeps
+    /// excluding `SIMD` once that application is the struct (R1800).
+    pub const fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
+        match self {
+            Self::Struct(name, arguments) if !self.is_simd() => Some((name, arguments)),
+            _ => None,
+        }
+    }
+
+    /// Whether this is a struct application other than a `SIMD` one
+    /// ([`TyKind::as_non_simd_struct`]).
+    pub const fn is_non_simd_struct(&self) -> bool {
+        self.as_non_simd_struct().is_some()
+    }
+
     /// The dtype and width slots of a `SIMD` vector, symbolic or not.
     pub fn as_simd(&self) -> Option<(SimdDtype, SimdWidth)> {
         match self {

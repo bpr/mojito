@@ -254,7 +254,9 @@ fn resolve_closure_types(
     let storages: HashSet<&str> = types
         .values()
         .filter_map(|ty| match ty.kind() {
-            TyKind::Struct(name, _) => Some(name.as_str()),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                Some(name.as_str())
+            }
             _ => None,
         })
         .collect();
@@ -298,10 +300,10 @@ fn retarget_storage_calls(
             callee_place,
             ..
         } = instruction
-            && let Some(TyKind::Struct(name, _)) = reg_types
+            && let Some((name, _)) = (reg_types
                 .get(&callee.0)
-                .or_else(|| callee_place.as_ref().and_then(|place| place.ty.as_ref()))
-                .map(Ty::kind)
+                .or_else(|| callee_place.as_ref().and_then(|place| place.ty.as_ref())))
+            .and_then(|ty| ty.kind().as_non_simd_struct())
             && storages.contains(name.as_str())
         {
             *resolved = Some(format!("{name}.__call__"));
@@ -1056,7 +1058,7 @@ fn lower_closure_storage(
     declarations: &mut MirDeclarations,
 ) {
     let copyable = closure_copyable(callable_ty);
-    let TyKind::Struct(name, _) = storage.ty.kind() else {
+    let Some((name, _)) = storage.ty.kind().as_non_simd_struct() else {
         unreachable!("a closure's storage is a struct")
     };
     let parameter_names: Vec<String> = captures

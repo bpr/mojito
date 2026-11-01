@@ -335,8 +335,9 @@ impl Checker {
                     // for stdlib-internal trap sites; the VM reads either
                     // spelling.
                     TyKind::StringLiteral(_) => Ok(Ty::none()),
-                    TyKind::Struct(name, targs)
-                        if targs.is_empty()
+                    struct_ty
+                        if let Some((name, targs)) = struct_ty.as_non_simd_struct()
+                            && targs.is_empty()
                             && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
                     {
                         Ok(Ty::none())
@@ -408,7 +409,7 @@ impl Checker {
             }
             "Tuple" => {
                 let tuple = self.infer_tuple_construction(&span, param_args, args)?;
-                if let TyKind::Struct(target, _) = tuple.kind()
+                if let Some((target, _)) = tuple.kind().as_non_simd_struct()
                     && target != mojito_types::types::TUPLE_TYPE_NAME
                 {
                     self.record_at(span).overload_target = Some(target.clone());
@@ -555,10 +556,13 @@ impl Checker {
                     self.construct_simd(span, &dtype, &width, args)
                 }),
             // An origin slot the arguments leave open is the instance's.
-            TyKind::Struct(name, expected) => self
+            struct_ty if let Some((name, expected)) = struct_ty.as_non_simd_struct() => self
                 .infer_construction_of(span, name, Some(instance), &[], args, kwargs)
                 .map(|constructed| match constructed.kind() {
-                    TyKind::Struct(name, arguments) if arguments.len() == expected.len() => {
+                    struct_ty
+                        if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                            && arguments.len() == expected.len() =>
+                    {
                         let arguments = arguments
                             .iter()
                             .zip(expected)
@@ -1136,13 +1140,14 @@ impl Checker {
                         && param_args.is_empty()
                         && kwargs.is_empty()
                         && candidates.iter().filter_map(Ty::as_func).any(|func| {
-                            matches!(
-                                func.ret.kind(),
-                                TyKind::Struct(target, _)
-                                    if mojito_types::types::SCALAR_RANGE_FAMILY
+                            func.ret
+                                .kind()
+                                .as_non_simd_struct()
+                                .is_some_and(|(target, _)| {
+                                    mojito_types::types::SCALAR_RANGE_FAMILY
                                         .iter()
                                         .any(|family| target.contains(family))
-                            )
+                                })
                         })
                         && let Some(ty) = self.infer_scalar_range(&span, args)?
                     {
@@ -1176,7 +1181,7 @@ impl Checker {
         // carrying its own callable contract keeps parameter application
         // (specialized callable values), and non-value bracket forms keep the
         // parenthesization hint in `infer_callable_ty`.
-        if let TyKind::Struct(struct_name, _) = ty.kind()
+        if let Some((struct_name, _)) = ty.kind().as_non_simd_struct()
             && !param_args.is_empty()
             && param_args
                 .iter()
@@ -1206,7 +1211,9 @@ impl Checker {
         let (ty, ordinary_param_args, forwarded) =
             self.prepare_callable_specialization(name, param_args, ty, origin_signatures.first())?;
         let indirect_target = match ty.kind() {
-            TyKind::Struct(..) => self.indirect_callable_target(&ty),
+            struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {
+                self.indirect_callable_target(&ty)
+            }
             _ if callable_contract_ty(&ty).is_some()
                 && self.binding_scope(name).is_some_and(|scope| scope > 0) =>
             {
@@ -1252,7 +1259,7 @@ impl Checker {
         }
         // A callable struct value dispatches `Struct.__call__`; replay its
         // effects with the callee binding as the receiver actual.
-        if let TyKind::Struct(struct_name, _) = ty.kind() {
+        if let Some((struct_name, _)) = ty.kind().as_non_simd_struct() {
             let callee_value = Expr {
                 kind: ExprKind::Identifier(name.to_string()),
                 span: span.span,
@@ -1328,7 +1335,7 @@ impl Checker {
     fn record_view_result_borrow(&self, span: &SourceSpan, ret: &Ty) {
         // Reference fields and origin-bearing pointer fields (upstream's
         // `Pointer[T, Self.o]` iterator storage) both borrow.
-        if matches!(ret.kind(), TyKind::Struct(..)) && self.type_carries_loans(ret) {
+        if ret.kind().is_non_simd_struct() && self.type_carries_loans(ret) {
             self.record_at(span.clone())
                 .adjustment
                 .get_or_insert_with(|| {
@@ -1460,7 +1467,7 @@ impl Checker {
         if !carried.is_empty() {
             self.replay_transfer_effects(carried, None, args, &span, &TySubst::new())?;
         }
-        if let TyKind::Struct(struct_name, _) = element_ty.kind() {
+        if let Some((struct_name, _)) = element_ty.kind().as_non_simd_struct() {
             let method_key = format!("{struct_name}.__call__");
             let effect_key = target.as_deref().unwrap_or(&method_key);
             self.apply_transfer_effects(effect_key, Some(receiver), args, &span, &TySubst::new())?;
@@ -2210,12 +2217,17 @@ impl Checker {
         }
         let found = self.infer(&argument.value)?;
         match found.kind() {
-            TyKind::Struct(name, args) if name == "StringDict" => match args.as_slice() {
-                [TyArg::Ty(element)] => Ok(Some(element.clone())),
-                _ => Err(TypeError::InvariantViolation(
-                    "StringDict must carry one value type".to_string(),
-                )),
-            },
+            struct_ty
+                if let Some((name, args)) = struct_ty.as_non_simd_struct()
+                    && name == "StringDict" =>
+            {
+                match args.as_slice() {
+                    [TyArg::Ty(element)] => Ok(Some(element.clone())),
+                    _ => Err(TypeError::InvariantViolation(
+                        "StringDict must carry one value type".to_string(),
+                    )),
+                }
+            }
             other => Err(TypeError::TypeMismatch {
                 expected: "StringDict[T]".to_string(),
                 found: other.to_string(),

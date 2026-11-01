@@ -33,7 +33,12 @@ pub(super) fn contextual_root_span(expression: &Expr) -> Option<mojito_common::t
 /// declared type, as upstream resolves it.
 pub(super) fn contextual_parameter_base(ty: &Ty, expr: &Expr) -> Result<String, TypeError> {
     match ty.kind() {
-        TyKind::Struct(name, arguments) if arguments.is_empty() => Ok(name.clone()),
+        struct_ty
+            if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                && arguments.is_empty() =>
+        {
+            Ok(name.clone())
+        }
         TyKind::Dtype => Ok("DType".to_string()),
         other => Err(TypeError::ContextualMember {
             member: contextual_member_name(expr),
@@ -603,9 +608,7 @@ impl Checker {
             },
             ExprKind::Member { object, field } => {
                 let object_ty = self.infer(object).ok()?;
-                let TyKind::Struct(name, _) = object_ty.kind() else {
-                    return None;
-                };
+                let (name, _) = object_ty.kind().as_non_simd_struct()?;
                 self.structs
                     .get(name)?
                     .fields
@@ -1055,7 +1058,7 @@ impl Checker {
                 // are a subscript of the member value, not parameter
                 // application on a callable — the member-base mirror of the
                 // identifier-base re-dispatch in `infer_call`.
-                if let TyKind::Struct(struct_name, _) = callable.kind()
+                if let Some((struct_name, _)) = callable.kind().as_non_simd_struct()
                     && !param_args.is_empty()
                     && param_args
                         .iter()
@@ -1105,7 +1108,7 @@ impl Checker {
                         &TySubst::new(),
                     )?;
                 }
-                if let TyKind::Struct(struct_name, _) = callable.kind() {
+                if let Some((struct_name, _)) = callable.kind().as_non_simd_struct() {
                     let method_key = format!("{struct_name}.__call__");
                     let effect_key = target.as_deref().unwrap_or(&method_key);
                     self.apply_transfer_effects(
@@ -1663,7 +1666,10 @@ impl Checker {
     /// Whether a variable's struct declares a type-keyed
     /// `__getitem_param__[T]` accessor (the self-hosted `Variant`'s `v[T]`).
     pub(super) fn type_keyed_accessor_receiver(&self, name: &str) -> bool {
-        let Some(TyKind::Struct(sname, _)) = self.lookup(name).map(Ty::kind) else {
+        let Some((sname, _)) = self
+            .lookup(name)
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+        else {
             return false;
         };
         self.structs.get(sname).is_some_and(|info| {
@@ -2195,7 +2201,7 @@ impl Checker {
         // the base name physically during syntax renaming.
         if let Some(root_span) = contextual_root_span(expression) {
             let base = match expected.kind() {
-                TyKind::Struct(name, _) => name.clone(),
+                struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name.clone(),
                 // `DType` is a compiler type here, whose members are
                 // upstream's `comptime` members of `struct DType`.
                 TyKind::Dtype => "DType".to_string(),
@@ -2220,18 +2226,23 @@ impl Checker {
             // String]`) roots the chain at that application, so a static
             // member call binds them as the spelled form does.
             let root = match expected.kind() {
-                TyKind::Struct(_, arguments) if !arguments.is_empty() => arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => mojito_types::ct::source_type(ty, expression.span)
-                            .map(mojito_ast::ast::ParamArg::Type),
-                        _ => None,
-                    })
-                    .collect::<Option<Vec<_>>>()
-                    .map(|args| ExprKind::TypeApply {
-                        name: base.clone(),
-                        args,
-                    }),
+                struct_ty
+                    if let Some((_, arguments)) = struct_ty.as_non_simd_struct()
+                        && !arguments.is_empty() =>
+                {
+                    arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            TyArg::Ty(ty) => mojito_types::ct::source_type(ty, expression.span)
+                                .map(mojito_ast::ast::ParamArg::Type),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .map(|args| ExprKind::TypeApply {
+                            name: base.clone(),
+                            args,
+                        })
+                }
                 _ => None,
             }
             .unwrap_or_else(|| ExprKind::Identifier(base.clone()));
@@ -2747,7 +2758,7 @@ impl Checker {
         target: &Ty,
         record: bool,
     ) -> Result<(), TypeError> {
-        let TyKind::Struct(name, _) = target.kind() else {
+        let Some((name, _)) = target.kind().as_non_simd_struct() else {
             return Ok(());
         };
         let empty = match &display.kind {
@@ -2815,7 +2826,7 @@ impl Checker {
         span: SourceSpan,
         target: &Ty,
     ) -> Result<(), TypeError> {
-        let TyKind::Struct(name, _) = target.kind() else {
+        let Some((name, _)) = target.kind().as_non_simd_struct() else {
             return Ok(());
         };
         let insert = if list_element(target).is_some() {
@@ -2842,9 +2853,7 @@ impl Checker {
         target: &Ty,
         is_literal: fn(&[String], bool) -> bool,
     ) -> Option<(String, Result<(), TypeError>)> {
-        let TyKind::Struct(name, arguments) = target.kind() else {
-            return None;
-        };
+        let (name, arguments) = target.kind().as_non_simd_struct()?;
         let info = self.structs.get(name)?;
         let sig = info
             .methods
@@ -2872,7 +2881,7 @@ impl Checker {
             return false;
         }
         let name = match ty.kind() {
-            TyKind::Struct(name, _) => name.as_str(),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name.as_str(),
             kind if kind.is_simd() => "SIMD",
             _ => return false,
         };
@@ -2994,7 +3003,7 @@ impl Checker {
         span: SourceSpan,
         target: &Ty,
     ) -> Result<(), TypeError> {
-        let TyKind::Struct(name, _) = target.kind() else {
+        let Some((name, _)) = target.kind().as_non_simd_struct() else {
             return Ok(());
         };
         let constructor = self

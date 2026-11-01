@@ -3,7 +3,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::FnParam;
-use mojito_types::types::TyKind;
 
 // --- Substitution / materialization -----------------------------------------
 //
@@ -145,7 +144,11 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 && param_args.is_empty()
             {
                 match bound.kind() {
-                    TyKind::Struct(struct_name, struct_args) if struct_args.is_empty() => {
+                    struct_ty
+                        if let Some((struct_name, struct_args)) =
+                            struct_ty.as_non_simd_struct()
+                            && struct_args.is_empty() =>
+                    {
                         name.clone_from(struct_name);
                     }
                     // A bound vector type is concrete (the elaborator binds
@@ -212,7 +215,10 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 && let Some(CtValue::Type(bound)) = subs(method)
             {
                 match bound.kind() {
-                    TyKind::Struct(name, parameters) if parameters.is_empty() => {
+                    struct_ty
+                        if let Some((name, parameters)) = struct_ty.as_non_simd_struct()
+                            && parameters.is_empty() =>
+                    {
                         e.kind = ExprKind::Call {
                             name: name.clone(),
                             param_args: Vec::new(),

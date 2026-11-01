@@ -303,17 +303,19 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
 /// This is the only mapping from a type to that declaration.
 pub fn member_table_name(ty: &Ty) -> Option<Cow<'_, str>> {
     match ty.kind() {
-        TyKind::Struct(name, _) => Some(Cow::Borrowed(name)),
-        kind if kind.is_simd() => {
-            let (dtype, width) = mojito_types::types::simd_shape(kind)?;
-            let arguments =
-                mojito_types::types::simd_struct_arguments(canonical_simd_ty(dtype, width).kind())?
-                    .into_iter()
-                    .map(|argument| match argument {
-                        TyArg::Val(value) => Some(InstanceArg::Value(value)),
-                        _ => None,
-                    })
-                    .collect::<Option<Vec<_>>>()?;
+        struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+            Some(Cow::Borrowed(name))
+        }
+        kind if let Some((dtype, width)) = kind.known_simd() => {
+            let canonical = canonical_simd_ty(dtype, width);
+            let (_, arguments) = mojito_types::types::nominal_parts(&canonical)?;
+            let arguments = arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Val(value) => Some(InstanceArg::Value(value.clone())),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
             Some(Cow::Owned(instance_symbol(
                 mojito_types::types::SIMD_TYPE_NAME,
                 &arguments,
@@ -1505,19 +1507,27 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // spelling while the compile-time literal spells `StringLiteral`, so
         // the two are distinct overload keys (as upstream: a literal argument
         // selects the exact `StringLiteral` overload beside a `String` one).
-        TyKind::Struct(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
+        struct_ty
+            if let Some((name, args)) = struct_ty.as_non_simd_struct()
+                && args.is_empty()
+                && is_stdlib_string_struct(name) =>
+        {
             "String".to_string()
         }
         // A minted generic instance (`W$mono$TInt`) spells as its own symbol:
         // that symbol already carries every argument, so re-encoding it and
         // appending the arguments again would make a nested instance's name
         // grow with its nesting depth.
-        TyKind::Struct(name, _) if mode == KeyMode::Instance && is_instance_struct_symbol(name) => {
+        struct_ty
+            if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                && mode == KeyMode::Instance
+                && is_instance_struct_symbol(name) =>
+        {
             name.clone()
         }
         // A struct type spells as its annotation does (`Point`, `Pair$Int`) —
         // no `Struct$` marker, so the MIR definition name matches.
-        TyKind::Struct(name, args) => {
+        struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
             let mut s = encode_identifier(name);
             for arg in args {
                 match arg {
@@ -2661,10 +2671,9 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
 pub fn canonical_specialization_type(ty: &Ty) -> Ty {
     let respell = |inner: &Ty| canonical_specialization_type(inner);
     match ty.kind() {
-        TyKind::Struct(name, args) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            mojito_types::types::map_tyargs(args, respell),
-        )),
+        struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => ty.reusing(
+            TyKind::Struct(name.clone(), mojito_types::types::map_tyargs(args, respell)),
+        ),
         TyKind::ComptimeList(element) => TyKind::ComptimeList(respell(element)).into(),
         TyKind::ParamList(element) => TyKind::ParamList(respell(element)).into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(respell).collect()).into(),
@@ -2723,7 +2732,7 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
         other => unqualified_value_argument(other),
     };
     match ty.kind() {
-        TyKind::Struct(name, arguments) => {
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
             if let Some(elements) = mojito_types::types::tuple_elements(ty) {
                 let elements = elements
                     .into_iter()
@@ -3356,11 +3365,14 @@ impl TypeNameSpeller<'_> {
             TyKind::StringLiteral(_) => self.qualify("std.builtin.string_literal", "StringLiteral"),
             // A variadic type pack spells as upstream's printer shows one.
             TyKind::Variant(_) => self.applied("std.utils.variant", "Variant", &Self::pack()),
-            TyKind::Struct(..) if mojito_types::types::tuple_elements(ty).is_some() => {
+            struct_ty
+                if let Some(_) = struct_ty.as_non_simd_struct()
+                    && mojito_types::types::tuple_elements(ty).is_some() =>
+            {
                 let module = (self.module_of)(mojito_types::types::TUPLE_TYPE_NAME);
                 self.applied(&module.unwrap_or_default(), "Tuple", &Self::pack())
             }
-            TyKind::Struct(name, arguments) => {
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 let template = mojito_types::types::struct_template(name);
                 let (template, baked) =
                     demangle_specialization(template).unwrap_or((template, Vec::new()));
@@ -3483,8 +3495,13 @@ fn reflected_base_name(ty: &Ty) -> String {
         TyKind::Error => "Error",
         TyKind::StringLiteral(_) => "StringLiteral",
         TyKind::Variant(_) => "Variant",
-        TyKind::Struct(..) if mojito_types::types::tuple_elements(ty).is_some() => "Tuple",
-        TyKind::Struct(name, _) => {
+        struct_ty
+            if let Some(_) = struct_ty.as_non_simd_struct()
+                && mojito_types::types::tuple_elements(ty).is_some() =>
+        {
+            "Tuple"
+        }
+        struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
             let template = mojito_types::types::struct_template(name);
             declared_struct_name(specialization_template(template).unwrap_or(template))
         }

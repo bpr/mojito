@@ -609,7 +609,7 @@ pub(super) fn validate_dependent_bindings_in(
                 callable_bound: Some(callable),
                 ..
             } => walk(callable, bound, frames)?,
-            TyKind::Struct(_, arguments) => {
+            struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
                 for argument in arguments {
                     match argument {
                         TyArg::Ty(ty) => walk(ty, bound, frames)?,
@@ -1010,7 +1010,9 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
         ));
     }
     let nominal_name = match cx.reg_ty(*callee).map(Ty::kind) {
-        Some(TyKind::Struct(name, _)) => Some(name.as_str()),
+        Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+            Some(name.as_str())
+        }
         _ => None,
     };
     if let Some(target) = resolved {

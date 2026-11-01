@@ -1552,8 +1552,9 @@ impl<'c> Inliner<'_, 'c> {
             // its own type, whose binders are the callee's too; anywhere
             // else it is the empty application of a struct keyed on one
             // pack (`Tuple()`), whose pack binds to no element.
-            TyKind::Struct(name, arguments)
-                if name == template
+            struct_ty
+                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                    && name == template
                     && arguments.is_empty()
                     && (self.is_member_of(template)
                         || !matches!(
@@ -4380,9 +4381,10 @@ struct BareOwner<'a> {
 
 impl TyRewrite for BareOwner<'_> {
     fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-        matches!(ty.kind(), TyKind::Struct(name, arguments)
-            if name == self.template && arguments.is_empty())
-        .then(|| self.owner.clone())
+        ty.kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, arguments)| name == self.template && arguments.is_empty())
+            .then(|| self.owner.clone())
     }
 
     fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {

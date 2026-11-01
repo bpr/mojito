@@ -271,21 +271,23 @@ fn default_construction<S: BuildHasher>(
                 },
             ])
         }
-        TyKind::Struct(..) => Ok(vec![declarations.default_initializer(ty).map_or_else(
-            || MirInstr::ConstructType {
-                dest,
-                ty: ty.clone(),
-            },
-            |initializer| {
-                initializer_call(
+        struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {
+            Ok(vec![declarations.default_initializer(ty).map_or_else(
+                || MirInstr::ConstructType {
                     dest,
-                    initializer,
-                    struct_arguments(ty, declarations),
-                    Vec::new(),
-                    Vec::new(),
-                )
-            },
-        )]),
+                    ty: ty.clone(),
+                },
+                |initializer| {
+                    initializer_call(
+                        dest,
+                        initializer,
+                        struct_arguments(ty, declarations),
+                        Vec::new(),
+                        Vec::new(),
+                    )
+                },
+            )])
+        }
         _ => Err(TypeConstructionError::NotAStruct(ty.clone())),
     }
 }
@@ -320,7 +322,7 @@ fn copy_construction<C: ConstructionTypes>(
             value: *source,
             constructor: None,
         }),
-        TyKind::Struct(..) => Some(struct_copy(
+        struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => Some(struct_copy(
             *dest,
             bound,
             (*source, kwarg_places.first().cloned().flatten()),
@@ -335,7 +337,7 @@ fn copy_construction<C: ConstructionTypes>(
 /// pack the type spells element by element (`Tuple[Int, Bool]`) passed
 /// whole as a direct call passes it.
 fn struct_arguments(ty: &Ty, declarations: &MirDeclarations) -> Vec<TyArg> {
-    let TyKind::Struct(name, arguments) = ty.kind() else {
+    let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
         return Vec::new();
     };
     let lone_pack = declarations

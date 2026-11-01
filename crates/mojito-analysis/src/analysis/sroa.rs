@@ -407,7 +407,7 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
                 )
             });
     }
-    if !matches!(ty.kind(), TyKind::Struct(..)) {
+    if !ty.kind().is_non_simd_struct() {
         return None;
     }
     let fields = declarations.field_types(ty)?;
@@ -433,7 +433,7 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
 /// Whether the struct `ty` declares `TrivialRegisterPassable`, or a trait
 /// refining it, unconditionally.
 fn declares_trivially_register_passable(ty: &Ty, declarations: &MirDeclarations) -> bool {
-    let TyKind::Struct(name, _) = ty.kind() else {
+    let Some((name, _)) = ty.kind().as_non_simd_struct() else {
         return false;
     };
     declarations.structure(name).is_some_and(|declaration| {

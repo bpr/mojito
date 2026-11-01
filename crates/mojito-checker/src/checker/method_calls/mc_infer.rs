@@ -265,7 +265,10 @@ impl Checker {
             .lowered_name
             .clone()
             .or_else(|| match obj_ty.kind() {
-                TyKind::Struct(name, _) if self.structs.contains_key(name) => {
+                struct_ty
+                    if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                        && self.structs.contains_key(name) =>
+                {
                     Some(format!("{name}.{method}"))
                 }
                 _ => self

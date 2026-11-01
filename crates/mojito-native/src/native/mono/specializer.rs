@@ -508,7 +508,7 @@ impl<'a> Specializer<'a> {
                     .collect::<Result<_, _>>()?;
                 None
             }
-            Some((_, instance)) if let TyKind::Struct(name, _) = instance.kind() => {
+            Some((_, instance)) if let Some((name, _)) = instance.kind().as_non_simd_struct() => {
                 Some(name.clone())
             }
             // The `SIMD` bridge is no struct instance a member retargets to
@@ -853,7 +853,7 @@ impl<'a> Specializer<'a> {
         let mut references = Vec::new();
         while let Some(ty) = types.pop() {
             collect_nested_types(&ty, &mut types);
-            let TyKind::Struct(name, _) = ty.kind() else {
+            let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                 continue;
             };
             if !structs.insert(name.clone()) {
@@ -1326,7 +1326,7 @@ impl<'a> Specializer<'a> {
                 erase(decls, instantiated_args);
             }
             if let Some(receiver) = receiver
-                && let TyKind::Struct(name, arguments) = receiver.kind()
+                && let Some((name, arguments)) = receiver.kind().as_non_simd_struct()
                 && let Some(owner) = self.structs.get(name.as_str())
                 && substitute_ty(receiver, &probe).is_err()
             {
@@ -2257,10 +2257,12 @@ impl<'a> Specializer<'a> {
     /// declared only once its body is discovered.
     fn translated_type(&self, ty: &Ty) -> Ty {
         let template = match ty.kind() {
-            TyKind::Struct(name, arguments) => Ty::new(TyKind::Struct(
-                name.split("$mono").next().unwrap_or(name).to_string(),
-                arguments.clone(),
-            )),
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+                Ty::new(TyKind::Struct(
+                    name.split("$mono").next().unwrap_or(name).to_string(),
+                    arguments.clone(),
+                ))
+            }
             _ => ty.clone(),
         };
         self.source.declarations.translated_type(&template)
@@ -2393,7 +2395,7 @@ impl<'a> Specializer<'a> {
             let Some(param_ty) = declaration.param_types.get(index) else {
                 continue;
             };
-            let TyKind::Struct(struct_name, arguments) = param_ty.kind() else {
+            let Some((struct_name, arguments)) = param_ty.kind().as_non_simd_struct() else {
                 continue;
             };
             if is_symbolic(param_ty) {
@@ -2637,7 +2639,7 @@ impl<'a> Specializer<'a> {
         arguments: &[InstanceArg],
     ) -> String {
         let base = match bindings.self_instance.as_ref().map(|(_, ty)| ty.kind()) {
-            Some(TyKind::Struct(name, _)) => {
+            Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 mojito_symbol::symbol::retarget_method_symbol(target, name)
                     .unwrap_or_else(|| target.to_string())
             }
@@ -2814,10 +2816,11 @@ impl<'a> Specializer<'a> {
                             | mojito_ast::ast::PrefixOp::Invert
                             | mojito_ast::ast::PrefixOp::Pos
                     )
-                    && matches!(
-                        (function.reg_types.get(&a.0).map(peel_refs)).map(Ty::kind),
-                        Some(TyKind::Struct(..))
-                    )
+                    && function
+                        .reg_types
+                        .get(&a.0)
+                        .map(peel_refs)
+                        .is_some_and(|ty| ty.kind().is_non_simd_struct())
                 {
                     let raises = raises.take();
                     *instruction =
@@ -2829,10 +2832,11 @@ impl<'a> Specializer<'a> {
                     && resolved
                         .as_deref()
                         .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
-                    && !matches!(
-                        (function.reg_types.get(&a.0).map(peel_refs)).map(Ty::kind),
-                        Some(TyKind::Struct(..))
-                    )
+                    && !function
+                        .reg_types
+                        .get(&a.0)
+                        .map(peel_refs)
+                        .is_some_and(|ty| ty.kind().is_non_simd_struct())
                 {
                     *resolved = None;
                 }
@@ -2852,10 +2856,11 @@ impl<'a> Specializer<'a> {
                     ..
                 } = instruction
                     && let Some(method) = mojito_mir::mir::operator_method(*op)
-                    && matches!(
-                        (function.reg_types.get(&a.0).map(peel_refs)).map(Ty::kind),
-                        Some(TyKind::Struct(..))
-                    )
+                    && function
+                        .reg_types
+                        .get(&a.0)
+                        .map(peel_refs)
+                        .is_some_and(|ty| ty.kind().is_non_simd_struct())
                 {
                     let (resolved, raises) = (resolved.take(), raises.take());
                     *instruction =
@@ -2882,7 +2887,7 @@ impl<'a> Specializer<'a> {
                     && let [other] = args.as_slice()
                     && let Some(op) = comparison_of_dunder(method)
                     && !(function.reg_types.get(&recv.0).map(peel_refs))
-                        .is_none_or(|ty| matches!(ty.kind(), TyKind::Struct(..)) || ty.is_simd())
+                        .is_none_or(|ty| ty.kind().is_non_simd_struct() || ty.is_simd())
                 {
                     *instruction = MirInstr::BinOp {
                         op,
@@ -3046,14 +3051,14 @@ impl<'a> Specializer<'a> {
                         if method == "__hash__"
                             && args.len() == 1
                             && kwargs.is_empty()
-                            && !matches!(peel_refs(receiver).kind(), TyKind::Struct(..))
+                            && !peel_refs(receiver).kind().is_non_simd_struct()
                         {
                             let receiver = peel_refs(receiver).clone();
                             self.enqueue_hash_leaf_instances(owner, function, args[0], &receiver)?;
                         }
                         if let Some(dispatch) = resolved.as_deref().filter(|symbol| {
                             mojito_symbol::symbol::is_trait_dispatch_symbol(symbol)
-                        }) && !matches!(peel_refs(receiver).kind(), TyKind::Struct(..))
+                        }) && !peel_refs(receiver).kind().is_non_simd_struct()
                             && !self.declares_witness(peel_refs(receiver), dispatch)
                         {
                             // The builtin answers the call itself and takes
@@ -3360,7 +3365,9 @@ impl<'a> Specializer<'a> {
                         {
                             *target = contract;
                         }
-                        let TyKind::Struct(receiver_name, _) = peel_refs(receiver).kind() else {
+                        let Some((receiver_name, _)) =
+                            peel_refs(receiver).kind().as_non_simd_struct()
+                        else {
                             continue;
                         };
                         // A `def(...)` contract is no trait, so no witness
@@ -3661,15 +3668,14 @@ impl<'a> Specializer<'a> {
         // argument and a pointee are not laid out by the type naming them.
         let mut types = seeds.into_iter().map(|ty| (ty, true)).collect::<Vec<_>>();
         while let Some((ty, held)) = types.pop() {
-            if matches!(ty.kind(), TyKind::Struct(..)) && !self.discovered_types.insert(ty.clone())
-            {
+            if ty.kind().is_non_simd_struct() && !self.discovered_types.insert(ty.clone()) {
                 continue;
             }
             let mut nested = Vec::new();
             collect_nested_types(&ty, &mut nested);
             let opaque = matches!(ty.kind(), TyKind::Struct(..) | TyKind::Pointer { .. });
             types.extend(nested.into_iter().map(|nested| (nested, held && !opaque)));
-            let TyKind::Struct(name, _) = ty.kind() else {
+            let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                 continue;
             };
             let template_name = name.split("$mono").next().unwrap_or(name).to_string();
@@ -3769,10 +3775,10 @@ impl<'a> Specializer<'a> {
         if self.output_struct_positions.contains_key(name.as_ref()) {
             return Ok(());
         }
-        let (Some(template), Some(arguments), Some((dtype, width))) = (
+        let (Some(template), Some((_, arguments)), Some((dtype, width))) = (
             self.structs.get(mojito_types::types::SIMD_TYPE_NAME),
-            mojito_types::types::simd_struct_arguments(ty.kind()),
-            mojito_types::types::simd_shape(ty.kind()),
+            mojito_types::types::nominal_parts(ty),
+            ty.kind().known_simd(),
         ) else {
             return Ok(());
         };
@@ -3913,7 +3919,7 @@ impl<'a> Specializer<'a> {
             let mut structs = Vec::new();
             while let Some(ty) = types.pop() {
                 collect_nested_types(&ty, &mut types);
-                if matches!(ty.kind(), TyKind::Struct(..)) {
+                if ty.kind().is_non_simd_struct() {
                     structs.push(ty);
                 }
             }
@@ -3933,7 +3939,7 @@ impl<'a> Specializer<'a> {
                 if !seen.insert(ty.clone()) {
                     continue;
                 }
-                let TyKind::Struct(name, _) = ty.kind() else {
+                let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                     continue;
                 };
                 let template_name = name.split("$mono").next().unwrap_or(name).to_string();
@@ -4003,7 +4009,7 @@ impl<'a> Specializer<'a> {
         ty: &Ty,
         member: &str,
     ) -> Result<Option<String>, MonoError> {
-        let TyKind::Struct(name, _) = ty.kind() else {
+        let Some((name, _)) = ty.kind().as_non_simd_struct() else {
             return Ok(None);
         };
         let Some(bindings) = self.struct_bindings(owner, ty)? else {
@@ -4035,7 +4041,9 @@ impl<'a> Specializer<'a> {
             return false;
         };
         let arguments = match ty.kind() {
-            TyKind::Struct(_, arguments) => arguments.as_slice(),
+            struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                arguments.as_slice()
+            }
             _ => &[],
         };
         let erased: Vec<&mojito_types::param_expr::ParamId> = template
@@ -4072,7 +4080,7 @@ impl<'a> Specializer<'a> {
         callable: Option<&Ty>,
         argc: usize,
     ) -> Result<(), MonoError> {
-        match callable.filter(|ty| matches!(ty.kind(), TyKind::Struct(..))) {
+        match callable.filter(|ty| ty.kind().is_non_simd_struct()) {
             Some(receiver) => {
                 let receiver = receiver.clone();
                 self.enqueue_nominal_method_instance(owner, &receiver, "__call__", argc, &[])
@@ -4084,7 +4092,7 @@ impl<'a> Specializer<'a> {
     /// The bindings of the struct instance `ty`, `None` when it names no
     /// struct template or applies too few of its parameters.
     fn struct_bindings(&self, owner: &str, ty: &Ty) -> Result<Option<Bindings>, MonoError> {
-        let TyKind::Struct(name, arguments) = ty.kind() else {
+        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return Ok(None);
         };
         let template_name = name.split("$mono").next().unwrap_or(name);
@@ -4673,9 +4681,10 @@ fn comparison_of_dunder(method: &str) -> Option<mojito_ast::ast::InfixOp> {
 /// Whether `arg` is a type naming an instance of the struct `owner`.
 fn names_instance_of(arg: &ParamExpr, owner: &str) -> bool {
     match arg.kind() {
-        ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
-            matches!(ty.kind(), TyKind::Struct(name, _) if nominal_template(name) == owner)
-        }
+        ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => ty
+            .kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, _)| nominal_template(name) == owner),
         _ => false,
     }
 }

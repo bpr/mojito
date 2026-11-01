@@ -46,7 +46,7 @@ impl VmBackend {
         match ty.kind() {
             TyKind::Ref(_) => true,
             TyKind::Pointer { .. } if super::references::single_pointee_pointer(Some(ty)) => true,
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 visited.insert(name.clone())
                     && prog.structs.get(name).is_some_and(|declaration| {
                         declaration.fields.iter().any(|(_, field_ty)| {
@@ -743,7 +743,7 @@ impl VmBackend {
 /// keeps its fields and takes the erased instance's name, and so its members.
 /// Its fields of erased types follow. Any other value is returned as it is.
 pub(super) fn erased_instance_value(prog: &Prog, value: Value, ty: &Ty) -> Value {
-    let TyKind::Struct(erased, _) = ty.kind() else {
+    let Some((erased, _)) = ty.kind().as_non_simd_struct() else {
         return value;
     };
     match value {

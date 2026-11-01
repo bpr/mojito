@@ -200,7 +200,10 @@ impl<'d, 'a> StructReads<'d, 'a> {
     /// The parts of the field type `ty` its layout reads in full.
     fn layout_parts(&self, ty: &Ty, visiting: &mut Vec<String>) -> Vec<TyArg> {
         match ty.kind() {
-            TyKind::Struct(name, arguments) if !arguments.is_empty() => {
+            struct_ty
+                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                    && !arguments.is_empty() =>
+            {
                 let reads = self.layout_in(name, visiting);
                 arguments
                     .iter()
@@ -228,7 +231,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
         symbols: &mut BTreeSet<String>,
     ) {
         match ty.kind() {
-            TyKind::Struct(name, arguments) => {
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 let Some(structure) = self.declarations.structure(name) else {
                     return;
                 };
@@ -339,29 +342,36 @@ impl<'d, 'a> StructReads<'d, 'a> {
     ) -> Vec<(TyArg, Need)> {
         match ty.kind() {
             TyKind::Param { .. } => vec![(TyArg::Ty(ty.clone()), Need::Member)],
-            TyKind::Struct(_, arguments) if arguments.is_empty() => Vec::new(),
-            TyKind::Struct(name, arguments) => match self.member_needs(name, member, visiting) {
-                None => arguments
-                    .iter()
-                    .map(|argument| (argument.clone(), Need::Whole))
-                    .collect(),
-                Some(needs) => arguments
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(position, argument)| {
-                        match (
-                            needs.get(position).copied().unwrap_or(Some(Need::Whole)),
-                            argument,
-                        ) {
-                            (None, _) => Vec::new(),
-                            (Some(Need::Member), TyArg::Ty(ty)) => {
-                                self.member_parts(ty, member, visiting)
+            struct_ty
+                if let Some((_, arguments)) = struct_ty.as_non_simd_struct()
+                    && arguments.is_empty() =>
+            {
+                Vec::new()
+            }
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+                match self.member_needs(name, member, visiting) {
+                    None => arguments
+                        .iter()
+                        .map(|argument| (argument.clone(), Need::Whole))
+                        .collect(),
+                    Some(needs) => arguments
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(position, argument)| {
+                            match (
+                                needs.get(position).copied().unwrap_or(Some(Need::Whole)),
+                                argument,
+                            ) {
+                                (None, _) => Vec::new(),
+                                (Some(Need::Member), TyArg::Ty(ty)) => {
+                                    self.member_parts(ty, member, visiting)
+                                }
+                                (Some(_), argument) => vec![(argument.clone(), Need::Whole)],
                             }
-                            (Some(_), argument) => vec![(argument.clone(), Need::Whole)],
-                        }
-                    })
-                    .collect(),
-            },
+                        })
+                        .collect(),
+                }
+            }
             TyKind::Tuple(items)
             | TyKind::RuntimePack(items)
             | TyKind::Variant(items)

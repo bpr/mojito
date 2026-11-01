@@ -401,8 +401,9 @@ impl FnLowering<'_> {
     /// or zero-sized field, so the register is that value, never storage.
     pub(super) fn holds_struct_value(&self, reg: Reg) -> bool {
         self.func.reg_types.get(&reg.0).is_some_and(|ty| {
-            matches!(ty.kind(), TyKind::Struct(name, _)
-                if self.mir_declarations.register_field(name).is_some())
+            ty.kind()
+                .as_non_simd_struct()
+                .is_some_and(|(name, _)| self.mir_declarations.register_field(name).is_some())
                 && !matches!(
                     lower_ty(self.name, ty, &self.layout, self.mir_declarations, None),
                     Ok(LowerTy::Aggregate { .. }) | Err(_)

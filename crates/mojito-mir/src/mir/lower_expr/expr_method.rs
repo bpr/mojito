@@ -3,7 +3,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{CheckedExpr, CheckedOp};
-use mojito_types::types::TyKind;
 
 impl<'a> Flatten<'a> {
     pub(super) fn method_call_expr(&mut self, call: Node<'a>, method: &str) -> Reg {
@@ -114,9 +113,11 @@ impl<'a> Flatten<'a> {
     /// spell that struct's binders (`W[Self.k]`), which the elaborator
     /// substitutes as it does any binder of the body.
     pub(super) fn static_receiver(object: Node<'a>) -> Option<Ty> {
-        object
-            .ty()
-            .filter(|ty| matches!(ty.kind(), TyKind::Struct(_, arguments) if !arguments.is_empty()))
+        object.ty().filter(|ty| {
+            ty.kind()
+                .as_non_simd_struct()
+                .is_some_and(|(_, arguments)| !arguments.is_empty())
+        })
     }
 
     /// The type name node `node` reads: a name the check bound to nothing

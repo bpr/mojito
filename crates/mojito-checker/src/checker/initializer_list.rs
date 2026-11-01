@@ -790,9 +790,7 @@ impl Checker {
         ty: &Ty,
     ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
         use mojito_ast::ast::ParamArg;
-        let TyKind::Struct(target, arguments) = ty.kind() else {
-            return None;
-        };
+        let (target, arguments) = ty.kind().as_non_simd_struct()?;
         let decls = &self.structs.get(target)?.decls;
         let raw = decls.iter().any(|decl| {
             matches!(decl, ParamDecl::Value { ty, variadic: false, .. }
@@ -910,10 +908,11 @@ impl Checker {
             }
             // An origin argument has no source spelling of its own: the
             // construction binds it against the instance.
-            TyKind::Struct(_, arguments)
-                if arguments
-                    .iter()
-                    .any(|argument| matches!(argument, TyArg::Origin(_))) =>
+            struct_ty
+                if let Some((_, arguments)) = struct_ty.as_non_simd_struct()
+                    && arguments
+                        .iter()
+                        .any(|argument| matches!(argument, TyArg::Origin(_))) =>
             {
                 return self
                     .instance_construction(expression, expected, args, kwargs)
@@ -993,7 +992,7 @@ impl Checker {
         kwargs: Vec<KwArg>,
     ) -> Option<Expr> {
         let name = match instance.kind() {
-            TyKind::Struct(name, _) => name.clone(),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name.clone(),
             kind if kind.is_simd() => mojito_types::types::SIMD_TYPE_NAME.to_string(),
 
             TyKind::StringLiteral(Some(_)) => {

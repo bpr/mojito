@@ -88,8 +88,9 @@ impl FnLowering<'_> {
             return Ok((descriptor.data, descriptor.len));
         }
         match self.func.reg_types.get(&reg.0).map(Ty::kind) {
-            Some(TyKind::Struct(name, _))
-                if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            Some(struct_ty)
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))

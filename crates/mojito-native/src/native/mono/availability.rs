@@ -197,7 +197,7 @@ impl Specializer<'_> {
             };
         }
         match ty.kind() {
-            TyKind::Struct(..) => {
+            struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {
                 self.type_conforms(ty, trivial_predicate_spelling(kind), visiting)
             }
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
@@ -276,7 +276,7 @@ impl Specializer<'_> {
                     })
                 });
         let Some((name, arguments)) = mojito_types::types::nominal_parts(ty)
-            .filter(|_| declared_by_simd || matches!(ty.kind(), TyKind::Struct(..)))
+            .filter(|_| declared_by_simd || ty.kind().is_non_simd_struct())
         else {
             let mut undecided = false;
             let mut element = |element: &Ty, required: &str| {

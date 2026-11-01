@@ -117,10 +117,12 @@ impl Checker {
                         )
                     )
                 }
-                TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-                    mojito_types::types::TyArg::Ty(ty) => contains_open_captures(ty),
-                    _ => false,
-                }),
+                struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                    arguments.iter().any(|argument| match argument {
+                        mojito_types::types::TyArg::Ty(ty) => contains_open_captures(ty),
+                        _ => false,
+                    })
+                }
                 TyKind::Ref(reference) => contains_open_captures(&reference.referent),
                 TyKind::Tuple(elements) => elements.iter().any(contains_open_captures),
                 _ => false,
@@ -131,12 +133,14 @@ impl Checker {
             // open-capture callables; a field left open by the arguments
             // stays conservative.
             match ty.kind() {
-                TyKind::Struct(name, arguments) => self.structs.get(name).is_some_and(|info| {
-                    let subst = struct_subst(&info.decls, arguments);
-                    info.fields
-                        .iter()
-                        .any(|(_, field)| contains_open_captures(&substitute(field, &subst)))
-                }),
+                struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+                    self.structs.get(name).is_some_and(|info| {
+                        let subst = struct_subst(&info.decls, arguments);
+                        info.fields
+                            .iter()
+                            .any(|(_, field)| contains_open_captures(&substitute(field, &subst)))
+                    })
+                }
                 _ => false,
             }
         }
@@ -180,7 +184,7 @@ impl Checker {
                         collect(checker, element, out);
                     }
                 }
-                TyKind::Struct(name, arguments) => {
+                struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                     let Some(info) = checker.structs.get(name) else {
                         return;
                     };
@@ -281,7 +285,7 @@ impl Checker {
                 TyKind::Variant(alternatives) => alternatives
                     .iter()
                     .any(|alternative| contains(checker, alternative, pointer_loans, seen)),
-                TyKind::Struct(name, args) => {
+                struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                     let key = ty.to_string();
                     if !seen.insert(key.clone()) {
                         return false;

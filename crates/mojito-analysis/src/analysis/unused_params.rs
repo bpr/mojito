@@ -556,7 +556,7 @@ fn receiver_forwarded_owner_params(
         TyKind::Ref(reference) => &reference.referent,
         _ => receiver,
     };
-    let TyKind::Struct(struct_name, arguments) = receiver.kind() else {
+    let Some((struct_name, arguments)) = receiver.kind().as_non_simd_struct() else {
         return Vec::new();
     };
     if mojito_symbol::symbol::split_method_symbol(name)

@@ -2273,7 +2273,7 @@ impl<'a> Flatten<'a> {
             }
             args.push(dest);
         }
-        let TyKind::Struct(structure, parameters) = storage.ty.kind() else {
+        let Some((structure, parameters)) = storage.ty.kind().as_non_simd_struct() else {
             unreachable!("a closure's storage is a struct")
         };
         let constructor = format!("{structure}.__init__");

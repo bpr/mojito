@@ -307,8 +307,10 @@ impl FnLowering<'_> {
         let dest_ty = self.func.reg_types.get(&dest.0).cloned();
         let Some(dest_ty) = dest_ty.filter(|ty| {
             matches!(ty.kind(), TyKind::StringLiteral(_))
-                || matches!(ty.kind(), TyKind::Struct(name, _)
-                    if mojito_symbol::symbol::is_stdlib_string_struct(name))
+                || ty
+                    .kind()
+                    .as_non_simd_struct()
+                    .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
         }) else {
             return Err(self.unsupported_reg("`input` without a String result".into(), dest));
         };

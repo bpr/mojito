@@ -80,7 +80,7 @@ fn close_over_fields(
             continue;
         }
         match ty.kind() {
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let declaration = structs(name);
                 if declaration.is_none_or(|declaration| declaration.member(member).is_none()) {
                     pending.extend(

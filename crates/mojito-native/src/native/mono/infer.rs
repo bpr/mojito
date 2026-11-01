@@ -494,10 +494,15 @@ impl Specializer<'_> {
                 let (name, reg) = &kwargs[*index];
                 let actual = peel_refs(reg_ty(caller, *reg, owner)?);
                 let actual = match actual.kind() {
-                    TyKind::Struct(_, arguments) if name == "**" => match arguments.as_slice() {
-                        [TyArg::Ty(collected)] => collected,
-                        _ => continue,
-                    },
+                    struct_ty
+                        if let Some((_, arguments)) = struct_ty.as_non_simd_struct()
+                            && name == "**" =>
+                    {
+                        match arguments.as_slice() {
+                            [TyArg::Ty(collected)] => collected,
+                            _ => continue,
+                        }
+                    }
                     _ => actual,
                 };
                 unify(element, actual, &mut bindings).map_err(|e| {
@@ -520,7 +525,8 @@ impl Specializer<'_> {
         }
         if bindings.self_instance.is_none()
             && let Some(receiver_pattern) = receiver_pattern_for_instance.as_ref()
-            && let TyKind::Struct(template, arguments) = peel_refs(receiver_pattern).kind()
+            && let Some((template, arguments)) =
+                peel_refs(receiver_pattern).kind().as_non_simd_struct()
             && !arguments.is_empty()
         {
             let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
@@ -532,8 +538,9 @@ impl Specializer<'_> {
         }
         if bindings.self_instance.is_none()
             && let Some(receiver) = receiver
-            && let TyKind::Struct(receiver_name, _) =
-                (peel_refs(reg_ty(caller, receiver, owner)?)).kind()
+            && let Some((receiver_name, _)) = (peel_refs(reg_ty(caller, receiver, owner)?))
+                .kind()
+                .as_non_simd_struct()
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             && !struct_decl.param_decls.is_empty()
         {
@@ -582,7 +589,7 @@ impl Specializer<'_> {
         receiver: &Ty,
         bindings: &mut Bindings,
     ) -> Result<(), MonoError> {
-        let TyKind::Struct(receiver_name, arguments) = receiver.kind() else {
+        let Some((receiver_name, arguments)) = receiver.kind().as_non_simd_struct() else {
             return Ok(());
         };
         let template = nominal_template(receiver_name);
@@ -751,7 +758,8 @@ impl Specializer<'_> {
             &mut bindings,
         )?;
         if bindings.self_instance.is_none()
-            && let TyKind::Struct(template, arguments) = peel_refs(receiver_pattern).kind()
+            && let Some((template, arguments)) =
+                peel_refs(receiver_pattern).kind().as_non_simd_struct()
             && !arguments.is_empty()
         {
             let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
@@ -762,7 +770,7 @@ impl Specializer<'_> {
             }
         }
         if bindings.self_instance.is_none()
-            && let TyKind::Struct(receiver_name, _) = receiver.kind()
+            && let Some((receiver_name, _)) = receiver.kind().as_non_simd_struct()
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             && !struct_decl.param_decls.is_empty()
         {
@@ -904,7 +912,7 @@ impl Specializer<'_> {
         target: &str,
     ) -> Result<Vec<InstanceArg>, MonoError> {
         match mojito_types::types::nominal_parts(receiver)
-            .filter(|_| !matches!(receiver.kind(), TyKind::Struct(..)))
+            .filter(|_| !receiver.kind().is_non_simd_struct())
             .and_then(|(name, _)| self.structs.get(name))
         {
             Some(struct_decl) => self.own_arguments(&struct_decl.param_decls, bindings, target, 0),

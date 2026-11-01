@@ -736,7 +736,9 @@ fn build_keyword_collector(
         param_arg_regs: Vec::new(),
         receiver: None,
         instantiated_args: match ty.kind() {
-            TyKind::Struct(_, arguments) => arguments.clone(),
+            struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                arguments.clone()
+            }
             _ => Vec::new(),
         },
         spread: None,
@@ -1420,7 +1422,7 @@ fn bindings_of(
                 }),
         );
     }
-    if let Some(TyKind::Struct(name, arguments)) = receiver.map(Ty::kind)
+    if let Some((name, arguments)) = receiver.and_then(|ty| ty.kind().as_non_simd_struct())
         && let Some(owner) = declarations.structure(name)
     {
         if arguments.is_empty() {
@@ -1690,7 +1692,9 @@ fn evaluate_constant(
             // parameters to the arguments of the type it builds, as a
             // written conversion's call does.
             let instantiated_args = match ty.kind() {
-                TyKind::Struct(_, arguments) => arguments.clone(),
+                struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                    arguments.clone()
+                }
                 _ => Vec::new(),
             };
             prelude.push(MirInstr::Call {

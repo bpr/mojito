@@ -335,7 +335,7 @@ impl FnLowering<'_> {
         field: &str,
         dest: Reg,
     ) -> Result<(u64, Ty), PlironError> {
-        let TyKind::Struct(name, _) = ty.kind() else {
+        let Some((name, _)) = ty.kind().as_non_simd_struct() else {
             return Err(self.unsupported_reg(format!("field access on `{ty}`"), dest));
         };
         let Some(decl) = self.struct_decls.get(name.as_str()) else {
@@ -379,7 +379,7 @@ impl FnLowering<'_> {
         // A held struct is its one field, so reading that field from a value
         // is the identity, as upstream's `LowerKGENToLLVM` lowers
         // `kgen.struct.extract` of a one-element register-passable struct.
-        if let TyKind::Struct(name, _) = base_ty.kind()
+        if let Some((name, _)) = base_ty.kind().as_non_simd_struct()
             && self.mir_declarations.register_field(name).is_some()
         {
             match lower_ty(

@@ -34,8 +34,16 @@ impl FnLowering<'_> {
                 // O1 exposed that as allocator corruption. Materialize the
                 // checked conversion explicitly and transfer the buffer.
                 if owned
-                    && matches!(ty.kind(), TyKind::Struct(name, _) if name.split("$mono").next() == Some("List"))
-                    && matches!(self.func.reg_types.get(&reg.0).map(Ty::kind), Some(TyKind::Struct(name, _)) if name.split("$mono").next() == Some("Array"))
+                    && ty
+                        .kind()
+                        .as_non_simd_struct()
+                        .is_some_and(|(name, _)| name.split("$mono").next() == Some("List"))
+                    && self
+                        .func
+                        .reg_types
+                        .get(&reg.0)
+                        .and_then(|ty| ty.kind().as_non_simd_struct())
+                        .is_some_and(|(name, _)| name.split("$mono").next() == Some("Array"))
                 {
                     return self.materialize_owned_array_as_list(ctx, reg, dest);
                 }
@@ -43,12 +51,15 @@ impl FnLowering<'_> {
                 // materializes through the constructor bridge — the VM's
                 // runtime coercion for generic parameters the checker could
                 // not wrap at check time.
-                if matches!(ty.kind(), TyKind::Struct(name, _)
-                        if mojito_symbol::symbol::is_stdlib_string_struct(name))
-                    && !matches!(
-                        self.func.reg_types.get(&reg.0).map(Ty::kind),
-                        Some(TyKind::Struct(..))
-                    )
+                if ty
+                    .kind()
+                    .as_non_simd_struct()
+                    .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
+                    && !self
+                        .func
+                        .reg_types
+                        .get(&reg.0)
+                        .is_some_and(|ty| ty.kind().is_non_simd_struct())
                     && (self.str_consts.contains_key(&reg.0)
                         || self.str_runtime.contains_key(&reg.0)
                         || matches!(

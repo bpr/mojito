@@ -517,7 +517,7 @@ fn names_a_place(ty: &Ty) -> bool {
     }
     mentions(ty, &|ty| match ty.kind() {
         TyKind::Ref(reference) => place(&reference.origin),
-        TyKind::Struct(_, arguments) => arguments
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments
             .iter()
             .any(|argument| matches!(argument, TyArg::Origin(origin) if place(origin))),
         _ => false,

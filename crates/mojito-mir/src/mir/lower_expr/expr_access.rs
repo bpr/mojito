@@ -292,7 +292,10 @@ impl<'a> Flatten<'a> {
         // would lose its concrete `__getitem__$N` target.
         if matches!(e.place_ty().as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
             && e.resolved_callable().is_none()
-            && !matches!(object.ty().as_ref().map(Ty::kind), Some(TyKind::Struct(..)))
+            && !object
+                .ty()
+                .as_ref()
+                .is_some_and(|ty| ty.kind().is_non_simd_struct())
             && let Some(place) = self.try_place(e)
         {
             let d = self.fresh(e.location(), Some(place.root));

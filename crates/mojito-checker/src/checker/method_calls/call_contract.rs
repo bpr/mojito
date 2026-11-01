@@ -198,7 +198,7 @@ impl Checker {
         let MethodCallArguments { args, kwargs, .. } = call;
         let lends_receiver = !resolved.consumes_receiver
             && match return_type.kind() {
-                TyKind::Struct(..) => {
+                struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {
                     self.type_carries_loans(return_type)
                         && resolved
                             .declared_return

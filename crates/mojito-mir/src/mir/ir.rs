@@ -1934,7 +1934,9 @@ pub fn converts_to_error(ty: &Ty, error: &Ty) -> bool {
     matches!(error.kind(), TyKind::Error)
         && match ty.kind() {
             TyKind::StringLiteral(_) => true,
-            TyKind::Struct(name, _) => mojito_symbol::symbol::is_stdlib_string_struct(name),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                mojito_symbol::symbol::is_stdlib_string_struct(name)
+            }
             _ => false,
         }
 }

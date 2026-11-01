@@ -87,12 +87,14 @@ pub(super) fn initializer_receiver_entry(
         return None;
     }
     let fields = match f.var_tys.get(&0).map(Ty::kind) {
-        Some(TyKind::Struct(struct_name, _)) => declarations.structure(struct_name).map(|decl| {
-            decl.fields
-                .iter()
-                .map(|(field, _)| field.clone())
-                .collect::<Vec<_>>()
-        }),
+        Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
+            declarations.structure(struct_name).map(|decl| {
+                decl.fields
+                    .iter()
+                    .map(|(field, _)| field.clone())
+                    .collect::<Vec<_>>()
+            })
+        }
         _ => None,
     };
     Some(fields.map_or_else(Node::moved, Node::with_uninitialized_fields))

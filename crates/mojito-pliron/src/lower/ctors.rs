@@ -17,7 +17,7 @@ impl FnLowering<'_> {
         let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned() else {
             return Err(self.unsupported_reg("untyped struct creation".into(), dest));
         };
-        let TyKind::Struct(name, _) = struct_ty.kind() else {
+        let Some((name, _)) = struct_ty.kind().as_non_simd_struct() else {
             return Err(self.unsupported_reg(format!("struct creation of `{struct_ty}`"), dest));
         };
         let Some(decl) = self.struct_decls.get(name.as_str()) else {
@@ -97,10 +97,13 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         dest: Reg,
     ) -> Result<(), PlironError> {
-        if !matches!(
-            self.func.reg_types.get(&dest.0).map(Ty::kind),
-            Some(TyKind::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name)
-        ) {
+        if !self
+            .func
+            .reg_types
+            .get(&dest.0)
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
+        {
             return Ok(());
         }
         let owned = self
@@ -144,7 +147,7 @@ impl FnLowering<'_> {
             return Ok(());
         }
         if let Some(ty) = self.func.reg_types.get(&arg.0)
-            && let TyKind::Struct(name, _) = ty.kind()
+            && let Some((name, _)) = ty.kind().as_non_simd_struct()
             && mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
             let ptr = self.reg_ptr(ctx, arg)?;
@@ -177,9 +180,8 @@ impl FnLowering<'_> {
         // A nominal struct converts through its `write_to` conformance over
         // a fresh accumulator — the VM's `format_value` struct arm. The
         // accumulated buffer transfers into the resulting owned string.
-        if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
-            .as_ref()
-            .map(Ty::kind)
+        if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
+            .and_then(|ty| ty.kind().as_non_simd_struct())
             && !mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
             let writer = self.entry_alloca(ctx, 16, 8);

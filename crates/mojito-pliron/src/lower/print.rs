@@ -145,7 +145,10 @@ impl<'a> FnLowering<'a> {
         hasher_place: Option<&MirPlace>,
     ) -> Result<(), PlironError> {
         let register_ty = self.func.reg_types.get(&hasher.0).cloned();
-        let Some(TyKind::Struct(hasher_name, _)) = register_ty.as_ref().map(Ty::kind) else {
+        let Some((hasher_name, _)) = register_ty
+            .as_ref()
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+        else {
             return Err(self.unsupported_reg("`__hash__` without a nominal hasher".into(), dest));
         };
         let Some(place) = hasher_place else {
@@ -308,9 +311,8 @@ impl<'a> FnLowering<'a> {
         let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
         for arg in args {
-            if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
-                .as_ref()
-                .map(Ty::kind)
+            if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
+                .and_then(|ty| ty.kind().as_non_simd_struct())
                 && !mojito_symbol::symbol::is_stdlib_string_struct(name)
                 && !mojito_symbol::symbol::is_stdlib_string_span_struct(name)
             {
@@ -376,7 +378,7 @@ impl<'a> FnLowering<'a> {
         // offsets), or a runtime StringLiteral value's (typed storage)
         // descriptor bytes.
         let is_string = match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(TyKind::Struct(name, _)) => {
+            Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 mojito_symbol::symbol::is_stdlib_string_struct(name)
                     || mojito_types::types::is_stdlib_string_span_struct(name)
             }
@@ -424,9 +426,8 @@ impl<'a> FnLowering<'a> {
         }
         // A nominal struct displays through its `write_to` conformance over
         // the builtin-string accumulator — the VM's `format_value` dispatch.
-        if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
-            .as_ref()
-            .map(Ty::kind)
+        if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
+            .and_then(|ty| ty.kind().as_non_simd_struct())
             && !mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
             return self.print_struct_via_write_to(ctx, arg, name, dest);
@@ -623,8 +624,9 @@ impl<'a> FnLowering<'a> {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }
-            Some(TyKind::Struct(name, _))
-                if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            Some(struct_ty)
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))

@@ -122,8 +122,9 @@ impl FnLowering<'_> {
             return Ok(());
         }
         match self.func.reg_types.get(&src.0).map(Ty::kind) {
-            Some(TyKind::Struct(name, _))
-                if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            Some(struct_ty)
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 let ptr = self.reg_ptr(ctx, src)?;
                 if self.mir_owned.contains(&src.0) {
@@ -149,11 +150,12 @@ impl FnLowering<'_> {
             // runtime payload; its owned message is the VM's `Display` of the
             // value, `Name()`. Structs with fields keep rejecting: their
             // display embeds runtime field values.
-            Some(TyKind::Struct(name, _))
-                if self
-                    .layout
-                    .layout_of(&self.func.reg_types[&src.0])
-                    .is_ok_and(|layout| layout.size == 0) =>
+            Some(struct_ty)
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && self
+                        .layout
+                        .layout_of(&self.func.reg_types[&src.0])
+                        .is_ok_and(|layout| layout.size == 0) =>
             {
                 let message = format!("{name}()").into_bytes();
                 let len = message.len() as u64;
@@ -281,7 +283,9 @@ impl FnLowering<'_> {
         let slot = self.var_slots[var as usize];
         let message = match self.func.var_tys.get(&var).map(Ty::kind) {
             Some(TyKind::Error) => true,
-            Some(TyKind::Struct(name, _)) => mojito_symbol::symbol::is_stdlib_string_struct(name),
+            Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                mojito_symbol::symbol::is_stdlib_string_struct(name)
+            }
             _ => false,
         };
         if message {
@@ -332,8 +336,12 @@ impl FnLowering<'_> {
         self.store_error_into(ctx, storage, src)?;
         // The VM's lifecycle log records only `Value::Error` raises; a
         // raised error struct (`raise StopIteration()`) stays silent there.
-        let struct_raise = matches!(self.func.reg_types.get(&src.0).map(Ty::kind), Some(TyKind::Struct(name, _))
-            if !mojito_symbol::symbol::is_stdlib_string_struct(name));
+        let struct_raise = self
+            .func
+            .reg_types
+            .get(&src.0)
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .is_some_and(|(name, _)| !mojito_symbol::symbol::is_stdlib_string_struct(name));
         if self.trace_lifecycle && !struct_raise {
             self.emit_trace_error(ctx, mojito_native::native::rt_abi::TRACE_RAISE, storage);
         }

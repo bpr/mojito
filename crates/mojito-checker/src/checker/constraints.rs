@@ -920,9 +920,7 @@ impl Checker {
                 self.lookup_trait_generator(&self.refined_bound(&subject)?, field)?;
             return Some(self.generator_application(&subject, field, params, result, args));
         }
-        let TyKind::Struct(name, arguments) = subject.kind() else {
-            return None;
-        };
+        let (name, arguments) = subject.kind().as_non_simd_struct()?;
         let info = self.structs.get(name)?;
         let member = info.parameterized_associated.get(field)?;
         let MemberTemplate::Value { decls, body } = &member.template else {
@@ -1191,10 +1189,10 @@ impl Checker {
         else {
             return None;
         };
-        let Some(TyKind::Struct(enum_name, enum_arguments)) = self.self_ty.as_ref().map(Ty::kind)
-        else {
-            return None;
-        };
+        let (enum_name, enum_arguments) = self
+            .self_ty
+            .as_ref()
+            .and_then(|ty| ty.kind().as_non_simd_struct())?;
         let index = index
             .to_u64()
             .and_then(|index| usize::try_from(index).ok())?;
@@ -1640,7 +1638,10 @@ impl Checker {
     /// per-instantiation clone, else the template's own symbolic binder
     /// ([`Self::self_param_ct_value`]).
     pub(super) fn self_param_value(&self, name: &str) -> Option<CtValue> {
-        if let Some(TyKind::Struct(_, arguments)) = self.self_ty.as_ref().map(Ty::kind)
+        if let Some((_, arguments)) = self
+            .self_ty
+            .as_ref()
+            .and_then(|ty| ty.kind().as_non_simd_struct())
             && arguments.len() >= self.self_decls.len()
             && let Some(index) = self
                 .self_decls
@@ -1723,7 +1724,11 @@ impl Checker {
         if declares(&self.self_decls) {
             return true;
         }
-        let Some(TyKind::Struct(struct_name, _)) = self.self_ty.as_ref().map(Ty::kind) else {
+        let Some((struct_name, _)) = self
+            .self_ty
+            .as_ref()
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+        else {
             return false;
         };
         mojito_symbol::symbol::specialization_template(struct_name)
@@ -2824,7 +2829,7 @@ impl Checker {
                     .ok()?
                     .meta()
                     .as_value()
-                    .filter(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+                    .filter(|ty| ty.kind().is_non_simd_struct())
                     .cloned()
                     .map(Ok),
             },
@@ -3033,11 +3038,10 @@ impl Checker {
             ("#kgen.param.expr<data_to_str,{},{}>:!kgen.string", [string, rest]) => {
                 let string = self.bracket_operand(string, recording)?;
                 let is_view = |meta: &MetaTy| {
-                    matches!(meta, MetaTy::Value(ty) if matches!(
-                        ty.kind(),
-                        TyKind::Struct(name, _)
-                            if mojito_types::types::is_stdlib_string_span_struct(name)
-                    ))
+                    matches!(meta, MetaTy::Value(ty) if ty
+                        .kind()
+                        .as_non_simd_struct()
+                        .is_some_and(|(name, _)| mojito_types::types::is_stdlib_string_span_struct(name)))
                 };
                 if !is_view(string.meta()) {
                     return Err(TypeError::TypeMismatch {
@@ -3403,9 +3407,10 @@ impl Checker {
                     .map_err(param_error),
             );
         }
-        let Some(TyKind::Struct(owner, arguments)) = base.meta().as_value().map(Ty::kind) else {
-            return None;
-        };
+        let (owner, arguments) = base
+            .meta()
+            .as_value()
+            .and_then(|ty| ty.kind().as_non_simd_struct())?;
         // The value's type arguments bind the field's declared type
         // (`_mlir_value` of a `StaticTuple[SIMDLength, n]`), as a run-time
         // read does; a builtin body folds before the struct's fields
@@ -3590,9 +3595,8 @@ impl Checker {
             else {
                 return None;
             };
-            (matches!(subject.kind(), TyKind::Struct(..))
-                && !mojito_types::types::is_symbolic(subject))
-            .then(|| subject.clone())
+            (subject.kind().is_non_simd_struct() && !mojito_types::types::is_symbolic(subject))
+                .then(|| subject.clone())
         })
     }
 
@@ -3667,9 +3671,7 @@ impl Checker {
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let type_list = self.type_pack_type_list(pack)?;
-        let TyKind::Struct(name, arguments) = type_list.kind() else {
-            return None;
-        };
+        let (name, arguments) = type_list.kind().as_non_simd_struct()?;
         self.struct_value_member(self.structs.get(name)?, arguments, field)
     }
 
@@ -5481,7 +5483,7 @@ impl Checker {
 
     fn subject_value_member(&self, subject: &Ty, field: &str) -> Option<ParamExpr> {
         match subject.kind() {
-            TyKind::Struct(name, arguments) => self
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => self
                 .struct_value_member(self.structs.get(name)?, arguments, field)?
                 .ok(),
             TyKind::Param { .. } => {
@@ -5610,9 +5612,7 @@ impl Checker {
     /// The raw list a construction of `ty` binds when `ty` is a
     /// `TypeList` application: the argument at its `values` parameter.
     fn type_list_construction(&self, ty: &Ty) -> Option<CtValue> {
-        let TyKind::Struct(name, arguments) = ty.kind() else {
-            return None;
-        };
+        let (name, arguments) = ty.kind().as_non_simd_struct()?;
         if name != super::comptime_validation::TYPE_LIST {
             return None;
         }
@@ -5724,7 +5724,7 @@ fn struct_valued(value: &ParamExpr) -> bool {
     value
         .meta()
         .as_value()
-        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+        .is_some_and(|ty| ty.kind().is_non_simd_struct())
 }
 
 fn is_simd_length_value(value: &ParamExpr) -> bool {
@@ -6208,7 +6208,7 @@ fn struct_valued_operand(operand: &ConstraintOperand) -> bool {
         | ConstraintOperand::Value(CtValue::Expr(expression)) => expression
             .meta()
             .as_value()
-            .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..))),
+            .is_some_and(|ty| ty.kind().is_non_simd_struct()),
         _ => false,
     }
 }

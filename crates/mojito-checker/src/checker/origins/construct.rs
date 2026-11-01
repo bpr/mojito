@@ -550,7 +550,7 @@ pub(in crate::checker) fn names_origin_binder(parameter: &Ty) -> bool {
             ..
         } => true,
         TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(_)),
-        TyKind::Struct(_, arguments) => arguments
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments
             .iter()
             .any(|argument| matches!(argument, TyArg::Origin(Origin::Param(_)))),
         _ => false,

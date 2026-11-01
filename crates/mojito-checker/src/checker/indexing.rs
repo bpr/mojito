@@ -76,9 +76,7 @@ impl Checker {
             // A value pack's member (`vs.values`) reads no storage.
             ExprKind::Member { object, .. } if self.value_pack_named(object).is_some() => None,
             ExprKind::Member { object, field } => self.infer(object).ok().and_then(|base| {
-                let TyKind::Struct(name, arguments) = base.kind() else {
-                    return None;
-                };
+                let (name, arguments) = base.kind().as_non_simd_struct()?;
                 let info = self.structs.get(name)?;
                 let (_, field_ty) = info
                     .fields
@@ -248,7 +246,7 @@ impl Checker {
                     return self.subscript_reference_place(place, &obj_ty, &lvalue);
                 }
                 self.prepare_index_argument(&obj_ty, index, "__setitem__", 0)?;
-                if let TyKind::Struct(name, _) = obj_ty.kind()
+                if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
                     && !self.structs.contains_key(name)
                 {
                     if let Some(element) = list_element(&obj_ty) {
@@ -543,9 +541,7 @@ impl Checker {
         let span = subscript.source_span();
         let (descriptors, _) = self.fact(&span, |facts| facts.subscript_descriptor.as_ref())?;
         let target = descriptors.into_iter().next()??.target;
-        let TyKind::Struct(name, _) = target.kind() else {
-            return None;
-        };
+        let (name, _) = target.kind().as_non_simd_struct()?;
         // Identities past every position `synthetic_slice_descriptor`
         // derives, so no synthetic operand is taken for the descriptor.
         let synthetic = |kind: ExprKind, ordinal: u32| {
@@ -1075,8 +1071,10 @@ impl Checker {
             // Positional String slicing was removed in current Mojo (like
             // bare positional `s[i]`): the byte or codepoint unit is spelled
             // explicitly through a keyword slice.
-            TyKind::Struct(name, arguments)
-                if arguments.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            struct_ty
+                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                    && arguments.is_empty()
+                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 return Err(TypeError::Unsupported(
                     "String positional slicing was removed in current Mojo; spell the \
@@ -1243,12 +1241,15 @@ impl Checker {
         // the EmptySubscript node is syntax-only and is not passed as an
         // ordinary argument.
         if matches!(index.kind, ExprKind::EmptySubscript) {
-            if matches!(obj_ty.kind(), TyKind::Struct(name, _)
-            if self.structs.get(name).is_some_and(|info| {
-                info.methods.get("__getitem__").is_some_and(|methods| {
-                    methods.iter().any(|method| method.has_self && method.params.is_empty())
+            if obj_ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
+                self.structs.get(name).is_some_and(|info| {
+                    info.methods.get("__getitem__").is_some_and(|methods| {
+                        methods
+                            .iter()
+                            .any(|method| method.has_self && method.params.is_empty())
+                    })
                 })
-            })) {
+            }) {
                 return self.infer_method_call(
                     &span,
                     object,
@@ -1291,7 +1292,7 @@ impl Checker {
         // structs. Pass the source index as a checked value parameter and no
         // runtime argument; ordinary generic-method specialization then leaves
         // an exact callable target for HIR/MIR.
-        if let TyKind::Struct(name, _) = obj_ty.kind()
+        if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
             && self
                 .structs
                 .get(name)
@@ -1344,7 +1345,7 @@ impl Checker {
                 _ => element.clone(),
             });
         }
-        if let TyKind::Struct(name, _) = obj_ty.kind()
+        if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
             && self.is_abstract_struct(name)
         {
             // A discovery-round abstract scalar range subscripts by Int to
@@ -1396,7 +1397,7 @@ impl Checker {
         // A user struct with `__getitem__` is subscriptable: `c[i]` →
         // `c.__getitem__(i)`, typed by the method (the index need not be `Int`).
         // A `SIMD` lane subscript is its declared `__getitem__` too.
-        if matches!(obj_ty.kind(), TyKind::Struct(..))
+        if obj_ty.kind().is_non_simd_struct()
             || self
                 .declared_receiver_member(&obj_ty, "__getitem__")
                 .is_some()
@@ -1662,7 +1663,10 @@ impl Checker {
     /// ordinary checked method dispatch once its runtime receiver is known.
     pub(super) fn index_normalization_target(&self, ty: &Ty) -> Option<String> {
         match ty.kind() {
-            TyKind::Struct(name, arguments) if self.conforms_to(ty, "Indexer") => {
+            struct_ty
+                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                    && self.conforms_to(ty, "Indexer") =>
+            {
                 let info = self.structs.get(name)?;
                 let substitution = struct_subst(&info.decls, arguments);
                 let methods = info.methods.get("__mlir_index__")?;
@@ -1732,7 +1736,7 @@ impl Checker {
         let Some(target) = self.index_normalization_target(&actual) else {
             return Ok(());
         };
-        let TyKind::Struct(name, arguments) = receiver.kind() else {
+        let Some((name, arguments)) = receiver.kind().as_non_simd_struct() else {
             if matches!(
                 receiver.kind(),
                 TyKind::Pointer { .. } | TyKind::VariadicPack(_)
@@ -1863,7 +1867,10 @@ impl Checker {
         // binding.
         if self.comptime_positions.get() == 0
             && self.is_parameter_read(object)
-            && matches!((self.infer(object)?).kind(), TyKind::Struct(_, arguments) if arguments.is_empty())
+            && (self.infer(object)?)
+                .kind()
+                .as_non_simd_struct()
+                .is_some_and(|(_, arguments)| arguments.is_empty())
             && let Some(value) = self.struct_value_field(object, field)
         {
             let value = value?;
@@ -1975,7 +1982,7 @@ impl Checker {
             ));
             return Ok(Ty::dtype());
         }
-        if let TyKind::Struct(sname, targs) = obj_ty.kind() {
+        if let Some((sname, targs)) = obj_ty.kind().as_non_simd_struct() {
             let info = self.structs.get(sname).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
             })?;
@@ -2182,10 +2189,12 @@ impl Checker {
                 .and_then(|(_, width)| self.simd_length_parameter(&width))
                 .is_some_and(|length| length.meta().as_value().is_some()),
             _ => match ty.kind() {
-                TyKind::Struct(name, _) => self.structs.get(name).is_some_and(|info| {
-                    info.decls.iter().any(|decl| decl.name() == field)
-                        && !info.fields.iter().any(|(name, _)| name == field)
-                }),
+                struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                    self.structs.get(name).is_some_and(|info| {
+                        info.decls.iter().any(|decl| decl.name() == field)
+                            && !info.fields.iter().any(|(name, _)| name == field)
+                    })
+                }
                 _ => false,
             },
         }
@@ -2367,9 +2376,7 @@ impl Checker {
     /// no type or `field` is not a type member of it.
     fn type_member_through(&self, base: &Expr, field: &str) -> Option<Result<Ty, TypeError>> {
         let base_ty = self.member_type_operand(base)?;
-        let TyKind::Struct(name, _) = base_ty.kind() else {
-            return None;
-        };
+        let (name, _) = base_ty.kind().as_non_simd_struct()?;
         matches!(
             self.structs.get(name)?.associated.get(field),
             Some(CtValue::Type(_))
@@ -2493,7 +2500,7 @@ impl Checker {
         operands: &[Option<Expr>; 3],
         record: bool,
     ) -> Result<Option<mojito_checked::checked::CheckedSliceLiteral>, TypeError> {
-        let TyKind::Struct(name, arguments) = target.kind() else {
+        let Some((name, arguments)) = target.kind().as_non_simd_struct() else {
             return Ok(None);
         };
         let Some(info) = self.structs.get(name) else {

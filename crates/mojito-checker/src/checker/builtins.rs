@@ -47,15 +47,17 @@ pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)>
     match name {
         "sep" | "end" => Some((
             ty.is_string_literal()
-                || matches!(ty.kind(), TyKind::Struct(name, targs)
-                    if (targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
-                        || mojito_types::types::is_stdlib_string_span_struct(name)),
+                || ty.kind().as_non_simd_struct().is_some_and(|(name, targs)| {
+                    (targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
+                        || mojito_types::types::is_stdlib_string_span_struct(name)
+                }),
             "String",
         )),
         "flush" => Some((*ty == TyKind::Bool, "Bool")),
         "file" => Some((
-            matches!(ty.kind(), TyKind::Struct(name, _)
-                if mojito_types::types::is_stdlib_file_descriptor_struct(name)),
+            ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
+                mojito_types::types::is_stdlib_file_descriptor_struct(name)
+            }),
             "RawFileDescriptor",
         )),
         _ => None,
@@ -397,7 +399,7 @@ impl Checker {
     /// printable built-in, a built-in aggregate of printable elements, or a
     /// struct or parameter that is `Writable`.
     pub(super) fn printable_argument(&self, ty: &Ty) -> bool {
-        if let TyKind::Struct(name, _) = ty.kind()
+        if let Some((name, _)) = ty.kind().as_non_simd_struct()
             && !self.structs.contains_key(name)
             && (list_element(ty).is_some_and(is_printable)
                 || set_element(ty).is_some_and(is_printable)
@@ -423,8 +425,12 @@ impl Checker {
     /// the nominal `String`, and the call raises `Error` at end of input.
     pub(super) fn infer_input(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("input", 1, args)?;
-        let nominal_prompt = matches!((tys[0]).kind(), TyKind::Struct(name, args)
-            if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
+        let nominal_prompt = (tys[0])
+            .kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, args)| {
+                args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
+            });
         if tys[0].is_string_literal() || nominal_prompt {
             self.record_call_effect(span, Ty::error());
             self.require_error("call to raising function 'input'", Ty::error())?;
@@ -481,7 +487,9 @@ impl Checker {
     /// `print(e)` never copies the `Error`, upstream's library struct.
     pub(super) fn borrow_nominal_place_argument(&self, argument: &Expr, ty: &Ty) {
         let nominal = match ty.kind() {
-            TyKind::Struct(name, _) => self.structs.contains_key(name),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                self.structs.contains_key(name)
+            }
             TyKind::Error => true,
             _ => false,
         };
@@ -655,7 +663,7 @@ impl Checker {
         ) {
             return Ok(Some(Ty::int()));
         }
-        if let TyKind::Struct(name, _) = ty.kind()
+        if let Some((name, _)) = ty.kind().as_non_simd_struct()
             && !self.structs.contains_key(name)
             && (list_element(ty).is_some()
                 || set_element(ty).is_some()
@@ -995,7 +1003,7 @@ impl Checker {
         method: &str,
         args: &[&Ty],
     ) -> Option<Result<Ty, TypeError>> {
-        if !matches!(ty.kind(), TyKind::Struct(..)) {
+        if !ty.kind().is_non_simd_struct() {
             return None;
         }
         if !self.conforms_to(ty, trait_name) {

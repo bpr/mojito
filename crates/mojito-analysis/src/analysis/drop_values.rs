@@ -703,9 +703,14 @@ fn level_fields(ty: &Ty, declarations: &MirDeclarations) -> Option<Vec<(OwnedSte
     // A struct named without arguments in its own body is its `Self`, whose
     // fields are the declared ones, over its own parameters.
     let declared = || match ty.kind() {
-        TyKind::Struct(name, arguments) if arguments.is_empty() => declarations
-            .structure(name)
-            .map(|structure| std::borrow::Cow::Borrowed(structure.fields.as_slice())),
+        struct_ty
+            if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                && arguments.is_empty() =>
+        {
+            declarations
+                .structure(name)
+                .map(|structure| std::borrow::Cow::Borrowed(structure.fields.as_slice()))
+        }
         _ => None,
     };
     Some(

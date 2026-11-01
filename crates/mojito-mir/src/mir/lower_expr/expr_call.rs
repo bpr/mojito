@@ -630,27 +630,38 @@ impl<'a> Flatten<'a> {
         let lends_reads = call.lends_read_arguments();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = (stringify
-            || !matches!(
-                node.ty.clone().as_ref().map(Ty::kind),
-                Some(TyKind::Struct(constructed, _)) if *constructed == *name
-            ))
+            || node
+                .ty
+                .clone()
+                .as_ref()
+                .and_then(|ty| ty.kind().as_non_simd_struct())
+                .is_none_or(|(constructed, _)| *constructed != *name))
             && call.call_anchors_arguments();
         self.open_call_setup();
         let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
-            && matches!(
-                node.ty.clone().as_ref().map(Ty::kind),
-                Some(TyKind::Struct(constructed, _)) if *constructed == *name
-            );
+            && node
+                .ty
+                .clone()
+                .as_ref()
+                .and_then(|ty| ty.kind().as_non_simd_struct())
+                .is_some_and(|(constructed, _)| *constructed == *name);
         let (kw, kwarg_places) = copy_construction
             .then(|| self.copy_construction_keywords(kwargs))
             .flatten()
             .unwrap_or_else(|| self.lower_call_keywords(kwargs, lends_reads));
         self.close_call_setup(Some(call));
         let (regs, arg_places, kw, kwarg_places) = match node.ty.clone().as_ref().map(Ty::kind) {
-            Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
-                .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
+            Some(struct_ty)
+                if let Some((constructed, _)) = struct_ty.as_non_simd_struct()
+                    && *constructed == *name =>
+            {
+                self.fieldwise_keywords_positional(
+                    constructed,
+                    (regs, arg_places, kw, kwarg_places),
+                )
+            }
             _ => (regs, arg_places, kw, kwarg_places),
         };
         let target = if stringify {

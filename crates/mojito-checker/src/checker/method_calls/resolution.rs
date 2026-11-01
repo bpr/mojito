@@ -19,7 +19,7 @@ impl Checker {
         availability_failure: &mut Option<String>,
     ) -> Result<MethodSelection, TypeError> {
         match site.obj_ty.kind() {
-            TyKind::Struct(sname, targs) => {
+            struct_ty if let Some((sname, targs)) = struct_ty.as_non_simd_struct() => {
                 self.resolve_struct_method(site, sname, targs, availability_failure)
             }
             TyKind::Param { .. } | TyKind::Assoc { .. } => {
@@ -97,7 +97,7 @@ impl Checker {
         // through it (thin or capturing) — the field-invocation
         // channel.
         if !parameterized_syntax
-            && let TyKind::Struct(sname, targs) = obj_ty.kind()
+            && let Some((sname, targs)) = obj_ty.kind().as_non_simd_struct()
             && let Some(info) = self.structs.get(sname)
             && let Some((_, field_ty)) = info.fields.iter().find(|(fname, _)| fname == method)
         {
@@ -156,7 +156,7 @@ impl Checker {
                     ),
                 });
         }
-        if let TyKind::Struct(sname, targs) = obj_ty.kind()
+        if let Some((sname, targs)) = obj_ty.kind().as_non_simd_struct()
             && !targs.is_empty()
         {
             self.record_struct_instantiation(sname, targs, span.source.as_deref());

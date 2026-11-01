@@ -250,7 +250,7 @@ pub(super) fn struct_instance<'b>(
     ty: &'b Ty,
     bindings: &'b Bindings,
 ) -> Result<Option<StructInstance<'b>>, MonoError> {
-    let TyKind::Struct(struct_name, struct_args) = ty.kind() else {
+    let Some((struct_name, struct_args)) = ty.kind().as_non_simd_struct() else {
         return Ok(None);
     };
     let Some((template, shape)) = [struct_name.as_str(), nominal_template(struct_name)]
@@ -303,7 +303,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 )));
             }
         },
-        TyKind::Struct(name, original) => {
+        struct_ty if let Some((name, original)) = struct_ty.as_non_simd_struct() => {
             if original.is_empty() {
                 // The bare in-body `self` spelling of a generic owner resolves
                 // to the concrete instance being materialized; other bare
@@ -623,7 +623,7 @@ fn closed_literal(ty: &Ty, value: &CtValue, bindings: &Bindings) -> Ty {
         .and_then(|closed| {
             let (name, _) = mojito_types::types::nominal_parts(ty)?;
             let closed = Ty::new(TyKind::Struct(name.to_string(), vec![TyArg::Val(closed)]));
-            (!matches!(closed.kind(), TyKind::Struct(..))).then_some(closed)
+            (!closed.kind().is_non_simd_struct()).then_some(closed)
         })
         .unwrap_or_else(|| ty.clone())
 }
@@ -723,7 +723,7 @@ pub(super) fn removed_parameter_read(binder: &ParamRef) -> String {
 fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
     fn names_outside_structs(ty: &Ty, removed: &[ParamRef]) -> bool {
         match ty.kind() {
-            TyKind::Struct(..) => false,
+            struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => false,
             TyKind::Pointer { element, .. }
             | TyKind::KgenPointer(element)
             | TyKind::LitRef { element, .. }
@@ -1159,9 +1159,7 @@ fn constructed_parts<'v>(
 /// The element type and length of an `Array` instance, a mono-named one
 /// included.
 fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
-    let TyKind::Struct(name, arguments) = ty.kind() else {
-        return None;
-    };
+    let (name, arguments) = ty.kind().as_non_simd_struct()?;
     if nominal_template(name) != mojito_types::types::ARRAY_TYPE_NAME {
         return None;
     }

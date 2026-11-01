@@ -298,9 +298,13 @@ pub(super) fn verify_subscript_call(
         ));
     }
     let concrete_receiver = match receiver_ty.map(Ty::kind) {
-        Some(TyKind::Struct(name, _)) => Some(name.as_str()),
+        Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+            Some(name.as_str())
+        }
         Some(TyKind::Ref(reference)) => match reference.referent.kind() {
-            TyKind::Struct(name, _) => Some(name.as_str()),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                Some(name.as_str())
+            }
             _ => None,
         },
         _ => None,

@@ -24,7 +24,7 @@ impl<'a> FnLowering<'a> {
     /// chains are exempt: pure frees/relocations, nothing user-observable.
     pub(super) fn chain_runs_user_lifecycle(&self, ty: &Ty, method: &str) -> bool {
         match ty.kind() {
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let template = name.split("$mono").next().unwrap_or(name);
                 let stdlib = template.starts_with("__module$std$")
                     || mojito_symbol::symbol::is_stdlib_string_struct(name)
@@ -160,7 +160,7 @@ impl<'a> FnLowering<'a> {
         if let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)?
             && self.trace_lifecycle
             && !self.synthesized_body()
-            && let TyKind::Struct(name, _) = &ty.kind()
+            && let Some((name, _)) = (&ty.kind()).as_non_simd_struct()
         {
             let name = name.clone();
             self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
@@ -284,7 +284,7 @@ impl<'a> FnLowering<'a> {
                 self.end_guard(ctx, cont_env);
                 Ok(())
             }
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 if let Some(deinit) = destructor {
                     let Some(signature) = self.signatures.get(deinit) else {
                         return Err(
@@ -385,7 +385,9 @@ impl<'a> FnLowering<'a> {
     /// backstop drop of a still-live slot.
     pub(super) fn type_destructor(&self, ty: &Ty) -> Option<&'a str> {
         match ty.kind() {
-            TyKind::Struct(name, _) => self.lifecycle_symbol(name, "__deinit__"),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                self.lifecycle_symbol(name, "__deinit__")
+            }
             _ => None,
         }
     }
@@ -401,7 +403,7 @@ impl<'a> FnLowering<'a> {
     /// (excluding `ty`'s own whole-value destructor).
     pub(super) fn fields_need_drop(&self, ty: &Ty) -> bool {
         match ty.kind() {
-            TyKind::Struct(name, _) => self
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
                 .struct_decls
                 .get(name.as_str())
                 .is_some_and(|decl| decl.fields.iter().any(|(_, field)| self.needs_drop(field))),
@@ -417,7 +419,9 @@ impl<'a> FnLowering<'a> {
 
     /// Whether `ty` is a struct that owns the lifecycle member `method`.
     pub(super) fn has_lifecycle_method(&self, ty: &Ty, method: &str) -> bool {
-        matches!(ty.kind(), TyKind::Struct(name, _) if self.lifecycle_symbol(name, method).is_some())
+        ty.kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, _)| self.lifecycle_symbol(name, method).is_some())
     }
 
     /// Whether `ty` or any transitive field declares `method`.
@@ -426,11 +430,13 @@ impl<'a> FnLowering<'a> {
             return true;
         }
         match ty.kind() {
-            TyKind::Struct(name, _) => self.struct_decls.get(name.as_str()).is_some_and(|decl| {
-                decl.fields
-                    .iter()
-                    .any(|(_, field)| self.has_nested_lifecycle(field, method))
-            }),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                self.struct_decls.get(name.as_str()).is_some_and(|decl| {
+                    decl.fields
+                        .iter()
+                        .any(|(_, field)| self.has_nested_lifecycle(field, method))
+                })
+            }
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
                 .iter()
                 .any(|element| self.has_nested_lifecycle(element, method)),

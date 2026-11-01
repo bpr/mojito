@@ -530,8 +530,9 @@ fn source_type_from_ty_with_origins(
         // canonical `Tuple[...]` application, which the checker maps back onto
         // the discovered specialization, instead of applying the retained
         // arguments to the erased symbol.
-        TyKind::Struct(name, _)
-            if name != mojito_types::types::TUPLE_TYPE_NAME
+        struct_ty
+            if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                && name != mojito_types::types::TUPLE_TYPE_NAME
                 && let Some(elements) = mojito_types::types::tuple_elements(ty) =>
         {
             Type::Named(
@@ -545,7 +546,7 @@ fn source_type_from_ty_with_origins(
                     .collect(),
             )
         }
-        TyKind::Struct(name, arguments) => Type::Named(
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => Type::Named(
             name.clone(),
             arguments
                 .iter()

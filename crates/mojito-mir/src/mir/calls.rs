@@ -1417,10 +1417,10 @@ impl<'a> Flatten<'a> {
         // reads through the view, so the source must outlive the call even at
         // its last use — the same hidden anchor a chained view result gets.
         if matches!(expression.op(), CheckedOp::Call { .. })
-            && matches!(
-                expression.ty().as_ref().map(Ty::kind),
-                Some(TyKind::Struct(..))
-            )
+            && expression
+                .ty()
+                .as_ref()
+                .is_some_and(|ty| ty.kind().is_non_simd_struct())
         {
             let value = self.expr(expression);
             let loans = self.aggregate_borrows(expression);
@@ -1895,10 +1895,10 @@ impl<'a> Flatten<'a> {
                     .contains_key(&expression.address()));
         if (call_temporary || subscript_view)
             && !anchored_by_conversion
-            && matches!(
-                expression.ty().as_ref().map(Ty::kind),
-                Some(TyKind::Struct(..))
-            )
+            && expression
+                .ty()
+                .as_ref()
+                .is_some_and(|ty| ty.kind().is_non_simd_struct())
         {
             let loans = self.aggregate_borrows(expression);
             if !loans.is_empty() {

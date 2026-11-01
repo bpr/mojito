@@ -131,7 +131,10 @@ impl FnLowering<'_> {
         anchor: Reg,
     ) -> Result<Option<Value>, PlironError> {
         let register_ty = self.func.reg_types.get(&source.0).cloned();
-        let Some(TyKind::Struct(name, _)) = register_ty.as_ref().map(Ty::kind) else {
+        let Some((name, _)) = register_ty
+            .as_ref()
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+        else {
             return Ok(None);
         };
         let Some((method, signature)) = self

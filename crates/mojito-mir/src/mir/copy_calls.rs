@@ -25,7 +25,7 @@ use super::{
     VarId, fresh_register, instruction_regions_mut,
 };
 use mojito_ast::ast::ArgConvention;
-use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
+use mojito_types::types::{ParamDecl, Ty, TyArg};
 use std::collections::HashSet;
 
 /// A function's declaration, by the function's name.
@@ -187,7 +187,7 @@ fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
             .then(Vec::new);
     }
     let arguments: Vec<TyArg> = match ty.kind() {
-        TyKind::Struct(_, arguments) => arguments
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments
             .iter()
             .take_while(|argument| !matches!(argument, TyArg::Origin(_)))
             .take(decls.len())

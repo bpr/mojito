@@ -922,7 +922,10 @@ fn drop_receiver_arguments(
     declarations: &MirDeclarations,
     ids: &[ParamId],
 ) -> bool {
-    let Some(TyKind::Struct(name, arguments)) = receiver.as_ref().map(Ty::kind) else {
+    let Some((name, arguments)) = receiver
+        .as_ref()
+        .and_then(|ty| ty.kind().as_non_simd_struct())
+    else {
         return false;
     };
     let Some(decls) = declarations
@@ -1187,7 +1190,7 @@ fn is_lifecycle_constructor_call(
     callee: &str,
     constructed: Option<&Ty>,
 ) -> bool {
-    let Some(TyKind::Struct(name, _)) = constructed.map(Ty::kind) else {
+    let Some((name, _)) = constructed.and_then(|ty| ty.kind().as_non_simd_struct()) else {
         return false;
     };
     ["__copyinit__", "__moveinit__"]
@@ -1488,7 +1491,10 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         match (ty.kind(), &self.self_type) {
             (TyKind::Struct(name, arguments), Some(self_type))
                 if arguments.is_empty()
-                    && matches!(self_type.kind(), TyKind::Struct(spelled, _) if spelled == name) =>
+                    && self_type
+                        .kind()
+                        .as_non_simd_struct()
+                        .is_some_and(|(spelled, _)| spelled == name) =>
             {
                 self_type
             }
@@ -1739,7 +1745,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             return false;
         };
         let receiver = self.spelled_self(receiver).clone();
-        let TyKind::Struct(name, arguments) = receiver.kind() else {
+        let Some((name, arguments)) = receiver.kind().as_non_simd_struct() else {
             return false;
         };
         let Some(decls) = mojito_symbol::symbol::split_method_symbol(callee)

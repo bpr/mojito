@@ -237,17 +237,24 @@ pub(super) fn materialize_nested_literals(ty: &Ty) -> Ty {
         }
     }
     match ty.kind() {
-        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
-        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(leaf(ty)),
-                    other => other.clone(),
-                })
-                .collect(),
-        )),
+        struct_ty
+            if let Some(_) = struct_ty.as_non_simd_struct()
+                && ty.is_closed() =>
+        {
+            ty.clone()
+        }
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            ty.reusing(TyKind::Struct(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(leaf(ty)),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            ))
+        }
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(leaf).collect()).into(),
         TyKind::RuntimePack(elements) => {
             TyKind::RuntimePack(elements.iter().map(leaf).collect()).into()
@@ -275,7 +282,7 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::KgenPointer(_)
         | TyKind::LitRef { .. }
         | TyKind::Ref(_) => true,
-        TyKind::Struct(..) => !ty.is_closed(),
+        struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => !ty.is_closed(),
         _ => false,
     };
     if !erases {

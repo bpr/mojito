@@ -33,7 +33,7 @@ impl Checker {
         {
             return Ok(None);
         }
-        if let TyKind::Struct(name, _) = obj_ty.kind()
+        if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
             && !self.structs.contains_key(name)
             && let Some(ty) = self.infer_unregistered_collection_method(site)?
         {
@@ -44,7 +44,12 @@ impl Checker {
         }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.
-        if matches!(obj_ty.kind(), TyKind::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if ty.is_int()))
+        if obj_ty
+            .kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, args)| {
+                name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if ty.is_int())
+            })
             && !self.structs.contains_key("Optional")
         {
             return self.infer_raw_optional_method(site).map(Some);
@@ -68,11 +73,12 @@ impl Checker {
             && args.len() == 1
             && kwargs.is_empty()
             && param_args.is_empty()
-            && !matches!(
-                receiver.kind(),
-                TyKind::Struct(name, targs)
-                    if !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
-            )
+            && !receiver
+                .kind()
+                .as_non_simd_struct()
+                .is_some_and(|(name, targs)| {
+                    !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
+                })
             && !(receiver.is_simd() && self.declared_receiver_member(receiver, method).is_some())
             && self.conforms_to(obj_ty, "Writable")
         {

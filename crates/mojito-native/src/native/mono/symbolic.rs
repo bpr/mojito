@@ -77,7 +77,10 @@ fn reflection_answer(
     let answer = match subject.kind() {
         // A type name spells any closed type, a struct's with its
         // arguments as they stand.
-        TyKind::Struct(_, args) if !matches!(query, ReflectQuery::TypeName(_)) => {
+        struct_ty
+            if let Some((_, args)) = struct_ty.as_non_simd_struct()
+                && !matches!(query, ReflectQuery::TypeName(_)) =>
+        {
             let Some(instance) = struct_instance(&subject, bindings).map_err(unsupported)? else {
                 return Ok(None);
             };
@@ -186,7 +189,9 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         // A parametric function type closed over its own binders is a
         // concrete type argument (`OptionalReg[G]`).
         TyKind::GenericFunc(_) => mojito_types::types::has_free_binders(ty),
-        TyKind::Struct(_, args) => !ty.is_closed() && args.iter().any(arg_has_symbolic),
+        struct_ty if let Some((_, args)) = struct_ty.as_non_simd_struct() => {
+            !ty.is_closed() && args.iter().any(arg_has_symbolic)
+        }
         TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
             v.iter().any(is_symbolic)
         }
@@ -358,13 +363,15 @@ pub(super) fn ensure_concrete_function(
 }
 pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
     match ty.kind() {
-        TyKind::Struct(_, args) => output.extend(args.iter().filter_map(|a| {
-            if let TyArg::Ty(t) = a {
-                Some(t.clone())
-            } else {
-                None
-            }
-        })),
+        struct_ty if let Some((_, args)) = struct_ty.as_non_simd_struct() => {
+            output.extend(args.iter().filter_map(|a| {
+                if let TyArg::Ty(t) = a {
+                    Some(t.clone())
+                } else {
+                    None
+                }
+            }));
+        }
         TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
             output.extend(v.iter().cloned());
         }

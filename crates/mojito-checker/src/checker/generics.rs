@@ -48,18 +48,22 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
         // parameters (`Pair[T]` against `Pair[Int]` solves `T = Int`). Value
         // arguments contribute no type solution. A structural mismatch is left
         // for the caller's coercion check to report.
-        TyKind::Struct(pn, pargs) => {
+        struct_ty if let Some((pn, pargs)) = struct_ty.as_non_simd_struct() => {
             // A spread of a pack against a closed element list is a whole
             // argument list, which `solve_value_args` binds: its one slot is
             // no element pattern. Against another spread it forwards that
             // pack, which the slot below binds.
             if mojito_types::types::pack_spread_argument(pargs).is_some()
-                && !matches!(actual.kind(), TyKind::Struct(_, aargs)
-                    if mojito_types::types::pack_spread_argument(aargs).is_some())
+                && !actual
+                    .kind()
+                    .as_non_simd_struct()
+                    .is_some_and(|(_, aargs)| {
+                        mojito_types::types::pack_spread_argument(aargs).is_some()
+                    })
             {
                 return Ok(());
             }
-            if let TyKind::Struct(an, aargs) = actual.kind()
+            if let Some((an, aargs)) = actual.kind().as_non_simd_struct()
                 && pn == an
                 && pargs.len() == aargs.len()
             {
@@ -525,10 +529,12 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
                 .map(|bound| substitute_self(bound, replacement)),
         }
         .into(),
-        TyKind::Struct(name, args) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            map_tyargs(args, |t| substitute_self(t, replacement)),
-        )),
+        struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
+            ty.reusing(TyKind::Struct(
+                name.clone(),
+                map_tyargs(args, |t| substitute_self(t, replacement)),
+            ))
+        }
         TyKind::Dependent(dependent) => dependent.map_types(|ty| substitute_self(ty, replacement)),
         TyKind::ComptimeList(elem) => {
             TyKind::ComptimeList(substitute_self(elem, replacement)).into()
@@ -682,7 +688,9 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             .collect()
     };
     match ty.kind() {
-        TyKind::Struct(name, args) => TyKind::Struct(name.clone(), map_args(args)).into(),
+        struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
+            TyKind::Struct(name.clone(), map_args(args)).into()
+        }
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
             base: recur(base),
             name: name.clone(),
@@ -1299,7 +1307,7 @@ impl Checker {
                 _ => set_element(&pattern).is_some(),
             },
         };
-        let TyKind::Struct(name, arguments) = pattern.kind() else {
+        let Some((name, arguments)) = pattern.kind().as_non_simd_struct() else {
             return self.infer(expression);
         };
         if !shaped {
@@ -1945,16 +1953,18 @@ fn bind_pointer_origin_tails(
                 TyKind::Pointer { element, origin }.into()
             }
         }
-        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                    other => other.clone(),
-                })
-                .collect(),
-        )),
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            ty.reusing(TyKind::Struct(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            ))
+        }
         TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
             referent: recur(&reference.referent),
             origin: reference.origin.clone(),

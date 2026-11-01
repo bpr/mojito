@@ -32,7 +32,7 @@ impl Checker {
             .as_deref()
             .map(|arguments| struct_subst(&resolved.param_decls, arguments))
             .unwrap_or_default();
-        if let TyKind::Struct(struct_name, _) = obj_ty.kind() {
+        if let Some((struct_name, _)) = obj_ty.kind().as_non_simd_struct() {
             let method_key = format!("{struct_name}.{method}");
             let effect_key = selected_target.unwrap_or(&method_key);
             self.apply_transfer_effects(effect_key, Some(object), args, span, &bindings)?;
@@ -303,7 +303,7 @@ impl Checker {
             });
         }
         if resolved.consumes_receiver
-            && let TyKind::Struct(name, _) = obj_ty.kind()
+            && let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
             && self
                 .structs
                 .get(name)
@@ -436,13 +436,15 @@ impl Checker {
         // declared signature (`Self`, `RefBox[Self.o]`), whose slots fix
         // their own mutability; type parameters stay abstract there.
         let (tail_bindings, self_declared) = match obj_ty.kind() {
-            TyKind::Struct(sname, targs) => match self.structs.get(sname) {
-                Some(info) => (
-                    info.tail_origin_bindings(targs),
-                    TyKind::Struct(sname.clone(), info.self_arguments()).into(),
-                ),
-                None => (HashMap::new(), obj_ty.clone()),
-            },
+            struct_ty if let Some((sname, targs)) = struct_ty.as_non_simd_struct() => {
+                match self.structs.get(sname) {
+                    Some(info) => (
+                        info.tail_origin_bindings(targs),
+                        TyKind::Struct(sname.clone(), info.self_arguments()).into(),
+                    ),
+                    None => (HashMap::new(), obj_ty.clone()),
+                }
+            }
             _ => (HashMap::new(), obj_ty.clone()),
         };
         let self_declared = substitute_struct_origin_tails(&self_declared, &tail_bindings);

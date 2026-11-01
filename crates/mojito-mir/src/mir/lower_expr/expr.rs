@@ -434,7 +434,7 @@ impl<'a> Flatten<'a> {
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
     ) -> Reg {
-        let TyKind::Struct(_, instantiated_args) = ty.kind() else {
+        let Some((_, instantiated_args)) = ty.kind().as_non_simd_struct() else {
             unreachable!("a constructor builds a nominal value")
         };
         let instantiated_args = instantiated_args.clone();

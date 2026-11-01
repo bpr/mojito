@@ -431,7 +431,11 @@ impl Checker {
             return Ok(());
         };
         if self.type_keyed_projection(object, index)
-            || !matches!(self.infer(object)?.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+            || !self
+                .infer(object)?
+                .kind()
+                .as_non_simd_struct()
+                .is_some_and(|(name, _)| self.structs.contains_key(name))
         {
             return Ok(());
         }

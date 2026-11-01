@@ -1019,7 +1019,7 @@ impl Checker {
         };
         let dunder = op.inplace_dunder().ok_or_else(missing)?;
         let has_method = match operand_ty.kind() {
-            TyKind::Struct(name, _) => self
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key(dunder)),
@@ -1289,9 +1289,7 @@ impl Checker {
         &'s self,
         vt: &'s Ty,
     ) -> Option<(&'s str, &'s MethodSig)> {
-        let TyKind::Struct(name, _) = vt.kind() else {
-            return None;
-        };
+        let (name, _) = vt.kind().as_non_simd_struct()?;
         tuple_elements(vt)?;
         let [accessor] = self
             .structs
@@ -1841,7 +1839,10 @@ impl Checker {
                 // (`x += y` → `x.__iadd__(y)`), which mutates `mut self`; Mojo
                 // does not fall back to the binary operator. Any other target
                 // (`Bool &=`) keeps the operator path below.
-                let inplace_operand = matches!(target.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+                let inplace_operand = target
+                    .kind()
+                    .as_non_simd_struct()
+                    .is_some_and(|(name, _)| self.structs.contains_key(name))
                     || self.bound_inplace_operator(&target, *op)
                     || op.inplace_dunder().is_some_and(|dunder| {
                         self.declared_receiver_member(&target, dunder).is_some()
@@ -2286,8 +2287,9 @@ impl Checker {
                 self.register_named_bindings(expr)?;
                 let ty = self.infer(expr)?;
                 let stringish = ty.is_string_literal()
-                    || matches!(ty.kind(), TyKind::Struct(name, args)
-                        if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
+                    || ty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
+                        args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    });
                 let error = if stringish { Ty::error() } else { ty };
                 self.require_error("'raise'", error)?;
                 Ok(())
@@ -4147,7 +4149,7 @@ fn holds_closure(ty: &Ty) -> bool {
             )
         }),
         TyKind::Overload(_) => true,
-        TyKind::Struct(_, arguments) => arguments.iter().any(|argument| {
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments.iter().any(|argument| {
             matches!(argument, mojito_types::types::TyArg::Ty(element) if holds_closure(element))
         }),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {

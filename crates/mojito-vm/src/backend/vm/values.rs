@@ -350,17 +350,20 @@ impl VmBackend {
     pub(super) fn uninitialized_value(prog: &Prog, ty: &Ty) -> Option<Value> {
         match ty.kind() {
             // A held struct's storage is its one field's.
-            TyKind::Struct(name, _)
-                if let Some(definition) = prog.structs.get(name)
+            struct_ty
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && let Some(definition) = prog.structs.get(name)
                     && definition.register_field.is_some()
                     && let [(_, field)] = definition.fields.as_slice() =>
             {
                 Some(uninitialized_field(field))
             }
-            TyKind::Struct(name, _) => Some(Value::Struct {
-                name: name.clone(),
-                fields: uninitialized_fields(&prog.structs.get(name)?.fields),
-            }),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                Some(Value::Struct {
+                    name: name.clone(),
+                    fields: uninitialized_fields(&prog.structs.get(name)?.fields),
+                })
+            }
             TyKind::Tuple(_) | TyKind::PopArray { .. } => Some(uninitialized_field(ty)),
             // Upstream's `undef` vector, which `SIMD`'s element list marks
             // initialized before writing it lane by lane: the zero vector.

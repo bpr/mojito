@@ -42,8 +42,10 @@ impl FnLowering<'_> {
                 } else {
                     // The nominal String's `__moveinit__` is an identity
                     // field move — the byte copy below is exactly it.
-                    let stdlib_string = matches!(&ty.kind(), TyKind::Struct(name, _)
-                        if mojito_symbol::symbol::is_stdlib_string_struct(name));
+                    let stdlib_string =
+                        (&ty.kind()).as_non_simd_struct().is_some_and(|(name, _)| {
+                            mojito_symbol::symbol::is_stdlib_string_struct(name)
+                        });
                     if let Some(moveinit) = constructor.filter(|_| !stdlib_string) {
                         // A `^` transfer naming a compiled `__moveinit__`
                         // always runs that constructor. Ownership checking

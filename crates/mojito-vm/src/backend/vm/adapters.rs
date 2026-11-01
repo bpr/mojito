@@ -103,7 +103,7 @@ impl VmBackend {
         if prog.held_field(Some(target)).is_some() {
             return Ok(prog.unboxed(value, Some(target)));
         }
-        let TyKind::Struct(name, _) = target.kind() else {
+        let Some((name, _)) = target.kind().as_non_simd_struct() else {
             return Ok(crate::runtime::coerce_checked(value, target));
         };
         let Some(public_elements) = mojito_types::types::tuple_elements(target) else {
@@ -252,17 +252,16 @@ impl VmBackend {
             }
             CtValue::Tuple(items) => {
                 let storage = match target.map(Ty::kind) {
-                    Some(TyKind::Struct(name, _)) => {
-                        prog.structs.get(name).and_then(|definition| {
-                            match definition.fields.as_slice() {
-                                [(field, storage)] => match storage.kind() {
-                                    TyKind::Tuple(types) => Some((name, field, types.as_slice())),
-                                    _ => None,
-                                },
+                    Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => prog
+                        .structs
+                        .get(name)
+                        .and_then(|definition| match definition.fields.as_slice() {
+                            [(field, storage)] => match storage.kind() {
+                                TyKind::Tuple(types) => Some((name, field, types.as_slice())),
                                 _ => None,
-                            }
-                        })
-                    }
+                            },
+                            _ => None,
+                        }),
                     _ => None,
                 };
                 let types = match (storage, target.map(Ty::kind)) {
@@ -303,7 +302,13 @@ impl VmBackend {
                     _ => self.materialize_checked_result(prog, Value::Tuple(items), target)?,
                 }
             }
-            CtValue::Str(text) if matches!(target.map(Ty::kind), Some(TyKind::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name)) => {
+            CtValue::Str(text)
+                if target
+                    .and_then(|ty| ty.kind().as_non_simd_struct())
+                    .is_some_and(|(name, _)| {
+                        mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    }) =>
+            {
                 self.nominal_string_value(prog, text)?
             }
             _ => crate::crossing::ct_to_vm(value)?,

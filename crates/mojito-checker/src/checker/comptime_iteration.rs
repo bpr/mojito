@@ -103,7 +103,7 @@ impl Checker {
     ) -> Result<(Expr, Ty, Ty), TypeError> {
         let ty = self.infer(iter)?;
         let has_iter = match ty.kind() {
-            TyKind::Struct(name, _) => self
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key("__iter__")),
@@ -210,13 +210,17 @@ fn comptime_iterator_binder(iter: &Expr, iterator: &Ty) -> ParamExpr {
 fn iterable_spelling(ty: &Ty) -> String {
     let elements: Vec<Ty> = match ty.kind() {
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
-        TyKind::Struct(name, args) if name == mojito_types::types::TUPLE_TYPE_NAME => args
-            .iter()
-            .filter_map(|argument| match argument {
-                TyArg::Ty(element) => Some(element.clone()),
-                TyArg::Val(_) | TyArg::Origin(_) => None,
-            })
-            .collect(),
+        struct_ty
+            if let Some((name, args)) = struct_ty.as_non_simd_struct()
+                && name == mojito_types::types::TUPLE_TYPE_NAME =>
+        {
+            args.iter()
+                .filter_map(|argument| match argument {
+                    TyArg::Ty(element) => Some(element.clone()),
+                    TyArg::Val(_) | TyArg::Origin(_) => None,
+                })
+                .collect()
+        }
         _ => return ty.to_string(),
     };
     format!(

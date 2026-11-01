@@ -252,11 +252,12 @@ impl Checker {
             return self.static_string_of(name).map(CtValue::Expr);
         }
         let fields = match subject.kind() {
-            TyKind::Struct(name, _)
-                if self
-                    .structs
-                    .get(name)
-                    .is_some_and(|info| !info.fields_resolved()) =>
+            struct_ty
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && self
+                        .structs
+                        .get(name)
+                        .is_some_and(|info| !info.fields_resolved()) =>
             {
                 if self.self_ty.is_none() {
                     return Err(TypeError::NotComptime(format!(
@@ -268,12 +269,17 @@ impl Checker {
                     self.param_context.reflect_query(&shape, query),
                 ));
             }
-            TyKind::Struct(name, arguments) if let Some(info) = self.structs.get(name) => Some(
-                info.fields
-                    .iter()
-                    .map(|(field, ty)| (field.clone(), substitute_at(ty, info, arguments)))
-                    .collect::<Vec<_>>(),
-            ),
+            struct_ty
+                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                    && let Some(info) = self.structs.get(name) =>
+            {
+                Some(
+                    info.fields
+                        .iter()
+                        .map(|(field, ty)| (field.clone(), substitute_at(ty, info, arguments)))
+                        .collect::<Vec<_>>(),
+                )
+            }
             TyKind::Param { .. } | TyKind::Dependent(_) | TyKind::SelfType => {
                 let shape = self.param_context.type_shape(subject.clone());
                 return Ok(CtValue::Expr(

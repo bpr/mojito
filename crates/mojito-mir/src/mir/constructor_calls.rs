@@ -169,9 +169,7 @@ fn struct_named_copy(
         return None;
     };
     let ty = reg_types.get(&dest.0)?;
-    let TyKind::Struct(name, _) = ty.kind() else {
-        return None;
-    };
+    let (name, _) = ty.kind().as_non_simd_struct()?;
     (keyword == "copy"
         && args.is_empty()
         && struct_template(name) == struct_template(&func.0)

@@ -278,7 +278,7 @@ impl FnLowering<'_> {
         src_ptr: Value,
         span: Reg,
     ) -> Result<(), PlironError> {
-        if let TyKind::Struct(name, _) = ty.kind()
+        if let Some((name, _)) = ty.kind().as_non_simd_struct()
             && mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
             let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
@@ -295,7 +295,7 @@ impl FnLowering<'_> {
             self.store_string_fields(ctx, dst, new_data, src_size, src_size, span);
             return Ok(());
         }
-        if let TyKind::Struct(name, _) = ty.kind()
+        if let Some((name, _)) = ty.kind().as_non_simd_struct()
             && self.lifecycle_symbol(name, "__copyinit__").is_some()
         {
             let name = name.clone();
@@ -360,7 +360,7 @@ impl FnLowering<'_> {
             return Ok(());
         }
         let elements: Vec<(Ty, u64)> = match ty.kind() {
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let Some(decl) = self.struct_decls.get(name.as_str()) else {
                     return Err(self.unsupported_reg(format!("fork of undeclared `{ty}`"), span));
                 };
@@ -457,6 +457,7 @@ impl FnLowering<'_> {
 /// Whether `ty` is the nominal String, whose copy and move constructors are
 /// bridged natively rather than compiled.
 pub(super) fn is_stdlib_string(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Struct(name, _)
-        if mojito_symbol::symbol::is_stdlib_string_struct(name))
+    ty.kind()
+        .as_non_simd_struct()
+        .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
 }

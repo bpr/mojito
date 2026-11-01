@@ -106,7 +106,7 @@ impl Checker {
             .and_then(closed_intrinsic_name)
             .and_then(LlvmIntrinsic::parse)
             && spread.is_none()
-            && !matches!(result.kind(), TyKind::Struct(..))
+            && !result.kind().is_non_simd_struct()
             && std::iter::once(&result)
                 .chain(&operands)
                 .all(|ty| !mojito_types::types::has_free_parameters(ty))

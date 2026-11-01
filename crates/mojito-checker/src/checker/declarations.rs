@@ -1722,7 +1722,7 @@ impl Checker {
         // once, before any read, on every path) is left for a later refinement.
         if result.is_ok()
             && out_init
-            && let TyKind::Struct(sname, _) = self_ty.kind()
+            && let Some((sname, _)) = self_ty.kind().as_non_simd_struct()
         {
             result = self.check_definite_init(sname, &m.name, &m.body);
         }
@@ -2276,7 +2276,7 @@ impl Checker {
         };
         let mut nested = Vec::new();
         for (field, ty) in &info.fields {
-            if !matches!(ty.kind(), TyKind::Struct(..)) {
+            if !ty.kind().is_non_simd_struct() {
                 continue;
             }
             let position = if info.fieldwise_init {
@@ -2496,7 +2496,7 @@ impl Checker {
     /// operands: among the overloads no argument binds whose `where` clause
     /// holds under `target`'s arguments, the best ranked.
     pub(super) fn empty_constructor(&self, target: &Ty) -> Result<String, TypeError> {
-        let TyKind::Struct(name, arguments) = target.kind() else {
+        let Some((name, arguments)) = target.kind().as_non_simd_struct() else {
             return Err(TypeError::InvariantViolation(format!(
                 "empty construction of non-nominal '{target}'"
             )));
@@ -4399,8 +4399,10 @@ impl Checker {
                 }
                 // A compile-time string is carried as a literal, which no
                 // `String`-typed read of the binder materializes yet.
-                if matches!(solved.kind(), TyKind::Struct(name, _)
-                    if mojito_symbol::symbol::is_stdlib_string_struct(name))
+                if solved
+                    .kind()
+                    .as_non_simd_struct()
+                    .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
                 {
                     return Err(TypeError::Unsupported(format!(
                         "value parameter '{}' typed by '{}' cannot bind a 'String' value yet",
@@ -4698,7 +4700,10 @@ impl Checker {
         // A copy keeps the source's origin tail.
         let mut arguments = tyargs;
         match arg_ty.kind() {
-            TyKind::Struct(actual, actual_arguments) if actual == name => {
+            struct_ty
+                if let Some((actual, actual_arguments)) = struct_ty.as_non_simd_struct()
+                    && actual == name =>
+            {
                 arguments.extend_from_slice(info.origin_tail(actual_arguments));
             }
             _ => arguments.extend(partitioned.tail_arguments()),
@@ -4737,12 +4742,14 @@ impl Checker {
                 TyKind::Ref(reference) => {
                     matches!(reference.origin, mojito_types::origin::Origin::Param(_))
                 }
-                TyKind::Struct(_, arguments) => arguments.iter().any(|argument| {
-                    matches!(
-                        argument,
-                        TyArg::Origin(mojito_types::origin::Origin::Param(_))
-                    )
-                }),
+                struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                    arguments.iter().any(|argument| {
+                        matches!(
+                            argument,
+                            TyArg::Origin(mojito_types::origin::Origin::Param(_))
+                        )
+                    })
+                }
                 _ => false,
             })
         };
@@ -5166,7 +5173,7 @@ fn mentioned_binder<'d>(argument: &TyArg, decls: &'d [ParamDecl]) -> Option<&'d 
                     TyKind::Param {
                         binder: reference, ..
                     } => binder(&reference.id),
-                    TyKind::Struct(_, arguments) => {
+                    struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
                         arguments.iter().find_map(|argument| match argument {
                             TyArg::Val(value) => in_value(value),
                             _ => None,
@@ -5522,7 +5529,7 @@ fn bind_instance_origins(
     instance: &Ty,
 ) {
     use mojito_types::origin::{Origin, OriginParamId};
-    let TyKind::Struct(_, arguments) = instance.kind() else {
+    let Some((_, arguments)) = instance.kind().as_non_simd_struct() else {
         return;
     };
     let origins = arguments.iter().filter_map(|argument| match argument {

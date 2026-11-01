@@ -618,7 +618,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             }
             if let Some(found) = cx.reg_ty(*dest)
                 && !matches!(found.kind(), TyKind::Param { binder, .. } if binder == param)
-                && !matches!(found.kind(), TyKind::Struct(..))
+                && !found.kind().is_non_simd_struct()
             {
                 errors.push(format!(
                     "{prefix}: type-parameter construction of '{}' has result type {found}",
@@ -1159,7 +1159,7 @@ fn verify_simd_lane_instruction(
 fn verify_struct_creation(cx: &InstrCx<'_>, dest: Reg, fields: &[Reg], errors: &mut Vec<String>) {
     let prefix = cx.prefix;
     let declared = cx.reg_ty(dest).and_then(|ty| match ty.kind() {
-        TyKind::Struct(name, arguments) => cx
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => cx
             .declarations
             .structure(name)
             .map(|declaration| (declaration, arguments.is_empty())),
@@ -1212,9 +1212,10 @@ fn capture_binds(
                 && match capture.mode {
                     MirCaptureMode::Reference => true,
                     MirCaptureMode::Move => capture.place.ty.as_ref().is_none_or(|ty| {
-                        matches!(ty.kind(), TyKind::Struct(name, _)
-                            if mojito_symbol::symbol::split_method_symbol(&declaration.lowered_name)
-                                .is_some_and(|(owner, _)| owner == name))
+                        ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
+                            mojito_symbol::symbol::split_method_symbol(&declaration.lowered_name)
+                                .is_some_and(|(owner, _)| owner == name)
+                        })
                     }),
                 }
         }

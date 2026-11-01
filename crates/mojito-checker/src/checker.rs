@@ -1250,7 +1250,7 @@ impl Checker {
     fn concrete_callable_captures(&self, ty: &Ty) -> Vec<mojito_types::origin::CaptureOrigin> {
         use mojito_types::origin::CaptureOriginSet;
         let callable = match ty.kind() {
-            TyKind::Struct(name, _) => self
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
                 .structs
                 .get(name)
                 .and_then(|info| info.callable_conformance.as_ref()),
@@ -1605,7 +1605,7 @@ impl Checker {
     /// `def(...)` value. Runtime retargeting uses the latter only when the value
     /// is a callable struct.
     fn indirect_callable_target(&self, callable: &Ty) -> Option<String> {
-        if let TyKind::Struct(name, _) = callable.kind() {
+        if let Some((name, _)) = callable.kind().as_non_simd_struct() {
             return self
                 .structs
                 .get(name)
@@ -1624,7 +1624,7 @@ impl Checker {
                 callable_bound: Some(bound),
                 ..
             } => Some((*bound).clone()),
-            TyKind::Struct(name, arguments) => {
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 let info = self.structs.get(name)?;
                 let contract = info.callable_conformance.as_ref()?;
                 Some(substitute(contract, &struct_subst(&info.decls, arguments)))
@@ -1825,7 +1825,7 @@ impl Checker {
                 own_arguments: Vec::new(),
             }));
         }
-        let TyKind::Struct(name, args) = to.kind() else {
+        let Some((name, args)) = to.kind().as_non_simd_struct() else {
             return Ok(None);
         };
         let Some(info) = self.structs.get(name) else {
@@ -1991,7 +1991,7 @@ impl Checker {
         // A constructor restates its struct's parameters, so the conversion
         // passes the converted-to type's binder prefix, then the
         // constructor's own arguments, as any construction does.
-        if let TyKind::Struct(name, arguments) = to.kind()
+        if let Some((name, arguments)) = to.kind().as_non_simd_struct()
             && mojito_symbol::symbol::lifecycle_constructor(&target)
                 .is_some_and(|(_, method)| method == "__init__")
             && let Some(info) = self.structs.get(name)
@@ -2709,7 +2709,10 @@ fn explicit_destroy_types(
                             .fields
                             .iter()
                             .filter_map(|(field, ty)| match ty.kind() {
-                                TyKind::Struct(field_ty, _) if !checker.is_deinitable(ty) => {
+                                struct_ty
+                                    if let Some((field_ty, _)) = struct_ty.as_non_simd_struct()
+                                        && !checker.is_deinitable(ty) =>
+                                {
                                     Some((field.clone(), field_ty.clone()))
                                 }
                                 _ => None,

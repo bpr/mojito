@@ -714,7 +714,10 @@ impl Checker {
         rt: &Ty,
     ) -> Result<Ty, TypeError> {
         let nominal_ok = match rt.kind() {
-            TyKind::Struct(name, _) if !self.structs.contains_key(name) => {
+            struct_ty
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && !self.structs.contains_key(name) =>
+            {
                 if let Some(element) = list_element(rt).or_else(|| set_element(rt)) {
                     coerces(lt, element) && self.is_list_equatable(element)
                 } else if let Some((key, _)) = dict_elements(rt) {
@@ -745,7 +748,10 @@ impl Checker {
         // dispatches to the container's `__contains__` (`c.__contains__(x)`),
         // which must return `Bool`.
         if let Some(span) = span
-            && (matches!(rt.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+            && (rt
+                .kind()
+                .as_non_simd_struct()
+                .is_some_and(|(name, _)| self.structs.contains_key(name))
                 || self.declared_receiver_member(rt, "__contains__").is_some())
         {
             let ret = self.infer_method_call(
@@ -910,8 +916,9 @@ impl Checker {
             });
         }
         let aty = self.infer(&args[0])?;
-        let nominal_string = matches!(aty.kind(), TyKind::Struct(name, args)
-            if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
+        let nominal_string = aty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
+            args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
+        });
         if !aty.is_string_literal() && !nominal_string {
             return Err(TypeError::TypeMismatch {
                 expected: "String".to_string(),
@@ -1259,7 +1266,10 @@ impl Checker {
         self.borrow_nominal_place_argument(operand, ty);
         self.borrow_parameter_place_argument(operand, ty);
         if matches!(operand.kind, ExprKind::Index { .. })
-            && matches!(ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+            && ty
+                .kind()
+                .as_non_simd_struct()
+                .is_some_and(|(name, _)| self.structs.contains_key(name))
             && self.infer_reference_value(operand).is_some()
         {
             self.record_at(operand.source_span())
@@ -1270,7 +1280,9 @@ impl Checker {
     /// Whether `ty` is a struct the program declares, whose operators are
     /// its dunders' method calls.
     fn is_checked_struct(&self, ty: &Ty) -> bool {
-        matches!(ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+        ty.kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, _)| self.structs.contains_key(name))
     }
 
     /// Whether `ty`'s operators are method calls: a struct the program

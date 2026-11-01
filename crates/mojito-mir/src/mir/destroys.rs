@@ -73,7 +73,7 @@ pub(super) fn close_over_fields(
             continue;
         }
         match ty.kind() {
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 if whole {
                     destroyed.structs.push(ty.clone());
                 }

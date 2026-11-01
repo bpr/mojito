@@ -16,7 +16,6 @@ use mojito_mir::mir::{
     SymbolTable, destroyed_structs, entry_roots, relocated_structs, table_member,
 };
 use mojito_symbol::symbol::{OV_SEP, split_method_symbol};
-use mojito_types::types::TyKind;
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under upstream's flag spelling.
@@ -254,7 +253,7 @@ impl<'p> Symbols<'p> {
                     ("__moveinit__", &relocated.moved),
                 ] {
                     pending.extend(structs.iter().filter_map(|ty| match ty.kind() {
-                        TyKind::Struct(name, _) => {
+                        struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                             self.lifecycle.get(&(name.as_str(), member)).copied()
                         }
                         _ => None,

@@ -3,7 +3,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl Checker {
     /// See [`Checker::lower_ref_sig_resolved`]. `Ok(None)` when `member` is
@@ -25,9 +24,10 @@ impl Checker {
             return None;
         }
         fields.reverse();
-        let Some(TyKind::Struct(owner, _)) = self.self_ty.as_ref().map(Ty::kind) else {
-            return None;
-        };
+        let (owner, _) = self
+            .self_ty
+            .as_ref()
+            .and_then(|ty| ty.kind().as_non_simd_struct())?;
         let mut owner = owner.clone();
         let mut current: Option<Vec<(u32, u32)>> = None;
         for field in &fields {
@@ -44,9 +44,7 @@ impl Checker {
                 })
                 .collect();
             let (_, field_ty) = info.fields.iter().find(|(name, _)| name == field)?;
-            let TyKind::Struct(next, _) = field_ty.kind() else {
-                return None;
-            };
+            let (next, _) = field_ty.kind().as_non_simd_struct()?;
             owner = next.clone();
             current = Some(composed);
         }
@@ -118,7 +116,7 @@ impl Checker {
             let OriginSeg::Field(field) = seg else {
                 unreachable!("receiver path collects field segments only");
             };
-            let TyKind::Struct(name, arguments) = receiver_ty.kind() else {
+            let Some((name, arguments)) = receiver_ty.kind().as_non_simd_struct() else {
                 return Err(TypeError::Unsupported(format!(
                     "delegated-call origin receiver field '{field}' projects a non-struct type"
                 )));
@@ -135,7 +133,7 @@ impl Checker {
             };
             receiver_ty = substitute_at(field_ty, info, arguments);
         }
-        let TyKind::Struct(callee_struct, receiver_args) = receiver_ty.kind() else {
+        let Some((callee_struct, receiver_args)) = receiver_ty.kind().as_non_simd_struct() else {
             return Err(TypeError::Unsupported(
                 "a delegated-call origin expression requires a struct-typed receiver".to_string(),
             ));

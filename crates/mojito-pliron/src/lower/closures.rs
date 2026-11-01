@@ -77,8 +77,9 @@ impl FnLowering<'_> {
                     // nominal String's bridged constructor is exactly the
                     // native relocation.
                     if named_capture_constructor(capture, &ty).is_none()
-                        && matches!(ty.kind(), TyKind::Struct(name, _)
-                            if self.lifecycle_symbol(name, "__moveinit__").is_some())
+                        && ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
+                            self.lifecycle_symbol(name, "__moveinit__").is_some()
+                        })
                         && self.chain_runs_user_lifecycle(&ty, "__moveinit__")
                     {
                         return Err(self.unsupported_reg(
@@ -172,7 +173,7 @@ impl FnLowering<'_> {
                 // the event.
                 if named.is_none()
                     && self.trace_lifecycle
-                    && let TyKind::Struct(name, _) = ty.kind()
+                    && let Some((name, _)) = ty.kind().as_non_simd_struct()
                     && self.lifecycle_symbol(name, "__moveinit__").is_some()
                 {
                     let name = name.clone();
@@ -290,7 +291,7 @@ impl FnLowering<'_> {
         while let TyKind::Ref(reference) = contract.kind() {
             contract = reference.referent.clone();
         }
-        if let TyKind::Struct(name, _) = contract.kind() {
+        if let Some((name, _)) = contract.kind().as_non_simd_struct() {
             // Monomorphization devirtualizes a call through a nominal
             // callable into a direct `__call__` method call; a `Variant`
             // owning operation's struct handler (a closure's storage) is
@@ -486,7 +487,8 @@ impl FnLowering<'_> {
 /// are bridged natively.
 fn named_capture_constructor<'c>(capture: &'c MirClosureCapture, ty: &Ty) -> Option<&'c str> {
     capture.constructor.as_deref().filter(|_| {
-        !matches!(ty.kind(), TyKind::Struct(name, _)
-            if mojito_symbol::symbol::is_stdlib_string_struct(name))
+        !ty.kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
     })
 }

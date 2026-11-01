@@ -409,7 +409,7 @@ pub(super) fn verify_place(
                 // A concrete non-generic struct's field projection must agree
                 // with its declared layout; generic layouts would need
                 // substitution the verifier deliberately does not re-derive.
-                if let Some(TyKind::Struct(struct_name, arguments)) = current.as_ref().map(Ty::kind)
+                if let Some((struct_name, arguments)) = current.as_ref().and_then(|ty| ty.kind().as_non_simd_struct())
                     && arguments.is_empty()
                     && let Some(declaration) = declarations.structure(struct_name)
                 {

@@ -113,8 +113,8 @@ impl FnLowering<'_> {
             Some(ty) if matches!(ty.kind(), TyKind::Pointer { .. }) => {
                 self.reg_value(ctx, reg, ScalarTy::Ptr)
             }
-            Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => {
-                let TyKind::Struct(name, _) = ty.kind() else {
+            Some(ty) if ty.kind().is_non_simd_struct() => {
+                let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                     unreachable!("matched above");
                 };
                 let field = self.struct_decls.get(name.as_str()).and_then(|decl| {

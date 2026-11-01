@@ -382,24 +382,68 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         {
             Ok(())
         }
-        TyKind::Struct(pn, pa) => match actual.kind() {
-            TyKind::Struct(an, _)
-                if nominal_template(pn) == nominal_template(an) && pa.is_empty() =>
+        // A vector's lane dtype or width that is a bare binder binds from the
+        // argument's slot (`Scalar[dt]` against a `Float32`, `SIMD[dt, n]`
+        // against a four-lane vector); a compound expression (`2 * n`) is
+        // bound from the call's recorded arguments, as the pin binds it from
+        // the brackets, and only its evaluation is compared.
+        kind if let Some((dtype, width)) = kind.as_simd() => {
+            let Some((actual_dtype, actual_width)) = mojito_types::types::simd_slots(actual) else {
+                return Err(format!("expected `{pattern}`, found `{actual}`"));
+            };
+            unify_simd_slot(
+                dtype.is_expr().then(|| slot_expr(&dtype)).flatten(),
+                dtype.known().map(CtValue::Dtype),
+                actual_dtype.known().map(CtValue::Dtype),
+                pattern,
+                actual,
+                bindings,
+            )?;
+            // A `SIMDLength` binder binds to the length of the argument's
+            // lanes; an `Int` one the slot converted (`SIMDLength(n)`) is its
+            // lane count.
+            if let Some(length) = width_expr(&width).and_then(ParamExpr::as_decl_ref)
+                && let Some(lanes) = actual_width.known()
+            {
+                return bind_value(
+                    length,
+                    &mojito_types::types::simd_length_value(lanes),
+                    bindings,
+                );
+            }
+            let lanes =
+                width_expr(&width).and_then(|_| width.lanes(&ParamContext::detached()).ok());
+            unify_simd_slot(
+                lanes.as_ref(),
+                width.known().map(CtValue::Int),
+                actual_width.known().map(CtValue::Int),
+                pattern,
+                actual,
+                bindings,
+            )
+        }
+        struct_ty if let Some((pn, pa)) = struct_ty.as_non_simd_struct() => match actual.kind() {
+            struct_ty
+                if let Some((an, _)) = struct_ty.as_non_simd_struct()
+                    && nominal_template(pn) == nominal_template(an)
+                    && pa.is_empty() =>
             {
                 Ok(())
             }
             // A spread of a list computed from packs solves nothing: it
             // closes once the packs it reads are bound.
-            TyKind::Struct(an, _)
-                if spreads_into(pn, an, actual)
+            struct_ty
+                if let Some((an, _)) = struct_ty.as_non_simd_struct()
+                    && spreads_into(pn, an, actual)
                     && mojito_types::types::list_spread_argument(pa).is_some() =>
             {
                 Ok(())
             }
             // A spread of a pack binds it to the actual's whole element
             // list, unless the call's recorded arguments already did.
-            TyKind::Struct(an, aa)
-                if spreads_into(pn, an, actual)
+            struct_ty
+                if let Some((an, aa)) = struct_ty.as_non_simd_struct()
+                    && spreads_into(pn, an, actual)
                     && let Some(TyKind::Param { binder, .. }) =
                         (mojito_types::types::pack_spread_argument(pa)).map(Ty::kind) =>
             {
@@ -428,8 +472,10 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                     None => Err(format!("expected `{pattern}`, found `{actual}`")),
                 }
             }
-            TyKind::Struct(an, aa)
-                if nominal_template(pn) == nominal_template(an) && pa.len() == aa.len() =>
+            struct_ty
+                if let Some((an, aa)) = struct_ty.as_non_simd_struct()
+                    && nominal_template(pn) == nominal_template(an)
+                    && pa.len() == aa.len() =>
             {
                 pa.iter()
                     .zip(aa)
@@ -480,46 +526,6 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 (Some(pattern), Some(actual)) => unify(&pattern, &actual, bindings),
                 _ => Err(format!("expected `{pattern}`, found `{actual}`")),
             }
-        }
-        // A vector's lane dtype or width that is a bare binder binds from the
-        // argument's slot (`Scalar[dt]` against a `Float32`, `SIMD[dt, n]`
-        // against a four-lane vector); a compound expression (`2 * n`) is
-        // bound from the call's recorded arguments, as the pin binds it from
-        // the brackets, and only its evaluation is compared.
-        kind if let Some((dtype, width)) = kind.as_simd() => {
-            let Some((actual_dtype, actual_width)) = mojito_types::types::simd_slots(actual) else {
-                return Err(format!("expected `{pattern}`, found `{actual}`"));
-            };
-            unify_simd_slot(
-                dtype.is_expr().then(|| slot_expr(&dtype)).flatten(),
-                dtype.known().map(CtValue::Dtype),
-                actual_dtype.known().map(CtValue::Dtype),
-                pattern,
-                actual,
-                bindings,
-            )?;
-            // A `SIMDLength` binder binds to the length of the argument's
-            // lanes; an `Int` one the slot converted (`SIMDLength(n)`) is its
-            // lane count.
-            if let Some(length) = width_expr(&width).and_then(ParamExpr::as_decl_ref)
-                && let Some(lanes) = actual_width.known()
-            {
-                return bind_value(
-                    length,
-                    &mojito_types::types::simd_length_value(lanes),
-                    bindings,
-                );
-            }
-            let lanes =
-                width_expr(&width).and_then(|_| width.lanes(&ParamContext::detached()).ok());
-            unify_simd_slot(
-                lanes.as_ref(),
-                width.known().map(CtValue::Int),
-                actual_width.known().map(CtValue::Int),
-                pattern,
-                actual,
-                bindings,
-            )
         }
         // Callable contracts unify on their runtime structure — parameters,
         // return, raising — never on the environment (`thin` vs

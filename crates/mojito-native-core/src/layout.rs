@@ -124,7 +124,7 @@ impl LayoutCx<'_> {
             // The built-in error value: `{ message: MjString }` where
             // `MjString` is `{ data: ptr, size: i64, cap: i64 }`.
             TyKind::Error => Ok(self.mj_error()),
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let Some(fields) = self.structs.get(name) else {
                     return Err(LayoutError::Unsupported(format!(
                         "struct '{name}' has no MIR declaration to lay out"

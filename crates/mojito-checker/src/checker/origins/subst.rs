@@ -407,16 +407,18 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
                 TyKind::Pointer { element, origin }.into()
             }
         }
-        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(substitute_pointer_origin_params(ty, bindings)),
-                    other => other.clone(),
-                })
-                .collect(),
-        )),
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            ty.reusing(TyKind::Struct(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(substitute_pointer_origin_params(ty, bindings)),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            ))
+        }
         TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
             referent: substitute_pointer_origin_params(&reference.referent, bindings),
             origin: reference.origin.clone(),
@@ -448,21 +450,23 @@ pub(in crate::checker) fn substitute_struct_origin_tails(
     }
     let recur = |ty: &Ty| substitute_struct_origin_tails(ty, bindings);
     match ty.kind() {
-        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                    TyArg::Origin(origin) => {
-                        TyArg::Origin(substitute_origin_params(origin.clone(), &|id| {
-                            bindings.get(&id).cloned()
-                        }))
-                    }
-                    TyArg::Val(_) => argument.clone(),
-                })
-                .collect(),
-        )),
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            ty.reusing(TyKind::Struct(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                        TyArg::Origin(origin) => {
+                            TyArg::Origin(substitute_origin_params(origin.clone(), &|id| {
+                                bindings.get(&id).cloned()
+                            }))
+                        }
+                        TyArg::Val(_) => argument.clone(),
+                    })
+                    .collect(),
+            ))
+        }
         TyKind::Pointer { element, origin } => TyKind::Pointer {
             element: recur(element),
             origin: origin.clone(),
@@ -499,10 +503,9 @@ pub(in crate::checker) fn bind_self_origin_arguments(
         other => other.clone(),
     };
     match ty.kind() {
-        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            arguments.iter().map(bind).collect(),
-        )),
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => ty.reusing(
+            TyKind::Struct(name.clone(), arguments.iter().map(bind).collect()),
+        ),
         TyKind::Assoc { base, name, args } => ty.reusing(TyKind::Assoc {
             base: bind_self_origin_arguments(base, origin),
             name: name.clone(),

@@ -305,7 +305,9 @@ impl MirDeclarations {
     /// struct without one or any other type.
     pub fn struct_member(&self, ty: &Ty, member: &str) -> Option<&str> {
         match ty.kind() {
-            TyKind::Struct(name, _) => self.lifecycle_member(name, member),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                self.lifecycle_member(name, member)
+            }
             _ => None,
         }
     }
@@ -319,7 +321,9 @@ impl MirDeclarations {
     pub fn witness(&self, receiver: &Ty, requirement: &str) -> Option<&str> {
         match receiver.kind() {
             TyKind::Ref(reference) => self.witness(&reference.referent, requirement),
-            TyKind::Struct(name, _) => self.structure(name)?.witness(requirement),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                self.structure(name)?.witness(requirement)
+            }
             _ => None,
         }
     }
@@ -331,9 +335,7 @@ impl MirDeclarations {
     /// substitution folds that witness; `None` for any other type, or a
     /// struct that records none.
     pub fn default_initializer(&self, ty: &Ty) -> Option<&str> {
-        let TyKind::Struct(name, _) = ty.kind() else {
-            return None;
-        };
+        let (name, _) = ty.kind().as_non_simd_struct()?;
         let requirement = self
             .trait_declaration("Defaultable")?
             .requirements
@@ -349,7 +351,7 @@ impl MirDeclarations {
     /// trivial fieldwise copy, and any other type.
     pub fn copy_initializer(&self, ty: &Ty) -> Option<&str> {
         match ty.kind() {
-            TyKind::Struct(name, _) => {
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 self.lifecycle_member(mojito_types::types::struct_template(name), "__copyinit__")
             }
             _ => None,
@@ -410,9 +412,7 @@ impl MirDeclarations {
     /// arguments ([`mojito_types::types::struct_field_types`]); `None` for
     /// any other type, or one whose fields its arguments do not close.
     pub fn field_types(&self, ty: &Ty) -> Option<Cow<'_, [(String, Ty)]>> {
-        let TyKind::Struct(name, arguments) = ty.kind() else {
-            return None;
-        };
+        let (name, arguments) = ty.kind().as_non_simd_struct()?;
         let declaration = self.structure(name)?;
         mojito_types::types::struct_field_types(
             &declaration.param_decls,
@@ -439,7 +439,7 @@ impl MirDeclarations {
             return true;
         }
         let name = match ty.kind() {
-            TyKind::Struct(name, _) => name,
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name,
             TyKind::Param { bounds, .. } => {
                 return bounds
                     .iter()
@@ -484,7 +484,7 @@ impl MirDeclarations {
     /// (R1800).
     pub fn translated_type(&self, ty: &Ty) -> Ty {
         let mut translated = ty.clone();
-        while let TyKind::Struct(name, _) = translated.kind()
+        while let Some((name, _)) = translated.kind().as_non_simd_struct()
             && self.register_field(name).is_some()
             && let Some(fields) = self.field_types(&translated)
             && let [(_, field)] = fields.as_ref()
@@ -524,23 +524,27 @@ impl MirDeclarations {
                 items.iter().all(|item| self.register_passable(item))
             }
             TyKind::PopArray { element, .. } => self.register_passable(element),
-            TyKind::Struct(name, arguments) => self.structure(name).is_some_and(|declaration| {
-                declaration.declared.iter().any(|row| {
-                    ["RegisterPassable", "TrivialRegisterPassable"]
-                        .iter()
-                        .any(|required| {
-                            row.trait_name == *required
-                                || self.trait_refines(&row.trait_name, required)
-                        })
-                        && (matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
-                            || row_holds_at(
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+                self.structure(name).is_some_and(|declaration| {
+                    declaration.declared.iter().any(|row| {
+                        ["RegisterPassable", "TrivialRegisterPassable"]
+                            .iter()
+                            .any(|required| {
+                                row.trait_name == *required
+                                    || self.trait_refines(&row.trait_name, required)
+                            })
+                            && (matches!(
+                                row.conditions.as_slice(),
+                                [GenericConstraint::Bool(true)]
+                            ) || row_holds_at(
                                 &row.conditions,
                                 &declaration.param_decls,
                                 arguments,
                                 &|ty, trait_name| self.passability_conformance(ty, trait_name),
                             ) == Some(true))
+                    })
                 })
-            }),
+            }
             _ => false,
         }
     }
@@ -605,7 +609,7 @@ impl MirDeclarations {
     /// its lifetime check sees no copy initialization to turn into a move.
     /// Anything else, and a row the arguments leave open, answers no.
     pub fn copy_runs_no_code(&self, ty: &Ty) -> bool {
-        let TyKind::Struct(name, arguments) = ty.kind() else {
+        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return false;
         };
         self.structure(name).is_some_and(|declaration| {
@@ -636,7 +640,10 @@ impl MirDeclarations {
                 .iter()
                 .all(|item| self.drop_runs_no_code_within(item, visiting)),
             TyKind::PopArray { element, .. } => self.drop_runs_no_code_within(element, visiting),
-            TyKind::Struct(name, arguments) if !visiting.contains(name) => {
+            struct_ty
+                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                    && !visiting.contains(name) =>
+            {
                 let Some(declaration) = self.structure(name) else {
                     return false;
                 };
@@ -828,7 +835,7 @@ pub fn reached_struct_fields(
     while let Some(ty) = pending.pop() {
         let named = std::cell::RefCell::new(Vec::new());
         mojito_types::types::mentions(&ty, &|nested| {
-            if let TyKind::Struct(name, _) = nested.kind() {
+            if let Some((name, _)) = nested.kind().as_non_simd_struct() {
                 named.borrow_mut().push(name.clone());
             }
             false
@@ -3556,7 +3563,7 @@ impl<'a> Flatten<'a> {
             .or_else(|| recv_place.and_then(|place| place.ty.clone()))
             .or_else(|| receiver.ty());
         match ty {
-            Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => {
+            Some(ty) if ty.kind().is_non_simd_struct() => {
                 let copied = self.fresh_typed(receiver.location(), None, ty);
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
@@ -5098,9 +5105,7 @@ fn close_register_types(
             .map(|declaration| declaration.ret_ty.clone())
     }
     fn struct_field(declarations: &MirDeclarations, base: &Ty, field: &str) -> Option<Ty> {
-        let TyKind::Struct(name, _) = base.kind() else {
-            return None;
-        };
+        let (name, _) = base.kind().as_non_simd_struct()?;
         declarations
             .structure(name)?
             .fields

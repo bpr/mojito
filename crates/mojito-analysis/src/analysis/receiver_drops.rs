@@ -7,7 +7,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::instruction_regions_mut;
-use mojito_types::types::{Ty, TyKind};
+use mojito_types::types::Ty;
 
 /// Rewrite each `DropVar` of an initializer's receiver in function `name`
 /// by the receiver's initialization state reaching it: a wholly initialized
@@ -23,10 +23,12 @@ pub(super) fn refine_receiver_drops(
         return;
     };
     let fields = match f.var_tys.get(&0).map(Ty::kind) {
-        Some(TyKind::Struct(struct_name, _)) => declarations
-            .structure(struct_name)
-            .map(|decl| decl.fields.clone())
-            .unwrap_or_default(),
+        Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
+            declarations
+                .structure(struct_name)
+                .map(|decl| decl.fields.clone())
+                .unwrap_or_default()
+        }
         _ => Vec::new(),
     };
     let root_ty = f.var_tys.get(&0).cloned();

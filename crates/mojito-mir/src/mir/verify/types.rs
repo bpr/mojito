@@ -233,7 +233,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // A struct may nominally conform to a `def(...)` callable trait; the
     // conformance is checker-verified and not yet recorded in MIR
     // declarations, so the verifier does not re-check it here.
-    if matches!(found.kind(), TyKind::Struct(..)) && matches!(expected.kind(), TyKind::Func(_)) {
+    if found.kind().is_non_simd_struct() && matches!(expected.kind(), TyKind::Func(_)) {
         return true;
     }
     mojito_types::types::value_coerces(found, expected)
@@ -251,9 +251,12 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
 /// elaborator's instance identity, which spells a callable without its
 /// environment, so its `self` holds the struct a `thin` instance names.
 fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
-    let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
-        (found.kind(), expected.kind())
-    else {
+    // A symbolic `SIMD` pattern is judged slot-wise
+    // (`symbolic_simd_compatible`).
+    let (Some((found_name, found_args)), Some((expected_name, expected_args))) = (
+        found.kind().as_non_simd_struct(),
+        expected.kind().as_non_simd_struct(),
+    ) else {
         return false;
     };
     let erased = |arg: &TyArg| matches!(arg, TyArg::Val(CtValue::RemovedArg));
@@ -335,10 +338,12 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
             elements.iter().any(contains_runtime_pack)
         }
         TyKind::Ref(reference) => contains_runtime_pack(&reference.referent),
-        TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-            mojito_types::types::TyArg::Ty(inner) => contains_runtime_pack(inner),
-            mojito_types::types::TyArg::Val(_) | mojito_types::types::TyArg::Origin(_) => false,
-        }),
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+            arguments.iter().any(|argument| match argument {
+                mojito_types::types::TyArg::Ty(inner) => contains_runtime_pack(inner),
+                mojito_types::types::TyArg::Val(_) | mojito_types::types::TyArg::Origin(_) => false,
+            })
+        }
         TyKind::Assoc { base, .. } => contains_runtime_pack(base),
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
@@ -410,29 +415,37 @@ pub(super) fn instantiate_checked_type(
             }
             instantiated
         }
-        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => {
-                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                            .map(TyArg::Ty)
-                    }
-                    // A residual value argument binds through the same
-                    // replacement the checker used, so an erased instance
-                    // compares canonical expressions, not spellings.
-                    TyArg::Val(value) => {
-                        let context = ParamContext::detached();
-                        let bindings = ParamBindings::from_named_values(&context, value_arguments);
-                        mojito_types::types::replace_value_parameters(&context, value, &bindings)
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            ty.reusing(TyKind::Struct(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => instantiate_checked_type(
+                            ty,
+                            type_arguments,
+                            value_arguments,
+                            bound_values,
+                        )
+                        .map(TyArg::Ty),
+                        // A residual value argument binds through the same
+                        // replacement the checker used, so an erased instance
+                        // compares canonical expressions, not spellings.
+                        TyArg::Val(value) => {
+                            let context = ParamContext::detached();
+                            let bindings =
+                                ParamBindings::from_named_values(&context, value_arguments);
+                            mojito_types::types::replace_value_parameters(
+                                &context, value, &bindings,
+                            )
                             .map(TyArg::Val)
                             .map_err(|error| error.to_string())
-                    }
-                    TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
-                })
-                .collect::<Result<Vec<_>, String>>()?,
-        )),
+                        }
+                        TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+            ))
+        }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(instantiate_checked_type(
             element,
             type_arguments,
@@ -643,9 +656,12 @@ pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
         expr.visit(&mut |node| pattern |= matches!(node.kind(), ParamKind::TypeShape(_)));
         pattern
     }
-    let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
-        (found.kind(), expected.kind())
-    else {
+    // A symbolic `SIMD` pattern is judged slot-wise
+    // (`symbolic_simd_compatible`).
+    let (Some((found_name, found_args)), Some((expected_name, expected_args))) = (
+        found.kind().as_non_simd_struct(),
+        expected.kind().as_non_simd_struct(),
+    ) else {
         return false;
     };
     found_name == expected_name
@@ -679,20 +695,22 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         TyKind::StringLiteral(Some(value))
         | TyKind::IntLiteral(Some(value))
         | TyKind::FloatLiteral(Some(value)) => matches!(value.as_ref(), CtValue::Expr(_)),
-        TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-            mojito_types::types::TyArg::Ty(inner) => contains_type_param(inner),
-            // A symbolic value argument (`Counter[Self.length]` in an erased
-            // method's signature) is an ABI slot the instance binds.
-            mojito_types::types::TyArg::Val(value) => {
-                matches!(
-                    value,
-                    mojito_types::ct::CtValue::Expr(_)
-                        | mojito_types::ct::CtValue::Deferred(_)
-                        | CtValue::Marker(_)
-                )
-            }
-            mojito_types::types::TyArg::Origin(_) => false,
-        }),
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+            arguments.iter().any(|argument| match argument {
+                mojito_types::types::TyArg::Ty(inner) => contains_type_param(inner),
+                // A symbolic value argument (`Counter[Self.length]` in an erased
+                // method's signature) is an ABI slot the instance binds.
+                mojito_types::types::TyArg::Val(value) => {
+                    matches!(
+                        value,
+                        mojito_types::ct::CtValue::Expr(_)
+                            | mojito_types::ct::CtValue::Deferred(_)
+                            | CtValue::Marker(_)
+                    )
+                }
+                mojito_types::types::TyArg::Origin(_) => false,
+            })
+        }
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(contains_type_param)),

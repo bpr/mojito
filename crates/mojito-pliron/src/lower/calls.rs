@@ -102,7 +102,7 @@ impl FnLowering<'_> {
         if mojito_symbol::symbol::is_initializer_symbol(name)
             && !params.is_empty()
             && let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned()
-            && (matches!(struct_ty.kind(), TyKind::Struct(..))
+            && (struct_ty.kind().is_non_simd_struct()
                 || struct_ty.is_simd()
                 || matches!(struct_ty.kind(), TyKind::KgenSimd { .. }))
         {
@@ -473,7 +473,7 @@ impl FnLowering<'_> {
         // constructor, and reads as text rather than as a construction, so it
         // is matched before the general converting-constructor form.
         if let LowerTy::Aggregate { ty, .. } = expected
-            && let TyKind::Struct(struct_name, _) = ty.kind()
+            && let Some((struct_name, _)) = ty.kind().as_non_simd_struct()
             && let Some(text) = string_default_text(default)
         {
             if mojito_symbol::symbol::is_stdlib_string_struct(struct_name) {

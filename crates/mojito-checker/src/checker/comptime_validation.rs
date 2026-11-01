@@ -850,9 +850,10 @@ impl Checker {
             }
             let stringish = ty.is_string_literal()
                 || matches!(ty.kind(), TyKind::KgenString)
-                || matches!(ty.kind(), TyKind::Struct(name, args)
-                    if (args.is_empty() && mojito_types::types::is_stdlib_string_struct(name))
-                        || mojito_types::types::is_stdlib_string_span_struct(name));
+                || ty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
+                    (args.is_empty() && mojito_types::types::is_stdlib_string_struct(name))
+                        || mojito_types::types::is_stdlib_string_span_struct(name)
+                });
             if !stringish {
                 return Err(TypeError::Unsupported(format!(
                     "cannot implicitly convert '{ty}' to a `StringSpan`"
@@ -1498,8 +1499,10 @@ impl Checker {
             {
                 ty
             }
-            TyKind::Struct(name, args)
-                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
+            struct_ty
+                if let Some((name, args)) = struct_ty.as_non_simd_struct()
+                    && args.is_empty()
+                    && mojito_types::types::is_stdlib_string_struct(name) =>
             {
                 ty
             }
@@ -1612,7 +1615,7 @@ impl Checker {
         argument: impl FnOnce(&Ty) -> Option<ParamExpr>,
     ) -> Result<Option<ParamExpr>, TypeError> {
         let owner = match ty.kind() {
-            TyKind::Struct(owner, _) => owner.as_str(),
+            struct_ty if let Some((owner, _)) = struct_ty.as_non_simd_struct() => owner.as_str(),
             kind if kind.is_simd() => mojito_types::types::SIMD_TYPE_NAME,
             _ => return Ok(None),
         };
@@ -2392,9 +2395,7 @@ impl Checker {
         }
         let typed = self.run_time_typing(expr);
         self.instance_inferences.borrow_mut().remove(&span);
-        typed
-            .ok()
-            .filter(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+        typed.ok().filter(|ty| ty.kind().is_non_simd_struct())
     }
 
     /// `expr` typed as a run-time expression in a compile-time position,
@@ -2425,9 +2426,7 @@ impl Checker {
         ty: &Ty,
         element: impl Fn(usize, &Ty) -> Result<Option<ParamExpr>, TypeError>,
     ) -> Option<Result<Option<ParamExpr>, TypeError>> {
-        let TyKind::Struct(name, instance_args) = ty.kind() else {
-            return None;
-        };
+        let (name, instance_args) = ty.kind().as_non_simd_struct()?;
         let symbol = if list {
             self.literal_constructor(ty, mojito_symbol::symbol::is_list_literal_constructor)?
                 .0
@@ -2698,9 +2697,7 @@ impl Checker {
             self.compile_dependent_ct_expr(object).ok()?
         };
         let instance = receiver.meta().as_value()?.clone();
-        let TyKind::Struct(owner, _) = instance.kind() else {
-            return None;
-        };
+        let (owner, _) = instance.kind().as_non_simd_struct()?;
         let name = format!("{}.{method}", template_name(owner));
         self.applicable_functions
             .get(&name)?
@@ -2724,7 +2721,9 @@ impl Checker {
             .function
             .grouped_arguments(&slots, &selected.arguments)?;
         let instance = match selected.instance.as_ref().map(Ty::kind) {
-            Some(TyKind::Struct(owner, instance_args)) => {
+            Some(struct_ty)
+                if let Some((owner, instance_args)) = struct_ty.as_non_simd_struct() =>
+            {
                 let decls = &self.structs.get(template_name(owner))?.decls;
                 let declared =
                     mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
@@ -2764,9 +2763,11 @@ impl Checker {
                 .flatten()
         };
         let instance = match &object.kind {
-            ExprKind::Identifier(name) if name == "Self" => self.self_ty.clone().filter(
-                |ty| matches!(ty.kind(), TyKind::Struct(owner, _) if applicable(template_name(owner))),
-            ),
+            ExprKind::Identifier(name) if name == "Self" => self.self_ty.clone().filter(|ty| {
+                ty.kind()
+                    .as_non_simd_struct()
+                    .is_some_and(|(owner, _)| applicable(template_name(owner)))
+            }),
             ExprKind::Identifier(name) => named(name, Vec::new()),
             ExprKind::TypeApply { name, args } => named(name, args.clone()),
             // A lone value argument parses as a subscript (`G[n]`).
@@ -2783,7 +2784,9 @@ impl Checker {
             _ => None,
         }?;
         match instance.kind() {
-            TyKind::Struct(owner, _) => Some((template_name(owner).to_string(), instance.clone())),
+            struct_ty if let Some((owner, _)) = struct_ty.as_non_simd_struct() => {
+                Some((template_name(owner).to_string(), instance.clone()))
+            }
             _ => None,
         }
     }
@@ -3333,20 +3336,26 @@ impl Checker {
                         | TyKind::FloatLiteral(_)
                         | TyKind::StringLiteral(_)
                 ))
-                || matches!(ty.kind(), TyKind::Struct(name, args)
-                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name))
+                || ty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
+                    args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
+                })
                 || self.parameter_aggregate_element(ty)
         };
         if let Some(elements) = mojito_types::types::tuple_elements(element) {
             return !elements.is_empty() && elements.into_iter().all(leaf);
         }
-        matches!(element.kind(), TyKind::Struct(name, args) if args.is_empty()
-        && self.structs.get(name).is_some_and(|info| {
-            info.fieldwise_init
-                && info.decls.is_empty()
-                && !info.fields.is_empty()
-                && info.fields.iter().all(|(_, ty)| leaf(ty))
-        }))
+        element
+            .kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, args)| {
+                args.is_empty()
+                    && self.structs.get(name).is_some_and(|info| {
+                        info.fieldwise_init
+                            && info.decls.is_empty()
+                            && !info.fields.is_empty()
+                            && info.fields.iter().all(|(_, ty)| leaf(ty))
+                    })
+            })
     }
 
     /// Whether `iter` is a display the elaborator evaluates per instance
@@ -3643,7 +3652,7 @@ impl Checker {
         let expected = self
             .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
             .ok()
-            .filter(|expected| matches!(expected.kind(), TyKind::Struct(..)))?;
+            .filter(|expected| expected.kind().is_non_simd_struct())?;
         let compiled = self.compile_dependent_ct_expr(value).ok()?;
         self.converted_parameter_value(value, &compiled, &expected)
     }
@@ -3917,8 +3926,11 @@ impl Checker {
         // loop header reads element by element; one its annotation types as
         // another collection (`comptime L: List[Int] = [1, 2]`) is that
         // collection's value.
-        let annotated = matches!(application.meta().as_value().map(Ty::kind),
-            Some(TyKind::Struct(collection, _)) if collection != mojito_types::types::ARRAY_TYPE_NAME);
+        let annotated = application
+            .meta()
+            .as_value()
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .is_some_and(|(collection, _)| collection != mojito_types::types::ARRAY_TYPE_NAME);
         let meta = match &value.kind {
             ExprKind::ListLit(_) | ExprKind::TupleLit(_) if !annotated => {
                 self.display_listed_element(value).map_or_else(
@@ -4751,14 +4763,16 @@ impl Checker {
         Some(
             self.applied_type(name, param_args)
                 .and_then(|(ty, _)| match ty.kind() {
-                    TyKind::Struct(_, arguments) => match arguments.as_slice() {
-                        [TyArg::Ty(element), TyArg::Val(raw), ..] => {
-                            Ok((element.clone(), raw.clone()))
+                    struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                        match arguments.as_slice() {
+                            [TyArg::Ty(element), TyArg::Val(raw), ..] => {
+                                Ok((element.clone(), raw.clone()))
+                            }
+                            _ => Err(TypeError::InvariantViolation(format!(
+                                "'{ty}' binds no raw parameter list"
+                            ))),
                         }
-                        _ => Err(TypeError::InvariantViolation(format!(
-                            "'{ty}' binds no raw parameter list"
-                        ))),
-                    },
+                    }
                     _ => Err(TypeError::InvariantViolation(format!(
                         "'{ty}' is not a 'ParameterList'"
                     ))),
@@ -5498,9 +5512,10 @@ impl Checker {
             set if let Some(element) = mojito_types::types::set_element(set) => {
                 Some(element.clone())
             }
-            TyKind::Struct(name, args)
-                if (name == mojito_types::types::LIST_TYPE_NAME
-                    || name == mojito_types::types::ARRAY_TYPE_NAME)
+            struct_ty
+                if let Some((name, args)) = struct_ty.as_non_simd_struct()
+                    && (name == mojito_types::types::LIST_TYPE_NAME
+                        || name == mojito_types::types::ARRAY_TYPE_NAME)
                     && let Some(TyArg::Ty(element)) = args.first() =>
             {
                 Some(default_literal(element))
@@ -5994,7 +6009,7 @@ fn materialized_collection_spelling(ty: &Ty) -> String {
     if let Some(element) = mojito_types::types::set_element(ty) {
         return format!("Set[{}]", scalar(element));
     }
-    if let TyKind::Struct(name, args) = ty.kind()
+    if let Some((name, args)) = ty.kind().as_non_simd_struct()
         && name == mojito_types::types::ARRAY_TYPE_NAME
     {
         let mut arguments = args.iter();
@@ -6121,16 +6136,22 @@ fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
         && (element.is_int()
             || element.is_float64()
             || matches!(element.kind(), TyKind::Bool)
-            || matches!(element.kind(), TyKind::Struct(name, args)
-                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)))
+            || element
+                .kind()
+                .as_non_simd_struct()
+                .is_some_and(|(name, args)| {
+                    args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
+                }))
 }
 
 /// The element a display of `element`s binds: a string element binds as a
 /// `String` value parameter does.
 pub(super) fn string_element_binder(element: Ty) -> Ty {
     match element.kind() {
-        TyKind::Struct(name, args)
-            if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
+        struct_ty
+            if let Some((name, args)) = struct_ty.as_non_simd_struct()
+                && args.is_empty()
+                && mojito_types::types::is_stdlib_string_struct(name) =>
         {
             Ty::string_literal()
         }

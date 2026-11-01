@@ -272,7 +272,7 @@ impl Checker {
         ty: &Ty,
         member: &str,
     ) -> Result<Option<Vec<mojito_types::param_expr::ParamExpr>>, TypeError> {
-        let TyKind::Struct(name, arguments) = ty.kind() else {
+        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return Ok(None);
         };
         let Some(info) = self.structs.get(name) else {
@@ -1076,7 +1076,7 @@ impl Checker {
             ));
         }
         let matches_head = match subject.ty.kind() {
-            TyKind::Struct(subject_name, _) => {
+            struct_ty if let Some((subject_name, _)) = struct_ty.as_non_simd_struct() => {
                 subject_name == name || subject_name.rsplit('$').next() == Some(name)
             }
             _ => false,
@@ -1170,7 +1170,7 @@ impl Checker {
     /// subject type's nominal family, parameters ignored.
     fn check_enum_owner(&self, owner: &Expr, subject: &Ty) -> Result<(), TypeError> {
         let family = |ty: &Ty| match ty.kind() {
-            TyKind::Struct(name, _) => Some(name.clone()),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => Some(name.clone()),
             _ => None,
         };
         let owner_family = match &owner.kind {

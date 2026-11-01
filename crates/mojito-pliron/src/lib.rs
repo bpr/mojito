@@ -1009,10 +1009,13 @@ impl<'p> CallEdges<'p, '_> {
     /// or a `SIMD` value's ([`Self::push_simd_members`]).
     fn push_display_members(&mut self, ty: &Ty, method: &str) {
         match ty.kind() {
-            TyKind::Struct(name, _) if !mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+            struct_ty
+                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    && !mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            {
                 self.push_members(name, method);
             }
-            TyKind::Struct(..) => {}
+            struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {}
             _ => self.push_simd_members(ty, method),
         }
     }
@@ -1058,7 +1061,9 @@ impl<'p> CallEdges<'p, '_> {
             MirInstr::Call { func, args, .. } if func.0 == "repr" => {
                 for arg in args {
                     match self.function.reg_types.get(&arg.0).map(Ty::kind) {
-                        Some(TyKind::Struct(name, _)) => self.push_members(name, "write_repr_to"),
+                        Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                            self.push_members(name, "write_repr_to")
+                        }
                         // A literal's repr writes through the nominal
                         // `String`'s member.
                         Some(TyKind::StringLiteral(_)) => self.push_members(
@@ -1122,8 +1127,11 @@ impl<'p> CallEdges<'p, '_> {
                 "write" | mojito_symbol::symbol::WRITE_FORMATTED
             ) =>
             {
-                if let Some(TyKind::Struct(name, _)) =
-                    self.function.reg_types.get(&recv.0).map(Ty::kind)
+                if let Some((name, _)) = self
+                    .function
+                    .reg_types
+                    .get(&recv.0)
+                    .and_then(|ty| ty.kind().as_non_simd_struct())
                 {
                     self.push_members(name, "write_string");
                 }
@@ -1151,7 +1159,7 @@ impl<'p> CallEdges<'p, '_> {
                         TyKind::Ref(reference) => &reference.referent,
                         _ => ty,
                     });
-                if let Some(TyKind::Struct(hasher, _)) = hasher.map(Ty::kind) {
+                if let Some((hasher, _)) = hasher.and_then(|ty| ty.kind().as_non_simd_struct()) {
                     self.push_members(hasher, "_update_with_simd");
                     let receiver = self
                         .function
@@ -1169,7 +1177,7 @@ impl<'p> CallEdges<'p, '_> {
                         matches!(receiver.map(Ty::kind), Some(TyKind::StringLiteral(_)));
                     if let Some(TyKind::Variant(alternatives)) = receiver.map(Ty::kind) {
                         for alternative in alternatives {
-                            if let TyKind::Struct(name, _) = alternative.kind() {
+                            if let Some((name, _)) = alternative.kind().as_non_simd_struct() {
                                 if mojito_symbol::symbol::is_stdlib_string_struct(name) {
                                     string_leaf = true;
                                 } else {
@@ -1248,8 +1256,11 @@ impl<'p> CallEdges<'p, '_> {
             // lowered expansion, so retain that implicit edge.
             MirInstr::MakeSimd { elems, .. } => {
                 for elem in elems {
-                    if let Some(TyKind::Struct(name, _)) =
-                        self.function.reg_types.get(&elem.0).map(Ty::kind)
+                    if let Some((name, _)) = self
+                        .function
+                        .reg_types
+                        .get(&elem.0)
+                        .and_then(|ty| ty.kind().as_non_simd_struct())
                     {
                         self.push_members(name, "__int__");
                     }
@@ -1333,15 +1344,21 @@ impl<'p> CallEdges<'p, '_> {
                 for destructor in destructors.iter().flatten() {
                     self.push_named(destructor);
                 }
-                if let Some(TyKind::Struct(name, _)) =
-                    self.function.reg_types.get(&factory.0).map(Ty::kind)
+                if let Some((name, _)) = self
+                    .function
+                    .reg_types
+                    .get(&factory.0)
+                    .and_then(|ty| ty.kind().as_non_simd_struct())
                 {
                     self.push_members(name, "__call__");
                 }
             }
             MirInstr::VariantDeinitWith { handler, .. } => {
-                if let Some(TyKind::Struct(name, _)) =
-                    self.function.reg_types.get(&handler.0).map(Ty::kind)
+                if let Some((name, _)) = self
+                    .function
+                    .reg_types
+                    .get(&handler.0)
+                    .and_then(|ty| ty.kind().as_non_simd_struct())
                 {
                     self.push_members(name, "__call__");
                 }
@@ -1375,7 +1392,7 @@ fn collect_struct_types<'p>(
     discovered: &mut Vec<&'p str>,
 ) {
     match ty.kind() {
-        TyKind::Struct(name, args) => {
+        struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
             if let Some((key, decl)) = structs.get_key_value(name.as_str())
                 && seen.insert(*key)
             {
@@ -1407,8 +1424,9 @@ fn collect_struct_types<'p>(
 /// Whether `ty` is the nominal String, whose copy constructor is bridged
 /// natively rather than compiled.
 fn is_stdlib_string_type(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Struct(name, _)
-        if mojito_symbol::symbol::is_stdlib_string_struct(name))
+    ty.kind()
+        .as_non_simd_struct()
+        .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
 }
 
 fn verify_module(context: &Context, module: ModuleOp) -> Result<(), PlironError> {
