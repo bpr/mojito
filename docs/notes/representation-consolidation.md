@@ -21,14 +21,10 @@ command cannot use both.
 1. **Finish the library `SIMD`** (conformance). The work order of 10-28
    has landed: initializers, the lane subscript, target queries, lane
    gathers, `//` and `/`, `**`, `%`/`divmod`/`ceildiv` (R1623), the `reduce` tree, display through
-   `write_to` on both backends (R1664), R1398 (the dead member rules), and R1399
-   (`Int(x)`, `UInt(x)`, and `Float64(x)` as `SIMD.__init__` overloads).
-   What is left:
-   - R1777 (`_dynamic_shuffle`).
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1777 -n 0
-   ```
+   `write_to` on both backends (R1664), R1398 (the dead member rules), R1399
+   (`Int(x)`, `UInt(x)`, and `Float64(x)` as `SIMD.__init__` overloads), and
+   `_dynamic_shuffle` over `pshufb`/`tbl1` (R1777). Nothing is left in this
+   step.
 
 2. **`SIMD` as the declared struct everywhere** (the port's end).
    - Since R1557, `SIMD[...]` resolves through the declared struct, and

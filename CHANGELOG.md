@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `SIMD` declares upstream's `_dynamic_shuffle`, a gather by a run-time
+  `uint8` mask, with `_pshuf_or_tbl1`, `_pshuf`, and `_tbl1` (R1777). The
+  LLVM intrinsic table adds `llvm.x86.ssse3.pshuf.b.128` and
+  `llvm.aarch64.neon.tbl1`, which the VM computes and the native backend
+  calls, so a 16-lane `uint8` receiver takes the pin's byte-table path.
+
 - The native backend's `String`, `repr`, and `Writer.write` of a `SIMD`
   value call its declared `write_to` and `write_repr_to`, as `print` and
   the VM already did (R1664). `String(v)`, `repr(v)`, and `s.write(v)` over

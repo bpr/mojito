@@ -11769,22 +11769,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1674, R1703.
   - Model: Opus, Not Planned.
 
-- [ ] **R1777 `SIMD._dynamic_shuffle` is undeclared**
-
-  `v._dynamic_shuffle(mask)` over a run-time `SIMD[DType.uint8, n]` mask
-  reports "has no method", where the pin declares it in `std/simd.mojo`.
-  - Port it with `_pshuf_or_tbl1`, `_pshuf`, and `_tbl1`, whose fast path
-    is `llvm.x86.ssse3.pshuf.b.128` or `llvm.aarch64.neon.tbl1` on a
-    16-lane `uint8` vector.
-  - Neither intrinsic is in `mojito-types/src/llvm_intrinsic.rs`, so the
-    VM and Pliron need a rule for each, beside the unrolled fallback the
-    port keeps for every other shape.
-  - Probe: `SIMD[DType.uint8, 16](…)._dynamic_shuffle(SIMD[DType.uint8,
-    4](3, 2, 1, 0))` prints the gathered lanes at the pin.
-  - Found while landing R1675 (2026-10-31).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
   accumulator where upstream writes through a `Writer` struct**
 

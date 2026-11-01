@@ -1038,6 +1038,7 @@ assets/ok/simd_display_builtins.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtype_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtype_self_comptime_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtypes_int_lanes.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_dynamic_shuffle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_element_list_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_float_div.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floats.mojo	-	ineligible	no-scalar-entry-shape

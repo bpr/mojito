@@ -9,9 +9,8 @@
 //! ([`LlvmIntrinsic::index_operand`]) must hold a value
 //! [`LlvmIntrinsic::index_error`] admits. The VM computes a lane by
 //! [`int_lane`], [`float_lane`], [`reduce_ints`], [`reduce_floats`],
-//! [`LlvmIntrinsic::shuffle_sources`], [`step_lanes`], and
-//! [`scalef_lane`], and the native
-//! backend calls the intrinsic, mangled by [`LlvmIntrinsic::overloads`].
+//! [`LlvmIntrinsic::shuffle_sources`], [`step_lanes`], [`scalef_lane`],
+//! and [`LlvmIntrinsic::table_lookup`], and the native backend calls the intrinsic, mangled by [`LlvmIntrinsic::overloads`].
 
 use crate::types::{SimdDtype, SimdWidth, Ty, TyKind, simd_slots};
 use mojito_ast::ast::Dtype;
@@ -38,6 +37,8 @@ pub enum LlvmIntrinsic {
     VectorDeinterleave2,
     Stepvector,
     X86Avx512MaskScalefPs512,
+    X86Ssse3PshufB128,
+    Aarch64NeonTbl1,
 }
 
 /// The end of `llvm.vector.splice.left`/`right`'s operands' concatenation
@@ -72,7 +73,7 @@ pub enum OverloadSlot {
 
 impl LlvmIntrinsic {
     /// Every intrinsic in the table.
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 29] = [
         Self::Ctlz,
         Self::Cttz,
         Self::Ctpop,
@@ -100,6 +101,8 @@ impl LlvmIntrinsic {
         Self::VectorDeinterleave2,
         Self::Stepvector,
         Self::X86Avx512MaskScalefPs512,
+        Self::X86Ssse3PshufB128,
+        Self::Aarch64NeonTbl1,
     ];
 
     /// The intrinsic LLVM spells `name`, if it is in the table.
@@ -139,6 +142,8 @@ impl LlvmIntrinsic {
             Self::VectorDeinterleave2 => "llvm.vector.deinterleave2",
             Self::Stepvector => "llvm.stepvector",
             Self::X86Avx512MaskScalefPs512 => "llvm.x86.avx512.mask.scalef.ps.512",
+            Self::X86Ssse3PshufB128 => "llvm.x86.ssse3.pshuf.b.128",
+            Self::Aarch64NeonTbl1 => "llvm.aarch64.neon.tbl1",
         }
     }
 
@@ -166,7 +171,9 @@ impl LlvmIntrinsic {
             | Self::Copysign
             | Self::IsFpclass
             | Self::VectorExtract
-            | Self::VectorInterleave2 => 2,
+            | Self::VectorInterleave2
+            | Self::X86Ssse3PshufB128
+            | Self::Aarch64NeonTbl1 => 2,
             Self::Fshl | Self::Fshr | Self::VectorInsert | Self::VectorSplice(_) => 3,
             Self::X86Avx512MaskScalefPs512 => 5,
         }
@@ -175,7 +182,7 @@ impl LlvmIntrinsic {
     /// The types the intrinsic's LLVM name is mangled by, in order.
     pub const fn overloads(self) -> &'static [OverloadSlot] {
         match self {
-            Self::Donothing | Self::X86Avx512MaskScalefPs512 => &[],
+            Self::Donothing | Self::X86Avx512MaskScalefPs512 | Self::X86Ssse3PshufB128 => &[],
             Self::VectorReduce(_) | Self::VectorDeinterleave2 | Self::IsFpclass => {
                 &[OverloadSlot::Operand(0)]
             }
@@ -430,6 +437,22 @@ impl LlvmIntrinsic {
                     && lanes(&operands[4]) == Some((Dtype::Int32, 1));
                 return (!scaled).then(mismatch).flatten();
             }
+            Self::X86Ssse3PshufB128 | Self::Aarch64NeonTbl1 => {
+                let bytes = |ty: &Ty| {
+                    lanes(ty)
+                        .filter(|(dtype, _)| dtype.is_integral() && dtype.bit_width() == 8)
+                        .map(|(_, width)| width)
+                };
+                let widths = (bytes(result), bytes(&operands[0]), bytes(&operands[1]));
+                let looked_up = match self {
+                    Self::X86Ssse3PshufB128 => widths == (Some(16), Some(16), Some(16)),
+                    _ => matches!(
+                        widths,
+                        (Some(width), Some(16), Some(indices)) if width == indices && matches!(width, 8 | 16)
+                    ),
+                };
+                return (!looked_up).then(mismatch).flatten();
+            }
             _ => {}
         }
         let Some((dtype, width)) = operands.first().and_then(lanes) else {
@@ -546,7 +569,7 @@ impl LlvmIntrinsic {
     /// when it can: it calls only what LLVM's constant folder folds, which
     /// leaves out `llvm.donothing`, the float reductions, `vector.insert`,
     /// the splices, `llvm.stepvector`, and the target-specific `scalef`,
-    /// and it types no struct result, which leaves out
+    /// `pshuf.b.128`, and `tbl1`, and it types no struct result, which leaves out
     /// `vector.deinterleave2`.
     pub fn compile_time_error(self) -> Option<String> {
         if self.result_elements() > 1 {
@@ -561,7 +584,9 @@ impl LlvmIntrinsic {
             | Self::VectorInsert
             | Self::VectorSplice(_)
             | Self::Stepvector
-            | Self::X86Avx512MaskScalefPs512 => Some(format!(
+            | Self::X86Avx512MaskScalefPs512
+            | Self::X86Ssse3PshufB128
+            | Self::Aarch64NeonTbl1 => Some(format!(
                 "LLVM could not constant fold intrinsic: {}",
                 self.name()
             )),
@@ -579,6 +604,28 @@ impl LlvmIntrinsic {
                 | Self::VectorReduce(VectorReduction::Fmax | VectorReduction::Fmin)
                 | Self::X86Avx512MaskScalefPs512
         )
+    }
+
+    /// The lanes a table-lookup intrinsic gives for byte `indices` into a
+    /// sixteen-byte `table`, each lane held sign- or zero-extended and read
+    /// as its low byte; `None` is an intrinsic that does not look up a
+    /// table. SSSE3's `pshufb` zeroes a lane whose index has its high bit
+    /// set and otherwise reads the table at the index's low four bits;
+    /// NEON's `tbl1` zeroes a lane whose index is past the table.
+    pub fn table_lookup(self, table: &[i128], indices: &[i128]) -> Option<Vec<i128>> {
+        let lane = |index: &i128| {
+            let index = (*index as u128 & 0xff) as usize;
+            let source = match self {
+                Self::X86Ssse3PshufB128 => (index & 0x80 == 0).then_some(index & 0x0f),
+                _ => Some(index),
+            };
+            source
+                .and_then(|source| table.get(source))
+                .copied()
+                .unwrap_or(0)
+        };
+        matches!(self, Self::X86Ssse3PshufB128 | Self::Aarch64NeonTbl1)
+            .then(|| indices.iter().map(lane).collect())
     }
 }
 
@@ -753,6 +800,21 @@ mod tests {
         }
         assert_eq!(LlvmIntrinsic::parse("llvm.no.such.thing"), None);
         assert_eq!(LlvmIntrinsic::parse("llvm.vector.reduce.add"), None);
+    }
+
+    #[test]
+    fn table_lookups_zero_out_of_range_indices() {
+        let table: Vec<i128> = (10..26).collect();
+        let indices = [3, 0x80, 0x8f, 0x13, 15, -1];
+        assert_eq!(
+            LlvmIntrinsic::X86Ssse3PshufB128.table_lookup(&table, &indices),
+            Some(vec![13, 0, 0, 13, 25, 0])
+        );
+        assert_eq!(
+            LlvmIntrinsic::Aarch64NeonTbl1.table_lookup(&table, &indices),
+            Some(vec![13, 0, 0, 0, 25, 0])
+        );
+        assert_eq!(LlvmIntrinsic::Ctpop.table_lookup(&table, &indices), None);
     }
 
     #[test]

@@ -2426,6 +2426,79 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         return self._shuffle_list[Self.length, mask.as_index_tuple()](other)
 
+    # Not an overload of shuffle because there is ambiguity
+    # with def shuffle[*mask: Int](self, other: Self) -> Self:
+    # TODO: move to the utils directory - see https://github.com/modular/modular/issues/3477
+    @inline(.always)
+    def _dynamic_shuffle[
+        mask_size: SIMDLength
+    ](self, mask: SIMD[.uint8, mask_size]) -> SIMD[Self.dtype, mask_size]:
+        """Shuffles (also called blend) the values of the current vector.
+
+        It's done using the specified mask (permutation). The mask
+        values must be within `len(self)`. If that's not the case,
+        the behavior is undefined.
+
+        The mask is not known at compile time, unlike the `shuffle` method.
+
+        Note that currently, this function is fast only if the following
+        conditions are met:
+        1) The SIMD vector `self` is of type uint8 and size 16
+        2) The CPU supports SSE4 or NEON
+
+        If that's not the case, the function will fallback on a slower path,
+        which is an unrolled for loop.
+
+        The pseudocode of this function is:
+        ```
+        result = SIMD[Self.type, mask_size]()
+        for i in range(mask_size):
+            result[i] = self[Int(mask[i])]
+        ```
+
+        Parameters:
+            mask_size: The size of the mask.
+
+        Args:
+            mask: The mask to use. Contains the indices to use to shuffle.
+
+        Returns:
+            A new vector with the same length as the mask where the value at
+            position `i` is equal to `self[mask[i]]`.
+        """
+
+        comptime if (
+            # TODO: Allow SSE3 when we have sys.has_sse3()
+            (CompilationTarget.has_sse4() or CompilationTarget.has_neon())
+            and Self.dtype == DType.uint8
+            and Self.length == 16
+        ):
+            # The instruction works with mask size of 16
+            comptime target_mask_size = 16
+
+            # We know that simd sizes are powers of two, so we can use recursivity
+            # to iterate on the method until we reach the target size.
+            comptime if mask_size < target_mask_size:
+                # Make a bigger mask (x2) and retry
+                return self._dynamic_shuffle(mask.join({})).slice[mask_size]()
+            elif mask_size == target_mask_size:
+                return _pshuf_or_tbl1(
+                    self._refine[DType.uint8, target_mask_size](),
+                    mask._refine[DType.uint8, target_mask_size](),
+                )._refine[Self.dtype, mask_size]()
+            elif mask_size > target_mask_size:
+                # We split it in two and call dynamic_shuffle twice.
+                var fst_mask, snd_mask = mask.split()
+                var fst = self._dynamic_shuffle(fst_mask)
+                var snd = self._dynamic_shuffle(snd_mask)
+                return fst.join(snd)._refine[Self.dtype, mask_size]()
+
+        # Slow path, ~3x slower than pshuf for size 16
+        var res = SIMD[Self.dtype, mask_size]()
+
+        comptime for i in range(mask_size):
+            res[i] = self[Int(mask[i])]
+        return res
 
     @inline(.always)
     def slice[
@@ -3131,6 +3204,40 @@ struct SIMD[dtype: DType, length: SIMDLength](
             return res
 
         return self.shuffle[mask=indices()]()
+
+
+comptime U8x16 = SIMD[.uint8, 16]
+"""A 16-element vector of unsigned 8-bit integers."""
+
+
+def _pshuf_or_tbl1(lookup_table: U8x16, indices: U8x16) -> U8x16:
+    comptime if CompilationTarget.has_sse4():
+        return _pshuf(lookup_table, indices)
+    elif CompilationTarget.has_neon():
+        return _tbl1(lookup_table, indices)
+    else:
+        # TODO: Change the error message when we allow SSE3
+        comptime assert False, "To call _pshuf_or_tbl1() you need sse4 or neon."
+
+
+def _pshuf(lookup_table: U8x16, indices: U8x16) -> U8x16:
+    """Shuffle operation using the SSSE3 `pshuf` instruction.
+
+    See https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm_shuffle_epi8&ig_expand=6003
+    """
+    return llvm_intrinsic[
+        "llvm.x86.ssse3.pshuf.b.128", U8x16, has_side_effect=False
+    ](lookup_table, indices)
+
+
+def _tbl1(lookup_table: U8x16, indices: U8x16) -> U8x16:
+    """Shuffle operation using the aarch64 `tbl1` instruction.
+
+    See https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/coding-for-neon---part-5-rearranging-vectors
+    """
+    return llvm_intrinsic[
+        "llvm.aarch64.neon.tbl1", U8x16, has_side_effect=False
+    ](lookup_table, indices)
 
 
 # ===----------------------------------------------------------------------=== #
