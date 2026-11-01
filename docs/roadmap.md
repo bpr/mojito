@@ -1139,6 +1139,9 @@ change that needs a new `MJRT_ABI_VERSION`.
     type resolution.
   - Done when the `.ll` of that fixture is byte-identical across runs with
     the comparison made exact.
+  - The fixture's instantiation counts vary too (498 or 504 concrete
+    instructions on one binary), so `scripts/instantiation-report
+    --check` can fail on it with no change (2026-11-01).
   - Found while landing R986 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.

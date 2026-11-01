@@ -18,15 +18,7 @@ command cannot use both.
 
 ## Recommended order
 
-1. **Finish the library `SIMD`** (conformance). The work order of 10-28
-   has landed: initializers, the lane subscript, target queries, lane
-   gathers, `//` and `/`, `**`, `%`/`divmod`/`ceildiv` (R1623), the `reduce` tree, display through
-   `write_to` on both backends (R1664), R1398 (the dead member rules), R1399
-   (`Int(x)`, `UInt(x)`, and `Float64(x)` as `SIMD.__init__` overloads), and
-   `_dynamic_shuffle` over `pshufb`/`tbl1` (R1777). Nothing is left in this
-   step.
-
-2. **`SIMD` as the declared struct everywhere** (the port's end).
+1. **`SIMD` as the declared struct everywhere** (the port's end).
    - Since R1557, `SIMD[...]` resolves through the declared struct, and
      `Scalar`, `Int`, `UInt`, `Float64`, and the sized aliases are
      `std.simd`'s `comptime` aliases, with no construction rule or parser
@@ -45,7 +37,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1801 -n 0
    ```
 
-3. **`Bool` as a library struct** (R1188's residue). R1188 made
+2. **`Bool` as a library struct** (R1188's residue). R1188 made
    `__mlir_type.i1` a type of its own and split the port:
    - R1608 declares `Bool` and its members.
    - R1609 (initializers), R1610 (operators), and R1611 (printing)
@@ -56,7 +48,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1612 -n 0
    ```
 
-4. **Literals as declared structs** (conformance, filed 10-31). R1779 and
+3. **Literals as declared structs** (conformance, filed 10-31). R1779 and
    R1780 made a numeric literal's type the declared `IntLiteral[value]`
    or `FloatLiteral[value]` and instantiated a bare literal parameter per
    call. What is left:
@@ -74,7 +66,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1660 --task R1651 --task R1654 --task R1655 -n 0
    ```
 
-5. **Finish gap D** (size). R1356 landed in part on 10-26. Its census
+4. **Finish gap D** (size). R1356 landed in part on 10-26. Its census
    filed the shapes that still destroy a memory-only register as R1440
    (reference results copied for a `read` parameter), R1441 (builtin
    arguments), R1442 (operands off the call-result path), R1443 (copied
@@ -85,7 +77,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1445 -n 0
    ```
 
-6. **Gap E: compile-time values are slots** (size, small). R662 and R663
+5. **Gap E: compile-time values are slots** (size, small). R662 and R663
    landed. A callable binder's read is still a frame slot (R1449), and
    `remove-unused-params` still counts slot reads (R1451).
 
@@ -93,7 +85,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1449 --task R1451 -n 0
    ```
 
-7. **Gap F: members reached by name, not called** (size, the largest
+6. **Gap F: members reached by name, not called** (size, the largest
    lever left). Its three stages have landed: the bundled library
    declares the compiler-known traits, operators are calls of the
    requirement, and the elaborator reads the witness table. What is left:
@@ -116,7 +108,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1280 --task R1466 --task R1287 --task R1461 -n 0
    ```
 
-8. **Gap G: a capture-list closure is a capture list** (size). Its cores
+7. **Gap G: a capture-list closure is a capture list** (size). Its cores
    landed (R1376–R1378, R1427, R1428, R533, R1344, R1345). What is left:
    - R1436 moves the closure's storage struct into the check.
    - R1433 → R176 → R1434 withdraw run-time `capturing[...]` values,
@@ -126,7 +118,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1436 --task R1434 -n 0
    ```
 
-9. **Gap H's residues** (size, partial). The chain R1379–R1388 landed:
+8. **Gap H's residues** (size, partial). The chain R1379–R1388 landed:
     `mojito-comptime` evaluates nothing, and the check binds every
     `comptime` declaration. What is left:
     - R1474 (a condition compiled without its binders in scope) and R1475
@@ -141,13 +133,13 @@ command cannot use both.
     scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1474 --task R1475 --task R1480 --task R1482 --task R893 -n 0
     ```
 
-10. **Gap I: packs are binder kinds** (slight size, about 20 entries):
+9. **Gap I: packs are binder kinds** (slight size, about 20 entries):
 
     ```sh
     scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1491 --only R1492 --only R1485 --only R1486 -n 0
     ```
 
-11. **Residues of the 10-27 to 10-31 `SIMD` runs** outside their work
+10. **Residues of the 10-27 to 10-31 `SIMD` runs** outside their work
     orders. Each is independent unless noted.
     - Compile-time applications: R1530 (displays and aggregates as
       parameter values), R1523 and R1527 (builtin bodies), R1574 (folding
@@ -164,6 +156,11 @@ command cannot use both.
       (after R792 and R178).
     - Function values (10-31): R1794 (a parametric struct's static) and
       R1796 (an initializer), with R1795 beside them.
+    - The 11-01 gate fix: R1805 and R1806 (a module binding named like a
+      callee's parameter wins over it), R1807 (three fixtures fail with the
+      library linked from source), and R1808 (one source occurrence checked
+      twice). R1809 (`reduce_add` stays out of line) is under *Inlining
+      reach*.
 
     ```sh
     scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1601 --task R1603 --task R1570 --task R1573 \
@@ -174,9 +171,10 @@ command cannot use both.
       --task R1540 --task R1565 --task R1571 --task R1572 --task R1604 --task R1548 --task R1687 -n 0
     scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1520 --task R1521 --task R1600 --task R1575 \
       --task R1734 --task R1794 --task R1796 --task R1795 -n 0
+    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1805 --only R1806 --only R1807 --only R1808 -n 0
     ```
 
-## Where things stand (2026-10-31)
+## Where things stand (2026-11-01)
 
 - Gaps A, B, and C have fully landed. Gap B's residues are conformance
   and cleanup: R1414 (a display's elements bind as call arguments), R695
@@ -188,12 +186,13 @@ command cannot use both.
   (R1369–R1372), one subscript lvalue (R1373–R1375), conformance
   evidence (R1364, R1365), transfers (R1366, R1367), and abandonment
   (R1368). Their leftovers are under *Blocks without a size lever*. The
-  scalar block is steps 1–4.
+  scalar block is steps 1–3.
 - The stale-entry sweeps R1400–R1406 have landed.
-- The `SIMD` port is in the checker: `SIMD` and its aliases are the
-  declared struct there, and its members are library bodies. Below the
-  checker it is still `TyKind::Simd` (step 2).
-- The 10-30/31 runs' corpus regressions are repaired (11-01 gate fix).
+- The library `SIMD` is complete: every member is a library body, and
+  `SIMD` and its aliases are the declared struct in the checker. Below
+  the checker it is still `TyKind::Simd` (step 1).
+- The 10-30/31 runs' corpus regressions are repaired (11-01 gate fix),
+  with R1805–R1809 filed as residues.
 
 `enum` (10-25) moves no gap: each enum is an ordinary struct whose
 members `mojito_parser::enums` generates as Mojo text, over the
@@ -304,7 +303,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | steps 1–4 (R1798, R1799 → R1800 → R1801, R1608 → R1612, R1785, R1657 → R1660), R160 | R1408, R850, R1019, R423, R1352, R851, R171, R1189, R427, R1681 (`Pointer`) |
+| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1798, R1799 → R1800 → R1801, R1608 → R1612, R1785, R1657 → R1660), R160 | R1408, R1019, R423, R1352, R851, R171, R1189, R427, R1681 (`Pointer`) |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R18, R159 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R77, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
@@ -327,8 +326,9 @@ to wait on:
 
 None of these unblocks another entry. Run them whenever they are useful.
 
-- **Inlining reach**: R1346, R1347, R1350, R1339, R1340, R1341, and R1452
-  (the pin measures a callee before cleaning what it spliced in).
+- **Inlining reach**: R1346, R1347, R1350, R1339, R1340, R1341, R1452
+  (the pin measures a callee before cleaning what it spliced in), and
+  R1809 (`SIMD.reduce_add` stays an out-of-line call).
 - **Bugs**: R1112, R1035, R1289.
 - **Hygiene**: R944, R868, R1276.
 - **Library ports**: R1411 (`std.iter.map`). **Diagnostics**: R1413 (enum declaration errors).
@@ -337,7 +337,7 @@ None of these unblocks another entry. Run them whenever they are useful.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1346 --only R1347 --only R1350 \
-  --only R1339 --only R1340 --only R1341 --only R1452 --only R1112 --only R1035 --only R1289 -n 0
+  --only R1339 --only R1340 --only R1341 --only R1452 --only R1809 --only R1112 --only R1035 --only R1289 -n 0
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R944 --only R868 --only R1276 \
   --only R896 --only R897 --only R924 --only R1255 --only R1256 -n 0
 scripts/claude_loop.py --model opus --only R1411 --only R1413 -n 0
@@ -348,13 +348,14 @@ scripts/claude_loop.py --model opus --only R1411 --only R1413 -n 0
 Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
 `scripts/instantiation-report`. The overnight gate says when it is stale.
 
-| counter | 10-13 | 10-17 | 10-21 | 10-24 |
-|---|---|---|---|---|
-| concrete functions | 42,409 | 24,864 | 25,859 | 26,934 |
-| concrete instructions | 892,391 | 402,905 | 386,579 | 401,799 |
-| generators | 16,553 | 8,801 | 9,213 | 9,500 |
-| generator instances | 26,868 | 13,804 | 13,989 | 14,619 |
-| instances per generator | 1.62 | 1.57 | 1.52 | 1.54 |
+| counter | 10-13 | 10-17 | 10-21 | 10-24 | 10-29 | 11-01 |
+|---|---|---|---|---|---|---|
+| fixtures | | | | 1,200 | 1,379 | 1,538 |
+| concrete functions | 42,409 | 24,864 | 25,859 | 26,934 | 18,743 | 41,010 |
+| concrete instructions | 892,391 | 402,905 | 386,579 | 401,799 | 859,746 | 1,821,334 |
+| generators | 16,553 | 8,801 | 9,213 | 9,500 | 5,841 | 17,667 |
+| generator instances | 26,868 | 13,804 | 13,989 | 14,619 | 9,164 | 26,483 |
+| instances per generator | 1.62 | 1.57 | 1.52 | 1.54 | 1.57 | 1.50 |
 
 - Compare runs with `scripts/instantiation-report --check`, over the
   fixtures both runs elaborate, not with the raw totals.
@@ -363,9 +364,16 @@ Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
   landed 10-17.
 - Instances per generator has barely moved: a generic body is still copied
   about as often as before. Gaps E, F, and G aim at that ratio.
-- The library `SIMD` (10-27 to 10-31) is real generic code and inlined
-  operator chains. The committed baseline is from 10-29. Refresh the
-  table before step 2 to see what the port cost.
+- The library `SIMD` (10-27 to 11-01) is real generic code and inlined
+  operator chains, and it doubled the program. Over the 1,368 fixtures
+  both the 10-29 and 11-01 baselines elaborate, concrete functions grew
+  2.0× and instructions 1.85×, and generators and their instances about
+  2.7×. That is the size gaps D′–I now have to win back.
+- The 11-01 baseline is from after the library `SIMD` was finished, so it
+  is the starting point for step 1.
+- `assets/ok/pointer_tuple_field_write.mojo` elaborates differently from
+  run to run (R1069), so `--check` can report a few instructions of
+  growth there with no change.
 
 ## Landed so far
 
@@ -393,3 +401,7 @@ Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
   display in Mojo (R276), R1398 and R1399, the declared struct in the
   checker (R1557, R1591, R1791, R1792), declared `IntLiteral[value]` and
   `FloatLiteral[value]` (R1779–R1781), and R1558.
+- 11-01: the 11-01 gate fix, and the library `SIMD`'s last members:
+  `%`, `divmod`, and `ceildiv` (R1623, closing R850), native display
+  through `write_to` (R1664), an initializer called without inlining
+  (R1617), `SIMD(copy=x)` (R1793), and `_dynamic_shuffle` (R1777).
