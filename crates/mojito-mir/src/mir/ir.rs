@@ -3241,7 +3241,7 @@ impl MirInstr {
         reg_types: &HashMap<u32, Ty>,
         declarations: &MirDeclarations,
     ) -> Option<Reg> {
-        let held = |reg: &Reg| reg_types.get(&reg.0).map(mojito_types::types::held_simd_ty);
+        let held = |reg: &Reg| reg_types.get(&reg.0).map(mojito_types::types::storage_ty);
         let held_alike =
             |dest: &Reg, operand: &Reg| held(dest).is_some() && held(dest) == held(operand);
         match self {
@@ -3253,8 +3253,13 @@ impl MirInstr {
             Self::SimdReduce { dest, value, .. }
                 if held_alike(dest, value)
                     && held(value).is_some_and(|ty| {
-                        mojito_types::types::simd_shape(ty.kind())
-                            .is_some_and(|(_, width)| width == 1)
+                        matches!(
+                            mojito_types::types::kgen_simd_slots(ty.kind()),
+                            Some((
+                                mojito_types::types::SimdDtype::Known(_),
+                                mojito_types::types::SimdWidth::Known(1)
+                            ))
+                        )
                     }) =>
             {
                 Some(*value)
@@ -3269,14 +3274,21 @@ impl MirInstr {
                 ..
             } if held_alike(dest, a) => {
                 let identity = *op == InfixOp::Eq;
-                let ty = reg_types.get(&b.0)?;
-                match const_ct_value(&constant(*b)?, &mojito_types::types::held_simd_ty(ty))? {
-                    CtValue::Simd {
+                let width = match mojito_types::types::vector_slots(reg_types.get(&b.0)?.kind())? {
+                    (
+                        mojito_types::types::SimdDtype::Known(Dtype::Bool),
+                        mojito_types::types::SimdWidth::Known(width),
+                    ) => usize::try_from(width).ok()?,
+                    _ => return None,
+                };
+                match constant(*b)? {
+                    Const::Value(CtValue::Simd {
                         dtype: Dtype::Bool,
                         lanes,
-                    } if lanes
-                        .iter()
-                        .all(|lane| *lane == mojito_types::ct::CtLane::Bool(identity)) =>
+                    }) if lanes.len() == width
+                        && lanes
+                            .iter()
+                            .all(|lane| *lane == mojito_types::ct::CtLane::Bool(identity)) =>
                     {
                         Some(*a)
                     }

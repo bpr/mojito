@@ -1017,15 +1017,14 @@ impl<'p> CallEdges<'p, '_> {
     }
 
     /// The display member `method` of the `SIMD` type that displays a
-    /// value of type `ty`: its own, its referent's, the vector its
-    /// `!kgen.simd` storage holds, or the type a literal materializes to,
-    /// found in that type's member table.
+    /// value of type `ty`: its own, its referent's, or the type a literal
+    /// materializes to, found in that type's member table.
     fn push_simd_members(&mut self, ty: &Ty, method: &str) {
         let ty = match ty.kind() {
             TyKind::Ref(reference) => &reference.referent,
             _ => ty,
         };
-        let ty = mojito_types::types::default_literal(&mojito_types::types::held_simd_ty(ty));
+        let ty = mojito_types::types::default_literal(ty);
         if ty.kind().is_simd()
             && let Some(table) = mojito_symbol::symbol::member_table_name(&ty)
         {

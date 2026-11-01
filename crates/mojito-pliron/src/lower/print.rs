@@ -931,16 +931,14 @@ impl<'a> FnLowering<'a> {
     }
 
     /// The closed `SIMD` type whose display members display `arg`: its
-    /// own, its referent's, the vector its `!kgen.simd` storage type holds
-    /// (an inlined initializer's result, R1798), or the type a literal
-    /// materializes to.
+    /// own, its referent's, or the type a literal materializes to.
     fn simd_display_ty(&self, arg: Reg) -> Option<Ty> {
         let ty = self.func.reg_types.get(&arg.0)?;
         let ty = match ty.kind() {
             TyKind::Ref(reference) => &reference.referent,
             _ => ty,
         };
-        let ty = mojito_types::types::default_literal(&mojito_types::types::held_simd_ty(ty));
+        let ty = mojito_types::types::default_literal(ty);
         ty.kind().is_simd().then_some(ty)
     }
 }
@@ -954,7 +952,7 @@ fn lane_shape(ty: &LowerTy) -> Option<(Dtype, i64)> {
         LowerTy::Scalar(ScalarTy::Float64) => Some((Dtype::Float64, 1)),
         LowerTy::Scalar(ScalarTy::Bool) => Some((Dtype::Bool, 1)),
         LowerTy::Scalar(ScalarTy::Sized(dtype)) => Some((*dtype, 1)),
-        LowerTy::Aggregate { ty, .. } => mojito_types::types::simd_shape(ty),
+        LowerTy::Aggregate { ty, .. } => super::support::simd_dims(ty),
         LowerTy::Scalar(ScalarTy::Ptr | ScalarTy::Dtype) | LowerTy::ZeroSized => None,
     }
 }

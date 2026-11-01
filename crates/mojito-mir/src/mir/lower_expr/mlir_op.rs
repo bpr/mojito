@@ -245,7 +245,7 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let dest = self.fresh_typed(location, None, ty.clone());
         let slots = || {
-            mojito_types::types::held_simd_slots(ty.kind())
+            mojito_types::types::vector_slots(ty.kind())
                 .expect("a checked splat, cast, or bitcast names a SIMD type")
         };
         self.emit(match (op.lowering(), operands.as_slice()) {

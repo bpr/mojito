@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
+use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
 
 impl Locator {
     pub(crate) fn new(ctx: &Context, sources: &[(String, String)]) -> Self {
@@ -118,14 +118,14 @@ impl ScalarTy {
     }
 }
 
-/// Classify a checked type for lowering: scalars (including width-1 SIMD
-/// aliases and the i64/f64 storage of `IntLiteral`/`FloatLiteral`-typed
-/// registers) stay SSA; `None` is zero-sized; struct, tuple, and
-/// `StringLiteral`-descriptor aggregates take their shared-engine layout, as
-/// does the two-word `{ invoke, env }` retained-callable value. Multi-lane
-/// SIMD values keep the lane-aligned aggregate as their storage and ABI
-/// form; `lower/simd.rs` computes on them as LLVM fixed vectors between the
-/// loads and stores.
+/// Classify a checked type for lowering: a vector classifies as its
+/// `!kgen.simd` storage; scalars (a one-lane storage, and the i64/f64
+/// storage of `IntLiteral`/`FloatLiteral`-typed registers) stay SSA; `None`
+/// is zero-sized; struct, tuple, and `StringLiteral`-descriptor aggregates
+/// take their shared-engine layout, as does the two-word `{ invoke, env }`
+/// retained-callable value. A multi-lane storage keeps the lane-aligned
+/// aggregate as its storage and ABI form; `lower/simd.rs` computes on it
+/// as an LLVM fixed vector between the loads and stores.
 pub fn lower_ty(
     function: &str,
     ty: &Ty,
@@ -138,16 +138,19 @@ pub fn lower_ty(
         TyKind::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
         // The MLIR builtin `index` is held as the `Int` it casts from.
         TyKind::Index => Ok(LowerTy::Scalar(ScalarTy::Int)),
-        // A vector's `!kgen.simd` storage is held as the vector.
-        TyKind::KgenSimd { .. } => lower_ty(
+        // A vector lowers as its `!kgen.simd` storage, as upstream's
+        // `LowerKGENToLLVM` lowers the `SIMD` struct to its field.
+        TyKind::Simd { .. } => lower_ty(
             function,
-            &mojito_types::types::held_simd_ty(ty),
+            &mojito_types::types::storage_ty(ty),
             layout,
             location,
         ),
-        ty if let Some(dtype) = scalar_simd_dtype(ty) => {
-            Ok(LowerTy::Scalar(ScalarTy::of_dtype(dtype)))
-        }
+        // A one-lane storage is the scalar, so `Int` stays an SSA `i64`.
+        TyKind::KgenSimd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(1),
+        } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
         // Literal-typed storage holds the default materialized value; a
         // constant that exceeds it rejects at the storage boundary rather
         // than wrapping (the VM keeps arbitrary precision).
@@ -165,34 +168,28 @@ pub fn lower_ty(
         // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor,
         // as is a `!kgen.string`'s.
         // A retained callable is the two-word `{ invoke, env }` value.
-        kind if kind.is_simd()
-            || matches!(
-                kind,
-                TyKind::Error
-                    | TyKind::Struct(..)
-                    | TyKind::Tuple(_)
-                    | TyKind::PopArray { .. }
-                    | TyKind::RuntimePack(_)
-                    | TyKind::Variant(_)
-                    | TyKind::StringLiteral(_)
-                    | TyKind::KgenString
-                    | TyKind::Func(_)
-            ) =>
-        {
-            match layout.layout_of(ty) {
-                Ok(computed) => Ok(LowerTy::Aggregate {
-                    ty: ty.clone(),
-                    layout: computed,
-                }),
-                Err(error) => Err(PlironError {
-                    function: Some(function.to_string()),
-                    kind: PlironErrorKind::Unsupported {
-                        construct: format!("type `{ty:?}` ({error})"),
-                    },
-                    location,
-                }),
-            }
-        }
+        TyKind::KgenSimd { .. }
+        | TyKind::Error
+        | TyKind::Struct(..)
+        | TyKind::Tuple(_)
+        | TyKind::PopArray { .. }
+        | TyKind::RuntimePack(_)
+        | TyKind::Variant(_)
+        | TyKind::StringLiteral(_)
+        | TyKind::KgenString
+        | TyKind::Func(_) => match layout.layout_of(ty) {
+            Ok(computed) => Ok(LowerTy::Aggregate {
+                ty: ty.clone(),
+                layout: computed,
+            }),
+            Err(error) => Err(PlironError {
+                function: Some(function.to_string()),
+                kind: PlironErrorKind::Unsupported {
+                    construct: format!("type `{ty:?}` ({error})"),
+                },
+                location,
+            }),
+        },
         other => Err(PlironError {
             function: Some(function.to_string()),
             kind: PlironErrorKind::Unsupported {

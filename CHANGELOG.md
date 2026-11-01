@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Below the check a `SIMD` value lowers to its `!kgen.simd` storage, as
+  upstream's `LowerKGENToLLVM` lowers the struct to its field (R1798): the
+  MIR verifier agrees a storage with the vector it stores, layout and the
+  native backend classify the storage, and LLVM intrinsic signatures see
+  it, where each used to read the storage back as the vector. The
+  elaborator's rebind erasure gives an inlined `Self(mlir_value=s)`
+  chain's root the type the program reads it at, so `repr` of an inlined
+  initializer's result displays its `SIMD` without a mapping at the
+  display. No program's output changes.
+
 - `SIMD` declares upstream's `_dynamic_shuffle`, a gather by a run-time
   `uint8` mask, with `_pshuf_or_tbl1`, `_pshuf`, and `_tbl1` (R1777). The
   LLVM intrinsic table adds `llvm.x86.ssse3.pshuf.b.128` and

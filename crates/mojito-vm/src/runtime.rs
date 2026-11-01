@@ -1219,7 +1219,7 @@ pub fn llvm_intrinsic(
         .and_then(<[Ty]>::first)
         .or(result)
         .map(Ty::kind)
-        .and_then(mojito_types::types::simd_slots)
+        .and_then(mojito_types::types::vector_slots)
     {
         Some((
             mojito_types::types::SimdDtype::Known(dtype),

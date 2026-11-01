@@ -5,7 +5,7 @@ use super::*;
 use crate::mir::{MirCaptureMode, MirClosureCapture};
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::TyKind;
-use mojito_types::types::{held_simd_ty, held_ty};
+use mojito_types::types::{i1_as_bool, storage_ty};
 
 pub(super) fn verify_instruction(
     name: &str,
@@ -993,7 +993,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
                 }
                 if let Some((_, width)) = cx
                     .reg_ty(*dest)
-                    .and_then(|ty| mojito_types::types::held_simd_slots(ty.kind()))
+                    .and_then(|ty| mojito_types::types::vector_slots(ty.kind()))
                     && let Some(width) = width.known()
                     && width != mask.len() as i64
                 {
@@ -1004,7 +1004,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
                 }
                 if let Some((_, width)) = cx
                     .reg_ty(*value)
-                    .and_then(|ty| mojito_types::types::held_simd_slots(ty.kind()))
+                    .and_then(|ty| mojito_types::types::vector_slots(ty.kind()))
                     && let Some(width) = width.known()
                 {
                     let lanes = if other.is_some() { width * 2 } else { width };
@@ -1017,7 +1017,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
             }
             if let Some(source) = cx.reg_ty(*value)
                 && let Some(joined) = other.as_ref().and_then(|register| cx.reg_ty(*register))
-                && held_simd_ty(joined) != held_simd_ty(source)
+                && storage_ty(joined) != storage_ty(source)
             {
                 errors.push(format!(
                     "{prefix}: SIMD join operand {joined} does not match {source}"
@@ -1043,7 +1043,7 @@ fn verify_simd_lane_instruction(
     let mnemonic = crate::mir::text::instruction_mnemonic(instruction);
     let slots = |register: Reg| {
         cx.reg_ty(register)
-            .map(|ty| (ty, mojito_types::types::held_simd_slots(ty.kind())))
+            .map(|ty| (ty, mojito_types::types::vector_slots(ty.kind())))
     };
     let mut expect_vector = |register: Reg, role: &str| match slots(register) {
         Some((ty, None)) => {
@@ -1065,7 +1065,7 @@ fn verify_simd_lane_instruction(
     let mut mismatches = Vec::new();
     let mut expect_type = |register: Reg, expected: Option<Ty>, role: &str| {
         if let (Some(found), Some(expected)) = (cx.reg_ty(register), expected)
-            && held_simd_ty(found) != held_simd_ty(&expected)
+            && storage_ty(found) != storage_ty(&expected)
         {
             mismatches.push(format!(
                 "{prefix}: {mnemonic} {role} has type {found}, expected {expected}"
@@ -1101,7 +1101,7 @@ fn verify_simd_lane_instruction(
                 &mask_slots,
                 result
                     .as_ref()
-                    .map(|ty| mojito_types::types::held_simd_slots(ty.kind())),
+                    .map(|ty| mojito_types::types::vector_slots(ty.kind())),
             ) && *mask_width != width
             {
                 errors.push(format!(
@@ -1127,8 +1127,7 @@ fn verify_simd_lane_instruction(
             let lane = expect_vector(value, "vector").and_then(|(dtype, _)| lane_of(&dtype));
             // A `Bool` is a `bool` lane, as the checker coerces it.
             let bool_lane = lane.as_ref().and_then(|lane| {
-                mojito_types::types::held_simd_slots(lane.kind())
-                    .and_then(|(dtype, _)| dtype.known())
+                mojito_types::types::vector_slots(lane.kind()).and_then(|(dtype, _)| dtype.known())
             }) == Some(mojito_ast::ast::Dtype::Bool)
                 && cx.reg_ty(element) == Some(&Ty::bool());
             if !bool_lane {
@@ -1312,7 +1311,7 @@ fn verify_pop(
         return;
     }
     // `index.divs` divides `index` values.
-    if mojito_types::types::held_simd_slots(result.kind()).is_none() && *result != Ty::index() {
+    if mojito_types::types::vector_slots(result.kind()).is_none() && *result != Ty::index() {
         errors.push(format!(
             "{prefix}: pop.{} defines a register of the non-SIMD type {result}",
             op.mnemonic()
@@ -1320,7 +1319,7 @@ fn verify_pop(
     }
     for operand in operands {
         if let Some(found) = cx.reg_ty(*operand)
-            && held_simd_ty(found) != held_simd_ty(result)
+            && storage_ty(found) != storage_ty(result)
         {
             errors.push(format!(
                 "{prefix}: pop.{} operand of type {found} where its result is {result}",
@@ -1368,7 +1367,11 @@ fn verify_scalar_cast(
 ) {
     let prefix = cx.prefix;
     if let Some(found) = cx.reg_ty(value)
-        && !target.casts_from(&held_simd_ty(found))
+        && !target.casts_from(found)
+        && !matches!(
+            mojito_types::types::kgen_simd_slots(found.kind()),
+            Some((_, mojito_types::types::SimdWidth::Known(1)))
+        )
     {
         errors.push(format!(
             "{prefix}: scalar cast to {} of the non-scalar {found}",
@@ -1398,8 +1401,7 @@ fn verify_select(
 ) {
     let prefix = cx.prefix;
     if let Some(found) = cx.reg_ty(condition)
-        && held_simd_ty(found)
-            != mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1)
+        && storage_ty(found) != mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1)
     {
         errors.push(format!(
             "{prefix}: select condition has type {found}, not a one-lane bool vector"
@@ -1410,7 +1412,7 @@ fn verify_select(
     };
     for (role, case) in ["true", "false"].into_iter().zip(cases) {
         if let Some(found) = cx.reg_ty(case)
-            && held_simd_ty(found) != held_simd_ty(result)
+            && storage_ty(found) != storage_ty(result)
         {
             errors.push(format!(
                 "{prefix}: select {role} case has type {found}, expected {result}"
@@ -1515,8 +1517,7 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
         | TyKind::LitRef { element, .. } => Some(element.clone()),
         _ => None,
     };
-    let (Some(to_element), Some(from_element)) = (element(&held_ty(to)), element(&held_ty(from)))
-    else {
+    let (Some(to_element), Some(from_element)) = (element(to), element(from)) else {
         errors.push(format!(
             "{}: pointer conversion from {from} to {to} is not among `Pointer`, \
              `!kgen.pointer`, and `!lit.ref`",
@@ -1536,12 +1537,12 @@ fn verify_builtin_cast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec
     let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
         return;
     };
-    let (to, from) = (&held_ty(to), &held_ty(from));
+    let (to, from) = (&storage_ty(&i1_as_bool(to)), &storage_ty(&i1_as_bool(from)));
     let pairs = [
-        (Ty::index(), Ty::int()),
+        (Ty::index(), storage_ty(&Ty::int())),
         (
             Ty::bool(),
-            mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1),
+            mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1),
         ),
     ];
     if !pairs.iter().any(|(builtin, storage)| {

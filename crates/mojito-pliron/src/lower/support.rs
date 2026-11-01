@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
+use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
 
 /// Emit the body of an `invoke` thunk (see [`ModuleShared::ensure_thunk`]):
 /// load/take the capture arguments out of the environment record, forward
@@ -179,8 +179,10 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
 /// it casts from. A symbolic slot never reaches lowering: the MIR verifier
 /// refuses it.
 pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {
-    match mojito_types::types::held_simd_ty(ty).kind() {
-        kind if let Some((dtype, width)) = kind.as_simd() => Some((dtype.known()?, width.known()?)),
+    match ty.kind() {
+        kind if let Some((dtype, width)) = mojito_types::types::vector_slots(kind) => {
+            Some((dtype.known()?, width.known()?))
+        }
 
         TyKind::Index => Some((Dtype::Int, 1)),
         _ => None,
@@ -209,10 +211,13 @@ pub fn scalar_type(
         TyKind::Bool | TyKind::I1 => Ok(ScalarTy::Bool),
         TyKind::Dtype => Ok(ScalarTy::Dtype),
         TyKind::Index => Ok(ScalarTy::Int),
-        TyKind::KgenSimd { .. } => {
-            scalar_type(function, &mojito_types::types::held_simd_ty(ty), location)
+        TyKind::Simd { .. } => {
+            scalar_type(function, &mojito_types::types::storage_ty(ty), location)
         }
-        ty if let Some(dtype) = scalar_simd_dtype(ty) => Ok(ScalarTy::of_dtype(dtype)),
+        TyKind::KgenSimd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(1),
+        } => Ok(ScalarTy::of_dtype(*dtype)),
         TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(ScalarTy::Ptr),
         other => Err(PlironError {
             function: Some(function.to_string()),

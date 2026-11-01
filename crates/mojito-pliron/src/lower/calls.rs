@@ -102,7 +102,9 @@ impl FnLowering<'_> {
         if mojito_symbol::symbol::is_initializer_symbol(name)
             && !params.is_empty()
             && let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned()
-            && (matches!(struct_ty.kind(), TyKind::Struct(..)) || struct_ty.is_simd())
+            && (matches!(struct_ty.kind(), TyKind::Struct(..))
+                || struct_ty.is_simd()
+                || matches!(struct_ty.kind(), TyKind::KgenSimd { .. }))
         {
             // A receiver held as a scalar (a one-lane `SIMD`) is read back
             // from that storage.
@@ -506,7 +508,7 @@ impl FnLowering<'_> {
                 // VM's binding materializes it.
                 LowerTy::Aggregate { ty, .. }
                     if matches!(default, CheckedConst::Int(_) | CheckedConst::Float(_))
-                        && let Some((dtype, width)) = mojito_types::types::simd_shape(ty)
+                        && let Some((dtype, width)) = super::support::simd_dims(ty)
                         && let Ok(width) = usize::try_from(width)
                         && width > 1 =>
                 {

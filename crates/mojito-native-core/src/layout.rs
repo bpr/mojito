@@ -98,7 +98,12 @@ impl LayoutCx<'_> {
                 .struct_layout(&[Ty::bool(), element.clone()])
                 .map(|s| s.layout);
         }
-        if let Some((dtype, width)) = ty.as_simd() {
+        // A vector lays out as its `!kgen.simd` storage, the field
+        // upstream's `LowerKGENToLLVM` lowers the `SIMD` struct to.
+        if let Some(storage) = mojito_types::types::simd_storage(ty) {
+            return self.layout_of(&storage);
+        }
+        if let Some((dtype, width)) = mojito_types::types::kgen_simd_slots(ty.kind()) {
             let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
                 return Err(LayoutError::Symbolic(ty.to_string()));
             };
@@ -147,8 +152,6 @@ impl LayoutCx<'_> {
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.
             TyKind::Func(_) => Ok(compose(&[self.pointer(), self.pointer()]).layout),
-            // A vector's `!kgen.simd` storage lays out as the vector.
-            TyKind::KgenSimd { .. } => self.layout_of(&mojito_types::types::held_simd_ty(ty)),
             // Literal-typed storage holds the value at its default
             // materialized width; a value that exceeds it rejects at lowering.
             TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => Ok(Layout::new(8, 8)),

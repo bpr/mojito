@@ -26,16 +26,27 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if found == expected {
         return true;
     }
-    // A vector and its `!kgen.simd` storage are one held representation
-    // while `SIMD` is a compiler type: `_mlir_value` reads the vector's own
-    // register, and `mlir_value=` constructs the vector from it. The MLIR
-    // builtin `i1` is held as the `Bool` it casts from.
-    let (held_found, held_expected) = (
-        mojito_types::types::held_ty(found),
-        mojito_types::types::held_ty(expected),
+    // The MLIR builtin `i1` is held as the `Bool` it casts from (R1612).
+    let (found_bool, expected_bool) = (
+        mojito_types::types::i1_as_bool(found),
+        mojito_types::types::i1_as_bool(expected),
     );
-    if held_found != *found || held_expected != *expected {
-        return types_compatible(&held_found, &held_expected);
+    if found_bool != *found || expected_bool != *expected {
+        return types_compatible(&found_bool, &expected_bool);
+    }
+    // A `!kgen.simd` storage agrees with the vector it stores, the type
+    // LLVM translation gives the vector, while `SIMD` is a compiler type
+    // whose `_mlir_value` reads the vector's own register (R1800).
+    if matches!(found.kind(), TyKind::KgenSimd { .. })
+        != matches!(expected.kind(), TyKind::KgenSimd { .. })
+    {
+        let (found_storage, expected_storage) = (
+            mojito_types::types::storage_ty(found),
+            mojito_types::types::storage_ty(expected),
+        );
+        if found_storage != *found || expected_storage != *expected {
+            return types_compatible(&found_storage, &expected_storage);
+        }
     }
     // Every string literal is one held descriptor whatever its text, which
     // the checker owns, value-less or still a parameter (R1660).
@@ -272,10 +283,11 @@ fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
             })
 }
 
-/// Whether `actual` fits the vector `pattern` when one of the pattern's
-/// slots is symbolic; `None` when the pattern is not such a vector.
+/// Whether `actual` fits the vector or `!kgen.simd` storage `pattern` when
+/// one of the pattern's slots is symbolic; `None` when the pattern is not
+/// such a vector.
 fn symbolic_simd_compatible(pattern: &Ty, actual: &Ty) -> Option<bool> {
-    let (dtype, width) = pattern.as_simd()?;
+    let (dtype, width) = mojito_types::types::vector_slots(pattern.kind())?;
 
     if !dtype.is_symbolic() && !width.is_symbolic() {
         return None;
@@ -285,7 +297,7 @@ fn symbolic_simd_compatible(pattern: &Ty, actual: &Ty) -> Option<bool> {
             mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Bool),
             mojito_types::types::SimdWidth::Known(1),
         ),
-        other => match mojito_types::types::simd_slots(other) {
+        other => match mojito_types::types::vector_slots(other) {
             Some(slots) => slots,
             None => return Some(false),
         },

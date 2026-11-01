@@ -478,7 +478,10 @@ impl MirDeclarations {
     /// arguments ([`Self::field_types`]), unwrapped again while the field is
     /// such a struct, as upstream's `LowerKGENToLLVM` lowers it; any other
     /// type is itself. A literal struct (`TyKind::Tuple`, upstream's
-    /// `!kgen.struct`) is never unwrapped, even of one element.
+    /// `!kgen.struct`) is never unwrapped, even of one element. A vector is
+    /// its `!kgen.simd` storage ([`mojito_types::types::storage_ty`]), the
+    /// field `register_field` gives once `SIMD` is a declared struct
+    /// (R1800).
     pub fn translated_type(&self, ty: &Ty) -> Ty {
         let mut translated = ty.clone();
         while let TyKind::Struct(name, _) = translated.kind()
@@ -488,7 +491,7 @@ impl MirDeclarations {
         {
             translated = field.clone();
         }
-        translated
+        mojito_types::types::storage_ty(&translated)
     }
 
     /// Whether a value of `ty` is register-passable, as upstream's

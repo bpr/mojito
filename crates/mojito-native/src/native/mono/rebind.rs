@@ -19,9 +19,13 @@ impl Specializer<'_> {
     /// Judge every rebind of the instance `function` of
     /// `template`: a value rebind's `dest` register becomes its operand's,
     /// and a rebound place loses its step, whose type now names the
-    /// storage's own. An operand only the rebind read takes the rebind's
-    /// type, the one the program reads the value at: a `SIMD` built from
-    /// its `!kgen.simd` storage (`Self(mlir_value=...)`) is the `SIMD`.
+    /// storage's own. A chain's root takes the type of its outermost rebind,
+    /// the one the program reads the value at, when only the chain reads it:
+    /// a `SIMD` built from its storage (`Self(mlir_value=...)`), built from
+    /// a `SIMD`, is the `SIMD`. A `!kgen.simd` root other instructions read
+    /// too takes the vector it is rebound to all the same, as `_mlir_value`
+    /// reads a vector's own register while `SIMD` is a compiler type
+    /// (R1800).
     pub(super) fn discharge_rebinds(
         &self,
         template: &str,
@@ -38,10 +42,29 @@ impl Specializer<'_> {
                     *count += 1;
                 }
             }
-            let retyped: Vec<(u32, Ty)> = aliases
+            let sole_reader: HashMap<u32, u32> = aliases
                 .iter()
                 .filter(|(_, value)| reads.get(value.0 as usize) == Some(&1))
-                .filter_map(|(dest, value)| Some((value.0, function.reg_types.get(dest)?.clone())))
+                .map(|(dest, value)| (value.0, *dest))
+                .collect();
+            let outermost = |mut reg: u32| {
+                while let Some(dest) = sole_reader.get(&reg) {
+                    reg = *dest;
+                }
+                reg
+            };
+            let retyped: Vec<(u32, Ty)> = aliases
+                .iter()
+                .filter(|(_, root)| !aliases.contains_key(&root.0))
+                .filter_map(|(dest, root)| {
+                    let read_at = function.reg_types.get(&outermost(*dest))?;
+                    let own = function.reg_types.get(&root.0);
+                    (reads.get(root.0 as usize) == Some(&1)
+                        || own.is_some_and(|own| {
+                            mojito_types::types::simd_storage(read_at).as_ref() == Some(own)
+                        }))
+                    .then(|| (root.0, read_at.clone()))
+                })
                 .collect();
             function.reg_types.extend(retyped);
             rename_blocks(&mut function.blocks, &aliases);

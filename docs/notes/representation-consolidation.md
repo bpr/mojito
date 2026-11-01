@@ -27,8 +27,9 @@ command cannot use both.
      `std.utils.numerics`.
    - R1558 made code outside `mojito-types` independent of the vector
      variant's layout.
-   - What is left is one chain. R1798 and R1799 hold a `SIMD` register as
-     its `!kgen.simd` field in the verifier and both backends. R1800
+   - What is left is one chain. R1798 lowered a `SIMD` register to its
+     `!kgen.simd` field in the verifier and both backends, and R1799 does
+     the same for every one-field register-passable struct. R1800
      deletes `TyKind::Simd`, so `SIMD` is the declared struct below the
      checker. R1801 then gives MIR's builtin ops the storage, not the
      struct.

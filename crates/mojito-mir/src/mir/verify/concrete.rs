@@ -585,7 +585,7 @@ fn bitcast_width(
     let source = function
         .reg_types
         .get(&value.0)
-        .and_then(|ty| mojito_types::types::held_simd_slots(ty.kind()));
+        .and_then(|ty| mojito_types::types::vector_slots(ty.kind()));
     if let (Some(dtype), Some(width), Some((source_dtype, source_width))) =
         (dtype.known(), width.known(), source)
         && let (Some(source_dtype), Some(source_width)) =
@@ -745,7 +745,7 @@ fn translation_blocks(
                 function
                     .reg_types
                     .get(&reg.0)
-                    .and_then(|ty| mojito_types::types::held_simd_slots(ty.kind()))
+                    .and_then(|ty| mojito_types::types::vector_slots(ty.kind()))
                     .and_then(|(_, width)| width.known())
                     .and_then(|width| usize::try_from(width).ok())
             };

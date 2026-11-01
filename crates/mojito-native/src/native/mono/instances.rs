@@ -301,7 +301,7 @@ impl Specializer<'_> {
         // A literal displays as the type it materializes to, as upstream's
         // `IntLiteral` and `FloatLiteral` members call `Int`'s and
         // `Float64`'s.
-        let ty = &mojito_types::types::default_literal(&mojito_types::types::held_simd_ty(ty));
+        let ty = &mojito_types::types::default_literal(ty);
         if mojito_types::types::simd_shape(ty.kind()).is_some() && ty.is_simd() {
             return self.enqueue_simd_format_instance(owner, ty, method);
         }

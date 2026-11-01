@@ -11008,8 +11008,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Checker::record_implicit_conversion` for the declared `@implicit`
     overloads, and `ScalarConversion::casts_from`'s `i1` arm.
   - Decide whether MIR keeps holding the struct as an `i1` (R1396's
-    one-field register-passable hold), and with it `types::held_ty`'s
-    `i1`-as-`Bool` arm, `require_bool`'s `i1` arm, and the VM's
+    one-field register-passable hold), and with it `types::i1_as_bool`, `require_bool`'s `i1` arm, and the VM's
     `builtin.cast` conversion between `Value::Bool` and a one-lane mask.
   - Like R1557 for `SIMD`.
   - Depends on R1608, R1609, R1610, R1611, and R1189.
@@ -11341,39 +11340,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1798 The verifier and both backends treat a `SIMD` value and its
-  `!kgen.simd` storage as one held type, where upstream lowers the struct to
-  its storage field**
-
-  `types::held_simd_ty` maps a `!kgen.simd` storage type to the vector
-  type, the reverse of upstream's `LowerKGENToLLVM`, which lowers the
-  register-passable `SIMD` struct to its `!pop.simd` field.
-  - Sites: `verify/instr.rs` (about fifteen `held_simd_*` comparisons),
-    `verify/types.rs`'s `held_ty`, `verify/concrete.rs`,
-    `verify/calls.rs`, `mono/gather.rs`, `mono/symbolic.rs`,
-    `mono/instances.rs`'s `enqueue_format_ty_instance`, Pliron's
-    `simd_display_ty` and `push_simd_members`, and `mir/ir.rs`'s constant
-    folder.
-  - Probe: natively, `repr(Scalar[DType.bool](True))`'s argument is the
-    inlined initializer's result, typed `KgenSimd`, so the display reads
-    its `SIMD` type back through `held_simd_ty`.
-  - Lever: `MirDeclarations::translated_type` translates a vector to its
-    storage (one transitional arm, which R1800 deletes), and the verifier
-    compares translated types, threading `&MirDeclarations` into the
-    `instr.rs` rules.
-  - Slots of either form come from one new `types::vector_slots`.
-  - `mojito-native-core`'s `layout_of` lays out `KgenSimd` as the vector
-    does today, and a vector delegates to its storage.
-  - Pliron's `lower_ty` maps a register's type through `translated_type`
-    before classifying it, so `Int` stays an SSA `i64`. `lower/support.rs`
-    (`simd_dims`, `scalar_type`) and `lower/abi.rs` key on the storage.
-  - `held_ty`'s `i1`-as-`Bool` half belongs to R1612. Keep it under a
-    name that says only that.
-  - Done when `rg held_simd` is empty and `assets/ok/simd_*.mojo` run
-    unchanged on both backends.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1799 Holding a one-field `TrivialRegisterPassable` struct as its
   field is a VM rewrite, where upstream's lowering does it for every
   backend**
@@ -11387,7 +11353,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Check that Pliron's place lowering handles `Proj::Rebind` on a
     scalar-held root, and add that handling if it does not.
   - Pliron's `lower_ty` classifies a held struct through
-    `MirDeclarations::translated_type`, as R1798 makes it for `SIMD`.
+    `MirDeclarations::translated_type`. Today it maps only a vector,
+    through `types::storage_ty`.
   - Probe: R1396's held structs (`assets/ok/` fixtures over a one-field
     `TrivialRegisterPassable` struct) on `--backend pliron`.
   - Depends on R1798 (`lower_ty` through `translated_type`).
@@ -11411,8 +11378,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Delete `TyKind::Simd`, `simd_struct_arguments`, `nominal_parts`'
     `Simd` arm, `self_receiver_ty`'s `SIMD` arm, `SimdStorage`, and
     `is_simd_storage`. `v._mlir_value` projects `Proj::Field`.
-  - Delete `translated_type`'s transitional vector arm (R1798): the
-    declaration's `register_field` answers.
+  - Delete `translated_type`'s transitional vector arm
+    (`types::storage_ty`): the declaration's `register_field` answers.
+  - Delete the identities `SimdStorage` forces below the check, where a
+    `SIMD` register is read as its own storage: `discharge_rebinds`'
+    arm giving a `!kgen.simd` root other instructions read the vector it
+    is rebound to, `types_compatible`'s storage-agrees-with-its-vector
+    arm, `verify_scalar_cast`'s one-lane storage source, and
+    `symbolic_simd_compatible`'s storage pattern.
+  - Probe: `assets/ok/mlir_builtin_casts.mojo`'s
+    `Int(mlir_value=storage)` over a `storage` another op reads displays
+    natively only through that `discharge_rebinds` arm.
   - The exhaustive walks naming the variant: `mir::text`'s
     `type_spelling`, `text/write.rs`'s type record, `verify/scope.rs`'s
     walk, and the checker's `type_is_symbolic`. Each keeps its spelling
@@ -11437,7 +11413,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Canonicalization folds an inlined dunder back into one `binary` over the
   struct, so `i < n` over `Int` compares two `SIMD` registers, not their
   storage fields.
-  - This is why `types::vector_slots` (R1798) reads slots off either a
+  - The constant folder must then fold a storage-typed register
+    (`mir/ir.rs`'s `const_ct_value`), as upstream folds `pop` ops over
+    `!pop.simd`. Admitting one today makes the VM fail
+    `SIMD[DType.int32, 4](1, 2, 3, 4)` with "index must be Int, got
+    Bool", so the folder and the VM's constant materialization must
+    agree on a storage register first.
+  - This is why `types::vector_slots` reads slots off either a
     vector or its storage.
   - Lever: lower compiler arithmetic as `pop` ops over `_mlir_value` field
     reads, and let canonicalization fold the `pop` chain without leaving

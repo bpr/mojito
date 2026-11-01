@@ -1613,25 +1613,26 @@ pub fn kgen_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     }
 }
 
-/// The slots of a register a backend holds as a vector: a SIMD value or
-/// its `!kgen.simd` storage, which are one representation.
-pub fn held_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
+/// The slots of a vector or of its `!kgen.simd` storage. Both forms are
+/// read because MIR's builtin vector instructions still take the `SIMD`
+/// register where upstream's `pop` ops take the storage (R1801).
+pub fn vector_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     kgen_simd_slots(ty).or_else(|| simd_slots(ty))
 }
 
-/// The SIMD type a backend holds a register of `ty` as: the vector of a
-/// `!kgen.simd` storage type, and any other type itself.
-pub fn held_simd_ty(ty: &Ty) -> Ty {
-    storage_simd(ty).unwrap_or_else(|| ty.clone())
+/// The type LLVM translation sees for a vector, its `!kgen.simd` storage,
+/// as upstream's `LowerKGENToLLVM` lowers the `SIMD` struct to its field;
+/// any other type itself.
+pub fn storage_ty(ty: &Ty) -> Ty {
+    simd_storage(ty).unwrap_or_else(|| ty.clone())
 }
 
-/// The type a backend holds a register of `ty` as: the vector of a
-/// `!kgen.simd` storage type, a `Bool` for the MLIR builtin `i1`, and any
-/// other type itself.
-pub fn held_ty(ty: &Ty) -> Ty {
+/// A `Bool` for the MLIR builtin `i1`, and any other type itself: the
+/// builtin `i1` and `Bool` are still one register type (R1612).
+pub fn i1_as_bool(ty: &Ty) -> Ty {
     match ty.kind() {
         TyKind::I1 => Ty::bool(),
-        _ => held_simd_ty(ty),
+        _ => ty.clone(),
     }
 }
 
