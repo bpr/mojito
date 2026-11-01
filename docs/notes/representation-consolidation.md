@@ -20,17 +20,16 @@ command cannot use both.
 
 1. **Finish the library `SIMD`** (conformance). The work order of 10-28
    has landed: initializers, the lane subscript, target queries, lane
-   gathers, `//` and `/`, `**`, the `reduce` tree, display through
+   gathers, `//` and `/`, `**`, `%`/`divmod`/`ceildiv` (R1623), the `reduce` tree, display through
    `write_to` on the VM, R1398 (the dead member rules), and R1399
    (`Int(x)`, `UInt(x)`, and `Float64(x)` as `SIMD.__init__` overloads).
    What is left:
-   - R1623: `%`, `divmod`, and `ceildiv` as `SIMD`'s own bodies.
    - R1664: Pliron's display through `write_to` and `write_repr_to`.
    - R1617 (an initializer called without inlining), R1793
      (`SIMD(copy=x)`), and R1777 (`_dynamic_shuffle`).
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1623 --only R1664 --only R1617 \
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1664 --only R1617 \
      --only R1793 --only R1777 -n 0
    ```
 

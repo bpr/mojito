@@ -7578,6 +7578,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Ledger name: `assets/runtime_error/div_by_zero.mojo`, which moves to
     `assets/ok` when this lands, with its errors-ledger and manifest rows.
   - Also R1738's `comptime g = x // 0` probe, whose `x` stays a literal.
+  - Probe: `W[5 % 0].n` over `struct W[n: Int]` fails its compile-time
+    run ("integer division or modulo by zero"), where the pin prints `0`;
+    `W[n % 0]` over an `Int` `n` already folds through `SIMD.__mod__`.
   - `docs/non-goals.md` no longer keeps a compile-time zero divisor an
     error: `SIMD.__floordiv__`'s mask makes the `Int` form `0`, and this
     entry makes the literal form follow `int_literal_bin`.
@@ -9748,8 +9751,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `divmod` is checked by name (`Checker::infer_divmod`).
   - Upstream declares `divmod[T: DivModable]` and `pow[T: Powable]`
     beside the traits, each returning the requirement's result.
-  - The backends run `divmod` as a builtin, and the elaborator rewrites a
-    struct operand into the dunder call.
+  - The elaborator rewrites every operand's `divmod` into its
+    `__divmod__` call; the VM's `dispatch.rs` arm and Pliron's
+    `lower/calls.rs` arm keep only an unsupported error for any other.
   - Declare both in `stdlib/std/math/math.mojo`, exported from the
     prelude, as `abs` and `round` are, and delete the builtin.
   - Delete the `round` builtin too (`Checker::infer_round`, the VM's
@@ -11264,54 +11268,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1396 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1623 `SIMD`'s `%`, `divmod`, and `ceildiv` are checker rules
-  and a trap, where upstream's are `__mod__`, `__divmod__`, and
-  `__ceildiv__` bodies**
-
-  `Int(7) % 0` traps here, where upstream's `__mod__` masks a zero divisor
-  and returns `0`, and `Float32(7.5) % 2.0` is rejected (R850).
-  - The signed branches of `__mod__` and `__divmod__` compute `self /
-    safe_divisor` over integer lanes, which routes through the landed,
-    truncating `__truediv__`; the port must not respell `/` as a raw
-    `pop.div`.
-  - Port `__mod__`, `__divmod__`, `__rmod__`, `__imod__` (`simd.mojo:1735`),
-    and `__ceildiv__` verbatim, beside the landed `__floordiv__`, and route
-    `%` in `Checker::infer_infix` as `//` is routed.
-  - `std.simd` imports `CeilDivable`, `DivModable`, and `trunc` from
-    `std.math`, and `any` from `std.builtin.bool`.
-  - `__ceildiv__`'s unsigned branch calls `divmod(self, denominator)`:
-    `Checker::infer_divmod` must type a `SIMD` pair, a symbolic one
-    included, as `Tuple[common, common]`, and the elaborator's builtin
-    rewrite (`mono/specializer.rs`) must make it `__divmod__` for every
-    `TyKind::Simd` operand.
-  - List `CeilDivable` and `DivModable` in `SIMD`'s declaration, and drop
-    their `modelled_conformance` arms.
-  - Retire the VM's `__ceildiv__`/`__divmod__` arms
-    (`backend/vm/invoke.rs`), Pliron's (`lower/methods.rs`,
-    `lower_ceildiv`), the checker's `math_operation_requirement` rows, and
-    `simd_infix` (`checker/operators.rs`), whose `Mod` arm is the last
-    `SIMD` operator rule; `builtin_fold.rs` reads `__mod__`'s inline
-    level as it reads `__floordiv__`'s.
-  - `assets/runtime_error/pliron_trap_mod_zero.mojo` then runs: move it to
-    `assets/ok` with a `print(x)`, drop its ledger and manifest rows, and
-    update `docs/non-goals.md`'s trap sentence.
-  - Add `assets/type_error/simd_bool_mask_inplace_mod.mojo` (the pin:
-    "the SIMD type must be numeric", `simd.mojo:1744`).
-  - Probe: `print(Int(7) % 0, divmod(Int(7), 0), ceildiv(UInt8(250),
-    UInt8(7)), Int(-7) % 2, Float64(-7.5) % 2.0)` prints `0 (0, 0) 36 1
-    0.5` at the pin; a 2026-10-29 prototype of this port matched it on
-    both backends once `/` truncated.
-  - Probe: `comptime r = UInt(7) % 0`, and `comptime k = n % 0` inside
-    `def f[n: Int]`, trap in their compile-time run, where the pin's
-    `__mod__` makes each `0`; `W[n % 0]` in a parameter position already
-    folds to `0`.
-  - Probe: `std/builtin/format_int.mojo`'s `ceil_div` inlines upstream's
-    `__ceildiv__` body, with its `divmod` as `//` and `%`, where
-    upstream's `_write_int` calls `value.__ceildiv__(radix)`.
-  - Closes R850.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
   upstream evaluates them and carries them to LLVM**
@@ -13292,21 +13248,6 @@ residue found inside a task moves to the task that owns its fix.
     `stdlib/std/collections/list.mojo`.
   - Found while planning R136 (2026-10-25).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R850 Float SIMD `%` is rejected**
-
-  Problem: `Float32(7.5) % Float32(2.0)` fails with "operator '%' is not
-  defined for Float32 and Float32", while the pin prints `1.5`.
-  - Float `//` runs, as upstream's `pop.floordiv` (R1392).
-  - Upstream's float `__mod__` is a library body in `std/simd.mojo`: the
-    quotient truncated, then `self - div * rhs`, plus `rhs` when the signs
-    differ. Each step rounds to the lane.
-  - Once the VM computes it, add it to `ct::float_lane_binop`, so `sccp`
-    folds it too.
-  - Closed by R1623, which ports upstream's `__mod__`.
-  - Found while landing R846 (2026-10-14).
-  - Depends on R1623.
   - Model: Opus, Not Planned.
 
 - [ ] **R1411 `std.iter.map` is not ported**

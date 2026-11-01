@@ -208,7 +208,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "call.method",
         CapabilityStatus::Partial,
-        "positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; a reference-returning `__next__`'s copy adapter copies the referent out by the `__copyinit__` it names, as a `for` loop's raising `__next__` call does",
+        "positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; a reference-returning `__next__`'s copy adapter copies the referent out by the `__copyinit__` it names, as a `for` loop's raising `__next__` call does",
     ),
     (
         "pointer.take",

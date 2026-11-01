@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `SIMD`'s `%`, `%=`, `divmod`, and `ceildiv` are upstream's `__mod__`,
+  `__rmod__`, `__imod__`, `__divmod__`, and `__ceildiv__` bodies, and every
+  `SIMD` declares `DivModable` and `CeilDivable` (R1623). An integer `%` or
+  `divmod` by zero yields `0` instead of trapping, float `%` runs
+  (`Float32(7.5) % 2.0` is `1.5`, R850), and a literal pair's `divmod`
+  binds `Int` or `Float64`. The checker's `simd_infix` rule and the VM's
+  and Pliron's `__ceildiv__`/`__divmod__` intrinsics are gone.
 - Code outside `mojito-types` no longer depends on the compiler vector
   type's layout (R1558): a vector is built through `Ty::simd`,
   `TyKind::as_simd` returns owned slots, `as_held_simd` and the public

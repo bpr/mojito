@@ -179,7 +179,7 @@ impl Checker {
         if let Some(span) = &span
             && (matches!(
                 op,
-                Add | Sub | Mul | Div | FloorDiv | Pow | BitAnd | BitOr | BitXor | Shl | Shr
+                Add | Sub | Mul | Div | FloorDiv | Mod | Pow | BitAnd | BitOr | BitXor | Shl | Shr
             ) || (comparison && self.structs.contains_key("SIMD")))
             && (lt.is_simd() || rt.is_simd())
             && !pointer_or_archetype(&lt)
@@ -196,14 +196,6 @@ impl Checker {
             return self
                 .infer_operator_call(span, op, left, right, &receiver, Some(&rt))?
                 .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
-        }
-        // `%` beside a vector is the one SIMD operator still typed here
-        // (before the scalar-numeric path, which `Int`, `UInt`, and
-        // `Float64` operands keep).
-        let vector =
-            |ty: &Ty| ty.is_simd() && !mojito_types::types::has_host_scalar_value(ty.kind());
-        if vector(&lt) || vector(&rt) {
-            return simd_infix(op, &lt, &rt);
         }
         // Arithmetic and identity comparison reason about allocation layout,
         // which an origin-bearing pointer to a single checked value does not
@@ -340,8 +332,9 @@ impl Checker {
             {
                 common
             }
-            // `%` keeps the common type until its `SIMD` dunder lands
-            // (R1623); an `IntLiteral` pair's `**` is the literal's own.
+            // `%` beside a `SIMD` is its `__mod__` above, so a literal pair
+            // keeps its common type here (`IntLiteral`'s fold, R1624); an
+            // `IntLiteral` pair's `**` is the literal's own.
             Mod => common,
             Pow if common.as_ref().is_some_and(Ty::is_int_literal) => common,
             // A literal pair divides exactly into a `FloatLiteral`, as
@@ -1398,32 +1391,4 @@ fn union_subtree_place(
         root: first.root,
         path,
     })
-}
-
-/// Type `%` beside a SIMD vector, not yet a declared dunder (R1623). Both
-/// operands must be the same SIMD type, except a numeric *literal* splats
-/// to the other operand's type; the remainder is elementwise and keeps the
-/// operand type.
-fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
-    use InfixOp::Mod;
-    let bad = || TypeError::BadOperator {
-        op: op.symbol().to_string(),
-        operands: format!("{lt} and {rt}"),
-    };
-    // Determine the common SIMD type, allowing a numeric literal on one
-    // side. The slots may be symbolic: identity is structural, and a
-    // dtype gate a symbolic lane cannot answer is the instantiation's.
-    let (dtype, width) = match (lt.as_simd(), rt.as_simd()) {
-        (Some(left), Some(right)) if left == right => left,
-        (Some((dtype, width)), _) if splats_to(rt, &dtype) => (dtype, width),
-        (_, Some((dtype, width))) if splats_to(lt, &dtype) => (dtype, width),
-        _ => return Err(bad()),
-    };
-    let same = || simd_of(dtype.clone(), width.clone());
-    match op {
-        // Remainder on integer lanes (upstream defines it on float lanes
-        // too, R850).
-        Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
-        _ => Err(bad()),
-    }
 }

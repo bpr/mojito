@@ -189,14 +189,9 @@ fn scalar_capability_manifest_and_differential() {
     // pliron-named fixture must never regress from differential to excluded.
     let count = |status: &str| rows.iter().filter(|(_, _, s, _)| s == status).count();
     let differential = count("differential");
-    let traps = count("trap-differential");
     assert!(
         differential >= 20,
         "differential coverage unexpectedly shrank: {differential} < 20"
-    );
-    assert!(
-        traps >= 2,
-        "trap-differential coverage unexpectedly shrank: {traps} < 2"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
@@ -492,12 +487,12 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 1614,
+            differential == 1616,
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 862"
         );
         assert!(
-            errors == 35,
-            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 35"
+            errors == 34,
+            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 34"
         );
         assert!(
             excluded == 0,

@@ -22,11 +22,8 @@
 # builtin (R1458).
 #
 # Each helper is generic over the trait that supplies its dunder. `SIMD`
-# declares `Absable`, `Ceilable`, `Floorable`, `Powable`, `Roundable`, and
-# `Truncable` in `std.simd`; for the other operation traits the
-# compiler-modelled `Int`, `UInt`, and `Float64` conform as upstream's
-# `SIMD` declares, other `SIMD` values do not yet (R1623), and each answers
-# a requirement intrinsically.
+# declares `Absable`, `Ceilable`, `CeilDivable`, `DivModable`, `Floorable`,
+# `Powable`, `Roundable`, and `Truncable` in `std.simd`.
 
 from std.sys import (
     CompilationTarget,

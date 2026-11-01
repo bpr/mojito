@@ -350,12 +350,6 @@ impl VmBackend {
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {
                     return crate::runtime::builtin_round_dir(method, &recv);
                 }
-                // `CeilDivable` — `x.__ceildiv__(y)`.
-                ("__ceildiv__", 1) => return crate::runtime::builtin_ceildiv(&recv, &args[0]),
-                // `DivModable` on a scalar: its builtin.
-                ("__divmod__", 1) => {
-                    return crate::runtime::builtin_divmod(recv, args[0].clone());
-                }
                 // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a
                 // `Bool` or a numeric literal: its conversion; a `SIMD`'s are
                 // its declared members. A string literal is true when

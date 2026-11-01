@@ -641,10 +641,9 @@ impl Checker {
         }
         // A scalar's `std.math` operation dunders are the methods upstream's
         // `SIMD` and `IntLiteral` declare for the trait owning each; the
-        // backends answer them intrinsically. A `SIMD`'s `__abs__`,
-        // `__floor__`, `__ceil__`, `__trunc__`, and `__round__` are its
-        // declared members and never reach here, so for the rounding ones
-        // only `IntLiteral` does.
+        // backends answer them intrinsically. A `SIMD`'s are its declared
+        // members and never reach here, so only `IntLiteral`'s rounding
+        // dunders do.
         if kwargs.is_empty()
             && param_args.is_empty()
             && let Some(trait_name) = math_operation_requirement(method, args.len())
@@ -661,13 +660,8 @@ impl Checker {
                     });
                 }
             }
-            let return_type = if method == "__divmod__" {
-                mojito_types::types::tuple_type(vec![obj_ty.clone(), obj_ty.clone()])
-            } else {
-                obj_ty.clone()
-            };
             return Ok(Ok(Some(intrinsic_resolution(
-                return_type,
+                obj_ty.clone(),
                 vec![None; param_types.len()],
                 param_types,
             ))));
@@ -729,8 +723,6 @@ fn math_operation_requirement(method: &str, argc: usize) -> Option<&'static str>
         ("__ceil__", 0) => "Ceilable",
         ("__floor__", 0) => "Floorable",
         ("__trunc__", 0) => "Truncable",
-        ("__ceildiv__", 1) => "CeilDivable",
-        ("__divmod__", 1) => "DivModable",
         _ => return None,
     })
 }

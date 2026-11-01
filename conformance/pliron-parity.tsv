@@ -476,6 +476,7 @@ assets/ok/int_literal_parameter_overload.mojo	main	exe-differential	sanitized
 assets/ok/int_literal_parameter_value.mojo	main	exe-differential	sanitized
 assets/ok/int_literal_struct.mojo	main	exe-differential	sanitized
 assets/ok/int_literal_value_type.mojo	main	exe-differential	sanitized
+assets/ok/int_mod_zero_divisor.mojo	main	exe-differential	sanitized
 assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/ok/invert_operator.mojo	main	exe-differential	sanitized
 assets/ok/is_run_in_comptime_interpreter.mojo	main	exe-differential	sanitized
@@ -1067,6 +1068,7 @@ assets/ok/simd_methods.mojo	main	exe-differential	sanitized
 assets/ok/simd_min_max_clamp.mojo	main	exe-differential	sanitized
 assets/ok/simd_mlir_storage.mojo	main	exe-differential	sanitized
 assets/ok/simd_mlir_value_inferred.mojo	main	exe-differential	sanitized
+assets/ok/simd_mod_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_modf_floor.mojo	main	exe-differential	sanitized
 assets/ok/simd_nullary_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_parameter_default_construction.mojo	main	exe-differential	sanitized
@@ -1648,7 +1650,6 @@ assets/runtime_error/pliron_raise_error_value.mojo	main,__toplevel__	error-diffe
 assets/runtime_error/pliron_raise_iter_body.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/pliron_raise_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
-assets/runtime_error/pliron_trap_mod_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
 assets/runtime_error/pointer_dangling.mojo	main,__toplevel__	error-differential	category=PointerDangling
 assets/runtime_error/pointer_double_free.mojo	main,__toplevel__	error-differential	category=PointerDoubleFree
 assets/runtime_error/pointer_use_after_free.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree

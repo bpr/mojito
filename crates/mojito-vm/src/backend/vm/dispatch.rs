@@ -584,7 +584,12 @@ impl VmBackend {
                     let sname = sname.clone();
                     return self.call_dunder(prog, &sname, "__divmod__", vec![a, b]);
                 }
-                builtin_divmod(a, b)
+                // The elaborator rewrites every other operand's `divmod`
+                // into its declared `__divmod__`.
+                Err(RuntimeError::Unsupported(format!(
+                    "divmod of a non-struct operand ({}) is not elaborated",
+                    crate::runtime::type_name(&a)
+                )))
             }
             "Error" => {
                 let mut argument = arg1(name, args)?;

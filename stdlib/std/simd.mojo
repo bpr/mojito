@@ -7,19 +7,20 @@
 # `index`, the `Scalar[Self.dtype]` splat, the element list, `FloatLiteral`,
 # and `from_bits=`, and its instance
 # `__len__`, `__getitem__`, `__setitem__`, `__contains__`, `__add__`,
-# `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, the three `__pow__`
+# `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__mod__`,
+# `__divmod__`, the three `__pow__`
 # overloads, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
 # comparisons `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, and
 # `__le__`, the elementwise `eq`, `ne`, `gt`, `ge`, `lt`, and `le` with
 # their `_Mask` alias, the `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE`
 # members over the bundled `std.utils.numerics`, the in-place `__iadd__`, `__isub__`, `__imul__`,
-# `__itruediv__`, `__ifloordiv__`, `__ipow__`, `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and
+# `__itruediv__`, `__ifloordiv__`, `__imod__`, `__ipow__`, `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and
 # `__irshift__`, the reflected `__radd__`, `__rsub__`, `__rmul__`,
-# `__rtruediv__`, `__rfloordiv__`, `__rpow__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
+# `__rtruediv__`, `__rfloordiv__`, `__rmod__`, `__rpow__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`, and
 # `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
-# `__abs__`, both `__round__` overloads, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
+# `__abs__`, both `__round__` overloads, `__hash__`, `__ceildiv__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
 # `_to_bits_signed`, `fma`, `_shuffle_variadic`, `_shuffle_list`, the two
 # variadic and the two `IndexList` `shuffle` overloads, `slice`, `insert`,
 # `join`, `interleave`, `split`, `deinterleave`, `select`, `rotate_left`,
@@ -28,8 +29,8 @@
 # `_rotate_mask`, `_shift_mask`, `_scalar_repr_alias`,
 # `_write_scalar`, `_floor`, `_pow`, `_powf_scalar`, `_powf`, `_powi`,
 # `_modf_scalar`, and `_modf`. The other
-# members are still served by the compiler or undeclared (R1623,
-# R1581, R1585, R1586; `_dynamic_shuffle` is R1777's),
+# members are still served by the compiler or undeclared (R1581,
+# R1585, R1586; `_dynamic_shuffle` is R1777's),
 # `write_padded` is not ported
 # (R1663), and the native backend's `print`, `String`, and `repr` of a value still
 # format in the compiler rather than calling `write_to` and
@@ -90,6 +91,8 @@ import std.math
 # `std.simd` cannot see while the prelude bootstraps (R894).
 from std.math import (
     Ceilable,
+    CeilDivable,
+    DivModable,
     Floorable,
     Powable,
     Roundable,
@@ -97,8 +100,9 @@ from std.math import (
     abs,
     max,
     min,
+    trunc,
 )
-from std.builtin.bool import all
+from std.builtin.bool import all, any
 from std._plugin import CurrentPlugin
 from std.sys import CompilationTarget, _RegisterPackType, llvm_intrinsic
 from std.sys.info import bit_width_of, simd_width_of
@@ -393,8 +397,10 @@ struct SIMD[dtype: DType, length: SIMDLength](
     Absable,
     Boolable,
     Ceilable,
+    CeilDivable,
     Comparable,
     Defaultable,
+    DivModable,
     Equatable,
     Floorable,
     Hashable,
@@ -1023,6 +1029,77 @@ struct SIMD[dtype: DType, length: SIMDLength](
         return is_zero_mask.select(Self(), floordiv)
 
     @inline(.nodebug)
+    def __mod__(self, rhs: Self) -> Self:
+        """Returns the remainder of self divided by rhs.
+
+        Args:
+            rhs: The value to divide with.
+
+        Returns:
+            The remainder of dividing self by rhs.
+        """
+        comptime assert Self.dtype.is_numeric(), "the type must be numeric"
+
+        var is_zero_mask = Self._Mask(fill=Self.dtype.is_integral()) and rhs.eq(
+            0
+        )
+        var safe_divisor = is_zero_mask.select(Self(1), rhs)
+
+        comptime if Self.dtype.is_unsigned():
+            var rem = Self(
+                mlir_value=__mlir_op.`pop.rem`(
+                    self._mlir_value, safe_divisor._mlir_value
+                )
+            )
+            return is_zero_mask.select(Self(), rem)
+        else:
+            var div = self / safe_divisor
+
+            comptime if Self.dtype.is_floating_point():
+                div = trunc(div)
+
+            var mod = self - div * rhs
+            var mask = (rhs.lt(0) ^ self.lt(0)) & mod.ne(0)
+            var mod_result = mod + mask.select(rhs, Self(0))
+            return is_zero_mask.select(Self(), mod_result)
+
+    @inline(.nodebug)
+    def __divmod__(self, denominator: Self) -> Tuple[Self, Self]:
+        """Computes both the quotient and remainder using floor division.
+
+        Args:
+            denominator: The value to divide on.
+
+        Returns:
+            The quotient and remainder as a
+            `Tuple(self // denominator, self % denominator)`.
+        """
+        var is_zero_mask = denominator.eq(0)
+        var safe_denominator = is_zero_mask.select(Self(1), denominator)
+
+        comptime if Self.dtype.is_unsigned():
+            var div = self // safe_denominator
+            var mod = self % safe_denominator
+            return is_zero_mask.select(Self(0), div), is_zero_mask.select(
+                Self(0), mod
+            )
+
+        var div = self / safe_denominator
+
+        comptime if Self.dtype.is_floating_point():
+            div = trunc(div)
+
+        var mod = self - div * denominator
+        var mask = (denominator.lt(0) ^ self.lt(0)) & mod.ne(0)
+
+        if any(mask):
+            div = div - mask.cast[Self.dtype]()
+
+        var div_res = is_zero_mask.select(Self(0), div)
+        var mod_res = mod + mask.select(denominator, Self(0))
+        return div_res, is_zero_mask.select(Self(0), mod_res)
+
+    @inline(.nodebug)
     def __pow__(self, exp: SIMD[_, _]) -> Self:
         """Computes the vector raised to the power of the input integer value.
 
@@ -1499,6 +1576,19 @@ struct SIMD[dtype: DType, length: SIMDLength](
         self = self // rhs
 
     @inline(.nodebug)
+    def __imod__(mut self, rhs: Self):
+        """In-place mod operator.
+
+        The vector is mutated where each element at position `i` is computed as
+        `self[i] % rhs[i]`.
+
+        Args:
+            rhs: The rhs of the operation.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        self = self.__mod__(rhs)
+
+    @inline(.nodebug)
     def __ipow__(mut self, rhs: Int):
         """In-place pow operator.
 
@@ -1655,6 +1745,19 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         comptime assert Self.dtype.is_numeric(), "the type must be numeric"
         return rhs // self
+
+    @inline(.nodebug)
+    def __rmod__(self, value: Self) -> Self:
+        """Returns `value mod self`.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value mod self`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the type must be numeric"
+        return value % self
 
     @inline(.nodebug)
     def __rpow__(self, base: Self) -> Self:
@@ -1954,6 +2057,26 @@ struct SIMD[dtype: DType, length: SIMDLength](
                 return
 
         hasher._update_with_simd(self)
+
+    @inline(.always)
+    def __ceildiv__(self, denominator: Self) -> Self:
+        """Return the rounded-up result of dividing self by denominator.
+
+
+        Args:
+            denominator: The denominator.
+
+        Returns:
+            The ceiling of dividing numerator by denominator.
+        """
+
+        comptime if Self.dtype.is_signed():
+            return -(self // -denominator)
+        # Biasing the numerator (`self + denominator - 1`) overflows and wraps
+        # when `self` is near the unsigned type's max, so correct the floor
+        # division with the remainder instead.
+        var quotient, remainder = divmod(self, denominator)
+        return quotient + remainder.ne(Self(0)).cast[Self.dtype]()
 
     # ===------------------------------------------------------------------=== #
     # Methods

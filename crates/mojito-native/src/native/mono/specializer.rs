@@ -2722,6 +2722,7 @@ impl<'a> Specializer<'a> {
                 // (`call_dunder`); rewrite them into ordinary method calls so
                 // the shared resolver and the `MethodCall` arm below
                 // monomorphize the dunder instance like any other method.
+                // A `SIMD` operand's `divmod` is its declared `__divmod__`.
                 // `Bool(x)` over a scalar operand is its `scalar.cast`; other
                 // non-struct operands pass through for the backend's scalar
                 // interception.
@@ -2766,6 +2767,7 @@ impl<'a> Specializer<'a> {
                                 operand.kind(),
                                 TyKind::Struct(..) | TyKind::StringLiteral(Some(_))
                             ) || vector(operand)
+                                || (method == "__divmod__" && operand.is_simd())
                         })
                     {
                         *instruction = dunder_method_call(

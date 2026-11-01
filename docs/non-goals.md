@@ -150,7 +150,8 @@ made a var-less introduction an error of its own
 (`conformance/assets-mojo-errors.tsv`, family `subset`); R196's landing
 left 31. R1082 withdrew two more: a `ref` binding names an origin, as
 upstream's does, and borrows nothing exclusively, so an access to its owner
-beside it is no longer rejected. Invariant 1 permits it:
+beside it is no longer rejected. R1623 withdrew one more: `Int`'s `%` by
+zero is `SIMD.__mod__`, which yields `0`. Invariant 1 permits it:
 Mojito may reject valid Mojo.
 
 - Twelve `ownership_error`/`origin_error` fixtures report `invalidated interior
@@ -161,8 +162,8 @@ Mojito may reject valid Mojo.
   sound program.
 - Six `runtime_error` fixtures trap on use-after-free, double-free, and reads of
   uninitialized `MaybeUninit` storage; the pin runs each one to exit 0.
-- Two more trap on an integer literal's `//` by zero and on `Int` modulo by
-  zero, which the pin folds or leaves to the hardware.
+- One more traps on an integer literal's `//` by zero, which the pin folds
+  (R1624).
 - `external_call_unknown_callee.mojo` names Mojito's own mechanism, the libc
   allowlist, which has no upstream counterpart to agree with.
 - `mapping_key_ref_write.mojo` and `set_element_ref_write.mojo` reject a write

@@ -45,7 +45,13 @@ impl FnLowering<'_> {
                     return self.lower_min_max_builtin(ctx, dest, name == "min", args, kwargs);
                 }
                 "round" => return self.lower_round_builtin(ctx, dest, args, kwargs),
-                "divmod" => return self.lower_divmod_builtin(ctx, dest, args, kwargs),
+                // The elaborator rewrites every non-struct operand's
+                // `divmod` into its declared `__divmod__`.
+                "divmod" => {
+                    return Err(
+                        self.unsupported_reg("`divmod` of a non-struct operand".into(), dest)
+                    );
+                }
                 "repr" if args.len() == 1 && kwargs.is_empty() => {
                     self.lower_repr_builtin(ctx, dest, args[0])?;
                     return self.own_string_result(ctx, dest);

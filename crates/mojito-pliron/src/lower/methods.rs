@@ -175,31 +175,20 @@ impl FnLowering<'_> {
         {
             return self.lower_len_builtin(ctx, dest, &[recv], &[]);
         }
-        // Unresolved scalar-receiver dunders are the VM's non-struct
-        // intrinsic dispatch (`builtin_round_dir`, `builtin_ceildiv`, and
-        // the `divmod` builtin), and an integer literal's
-        // rounding dunders; a struct receiver with its own method arrives
+        // An unresolved scalar-receiver rounding dunder is the VM's
+        // non-struct intrinsic dispatch (`builtin_round_dir`), an integer
+        // literal's included; a struct receiver with its own method arrives
         // resolved instead.
         if resolved.is_none()
+            && matches!(method, "__floor__" | "__ceil__" | "__trunc__")
+            && args.is_empty()
             && let Some(recv_ty) = self.func.reg_types.get(&recv.0).cloned()
             && (recv_ty.is_int()
                 || recv_ty.is_uint()
                 || recv_ty.is_float64()
                 || matches!(recv_ty.kind(), TyKind::IntLiteral(_)))
         {
-            match (method, args.len()) {
-                ("__floor__" | "__ceil__" | "__trunc__", 0) => {
-                    return self.lower_round_dir(ctx, dest, recv, &recv_ty, method);
-                }
-                _ if recv_ty.is_int_literal() => {}
-                ("__ceildiv__", 1) => {
-                    return self.lower_ceildiv(ctx, dest, recv, args[0], &recv_ty);
-                }
-                ("__divmod__", 1) => {
-                    return self.lower_divmod_builtin(ctx, dest, &[recv, args[0]], &[]);
-                }
-                _ => {}
-            }
+            return self.lower_round_dir(ctx, dest, recv, &recv_ty, method);
         }
         let Some(resolved) = resolved else {
             let receiver = self.func.reg_types.get(&recv.0).map_or_else(

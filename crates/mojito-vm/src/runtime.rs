@@ -934,40 +934,6 @@ pub fn builtin_round_dir(method: &str, v: &Value) -> Result<Value, RuntimeError>
     }
 }
 
-/// The intrinsic behind `math.ceildiv` — the `CeilDivable` dunder
-/// (`__ceildiv__(self, denominator) -> Self`, roadmap milestone 7): ceiling
-/// division, preserving the operand type.
-///
-/// Integer ceildiv rounds toward +∞ (`ceildiv(-7, 2) == -3`); float ceildiv is
-/// `ceil(a / b)`.
-pub fn builtin_ceildiv(a: &Value, b: &Value) -> Result<Value, RuntimeError> {
-    match (a, b) {
-        // Ceiling = negated floor of the negated numerator (Python flooring).
-        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(-floor_div(-*x, nonzero(*y)?))),
-        (Value::UInt(x), Value::UInt(y)) => {
-            let y = nonzero_u(*y)?;
-            Ok(Value::UInt(x / y + u64::from(x % y != 0)))
-        }
-        (Value::Float64(x), Value::Float64(y)) => Ok(Value::Float64((x / y).ceil())),
-        _ => Err(RuntimeError::TypeError(format!(
-            "__ceildiv__ expects two numeric values of the same type, got {} and {}",
-            type_name(a),
-            type_name(b)
-        ))),
-    }
-}
-
-/// Primitive core of `divmod(a, b)` (`DivModable`): compute `(a // b, a % b)`
-/// in private pack storage using the operators' flooring rules.
-///
-/// The VM wraps this transient value in the checker-selected nominal public
-/// Tuple before it crosses the instruction-result boundary.
-pub fn builtin_divmod(a: Value, b: Value) -> Result<Value, RuntimeError> {
-    let q = apply_infix(InfixOp::FloorDiv, a.clone(), b.clone())?;
-    let r = apply_infix(InfixOp::Mod, a, b)?;
-    Ok(Value::Tuple(vec![q, r]))
-}
-
 /// `Error(msg)`: wrap a `String` into an `Error` value.
 pub fn builtin_error(v: Value) -> Result<Value, RuntimeError> {
     match v {

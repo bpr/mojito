@@ -240,9 +240,8 @@ impl Checker {
     /// `Self.ok(n)`, `G[1].ok(n)`), a method of `self` or of a `Self`
     /// parameter no overload of which is builtin (`self.ord()`), an
     /// operator over a non-literal operand whose `SIMD` dunder is not
-    /// builtin (`//`, `SIMD.__floordiv__`), `%` or `**` over one (their
-    /// dunders are not ported, R1623 and R1567, and upstream's are not
-    /// builtin), or arithmetic converting a `FloatLiteral` operand.
+    /// builtin (`//`, `%`, or `**`: `SIMD.__floordiv__`, `__mod__`, and
+    /// `__pow__`), or arithmetic converting a `FloatLiteral` operand.
     fn non_builtin_operation(
         &self,
         declaration: &ApplicableDeclaration<'_>,
@@ -288,10 +287,9 @@ impl Checker {
                     ) => {
                         !(matches!(left.kind, ExprKind::Int(_))
                             && matches!(right.kind, ExprKind::Int(_)))
-                            && (*op == InfixOp::Mod
-                                || op.dunder().is_none_or(|dunder| {
-                                    !self.checker.simd_dunder_is_builtin(dunder)
-                                }))
+                            && op
+                                .dunder()
+                                .is_none_or(|dunder| !self.checker.simd_dunder_is_builtin(dunder))
                     }
                     ExprKind::Infix(
                         InfixOp::Add | InfixOp::Sub | InfixOp::Mul | InfixOp::Div,

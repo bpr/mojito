@@ -944,17 +944,27 @@ impl Checker {
     }
 
     /// Type the prelude built-in `divmod(a, b)` (`DivModable`) → `Tuple[T, T]`:
-    /// two numeric arguments of a common type (like an operator), or two equal
-    /// opaque type parameters bounded by `DivModable`.
+    /// two numeric arguments of a common type (like an operator), a literal
+    /// one materialized to its default (`Int`, `Float64`) as upstream's `T`
+    /// binds it, or two equal `SIMD` types or opaque type parameters bounded
+    /// by `DivModable`. The elaborator makes each its operand's `__divmod__`.
     pub(super) fn infer_divmod(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("divmod", 2, args)?;
         if let Some(common) = common_numeric(&tys[0], &tys[1]) {
+            let common = mojito_types::types::default_literal(&common);
+            for (arg, ty) in args.iter().zip(&tys) {
+                if *ty != common {
+                    self.record_literal_materializations(arg, ty, &common)?;
+                }
+            }
             return Ok(mojito_types::types::tuple_type(vec![
                 common.clone(),
                 common,
             ]));
         }
-        if tys[0] == tys[1] && self.param_has_bound(&tys[0], &super::math_trait("DivModable")) {
+        if tys[0] == tys[1]
+            && (tys[0].is_simd() || self.param_has_bound(&tys[0], &super::math_trait("DivModable")))
+        {
             return Ok(mojito_types::types::tuple_type(vec![
                 tys[0].clone(),
                 tys[0].clone(),
