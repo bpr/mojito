@@ -541,20 +541,17 @@ mod tests {
                 structure(
                     "Arr",
                     value_decl("Arr", "n"),
-                    vec![
-                        TyKind::simd(
-                            SimdDtype::Known(mojito_ast::ast::Dtype::Int64),
-                            SimdWidth::Expr(
-                                mojito_types::types::simd_length_converted(
-                                    &ParamContext::detached(),
-                                    "SIMDLength.__init__$ov$Int",
-                                    &width,
-                                )
-                                .expect("an Int converts"),
-                            ),
-                        )
-                        .into(),
-                    ],
+                    vec![Ty::simd(
+                        SimdDtype::Known(mojito_ast::ast::Dtype::Int64),
+                        SimdWidth::Expr(
+                            mojito_types::types::simd_length_converted(
+                                &ParamContext::detached(),
+                                "SIMDLength.__init__$ov$Int",
+                                &width,
+                            )
+                            .expect("an Int converts"),
+                        ),
+                    )],
                 ),
                 structure(
                     "Holder",

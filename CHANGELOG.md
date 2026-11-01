@@ -6,6 +6,16 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Changed
+
+- Code outside `mojito-types` no longer depends on the compiler vector
+  type's layout (R1558): a vector is built through `Ty::simd`,
+  `TyKind::as_simd` returns owned slots, `as_held_simd` and the public
+  `TyKind::INT`, `UINT`, and `FLOAT64` pattern constants are gone, and
+  `TyKind::simd` is retired. No behavior changes. Holding a `SIMD`
+  register as its storage and deleting the variant are R1798, R1799,
+  and R1800.
+
 ### Added
 
 - A call of a generic `comptime` alias's application constructs the type

@@ -231,8 +231,7 @@ pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
 }
 
 /// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`: a **width-1 `float64`**
-/// is the native `TyKind::FLOAT64` (Mojo unifies `Float64` with `SIMD[DType.float64,
-/// 1]`); everything else is a `TyKind::Simd`.
+/// is `Ty::float64()` (Mojo unifies `Float64` with `SIMD[DType.float64, 1]`).
 pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {
     mojito_types::types::canonical_simd_ty(dtype, width)
 }

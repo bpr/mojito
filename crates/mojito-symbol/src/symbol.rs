@@ -3357,7 +3357,7 @@ struct TypeNameSpeller<'a> {
 impl TypeNameSpeller<'_> {
     fn name(&self, ty: &Ty) -> String {
         if let Some((dtype, width)) = ty.as_simd() {
-            return self.simd(dtype, width);
+            return self.simd(&dtype, &width);
         }
         match ty.kind() {
             TyKind::IntLiteral(_) => self.simd(&"DType.int", &1),

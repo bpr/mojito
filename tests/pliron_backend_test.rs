@@ -1188,9 +1188,9 @@ mod native_abi_cross_checks {
         fn ty(&self, structs: &StructFieldIndex, ty: &Ty) -> LLVMTypeRef {
             unsafe {
                 match ty.kind() {
-                    TyKind::INT | TyKind::UINT => LLVMInt64TypeInContext(self.ctx),
+                    kind if kind.is_int() || kind.is_uint() => LLVMInt64TypeInContext(self.ctx),
                     TyKind::Bool => LLVMInt1TypeInContext(self.ctx),
-                    TyKind::FLOAT64 => LLVMDoubleTypeInContext(self.ctx),
+                    kind if kind.is_float64() => LLVMDoubleTypeInContext(self.ctx),
                     TyKind::None => self.strukt(&[]),
                     TyKind::Pointer { .. } | TyKind::Ref(_) => {
                         LLVMPointerTypeInContext(self.ctx, 0)
@@ -1224,7 +1224,7 @@ mod native_abi_cross_checks {
                     // alignment, byte-per-lane Bool), never an LLVM vector
                     // type: the backend computes in vectors but stores in
                     // this shape.
-                    TyKind::Simd { .. } => {
+                    kind if kind.is_simd() => {
                         let (dtype, width) =
                             simd_shape(ty).expect("a layout test names a concrete SIMD type");
                         let lane = match dtype {

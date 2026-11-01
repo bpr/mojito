@@ -2357,7 +2357,7 @@ impl Checker {
 /// `Float64` included. `None` for any other type: a `Bool` or a literal
 /// type has no `dtype`.
 pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<SimdDtype, TypeError>> {
-    ty.as_simd().map(|(dtype, _)| Ok(dtype.clone()))
+    ty.as_simd().map(|(dtype, _)| Ok(dtype))
 }
 
 impl Checker {

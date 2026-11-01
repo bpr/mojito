@@ -2041,7 +2041,7 @@ impl Checker {
             };
         }
         if let Some((dtype, SimdWidth::Known(1))) = to.as_simd()
-            && splats_to(from, dtype)
+            && splats_to(from, &dtype)
         {
             self.record_literal_materializations(expression, from, to)?;
             return Ok(true);
@@ -2098,7 +2098,7 @@ impl Checker {
         {
             return self.record_instance_assertion(
                 &expression.source_span(),
-                width,
+                &width,
                 mojito_types::types::BOOL_MASK_CONVERSION_MESSAGE,
             );
         }

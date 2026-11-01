@@ -555,18 +555,18 @@ pub enum JitValue {
 pub enum RetKind {
     /// `TyKind::None` — no return value.
     Void,
-    /// `TyKind::INT` — signed i64.
+    /// `Int` — signed i64.
     I64,
-    /// `TyKind::UINT` — the i64 bits reinterpret as u64.
+    /// `UInt` — the i64 bits reinterpret as u64.
     U64,
-    /// `TyKind::FLOAT64` — f64.
+    /// `Float64` — f64.
     F64,
     /// `TyKind::Bool` — i1 (read as u8, low bit significant).
     Bool,
     /// `TyKind::Pointer` — an opaque pointer. Compiles; the value-comparing JIT
     /// harness refuses to read it (a raw address has no VM display analog).
     Ptr,
-    /// A width-1 SIMD scalar alias (`TyKind::Simd { dtype, width: 1 }`): the
+    /// A width-1 SIMD scalar alias (`Scalar[dtype]`): the
     /// native return is the lane type; the JIT reads it back as the VM's
     /// mathematical lane value (sign/zero-extended integer, f64 view of a
     /// `Float32`; a `Float16` return is refused).

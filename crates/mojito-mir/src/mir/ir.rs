@@ -4984,10 +4984,10 @@ mod tests {
     fn folded_constant_folds_a_self_comparison_of_int_like_values() {
         use mojito_types::ct::CtLane;
         use mojito_types::types::{SimdDtype, SimdWidth};
-        let simd = |dtype, width| TyKind::simd(SimdDtype::Known(dtype), SimdWidth::Known(width));
+        let simd = |dtype, width| Ty::simd(SimdDtype::Known(dtype), SimdWidth::Known(width));
 
-        let compare = |op, operand: TyKind, dest: TyKind| {
-            let reg_types = HashMap::from([(0, Ty::new(operand)), (1, Ty::new(dest))]);
+        let compare = |op, operand: Ty, dest: Ty| {
+            let reg_types = HashMap::from([(0, operand), (1, dest)]);
             MirInstr::BinOp {
                 op,
                 dest: Reg(1),
@@ -5007,13 +5007,9 @@ mod tests {
             (InfixOp::Ge, true),
             (InfixOp::Eq, true),
         ] {
-            for operand in [
-                Ty::int().kind().clone(),
-                Ty::uint().kind().clone(),
-                TyKind::Bool,
-            ] {
+            for operand in [Ty::int(), Ty::uint(), Ty::bool()] {
                 assert!(matches!(
-                    compare(op, operand, TyKind::Bool),
+                    compare(op, operand, Ty::bool()),
                     Some(Const::Bool(value)) if value == holds
                 ));
             }
@@ -5022,17 +5018,10 @@ mod tests {
                 Some(Const::Value(CtValue::Simd { dtype: Dtype::Bool, lanes }))
                     if lanes == vec![CtLane::Bool(holds); 4]
             ));
-            assert!(compare(op, Ty::float64().kind().clone(), TyKind::Bool).is_none());
+            assert!(compare(op, Ty::float64(), Ty::bool()).is_none());
             assert!(compare(op, simd(Dtype::Float32, 4), simd(Dtype::Bool, 4)).is_none());
         }
-        assert!(
-            compare(
-                InfixOp::Add,
-                Ty::int().kind().clone(),
-                Ty::int().kind().clone()
-            )
-            .is_none()
-        );
+        assert!(compare(InfixOp::Add, Ty::int(), Ty::int()).is_none());
     }
 
     #[test]

@@ -417,7 +417,7 @@ impl ScopeCx<'_> {
                 | MirInstr::SimdCast { dtype, width, .. }
                 | MirInstr::SimdBitcast { dtype, width, .. } = instruction
                 {
-                    let built = Ty::new(TyKind::simd(dtype.clone(), width.clone()));
+                    let built = Ty::simd(dtype.clone(), width.clone());
                     self.walk(&format!("block {index} vector slots"), &built);
                 }
                 let projected = instruction_places(instruction)
@@ -1104,7 +1104,7 @@ mod tests {
         let context = ParamContext::detached();
         let dt = context.decl_ref(ParamId::new("f", 0), "dt", MetaTy::value(Ty::dtype()));
         let width = context.decl_ref(ParamId::new("f", 1), "width", MetaTy::int());
-        let symbolic = TyKind::simd(SimdDtype::Expr(dt), SimdWidth::Expr(length_of(&width)));
+        let symbolic = Ty::simd(SimdDtype::Expr(dt), SimdWidth::Expr(length_of(&width)));
         let function = function_with(vec![symbolic.into()]);
         let declarations = declarations(
             "f",
@@ -1131,25 +1131,19 @@ mod tests {
         let foreign = context.decl_ref(ParamId::new("g", 0), "n", MetaTy::int());
         let flag = context.decl_ref(ParamId::new("f", 0), "flag", MetaTy::bool());
         let declarations = declarations("f", vec![value_decl("f", 0, "flag", Ty::bool())]);
-        let unbound = function_with(vec![
-            TyKind::simd(
-                SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                SimdWidth::Expr(length_of(&foreign)),
-            )
-            .into(),
-        ]);
+        let unbound = function_with(vec![Ty::simd(
+            SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+            SimdWidth::Expr(length_of(&foreign)),
+        )]);
         assert!(
             findings(&unbound, &declarations)
                 .iter()
                 .any(|finding| finding.contains("no enclosing declaration binds")),
         );
-        let mistyped = function_with(vec![
-            TyKind::simd(
-                SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                SimdWidth::Expr(flag),
-            )
-            .into(),
-        ]);
+        let mistyped = function_with(vec![Ty::simd(
+            SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+            SimdWidth::Expr(flag),
+        )]);
         assert!(
             findings(&mistyped, &declarations)
                 .iter()
@@ -1247,13 +1241,10 @@ mod tests {
         let mut erased = function_with(vec![boxed.into()]);
         erased.removed_params = vec![ParamId::new("f", 0)];
         assert_eq!(findings(&erased, &declarations), Vec::<String>::new());
-        let mut read = function_with(vec![
-            TyKind::simd(
-                SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                SimdWidth::Expr(length_of(&n)),
-            )
-            .into(),
-        ]);
+        let mut read = function_with(vec![Ty::simd(
+            SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+            SimdWidth::Expr(length_of(&n)),
+        )]);
         read.removed_params = vec![ParamId::new("f", 0)];
         let found = findings(&read, &declarations);
         assert!(
@@ -1277,7 +1268,7 @@ mod tests {
         thunk.lowered_name = lifted.into();
         declarations.functions.push(thunk);
         let width = |argument: &ParamExpr| {
-            TyKind::simd(
+            Ty::simd(
                 SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
                 SimdWidth::Expr(length_of(&context.apply(
                     lifted,
@@ -1285,7 +1276,6 @@ mod tests {
                     MetaTy::int(),
                 ))),
             )
-            .into()
         };
         let mut erased = function_with(vec![width(&n)]);
         erased.removed_params = vec![ParamId::new("f", 0)];
@@ -1427,11 +1417,10 @@ mod tests {
         let callable = context.decl_ref(ParamId::new("$callable", 0), "index", MetaTy::int());
         let function = function_with(vec![
             TyKind::Dependent(DependentType::Parameter(element)).into(),
-            TyKind::simd(
+            Ty::simd(
                 SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
                 SimdWidth::Expr(length_of(&callable)),
-            )
-            .into(),
+            ),
         ]);
         let mut declarations = declarations(
             "Bag.first",

@@ -653,7 +653,7 @@ fn const_value_and_param_field_round_trip() {
             k: Const::Param(rows),
         },
     ];
-    let vector = TyKind::simd(
+    let vector = Ty::simd(
         mojito_types::types::SimdDtype::Known(Dtype::UInt64),
         mojito_types::types::SimdWidth::Known(2),
     );
@@ -2140,10 +2140,10 @@ fn symbolic_simd_slots_round_trip() {
         .infix(InfixOp::Mul, &n, &constant(CtValue::Int(2)))
         .expect("Int * Int builds");
     let dtype = context.decl_ref(ParamId::new("f", 1), "dt", MetaTy::value(Ty::dtype()));
-    let symbolic = Ty::new(TyKind::simd(
+    let symbolic = Ty::simd(
         mojito_types::types::SimdDtype::Expr(dtype),
         width_of(&width),
-    ));
+    );
     let program = program_with(vec![(
         "main".into(),
         function_with(vec![symbolic.clone()], Vec::new()),
@@ -3470,20 +3470,17 @@ fn param_apply_list_get_and_reflect_round_trip() {
     );
     let static_method = context.dtype_float_query("mantissa_width", &dt);
     let types = vec![
-        TyKind::Dependent(DependentType::Parameter(element)),
-        TyKind::Dependent(DependentType::Parameter(reflected)),
-        TyKind::simd(
+        Ty::new(TyKind::Dependent(DependentType::Parameter(element))),
+        Ty::new(TyKind::Dependent(DependentType::Parameter(reflected))),
+        Ty::simd(
             mojito_types::types::SimdDtype::Known(Dtype::Float32),
             width_of(&applied),
         ),
-        TyKind::simd(
+        Ty::simd(
             mojito_types::types::SimdDtype::Known(Dtype::Float32),
             width_of(&static_method),
         ),
-    ]
-    .into_iter()
-    .map(Ty::new)
-    .collect::<Vec<_>>();
+    ];
     let program = program_with(vec![(
         "main".into(),
         function_with(types.clone(), Vec::new()),

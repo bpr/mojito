@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn width_one_simd_scalars_store_at_lane_width() {
-        let scalar = |dtype| Ty::new(TyKind::simd(SimdDtype::Known(dtype), SimdWidth::Known(1)));
+        let scalar = |dtype| Ty::simd(SimdDtype::Known(dtype), SimdWidth::Known(1));
         assert_eq!(layout_of(&scalar(Dtype::Int8)), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&scalar(Dtype::UInt8)), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&scalar(Dtype::Int16)), Ok(Layout::new(2, 2)));
@@ -520,14 +520,14 @@ mod tests {
             name: "T".into(),
         };
         for ty in [
-            TyKind::Param {
+            Ty::new(TyKind::Param {
                 binder,
                 bounds: Vec::new(),
                 callable_bound: None,
-            },
-            TyKind::Infer,
-            TyKind::SelfType,
-            TyKind::simd(
+            }),
+            Ty::new(TyKind::Infer),
+            Ty::new(TyKind::SelfType),
+            Ty::simd(
                 mojito_types::types::SimdDtype::Known(Dtype::Int32),
                 mojito_types::types::SimdWidth::Expr(
                     mojito_types::types::simd_length_converted(
@@ -538,15 +538,13 @@ mod tests {
                     .expect("an Int converts"),
                 ),
             ),
-            TyKind::Struct(
+            Ty::new(TyKind::Struct(
                 "Buf".into(),
                 vec![mojito_types::types::TyArg::Val(
                     mojito_types::ct::CtValue::Expr(width),
                 )],
-            ),
-        ]
-        .map(Ty::new)
-        {
+            )),
+        ] {
             assert!(
                 matches!(layout_of(&ty), Err(LayoutError::Symbolic(_))),
                 "{ty} should be refused as symbolic"

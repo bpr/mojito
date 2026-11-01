@@ -1084,37 +1084,37 @@ impl Ty {
     pub fn as_generic_func(&self) -> Option<&GenericFuncTy> {
         self.kind().as_generic_func()
     }
+
+    /// A `SIMD[dtype, width]` vector over slots as given: ones read off
+    /// another vector or a MIR instruction, already canonical. New slots go
+    /// through [`simd_ty_from_slots`].
+    pub fn simd(dtype: SimdDtype, width: SimdWidth) -> Self {
+        Self::new(TyKind::Simd { dtype, width })
+    }
 }
 
 impl TyKind {
-    /// `Int`, upstream's `Scalar[DType.int]`.
-    pub const INT: &'static Self = &Self::Simd {
-        dtype: SimdDtype::Known(Dtype::Int),
-        width: SimdWidth::Known(1),
-    };
-    /// `UInt`, upstream's `Scalar[DType.uint]`.
-    pub const UINT: &'static Self = &Self::Simd {
-        dtype: SimdDtype::Known(Dtype::UInt),
-        width: SimdWidth::Known(1),
-    };
-    /// `Float64`, upstream's `Scalar[DType.float64]`.
-    pub const FLOAT64: &'static Self = &Self::Simd {
-        dtype: SimdDtype::Known(Dtype::Float64),
-        width: SimdWidth::Known(1),
-    };
     /// The value-less `StringLiteral` ([`TyKind::StringLiteral(_)`]).
     pub const STRING_LITERAL: &'static Self = &Self::StringLiteral(None);
     /// The value-less `IntLiteral` ([`TyKind::IntLiteral(_)`]).
     pub const INT_LITERAL: &'static Self = &Self::IntLiteral(None);
     /// The value-less `FloatLiteral` ([`TyKind::FloatLiteral(_)`]).
     pub const FLOAT_LITERAL: &'static Self = &Self::FloatLiteral(None);
-
-    /// A `SIMD[dtype, width]` vector over slots as given: ones read off
-    /// another vector or a MIR instruction, already canonical. New slots go
-    /// through [`simd_ty_from_slots`].
-    pub const fn simd(dtype: SimdDtype, width: SimdWidth) -> Self {
-        Self::Simd { dtype, width }
-    }
+    /// `Int`, upstream's `Scalar[DType.int]`.
+    pub(crate) const INT: &'static Self = &Self::Simd {
+        dtype: SimdDtype::Known(Dtype::Int),
+        width: SimdWidth::Known(1),
+    };
+    /// `UInt`, upstream's `Scalar[DType.uint]`.
+    pub(crate) const UINT: &'static Self = &Self::Simd {
+        dtype: SimdDtype::Known(Dtype::UInt),
+        width: SimdWidth::Known(1),
+    };
+    /// `Float64`, upstream's `Scalar[DType.float64]`.
+    pub(crate) const FLOAT64: &'static Self = &Self::Simd {
+        dtype: SimdDtype::Known(Dtype::Float64),
+        width: SimdWidth::Known(1),
+    };
 
     /// Whether this is `Int`.
     pub const fn is_int(&self) -> bool {
@@ -1139,9 +1139,9 @@ impl TyKind {
     }
 
     /// The dtype and width slots of a `SIMD` vector, symbolic or not.
-    pub const fn as_simd(&self) -> Option<(&SimdDtype, &SimdWidth)> {
+    pub fn as_simd(&self) -> Option<(SimdDtype, SimdWidth)> {
         match self {
-            Self::Simd { dtype, width } => Some((dtype, width)),
+            Self::Simd { dtype, width } => Some((dtype.clone(), width.clone())),
             _ => None,
         }
     }
@@ -1154,15 +1154,6 @@ impl TyKind {
                 dtype: SimdDtype::Known(dtype),
                 width: SimdWidth::Known(width),
             } => Some((*dtype, *width)),
-            _ => None,
-        }
-    }
-
-    /// The slots of a register a backend holds as a vector, borrowed: a
-    /// `SIMD` value or its `!kgen.simd` storage ([`held_simd_slots`]).
-    pub const fn as_held_simd(&self) -> Option<(&SimdDtype, &SimdWidth)> {
-        match self {
-            Self::Simd { dtype, width } | Self::KgenSimd { dtype, width } => Some((dtype, width)),
             _ => None,
         }
     }
@@ -3470,7 +3461,7 @@ pub fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
 /// A slot whose expression is a closed constant becomes `Known`, and two
 /// known slots canonicalize through [`canonical_simd_ty`]. This is the
 /// constructor of a symbolic `TyKind::Simd` from new slots, so `Expr` never
-/// holds a closed expression; [`TyKind::simd`] only reassembles slots read
+/// holds a closed expression; [`Ty::simd`] only reassembles slots read
 /// off a vector or a MIR instruction.
 pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, ParamError> {
     let dtype = match dtype {

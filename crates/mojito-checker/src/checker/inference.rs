@@ -531,12 +531,12 @@ impl Checker {
                         .borrow()
                         .contains_key(&expr.source_span())
                 {
-                    Some((dtype.clone(), width.clone()))
+                    Some((dtype, width))
                 } else if name == "SIMD" {
                     self.simd_dims(param_args).ok().map(|(dtype, width, _)| {
                         // An unbound `_` is the width the construction bound.
                         let width = match ty.as_simd() {
-                            Some((_, bound)) if width.is_inferred() => bound.clone(),
+                            Some((_, bound)) if width.is_inferred() => bound,
                             _ => width,
                         };
                         (dtype, width)

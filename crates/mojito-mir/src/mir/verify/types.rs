@@ -789,7 +789,7 @@ mod tests {
         // A symbolic lane width crosses as a parameter expression; a hole
         // in it is the same boundary error as anywhere else.
         let symbolic = |width: mojito_types::param_expr::ParamExpr| {
-            Ty::new(TyKind::simd(
+            Ty::simd(
                 mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
                 mojito_types::types::SimdWidth::Expr(
                     mojito_types::types::simd_length_converted(
@@ -799,7 +799,7 @@ mod tests {
                     )
                     .expect("an Int converts"),
                 ),
-            ))
+            )
         };
         assert!(
             super::super::calls::validate_dependent_bindings(&symbolic(context.decl_ref(

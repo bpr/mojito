@@ -17,7 +17,7 @@ use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_types::param_expr::ParamRef;
 use mojito_types::types::{
-    GenericConstraint, LaneMask, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, TyKind, VariantIndex,
+    GenericConstraint, LaneMask, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, VariantIndex,
 };
 
 /// Where a visited type sits. A client that treats sites differently
@@ -518,7 +518,7 @@ fn visit_vector_slots<V: MutTypeVisitor + ?Sized>(
     dtype: &mut SimdDtype,
     width: &mut SimdWidth,
 ) -> Result<(), V::Error> {
-    let mut built = Ty::new(TyKind::simd(dtype.clone(), width.clone()));
+    let mut built = Ty::simd(dtype.clone(), width.clone());
 
     visitor.visit_ty(&mut built, TySite::VectorSlots)?;
     if let Some((visited_dtype, visited_width)) = mojito_types::types::simd_slots(&built) {
@@ -592,7 +592,7 @@ mod tests {
     fn visit_walk_reaches_every_site_kind() {
         let int = || Ty::int();
         let mut place = MirPlace::root(0, Some(int()));
-        place.project(Proj::Variant(VariantIndex::Known(0)), Ty::new(TyKind::Bool));
+        place.project(Proj::Variant(VariantIndex::Known(0)), Ty::bool());
         let region = vec![MirBlock {
             instrs: vec![MirInstr::MaterializeLiteral {
                 dest: Reg(5),

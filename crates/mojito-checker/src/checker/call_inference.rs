@@ -562,7 +562,7 @@ impl Checker {
                 .declared_simd_construction(span, Some(instance), &[], args, kwargs)
                 .unwrap_or_else(|| {
                     super::calls::reject_kwargs(kwargs)?;
-                    self.construct_simd(span, dtype, width, args)
+                    self.construct_simd(span, &dtype, &width, args)
                 }),
             // An origin slot the arguments leave open is the instance's.
             TyKind::Struct(name, expected) => self

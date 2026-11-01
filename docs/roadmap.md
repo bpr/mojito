@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1798**.
+Next free ID: **R1802**.
 
 ## Ordered Work
 
@@ -11330,27 +11330,100 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1558 MIR and the backends hold a `SIMD` value as a vector type,
-  where upstream holds the struct as its `!kgen.simd` field**
+- [ ] **R1798 The verifier and both backends treat a `SIMD` value and its
+  `!kgen.simd` storage as one held type, where upstream lowers the struct to
+  its storage field**
+
+  `types::held_simd_ty` maps a `!kgen.simd` storage type to the vector
+  type, the reverse of upstream's `LowerKGENToLLVM`, which lowers the
+  register-passable `SIMD` struct to its `!pop.simd` field.
+  - Sites: `verify/instr.rs` (about fifteen `held_simd_*` comparisons),
+    `verify/types.rs`'s `held_ty`, `verify/concrete.rs`,
+    `verify/calls.rs`, `mono/gather.rs`, `mono/symbolic.rs`, and
+    `mir/ir.rs`'s constant folder.
+  - Lever: `MirDeclarations::translated_type` translates a vector to its
+    storage (one transitional arm, which R1800 deletes), and the verifier
+    compares translated types, threading `&MirDeclarations` into the
+    `instr.rs` rules.
+  - Slots of either form come from one new `types::vector_slots`.
+  - `mojito-native-core`'s `layout_of` lays out `KgenSimd` as the vector
+    does today, and a vector delegates to its storage.
+  - Pliron's `lower_ty` maps a register's type through `translated_type`
+    before classifying it, so `Int` stays an SSA `i64`. `lower/support.rs`
+    (`simd_dims`, `scalar_type`) and `lower/abi.rs` key on the storage.
+  - `held_ty`'s `i1`-as-`Bool` half belongs to R1612. Keep it under a
+    name that says only that.
+  - Done when `rg held_simd` is empty and `assets/ok/simd_*.mojo` run
+    unchanged on both backends.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1799 Holding a one-field `TrivialRegisterPassable` struct as its
+  field is a VM rewrite, where upstream's lowering does it for every
+  backend**
+
+  `hold_register_fields` (`mojito-vm/src/backend/vm.rs`) rewrites a
+  `Proj::Field` on a held struct to `Proj::Rebind`, but Pliron never sees
+  that rewrite and lays the struct out as a memory aggregate.
+  - Lever: move the rewrite into a post-elaboration MIR pass
+    (`mojito-analysis/src/analysis/post_elaboration.rs`), so both backends
+    consume rebound places, as `LowerKGENToLLVM` is one lowering.
+  - Check that Pliron's place lowering handles `Proj::Rebind` on a
+    scalar-held root, and add that handling if it does not.
+  - Pliron's `lower_ty` classifies a held struct through
+    `MirDeclarations::translated_type`, as R1798 makes it for `SIMD`.
+  - Probe: R1396's held structs (`assets/ok/` fixtures over a one-field
+    `TrivialRegisterPassable` struct) on `--backend pliron`.
+  - Depends on R1798 (`lower_ty` through `translated_type`).
+  - Model: Fable, Not Planned.
+
+- [ ] **R1800 Below the checker a `SIMD` application is the compiler's
+  vector type `TyKind::Simd`, where upstream holds the declared struct**
 
   The `Ty::new` bridge (`types::bridged_simd`) interns the declared
-  struct's `SIMD[...]` application as `TyKind::Simd`, and the MIR verifier
-  compares it with `TyKind::KgenSimd` as one held representation
-  (`verify/types.rs`, `types::held_simd_ty`).
-  - Delete the bridge, `nominal_parts`' `Simd` arm and
-    `simd_struct_arguments`, and `self_receiver_ty`'s `SIMD` arm
-    (`mojito-mir`), which read `SIMD`'s identity through it.
-  - Delete the nominal `TyKind::Simd`. `KgenSimd` is the only vector type.
-  - A `SIMD` register is a held one-field struct (R1396's rule,
-    `MirDeclarations::translated_type` for Pliron).
-  - Delete the verifier's equivalence and the `held_simd_*` helpers.
-  - Code outside `mojito-types` reads the variant through `TyKind`'s
-    accessors (`as_simd`, `known_simd`, `as_held_simd`, `is_simd`) since
-    R1556. Only four exhaustive walks still name it: `mir::text`'s
+  struct's `SIMD[...]` application as `TyKind::Simd`, and `v._mlir_value`
+  is not a field read but the value's own register
+  (`SemanticAdjustment::SimdStorage`).
+  - Constructors (`canonical_simd_ty`, `simd_ty_from_slots`, `Ty::simd`,
+    `Ty::int()` and its siblings) build `TyKind::Struct("SIMD", …)`, and
+    `TyKind`'s accessors (`as_simd`, `known_simd`, `is_simd`, `is_int`, …)
+    decode it. Code outside `mojito-types` already reads `SIMD` only
+    through them.
+  - Replace the bridge with struct-argument canonicalization, so `Int`,
+    `Scalar[DType.int]`, and `SIMD[DType.int, SIMDLength(1)]` stay one
+    type.
+  - Delete `TyKind::Simd`, `simd_struct_arguments`, `nominal_parts`'
+    `Simd` arm, `self_receiver_ty`'s `SIMD` arm, `SimdStorage`, and
+    `is_simd_storage`. `v._mlir_value` projects `Proj::Field`.
+  - Delete `translated_type`'s transitional vector arm (R1798): the
+    declaration's `register_field` answers.
+  - The exhaustive walks naming the variant: `mir::text`'s
     `type_spelling`, `text/write.rs`'s type record, `verify/scope.rs`'s
-    walk, and the checker's `type_is_symbolic`.
-  - Depends on R1557, R1791, and R1792.
+    walk, and the checker's `type_is_symbolic`. Each keeps its spelling
+    through an accessor arm above its `TyKind::Struct` arm, as do
+    `TyKind`'s `Display` and `symbol.rs`'s `ty_raw`, so diagnostics,
+    instance symbols, and MIR-text fixtures do not change.
+  - SROA's `splittable_type` must not split a struct `register_field`
+    answers for, or every `Int` slot splits.
+  - The elaborator's `substitute_ty` renames a closed `SIMD` to the
+    instance `declare_simd_instance` declares.
+  - Depends on R1798 and R1799.
   - Model: Fable, Planned.
+
+- [ ] **R1801 MIR's builtin `binary`, `MakeSimd`, lane, and cast
+  instructions take a `SIMD` struct register, where upstream's `pop` ops
+  take only its `!pop.simd` storage**
+
+  Canonicalization folds an inlined dunder back into one `binary` over the
+  struct, so `i < n` over `Int` compares two `SIMD` registers, not their
+  storage fields.
+  - This is why `types::vector_slots` (R1798) reads slots off either a
+    vector or its storage.
+  - Lever: lower compiler arithmetic as `pop` ops over `_mlir_value` field
+    reads, and let canonicalization fold the `pop` chain without leaving
+    the storage type. `vector_slots` then narrows to `KgenSimd`.
+  - Depends on R1800.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1618 A compile-time argument computed by an inlined dunder keeps
   its function's parameter**

@@ -737,11 +737,11 @@ fn checked_hir_reference_yielding_call_next_retains_a_reference_result() {
         .expect("iteration binding");
     assert!(matches!(
         plan.yielded_ty.kind(),
-        mojito::TyKind::Ref(reference) if reference.referent == *mojito::TyKind::INT
+        mojito::TyKind::Ref(reference) if reference.referent.is_int()
     ));
     assert!(matches!(
         call.result_ty.kind(),
-        mojito::TyKind::Ref(reference) if reference.referent == *mojito::TyKind::INT
+        mojito::TyKind::Ref(reference) if reference.referent.is_int()
     ));
     assert_eq!(
         call.reference_result.as_ref(),

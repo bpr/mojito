@@ -1048,12 +1048,11 @@ mod tests {
             CtValue::PopFloatLiteral(if negative { value.neg() } else { value })
         };
         let fold = |op, value: &CtValue| fold_literal_attribute(op, value).ok();
-        let simd = |dtype, width| -> crate::types::Ty {
-            crate::types::TyKind::simd(
+        let simd = |dtype, width| {
+            crate::types::Ty::simd(
                 crate::types::SimdDtype::Known(dtype),
                 crate::types::SimdWidth::Known(width),
             )
-            .into()
         };
         let convert =
             |op, ty: crate::types::Ty, value: &CtValue| fold_literal_convert(op, &ty, value).ok();

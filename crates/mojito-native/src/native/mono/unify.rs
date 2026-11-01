@@ -491,7 +491,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 return Err(format!("expected `{pattern}`, found `{actual}`"));
             };
             unify_simd_slot(
-                dtype.is_expr().then(|| slot_expr(dtype)).flatten(),
+                dtype.is_expr().then(|| slot_expr(&dtype)).flatten(),
                 dtype.known().map(CtValue::Dtype),
                 actual_dtype.known().map(CtValue::Dtype),
                 pattern,
@@ -501,7 +501,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             // A `SIMDLength` binder binds to the length of the argument's
             // lanes; an `Int` one the slot converted (`SIMDLength(n)`) is its
             // lane count.
-            if let Some(length) = width_expr(width).and_then(ParamExpr::as_decl_ref)
+            if let Some(length) = width_expr(&width).and_then(ParamExpr::as_decl_ref)
                 && let Some(lanes) = actual_width.known()
             {
                 return bind_value(
@@ -510,7 +510,8 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                     bindings,
                 );
             }
-            let lanes = width_expr(width).and_then(|_| width.lanes(&ParamContext::detached()).ok());
+            let lanes =
+                width_expr(&width).and_then(|_| width.lanes(&ParamContext::detached()).ok());
             unify_simd_slot(
                 lanes.as_ref(),
                 width.known().map(CtValue::Int),

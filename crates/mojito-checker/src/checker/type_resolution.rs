@@ -4455,7 +4455,7 @@ impl Checker {
 
     /// The (canonicalized) `Ty` for `SIMD[DType.<dt>, width]` by the
     /// positional reader — a width-1 `float64` resolves to
-    /// `TyKind::FLOAT64` (the unification).
+    /// `Ty::float64()` (the unification).
     fn simd_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],

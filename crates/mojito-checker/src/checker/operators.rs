@@ -276,13 +276,13 @@ impl Checker {
         if common.is_none() {
             for (literal, literal_ty, lane) in [(right, &rt, &lt), (left, &lt, &rt)] {
                 if let Some((dtype, width)) = lane.as_simd()
-                    && *width == SimdWidth::Known(1)
+                    && width == SimdWidth::Known(1)
                     && dtype.is_symbolic()
                     && matches!(
                         literal_ty.kind(),
                         TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
                     )
-                    && splats_to(literal_ty, dtype)
+                    && splats_to(literal_ty, &dtype)
                 {
                     self.record_literal_materializations(literal, literal_ty, lane)?;
                 }
@@ -1208,7 +1208,7 @@ impl Checker {
             kind if let Some((_, width)) = kind.as_simd()
                 && !width.is_inferred() =>
             {
-                Ok(width.clone())
+                Ok(width)
             }
 
             TyKind::Bool | TyKind::Param { .. } | TyKind::Struct(..)
@@ -1330,7 +1330,7 @@ fn is_bound_archetype(ty: &Ty) -> bool {
 /// fails its float-dtype assert, anything else matches no overload.
 fn simd_argument_error(dtype: &SimdDtype, width: &SimdWidth, aty: &Ty) -> TypeError {
     if aty.is_float_literal() && dtype.known().is_some_and(|dtype| !dtype.is_float()) {
-        let target = Ty::from(TyKind::simd(dtype.clone(), width.clone()));
+        let target = Ty::simd(dtype.clone(), width.clone());
         return super::builtins::float_literal_conversion_error(&target);
     }
     TypeError::TypeMismatch {
@@ -1415,11 +1415,10 @@ fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
     // dtype gate a symbolic lane cannot answer is the instantiation's.
     let (dtype, width) = match (lt.as_simd(), rt.as_simd()) {
         (Some(left), Some(right)) if left == right => left,
-        (Some((dtype, width)), _) if splats_to(rt, dtype) => (dtype, width),
-        (_, Some((dtype, width))) if splats_to(lt, dtype) => (dtype, width),
+        (Some((dtype, width)), _) if splats_to(rt, &dtype) => (dtype, width),
+        (_, Some((dtype, width))) if splats_to(lt, &dtype) => (dtype, width),
         _ => return Err(bad()),
     };
-    let (dtype, width) = (dtype.clone(), width.clone());
     let same = || simd_of(dtype.clone(), width.clone());
     match op {
         // Remainder on integer lanes (upstream defines it on float lanes

@@ -429,7 +429,7 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 _ => simd_slots(actual),
             };
             if let Some((actual_dtype, actual_width)) = actual_slots {
-                solve_simd_slot_values(dtype, width, Some(actual_dtype), Some(actual_width), out);
+                solve_simd_slot_values(&dtype, &width, Some(actual_dtype), Some(actual_width), out);
             }
         }
         // A spread of a pack that is still a parameter (`Tuple[*Self.Ts]`

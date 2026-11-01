@@ -572,13 +572,13 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         // A symbolic lane or width the bindings close — a layout application
         // the instance's oracle answers — becomes the known slot; one they do
         // not close stays as spelled, for the concreteness check to name.
-        kind if let Some((dtype, width)) = kind.as_simd() => TyKind::simd(
-            match dtype {
+        kind if let Some((dtype, width)) = kind.as_simd() => Ty::simd(
+            match &dtype {
                 SimdDtype::Expr(expr) => match eval_ct(expr, bindings) {
                     Ok(CtValue::Dtype(known)) => SimdDtype::Known(known),
-                    _ => dtype.clone(),
+                    _ => dtype,
                 },
-                SimdDtype::Known(known) => SimdDtype::Known(*known),
+                SimdDtype::Known(_) => dtype,
             },
             match width {
                 SimdWidth::Expr(_) => match width
@@ -586,12 +586,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                     .map(|lanes| eval_ct(&lanes, bindings))
                 {
                     Ok(Ok(CtValue::Int(known))) => SimdWidth::Known(known),
-                    _ => width.clone(),
+                    _ => width,
                 },
-                SimdWidth::Known(known) => SimdWidth::Known(*known),
+                SimdWidth::Known(_) => width,
             },
-        )
-        .into(),
+        ),
         // A literal's symbolic value closes as the literal it names; one
         // the bindings do not close stays as spelled, for the concreteness
         // check to name.
@@ -600,8 +599,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         | TyKind::FloatLiteral(Some(value)) => closed_literal(ty, value, bindings),
         // A vector's storage closes as the vector it stores.
         TyKind::KgenSimd { dtype, width } => {
-            let vector =
-                substitute_ty(&TyKind::simd(dtype.clone(), width.clone()).into(), bindings)?;
+            let vector = substitute_ty(&Ty::simd(dtype.clone(), width.clone()), bindings)?;
 
             mojito_types::types::simd_storage(&vector).unwrap_or(vector)
         }

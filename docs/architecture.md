@@ -1621,8 +1621,9 @@ pointer to storage its context uniques (`mojito_types::types`):
 - `Int`, `UInt`, and `Float64` are no variants of their own: as upstream's
   `Scalar[DType.int]`, `Scalar[DType.uint]`, and `Scalar[DType.float64]`
   aliases are, each is the width-one `TyKind::Simd` of its dtype
-  (`TyKind::INT`, `UINT`, and `FLOAT64` name them in patterns, and
-  `Ty::int()`, `uint()`, and `float64()` build them), displayed by its alias
+  (`Ty::int()`, `uint()`, and `float64()` build them, and code outside
+  `mojito-types` tests them by `TyKind::{is_int, is_uint, is_float64}`
+  rather than matching a pattern), displayed by its alias
   name (`Dtype::repr_alias`). `types::canonical_simd_ty` builds every known
   vector, a scalar one included, with no special case. Below the waist a
   width-one `int`, `uint`, or `float64` value keeps its host scalar form

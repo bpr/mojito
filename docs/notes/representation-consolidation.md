@@ -42,13 +42,16 @@ command cannot use both.
      `Scalar`, `Int`, `UInt`, `Float64`, and the sized aliases are
      `std.simd`'s `comptime` aliases, with no construction rule or parser
      type keyed by those names (R1791, R1792).
-   - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
-     both backends.
+   - R1558 made code outside `mojito-types` independent of the vector
+     variant's layout. R1798 and R1799 then hold a `SIMD` register as its
+     `!kgen.simd` field in the verifier and both backends, and R1800
+     deletes the variant, so `SIMD` is the declared struct below the
+     checker.
    - The limit members (`MAX`, `MIN`, `MAX_FINITE`, `MIN_FINITE`) are
      declared over the bundled `std.utils.numerics`.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1558 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1800 -n 0
    ```
 
 3. **`Bool` as a library struct** (R1188's residue). R1188 made
@@ -283,7 +286,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1398, R1399, R1557 → R1791, R1792 → R1558, R1608 → R1612), R160, R276, R1192 | R1408, R331, R850, R212, R1019, R423, R1352, R851, R187, R171, R1671, R1673, R1675, R1189, R427, R432 |
+| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1398, R1399, R1557 → R1791, R1792 → R1798, R1799 → R1800, R1608 → R1612), R160, R276, R1192 | R1408, R331, R850, R212, R1019, R423, R1352, R851, R187, R171, R1671, R1673, R1675, R1189, R427, R432 |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R275, R18, R159, R937 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R77, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |

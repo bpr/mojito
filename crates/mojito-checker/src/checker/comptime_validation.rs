@@ -1613,7 +1613,7 @@ impl Checker {
     ) -> Result<Option<ParamExpr>, TypeError> {
         let owner = match ty.kind() {
             TyKind::Struct(owner, _) => owner.as_str(),
-            TyKind::Simd { .. } => mojito_types::types::SIMD_TYPE_NAME,
+            kind if kind.is_simd() => mojito_types::types::SIMD_TYPE_NAME,
             _ => return Ok(None),
         };
         let name = template_name(owner).to_string();
