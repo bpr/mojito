@@ -276,7 +276,7 @@ fn parses_struct_with_field_and_method() {
             where_clauses: Vec::new(),
             fields: vec![Param {
                 name: "x".into(),
-                ty: Type::Int
+                ty: Type::Named("Int".into(), vec![])
             }],
             associated: vec![],
             methods: vec![Method {
@@ -294,7 +294,7 @@ fn parses_struct_with_field_and_method() {
                 keyword_only: None,
                 raises: false,
                 raises_type: None,
-                ret: Some(Type::Int),
+                ret: Some(Type::Named("Int".into(), vec![])),
                 body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                     ExprKind::Member {
                         object: ident("self"),
@@ -405,7 +405,7 @@ fn parses_uint_and_float64_annotations() {
         parse("var u: UInt = UInt(0)")[0],
         Stmt::from(StmtKind::VarDecl {
             name: "u".into(),
-            ty: Some(Type::UInt),
+            ty: Some(Type::Named("UInt".into(), vec![])),
             value: Expr::from(ExprKind::Call {
                 name: "UInt".into(),
                 param_args: vec![],
@@ -418,7 +418,7 @@ fn parses_uint_and_float64_annotations() {
         parse("var f: Float64 = 3.5")[0],
         Stmt::from(StmtKind::VarDecl {
             name: "f".into(),
-            ty: Some(Type::Float64),
+            ty: Some(Type::Named("Float64".into(), vec![])),
             value: Expr::from(ExprKind::Float(float_literal(3.5))),
         })
     );
@@ -430,7 +430,7 @@ fn parses_typed_var_decl() {
         parse("var x: Int = 1 + 2")[0],
         Stmt::from(StmtKind::VarDecl {
             name: "x".into(),
-            ty: Some(Type::Int),
+            ty: Some(Type::Named("Int".into(), vec![])),
             value: Expr::from(ExprKind::Infix(InfixOp::Add, int(1), int(2))),
         })
     );
@@ -446,13 +446,16 @@ fn parses_def_signature_and_body() {
             name: "add".into(),
             decorators: vec![],
             type_params: vec![],
-            params: vec![fnparam("a", Type::Int), fnparam("b", Type::Int)],
+            params: vec![
+                fnparam("a", Type::Named("Int".into(), vec![])),
+                fnparam("b", Type::Named("Int".into(), vec![]))
+            ],
             positional_only: None,
             keyword_only: None,
             captures: None,
             raises: false,
             raises_type: None,
-            ret: Some(Type::Int),
+            ret: Some(Type::Named("Int".into(), vec![])),
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                 ExprKind::Infix(InfixOp::Add, ident("a"), ident("b"))
             ))))],
@@ -811,7 +814,10 @@ fn parses_parameterized_type_annotation() {
         StmtKind::VarDecl { ty: Some(ty), .. } => {
             assert_eq!(
                 *ty,
-                Type::Named("Pair".into(), vec![ParamArg::Type(Type::Int)])
+                Type::Named(
+                    "Pair".into(),
+                    vec![ParamArg::Type(Type::Named("Int".into(), vec![]))]
+                )
             );
         }
         other => panic!("expected a var decl, got {other:?}"),
@@ -883,7 +889,7 @@ fn parses_trait_with_method_requirements() {
                     keyword_only: None,
                     raises: false,
                     raises_type: None,
-                    ret: Some(Type::Int),
+                    ret: Some(Type::Named("Int".into(), vec![])),
                     default_body: None,
                 },
             ],
@@ -1067,13 +1073,16 @@ fn parses_a_member_application_in_type_position() {
         Some(assoc(
             Type::Named("_MLIR".into(), vec![]),
             "KGENParamListType",
-            vec![ParamArg::Type(Type::Int)],
+            vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
         ))
     );
     assert_eq!(
         params[0].ty,
         assoc(
-            Type::Named("S".into(), vec![ParamArg::Type(Type::Int)]),
+            Type::Named(
+                "S".into(),
+                vec![ParamArg::Type(Type::Named("Int".into(), vec![]))]
+            ),
             "Of",
             vec![ParamArg::Type(Type::Bool)],
         )
@@ -1093,7 +1102,7 @@ fn parses_a_member_application_in_type_position() {
         if matches!(base.as_ref(), Type::Value(value)
             if matches!(&value.kind, ExprKind::Invoke { callee, param_args, args, .. }
                 if args.is_empty()
-                    && param_args == &[ParamArg::Type(Type::Int)]
+                    && param_args == &[ParamArg::Type(Type::Named("Int".into(), vec![]))]
                     && matches!(&callee.kind, ExprKind::Member { field, .. } if field == "Of")))));
 }
 
@@ -1117,7 +1126,7 @@ fn parses_a_member_application_in_expression_position_as_a_subscript() {
             object: member(
                 ExprKind::TypeApply {
                     name: "S".into(),
-                    args: vec![ParamArg::Type(Type::Int)],
+                    args: vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
                 },
                 "Of",
             ),
@@ -1231,7 +1240,7 @@ fn parses_generator_types_as_parameter_types_and_alias_bodies() {
         panic!("expected a generator type, got {value:?}");
     };
     assert_eq!(params[0].name, "Idx");
-    assert_eq!(**result, Type::Int);
+    assert_eq!(**result, Type::Named("Int".into(), vec![]));
     let StmtKind::Def { type_params, .. } = &statements[1].kind else {
         panic!("expected def");
     };
@@ -1243,7 +1252,7 @@ fn parses_generator_types_as_parameter_types_and_alias_bodies() {
     assert_eq!(**result, Type::Named("T".into(), Vec::new()));
     assert!(matches!(
         &type_params[1].value_type,
-        Some(Type::Generator { params, result }) if params.is_empty() && **result == Type::Int
+        Some(Type::Generator { params, result }) if params.is_empty() && **result == Type::Named("Int".into(), vec![])
     ));
 }
 
@@ -1393,7 +1402,7 @@ fn parses_trait_comptime_member() {
                 &vec![TraitComptime {
                     name: "count".into(),
                     params: vec![],
-                    ty: Type::Int,
+                    ty: Type::Named("Int".into(), vec![]),
                     where_clauses: Vec::new(),
                     default: None,
                 }]
@@ -1520,7 +1529,7 @@ fn parses_annotated_comptime_constant() {
         Stmt::from(StmtKind::Comptime {
             name: "counter".into(),
             type_params: vec![],
-            ty: Some(Type::Int),
+            ty: Some(Type::Named("Int".into(), vec![])),
             where_clauses: Vec::new(),
             value: int_expr(1),
         })
@@ -2313,7 +2322,7 @@ fn parses_nested_type_argument() {
                     "Box".into(),
                     vec![ParamArg::Value(Expr::from(ExprKind::TypeApply {
                         name: "Pair".into(),
-                        args: vec![ParamArg::Type(Type::Int)],
+                        args: vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
                     }))],
                 )
             );
@@ -3185,9 +3194,9 @@ fn parses_inferred_var_decl() {
 fn annotated_var_still_parses_with_some_ty() {
     match &parse("var x: Int = 5")[0].kind {
         StmtKind::VarDecl {
-            ty: Some(Type::Int),
+            ty: Some(Type::Named(name, args)),
             ..
-        } => {}
+        } if name == "Int" && args.is_empty() => {}
         other => panic!("expected an annotated var decl, got {other:?}"),
     }
 }
@@ -3723,7 +3732,7 @@ fn parses_ref_return_type() {
             assert!(matches!(
                 ret,
                 Some(Type::Ref { referent, origin: Some(origins) })
-                    if **referent == Type::Int && origins.len() == 1
+                    if **referent == Type::Named("Int".into(), vec![]) && origins.len() == 1
             ));
         }
         other => panic!("expected a def, got {other:?}"),
@@ -4183,8 +4192,8 @@ fn parses_function_type_annotations() {
         var_anno_type("var f: def(Int) -> Int = g\n"),
         Type::Func {
             type_params: vec![],
-            params: vec![function_type_param(Type::Int)],
-            ret: Box::new(Type::Int),
+            params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
+            ret: Box::new(Type::Named("Int".into(), vec![])),
             thin: false,
             capturing: None,
             raises: false,
@@ -4198,7 +4207,7 @@ fn parses_function_type_annotations() {
         Type::Func {
             type_params: vec![],
             params: vec![
-                function_type_param(Type::Int),
+                function_type_param(Type::Named("Int".into(), vec![])),
                 function_type_param(Type::Bool),
             ],
             ret: Box::new(Type::Named("String".into(), vec![])),
@@ -4228,7 +4237,7 @@ fn parses_function_type_annotations() {
         var_anno_type("var sink: def(Int) thin = callback\n"),
         Type::Func {
             type_params: vec![],
-            params: vec![function_type_param(Type::Int)],
+            params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
             ret: Box::new(Type::None),
             thin: true,
             capturing: None,
@@ -4251,9 +4260,9 @@ fn function_types_retain_the_var_keyword_variadic_role() {
             name: Some(name),
             kind: ParamKind::KwVariadic,
             convention: Some(ArgConvention::Var),
-            ty: Type::Int,
+            ty: Type::Named(ty_name, ty_args),
             ..
-        }] if name == "options"
+        }] if name == "options" && ty_name == "Int" && ty_args.is_empty()
     ));
 
     let error = mojito::parse("var callback: def(**options: Int) -> Int = target\n")
@@ -4310,7 +4319,7 @@ fn retains_callable_parameter_bounds_and_capture_effects() {
             thin: false,
             capturing: None,
             ..
-        }) if **ret == Type::Int
+        }) if **ret == Type::Named("Int".into(), vec![])
     ));
     assert!(matches!(
         &type_params[1].callable_bound,
@@ -4357,7 +4366,7 @@ fn composes_a_function_type_after_trait_bounds() {
     assert!(type_params[0].infer_only);
     assert!(matches!(
         &type_params[0].callable_bound,
-        Some(Type::Func { ret, thin: false, .. }) if **ret == Type::Int
+        Some(Type::Func { ret, thin: false, .. }) if **ret == Type::Named("Int".into(), vec![])
     ));
 }
 
@@ -4463,11 +4472,11 @@ fn function_type_return_nests() {
         var_anno_type("var c: def(Int) -> def(Int) -> Int = mk\n"),
         Type::Func {
             type_params: vec![],
-            params: vec![function_type_param(Type::Int)],
+            params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
             ret: Box::new(Type::Func {
                 type_params: vec![],
-                params: vec![function_type_param(Type::Int)],
-                ret: Box::new(Type::Int),
+                params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
+                ret: Box::new(Type::Named("Int".into(), vec![])),
                 thin: false,
                 capturing: None,
                 raises: false,
@@ -4494,8 +4503,8 @@ fn parses_function_typed_parameter() {
         params[0].ty,
         Type::Func {
             type_params: vec![],
-            params: vec![function_type_param(Type::Int)],
-            ret: Box::new(Type::Int),
+            params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
+            ret: Box::new(Type::Named("Int".into(), vec![])),
             thin: true,
             capturing: None,
             raises: false,
@@ -4751,7 +4760,7 @@ fn parses_fully_explicit_lambda() {
                 infer_only: false,
                 default: None,
             }],
-            vec![fnparam("x", Type::Int)],
+            vec![fnparam("x", Type::Named("Int".into(), vec![]))],
             Some(mojito::ast::CaptureList {
                 entries: vec![Capture {
                     name: "y".into(),
@@ -4760,7 +4769,7 @@ fn parses_fully_explicit_lambda() {
                 default: None,
             }),
             true,
-            Some(Type::Int),
+            Some(Type::Named("Int".into(), vec![])),
             ExprKind::Identifier("x".into()),
         )
     );
@@ -4777,7 +4786,7 @@ fn parses_lambda_omission_forms() {
             vec![],
             None,
             false,
-            Some(Type::Int),
+            Some(Type::Named("Int".into(), vec![])),
             ExprKind::Int(42.into())
         )
     );
@@ -4787,7 +4796,7 @@ fn parses_lambda_omission_forms() {
         lambda_expr(
             0,
             vec![],
-            vec![fnparam("x", Type::Int)],
+            vec![fnparam("x", Type::Named("Int".into(), vec![]))],
             None,
             false,
             None,
@@ -4819,13 +4828,13 @@ fn parses_lambda_omission_forms() {
         lambda_expr(
             0,
             vec![],
-            vec![fnparam("x", Type::Int)],
+            vec![fnparam("x", Type::Named("Int".into(), vec![]))],
             Some(mojito::ast::CaptureList {
                 entries: vec![],
                 default: None,
             }),
             false,
-            Some(Type::Int),
+            Some(Type::Named("Int".into(), vec![])),
             ExprKind::Infix(InfixOp::Add, ident("x"), int(1)),
         )
     );
@@ -4835,10 +4844,10 @@ fn parses_lambda_omission_forms() {
         lambda_expr(
             0,
             vec![],
-            vec![fnparam("x", Type::Int)],
+            vec![fnparam("x", Type::Named("Int".into(), vec![]))],
             None,
             false,
-            Some(Type::Int),
+            Some(Type::Named("Int".into(), vec![])),
             ExprKind::Identifier("x".into()),
         )
     );
@@ -4856,7 +4865,7 @@ fn lambda_body_extends_through_ternary() {
             vec![fnparam("x", Type::Bool)],
             None,
             false,
-            Some(Type::Int),
+            Some(Type::Named("Int".into(), vec![])),
             ExprKind::IfExpr {
                 cond: ident("x"),
                 then_branch: int(1),

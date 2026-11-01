@@ -541,8 +541,10 @@ pub(super) fn fold_simd_alias_bounds(
         if !ty.is_simd() {
             return None;
         }
+        // `Int`, `UInt`, and `Float64` spell their own alias, which value
+        // parameter classification reads by name.
         match source_type_from_ty(ty)? {
-            Type::Named(_, args) => Some(args),
+            Type::Named(name, args) if name == "SIMD" => Some(args),
             _ => None,
         }
     };

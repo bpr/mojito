@@ -39,9 +39,9 @@ command cannot use both.
 
 2. **`SIMD` as the declared struct everywhere** (the port's end).
    - Since R1557, `SIMD[...]` resolves through the declared struct and
-     `Scalar` and the sized aliases are `std.simd`'s `comptime` aliases;
-     R1791 and R1792 retire the construction rules and the parser types
-     still keyed by those names.
+     `Scalar`, `Int`, `UInt`, `Float64`, and the sized aliases are
+     `std.simd`'s `comptime` aliases, with no construction rule or parser
+     type keyed by those names (R1791, R1792).
    - R1558 then holds a `SIMD` value as its `!kgen.simd` field in MIR and
      both backends.
    - The limit members (`MAX`, `MIN`, `MAX_FINITE`, `MIN_FINITE`) are

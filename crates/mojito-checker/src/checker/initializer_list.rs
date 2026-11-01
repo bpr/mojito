@@ -932,10 +932,7 @@ impl Checker {
                             },
                         ));
                     }
-                    Some(SourceType::Int) => "Int",
-                    Some(SourceType::UInt) => "UInt",
                     Some(SourceType::Bool) => "Bool",
-                    Some(SourceType::Float64) => "Float64",
                     _ => {
                         return self
                             .instance_construction(expression, expected, args, kwargs)

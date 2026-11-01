@@ -539,8 +539,8 @@ the checker decides whether each denotes a type or a value. An operand is a
 `type` only where the type grammar alone spells it: a function type
 `def(...)`, a `ref` type, and a `*` pack. The scalar names (`Int`, `UInt`,
 `Bool`, `StringLiteral`, `Float64`, and the sized aliases such as `UInt8`),
-`Self` and its members, and `None` still parse as a `type` there, a
-divergence (roadmap R1511, R1512). Followed by `(`, `Int`, `UInt`, `Bool`,
+`Self` and its members, and `None` still parse as a `type` there (a scalar
+alias as a `NAME` type), a divergence (roadmap R1511, R1512). Followed by `(`, `Int`, `UInt`, `Bool`,
 `StringLiteral`, `Float64`, and `Self` open the construction expression they
 start (`Int(3)`, `HookFor[Self()]`), a value operand.
 
@@ -1197,7 +1197,7 @@ Notes:
 
 ```
 type:
-    | 'Int' | 'UInt' | 'Bool' | 'Float64' | 'None'
+    | 'Bool' | 'None'
     | 'Self' '.' NAME              # a struct's own type parameter, inside its body
     | 'Self'                       # the enclosing struct/trait type
     | function_type               # a checked function/closure contract or value type
@@ -1218,8 +1218,10 @@ function_type_param:
 fn_effect: 'capturing' ['[' ... ']'] | 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
-`None` is a reserved keyword; `Int`, `UInt`, `Bool`, `Float64` are ordinary `NAME`s recognized
-here by spelling (they are **not** reserved). `String` is an ordinary `NAME` resolving to
+`None` is a reserved keyword; `Bool` is an ordinary `NAME` recognized here by spelling (it
+is **not** reserved). `Int`, `UInt`, and `Float64` are plain `NAME`s: the prelude's `comptime`
+aliases of `std.simd` (`Scalar[DType.int]`, `Scalar[DType.uint]`, `Scalar[DType.float64]`),
+which a program's own declaration of the name shadows, as it does `Int8` or `Scalar`. `String` is an ordinary `NAME` resolving to
 the prelude's nominal self-hosted `String` struct; a bare `StringLiteral` names the compile-time
 string literal type, and `StringLiteral[value]` with arguments is a parameterized struct
 type (the bundled `std.builtin.string_literal` declaration). A string literal implicitly converts wherever the nominal `String`
@@ -1295,7 +1297,7 @@ when a type-starting token follows.
 
 A `NAME` is also a **SIMD type** when it is `SIMD[DType.<dt>, <width>]`,
 `Scalar[DType.<dt>]`, or one of the
-fixed-width **scalar aliases** (`Int8` / `Int16` / `Int32` / `Int64`, `UInt8` / `UInt16`
+**scalar aliases** (`Int` / `UInt` / `Float64`, and the fixed-width `Int8` / `Int16` / `Int32` / `Int64`, `UInt8` / `UInt16`
 / `UInt32` / `UInt64`, `Float32`) — see **SIMD** — or a **`List[T]`** (see
 **Collections**). These are recognized by the checker, not reserved words.
 

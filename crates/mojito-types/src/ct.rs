@@ -1747,11 +1747,13 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
     Some(match ty.kind() {
         // A literal whose type carries its value has no closed spelling:
         // `IntLiteral[v]`'s attribute is no source expression.
-        TyKind::INT | TyKind::IntLiteral(None) => Type::Int,
-        TyKind::UINT => Type::UInt,
+        TyKind::INT | TyKind::IntLiteral(None) => Type::Named("Int".to_string(), Vec::new()),
+        TyKind::UINT => Type::Named("UInt".to_string(), Vec::new()),
         TyKind::Bool => Type::Bool,
         TyKind::StringLiteral(_) => Type::StringLiteral,
-        TyKind::FLOAT64 | TyKind::FloatLiteral(None) => Type::Float64,
+        TyKind::FLOAT64 | TyKind::FloatLiteral(None) => {
+            Type::Named("Float64".to_string(), Vec::new())
+        }
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::Simd {

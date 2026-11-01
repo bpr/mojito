@@ -4,7 +4,7 @@
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
-    /// Parses a type annotation: a scalar keyword, `Self.T`, associated lookups
+    /// Parses a type annotation: `Bool`, `None`, `Self.T`, associated lookups
     /// like `C.Element`, or a named type optionally applied to type arguments
     /// (`Pair[Int]`).
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
@@ -31,15 +31,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::GeneratorType => self.parse_generator_type_tail(),
             Token::None => Ok(Type::None),
             Token::Identifier(id) => match id.as_str() {
-                "Int" => Ok(Type::Int),
-                "UInt" => Ok(Type::UInt),
                 "Bool" => Ok(Type::Bool),
                 // An application (`StringLiteral[v]`) names the declared
                 // struct; the bare name is the literal type.
                 "StringLiteral" if !matches!(self.peek_token()?, Some(Token::LBracket)) => {
                     Ok(Type::StringLiteral)
                 }
-                "Float64" => Ok(Type::Float64),
                 // `Self.T` references one of the enclosing struct's type
                 // parameters; bare `Self` is the enclosing struct/trait type.
                 "Self" if matches!(self.peek_token()?, Some(Token::Dot)) => {
@@ -71,29 +68,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 // Any other identifier names a struct type or an in-scope type
                 // parameter (the checker decides), optionally with parameter args.
-                _ => {
-                    let args = if matches!(self.peek_token()?, Some(Token::LBracket)) {
-                        self.parse_param_args()?
-                    } else {
-                        Vec::new()
-                    };
-                    if matches!(self.peek_token()?, Some(Token::LParen)) {
-                        self.next_token()?;
-                        let (call_args, kwargs) = self.parse_call_args()?;
-                        self.expect(&Token::RParen, "Expected ')' after arguments")?;
-                        Ok(Type::Value(Box::new(Expr::new(
-                            ExprKind::Call {
-                                name: id,
-                                param_args: args,
-                                args: call_args,
-                                kwargs,
-                            },
-                            (start, self.last_span.1),
-                        ))))
-                    } else {
-                        Ok(Type::Named(id, args))
-                    }
-                }
+                _ => self.parse_named_type(id, start),
             },
             token => Err(ParseError::UnexpectedToken(
                 token,
@@ -102,6 +77,32 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }?;
 
         self.parse_type_assoc_tail(ty, start)
+    }
+
+    /// Parses the rest of a named type whose name `id` (starting at `start`)
+    /// was consumed: its optional parameter arguments, and a following
+    /// argument list, which makes it a compile-time value (`Pair[Int](1, 2)`).
+    fn parse_named_type(&mut self, id: String, start: usize) -> Result<Type, ParseError> {
+        let args = if matches!(self.peek_token()?, Some(Token::LBracket)) {
+            self.parse_param_args()?
+        } else {
+            Vec::new()
+        };
+        if !matches!(self.peek_token()?, Some(Token::LParen)) {
+            return Ok(Type::Named(id, args));
+        }
+        self.next_token()?;
+        let (call_args, kwargs) = self.parse_call_args()?;
+        self.expect(&Token::RParen, "Expected ')' after arguments")?;
+        Ok(Type::Value(Box::new(Expr::new(
+            ExprKind::Call {
+                name: id,
+                param_args: args,
+                args: call_args,
+                kwargs,
+            },
+            (start, self.last_span.1),
+        ))))
     }
 
     /// Parse zero or more structured projections after a type atom. Associated
@@ -470,7 +471,23 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         if self.peek_starts_type()? {
             let start = self.peek_start();
-            let ty = self.parse_type()?;
+            let ty = match self.peek_token()? {
+                Some(Token::Identifier(id)) if is_scalar_alias_name(id) => {
+                    let id = id.clone();
+                    self.next_token()?;
+                    // A scalar construction is the first atom of a value
+                    // expression (`Int(4).__mlir_index__()`).
+                    if matches!(self.peek_token()?, Some(Token::LParen)) {
+                        let atom = Expr::new(ExprKind::Identifier(id), (start, self.last_span.1));
+                        return Ok(ParamArg::Value(
+                            self.parse_expression_from(atom, Precedence::Lowest)?,
+                        ));
+                    }
+                    let named = self.parse_named_type(id, start)?;
+                    self.parse_type_assoc_tail(named, start)?
+                }
+                _ => self.parse_type()?,
+            };
             // Upstream reads `ref[o]` here as an expression followed by a stray
             // type: an origin-bearing reference is never a type argument.
             if matches!(
@@ -491,11 +508,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
             if matches!(self.peek_token()?, Some(Token::LParen)) {
                 let name = match &ty {
-                    Type::Int => Some("Int"),
-                    Type::UInt => Some("UInt"),
                     Type::Bool => Some("Bool"),
                     Type::StringLiteral => Some("StringLiteral"),
-                    Type::Float64 => Some("Float64"),
                     Type::SelfType => Some("Self"),
                     _ => None,
                 };
@@ -608,10 +622,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(match self.peek_token()? {
             Some(Token::None | Token::Def | Token::Star) => true,
             Some(Token::Identifier(id)) => {
-                matches!(
-                    id.as_str(),
-                    "Int" | "UInt" | "Bool" | "StringLiteral" | "Float64" | "Self" | "ref"
-                ) || mojito_ast::ast::Dtype::from_scalar_alias(id).is_some()
+                matches!(id.as_str(), "Bool" | "StringLiteral" | "Self" | "ref")
+                    || is_scalar_alias_name(id)
             }
             _ => false,
         })
@@ -859,4 +871,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     // --- Expressions (Pratt parser) ---
+}
+
+/// A scalar alias of `std.simd` (`Int`, `Float64`, `UInt8`), which a bracket
+/// operand still parses as a type (roadmap R1511).
+fn is_scalar_alias_name(id: &str) -> bool {
+    matches!(id, "Int" | "UInt" | "Float64")
+        || mojito_ast::ast::Dtype::from_scalar_alias(id).is_some()
 }

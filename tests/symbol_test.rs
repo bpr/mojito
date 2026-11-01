@@ -1258,13 +1258,18 @@ fn an_applied_type_operand_mangles_as_the_type_it_spells() {
     // same as the type argument it spells.
     use mojito::ast::{Expr, ExprKind, ParamArg, Type};
     use mojito::symbol::TypeKey;
-    let pair = || ParamArg::Type(Type::Named("Pair".into(), vec![ParamArg::Type(Type::Int)]));
+    let pair = || {
+        ParamArg::Type(Type::Named(
+            "Pair".into(),
+            vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
+        ))
+    };
     let spelled = Type::Named("List".into(), vec![pair()]);
     let parsed = Type::Named(
         "List".into(),
         vec![ParamArg::Value(Expr::from(ExprKind::TypeApply {
             name: "Pair".into(),
-            args: vec![ParamArg::Type(Type::Int)],
+            args: vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
         }))],
     );
     assert_eq!(TypeKey::from_ast(&parsed), TypeKey::from_ast(&spelled));

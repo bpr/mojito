@@ -353,12 +353,9 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         // binder.
         Type::TypeOf(_) => {}
         Type::Value(value) => rewrite::substitute_type_bindings_in_expr(value, subs),
-        Type::Int
-        | Type::UInt
-        | Type::Bool
+        Type::Bool
         | Type::StringLiteral
         | Type::ClosedStringLiteral
-        | Type::Float64
         | Type::None
         | Type::SelfType => {}
     }
@@ -431,14 +428,14 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
 
 fn ct_param_source_type(source: &Type) -> Option<Ty> {
     match source {
-        Type::Int => Some(Ty::int()),
-        Type::UInt => Some(Ty::uint()),
         Type::Bool => Some(Ty::bool()),
         Type::StringLiteral | Type::ClosedStringLiteral => Some(Ty::string_literal()),
-        Type::Float64 => Some(Ty::float64()),
         Type::None => Some(Ty::none()),
         // A trait-valued parameter (`Tr: type_of(AnyType)`).
         Type::TypeOf(operand) => any_trait_source_type(operand),
+        // A scalar alias (`Int`, `Float64`, `Int8`): after linking, a bare
+        // alias name is std's, since a program's own declaration is renamed.
+        Type::Named(name, args) if args.is_empty() => scalar_type_name(name),
         Type::Named(name, args) if name == "List" && args.len() == 1 => {
             Some(list_type(ct_param_argument_type(&args[0])?))
         }
@@ -477,11 +474,15 @@ fn source_type_from_ty_with_origins(
     origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
 ) -> Option<Type> {
     Some(match ty.kind() {
-        kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => Type::Int,
-        kind if kind.is_uint() => Type::UInt,
+        kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => {
+            Type::Named("Int".to_string(), Vec::new())
+        }
+        kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
         TyKind::Bool => Type::Bool,
         TyKind::StringLiteral(_) => Type::ClosedStringLiteral,
-        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => Type::Float64,
+        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
+            Type::Named("Float64".to_string(), Vec::new())
+        }
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::KgenString => kgen_string_source_type(),

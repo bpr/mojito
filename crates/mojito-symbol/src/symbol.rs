@@ -1712,11 +1712,8 @@ fn ast_raw(
                 ast_raw(&vector, comptimes, type_bounds, None)
             );
         }
-        Type::Int => "Int".to_string(),
-        Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
         Type::StringLiteral | Type::ClosedStringLiteral => "StringLiteral".to_string(),
-        Type::Float64 => "Float64".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             // Mirror `ty_raw`: the nominal String annotation mangles as the
@@ -2031,10 +2028,7 @@ fn annotation_display(
     scope: &HashMap<String, BinderSpelling>,
 ) -> String {
     match ty {
-        Type::Int => "Int".to_string(),
-        Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
-        Type::Float64 => "Float64".to_string(),
         Type::StringLiteral | Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args)
@@ -3604,7 +3598,7 @@ mod tests {
         let annotation = Type::Named(
             "Array".to_string(),
             vec![
-                ParamArg::Type(Type::Int),
+                ParamArg::Type(Type::Named("Int".into(), vec![])),
                 ParamArg::Value(Expr::new(
                     ExprKind::Identifier("k".to_string()),
                     Span::default(),

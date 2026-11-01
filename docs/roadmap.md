@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1797**.
+Next free ID: **R1798**.
 
 ## Ordered Work
 
@@ -4629,6 +4629,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     in initialization". A module `comptime N: Int = 3` does the same.
   - Probe: `comptime x: Int = 7; comptime y = x / 2` in `main` prints
     `3.5`, where the pin prints `3`: the literal pair divides exactly.
+  - Probe: `comptime N: Int = 3` at module scope, then `print(N / 2)`,
+    fails "type mismatch for numeric literal materialization of '3/2'",
+    where the pin prints `1`.
   - Probe: `comptime g = x // 0` over a module `comptime x: Int = 7`, then
     `print(g)`, fails its compile-time evaluation, where the pin prints
     `0`: an `Int`'s `//` by zero folds to `0`, the literal pair's does not
@@ -7513,6 +7516,32 @@ retained on purpose and re-probed rather than fixed; they are listed in
     error: `SIMD.__floordiv__`'s mask makes the `Int` form `0`, and this
     entry makes the literal form follow `int_literal_bin`.
   - Found while landing R1566 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1797 An import alias of a library name the entry module also
+  declares names the entry's own declaration**
+
+  `from std.simd import Int8 as I8` beside the program's own `struct Int8`
+  makes `I8(7)` construct the program's struct, where the pin's alias
+  names the imported declaration.
+  - Cause: `ModuleLoader` resolves the entry's imports to the library's
+    bare linked names first, then renames every bare reference to an own
+    declaration to `entry_item_name`
+    (`crates/mojito-module/src/module.rs`), the import-resolved ones
+    included.
+  - Lever: rename the own declarations before the imports resolve, or
+    resolve an import alias to a spelling the own-name rewrite skips.
+  - Probe: the shape above, then `print(s.v, v)`, fails "does not conform
+    to trait 'Writable'", where the pin prints `3 7`.
+  - Probe: `from std.collections.list import List as L` beside an own
+    `struct List`, then `L[Int]()`, fails "expects 0 type argument(s), got
+    1".
+  - Probe: `from std.simd import SIMD as V` beside an own `struct SIMD`,
+    then `V[DType.int32, 4](7)`, fails "expects 0 type argument(s), got 2".
+  - Probe: `from std.simd import Int as I` beside an own `struct Int`
+    (reachable since R1792).
+  - Found while planning R1792 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11263,32 +11292,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1553 (2026-10-28).
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R1792 `Int`, `UInt`, and `Float64` are parser types, where
-  upstream's are the prelude's `comptime` aliases**
-
-  A program's own `struct Float64` is shadowed in annotations: `def f(x:
-  Float64)` over it stops with "type 'Float64' has no field 'v'", where the
-  pin reads the program's struct.
-  - The parser maps the three names to `Type::Int`, `Type::UInt`, and
-    `Type::Float64` (`mojito-parser/src/parser/types.rs`), and
-    `peek_starts_type` classifies `Dtype::from_scalar_alias` names as
-    types.
-  - Since R1557 the other sized aliases and `Scalar` resolve as
-    `std.simd`'s `comptime` aliases, so only these three still bypass the
-    alias lookup.
-  - Lever: parse them as `Type::Named`, then delete the variants and the
-    `"Int"`/`"UInt"`/`"Float64"` arm of `builtin_applied_type`.
-  - Teach `symbol.rs::simd_annotation_spelling`,
-    `comptime.rs::scalar_type_name`, and `mojito-types::ffi` to read the
-    resolved type instead of the spelling.
-  - `comptime/rewrite.rs` and `synth.rs` respell a bound vector as the bare
-    `SIMD`, which a program's own `struct SIMD` would capture.
-  - Update `docs/grammar.md` first.
-  - Probe: `struct Float64` with a field `v` and `def f(x: Float64) -> Int:
-    return x.v`, `f(Float64(4))`, prints `4` at the pin.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1790 A `_` in a binding's annotation is not solved by its
   initializer**

@@ -5721,8 +5721,8 @@ enum SelfSlot {
 /// The type of an [`ApplicableParameter`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum SlotType {
-    /// An `Int`, a `UInt`, a `Bool`, a `Float64`, an `index`, an `i1`, an
-    /// `IntLiteral`, or a `StringLiteral`, a `String` parameter's included.
+    /// A `Bool`, an `index`, an `i1`, an `IntLiteral`, or a `StringLiteral`,
+    /// a `String` parameter's included.
     Scalar(Ty),
     /// `Self`, the struct a call's instance or receiver resolves.
     Owner,
@@ -5800,10 +5800,7 @@ impl ApplicableShape<'_> {
             })
             .collect::<Option<_>>()?;
         let slot = |ty: &SourceType| match ty {
-            SourceType::Int => Some(SlotType::Scalar(Ty::int())),
-            SourceType::UInt => Some(SlotType::Scalar(Ty::uint())),
             SourceType::Bool => Some(SlotType::Scalar(Ty::bool())),
-            SourceType::Float64 => Some(SlotType::Scalar(Ty::float64())),
             SourceType::SelfType => Some(SlotType::Owner),
             // A string is the parameter domain's string, as a `[s:
             // String]` binder is.
@@ -5883,10 +5880,7 @@ impl ApplicableShape<'_> {
                 variadic,
             ),
             result: match self.ret {
-                SourceType::Int
-                | SourceType::UInt
-                | SourceType::Bool
-                | SourceType::Float64
+                SourceType::Bool
                 | SourceType::None
                 | SourceType::SelfType
                 | SourceType::Named(..) => self.ret.clone(),

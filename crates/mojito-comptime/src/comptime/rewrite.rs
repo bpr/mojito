@@ -805,12 +805,9 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
             }
         }
         Type::TypeOf(operand) | Type::Value(operand) => rewrite_expr(operand, subs),
-        Type::Int
-        | Type::UInt
-        | Type::Bool
+        Type::Bool
         | Type::StringLiteral
         | Type::ClosedStringLiteral
-        | Type::Float64
         | Type::None
         | Type::SelfType => {}
     }
@@ -1953,11 +1950,8 @@ fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
     };
     let (head, head_args) = match replacement {
         Type::Named(head, head_args) => (head, head_args),
-        Type::Int => ("Int".to_string(), Vec::new()),
-        Type::UInt => ("UInt".to_string(), Vec::new()),
         Type::Bool => ("Bool".to_string(), Vec::new()),
         Type::StringLiteral | Type::ClosedStringLiteral => ("String".to_string(), Vec::new()),
-        Type::Float64 => ("Float64".to_string(), Vec::new()),
         // No source constructor head exists (function types, references);
         // leave the call for the checker to report against the clone.
         _ => return,
@@ -2059,22 +2053,15 @@ fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr
             span,
         ));
     }
-    // A scalar element converts its zero literal explicitly, so the storage
-    // is built at exactly the element types, with no literal left for the
+    // A `Bool` element converts its zero literal explicitly, so the storage
+    // is built at exactly the element type, with no literal left for the
     // store to materialize.
-    let scalar = match ty {
-        Type::Int => Some(("Int", ExprKind::Int(0.into()))),
-        Type::UInt => Some(("UInt", ExprKind::Int(0.into()))),
-        Type::Bool => Some(("Bool", ExprKind::Bool(false))),
-        Type::Float64 => Some(("Float64", ExprKind::Float(0.0.into()))),
-        _ => None,
-    };
-    if let Some((name, zero)) = scalar {
+    if matches!(ty, Type::Bool) {
         return Some(Expr::new(
             ExprKind::Call {
-                name: name.to_string(),
+                name: "Bool".to_string(),
                 param_args: Vec::new(),
-                args: vec![Expr::new(zero, span)],
+                args: vec![Expr::new(ExprKind::Bool(false), span)],
                 kwargs: Vec::new(),
             },
             span,

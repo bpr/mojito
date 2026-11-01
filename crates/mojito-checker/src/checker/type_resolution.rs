@@ -415,15 +415,12 @@ impl Checker {
             return Ok(reflected);
         }
         Ok(match ty {
-            SourceType::Int => Ty::int(),
-            SourceType::UInt => Ty::uint(),
             SourceType::Bool => Ty::bool(),
             SourceType::StringLiteral => {
                 self.bare_literal(Ty::string_literal(), "StringLiteral")?
             }
             SourceType::ClosedStringLiteral => Ty::string_literal(),
             SourceType::TypeOf(operand) => self.type_of_operand(operand)?,
-            SourceType::Float64 => Ty::float64(),
             SourceType::None => Ty::none(),
             SourceType::Generator { params, result } => self.generator_type(params, result)?,
             SourceType::Func {
@@ -1472,18 +1469,10 @@ impl Checker {
         {
             return Ok(Some((parameter, Vec::new())));
         }
-        // Annotations parse the primitive spellings to dedicated
-        // `SourceType` variants; a `Named` primitive reaches this arm
-        // only from an expression-derived type position (a comptime
-        // alias or associated-member body).
-        if args.is_empty() {
-            match name {
-                "Int" => return Ok(Some((Ty::int(), Vec::new()))),
-                "UInt" => return Ok(Some((Ty::uint(), Vec::new()))),
-                "Bool" => return Ok(Some((Ty::bool(), Vec::new()))),
-                "Float64" => return Ok(Some((Ty::float64(), Vec::new()))),
-                _ => {}
-            }
+        // `Bool` is still the compiler's own spelling; `Int`, `UInt`, and
+        // `Float64` resolve through `std.simd`'s comptime aliases.
+        if args.is_empty() && name == "Bool" {
+            return Ok(Some((Ty::bool(), Vec::new())));
         }
         if name == "SIMD" && !self.simd_declared_application(args) {
             return self.simd_type(args).map(Some);

@@ -152,14 +152,14 @@ pub fn subscript_param_arg(index: &Expr) -> ParamArg {
 
 /// A type annotation.
 ///
-/// Covers the scalar types plus nominal (`struct`) types, which may carry type
-/// arguments (`Pair[Int]`), and references to a type parameter.
+/// Covers `Bool`, the string literal types, and `None` plus nominal (`struct`)
+/// types, which may carry type arguments (`Pair[Int]`), and references to a
+/// type parameter. `Int`, `UInt`, and `Float64` are nominal: the prelude's
+/// `comptime` aliases.
 /// Function/closure and reference types are represented even though their
 /// runtime semantics are not yet supported.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Type {
-    Int,
-    UInt,
     Bool,
     /// The compile-time string literal type, spelled `StringLiteral` in
     /// source. A bare `String` annotation parses as `Named("String")` and
@@ -171,7 +171,6 @@ pub enum Type {
     /// `"two"` binds), so the annotation it substitutes stays concrete where
     /// the open bare spelling would not. The parser never constructs it.
     ClosedStringLiteral,
-    Float64,
     None,
     /// A name that resolves to a `struct` type, optionally applied to parameter
     /// arguments (`Point` is `Named("Point", [])`, `Pair[Int]` is
@@ -272,11 +271,8 @@ impl Type {
     /// spelling no expression denotes.
     pub fn expression_spelling(&self, span: Span) -> Option<Expr> {
         let kind = match self {
-            Self::Int => ExprKind::Identifier("Int".to_string()),
-            Self::UInt => ExprKind::Identifier("UInt".to_string()),
             Self::Bool => ExprKind::Identifier("Bool".to_string()),
             Self::StringLiteral => ExprKind::Identifier("StringLiteral".to_string()),
-            Self::Float64 => ExprKind::Identifier("Float64".to_string()),
             Self::SelfType => ExprKind::Identifier("Self".to_string()),
             Self::Named(name, args) if args.is_empty() => ExprKind::Identifier(name.clone()),
             Self::Named(name, args) => ExprKind::TypeApply {
@@ -2044,11 +2040,8 @@ impl Expr {
             ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
             ExprKind::Identifier(name) if !name.chars().next()?.is_lowercase() => {
                 Some(match name.as_str() {
-                    "Int" => Type::Int,
-                    "UInt" => Type::UInt,
                     "Bool" => Type::Bool,
                     "StringLiteral" => Type::StringLiteral,
-                    "Float64" => Type::Float64,
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
             }
@@ -3188,12 +3181,9 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         self.expr(clause);
                     }
                 }
-                Type::Int
-                | Type::UInt
-                | Type::Bool
+                Type::Bool
                 | Type::StringLiteral
                 | Type::ClosedStringLiteral
-                | Type::Float64
                 | Type::None
                 | Type::SelfParam(_)
                 | Type::SelfType => {}

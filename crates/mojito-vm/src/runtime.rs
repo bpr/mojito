@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::io::{self, Write};
 
-use mojito_ast::ast::{Dtype, InfixOp, PrefixOp, Type};
+use mojito_ast::ast::{Dtype, InfixOp, PrefixOp};
 use mojito_types::ct::{
     CtLane, CtValue, ScalarConversion, bool_lane_binop, convert_lane, float_lane_binop,
     int_lane_binop, lane_compare, wrap_lane,
@@ -1385,42 +1385,6 @@ pub fn llvm_intrinsic(
     Ok(simd_value(dtype, lanes))
 }
 
-/// Coerce a value to a declared type at a binding site. Only materializes a
-/// numeric literal's default (`Int`/`Float64`) into another numeric type; all
-/// other values pass through unchanged.
-///
-/// # Panics
-///
-/// Panics if a literal that reached the VM does not round to `binary64`, which
-/// the lexer's literal grammar rules out.
-pub fn coerce(value: Value, ty: &Type) -> Value {
-    match ty {
-        Type::UInt => match value {
-            Value::Int(n) => Value::UInt(n as u64),
-            Value::IntLiteral(value) => value
-                .to_u64()
-                .map_or_else(|| Value::IntLiteral(value), Value::UInt),
-            v => v,
-        },
-        Type::Float64 => match value {
-            Value::Int(n) => Value::Float64(n as f64),
-            Value::UInt(n) => Value::Float64(n as f64),
-            Value::IntLiteral(value) => Value::Float64(
-                value
-                    .to_f64()
-                    .expect("an integer literal always rounds to binary64"),
-            ),
-            Value::FloatLiteral(value) => Value::Float64(
-                value
-                    .to_f64()
-                    .expect("a finite float literal always rounds to binary64"),
-            ),
-            v => v,
-        },
-        _ => value,
-    }
-}
-
 /// Apply the exact literal-to-runtime conversion selected by checked HIR and
 /// represented explicitly in MIR.
 pub fn materialize_literal(
@@ -1537,16 +1501,38 @@ pub fn coerce_checked(value: Value, ty: &mojito_types::types::Ty) -> Value {
 
 /// Coerce a value to match an existing binding's numeric type (for assignment,
 /// where the declared type isn't carried but the current value's type is it).
+///
+/// Only a numeric value or literal moving into a `UInt` or `Float64` binding
+/// converts; all other values pass through unchanged.
+///
+/// # Panics
+///
+/// Panics if a literal that reached the VM does not round to `binary64`, which
+/// the lexer's literal grammar rules out.
 pub fn coerce_like(new: Value, existing: &Value) -> Value {
     if matches!(new, Value::IntLiteral(_) | Value::FloatLiteral(_))
         && let Ok(materialized) = materialize_like_numeric(new.clone(), existing)
     {
         return materialized;
     }
-    match existing {
-        Value::UInt(_) => coerce(new, &Type::UInt),
-        Value::Float64(_) => coerce(new, &Type::Float64),
-        _ => new,
+    match (existing, new) {
+        (Value::UInt(_), Value::Int(n)) => Value::UInt(n as u64),
+        (Value::UInt(_), Value::IntLiteral(value)) => value
+            .to_u64()
+            .map_or_else(|| Value::IntLiteral(value), Value::UInt),
+        (Value::Float64(_), Value::Int(n)) => Value::Float64(n as f64),
+        (Value::Float64(_), Value::UInt(n)) => Value::Float64(n as f64),
+        (Value::Float64(_), Value::IntLiteral(value)) => Value::Float64(
+            value
+                .to_f64()
+                .expect("an integer literal always rounds to binary64"),
+        ),
+        (Value::Float64(_), Value::FloatLiteral(value)) => Value::Float64(
+            value
+                .to_f64()
+                .expect("a finite float literal always rounds to binary64"),
+        ),
+        (_, new) => new,
     }
 }
 

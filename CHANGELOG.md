@@ -2409,6 +2409,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Int`, `UInt`, and `Float64` are no longer parser types: they resolve
+  through `std.simd`'s `comptime` aliases like `Int8`, so a program's own
+  `struct Float64` is the type its annotations name, as at the pin
+  (R1792), where `def f(x: Float64)` used to read the builtin scalar. A
+  scalar construction in a bracket (`count[Int8(4).__mlir_index__()]`) now
+  parses as a value expression for every scalar alias.
 - `SIMD`'s `mlir_value=` initializer is upstream's declared overload, and a
   bracketless `SIMD(mlir_value=s)` infers `dtype` and `length` only from
   storage a binder spells, as the pin's unifier does (R1591). Over a

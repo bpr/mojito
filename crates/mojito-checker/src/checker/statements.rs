@@ -458,7 +458,11 @@ impl Checker {
             self.comptime_applied.insert(name.clone(), applied);
             ty
         } else if let Some(folded) = self.program_constants.own(name) {
-            Some(if matches!(ty, Some(SourceType::Int)) {
+            let declared_int = ty
+                .as_ref()
+                .and_then(|annotation| self.ty_from_anno(annotation).ok())
+                .is_some_and(|declared| declared.is_int());
+            Some(if declared_int {
                 Ty::int()
             } else {
                 Ty::int_literal_of(folded)
