@@ -1630,9 +1630,8 @@ impl Checker {
         match &index.kind {
             ExprKind::Identifier(name)
                 if self.structs.contains_key(name)
-                    || ((scalar_type_name(name).is_some()
-                        || self.lookup_tparam(name).is_some())
-                        && self.lookup(name).is_none()) =>
+                    || (scalar_type_name(name).is_some() && self.lookup(name).is_none())
+                    || (self.lookup_tparam(name).is_some() && !self.is_local_binding(name)) =>
             {
                 Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }

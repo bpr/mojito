@@ -189,7 +189,7 @@ def build(vm_only: bool, env: dict[str, str]) -> bool:
 def native_env() -> dict[str, str]:
     """The environment `scripts/check-pliron` builds and runs under."""
     env = dict(os.environ)
-    prefix = env.setdefault("LLVM_SYS_231_PREFIX", "/opt/llvm-23")
+    prefix = env.setdefault("LLVM_SYS_231_PREFIX", "/usr/lib/llvm-23")
     env["PATH"] = f"{prefix}/bin:{env.get('PATH', '')}"
     env.setdefault("MOJITO_RUNTIME_LIB", str(ROOT / "target" / "debug" / "libmojito_runtime.a"))
     return env

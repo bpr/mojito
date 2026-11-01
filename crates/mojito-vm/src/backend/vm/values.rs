@@ -381,11 +381,14 @@ impl VmBackend {
 
     /// The value of a never-stored slot of `ty` that `mem-2-reg` reads as
     /// `uninitmem`, upstream's `undef`: a struct with no fields is whole
-    /// with nothing stored, so it is that struct, and a `!pop.array` is its
+    /// with nothing stored, so it is that struct, a `!pop.array` is its
     /// elements' placeholders, which stores through `pop.array.gep` fill
-    /// one by one; anything else is uninitialized storage.
+    /// one by one, and a vector is one of its type, whose lanes
+    /// `pop.simd.insertelement` writes one by one; anything else is
+    /// uninitialized storage.
     pub(super) fn uninit_mem_value(prog: &Prog, ty: Option<&Ty>) -> Value {
-        let elements = ty.is_some_and(|ty| matches!(ty.kind(), TyKind::PopArray { .. }));
+        let elements = ty
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::PopArray { .. }) || ty.kind().is_simd());
         ty.and_then(|ty| Self::uninitialized_value(prog, ty))
             .filter(|value| {
                 elements || matches!(value, Value::Struct { fields, .. } if fields.is_empty())

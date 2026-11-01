@@ -1048,9 +1048,15 @@ def main():
         matches!(
             &conditions[0],
             mojito::types::GenericConstraint::Eq(
-                mojito::types::ConstraintOperand::Param(binder),
+                operand,
                 mojito::types::ConstraintOperand::Value(mojito::ct::CtValue::Bool(true)),
-            ) if &*binder.name == "b"
+            ) if match operand {
+                mojito::types::ConstraintOperand::Param(binder) => &*binder.name == "b",
+                mojito::types::ConstraintOperand::Expr(read) => {
+                    read.as_decl_ref().is_some_and(|reference| &*reference.name == "b")
+                }
+                _ => false,
+            }
         ),
         "{conditions:?}"
     );
@@ -2491,8 +2497,10 @@ fn literal_materialization_is_explicit_in_typed_mir() {
 }
 
 #[test]
-fn scalar_literal_construction_is_a_materialization() {
-    let program = parse("def main():\n    print(UInt(7), Float64(2.5), UInt())\n").expect("parse");
+fn scalar_literal_construction_calls_the_declared_initializer() {
+    // `UInt(7)`, `Float64(2.5)`, and `UInt()` bind `SIMD`'s declared
+    // literal and default initializers, as at the pin.
+    let program = linked("def main():\n    print(UInt(7), Float64(2.5), UInt())\n");
     let checked = mojito::check_program(&program).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     let main = &mir
@@ -2502,17 +2510,27 @@ fn scalar_literal_construction_is_a_materialization() {
         .expect("main lowered")
         .1;
     let instructions = main.blocks.iter().flat_map(|block| &block.instrs);
-    assert!(!instructions.clone().any(|instruction| matches!(
-        instruction,
-        MirInstr::Call { func, .. } if matches!(func.0.as_str(), "UInt" | "Float64")
-    )));
-    let targets = instructions
+    assert!(
+        !instructions
+            .clone()
+            .any(|instruction| matches!(instruction, MirInstr::MaterializeLiteral { .. }))
+    );
+    let callees = instructions
         .filter_map(|instruction| match instruction {
-            MirInstr::MaterializeLiteral { target, .. } => Some(target.to_string()),
+            MirInstr::Call { func, .. } if func.0.starts_with("SIMD.__init__") => {
+                Some(func.0.as_str())
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(targets, ["UInt", "Float64", "UInt"]);
+    assert_eq!(
+        callees,
+        [
+            "SIMD.__init__$ov$IntLiteral",
+            "SIMD.__init__$ov$FloatLiteral",
+            "SIMD.__init__$ov$"
+        ]
+    );
 }
 
 #[test]
@@ -4224,7 +4242,9 @@ fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
         instructions
             .iter()
             .filter(|instruction| {
-                matches!(instruction, MirInstr::Call { func, .. } if func.0 == "index")
+                // The entry's `index` is qualified beside the library's.
+                matches!(instruction, MirInstr::Call { func, .. }
+                    if func.0 == "index" || func.0.ends_with("$$$index"))
             })
             .count(),
         1,
@@ -4269,9 +4289,11 @@ fn nominal_setter_mir_orders_receiver_index_and_rhs_evaluation() {
     let call_position = |name: &str| {
         instructions
             .iter()
-            .position(
-                |instruction| matches!(instruction, MirInstr::Call { func, .. } if func.0 == name),
-            )
+            .position(|instruction| {
+                // An entry name beside a library one is module-qualified.
+                matches!(instruction, MirInstr::Call { func, .. }
+                    if func.0 == name || func.0.ends_with(&format!("$$${name}")))
+            })
             .unwrap_or_else(|| panic!("call to {name} lowered"))
     };
     let rhs = call_position("rhs");
@@ -5739,56 +5761,42 @@ fn stored_span_iterator_lends_the_span_place() {
 
 #[test]
 fn closed_aggregate_parameter_argument_has_no_runtime_form() {
-    // `tup[(1, Q(8))]()`: the call carries the closed tuple in its
-    // instantiated arguments, as Mojo's carries a parameter attribute, so the
-    // caller builds no `Q` or `Tuple`; the verifier accepts the empty slot only
-    // while the call carries that value.
+    // `tup[(1, Q(8))]()`: the tuple is the application of its constructors,
+    // which the elaborator evaluates, so the caller builds no `Q` or `Tuple`
+    // and passes the application as the parameter's attribute.
     let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\ndef tup[p: Tuple[Int, Q]]():\n    print(p[1].a)\n\ndef main():\n    tup[(1, Q(8))]()\n";
     let linked = mojito::link_source(source, Path::new("mir_test.mojo")).expect("link error");
     let program = mojito::elaborate(linked).expect("elaborate");
     let checked = mojito::check_program(&program).expect("check");
-    let mut mir = mojito::mir::lower_checked_program(&checked);
+    let mir = mojito::mir::lower_checked_program(&checked);
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
         mir.invariant_errors
     );
-    let main = &mut mir
+    let main = &mir
         .functions
-        .iter_mut()
+        .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
     assert!(!main.blocks.iter().flat_map(|block| &block.instrs).any(
         |instruction| matches!(instruction, MirInstr::Call { func, .. } if func.0 == "Tuple" || func.0 == "Q")
     ));
-    let call = main
+    let arguments = main
         .blocks
-        .iter_mut()
-        .flat_map(|block| &mut block.instrs)
+        .iter()
+        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::Call {
                 func,
                 param_arg_regs,
-                instantiated_args,
                 ..
-            } if func.0 == "tup" => Some((param_arg_regs, instantiated_args)),
+            } if func.0 == "tup" => Some(param_arg_regs),
             _ => None,
         })
         .expect("tup call");
-    assert!(matches!(call.0.as_slice(), [argument] if argument.value.is_none()));
-    assert!(matches!(
-        call.1.as_slice(),
-        [mojito::TyArg::Val(value)] if value.is_closed_aggregate_value()
-    ));
-    call.1.clear();
-    let errors = mojito::mir::verify::verify(&mir);
-    assert!(
-        errors
-            .iter()
-            .any(|error| error.contains("value parameter 'p' has no runtime register")),
-        "{errors:?}"
-    );
+    assert!(matches!(arguments.as_slice(), [argument] if argument.expr.is_some()));
 }
 
 #[test]

@@ -395,7 +395,7 @@ pub enum TypeError {
         argument: String,
         from: String,
         to: String,
-        parameter: String,
+        parameter: Box<str>,
     },
     /// A solved type argument does not conform to a type parameter's declared
     /// trait bound (`f[T: Quackable](...)` called with a non-`Quackable` type).

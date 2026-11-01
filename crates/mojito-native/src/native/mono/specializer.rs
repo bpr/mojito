@@ -1031,6 +1031,7 @@ impl<'a> Specializer<'a> {
         // the body was read through answer first, then every other callee
         // ([`Self::drop_removed_arguments`]).
         let arguments = mojito_mir::mir::with_removed_argument_forwards_erased(
+            &key.template,
             template,
             &self.source.declarations,
             &|callee| {
@@ -2700,6 +2701,9 @@ impl<'a> Specializer<'a> {
             // Argument loads a devirtualized capturing call needs, spliced in
             // ahead of the call once the walk over this block is done.
             let mut preludes: Vec<(usize, Vec<MirInstr>)> = Vec::new();
+            // The results of calls rewritten to a cast, whose binding is no
+            // longer a call's result storage.
+            let mut casts = HashSet::new();
             for (index, instruction) in block.instrs.iter_mut().enumerate() {
                 let regions = mojito_mir::mir::instruction_regions_mut(instruction);
                 if !regions.is_empty() {
@@ -2707,6 +2711,11 @@ impl<'a> Specializer<'a> {
                         self.rewrite_blocks(owner, function, region)?;
                     }
                     continue;
+                }
+                if let MirInstr::DefVar { src, in_place, .. } = instruction
+                    && casts.contains(&src.0)
+                {
+                    *in_place = false;
                 }
                 // `abs`/`round`/`divmod` on a nominal receiver are
                 // checker-typed dunder dispatches the VM performs by name
@@ -2780,6 +2789,7 @@ impl<'a> Specializer<'a> {
                         // `Bool(x)` a template spelled over a type parameter
                         // is, at a scalar instance, the cast the check
                         // records where the operand is spelled scalar.
+                        casts.insert(dest.0);
                         *instruction = MirInstr::ScalarCast {
                             dest: *dest,
                             value: *value,

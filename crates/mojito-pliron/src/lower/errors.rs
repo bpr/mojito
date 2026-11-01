@@ -22,11 +22,9 @@ impl FnLowering<'_> {
 
     /// A lifecycle event with a compile-time payload (a type name).
     pub(super) fn emit_trace_text(&mut self, ctx: &mut Context, kind: u32, text: &str) {
-        // Lifecycle events name types as the VM logs them: the bare template
-        // (`List`), never the backend's monomorphized instance spelling
-        // (`List$mono$TInt`). Checker-specialized names (`Bag$t2[…]`) are
-        // the runtime struct name on both sides and pass through.
-        let text = text.split("$mono").next().unwrap_or(text);
+        // Lifecycle events name types as the VM logs them: both run the
+        // elaborator's concrete MIR, so a struct is its instance name
+        // (`Array$mono$TUInt8$V65`).
         let global = self.shared.intern_string(ctx, text.as_bytes());
         let data = self.global_address(ctx, &global, Reg(u32::MAX));
         let len = self.uint_constant(ctx, text.len() as u64);

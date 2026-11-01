@@ -30,7 +30,7 @@ def main():
 
 /// The host triple with the `x86-64` baseline CPU, as in
 /// `pliron_support::host_target`.
-fn host_target() -> NativeTarget {
+const fn host_target() -> NativeTarget {
     NativeTarget::new(
         mojito::native::target::Triple::host()
             .expect("pliron tests require a supported host target"),

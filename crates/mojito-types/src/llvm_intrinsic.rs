@@ -830,7 +830,11 @@ mod tests {
             (1.0, 128.0, f64::INFINITY),
         ];
         for (src1, src2, expected) in cases {
-            assert_eq!(scalef_lane(src1, f32(src2)), expected, "{src1}, {src2}");
+            assert_eq!(
+                scalef_lane(src1, f32(src2)).to_bits(),
+                expected.to_bits(),
+                "{src1}, {src2}"
+            );
         }
         assert!(scalef_lane(-0.0, 1.0).is_sign_negative());
         assert!(scalef_lane(0.0, f64::INFINITY).is_nan());

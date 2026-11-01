@@ -83,6 +83,17 @@ impl FnLowering<'_> {
             .get(&dest.0)
             .cloned()
             .ok_or_else(|| self.unsupported_reg("untyped `uninitmem`".to_string(), dest))?;
+        // A vector is the poison vector its lanes are inserted into, as an
+        // element list builds it, held in its own typed storage: a load of
+        // never-written bytes would be a poison byte.
+        if let Some((dtype, width)) = simd_dims(&ty).filter(|&(_, width)| width > 1) {
+            let width = width as usize;
+            let vector_ty = self.simd_vector_ty(ctx, dtype, width);
+            let poison = PoisonOp::new(ctx, vector_ty);
+            self.append(ctx, poison.get_operation(), Some(dest));
+            self.simd_store_vector(ctx, dest, dtype, width, poison.get_result(ctx));
+            return Ok(());
+        }
         match lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))? {
             LowerTy::Scalar(scalar) => {
                 let undef = UndefOp::new(ctx, scalar.handle(ctx));
@@ -519,49 +530,30 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         dest: Reg,
         value: Reg,
-        target: &Ty,
+        target_ty: &Ty,
     ) -> Result<(), PlironError> {
-        let target = match target.kind() {
-            kind if kind.is_int() => ScalarTy::Int,
-            kind if kind.is_uint() => ScalarTy::UInt,
-            kind if kind.is_float64() => ScalarTy::Float64,
-            ty if let Some(dtype) = scalar_simd_dtype(ty) => ScalarTy::of_dtype(dtype),
+        let (target, literal_storage) = match target_ty.kind() {
+            kind if kind.is_int() => (ScalarTy::Int, false),
+            kind if kind.is_uint() => (ScalarTy::UInt, false),
+            kind if kind.is_float64() => (ScalarTy::Float64, false),
+            ty if let Some(dtype) = scalar_simd_dtype(ty) => (ScalarTy::of_dtype(dtype), false),
             // Literal-typed storage holds the exact value at its default
             // width, rejecting what i64/f64 cannot represent.
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => {
-                let Some(literal) = self.pending_literals.get(&value.0).cloned() else {
-                    if let Some(materialized) = self.reg_values.get(&value.0).copied() {
-                        self.reg_values.insert(dest.0, materialized);
-                        return Ok(());
-                    }
-                    return Err(self.unsupported_reg(
-                        "literal materialization of a non-literal register".into(),
-                        dest,
-                    ));
-                };
-                let constant = self.exact_literal_storage(ctx, &literal, target, dest)?;
-                self.reg_values.insert(dest.0, constant);
-                return Ok(());
-            }
+            TyKind::IntLiteral(_) => (ScalarTy::Int, true),
+            TyKind::FloatLiteral(_) => (ScalarTy::Float64, true),
             other => {
                 return Err(
                     self.unsupported_reg(format!("literal materialization to `{other:?}`"), dest)
                 );
             }
         };
-        // A literal register may also have been materialized on demand by an
-        // earlier direct consumer; alias its value in that case.
-        let Some(literal) = self.pending_literals.get(&value.0).cloned() else {
-            if let Some(materialized) = self.reg_values.get(&value.0).copied() {
-                self.reg_values.insert(dest.0, materialized);
-                return Ok(());
+        let constant = match self.pending_literals.get(&value.0).cloned() {
+            Some(literal) if literal_storage => {
+                self.exact_literal_storage(ctx, &literal, target_ty, dest)?
             }
-            return Err(self.unsupported_reg(
-                "literal materialization of a non-literal register".into(),
-                dest,
-            ));
+            Some(literal) => self.materialize_pending(ctx, &literal, target, dest)?,
+            None => self.runtime_literal_value(ctx, value, target, dest)?,
         };
-        let constant = self.materialize_pending(ctx, &literal, target, dest)?;
         self.reg_values.insert(dest.0, constant);
         Ok(())
     }
@@ -709,6 +701,31 @@ impl FnLowering<'_> {
                 dest,
             )),
         }
+    }
+
+    /// A literal-typed register computed at run time (a join of literal
+    /// arms) holds its value in storage — i64 for `IntLiteral`, f64 for
+    /// `FloatLiteral` — and materializes through the VM's lane conversion:
+    /// an integer wraps to the target width, a float target converts.
+    fn runtime_literal_value(
+        &mut self,
+        ctx: &mut Context,
+        value: Reg,
+        target: ScalarTy,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let source = match self.func.reg_types.get(&value.0).map(Ty::kind) {
+            Some(TyKind::IntLiteral(_)) => ScalarTy::Int,
+            Some(TyKind::FloatLiteral(_)) => ScalarTy::Float64,
+            _ => {
+                return Err(self.unsupported_reg(
+                    "literal materialization of a non-literal register".into(),
+                    dest,
+                ));
+            }
+        };
+        let stored = self.reg_value(ctx, value, source)?;
+        self.convert_lane(ctx, source, target, stored, dest)
     }
 }
 

@@ -978,7 +978,7 @@ fn heterogeneous_pack_bound_failure_names_the_call_element() {
     let src = "def count[*ArgTypes: Intable](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    print(count(1, \"two\", True))\n";
     let error = run(src).unwrap_err();
     assert!(
-        error.contains("type 'StringLiteral' for parameter '*ArgTypes'"),
+        error.contains("type 'StringLiteral[\"two\"]' for parameter '*ArgTypes'"),
         "got: {error}"
     );
     assert!(error.contains("'Intable'"), "got: {error}");
@@ -1243,7 +1243,10 @@ fn variadic_struct_binds_its_pack_beside_another_parameter() {
 fn variadic_struct_runtime_index_is_rejected() {
     let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var i = 0\n    print(p.storage[i])\n";
     let err = run(src).unwrap_err();
-    assert!(err.contains("compile-time Int index"), "got: {err}");
+    assert!(
+        err.contains("cannot use a dynamic value in a parameter list"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -1332,7 +1335,10 @@ fn variadic_struct_dependent_getitem_rejects_bad_indices() {
         "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    var i = 0\n    print(p[i])\n"
     );
     let err = run(&runtime).unwrap_err();
-    assert!(err.contains("compile-time Int index"), "got: {err}");
+    assert!(
+        err.contains("cannot use a dynamic value in a parameter list"),
+        "got: {err}"
+    );
     // A constant index outside the pack names no element, so the read has
     // no capability the pin's `print` could use.
     let range =
@@ -1399,7 +1405,7 @@ fn bound_generic_template_reports_abstract_body_errors() {
     let src = "@fieldwise_init\nstruct Plain(Copyable, Movable):\n    var n: Int\n\ndef broken[T: Movable](x: T) -> Int:\n    return x.definitely_missing_member\n\ndef main():\n    print(broken[Plain](Plain(3)))\n";
     let error = run(src).unwrap_err();
     assert!(
-        error.contains("type 'T' has no field 'definitely_missing_member'"),
+        error.contains("'T' value has no attribute 'definitely_missing_member'"),
         "got: {error}"
     );
 }
@@ -1851,5 +1857,5 @@ fn a_comptime_alias_of_a_parametric_function_type_is_a_type_argument() {
     let unbound =
         "comptime _U = def[d: DType](SIMD[e, 1]) thin -> None\n\ndef main():\n    print(\"ok\")\n";
     let error = run(unbound).unwrap_err();
-    assert!(error.contains("'e' does not name a DType"), "{error}");
+    assert!(error.contains("Undefined variable 'e'"), "{error}");
 }

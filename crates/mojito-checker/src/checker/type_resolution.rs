@@ -3062,12 +3062,7 @@ impl Checker {
                         // A struct parameter converts its argument through
                         // the `@implicit` constructor a run-time argument's
                         // own type selects (a literal its `IntLiteral` one).
-                        // A binder a signature reads is no variable there,
-                        // and is of the type it binds.
-                        let source = {
-                            let _position = self.comptime_position();
-                            self.infer(expr).unwrap_or_else(|_| actual.clone())
-                        };
+                        let source = self.argument_source_type(expr, &value, &actual);
                         let mut slot = None;
                         let converted =
                             self.implicit_parameter_application(&source, ty, |slot_ty| {
@@ -4691,6 +4686,19 @@ impl Checker {
                 .collect::<Option<Vec<_>>>()?;
             self.param_context.type_list(types).ok()
         })
+    }
+
+    /// The type an argument `expr`, valued `value` of type `actual`,
+    /// converts from: a struct parameter converts through the `@implicit`
+    /// constructor its run-time type selects (a literal its `IntLiteral`
+    /// one), and a binder a signature reads is no variable there, of the
+    /// type it binds whatever a module declaration shares its name.
+    fn argument_source_type(&self, expr: &Expr, value: &CtValue, actual: &Ty) -> Ty {
+        if matches!(value, CtValue::Expr(read) if read.as_decl_ref().is_some()) {
+            return actual.clone();
+        }
+        let _position = self.comptime_position();
+        self.infer(expr).unwrap_or_else(|_| actual.clone())
     }
 }
 

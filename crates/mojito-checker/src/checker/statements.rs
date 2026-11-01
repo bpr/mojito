@@ -442,11 +442,7 @@ impl Checker {
         let converted = ty
             .as_ref()
             .filter(|_| vector.is_none())
-            .and_then(|annotation| {
-                self.annotated_comptime_conversion(annotation, value)
-                    .ok()
-                    .flatten()
-            });
+            .and_then(|annotation| self.annotated_comptime_conversion(annotation, value));
         let predeclared = if vector.is_some() {
             vector
         } else if let Some(applied) = converted {

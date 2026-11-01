@@ -19,7 +19,7 @@ const FIXTURE_NAME: &str = "pliron_opt_regression.mojo";
 
 /// The host triple with the `x86-64` baseline CPU, as in
 /// `pliron_support::host_target`.
-fn host_target() -> NativeTarget {
+const fn host_target() -> NativeTarget {
     NativeTarget::new(
         mojito::native::target::Triple::host()
             .expect("pliron tests require a supported host target"),
@@ -127,14 +127,23 @@ def main():
     );
 }
 
+/// `Int` division by zero is `0` at the pin (`SIMD.__floordiv__` selects
+/// zero for a zero divisor), so the trap is the program's own guard: an
+/// unhandled `raise` after a division that ran.
 #[test]
 fn pliron_opt_preserves_division_trap() {
     assert_trap_parity(
         "div-trap",
         "\
-def main():
+def checked_div(a: Int, b: Int) raises -> Int:
+    if b == 0:
+        raise Error(\"division by zero\")
+    return a // b
+
+def main() raises:
     var d: Int = 0
-    print(10 // d)
+    print(checked_div(10, 2))
+    print(checked_div(10, d))
 ",
     );
 }
@@ -386,7 +395,7 @@ def main():
     print(f.cast[DType.int32](), f.cast[DType.uint8](), f.cast[DType.int64]())
     print(f.reduce_min(), f.reduce_max(), f.reduce_add())
     var w = SIMD[DType.int64, 16](3) << SIMD[DType.int64, 16](0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60)
-    print(w.reduce_add(), w.reduce_max(), (w > 1000).reduce_and())
+    print(w.reduce_add(), w.reduce_max(), w.gt(1000).reduce_and())
 ",
     );
 }

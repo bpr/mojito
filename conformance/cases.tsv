@@ -248,7 +248,7 @@ function-type-where-unconstrained	run	assets/ok/function_type_where_unconstraine
 function-type-where-violates	reject	assets/type_error/function_type_where_call_violates.mojo
 function-type-where-missing	reject	assets/type_error/function_type_where_missing_on_contract.mojo
 function-type-where-no-binders	mojo-only	conformance/fixtures/function_type_where_no_binders.mojo
-function-type-where-alias	mojo-only	conformance/fixtures/function_type_where_alias.mojo
+function-type-where-alias	run	conformance/fixtures/function_type_where_alias.mojo
 contextual-member-static	run	assets/ok/contextual_member_static.mojo
 contextual-member-no-context	reject	assets/type_error/contextual_member_no_context.mojo
 contextual-member-unknown	reject	assets/type_error/contextual_member_unknown.mojo

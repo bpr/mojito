@@ -1620,6 +1620,23 @@ impl<'a> Flatten<'a> {
         if let Some(target_ty) = target.ty() {
             value = self.materialize_register(value, &target_ty, value_expression.location());
         }
+        // `v._mlir_value = s` stores the whole `SIMD` value, which its
+        // storage is: the stored register is retyped, never converted.
+        if target.is_simd_storage()
+            && self
+                .f
+                .reg_types
+                .get(&value.0)
+                .is_some_and(|stored| matches!(stored.kind(), TyKind::KgenSimd { .. }))
+            && let Some(vector) = target.object().and_then(Node::ty)
+        {
+            let retyped = self.fresh_typed(value_expression.location(), None, vector);
+            self.emit(MirInstr::Rebind {
+                dest: retyped,
+                value,
+            });
+            value = retyped;
+        }
         self.yield_stored_value(value_expression, value);
         (value, value_place)
     }

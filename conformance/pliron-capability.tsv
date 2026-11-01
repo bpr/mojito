@@ -23,7 +23,8 @@ instruction	store_to_mem	unsupported	compile-time memory has no run-time form; o
 instruction	type.name	unsupported	the elaborator spells every type name as a constant; one that survives rejects
 instruction	type.construct	unsupported	monomorphization leaves no type parameter to construct; one that survives rejects
 instruction	type.construct_expr	unsupported	monomorphization leaves no type expression to construct; one that survives rejects
-instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
+instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a run-time literal value converts from its i64/f64 storage; a constant exceeding that storage rejects
+instruction	scalar.cast	partial	numeric, Bool, width-1 SIMD, and literal operands, VM-exact; Int of a pointer is its address; a pointer to any other target rejects
 instruction	pointer.convert	supported	a `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one `ptr`; the copy is the identity
 instruction	var.use	supported	copy/move/borrow
 instruction	var.declare	supported	a declaration marker; the slot is allocated at entry and it lowers to nothing
@@ -31,7 +32,7 @@ instruction	place.move	partial	marks the root partially initialized; later whole
 instruction	var.store	supported	sets the initialization flag
 instruction	unary	partial	checked scalar operand types
 instruction	binary	partial	checked scalar operand types plus pointer `+` element arithmetic; nominal left operands monomorphize to operator-method calls; other forms reject
-instruction	call	partial	positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject
+instruction	call	partial	positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort`/`_mojito_float_text` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject
 instruction	call.indirect	partial	contract-bound positional and keyword arguments through `{invoke, env}` values, raising contracts included; variadic/keyword-variadic contracts, defaulted arguments, reference returns, generic callable values, and un-devirtualized nominal callables reject
 instruction	call.method	partial	positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; a reference-returning `__next__`'s copy adapter copies the referent out by the `__copyinit__` it names, as a `for` loop's raising `__next__` call does
 instruction	pointer.take	partial	element-offset raw move out of ownership-verified single-take storage; unlayoutable elements reject
@@ -42,7 +43,7 @@ instruction	uninit.destroy	partial	in-place payload destructor; raising or dropp
 instruction	field.get	partial	layoutable base aggregates
 instruction	index.get	partial	nominal `__getitem__` dispatch (value, reference, and raising-reference results) plus the `pointer` and constant-index pack-storage intrinsics; runtime pack indexes reject until the packs slice
 instruction	index.multi	supported	variadic `__getitem__` dispatch with index actuals, a slice literal's constructed value among them, positional or keyword
-instruction	index.multi_set	supported	`__setitem__` dispatch with the value passed by the setter's value name and `mut self` write-back
+instruction	index.multi_set	supported	`__setitem__` dispatch with the keyword or trailing-positional value slot and `mut self` write-back
 instruction	place.store	supported	whole-variable stores set the initialization flag
 instruction	place.store_ref	supported	stores the reference handle
 instruction	place.load	partial	layoutable, typed places

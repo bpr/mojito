@@ -1868,7 +1868,11 @@ impl Checker {
             return applied.ok();
         }
         let found = compiled.meta().as_value()?;
-        if coerces(found, ty) {
+        // A compile-time string is the `String` it materializes to.
+        if coerces(found, ty)
+            || mojito_types::types::is_nominal_string(ty)
+                && matches!(compiled.as_constant(), Some(CtValue::Str(_)))
+        {
             return None;
         }
         if let Some(lanes) = self.simd_length_lanes(found, ty, compiled) {
@@ -3417,7 +3421,7 @@ impl Checker {
         // argument converts: `comptime w: L = 4` binds `L(4)`.
         if !self.function_bases.is_empty()
             && let Some(annotation) = annotation
-            && let Some(converted) = self.annotated_comptime_conversion(annotation, value)?
+            && let Some(converted) = self.annotated_comptime_conversion(annotation, value)
         {
             let level = self.tparams.len().saturating_sub(1);
             self.local_comptime_parameters
@@ -3634,16 +3638,14 @@ impl Checker {
         &self,
         annotation: &SourceType,
         value: &Expr,
-    ) -> Result<Option<ParamExpr>, TypeError> {
-        let expected =
-            self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
-        if !matches!(expected.kind(), TyKind::Struct(..)) {
-            return Ok(None);
-        }
-        let Ok(compiled) = self.compile_dependent_ct_expr(value) else {
-            return Ok(None);
-        };
-        Ok(self.converted_parameter_value(value, &compiled, &expected))
+    ) -> Option<ParamExpr> {
+        // A trait (`comptime C: Hooks = …`) names no struct to convert to.
+        let expected = self
+            .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
+            .ok()
+            .filter(|expected| matches!(expected.kind(), TyKind::Struct(..)))?;
+        let compiled = self.compile_dependent_ct_expr(value).ok()?;
+        self.converted_parameter_value(value, &compiled, &expected)
     }
 
     /// Require a raw list binding's annotation, if any, to name the list's

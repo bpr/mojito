@@ -77,13 +77,15 @@ impl Checker {
             }
             // A value getter's result is no place: a binding over it
             // materializes the value, as over any other owned call result.
+            // A store's setter selection names the element place it writes.
             ExprKind::Index { .. }
                 if self.has_fact(&expr.source_span(), |facts| {
                     facts.subscript_write_back.is_none()
-                        && facts
-                            .selected_call
-                            .as_deref()
-                            .is_some_and(|getter| getter.reference_result.is_none())
+                        && facts.selected_call.as_deref().is_some_and(|getter| {
+                            getter.reference_result.is_none()
+                                && mojito_symbol::symbol::split_method_symbol(&getter.target)
+                                    .is_some_and(|(_, member)| member.starts_with("__getitem__"))
+                        })
                 }) =>
             {
                 Err(TypeError::Unsupported(

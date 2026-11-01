@@ -999,12 +999,17 @@ impl<'c> Inliner<'_, 'c> {
         full_declaration: &MirFunctionDeclaration,
         removed: &[VarId],
     ) -> (MirFunction, MirFunctionDeclaration) {
-        let forwards = with_removed_argument_forwards_erased(full, self.declarations, &|callee| {
-            full.callee_removed_args
-                .iter()
-                .find(|(discounted, _)| discounted == callee)
-                .map(|(_, slots)| slots.as_slice())
-        });
+        let forwards = with_removed_argument_forwards_erased(
+            &full_declaration.lowered_name,
+            full,
+            self.declarations,
+            &|callee| {
+                full.callee_removed_args
+                    .iter()
+                    .find(|(discounted, _)| discounted == callee)
+                    .map(|(_, slots)| slots.as_slice())
+            },
+        );
         let source = forwards.as_ref().map_or(full, |(view, _)| view);
         without_removed_arguments(source, full_declaration, removed)
     }

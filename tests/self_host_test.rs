@@ -648,7 +648,10 @@ fn self_hosted_pack_tuple_preserves_tuple_restrictions() {
         ),
     );
     let err = run(&runtime_index).unwrap_err();
-    assert!(err.contains("compile-time Int index"), "got: {err}");
+    assert!(
+        err.contains("cannot use a dynamic value in a parameter list"),
+        "got: {err}"
+    );
 }
 
 #[test]

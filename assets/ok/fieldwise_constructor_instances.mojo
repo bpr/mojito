@@ -15,16 +15,23 @@ def mkf[n: Int]() -> Int:
     return Fw[n](5).v
 
 
+# A slot over the generator's `n` whose construction asserts nothing: a
+# `SIMD[dt, n]` construction checks its width, which keeps `n` read.
+@fieldwise_init
+struct Lane[n: Int](Copyable, ImplicitlyCopyable, Movable):
+    var x: Int
+
+
 @fieldwise_init
 struct Arr[n: Int](Copyable, Movable):
-    var v: SIMD[DType.int64, Self.n]
+    var v: Lane[Self.n]
 
 
 def plain_nested[n: Int](y: Int) -> Int:
     def inner(a: Arr[n], y: Int) -> Int:
         return y + 1
 
-    return inner(Arr[n](SIMD[DType.int64, n](1)), y)
+    return inner(Arr[n](Lane[n](1)), y)
 
 
 @fieldwise_init

@@ -1,4 +1,4 @@
-mojito-mir 1.87
+mojito-mir 1.153
 artifact {
   features: [],
   files: [
@@ -29,17 +29,17 @@ artifact {
         return_type: present(simd { dtype: float32, width: 4 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: float32, width: 4 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 194, end: 195, origin: present($v0) }) }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: simd { dtype: float32, width: 4 } }, reg_type { reg: %r3, type: simd { dtype: float32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 194, end: 195, origin: present($v0) }) }],
         blocks: [
           bb0 {
             instructions: [
+              drop.var { var: $v0 },
               const { dest: %r0, value: int_literal(99) },
               literal.materialize { dest: %r1, value: %r0, target: simd { dtype: float32, width: 1 } },
-              const { dest: %r2, value: int_literal(0) },
-              place.store { place: place { root: $v0, root_type: present(simd { dtype: float32, width: 4 }), projections: [projection { op: index(%r2), type: simd { dtype: float32, width: 1 } }], type: present(simd { dtype: float32, width: 1 }), through: absent }, src: %r1 },
-              var.use { dest: %r3, var: $v0, mode: copy },
-              drop.var { var: $v0 }
+              simd.make { dest: %r2, dtype: float32, width: 4, elems: [%r1] },
+              var.store { var: $v0, src: %r2, binding_type: absent, in_place: false },
+              var.use { dest: %r3, var: $v0, mode: move }
             ],
             terminator: return { value: present(%r3) }
           }

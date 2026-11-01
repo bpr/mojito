@@ -548,7 +548,7 @@ pub(super) fn fold_simd_alias_bounds(
             _ => None,
         }
     };
-    let own: HashMap<String, Vec<ParamArg>> = program
+    let aliases: HashMap<&str, &Expr> = program
         .iter()
         .filter_map(|statement| match &statement.kind {
             StmtKind::Comptime {
@@ -556,17 +556,13 @@ pub(super) fn fold_simd_alias_bounds(
                 type_params,
                 value,
                 ..
-            } if type_params.is_empty() => match &value.kind {
-                ExprKind::TypeApply {
-                    name: applied,
-                    args,
-                } if applied == "SIMD" && simd_source_dims(args).is_some() => {
-                    Some((name.clone(), args.clone()))
-                }
-                _ => None,
-            },
+            } if type_params.is_empty() => Some((name.as_str(), value)),
             _ => None,
         })
+        .collect();
+    let own: HashMap<String, Vec<ParamArg>> = aliases
+        .keys()
+        .filter_map(|&name| Some((name.to_string(), own_simd_alias(&aliases, name)?)))
         .collect();
     if own.is_empty() && installed.is_none() {
         return;
@@ -585,6 +581,80 @@ pub(super) fn fold_simd_alias_bounds(
             }
         }
     }
+}
+
+/// The `SIMD[dtype, width]` arguments the module alias `name` of
+/// `aliases` names, through other aliases (`comptime Byte = UInt8`) and a
+/// partially bound one applied to the arguments its `_` slots take
+/// (`comptime Scalar = SIMD[_, length=1]`, `Scalar[DType.uint8]`).
+fn own_simd_alias(aliases: &HashMap<&str, &Expr>, name: &str) -> Option<Vec<ParamArg>> {
+    let mut value = *aliases.get(name)?;
+    let mut supplied: Vec<ParamArg> = Vec::new();
+    for _ in 0..aliases.len() {
+        match &value.kind {
+            ExprKind::Identifier(next) if supplied.is_empty() => {
+                value = aliases.get(next.as_str())?;
+            }
+            // One bracket argument parses as a subscript (`Scalar[DType.int8]`).
+            ExprKind::Index { object, index } if supplied.is_empty() => {
+                let ExprKind::Identifier(applied) = &object.kind else {
+                    return None;
+                };
+                value = aliases.get(applied.as_str())?;
+                supplied = vec![ParamArg::Value((**index).clone())];
+            }
+            ExprKind::TypeApply { name, args } => {
+                let mut supplied_args = supplied.into_iter();
+                let mut filled: Vec<ParamArg> = args
+                    .iter()
+                    .map(|arg| match arg {
+                        ParamArg::Value(Expr {
+                            kind: ExprKind::Identifier(hole),
+                            ..
+                        }) if hole == "_" => supplied_args.next().unwrap_or_else(|| arg.clone()),
+                        _ => arg.clone(),
+                    })
+                    .collect();
+                filled.extend(supplied_args);
+                let args = filled;
+                if name == "SIMD" {
+                    let positional = simd_positional_args(args)?;
+                    return simd_source_dims(&positional).map(|_| positional);
+                }
+                value = aliases.get(name.as_str())?;
+                supplied = args;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// `SIMD`'s bracket arguments in its parameter order, `dtype` then
+/// `length`, keyword ones placed by name.
+fn simd_positional_args(args: Vec<ParamArg>) -> Option<Vec<ParamArg>> {
+    let mut slots: [Option<ParamArg>; 2] = [None, None];
+    let mut position = 0;
+    for arg in args {
+        let slot = match arg {
+            ParamArg::Named { name, value } => {
+                let slot = ["dtype", "length"].iter().position(|slot| *slot == name)?;
+                slots[slot] = Some(*value);
+                continue;
+            }
+            arg => {
+                while slots.get(position)?.is_some() {
+                    position += 1;
+                }
+                (position, arg)
+            }
+        };
+        slots[slot.0] = Some(slot.1);
+    }
+    let [Some(dtype), Some(length)] = slots else {
+        return None;
+    };
+    Some(vec![dtype, length])
 }
 
 /// Fold every parameter whose type is one of upstream's KGEN types,

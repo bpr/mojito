@@ -1105,7 +1105,7 @@ mod tests {
         let dt = context.decl_ref(ParamId::new("f", 0), "dt", MetaTy::value(Ty::dtype()));
         let width = context.decl_ref(ParamId::new("f", 1), "width", MetaTy::int());
         let symbolic = Ty::simd(SimdDtype::Expr(dt), SimdWidth::Expr(length_of(&width)));
-        let function = function_with(vec![symbolic.into()]);
+        let function = function_with(vec![symbolic]);
         let declarations = declarations(
             "f",
             vec![

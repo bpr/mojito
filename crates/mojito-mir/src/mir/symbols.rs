@@ -139,7 +139,8 @@ impl<'t> SymbolTable<'t> {
 
     /// The member-table declarations the closed `SIMD` types in `ty` use
     /// ([`member_table_name`]), which their serialized dtype and width do
-    /// not spell as a struct type spells its name.
+    /// not spell as a struct type spells its name, and the `SIMD` template
+    /// a program declaring it names by any `SIMD` type.
     fn member_table_uses(&self, ty: &Ty) -> Vec<&'t str> {
         let simds = RefCell::new(Vec::new());
         mentions(ty, &|nested| {
@@ -148,11 +149,15 @@ impl<'t> SymbolTable<'t> {
             }
             false
         });
+        let simds = simds.into_inner();
+        let template = (!simds.is_empty())
+            .then(|| self.lookup(mojito_types::types::SIMD_TYPE_NAME))
+            .flatten();
         simds
-            .into_inner()
             .iter()
             .filter_map(member_table_name)
             .filter_map(|name| self.lookup(&name))
+            .chain(template)
             .collect()
     }
 

@@ -211,7 +211,7 @@ fn checked_boundary_keys_template_source_provenance_by_occurrence() {
     assert_eq!(xs.len(), 1);
 
     let mut locations = std::collections::HashSet::new();
-    for expression in checked.expressions() {
+    for expression in own_expressions(&checked) {
         assert!(
             locations.insert(expression.location()),
             "one checked syntax occurrence must build exactly one node"
@@ -572,24 +572,17 @@ fn accepts_uint_via_conversion() {
 
 #[test]
 fn accepts_numeric_conversions() {
-    ok("var i: Int = Int(Float64(3.9))\nvar f: Float64 = Float64(3)\nvar u: UInt = UInt(True)\n");
+    ok_std(
+        "var i: Int = Int(Float64(3.9))\nvar f: Float64 = Float64(3)\nvar u: UInt = UInt(True)\n",
+    );
 }
 
 #[test]
-fn rejects_float_literal_to_int() {
+fn float_literal_to_int_type_checks() {
     // Upstream's `@implicit SIMD.__init__(FloatLiteral)` outranks the
-    // `Intable` overload and asserts a float dtype.
-    for source in [
-        "var i: Int = Int(3.9)\n",
-        "var u: UInt = UInt(3.0)\n",
-        "def main():\n    comptime x: Int = Int(3.9)\n    print(x)\n",
-    ] {
-        let message = err(source).to_string();
-        assert!(
-            message.contains("constraint failed: the SIMD type must be floating point"),
-            "{source}: {message}"
-        );
-    }
+    // `Intable` overload; its float-dtype assert fails at elaboration
+    // (`compiler_test`'s `float_literal_into_an_integer_lane_fails_its_assert`).
+    ok_std("def main():\n    var i = Int(3.9)\n    var u = UInt(3.0)\n");
 }
 
 #[test]
@@ -601,9 +594,9 @@ fn int_literal_coerces_to_uint_and_float() {
 #[test]
 fn literal_arithmetic_mixes_but_concrete_types_do_not() {
     // Mixing two literals is fine (`1.0 + 2` is Float64)...
-    ok("var x: Float64 = 1.0 + 2\n");
+    ok_std("var x: Float64 = 1.0 + 2\n");
     // ...but mixing two *concrete* numeric types is rejected.
-    let e = err("var i: Int = 1\nvar u: UInt = UInt(2)\nvar bad: Int = i + u\n");
+    let e = err_std("var i: Int = 1\nvar u: UInt = UInt(2)\nvar bad: Int = i + u\n");
     assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
@@ -625,21 +618,25 @@ fn floor_div_mod_pow_preserve_type() {
 }
 
 #[test]
-fn rejects_unary_minus_on_uint() {
-    let e = err("var u: UInt = UInt(1)\nvar n: UInt = -u\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
+fn accepts_unary_minus_on_uint() {
+    // `SIMD.__neg__` asserts only a numeric dtype, so an unsigned operand
+    // negates as at the pin.
+    ok_std("def main():\n    var u: UInt = UInt(1)\n    var n: UInt = -u\n");
 }
 
 #[test]
 fn rejects_cross_numeric_equality() {
-    let e = err("var ok: Bool = Int(1) == UInt(1)\n");
+    let e = err_std("var ok: Bool = Int(1) == UInt(1)\n");
     assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
-fn rejects_conversion_of_string() {
-    let e = err("var i: Int = Int(\"5\")\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+fn conversion_of_string_raises() {
+    // A string converts through the `IntableRaising` initializer, which a
+    // non-raising context must handle.
+    ok_std("def main() raises:\n    var i = Int(\"5\")\n");
+    let e = err_std("def main():\n    var i = Int(\"5\")\n");
+    assert!(matches!(e, TypeError::UnhandledRaise(_)), "got {e:?}");
 }
 
 // --- Assignment ---
@@ -885,7 +882,7 @@ fn rejects_for_over_non_range() {
                 expected,
                 "a nominal collection or a type with borrowed __iter__"
             );
-            assert_eq!(found, "Int");
+            assert_eq!(found, "IntLiteral[5]");
         }
         other => panic!("expected a type mismatch, got {other:?}"),
     }
@@ -1159,9 +1156,10 @@ fn closed_bracket_arguments_record_their_folded_positions() {
             })
             .collect()
     };
-    assert_eq!(folded("tup"), vec![(true, vec![0])]);
     // A struct construction is the application of its `__init__`, which the
-    // elaborator evaluates, so it is no closed value at the check.
+    // elaborator evaluates, so it is no closed value at the check, nor is a
+    // tuple holding one.
+    assert_eq!(folded("tup"), vec![(false, vec![])]);
     assert_eq!(folded("one"), vec![(false, vec![])]);
     let scalar = folded("s");
     assert!(scalar.contains(&(true, vec![0])), "{scalar:?}");
@@ -1254,18 +1252,37 @@ fn fixed_immutable_origin_iterator_still_binds_immutably() {
 }
 
 #[test]
+fn a_declarations_own_parameters_shadow_module_bindings() {
+    // A parametric function type's own binder over a module function of its
+    // name.
+    ok_std(
+        "def width[dt: DType]() -> Int:\n    return 1\n\nstruct H[dtype: DType]:\n    comptime _T = SIMD[Self.dtype, _]\n\n    @staticmethod\n    def apply[func: def[width: Int](Self._T[width]) thin -> Self._T[width]](x: Self._T[4]) -> Self._T[4]:\n        return func[4](x)\n\ndef twice[w: Int](x: SIMD[DType.int32, w]) -> SIMD[DType.int32, w]:\n    return x * 2\n\ndef main():\n    print(H[DType.int32].apply[twice](SIMD[DType.int32, 4](1)))\n",
+    );
+    // A type parameter over a module constant of its name, in a type
+    // argument and a local type alias's construction.
+    ok_std(
+        "comptime T = (2, 3)\n\ndef g[T: Writable & ImplicitlyCopyable & Deinitable](x: List[T]) -> Int:\n    return len(x)\n\ndef h[T: Intable]() -> Int:\n    comptime I = SIMD[DType.int64, 1]\n    return Int(I(0))\n\ndef main():\n    print(g([1, 2]), T[1], h[Int]())\n",
+    );
+    // A callable parameter over a module function of its name.
+    ok_std(
+        "@unavailable(\"use g instead\")\ndef f(x: Int) -> Int:\n    ...\n\ndef apply[f: def(Int) thin -> Int](x: Int) -> Int:\n    return f(x)\n\ndef g(x: Int) -> Int:\n    return x + 1\n\ndef main():\n    print(apply[g](1))\n",
+    );
+}
+
+#[test]
 fn parametric_mut_origin_binder_is_erased_from_struct_parameters() {
     // The infer-only `Bool` that binds a sibling origin parameter's `mut=`
     // erases with the origin parameter: an application supplies only the
-    // ordinary type parameter, and spelling the Bool explicitly over-applies.
-    ok(
+    // ordinary type parameter, and spelling the Bool explicitly shifts the
+    // explicit arguments, so `Int` lands in the origin slot.
+    ok_std(
         "@fieldwise_init\nstruct Slot[m: Bool, //, T: Movable, o: Origin[mut=m]]:\n    var value: ref[o] Self.T\n\ndef main():\n    var n = 5\n    ref h = n\n    var s = Slot[Int](h)\n    print(s.value)\n",
     );
-    let error = err(
+    let error = err_std(
         "@fieldwise_init\nstruct Slot[m: Bool, //, T: Movable, o: Origin[mut=m]]:\n    var value: ref[o] Self.T\n\ndef main():\n    var n = 5\n    ref h = n\n    var s = Slot[True, Int](h)\n    print(s.value)\n",
     );
     assert!(
-        matches!(&error, TypeError::WrongTypeArgCount { .. }),
+        matches!(&error, TypeError::TypeMismatch { context, .. } if context == "explicit origin argument"),
         "got {error:?}"
     );
 }
@@ -2082,7 +2099,7 @@ fn rejects_non_comptime_value_argument() {
     let e = err(&format!(
         "{FIXEDBUF}var x: Int = 3\nvar b: FixedBuffer[x] = FixedBuffer[x](0)\n"
     ));
-    assert!(matches!(e, TypeError::NotComptime(_)), "got {e:?}");
+    assert!(matches!(e, TypeError::DynamicParameterValue), "got {e:?}");
 }
 
 #[test]
@@ -2189,7 +2206,7 @@ fn accepts_literal_splat_in_simd_operator() {
 
 #[test]
 fn accepts_scalar_alias_types_and_construction() {
-    ok("var a: Int8 = Int8(5)\nvar b: UInt32 = UInt32(9)\nvar c: Float32 = Float32(1.5)\n");
+    ok_std("var a: Int8 = Int8(5)\nvar b: UInt32 = UInt32(9)\nvar c: Float32 = Float32(1.5)\n");
 }
 
 #[test]
@@ -2219,13 +2236,13 @@ fn generic_alias_call_binds_its_brackets_as_the_type_position_does() {
 
 #[test]
 fn byte_alias_contextually_materializes_with_integer_wrapping() {
-    ok("var byte: Byte = 255\nvar same: UInt8 = byte\n");
-    ok("var wrapped_zero: Byte = 256\nvar wrapped_max: Byte = -1\n");
+    ok_std("var byte: Byte = 255\nvar same: UInt8 = byte\n");
+    ok_std("var wrapped_zero: Byte = 256\nvar wrapped_max: Byte = -1\n");
 }
 
 #[test]
 fn accepts_comptime_simd_width() {
-    ok("comptime W = 2 * 2\nvar v: SIMD[DType.int32, W] = SIMD[DType.int32, W](1, 2, 3, 4)\n");
+    ok_std("comptime W = 2 * 2\nvar v: SIMD[DType.int32, W] = SIMD[DType.int32, W](1, 2, 3, 4)\n");
 }
 
 #[test]
@@ -2426,7 +2443,7 @@ fn rejects_unknown_dtype() {
 
 #[test]
 fn rejects_mixed_dtype_operands() {
-    let e = err(
+    let e = err_std(
         "var a: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar b: SIMD[DType.int64, 4] = SIMD[DType.int64, 4](1, 2, 3, 4)\nvar c: SIMD[DType.int32, 4] = a + b\n",
     );
     assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
@@ -2526,7 +2543,7 @@ fn rejects_simd_mask_negation_and_shape_misuse() {
 fn accepts_runtime_scalar_dtype_conversions() {
     // Explicit construction converts: runtime integers wrap to any integer
     // width and convert to float lanes; floats adjust precision.
-    ok(
+    ok_std(
         "def main():\n    var i = 300\n    var b: Byte = Byte(i)\n    var u: UInt32 = UInt32(UInt(70000))\n    var w: Int32 = Int32(b)\n    var f: Float32 = Float32(2.75)\n    var g: Float32 = Float32(i)\n    var v: SIMD[DType.uint8, 4] = SIMD[DType.uint8, 4](Byte(i), 1, 2, 3)\n",
     );
 }
@@ -2541,14 +2558,11 @@ fn accepts_intable_sources_for_integer_lanes() {
 }
 
 #[test]
-fn rejects_float_literal_sources_for_integer_lanes() {
-    // A float literal fails the `FloatLiteral` initializer's float-dtype
-    // assert, as at the pin; a float value converts through `SIMD`'s cast
-    // initializer (`Int8(f)` truncates).
-    assert!(matches!(
-        err_std("def main():\n    var b = Byte(1.5)\n"),
-        TypeError::BadCall { .. }
-    ));
+fn float_sources_for_integer_lanes_type_check() {
+    // A float literal selects the `FloatLiteral` initializer, whose
+    // float-dtype assert fails at elaboration, as at the pin; a float value
+    // converts through `SIMD`'s cast initializer (`Int8(f)` truncates).
+    ok_std("def main():\n    var b = Byte(1.5)\n");
     ok_std("def main():\n    var f = 2.5\n    var b = Int8(f)\n");
     ok_std("def main():\n    var g: Float32 = Float32(1.0)\n    var b = Int8(g)\n");
 }
@@ -2561,7 +2575,7 @@ fn rejects_float_literal_for_integer_dtype() {
 
 #[test]
 fn distinct_simd_widths_are_distinct_types() {
-    let e = err("var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 2](1, 2)\n");
+    let e = err_std("var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 2](1, 2)\n");
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
@@ -2877,8 +2891,8 @@ fn rejects_len_of_non_string() {
 
 #[test]
 fn rejects_min_mixing_concrete_types() {
-    let e = err("var i: Int = 1\nvar u: UInt = UInt(2)\nvar m: Int = min(i, u)\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
+    let e = err_std("var i: Int = 1\nvar u: UInt = UInt(2)\nvar m: Int = min(i, u)\n");
+    assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
 }
 
 #[test]
@@ -3256,7 +3270,7 @@ fn float64_scalar_splats_into_a_float64_vector() {
 #[test]
 fn rejects_float64_vector_dtype_mismatch() {
     // A float32 scalar does not splat into a float64 vector (distinct dtypes).
-    let e = err(
+    let e = err_std(
         "var v: SIMD[DType.float64, 2] = SIMD[DType.float64, 2](1.0, 2.0)\nvar w: SIMD[DType.float64, 2] = v + Float32(1.0)\n",
     );
     assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
@@ -3416,9 +3430,7 @@ fn display_argument_to_generic_constructor_constructs_its_parameter() {
     let linked =
         mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link");
     let checked = check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
-    let display = checked
-        .expressions()
-        .iter()
+    let display = own_expressions(&checked)
         .find(|expression| matches!(expression.op, mojito::checked::CheckedOp::ListLit(_)))
         .expect("the display argument is checked");
     assert!(
@@ -3542,7 +3554,8 @@ fn rejects_runtime_tuple_index() {
     let e = err_std("var t: Tuple[Int, String] = (1, \"x\")\nvar i: Int = 0\nvar y = t[i]\n");
     assert!(
         matches!(&e, TypeError::BadCall { func, reason }
-            if func == "__getitem_param__" && reason.contains("compile-time Int index")),
+            if func == "__getitem_param__"
+                && reason.contains("cannot use a dynamic value in a parameter list")),
         "got {e:?}"
     );
 }
@@ -3812,7 +3825,7 @@ fn applies_defaulted_type_parameters() {
 
 #[test]
 fn supports_parameterized_aggregate_compile_time_values() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Selection[indices: List[Int]]:\n    var value: Int\n\nvar selected: Selection[[0, 2, 4]] = Selection[[0, 2, 4]](9)\n",
     );
 }
@@ -3908,7 +3921,7 @@ fn bounded_and_builtin_write_to_lower_as_writer_write() {
     ));
     assert!(matches!(
         err_std("var n = 3\nInt(7).write_to(n)\n"),
-        TypeError::TypeMismatch { .. }
+        TypeError::BadCall { .. }
     ));
 }
 
@@ -4086,7 +4099,7 @@ fn removed_simdsize_alias_rejects() {
 #[test]
 fn accepts_default_argument_values() {
     // A default lets a call omit the trailing argument.
-    ok(
+    ok_std(
         "def my_pow(base: Int, exp: Int = 2) -> Int:\n    return base ** exp\n\nvar a: Int = my_pow(3)\nvar b: Int = my_pow(3, 3)\n",
     );
 }
@@ -5702,7 +5715,7 @@ fn augmented_subscript_freezes_distinct_getter_and_setter_value_adjustments() {
     assert!(
         matches!(
         getter_index.adjustments.as_slice(),
-        [CheckedCallValueAdjustment::ImplicitConversion { target }]
+        [CheckedCallValueAdjustment::ImplicitConversion { target, .. }]
             if target.starts_with("Wrapped")
         ),
         "getter adjustments: {:?}",
@@ -6440,7 +6453,7 @@ fn int_width_binder_is_not_inferred_from_a_vector() {
     // SIMD's width parameter is a `SIMDLength`: an `Int` binder in the slot
     // is a conversion the pin leaves unresolved.
     assert!(matches!(
-        err("def lanes[dt: DType, n: Int](v: SIMD[dt, n]) -> Int:\n    return n\n\ndef main():\n    var a = lanes(SIMD[DType.int32, 4](1, 2, 3, 4))\n"),
+        err_std("def lanes[dt: DType, n: Int](v: SIMD[dt, n]) -> Int:\n    return n\n\ndef main():\n    var a = lanes(SIMD[DType.int32, 4](1, 2, 3, 4))\n"),
         TypeError::CannotInferTypeParam { param, .. } if param == "n"
     ));
 }
@@ -6524,20 +6537,20 @@ fn numeric_operation_traits_permit_their_operation() {
 fn any_type_bound_does_not_permit_numeric_operations() {
     // A plain `T: AnyType` grants none of the numeric operations.
     assert!(matches!(
-        err("def absolute[T: AnyType](x: T) -> T:\n    return abs(x)\n"),
-        TypeError::TypeMismatch { .. }
+        err_std("def absolute[T: AnyType](x: T) -> T:\n    return abs(x)\n"),
+        TypeError::TraitNotSatisfied { .. }
     ));
     assert!(matches!(
-        err("def rounded[T: AnyType](x: T) -> T:\n    return round(x)\n"),
-        TypeError::TypeMismatch { .. }
+        err_std("def rounded[T: AnyType](x: T) -> T:\n    return round(x)\n"),
+        TypeError::TraitNotSatisfied { .. }
     ));
     assert!(matches!(
-        err("def powit[T: AnyType](x: T, y: T) -> T:\n    return x ** y\n"),
+        err_std("def powit[T: AnyType](x: T, y: T) -> T:\n    return x ** y\n"),
         TypeError::BadOperator { .. }
     ));
     assert!(matches!(
-        err("def to_int[T: AnyType](x: T) -> Int:\n    return Int(x)\n"),
-        TypeError::TypeMismatch { .. }
+        err_std("def to_int[T: AnyType](x: T) -> Int:\n    return Int(x)\n"),
+        TypeError::BadCall { .. }
     ));
     // A bound also does not grant an *unrelated* operation: `Absable` gives `abs`
     // but not `**`.
@@ -6547,15 +6560,15 @@ fn any_type_bound_does_not_permit_numeric_operations() {
     ));
     // `Bool(x)`/`divmod` and the rounding dunders are likewise gated.
     assert!(matches!(
-        err("def to_bool[T: AnyType](x: T) -> Bool:\n    return Bool(x)\n"),
+        err_std("def to_bool[T: AnyType](x: T) -> Bool:\n    return Bool(x)\n"),
         TypeError::TypeMismatch { .. }
     ));
     assert!(matches!(
-        err("def dm[T: AnyType](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n"),
+        err_std("def dm[T: AnyType](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n"),
         TypeError::BadOperator { .. }
     ));
     assert!(matches!(
-        err("def flr[T: AnyType](x: T) -> T:\n    return x.__floor__()\n"),
+        err_std("def flr[T: AnyType](x: T) -> T:\n    return x.__floor__()\n"),
         TypeError::NoSuchMethod { .. }
     ));
     // `Floorable` grants `__floor__` but not `__ceildiv__`.
@@ -6641,17 +6654,19 @@ fn concrete_conversions_and_abs_route_through_dunders() {
         TypeError::TraitNotSatisfied { .. }
     ));
     // `Int(x)` is upstream's `__init__[T: Intable]`: a `__int__` alone is no
-    // declaration.
+    // declaration, so no initializer overload matches.
     assert!(matches!(
         err_std(
             "@fieldwise_init\nstruct M:\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n\ndef main():\n    print(Int(M(1)))\n"
         ),
-        TypeError::TraitNotSatisfied { .. }
+        TypeError::BadCall { .. }
     ));
     // A struct lacking the dunder is still rejected.
     assert!(matches!(
-        err("@fieldwise_init\nstruct P:\n    var n: Int\n\ndef main():\n    print(Int(P(1)))\n"),
-        TypeError::TypeMismatch { .. }
+        err_std(
+            "@fieldwise_init\nstruct P:\n    var n: Int\n\ndef main():\n    print(Int(P(1)))\n"
+        ),
+        TypeError::BadCall { .. }
     ));
 }
 
@@ -7231,12 +7246,17 @@ fn where_clause_messages_are_retained_without_changing_constraint_semantics() {
     };
     assert!(message.contains("must be a string literal"), "{message}");
 
-    // Method availability and trait requirements compile through the same
-    // retained wrapper instead of treating the tuple as a new proposition.
-    // Keep the declaration-path checks separate: normalizing constraints
-    // between generic trait methods and conforming methods is a distinct task.
-    ok(
+    // Method availability compiles through the same retained wrapper
+    // instead of treating the tuple as a new proposition; the pin rejects a
+    // trait requirement's clause.
+    let TypeError::Unsupported(message) = err(
         "trait Selects:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"select is available\"): ...\n",
+    ) else {
+        panic!("expected a trait-method where rejection");
+    };
+    assert_eq!(
+        message,
+        "'where' clauses on trait methods are not supported"
     );
     ok(
         "struct Selector:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"select is available\"):\n        return 1\n",
@@ -7355,18 +7375,13 @@ fn repeated_where_clauses_keep_independent_messages_across_declaration_families(
     };
     assert_eq!(reason, "constraint failed: Copyable type required");
 
-    // Trait requirements and struct methods accept repeated clauses at
-    // declaration. As with single clauses, normalizing constraints between a
-    // generic trait requirement and a conforming method remains a distinct
-    // task, so an implementation clause list no requirement covers rejects.
-    ok(
-        "trait Selects:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"m1\") where (True, \"m2\"): ...\n",
-    );
+    // A trait requirement declares no clause, repeated or not, as the pin
+    // rejects it.
     assert!(matches!(
         err(
-            "trait Selects:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"m1\"): ...\n\n@fieldwise_init\nstruct Chooser(Selects):\n    var marker: Int\n    def select[T: AnyType](self, value: T) -> Int where (True, \"m1\") where (False, \"m2\"):\n        return 1\n",
+            "trait Selects:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"m1\") where (True, \"m2\"): ...\n",
         ),
-        TypeError::TraitMethodMismatch { .. }
+        TypeError::Unsupported(message) if message == "'where' clauses on trait methods are not supported"
     ));
 }
 
@@ -7482,14 +7497,10 @@ fn generic_comptime_aliases_reject_unsupported_shapes() {
         TypeError::Redeclaration(name) if name == "Pair"
     ));
 
-    // Constructor-through-alias stays rejected: an alias declares no value
-    // binding (recorded subset gap).
-    assert!(matches!(
-        err(
-            "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair = Pair[Int](1, 2)\n",
-        ),
-        TypeError::UndefinedVariable(name) if name == "Pair"
-    ));
+    // A call of the alias's application constructs the type it names.
+    ok(
+        "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair = Pair[Int](1, 2)\n",
+    );
     // A bare alias is a type, which a `var` cannot hold, as at the pin.
     assert!(matches!(
         err(
@@ -8679,7 +8690,7 @@ fn pop_select_types_as_its_verifier_does() {
     // A `Bool`'s `!kgen.scalar<bool>` storage selects one of two cases of
     // one trivially register-passable type, which the result has; the
     // struct case is `assets/ok/mlir_pop_select.mojo`.
-    ok(
+    ok_std(
         "def main():\n    var c = 3 > 2\n    var n: Int = __mlir_op.`pop.select`(c.__mlir_bool__(), Int(1), Int(2))\n    var v: SIMD[DType.int8, 4] = __mlir_op.`pop.select`(c.__mlir_bool__(), SIMD[DType.int8, 4](1), SIMD[DType.int8, 4](2))\n    var b: Bool = __mlir_op.`pop.select`(c.__mlir_bool__(), False, True)\n    print(n, v, b)\n",
     );
     for (source, message) in [
@@ -8693,14 +8704,14 @@ fn pop_select_types_as_its_verifier_does() {
         ),
         (
             "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c.__mlir_bool__(), 1, 2))\n",
-            "over literal cases is outside the subset",
+            "have same type",
         ),
         (
             "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c.__mlir_bool__(), String(\"a\"), String(\"b\")))\n",
             "Mojito selects trivially register-passable values",
         ),
     ] {
-        let error = err(source);
+        let error = err_std(source);
         assert!(error.to_string().contains(message), "{error}");
     }
 }
@@ -8733,12 +8744,12 @@ fn pop_array_ops_take_trivially_register_passable_elements() {
 fn pop_call_llvm_intrinsic_types_as_its_verifier_does() {
     // `intrin` is a `!kgen.string`, `_type` names the result, and
     // `hasSideEffects` is a `Bool`'s `__mlir_i1__()`; plain operands pass.
-    ok(
+    ok_std(
         "def main():\n    var x = Int32(7)\n    var y: Int32 = __mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.ctlz\".value, _type=Int32, hasSideEffects=False.__mlir_i1__()](x, False.__mlir_i1__())\n    print(y)\n",
     );
     // A symbolic `StringLiteral` binder's `value` is the name an instance
     // closes.
-    ok(
+    ok_std(
         "def f[s: StringLiteral, T: Copyable](x: T) -> T:\n    return __mlir_op.`pop.call_llvm_intrinsic`[intrin=s.value, _type=T, hasSideEffects=False.__mlir_i1__()](x)\n\ndef main():\n    print(f[\"llvm.ctpop\"](Int32(7)))\n",
     );
     for (source, message) in [
@@ -8763,7 +8774,7 @@ fn pop_call_llvm_intrinsic_types_as_its_verifier_does() {
             "__mlir_i1__",
         ),
     ] {
-        let error = err(source);
+        let error = err_std(source);
         assert!(error.to_string().contains(message), "{error}");
     }
 }
@@ -9236,28 +9247,19 @@ fn module_integer_constants_fold_once_as_at_the_pin() {
 }
 
 #[test]
-fn scalar_construction_from_a_literal_is_its_materialization() {
-    // `UInt(7)` is upstream's builtin-inline `SIMD.__init__(IntLiteral)`, the
-    // literal's conversion; a runtime `Int(x)` and `Int(f)` stay calls.
-    let source =
-        "def main():\n    var x = 5\n    var f = 3.9\n    print(UInt(7), Int(x), Int(f))\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
-    let constructions = checked
-        .expressions()
-        .iter()
-        .filter(|expression| {
-            expression
-                .adjustments
-                .contains(&SemanticAdjustment::ConvertedArgument)
+fn scalar_construction_from_a_literal_binds_the_declared_initializer() {
+    // `UInt(7)` binds `SIMD`'s declared `__init__(IntLiteral)`, as at the
+    // pin, rather than materializing the literal by a checker rule.
+    let checked = checked_with_std("def main():\n    print(UInt(7))\n").expect("check");
+    assert!(!own_expressions(&checked).any(|expression| {
+        expression.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                SemanticAdjustment::MaterializeLiteral(_) | SemanticAdjustment::ConvertedArgument
+            )
         })
-        .collect::<Vec<_>>();
-    assert_eq!(constructions.len(), 1, "{constructions:#?}");
-    assert_eq!(constructions[0].ty, Some(Ty::uint()));
-    assert!(checked.expressions().iter().any(|expression| {
-        expression
-            .adjustments
-            .contains(&SemanticAdjustment::MaterializeLiteral(Ty::uint()))
     }));
+    assert!(own_expressions(&checked).any(|expression| expression.ty == Some(Ty::uint())));
 }
 
 #[test]
@@ -9304,10 +9306,8 @@ fn type_of_is_the_value_type_and_rejects_what_has_no_type_yet() {
             "{error:?}"
         );
     };
-    unsupported(
-        "def main():\n    var y: type_of(3) = 3\n",
-        "'type_of' of a literal value",
-    );
+    // A literal's type is its value-carrying `IntLiteral[3]`.
+    ok_std("def main():\n    var y: type_of(3) = 3\n");
     unsupported(
         "def main():\n    comptime T = type_of(Int)\n",
         "'type_of' of a type",
@@ -9456,19 +9456,15 @@ fn symbolic_conformance_is_unproven_not_violated() {
 }
 
 #[test]
-fn comptime_assert_rejects_a_dynamic_condition_and_a_computed_message() {
+fn comptime_assert_rejects_a_dynamic_condition_and_accepts_a_computed_message() {
     let dynamic =
         err_std("def main():\n    var x = 3\n    comptime assert x == 3, \"rt\"\n").to_string();
     assert!(
         dynamic.contains("cannot use a dynamic value in 'comptime assert' expression"),
         "{dynamic}"
     );
-    let message =
-        err_std("def f[n: Int]():\n    comptime assert n > 0, String(\"n is \", n)\n").to_string();
-    assert!(
-        message.contains("a 'comptime assert' message other than a string literal"),
-        "{message}"
-    );
+    // A message is any compile-time string over the parameters in scope.
+    ok_std("def f[n: Int]():\n    comptime assert n > 0, String(\"n is \", n)\n");
 }
 
 #[test]

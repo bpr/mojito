@@ -847,6 +847,7 @@ impl<'a> Flatten<'a> {
                 }
                 mojito_checked::checked::CheckedCallValueAdjustment::ImplicitConversion {
                     target,
+                    instantiated_args,
                 } => {
                     let dest = self.fresh_typed(
                         site.clone(),
@@ -864,7 +865,7 @@ impl<'a> Flatten<'a> {
                         capture_accesses: Vec::new(),
                         param_arg_regs: Vec::new(),
                         receiver: None,
-                        instantiated_args: Vec::new(),
+                        instantiated_args: instantiated_args.clone(),
                         spread: None,
                     });
                     dest

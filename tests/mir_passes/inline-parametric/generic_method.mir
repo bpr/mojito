@@ -1,4 +1,4 @@
-mojito-mir 1.61
+mojito-mir 1.153
 artifact {
   features: [],
   files: [
@@ -16,26 +16,25 @@ artifact {
       fn {
         name: "Meter.scaled",
         registers: 3,
-        vars: 2,
-        var_names: [self, k],
+        vars: 1,
+        var_names: [self],
         params: 1,
         param_types: [struct_type { name: Meter, arguments: [] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Meter, arguments: [] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 626, end: 636, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 639, end: 640, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 626, end: 640, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 626, end: 636, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 639, end: 640, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 626, end: 640, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
-              var.use { dest: %r1, var: $v1, mode: copy },
-              drop.var { var: $v1 },
+              const { dest: %r1, value: param(param_decl_ref { owner: "Meter.scaled", slot: 0, name: k, type: meta_value(Int) }) },
               binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r2) }

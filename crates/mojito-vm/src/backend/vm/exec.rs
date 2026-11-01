@@ -659,7 +659,9 @@ impl VmBackend {
                 }
                 // A free function with `mut`/`ref` parameters — or a retained
                 // shared-read place lent to a borrowing-view result — binds
-                // those parameters to caller-place handles.
+                // those parameters to caller-place handles. An initializer of
+                // a receiver the VM holds as a value enters with its storage
+                // through the plain call, which returns no view.
                 let retains_place = arg_places
                     .iter()
                     .chain(kwarg_places.iter())
@@ -668,7 +670,11 @@ impl VmBackend {
                     .is_none()
                     .then(|| {
                         prog.index_of(&func.0).filter(|&idx| {
-                            retains_place || prog.mir.functions[idx].1.ref_params.iter().any(|&r| r)
+                            let function = &prog.mir.functions[idx].1;
+                            !matches!(
+                                prog.constructed(&func.0, &function.param_types),
+                                Some(Constructed::Value(_))
+                            ) && (retains_place || function.ref_params.iter().any(|&r| r))
                         })
                     })
                     .flatten();
@@ -1082,8 +1088,13 @@ impl VmBackend {
                     // Use the checked argument contract, not the mere presence
                     // of a selected symbol, to distinguish those ABIs.
                     let base_ty = prog.mir.functions[function].1.reg_types.get(&base.0);
+                    // A `SIMD` receiver is the builtin value `method_call`
+                    // dispatches to the selected declared member.
                     let recv = match prog.boxed(base_value, base_ty.map(peel_references)) {
                         recv @ Value::Struct { .. } => recv,
+                        recv if base_ty.is_some_and(|ty| peel_references(ty).kind().is_simd()) => {
+                            recv
+                        }
                         other => {
                             return Err(RuntimeError::TypeError(format!(
                                 "vm: checked nominal subscript receiver is {}",

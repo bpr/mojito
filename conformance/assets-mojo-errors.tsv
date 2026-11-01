@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1019
+# swept-count	1021
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -637,31 +637,31 @@ assets/type_error/mlir_op_select_cases_differ.mojo	compile-reject	agree	error: '
 assets/type_error/mlir_op_select_condition_not_scalar.mojo	compile-reject	agree	error: 'pop.select' op operand #0 must be !kgen.scalar<bool>, but got '!kgen.simd<2, bool>'
 assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'
 assets/type_error/mlir_pop_array_dynamic_index.mojo	compile-reject	agree	error: cannot use a dynamic value in MLIR magic
-assets/type_error/mlir_pop_array_gep_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.gep' op operand #1 must be index, but got '!lit.struct<@std::@builtin::@int_literal::@IntLiteral<:!pop.int_literal 0>>'
+assets/type_error/mlir_pop_array_gep_index_operand.mojo	compile-reject	agree	error: 'pop.array.gep' op operand #1 must be index, but got '!lit.struct<@std::@builtin::@int_literal::@IntLiteral<:!pop.int_literal 0>>'
 assets/type_error/mlir_pop_array_gep_non_array_pointer.mojo	compile-reject	agree	error: unable to infer result type from MLIR operation 'pop.array.gep'
-assets/type_error/mlir_pop_array_gep_operand_count.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.gep' op expected 2 operands, but found 1
-assets/type_error/mlir_pop_array_gep_type_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.gep' op failed to verify that pointer to array element type
-assets/type_error/mlir_pop_array_get_element_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.get' op failed to verify that value type matches array element type
-assets/type_error/mlir_pop_array_get_out_of_bounds.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.get' op array index out of bounds: 3
+assets/type_error/mlir_pop_array_gep_operand_count.mojo	compile-reject	agree	error: 'pop.array.gep' op expected 2 operands, but found 1
+assets/type_error/mlir_pop_array_gep_type_mismatch.mojo	compile-reject	agree	error: 'pop.array.gep' op failed to verify that pointer to array element type
+assets/type_error/mlir_pop_array_get_element_mismatch.mojo	compile-reject	agree	error: 'pop.array.get' op failed to verify that value type matches array element type
+assets/type_error/mlir_pop_array_get_out_of_bounds.mojo	compile-reject	agree	error: 'pop.array.get' op array index out of bounds: 3
 assets/type_error/mlir_pop_array_instance_get_out_of_bounds.mojo	compile-reject	agree	error: 'pop.array.get' op array index out of bounds: 4
-assets/type_error/mlir_pop_array_repeat_element_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.repeat' op failed to verify that value type matches array element type
-assets/type_error/mlir_pop_array_replace_array_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.replace' op failed to verify that all of {array, result} have same type
-assets/type_error/mlir_pop_array_replace_element_mismatch.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.replace' op failed to verify that value type matches array element type
-assets/type_error/mlir_pop_array_replace_out_of_bounds.mojo	compile-reject	agree	error: MLIR verification error: 'pop.array.replace' op array index out of bounds: 5
+assets/type_error/mlir_pop_array_repeat_element_mismatch.mojo	compile-reject	agree	error: 'pop.array.repeat' op failed to verify that value type matches array element type
+assets/type_error/mlir_pop_array_replace_array_mismatch.mojo	compile-reject	agree	error: 'pop.array.replace' op failed to verify that all of {array, result} have same type
+assets/type_error/mlir_pop_array_replace_element_mismatch.mojo	compile-reject	agree	error: 'pop.array.replace' op failed to verify that value type matches array element type
+assets/type_error/mlir_pop_array_replace_out_of_bounds.mojo	compile-reject	agree	error: 'pop.array.replace' op array index out of bounds: 5
 assets/type_error/mlir_pop_array_unbounded_element.mojo	compile-reject	agree	error: cannot load non-register passable type into SSA register (compiler bug, please report!)
 assets/type_error/mlir_pop_op_index_operand.mojo	compile-reject	agree	error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got 'index'
 assets/type_error/mlir_pop_op_simd_struct_operand.mojo	compile-reject	agree	error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype si32}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {2}>>'
 assets/type_error/mlir_scalar_storage_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__mlir_type.`!kgen.scalar<index>`' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/mlir_simd_int_length_operand.mojo	compile-reject	agree	error: invalid MLIR type: !kgen.simd<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> length, "_mlir_value"> : !kgen.scalar<index>, #lit.struct.extract<:!lit.struct<@std::@builtin::@dtype::@DType> dtype, "_mlir_value"> : !kgen.dtype>
-assets/type_error/mlir_simd_shuffle_closed_struct_mask.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op expected mask to be a list of indices
+assets/type_error/mlir_simd_shuffle_closed_struct_mask.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op expected mask to be a list of indices
 assets/type_error/mlir_simd_shuffle_instance_mask_out_of_bounds.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op mask element 5 is out of bounds
-assets/type_error/mlir_simd_shuffle_mask_out_of_bounds.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op mask element 9 is out of bounds
-assets/type_error/mlir_simd_shuffle_operands_differ.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op failed to verify that all of {lhs, rhs} have same type
+assets/type_error/mlir_simd_shuffle_mask_out_of_bounds.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op mask element 9 is out of bounds
+assets/type_error/mlir_simd_shuffle_operands_differ.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op failed to verify that all of {lhs, rhs} have same type
 assets/type_error/mlir_simd_shuffle_parameter_mask_not_indices.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op expected mask to be a list of indices
 assets/type_error/mlir_simd_shuffle_parameter_mask_out_of_bounds.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op mask element 9 is out of bounds
-assets/type_error/mlir_simd_shuffle_result_dtype.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op expected result dtype to match operand dtypes
-assets/type_error/mlir_simd_shuffle_result_width.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.shuffle' op expected result to be a vector of 4 elements
-assets/type_error/mlir_string_size_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.string.size' op operand #0 must be String type for parameters, but got '!lit.struct<@std::@builtin::@string_literal::@StringLiteral<:string "ab">>'
+assets/type_error/mlir_simd_shuffle_result_dtype.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op expected result dtype to match operand dtypes
+assets/type_error/mlir_simd_shuffle_result_width.mojo	compile-reject	agree	error: 'pop.simd.shuffle' op expected result to be a vector of 4 elements
+assets/type_error/mlir_string_size_operand.mojo	compile-reject	agree	error: 'pop.string.size' op operand #0 must be String type for parameters, but got '!lit.struct<@std::@builtin::@string_literal::@StringLiteral<:string "ab">>'
 assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to '__mlir_type.i64' in return value
 assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'
 assets/type_error/mut_argument_aliases_variadic_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'both' call
@@ -874,6 +874,7 @@ assets/type_error/simd_int_width_binder_not_inferred.mojo	compile-reject	agree	e
 assets/type_error/simd_length_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'SIMDLength' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/simd_mlir_index_float.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_mlir_value_concrete_storage.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/simd_mlir_value_int_width.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_mlir_value_literal_width.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_pow_exponent_shape.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_scalar_splat_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Int32' value to 'SIMD[.int64, 4]'
@@ -1043,6 +1044,7 @@ assets/type_error/where_dtype_predicate_lacks_evidence.mojo	compile-reject	agree
 assets/type_error/where_dtype_predicate_violated.mojo	compile-reject	agree	error: invalid call to 'lane_kind': violated constraint
 assets/type_error/where_message_violated.mojo	compile-reject	agree	error: invalid call to 'disabled': violated constraint
 assets/type_error/where_negated_conformance_lacks_evidence.mojo	compile-reject	agree	error: invalid call to 'g': lacking evidence to prove correctness
+assets/type_error/where_on_trait_method.mojo	compile-reject	agree	error: 'where' clauses on trait methods are not supported
 assets/type_error/where_reads_argument_violated.mojo	compile-reject	agree	error: invalid call to 'doubled': violated constraint
 assets/type_error/where_repeated_second_fails.mojo	compile-reject	agree	error: invalid call to 'pick': violated constraint
 assets/type_error/where_violated_sole_candidate.mojo	compile-reject	agree	error: invalid call to 'show': violated constraint

@@ -309,6 +309,12 @@ impl Checker {
                         None => Ty::none(),
                     };
                     let error = this.declared_error(m.raises, m.raises_type.as_ref())?;
+                    // The pin rejects a requirement's `where` clause.
+                    if !m.where_clauses.is_empty() {
+                        return Err(TypeError::Unsupported(
+                            "'where' clauses on trait methods are not supported".to_string(),
+                        ));
+                    }
                     // The clauses read the arguments, which upstream emits
                     // before them (`where x.dtype.is_floating_point()`).
                     let compiled = m

@@ -4317,7 +4317,7 @@ impl Checker {
                     argument: argument.to_string(),
                     from: actual.to_string(),
                     to: pattern.to_string().replace(binder, &shown),
-                    parameter: shown,
+                    parameter: shown.into(),
                 })
             })
             .unwrap_or_else(|| TypeError::CannotInferTypeParam {

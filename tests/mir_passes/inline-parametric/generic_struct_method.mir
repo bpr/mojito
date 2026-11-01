@@ -1,4 +1,4 @@
-mojito-mir 1.61
+mojito-mir 1.153
 artifact {
   features: [],
   files: [
@@ -17,25 +17,25 @@ artifact {
       fn {
         name: "Box.get",
         registers: 3,
-        vars: 2,
-        var_names: [self, Self],
+        vars: 1,
+        var_names: [self],
         params: 1,
         param_types: [struct_type { name: Box, arguments: [] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 218, end: 228, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 231, end: 237, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 218, end: 237, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 218, end: 228, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 231, end: 237, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 218, end: 237, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
-              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } },
+              const { dest: %r1, value: param(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }) },
               binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r2) }
@@ -45,26 +45,25 @@ artifact {
       fn {
         name: "Box.scaled",
         registers: 3,
-        vars: 2,
-        var_names: [self, j],
+        vars: 1,
+        var_names: [self],
         params: 1,
         param_types: [struct_type { name: Box, arguments: [] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 321, end: 331, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 334, end: 335, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 321, end: 335, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 321, end: 331, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 334, end: 335, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 321, end: 335, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
-              var.use { dest: %r1, var: $v1, mode: copy },
-              drop.var { var: $v1 },
+              const { dest: %r1, value: param(param_decl_ref { owner: "Box.scaled", slot: 0, name: j, type: meta_value(Int) }) },
               binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r2) }

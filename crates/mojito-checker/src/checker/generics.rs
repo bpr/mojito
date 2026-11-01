@@ -391,11 +391,18 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
             if let (Some((dtype, width)), Some((actual_dtype, actual_width))) =
                 (slots(pattern), slots(actual))
             {
+                // Only a slot that is a binder itself binds: a width an
+                // `Int` binder converts to (`SIMD[dt, n]` over `n: Int`)
+                // spells no `SIMDLength` the pin's unifier can read back.
+                let dtype_binder = matches!(&actual_dtype,
+                    SimdDtype::Expr(slot) if slot.as_decl_ref().is_some());
+                let width_binder = matches!(&actual_width,
+                    SimdWidth::Expr(slot) if slot.as_decl_ref().is_some());
                 solve_simd_slot_values(
                     &dtype,
                     &width,
-                    actual_dtype.is_symbolic().then_some(actual_dtype),
-                    actual_width.is_symbolic().then_some(actual_width),
+                    dtype_binder.then_some(actual_dtype),
+                    width_binder.then_some(actual_width),
                     out,
                 );
             }

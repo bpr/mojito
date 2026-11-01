@@ -52,7 +52,7 @@ use mojito::mir::text::{disassemble, parse_artifact};
 use mojito::mir::verify::verify;
 use mojito::{
     Compiler, CompilerError, OwnershipError, check, check_ownership, check_program, elaborate,
-    link, parse,
+    inject_prelude, link, parse,
 };
 use std::fs;
 use std::io::Write;
@@ -475,6 +475,13 @@ const PIPELINE_DECIDES: &[&str] = &[
     // `inline-parametric` folds the bound's witness, which closes the
     // element of the method's own pack the requirement reads.
     "trait_requirement_indexes_own_pack",
+    // `RemoveUnusedParams` drops an unread `NoneType` default, so its failing
+    // constraint is never elaborated.
+    "parameter_default_none_application",
+    "parameter_default_none_application_struct",
+    // The read past the element list is undefined: the dangling reference's
+    // register and frame slot are what the pipeline left of the body.
+    "simd_element_list_too_few",
 ];
 
 /// Require the pre-elaboration pipeline to leave what the VM observes of the
@@ -715,13 +722,14 @@ fn origin_trials(trials: &mut Vec<Trial>) {
 /// Elaborate and type-check a fixture (the production stage order), then run
 /// the ownership analysis. (Mirrors the helper `tests/ownership_test.rs` keeps
 /// for its targeted tests.) A `# requires: stdlib` fixture enters at `link` so
-/// its standard-library types resolve.
+/// its standard-library types resolve; any other takes the implicit prelude,
+/// whose aliases name `Int` and its siblings.
 fn own(path: &Path) -> Result<(), OwnershipError> {
     let program = if requires_stdlib(path) {
         link(path).expect("link error")
     } else {
         let src = fs::read_to_string(path).expect("read fixture");
-        parse(&src).expect("parse error")
+        inject_prelude(parse(&src).expect("parse error")).expect("inject implicit prelude")
     };
     let program = elaborate(program).expect("comptime error");
     check(&program).expect("type error");

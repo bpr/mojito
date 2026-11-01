@@ -4630,7 +4630,7 @@ mod tests {
         let binary = fold_binary;
         let literal = int_literal;
         assert!(matches!(
-            binary(InfixOp::Add, literal(2), literal(3), TyKind::IntLiteral(_), TyKind::IntLiteral(_)),
+            binary(InfixOp::Add, literal(2), literal(3), TyKind::IntLiteral(None), TyKind::IntLiteral(None)),
             Some(Const::IntLiteral(value)) if value == IntLiteral::from(5i64)
         ));
         assert!(matches!(
@@ -4638,7 +4638,7 @@ mod tests {
                 InfixOp::Lt,
                 literal(1),
                 literal(2),
-                TyKind::IntLiteral(_),
+                TyKind::IntLiteral(None),
                 TyKind::Bool
             ),
             Some(Const::Bool(true))
@@ -4761,7 +4761,7 @@ mod tests {
         let literal = int_literal;
         let materialize = |target: TyKind| {
             let reg_types =
-                HashMap::from([(0, ty(TyKind::IntLiteral(_))), (1, ty(target.clone()))]);
+                HashMap::from([(0, ty(TyKind::IntLiteral(None))), (1, ty(target.clone()))]);
             MirInstr::MaterializeLiteral {
                 dest: Reg(1),
                 value: Reg(0),
@@ -4803,7 +4803,7 @@ mod tests {
             })
         };
         let into_lane = |value: i64, dtype| {
-            materialize_into(literal(value), TyKind::IntLiteral(_), lane(dtype))
+            materialize_into(literal(value), TyKind::IntLiteral(None), lane(dtype))
         };
         assert!(matches!(
             (into_lane(250, Dtype::UInt8), simd(Dtype::UInt8, CtLane::Int(250))),
@@ -4816,7 +4816,7 @@ mod tests {
         assert!(matches!(
             materialize_into(
                 literal(-1),
-                TyKind::IntLiteral(_),
+                TyKind::IntLiteral(None),
                 ty(Ty::uint().kind().clone())
             ),
             Some(Const::Value(CtValue::UInt(u64::MAX)))
@@ -4826,7 +4826,7 @@ mod tests {
         assert!(matches!(
             materialize_into(
                 Const::FloatLiteral(tenth),
-                TyKind::FloatLiteral(_),
+                TyKind::FloatLiteral(None),
                 lane(Dtype::Float32)
             ),
             Some(Const::Value(CtValue::Simd { lanes, .. }))
@@ -4837,7 +4837,7 @@ mod tests {
         assert!(
             materialize_into(
                 literal(1),
-                TyKind::IntLiteral(_),
+                TyKind::IntLiteral(None),
                 mojito_types::types::canonical_simd_ty(Dtype::Int32, 4)
             )
             .is_none()
@@ -4867,8 +4867,8 @@ mod tests {
 
         let lanes = |op, a: Const, b: Const, operand: Ty, dest: Ty| {
             let right = match &b {
-                Const::IntLiteral(_) => ty(TyKind::IntLiteral(_)),
-                Const::FloatLiteral(_) => ty(TyKind::FloatLiteral(_)),
+                Const::IntLiteral(_) => ty(TyKind::IntLiteral(None)),
+                Const::FloatLiteral(_) => ty(TyKind::FloatLiteral(None)),
                 _ => operand.clone(),
             };
             let reg_types = HashMap::from([(0, operand), (1, right), (2, dest)]);
@@ -4950,7 +4950,7 @@ mod tests {
 
         let make = |width: i64| {
             let target = mojito_types::types::canonical_simd_ty(Dtype::UInt8, width);
-            let reg_types = HashMap::from([(0, ty(TyKind::IntLiteral(_))), (1, target)]);
+            let reg_types = HashMap::from([(0, ty(TyKind::IntLiteral(None))), (1, target)]);
             MirInstr::MakeSimd {
                 dest: Reg(1),
                 dtype: mojito_types::types::SimdDtype::Known(Dtype::UInt8),
@@ -5119,7 +5119,7 @@ mod tests {
         let literal = |value: i64| {
             (
                 Const::IntLiteral(IntLiteral::from(value)),
-                TyKind::IntLiteral(_),
+                TyKind::IntLiteral(None),
             )
         };
         let make = |elements: Vec<(Option<Const>, TyKind)>, dtype, width: i64| {
@@ -5171,8 +5171,8 @@ mod tests {
         assert_eq!(
             make(
                 vec![
-                    some(Const::FloatLiteral(tenth), TyKind::FloatLiteral(_)),
-                    some(literal(1).0, TyKind::IntLiteral(_))
+                    some(Const::FloatLiteral(tenth), TyKind::FloatLiteral(None)),
+                    some(literal(1).0, TyKind::IntLiteral(None))
                 ],
                 Dtype::Float32,
                 2
@@ -5202,7 +5202,7 @@ mod tests {
             make(
                 vec![
                     some(seven, int32),
-                    some(literal(2).0, TyKind::IntLiteral(_))
+                    some(literal(2).0, TyKind::IntLiteral(None))
                 ],
                 Dtype::Int32,
                 2
@@ -5213,7 +5213,7 @@ mod tests {
             make(
                 vec![
                     some(Const::Int(7), Ty::int().kind().clone()),
-                    some(literal(2).0, TyKind::IntLiteral(_))
+                    some(literal(2).0, TyKind::IntLiteral(None))
                 ],
                 Dtype::Int32,
                 2
@@ -5251,7 +5251,7 @@ mod tests {
             conversion(
                 ScalarConversion::Bool,
                 Const::IntLiteral(IntLiteral::from(1)),
-                TyKind::IntLiteral(_)
+                TyKind::IntLiteral(None)
             ),
             Some(Const::Bool(true))
         ));

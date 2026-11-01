@@ -1527,13 +1527,20 @@ impl Checker {
             .rev()
             .find_map(|(level, scope)| scope.get(name).map(|reference| (level, reference)));
         // A local `comptime` binding shadows a parameter of its own body or
-        // an enclosing one, not one of a `def` nested below it.
+        // an enclosing one, not one of a `def` nested below it. A type
+        // parameter or local type alias in scope shadows a module one.
+        let module_shadowed = self.lookup_tparam(name).is_some();
         let local = self
             .local_comptime_parameters
             .iter()
+            .enumerate()
             .rev()
-            .find_map(|scope| scope.get(name))
-            .or_else(|| self.installed_comptime_parameter(name))
+            .find_map(|(depth, scope)| scope.get(name).filter(|_| depth > 0 || !module_shadowed))
+            .or_else(|| {
+                (!module_shadowed)
+                    .then(|| self.installed_comptime_parameter(name))
+                    .flatten()
+            })
             .filter(|(level, _)| parameter.is_none_or(|(declared, _)| *level >= declared));
         local
             .map(|(_, expression)| expression)
@@ -2553,6 +2560,10 @@ impl Checker {
         {
             return self.build_ct(bound, recording);
         }
+        // A type parameter in scope shadows a same-named module constant.
+        if let Some(ty) = self.tparams.iter().rev().find_map(|scope| scope.get(name)) {
+            return self.ct_param(CtValue::Type(ty.clone()));
+        }
         // An applied constant is its application in a type position,
         // whatever literal the elaborator folded it to.
         if let Some(entry) = self.module_constant_entry(name) {
@@ -3498,9 +3509,16 @@ impl Checker {
                         info.comptime_members.contains_key(field)
                             || info.methods.contains_key(field)
                     });
+                // A value of the parameter's type is a `T` value, as the
+                // pin reports it; the parameter itself is a value of its
+                // bound.
+                let value_read = matches!(&object.kind,
+                    ExprKind::Identifier(name) if name != "Self" && self.lookup(name).is_some());
                 (!declared).then(|| {
                     Err(TypeError::NoTraitAttribute {
-                        trait_name: if bounds.is_empty() {
+                        trait_name: if value_read {
+                            subject.to_string()
+                        } else if bounds.is_empty() {
                             "AnyType".to_string()
                         } else {
                             bounds.join(" & ")

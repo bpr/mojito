@@ -253,7 +253,7 @@ pub fn without_removed_argument_forwards<'a>(
     declarations: &MirDeclarations,
     removed: &dyn Fn(&str) -> Option<&'a [VarId]>,
 ) -> Option<(MirFunction, Vec<String>)> {
-    argument_forwards_view(function, declarations, removed, Operands::Drop)
+    argument_forwards_view(function, declarations, removed, Operands::Drop, false)
         .map(|view| (view.function, view.discounted))
 }
 
@@ -273,12 +273,19 @@ pub fn without_removed_argument_forwards<'a>(
 /// instruction defines any more, ascending, whose types the instance
 /// sheds once its calls drop them.
 pub fn with_removed_argument_forwards_erased<'a>(
+    name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
     removed: &dyn Fn(&str) -> Option<&'a [VarId]>,
 ) -> Option<(MirFunction, Vec<Reg>)> {
-    argument_forwards_view(function, declarations, removed, Operands::Keep)
-        .map(|view| (view.function, view.undefined))
+    argument_forwards_view(
+        function,
+        declarations,
+        removed,
+        Operands::Keep,
+        name == crate::mir::MODULE_INITIALIZER,
+    )
+    .map(|view| (view.function, view.undefined))
 }
 
 /// Erase from `function` each instruction that only computed an operand a
@@ -293,7 +300,7 @@ pub fn erase_removed_operands(
     declarations: &MirDeclarations,
     before: &[u32],
 ) {
-    erase_forward_chains(function, declarations, &HashSet::new(), before);
+    erase_forward_chains(function, declarations, &HashSet::new(), before, false);
 }
 
 /// The runtime operands of one call, with their places and the position of
@@ -574,6 +581,7 @@ fn argument_forwards_view<'a>(
     declarations: &MirDeclarations,
     removed: &dyn Fn(&str) -> Option<&'a [VarId]>,
     operands: Operands,
+    module_scope: bool,
 ) -> Option<ArgumentForwards> {
     if !calls_removing(&function.blocks, removed) {
         return None;
@@ -604,6 +612,7 @@ fn argument_forwards_view<'a>(
         declarations,
         &HashSet::new(),
         &original,
+        module_scope,
     ));
     let mut undefined = Vec::new();
     if operands == Operands::Keep {

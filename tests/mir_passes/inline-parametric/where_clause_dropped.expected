@@ -2,25 +2,24 @@
       fn {
         name: check,
         registers: 1,
-        vars: 1,
-        var_names: [n],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 105, end: 106, origin: present($v0) }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 105, end: 106, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
-              drop.var { var: $v0 }
+              const { dest: %r0, value: param(param_decl_ref { owner: "check", slot: 0, name: n, type: meta_value(Int) }) }
             ],
             terminator: return { value: present(%r0) }
           }
@@ -29,15 +28,15 @@
       fn {
         name: where_clause_dropped,
         registers: 2,
-        vars: 1,
-        var_names: ["n$inline0"],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,

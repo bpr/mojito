@@ -159,7 +159,131 @@ fn type_families_reprint_byte_identically() {
             mutable: false,
         }]),
     })));
-    let generic_ty = TyKind::GenericFunc(Box::new(GenericFuncTy {
+    let program = program_with(vec![(
+        "types".into(),
+        function_with(
+            vec![
+                TyKind::Overload(vec![Ty::int(), Ty::bool()]).into(),
+                TyKind::Param {
+                    binder: test_binder("T"),
+                    bounds: vec!["Copyable".into(), "Movable".into()],
+                    callable_bound: Some(func_ty.clone()),
+                }
+                .into(),
+                TyKind::Assoc {
+                    base: TyKind::Param {
+                        binder: test_binder("C"),
+                        bounds: vec!["Iterable".into()],
+                        callable_bound: None,
+                    }
+                    .into(),
+                    name: "IteratorType".into(),
+                    args: vec![TyArg::Origin(Origin::SelfParam)],
+                }
+                .into(),
+                {
+                    let context = ParamContext::detached();
+                    let negated = context
+                        .neg(&int_parameter("f", 2, "i"))
+                        .expect("negation builds");
+                    let index = context
+                        .infix(InfixOp::FloorDiv, &negated, &constant(CtValue::Int(2)))
+                        .expect("Int // Int builds");
+                    DependentType::resolve(
+                        context
+                            .select(vec![Ty::int(), Ty::bool()], &index)
+                            .expect("an Int index selects"),
+                    )
+                },
+                func_ty,
+                generic_func_ty().into(),
+                fancy_struct_ty().into(),
+                mojito_types::types::canonical_simd_ty(Dtype::Float32, 4),
+                mojito_types::types::canonical_simd_ty(Dtype::Float16, 2),
+                TyKind::ComptimeList(Ty::int()).into(),
+                TyKind::RuntimePack(vec![Ty::int(), Ty::bool()]).into(),
+                TyKind::VariadicPack(Ty::int()).into(),
+                TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
+                TyKind::PopArray {
+                    size: mojito_types::types::ArraySize::Known(2),
+                    element: TyKind::Pointer {
+                        element: Ty::int(),
+                        origin: PointerOrigin::Untracked { mutable: false },
+                    }
+                    .into(),
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
+                    origin: PointerOrigin::Place {
+                        place: OriginPlace {
+                            root: OwnerId(0),
+                            path: vec![OriginSeg::Subtree],
+                        },
+                        mutable: true,
+                    },
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
+                    origin: PointerOrigin::Param {
+                        id: OriginParamId(2),
+                        mutability: Mutability::Param(OriginParamId(3)),
+                        interior: vec!["element".into()],
+                        subtree: true,
+                    },
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
+                    origin: PointerOrigin::SelfPlace {
+                        mutability: Mutability::Immutable,
+                        interior: Vec::new(),
+                        subtree: false,
+                    },
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
+                    origin: PointerOrigin::Static,
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
+                    origin: PointerOrigin::Untracked { mutable: false },
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
+                    origin: PointerOrigin::UnsafeAny { mutable: true },
+                }
+                .into(),
+                TyKind::KgenPointer(Ty::int()).into(),
+                TyKind::LitRef {
+                    element: Ty::int(),
+                    origin: PointerOrigin::Param {
+                        id: OriginParamId(0),
+                        mutability: Mutability::Immutable,
+                        interior: Vec::new(),
+                        subtree: false,
+                    },
+                }
+                .into(),
+                TyKind::Ref(RefTy {
+                    referent: TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]).into(),
+                    origin: Origin::Untracked { mutable: true },
+                    mutability: Mutability::Mutable,
+                })
+                .into(),
+            ],
+            Vec::new(),
+        ),
+    )]);
+    assert_reprints(&program);
+}
+
+fn generic_func_ty() -> TyKind {
+    TyKind::GenericFunc(Box::new(GenericFuncTy {
         decls: vec![
             ParamDecl::Type {
                 id: test_id("T"),
@@ -259,8 +383,11 @@ fn type_families_reprint_byte_identically() {
             ref_return: None,
             transfers: TransferSet(Vec::new()),
         },
-    }));
-    let struct_ty = TyKind::Struct(
+    }))
+}
+
+fn fancy_struct_ty() -> TyKind {
+    TyKind::Struct(
         "Fancy".into(),
         vec![
             TyArg::Ty(TyKind::Tuple(vec![Ty::int(), Ty::bool()]).into()),
@@ -303,128 +430,7 @@ fn type_families_reprint_byte_identically() {
                 Origin::SelfParam,
             ])),
         ],
-    );
-    let program = program_with(vec![(
-        "types".into(),
-        function_with(
-            vec![
-                TyKind::Overload(vec![Ty::int(), Ty::bool()]).into(),
-                TyKind::Param {
-                    binder: test_binder("T"),
-                    bounds: vec!["Copyable".into(), "Movable".into()],
-                    callable_bound: Some(func_ty.clone()),
-                }
-                .into(),
-                TyKind::Assoc {
-                    base: TyKind::Param {
-                        binder: test_binder("C"),
-                        bounds: vec!["Iterable".into()],
-                        callable_bound: None,
-                    }
-                    .into(),
-                    name: "IteratorType".into(),
-                    args: vec![TyArg::Origin(Origin::SelfParam)],
-                }
-                .into(),
-                {
-                    let context = ParamContext::detached();
-                    let negated = context
-                        .neg(&int_parameter("f", 2, "i"))
-                        .expect("negation builds");
-                    let index = context
-                        .infix(InfixOp::FloorDiv, &negated, &constant(CtValue::Int(2)))
-                        .expect("Int // Int builds");
-                    DependentType::resolve(
-                        context
-                            .select(vec![Ty::int(), Ty::bool()], &index)
-                            .expect("an Int index selects"),
-                    )
-                },
-                func_ty,
-                generic_ty.into(),
-                struct_ty.into(),
-                mojito_types::types::canonical_simd_ty(Dtype::Float32, 4),
-                mojito_types::types::canonical_simd_ty(Dtype::Float16, 2),
-                TyKind::ComptimeList(Ty::int()).into(),
-                TyKind::RuntimePack(vec![Ty::int(), Ty::bool()]).into(),
-                TyKind::VariadicPack(Ty::int()).into(),
-                TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
-                TyKind::PopArray {
-                    size: mojito_types::types::ArraySize::Known(2),
-                    element: TyKind::Pointer {
-                        element: Ty::int(),
-                        origin: PointerOrigin::Untracked { mutable: false },
-                    }
-                    .into(),
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Place {
-                        place: OriginPlace {
-                            root: OwnerId(0),
-                            path: vec![OriginSeg::Subtree],
-                        },
-                        mutable: true,
-                    },
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Param {
-                        id: OriginParamId(2),
-                        mutability: Mutability::Param(OriginParamId(3)),
-                        interior: vec!["element".into()],
-                        subtree: true,
-                    },
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::SelfPlace {
-                        mutability: Mutability::Immutable,
-                        interior: Vec::new(),
-                        subtree: false,
-                    },
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Static,
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Untracked { mutable: false },
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::UnsafeAny { mutable: true },
-                }
-                .into(),
-                TyKind::KgenPointer(Ty::int()).into(),
-                TyKind::LitRef {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Param {
-                        id: OriginParamId(0),
-                        mutability: Mutability::Immutable,
-                        interior: Vec::new(),
-                        subtree: false,
-                    },
-                }
-                .into(),
-                TyKind::Ref(RefTy {
-                    referent: TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]).into(),
-                    origin: Origin::Untracked { mutable: true },
-                    mutability: Mutability::Mutable,
-                })
-                .into(),
-            ],
-            Vec::new(),
-        ),
-    )]);
-    assert_reprints(&program);
+    )
 }
 
 #[test]
@@ -659,7 +665,7 @@ fn const_value_and_param_field_round_trip() {
     );
     let program = program_with(vec![(
         "consts".into(),
-        function_with(vec![vector.into(), extent, Ty::int()], instrs),
+        function_with(vec![vector, extent, Ty::int()], instrs),
     )]);
     let text = write::program(&program);
     assert!(text.contains("value(ct_simd"));

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1802**.
+Next free ID: **R1810**.
 
 ## Ordered Work
 
@@ -4523,6 +4523,72 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R1805 A module binding of a parameter's name captures
+  `origin_of(param)` at a call, so `reversed(xs)` fails beside a user
+  `def value()`**
+
+  `for x in reversed(xs)` over a `List` fails with "cannot implicitly
+  convert '_ListReversedIter[T, origin_of(self)]' value to
+  '_ListReversedIter[T, origin_of(value)]'" when the program declares a
+  module function named `value`, the name of `reversed`'s parameter.
+  - The callee signature's `origin_of(value)` is substituted at the call
+    by name, and the caller's module binding wins over the callee's
+    parameter.
+  - The same collision fails `assets/ok/comptime_match_patterns.mojo` in
+    the source-linked seams (`verify::ok`, `roundtrip::ok`).
+  - Type and value parameters already shadow module bindings
+    (`a_declarations_own_parameters_shadow_module_bindings` in
+    `tests/checker_test.rs`); origins are the missing case.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1806 A library struct's conditional conformance reads a user
+  module constant named like its parameter**
+
+  `MaybeUninit[T]`'s `Copyable where …` condition, checked for a program
+  that declares `comptime T = (twice(1), "a")`, reads the module tuple
+  rather than the library's own `T`, so
+  `assets/ok/ctfe_module_display_constant_requests.mojo` fails with "type
+  'MaybeUninit[T]' … does not conform to trait 'Copyable'" when the library
+  is linked from source (the `verify::ok` and `roundtrip::ok` seams).
+  - The condition is evaluated outside the parameter scope that now
+    shadows module bindings (`Checker::shadows_module_binding`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1807 Three fixtures fail to check with the library linked from
+  source, which the compiled package checks**
+
+  The raw phase seams (`link` → `elaborate` → `check_program`, as
+  `verify::ok` and `roundtrip::ok` run them, and `MOJITO_STD_PACKAGE=0`)
+  reject them; `Compiler` with the package runs them.
+  - `assets/ok/module_type_alias_reads.mojo`: "unknown type 'C'" for
+    `comptime C = B` over `comptime B = Int`, since `Int` became a
+    `std.simd` alias (1650c7c3).
+  - `assets/ok/static_string_parameter.mojo`: "unknown trait
+    '__module$std$string$StaticString' in a type-parameter bound", already
+    failing at 0db05093.
+  - `assets/ok/comptime_application_ref_parameter.mojo` and
+    `compile_time_application_takes_ref_but_not_mut_parameters` in
+    `tests/checker_test.rs`: "not an associated comptime expression" for
+    `comptime m = bc(String("ab")) + Self.n` over a `ref` parameter, already
+    failing at 0db05093.
+  - Split this entry per fixture if one session cannot land all three.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1808 `CompilationTarget.current`'s `_current_target()` builds two
+  checked nodes at one source occurrence**
+
+  The member `comptime current = CompilationTarget[_mlir_value=
+  _current_target()]` in `stdlib/std/sys/info.mojo` checks its call twice,
+  where every syntax occurrence should build exactly one node.
+  - `checked_boundary_keys_template_source_provenance_by_occurrence` in
+    `tests/checker_test.rs` checks the program's own expressions only
+    until this lands; restore the whole-program check with the fix.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1571 A compile-time operator over a `comptime` constant
   annotated with a sized integer does not wrap to its width**
@@ -9238,6 +9304,22 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R1809 `SIMD.reduce_add`, declared `@inline(.always)`, stays an
+  out-of-line call**
+
+  A caller of `v.reduce_add()` keeps a call to the library's split-tree
+  instance, so a native caller spills the vector to pass it by pointer,
+  where upstream inlines the body at every call.
+  - Seen in `simd_lowering_emits_vector_code`
+    (`tests/pliron_backend_test.rs`), whose fixture now calls
+    `reduce_add` where it was a builtin rule.
+  - Find which pass declines the splice (`inline-parametric` or the
+    post-elaboration `automatic-inline`) and why; the body recurses through
+    `slice` on halves.
+  - Found while fixing the 2026-11-01 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R867 A conditional's literal arm reaches its carrier
   unmaterialized**
 
@@ -11430,14 +11512,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   `subscript_expr_fwd[n]`, returning `Grid(7)[n + 1]` over a
   `__getitem_param__[i]` that never reads `i`, keeps `n` and makes one
-  instance per `n`, where `Grid(5)[10 // n]` removes it.
+  instance per `n`, and so does `subscript_div_fwd[n]` over
+  `Grid(5)[10 // n]`.
   - Since R1551 `n + 1` is `SIMD.__add__`'s inlined body, a region whose
-    result is the argument, where `10 // n` is still a `binary` the
-    forward analysis (`mir::param_uses`) traces into the removed binder.
+    result is the argument, and since R1566 `10 // n` is
+    `SIMD.__floordiv__`'s, with its asserts. The forward analysis
+    (`mir::param_uses`) traces neither into the removed binder.
   - Upstream folds the `@always_inline("builtin")` dunder into the
-    parameter expression `n + 1`, which forwards as any other.
+    parameter expression `n + 1`, which forwards as any other, and never
+    emits a parameter argument's operation, so `10 // n` at `n == 0` fails
+    nothing.
   - `forwarded_parameters_leave_the_instance_key` in
-    `tests/compiler_test.rs` expects two instances until this lands.
+    `tests/compiler_test.rs` expects two instances of each until this
+    lands.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11487,30 +11574,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     over the whole pack, and its type is the closure's storage struct.
   - Pinned by `cloned_comptime_bodies_keep_distinct_checked_occurrence_facts`
     in `tests/comptime_test.rs`, failing until this lands.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1622 Twenty-one `inline-parametric` pass cases spell a value
-  binder read as a frame-slot read, which lowering no longer emits**
-
-  Since R662 a read of a non-callable value binder lowers to its parameter
-  constant (`const { value: param(param_decl_ref { … }) }`), and the inliner
-  no longer rewrites a binder's slot. The cases under
-  `tests/mir_passes/inline-parametric/` written before that still read the
-  binder through a `var.use` of a slot nothing stores, so the splice now
-  leaves those reads in place and 21 expectations fail.
-  - Failing cases include `generic_value`, `generic_method`,
-    `generic_struct_method`, `nested_captures`, `tuple_members`, and
-    `tuple_reverse_closed`; `cargo nextest run --test mir_pass_test
-    inline-parametric` lists them all.
-  - Bisected to 628ca72a (R662); the test target did not compile in the
-    10-29 gate, which hid them.
-  - Several cases also changed in ways unrelated to the binder slots, such
-    as a `ref.make`/`ref.read` pair that is now one `place.load`; judge each
-    one before blessing it.
-  - Fix: re-derive each input from current lowering by the recipe in
-    `tests/mir_passes/README.md`, then bless and read each expectation.
-    Do not bless the current outputs, which read never-stored slots.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11621,20 +11684,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R1664 Pliron formats a `SIMD` value's display in the lowering,
   where upstream calls its `write_to` and `write_repr_to`**
 
-  Native `print`, `String`, `repr`, and `Writer.write` of a `SIMD` value
-  emit its text inline, and `repr` of a vector `Bool` is unsupported.
-  - The host text is `print_simd`, `format_scalar`'s numeric arms, and the
-    `SIMD` text inside `lower_str_writer_write` (`lower/print.rs`),
-    `lower_repr_builtin`'s `SIMD` arms, and `lower_writer_write`
-    (`lower/methods.rs`).
-  - Find a `SIMD` value's display instance as the VM does: in the member
+  Native `String`, `repr`, and `Writer.write` of a `SIMD` value emit its
+  text inline, and `repr` of a vector `Bool` is unsupported. Native
+  `print` already calls the `write_to` instance (`print_simd_via_write_to`).
+  - The host text is `print_simd` and `format_scalar`'s numeric arms (now
+    reached only by the paths below), the `SIMD` text inside
+    `lower_str_writer_write` (`lower/print.rs`), `lower_repr_builtin`'s
+    `SIMD` arms, and `lower_writer_write` (`lower/methods.rs`).
+  - Find a `SIMD` value's display instance as `print` does: in the member
     table `symbol::member_table_name` names from its static type, which
     the elaborator declares and fills (`declare_simd_instance`).
-  - `CallEdges::push_members` and `dispatch_edges` (`lib.rs`) push a
-    struct's display members only for a `TyKind::Struct`; they must push
-    that table's members for every `print`, `repr`, `String`, and
-    `$write_formatted` argument of a `SIMD` type, or the instances stay
-    unreachable natively.
+  - `CallEdges::dispatch_edges` (`lib.rs`) pushes that table's `write_to`
+    for a `print` argument of a `SIMD` type; it must push the display
+    members for every `repr`, `String`, and `$write_formatted` argument
+    too, or the instances stay unreachable natively.
   - Then retire `std._intrinsics._int_digits`/`_uint_digits`,
     `INT_DIGITS_SYMBOL` and `UINT_DIGITS_SYMBOL`, and their keep-alive in
     `mir/symbols.rs`.

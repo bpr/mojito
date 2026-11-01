@@ -19,7 +19,7 @@ use native::{JitValue, NativeTarget};
 /// elaborates and compiles for (and JITs or runs on) the host. The CPU is
 /// pinned, as LLVM's own tests pin `-mcpu`, so goldens and the target
 /// queries a program folds do not follow the build machine.
-pub fn host_target() -> NativeTarget {
+pub const fn host_target() -> NativeTarget {
     NativeTarget::new(
         mojito::native::target::Triple::host()
             .expect("pliron tests require a supported host target"),

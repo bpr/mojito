@@ -52,6 +52,30 @@ fn compiler_driver_reports_the_failing_stage() {
 }
 
 #[test]
+fn float_literal_into_an_integer_lane_fails_its_assert() {
+    // Upstream's `@implicit SIMD.__init__(FloatLiteral)` outranks the
+    // `Intable` overload, and its instance asserts a float dtype.
+    for source in [
+        "def main():\n    var i = Int(3.9)\n    print(i)\n",
+        "def main():\n    var u = UInt(3.0)\n    print(u)\n",
+        "def main():\n    var b = Byte(1.5)\n    print(b)\n",
+    ] {
+        let compiler = Compiler::default();
+        let program = compiler
+            .compile_source(source, std::path::Path::new("float_literal.mojo"))
+            .expect("the check accepts the construction");
+        let error = program
+            .concrete_mir()
+            .expect_err("the instance's assert fails")
+            .to_string();
+        assert!(
+            error.contains("constraint failed: the SIMD type must be floating point"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
 fn compiler_rejects_executable_file_scope() {
     let compiler = Compiler::default();
     let error = compiler
@@ -1427,7 +1451,9 @@ fn trait_default_body_is_one_member_node() {
         .iter()
         .filter(|statement| {
             matches!(statement.op, CheckedStmtOp::Return(Some(value))
-                if checked.expression(value).is_some_and(|node| node.ty == Some(Ty::int_literal())))
+            if checked.expression(value).is_some_and(|node| {
+                node.ty.as_ref().is_some_and(|ty| ty.kind().is_int_literal())
+            }))
         })
         .count();
     assert_eq!(returns, 1, "the program holds the default's return once");
@@ -1478,7 +1504,10 @@ fn generic_def_declares_no_clone() {
     );
     let ids = returned;
     let node = program.checked().expression(ids[0]).expect("checked node");
-    assert_eq!(node.ty, Some(Ty::int_literal()));
+    assert_eq!(
+        node.ty.as_ref().map(ToString::to_string).as_deref(),
+        Some("IntLiteral[7]")
+    );
     assert!(
         node.adjustments
             .contains(&SemanticAdjustment::MaterializeLiteral(Ty::int())),
@@ -4243,7 +4272,7 @@ fn comptime_for_nested_unread_binders_leave_the_instance_key() {
         mir,
         program.imported_package().map(|package| &package.bodies),
         &mojito::mir::entry_roots(mir),
-        None,
+        mojito::native::target::NativeTarget::host().as_ref(),
     )
     .expect("elaborate");
     let instances = |template: &str| {
@@ -4297,7 +4326,7 @@ fn comptime_for_nested_unused_arguments_leave(fixture: &str) {
         mir,
         program.imported_package().map(|package| &package.bodies),
         &mojito::mir::entry_roots(mir),
-        None,
+        mojito::native::target::NativeTarget::host().as_ref(),
     )
     .expect("elaborate");
     let instances = |template: &str| {
@@ -4355,7 +4384,7 @@ fn fieldwise_constructions_leave_the_instance_key() {
         mir,
         program.imported_package().map(|package| &package.bodies),
         &mojito::mir::entry_roots(mir),
-        None,
+        mojito::native::target::NativeTarget::host().as_ref(),
     )
     .expect("elaborate");
     let instances = |template: &str| {
@@ -4385,7 +4414,7 @@ fn generic_struct_slots_leave_the_instance_key() {
         mir,
         program.imported_package().map(|package| &package.bodies),
         &mojito::mir::entry_roots(mir),
-        None,
+        mojito::native::target::NativeTarget::host().as_ref(),
     )
     .expect("elaborate");
     let instances = |template: &str| {
@@ -4421,7 +4450,7 @@ fn nested_method_unread_owner_parameters_leave_the_instance_key() {
         mir,
         program.imported_package().map(|package| &package.bodies),
         &mojito::mir::entry_roots(mir),
-        None,
+        mojito::native::target::NativeTarget::host().as_ref(),
     )
     .expect("elaborate");
     let instances = |template: &str| {
@@ -4584,7 +4613,8 @@ fn forwarded_parameters_leave_the_instance_key() {
         ("div_outer", 1),
         ("div_kept", 1),
         ("static_div_fwd", 1),
-        ("subscript_div_fwd", 1),
+        // `10 // n` is an inlined `SIMD.__floordiv__` region (R1618).
+        ("subscript_div_fwd", 2),
         ("dmid", 1),
         ("tmid", 1),
         ("method_fwd", 1),

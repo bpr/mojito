@@ -557,6 +557,7 @@ pub(in crate::checker) fn call_value_adjustments(
         } else {
             vec![CheckedCallValueAdjustment::ImplicitConversion {
                 target: target.clone(),
+                instantiated_args: facts.conversion_instantiation.clone().unwrap_or_default(),
             }]
         }
     } else {

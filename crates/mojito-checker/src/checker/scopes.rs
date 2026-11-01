@@ -410,11 +410,43 @@ impl Checker {
     /// Look up `name`, walking outward through the scope chain (lexical lookup).
     /// A package module binding resolves below the module scope.
     pub(super) fn lookup(&self, name: &str) -> Option<&Ty> {
-        self.scopes
+        if let Some(local) = self
+            .scopes
             .iter()
+            .skip(1)
             .rev()
             .find_map(|scope| scope.get(name))
+        {
+            return Some(local);
+        }
+        if self.shadows_module_binding(name) {
+            return None;
+        }
+        self.scopes
+            .first()
+            .and_then(|module| module.get(name))
             .or_else(|| self.installed_binding(name).map(|(_, binding)| &binding.ty))
+    }
+
+    /// Whether a declaration's own compile-time parameter, or a local type
+    /// alias, named `name` is in scope, which shadows a module binding.
+    pub(super) fn shadows_module_binding(&self, name: &str) -> bool {
+        self.lookup_tparam(name).is_some()
+            || self
+                .vparams
+                .iter()
+                .take(self.tparams.len())
+                .any(|scope| scope.contains_key(name))
+    }
+
+    /// Whether `name` is bound inside the module scope, where it shadows a
+    /// declaration's own parameter of that name, as a module binding does
+    /// not.
+    pub(super) fn is_local_binding(&self, name: &str) -> bool {
+        self.scopes
+            .iter()
+            .skip(1)
+            .any(|scope| scope.contains_key(name))
     }
 
     /// The package module binding `name` resolves to below the module
@@ -455,15 +487,18 @@ impl Checker {
         &self,
         name: &str,
     ) -> Option<Vec<CallableOriginSignature>> {
-        self.callable_origin_scopes
+        // The scope that binds `name` answers, so a local or a parameter
+        // never reads a same-named module function's signatures.
+        match self
+            .scopes
             .iter()
-            .rev()
-            .find_map(|scope| scope.get(name).cloned())
-            .or_else(|| {
-                (!self.scopes.iter().any(|scope| scope.contains_key(name)))
-                    .then(|| self.installed_binding(name)?.1.callable_origins.clone())
-                    .flatten()
-            })
+            .rposition(|scope| scope.contains_key(name))
+        {
+            Some(0) if self.shadows_module_binding(name) => None,
+            Some(index) => self.callable_origin_scopes.get(index)?.get(name).cloned(),
+            None if self.shadows_module_binding(name) => None,
+            None => self.installed_binding(name)?.1.callable_origins.clone(),
+        }
     }
 
     /// The scope binding `name`; a package module binding's is the module

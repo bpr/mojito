@@ -1024,11 +1024,23 @@ impl<'p> CallEdges<'p, '_> {
             // `write_to` is there for the VM, never an edge here.
             MirInstr::Call { func, args, .. } if matches!(func.0.as_str(), "print" | "String") => {
                 for arg in args {
-                    if let Some(TyKind::Struct(name, _)) =
-                        self.function.reg_types.get(&arg.0).map(Ty::kind)
-                        && !mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    {
-                        self.push_members(name, "write_to");
+                    let Some(ty) = self.function.reg_types.get(&arg.0) else {
+                        continue;
+                    };
+                    match ty.kind() {
+                        TyKind::Struct(name, _)
+                            if !mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+                        {
+                            self.push_members(name, "write_to");
+                        }
+                        // `print` of a `SIMD` value calls the `write_to`
+                        // its type's member table names.
+                        kind if kind.is_simd() && func.0 == "print" => {
+                            if let Some(table) = mojito_symbol::symbol::member_table_name(ty) {
+                                self.push_members(&table, "write_to");
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

@@ -9,7 +9,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-export LLVM_SYS_231_PREFIX="${LLVM_SYS_231_PREFIX:-/opt/llvm-23}"
+export LLVM_SYS_231_PREFIX="${LLVM_SYS_231_PREFIX:-/usr/lib/llvm-23}"
 export PATH="${LLVM_SYS_231_PREFIX}/bin:${PATH}"
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)

@@ -374,12 +374,14 @@ pub fn with_removed_forwards_erased<'a>(
 /// ([`MirDeclarations::drop_runs_no_code`]) goes when every read of it
 /// was a dropped argument's: the argument it handed a call is no longer
 /// passed, and nothing is left to destroy. A copy of any other slot stays,
-/// since the copy is a call of its own.
+/// since the copy is a call of its own. A slot only stored to goes too,
+/// but in a `module_scope` body, whose slots are the module's bindings.
 pub fn erase_forward_chains(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
     callables: &HashSet<VarId>,
     original: &[u32],
+    module_scope: bool,
 ) -> HashSet<u32> {
     let mut erased = HashSet::new();
     let mut forwarded: Vec<u32> = original
@@ -468,7 +470,11 @@ pub fn erase_forward_chains(
             &reads,
             &mut erased,
         );
-        if erased.len() == before && !erase_store_only_slots(function, declarations) {
+        // A module initializer's slots are the module's bindings, which
+        // stay observable after it returns.
+        if erased.len() == before
+            && (module_scope || !erase_store_only_slots(function, declarations))
+        {
             break;
         }
     }
@@ -792,7 +798,13 @@ fn removed_forwards_view<'a>(
         .function(name)
         .map(|declaration| callable_parameter_slots(function, &declaration.param_decls))
         .unwrap_or_default();
-    erase_forward_chains(&mut view, declarations, &callables, &original);
+    erase_forward_chains(
+        &mut view,
+        declarations,
+        &callables,
+        &original,
+        name == crate::mir::MODULE_INITIALIZER,
+    );
     Some((view, discounted.into_iter().collect()))
 }
 

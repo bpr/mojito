@@ -155,6 +155,9 @@ pub struct MirProgram {
     pub invariant_errors: Vec<String>,
 }
 
+/// The synthetic module initializer, whose slots are the module's bindings.
+pub const MODULE_INITIALIZER: &str = "__toplevel__";
+
 /// The entry roots of a whole program.
 ///
 /// They are `main` and the module initializer `__toplevel__`, each when the
@@ -162,7 +165,7 @@ pub struct MirProgram {
 /// executable all elaborate from these; any other root is an entry a native
 /// caller requests by name.
 pub fn entry_roots(program: &MirProgram) -> Vec<String> {
-    ["main", "__toplevel__"]
+    ["main", MODULE_INITIALIZER]
         .into_iter()
         .filter(|entry| program.functions.iter().any(|(name, _)| name == entry))
         .map(str::to_string)

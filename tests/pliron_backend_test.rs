@@ -105,24 +105,24 @@ fn fib_lowers_verifies_and_prints_canonically() {
                 llvm.br ^block3v1()
 
               ^block3v1():
-                v4 = llvm.constant <builtin.integer <2: i64>> : builtin.integer i64;
-                v5 = llvm.icmp v0 <SLT> v4 : builtin.integer i1 !0;
-                llvm.cond_br if v5 ^block5v1() else ^block6v1() !1
+                v5 = llvm.constant <builtin.integer <2: i64>> : builtin.integer i64;
+                v6 = llvm.icmp v0 <SLT> v5 : builtin.integer i1 !0;
+                llvm.cond_br if v6 ^block5v1() else ^block6v1() !1
 
-              ^block4v1(v6: builtin.integer i64):
-                llvm.return v6 !2
+              ^block4v1(v7: builtin.integer i64):
+                llvm.return v7 !2
 
               ^block5v1():
                 llvm.br ^block4v1(v0)
 
               ^block6v1():
-                v7 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
-                v8 = llvm.sub v0, v7 <{nsw=false,nuw=false}>: builtin.integer i64 !3;
-                v9 = llvm.call @mj_fib (v8) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !4;
-                v10 = llvm.sub v0, v4 <{nsw=false,nuw=false}>: builtin.integer i64 !5;
-                v11 = llvm.call @mj_fib (v10) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !6;
-                v12 = llvm.add v9, v11 <{nsw=false,nuw=false}>: builtin.integer i64 !7;
-                llvm.br ^block4v1(v12)
+                v8 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
+                v9 = llvm.sub v0, v8 <{nsw=false,nuw=false}>: builtin.integer i64 !3;
+                v10 = llvm.call @mj_fib (v9) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !4;
+                v11 = llvm.sub v0, v5 <{nsw=false,nuw=false}>: builtin.integer i64 !5;
+                v12 = llvm.call @mj_fib (v11) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !6;
+                v13 = llvm.add v10, v12 <{nsw=false,nuw=false}>: builtin.integer i64 !7;
+                llvm.br ^block4v1(v13)
             } !8;
             llvm.func @mj_compute: llvm.func <builtin.integer i64() variadic = false>
               [] 
@@ -131,12 +131,12 @@ fn fib_lowers_verifies_and_prints_canonically() {
                 llvm.br ^block8v1()
 
               ^block8v1():
-                v14 = llvm.constant <builtin.integer <9: i64>> : builtin.integer i64;
-                v15 = llvm.call @mj_fib (v14) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !9;
-                v16 = llvm.constant <builtin.integer <8: i64>> : builtin.integer i64;
-                v17 = llvm.call @mj_fib (v16) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !10;
-                v18 = llvm.add v15, v17 <{nsw=false,nuw=false}>: builtin.integer i64 !11;
-                llvm.return v18 !12
+                v16 = llvm.constant <builtin.integer <9: i64>> : builtin.integer i64;
+                v17 = llvm.call @mj_fib (v16) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !9;
+                v18 = llvm.constant <builtin.integer <8: i64>> : builtin.integer i64;
+                v19 = llvm.call @mj_fib (v18) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !10;
+                v20 = llvm.add v17, v19 <{nsw=false,nuw=false}>: builtin.integer i64 !11;
+                llvm.return v20 !12
             } !13
         }
 
@@ -160,7 +160,9 @@ fn fib_lowers_verifies_and_prints_canonically() {
 
 #[test]
 fn backend_monomorphizes_one_generic_function_at_multiple_types() {
-    let source = "def identity[T: Copyable & Movable](value: T) -> T:\n    return value.copy()\n\ndef int_value() -> Int:\n    return identity(42)\n\ndef bool_value() -> Bool:\n    return identity(True)\n";
+    // `@no_inline` keeps the instances: the elaborator's automatic inliner
+    // would otherwise splice so small a body into both callers.
+    let source = "@no_inline\ndef identity[T: Copyable & Movable](value: T) -> T:\n    return value.copy()\n\ndef int_value() -> Int:\n    return identity(42)\n\ndef bool_value() -> Bool:\n    return identity(True)\n";
     let module = native_compile(source, &["int_value", "bool_value"]);
 
     assert_eq!(module.jit_i64("int_value").unwrap(), 42);
@@ -199,11 +201,11 @@ def prefix(v: SIMD[DType.int32, 8]) -> SIMD[DType.int32, 8]:
     return out
 
 @no_inline
-def carry(v: SIMD[DType.int32, 8], k: Int32) -> Int32:
+def carry(v: SIMD[DType.int32, 8], k: Int32) -> SIMD[DType.int32, 8]:
     var a = v
     var b = a
     a = a + k
-    return (a + b).reduce_add()
+    return a + b
 
 @no_inline
 def truncate(v: SIMD[DType.float32, 8]) -> SIMD[DType.int32, 8]:
@@ -216,7 +218,7 @@ def compute() -> Int:
         acc += Int(total(scale(v, Int32(i))))
     var p = prefix(v)
     var f = v.cast[DType.float32]()
-    return acc + Int(mask_sum(f, 3.5)) + Int(p.reduce_add()) + Int(carry(v, 2)) + Int(truncate(f).reduce_add())
+    return acc + Int(mask_sum(f, 3.5)) + Int(p.reduce_add()) + Int(carry(v, 2).reduce_add()) + Int(truncate(f).reduce_add())
 
 def main():
     print(compute())
@@ -224,9 +226,11 @@ def main():
 
 /// The vector lowering must survive the release pipeline *as vector code*:
 /// legal vector IR proves nothing if LLVM scalarizes it. Release IR keeps
-/// the `<8 x i32>` arithmetic, the `<8 x i1>` select, and the
-/// `llvm.vector.reduce.*` calls, and the emitted object selects packed SSE
-/// instructions for them (checked when the pinned toolchain's
+/// the `<8 x i32>` arithmetic and the `<8 x i1>` select; the library's
+/// `reduce_add` split tree folds to `llvm.vector.reduce.add` over integer
+/// lanes and stays a tree of narrowing vector `fadd`s over float lanes
+/// (float addition does not reassociate). The emitted object selects
+/// packed SSE instructions for them (checked when the pinned toolchain's
 /// `llvm-objdump` is present; the baseline x86-64 target has no SSE4.1, so
 /// the i32 multiply is `pmuludq` pairs rather than `pmulld`).
 ///
@@ -240,7 +244,7 @@ def main():
 /// is visible — every access to a multi-lane slot is a typed whole-vector
 /// load or store, so mem2reg lifts the slot into vector SSA (`prefix`'s
 /// lane-written `out` becomes a `phi <8 x i32>`, and `carry`, which only
-/// moves whole vectors, keeps no storage at all).
+/// moves whole vectors into its result, keeps no storage at all).
 #[test]
 fn simd_lowering_emits_vector_code() {
     let mut module = native_compile(SIMD_KERNELS, &["compute", "main"]);
@@ -290,7 +294,7 @@ fn simd_lowering_emits_vector_code() {
         "@llvm.vector.reduce.add.v8i32(",
         "fcmp ogt <8 x float>",
         "select <8 x i1>",
-        "@llvm.vector.reduce.fadd.v8f32(float -0.000000e+00",
+        "fadd <4 x float>",
     ] {
         assert!(ir.contains(needle), "release IR lacks `{needle}`:\n{ir}");
     }
@@ -414,7 +418,7 @@ fn llvm_function<'a>(ir: &'a str, name: &str) -> &'a str {
 /// `PATH`.
 fn llvm_objdump() -> Option<std::path::PathBuf> {
     let prefix = std::env::var_os("LLVM_SYS_231_PREFIX").map_or_else(
-        || std::path::PathBuf::from("/opt/llvm-23"),
+        || std::path::PathBuf::from("/usr/lib/llvm-23"),
         std::path::PathBuf::from,
     );
     [
@@ -841,8 +845,10 @@ def main():
 
 /// String literals intern into private `mjstr_<n>` constant-pool globals on
 /// use — deduplicated by content in deterministic first-use order — and the
-/// literal-only `+`/`==` operators fold at compile time (fold-only literals
-/// never emit a global).
+/// literal-only `+` folds at compile time (fold-only literals never emit a
+/// global). `==` is `StringLiteral`'s library `__eq__`, which reads its
+/// operands through `unsafe_ptr`: the elaborator freezes that pointer into
+/// the literal's NUL-terminated compile-time bytes, a constant of its own.
 #[test]
 fn string_constant_pool_interns_and_dedups() {
     let src = "\
@@ -865,21 +871,52 @@ def main():
         );
     }
     // Pool contents in first-use order: "hello", "\n", " ", "ab" (the folded
-    // concatenation), "True", "False" — the repeated "hello" and the folded
-    // equality share entries, and the fold-only "a"/"b" never intern.
+    // concatenation), "ab\0" (the frozen bytes `==` reads), "True", "False"
+    // — the repeated "hello" and "ab" share entries, and the fold-only
+    // "a"/"b" never intern.
     let globals = text.matches("llvm.global @mjstr_").count();
-    assert_eq!(globals, 6, "constant pool size changed:\n{text}");
+    assert_eq!(globals, 7, "constant pool size changed:\n{text}");
 }
 
 /// The aggregate memory model prints canonically: layout-engine offsets
 /// realize as `i8` GEPs, aggregate copies as `llvm.memcpy` intrinsic calls,
-/// and struct storage as aligned byte allocas.
+/// and struct storage as aligned byte allocas. `grown` is `@no_inline`, so
+/// its nested struct copies keep their storage rather than folding into
+/// `main`'s scalars.
 #[test]
 fn aggregate_surface_prints_canonically() {
-    let src =
-        std::fs::read_to_string("assets/ok/pliron_struct_fieldwise.mojo").expect("fixture exists");
-    let module = native_compile(&src, &["main"]);
+    let src = "\
+@fieldwise_init
+struct Inner(ImplicitlyCopyable, Movable):
+    var a: Int
+    var b: Bool
+
+@fieldwise_init
+struct Outer(ImplicitlyCopyable, Movable):
+    var inner: Inner
+    var scale: Float64
+
+@no_inline
+def grown(o: Outer, by: Float64) -> Outer:
+    var p = o
+    p.inner.a += 1
+    p.scale += by
+    return p
+
+def main():
+    var o = Outer(Inner(6, True), 2.5)
+    var g = grown(o, 0.5)
+    print(g.inner.a, g.inner.b, g.scale, o.inner.a)
+";
+    let module = native_compile(src, &["main"]);
     let text = module.plir_text();
+    let start = text
+        .find("llvm.func @mj_grown")
+        .unwrap_or_else(|| panic!("no `grown` body:\n{text}"));
+    let end = text[start..]
+        .find("\n    } ")
+        .map_or(text.len(), |at| start + at);
+    let grown = &text[start..end];
     for needle in [
         "llvm.gep",
         "llvm.call_intrinsic",
@@ -888,8 +925,8 @@ fn aggregate_surface_prints_canonically() {
         "[align : 8]",
     ] {
         assert!(
-            text.contains(needle),
-            "canonical text lacks `{needle}`:\n{text}"
+            grown.contains(needle),
+            "`grown`'s canonical text lacks `{needle}`:\n{grown}"
         );
     }
 }
@@ -965,10 +1002,9 @@ fn lifecycle_event_traces_match_the_vm() {
         "assets/ok/pliron_struct_drop_order.mojo",
         "assets/ok/pliron_iter_drop_order.mojo",
         "assets/extensions/ok/pliron_closure_drop_order.mojo",
-        // pliron_list_core stays out of this lane even with instance names
-        // normalized to bare templates: generic-collection copy/consume
-        // events differ structurally (compiled destructor chains trace
-        // element drops the VM's arena never performs).
+        // pliron_list_core stays out of this lane: generic-collection
+        // copy/consume events differ structurally (compiled destructor
+        // chains trace element drops the VM's arena never performs).
     ] {
         let src = std::fs::read_to_string(fixture).expect("fixture exists");
         let compiler = Compiler::default().with_target(host_target());

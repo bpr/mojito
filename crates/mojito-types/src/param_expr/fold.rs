@@ -811,8 +811,9 @@ fn target_operands<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        fold_comparison, fold_data_to_str, fold_infix, fold_literal_attribute, fold_string_address,
-        fold_string_size, fold_target_get_field, fold_target_has_feature,
+        fold_comparison, fold_data_to_str, fold_infix, fold_literal_attribute,
+        fold_literal_convert, fold_string_address, fold_string_size, fold_target_get_field,
+        fold_target_has_feature,
     };
     use crate::ct::{CtLane, CtValue, KgenTarget};
     use crate::param_expr::ParamOp;

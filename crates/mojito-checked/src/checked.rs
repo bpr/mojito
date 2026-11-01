@@ -98,12 +98,27 @@ pub struct CheckedCallParameterArgument {
 /// source value through different getter and setter parameter contracts.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CheckedCallValueAdjustment {
-    ResolveCallable { target: String },
-    ImplicitConversion { target: String },
-    IndexNormalization { target: String },
-    MaterializeLiteral { target: Ty },
-    SplatScalar { target: Ty },
-    SimdFromLength { target: Ty },
+    ResolveCallable {
+        target: String,
+    },
+    /// The implicit constructor `target`, applied at the conversion's own
+    /// compile-time arguments (a literal source's `IntLiteral[v]`).
+    ImplicitConversion {
+        target: String,
+        instantiated_args: Vec<mojito_types::types::TyArg>,
+    },
+    IndexNormalization {
+        target: String,
+    },
+    MaterializeLiteral {
+        target: Ty,
+    },
+    SplatScalar {
+        target: Ty,
+    },
+    SimdFromLength {
+        target: Ty,
+    },
 }
 
 /// Call-boundary facts for one supplied argument.

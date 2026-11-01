@@ -6,11 +6,12 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl<'a> FnLowering<'a> {
-    /// `print(args…, sep=, end=, flush=, file=)`: format each argument
-    /// through the runtime `mjrt_fmt_*` family (string-literal, Bool, and
-    /// None text comes from the constant pool), joined by `sep` (default one
-    /// space) with a trailing `end` (default newline) — composing the same
-    /// bytes as the VM's `format_value` join (`backend/vm.rs`). With
+    /// `print(args…, sep=, end=, flush=, file=)`: display each argument —
+    /// a struct or `SIMD` value through its `write_to` instance,
+    /// string-literal, Bool, and None text from the constant pool — joined
+    /// by `sep` (default one space) with a trailing `end` (default
+    /// newline) — composing the same bytes as the VM's `format_value` join
+    /// (`backend/vm.rs`). With
     /// `file=`, every piece goes through libc `write` on the descriptor's
     /// value instead of `mjrt_write_stdout` (`flush` is a no-op: the runtime
     /// stdout writer flushes per call). The destination register is
@@ -421,6 +422,16 @@ impl<'a> FnLowering<'a> {
             && !mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
             return self.print_struct_via_write_to(ctx, arg, name, dest);
+        }
+        // A `SIMD` value displays through its declared `write_to`, the
+        // instance its type's member table names — the VM's
+        // `format_value` dispatch, as upstream's `print` calls it.
+        if let Some(ty) = self.func.reg_types.get(&arg.0).cloned()
+            && let Some(table) =
+                mojito_symbol::symbol::member_table_name(&ty).filter(|_| ty.kind().is_simd())
+            && let Some(symbol) = self.display_member(&table, "write_to", dest)?
+        {
+            return self.print_simd_via_write_to(ctx, arg, symbol, dest);
         }
         if let Some((dtype, width)) = self.func.reg_types.get(&arg.0).and_then(simd_dims)
             && width > 1
@@ -935,6 +946,45 @@ impl<'a> FnLowering<'a> {
                 dest,
             )),
         }
+    }
+
+    /// Display one `SIMD` value through its `write_to` instance `symbol`
+    /// into a fresh builtin-string accumulator, then write the accumulated
+    /// bytes to stdout and free them.
+    fn print_simd_via_write_to(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        symbol: &str,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let signature = &self.signatures[symbol];
+        if signature.outcome.is_some() {
+            return Err(self.unsupported_reg(format!("raising `{symbol}`"), dest));
+        }
+        let Some(receiver_ty) = signature.params.first().cloned() else {
+            return Err(self.unsupported_reg(format!("`{symbol}` takes no receiver"), dest));
+        };
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let receiver = self.arg_value(ctx, arg, &receiver_ty, false, dest)?;
+        let writer = self.entry_alloca(ctx, 16, 8);
+        self.mem_zero(ctx, writer, 16);
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            vec![receiver, writer],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        let (data, len) = self.string_parts(ctx, writer, dest);
+        self.write_stdout(ctx, data, len, dest);
+        self.emit_free(ctx, data);
+        Ok(())
     }
 }
 

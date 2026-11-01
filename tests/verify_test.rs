@@ -834,12 +834,13 @@ fn verifier_types_simd_lane_instructions() {
 
 #[test]
 fn verifier_types_select() {
-    let mut mir = lower_source(
+    let mut mir = lower_linked_source(
         "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c.__mlir_bool__(), Int(1), Int(2)))\n",
     );
     let select = mir
         .functions
         .iter_mut()
+        .filter(|(name, _)| name == "main")
         .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find(|instruction| matches!(instruction, MirInstr::Select { .. }))
         .expect("select lowered");
@@ -858,7 +859,7 @@ fn verifier_types_select() {
 #[test]
 fn verifier_checks_llvm_intrinsic_calls() {
     let lowered = || {
-        lower_source(
+        lower_linked_source(
             "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.ctpop\".value, _type=Int32, hasSideEffects=False.__mlir_i1__()](x))\n",
         )
     };
@@ -867,6 +868,7 @@ fn verifier_checks_llvm_intrinsic_calls() {
         let call = mir
             .functions
             .iter_mut()
+            .filter(|(name, _)| name == "main")
             .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
             .find(|instruction| matches!(instruction, MirInstr::CallLlvmIntrinsic { .. }))
             .expect("LLVM intrinsic call lowered");
@@ -883,7 +885,7 @@ fn verifier_checks_llvm_intrinsic_calls() {
     assert!(
         !mojito::mir::verify::verify_concrete(&lowered())
             .iter()
-            .any(|error| error.contains("intrinsic")),
+            .any(|error| error.contains("intrinsic") && error.contains("'main'")),
         "a closed call in the table is concrete"
     );
     concrete_finding(

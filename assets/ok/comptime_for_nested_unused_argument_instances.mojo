@@ -9,9 +9,16 @@
 # reduced one its call names.
 
 
+# A slot over the generator's `n` whose construction asserts nothing: a
+# `SIMD[dt, n]` construction checks its width, which keeps `n` read.
+@fieldwise_init
+struct Lane[n: Int](Copyable, ImplicitlyCopyable, Movable):
+    var x: Int
+
+
 @fieldwise_init
 struct Arr[n: Int](Copyable, Movable):
-    var v: SIMD[DType.int64, Self.n]
+    var v: Lane[Self.n]
 
 
 @no_inline
@@ -24,7 +31,7 @@ def looped[n: Int](x: Int) -> Int:
         def inner(a: Arr[n], y: Int) -> Int:
             return y + 1
 
-        total += inner(Arr[n](SIMD[DType.int64, n](1)), x)
+        total += inner(Arr[n](Lane[n](1)), x)
     return total
 
 
@@ -38,7 +45,7 @@ def indexed(x: Int) -> Int:
         def inner(a: Arr[i + 1], y: Int) -> Int:
             return y + 3
 
-        total += inner(Arr[i + 1](SIMD[DType.int64, i + 1](1)), x)
+        total += inner(Arr[i + 1](Lane[i + 1](1)), x)
     return total
 
 
@@ -52,8 +59,8 @@ def generic(x: Int) -> Int:
         def inner[m: Int](a: Arr[m], y: Int) -> Int:
             return y * 2
 
-        total += inner(Arr[1](SIMD[DType.int64, 1](1)), x) + inner(
-            Arr[2](SIMD[DType.int64, 2](1)), x
+        total += inner(Arr[1](Lane[1](1)), x) + inner(
+            Arr[2](Lane[2](1)), x
         )
     return total
 
@@ -68,7 +75,7 @@ def keyword[n: Int](x: Int) -> Int:
         def inner(y: Int, a: Arr[n]) -> Int:
             return y + 2
 
-        total += inner(a=Arr[n](SIMD[DType.int64, n](1)), y=x)
+        total += inner(a=Arr[n](Lane[n](1)), y=x)
     return total
 
 
@@ -82,7 +89,7 @@ def reads_index(x: Int) -> Int:
         def inner(a: Arr[i + 1], y: Int) -> Int:
             return y + i
 
-        total += inner(Arr[i + 1](SIMD[DType.int64, i + 1](1)), x)
+        total += inner(Arr[i + 1](Lane[i + 1](1)), x)
     return total
 
 
@@ -97,8 +104,8 @@ def valued[n: Int](x: Int) -> Int:
             return y - 1
 
         var f = inner
-        total += f(Arr[n](SIMD[DType.int64, n](1)), x) + inner(
-            Arr[n](SIMD[DType.int64, n](2)), x
+        total += f(Arr[n](Lane[n](1)), x) + inner(
+            Arr[n](Lane[n](2)), x
         )
     return total
 
