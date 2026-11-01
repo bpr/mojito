@@ -129,6 +129,10 @@ impl FnLowering<'_> {
                         dest,
                     ));
                 };
+                // A held view is its pointer field.
+                if self.holds_struct_value(reg) {
+                    return self.reg_value(ctx, reg, ScalarTy::Ptr);
+                }
                 let storage = self.reg_ptr(ctx, reg)?;
                 let (offset, _) = self.field_offset(ty, &field, dest)?;
                 let address = self.gep_byte(ctx, storage, offset, dest);

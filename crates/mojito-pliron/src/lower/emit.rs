@@ -393,7 +393,21 @@ impl FnLowering<'_> {
                 None,
             ));
         };
-        lower_ty(self.name, ty, &self.layout, None)
+        lower_ty(self.name, ty, &self.layout, self.mir_declarations, None)
+    }
+
+    /// Whether `reg` is typed as a held struct (one field,
+    /// `TrivialRegisterPassable`) that `lower_ty` classifies as its scalar
+    /// or zero-sized field, so the register is that value, never storage.
+    pub(super) fn holds_struct_value(&self, reg: Reg) -> bool {
+        self.func.reg_types.get(&reg.0).is_some_and(|ty| {
+            matches!(ty.kind(), TyKind::Struct(name, _)
+                if self.mir_declarations.register_field(name).is_some())
+                && !matches!(
+                    lower_ty(self.name, ty, &self.layout, self.mir_declarations, None),
+                    Ok(LowerTy::Aggregate { .. }) | Err(_)
+                )
+        })
     }
 
     /// Record `value` as `reg`'s, materialized on demand at the position

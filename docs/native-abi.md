@@ -193,7 +193,9 @@ Rules:
   checked type requires it — no checked type does today. Dangling ZST-style
   pointers are aligned sentinels, never null.
 - `Tuple`/`RuntimePack`/nominal structs are ordinary aggregates of their
-  element/field types.
+  element/field types. A struct `MirDeclarations::translated_type` unwraps
+  (one field, declaring `TrivialRegisterPassable` unconditionally) lays out
+  as its field, which is the same size, alignment, and offset 0.
 - A `!pop.array<n, T>` (MIR's `pop_array`) is `n` elements of `T` at its
   stride, aligned like one element. Its size is closed before layout: a
   parameter size is an elaboration-time value, and layout rejects one left
@@ -326,7 +328,9 @@ Rules:
   parameter, which a struct parameter receives by address: a `def`'s
   closure's one `Reference` slot holds the storage's address, and a
   lambda's one moved (`m`) slot holds the storage itself, passing the
-  slot's own address. A moved slot naming no `__moveinit__` is relocated
+  slot's own address, or, when the storage is a held struct passed by
+  value (see [Calling convention](#calling-convention)), the value loaded
+  from the slot. A moved slot naming no `__moveinit__` is relocated
   into the record, running none, since the record is the lambda's storage.
 - The **environment record** is frame-local storage of the creating
   `MakeClosure` (one entry allocation per site, slots re-stored on each
@@ -346,6 +350,11 @@ Rules:
   1:1 to deterministically mangled native symbols.
 - Scalars pass and return by value (`Bool` as i1 in SSA, byte-sized at ABI
   boundaries as above).
+- A struct `MirDeclarations::translated_type` unwraps (one field, declaring
+  `TrivialRegisterPassable` unconditionally) passes and returns as its field
+  type would, as upstream's `LowerKGENToLLVM` lowers a one-element
+  register-passable struct to its element: `struct L { var v: Int }` is an
+  `i64` by value. The rules below apply to every other struct.
 - Aggregates pass **by reference** and return through an sret-style out
   pointer — deterministic and target-independent by construction; the ABI
   deliberately does not adopt SysV register classification for aggregates.

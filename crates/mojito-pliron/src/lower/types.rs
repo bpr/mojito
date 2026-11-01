@@ -118,34 +118,36 @@ impl ScalarTy {
     }
 }
 
-/// Classify a checked type for lowering: a vector classifies as its
-/// `!kgen.simd` storage; scalars (a one-lane storage, and the i64/f64
-/// storage of `IntLiteral`/`FloatLiteral`-typed registers) stay SSA; `None`
-/// is zero-sized; struct, tuple, and `StringLiteral`-descriptor aggregates
-/// take their shared-engine layout, as does the two-word `{ invoke, env }`
+/// Classify a checked type for lowering, through the type LLVM translation
+/// sees ([`MirDeclarations::translated_type`]): a vector classifies as its
+/// `!kgen.simd` storage, and a one-field `TrivialRegisterPassable` struct as
+/// its field, as upstream's `LowerKGENToLLVM` type converter unwraps both;
+/// scalars (a one-lane storage, and the i64/f64 storage of
+/// `IntLiteral`/`FloatLiteral`-typed registers) stay SSA; `None` is
+/// zero-sized; struct, tuple, and `StringLiteral`-descriptor aggregates take
+/// their shared-engine layout, as does the two-word `{ invoke, env }`
 /// retained-callable value. A multi-lane storage keeps the lane-aligned
-/// aggregate as its storage and ABI form; `lower/simd.rs` computes on it
-/// as an LLVM fixed vector between the loads and stores.
+/// aggregate as its storage and ABI form; `lower/simd.rs` computes on it as
+/// an LLVM fixed vector between the loads and stores.
 pub fn lower_ty(
     function: &str,
     ty: &Ty,
     layout: &LayoutCx<'_>,
+    declarations: &MirDeclarations,
     location: Option<SourceSpan>,
 ) -> Result<LowerTy, PlironError> {
+    if matches!(ty.kind(), TyKind::Simd { .. } | TyKind::Struct(..)) {
+        let translated = declarations.translated_type(ty);
+        if translated != *ty {
+            return lower_ty(function, &translated, layout, declarations, location);
+        }
+    }
     match ty.kind() {
         // The MLIR builtin `i1` is held as the `Bool` it casts from.
         TyKind::Bool | TyKind::I1 => Ok(LowerTy::Scalar(ScalarTy::Bool)),
         TyKind::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
         // The MLIR builtin `index` is held as the `Int` it casts from.
         TyKind::Index => Ok(LowerTy::Scalar(ScalarTy::Int)),
-        // A vector lowers as its `!kgen.simd` storage, as upstream's
-        // `LowerKGENToLLVM` lowers the `SIMD` struct to its field.
-        TyKind::Simd { .. } => lower_ty(
-            function,
-            &mojito_types::types::storage_ty(ty),
-            layout,
-            location,
-        ),
         // A one-lane storage is the scalar, so `Int` stays an SSA `i64`.
         TyKind::KgenSimd {
             dtype: SimdDtype::Known(dtype),

@@ -337,7 +337,13 @@ impl FnLowering<'_> {
                 // A move relocates the bytes — ownership transfers to the
                 // destination register (the VM's `mem::replace`; no clone
                 // runs).
-                match lower_ty(self.name, &ty, &self.layout, self.reg_span(*dest))? {
+                match lower_ty(
+                    self.name,
+                    &ty,
+                    &self.layout,
+                    self.mir_declarations,
+                    self.reg_span(*dest),
+                )? {
                     LowerTy::Scalar(scalar) => {
                         let handle = scalar.handle(ctx);
                         let load = LoadOp::new(ctx, address, handle);

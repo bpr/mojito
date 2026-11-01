@@ -108,24 +108,29 @@ impl FnLowering<'_> {
         {
             // A receiver held as a scalar (a one-lane `SIMD`) is read back
             // from that storage.
-            let (layout, scalar) =
-                match lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))? {
-                    LowerTy::Aggregate { layout, .. } => (layout, None),
-                    LowerTy::Scalar(scalar) if by_reference.first().copied().unwrap_or(false) => {
-                        let layout = self.layout.layout_of(&struct_ty).map_err(|error| {
-                            self.unsupported_reg(
-                                format!("constructor result `{struct_ty}` ({error})"),
-                                dest,
-                            )
-                        })?;
-                        (layout, Some(scalar))
-                    }
-                    _ => {
-                        return Err(
-                            self.unsupported_reg(format!("constructor result `{struct_ty}`"), dest)
-                        );
-                    }
-                };
+            let (layout, scalar) = match lower_ty(
+                self.name,
+                &struct_ty,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(dest),
+            )? {
+                LowerTy::Aggregate { layout, .. } => (layout, None),
+                LowerTy::Scalar(scalar) if by_reference.first().copied().unwrap_or(false) => {
+                    let layout = self.layout.layout_of(&struct_ty).map_err(|error| {
+                        self.unsupported_reg(
+                            format!("constructor result `{struct_ty}` ({error})"),
+                            dest,
+                        )
+                    })?;
+                    (layout, Some(scalar))
+                }
+                _ => {
+                    return Err(
+                        self.unsupported_reg(format!("constructor result `{struct_ty}`"), dest)
+                    );
+                }
+            };
             let storage = self.entry_alloca(ctx, layout.size, layout.align);
             let rest = &params[1..];
             let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
@@ -668,7 +673,13 @@ impl FnLowering<'_> {
         } else if returns_reference {
             (PointerType::get(ctx, 0).into(), true, None, None)
         } else if *raises {
-            let ok = lower_ty(self.name, ret, &self.layout, self.reg_span(dest))?;
+            let ok = lower_ty(
+                self.name,
+                ret,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(dest),
+            )?;
             let composed = self.layout.outcome_layout(ret).map_err(|error| {
                 self.unsupported_reg(
                     format!("raising indirect return of `{ret}` ({error})"),
@@ -684,7 +695,13 @@ impl FnLowering<'_> {
             };
             (VoidType::get(ctx).to_handle(), false, None, Some(outcome))
         } else {
-            match lower_ty(self.name, ret, &self.layout, self.reg_span(dest))? {
+            match lower_ty(
+                self.name,
+                ret,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(dest),
+            )? {
                 LowerTy::ZeroSized => (VoidType::get(ctx).to_handle(), false, None, None),
                 LowerTy::Scalar(scalar) => (scalar.handle(ctx), true, None, None),
                 LowerTy::Aggregate { layout, .. } => {
@@ -704,7 +721,13 @@ impl FnLowering<'_> {
         let mut owned_params = Vec::with_capacity(params.len());
         let mut by_reference = Vec::with_capacity(params.len());
         for (index, ty) in params.iter().enumerate() {
-            let lowered = lower_ty(self.name, ty, &self.layout, self.reg_span(dest))?;
+            let lowered = lower_ty(
+                self.name,
+                ty,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(dest),
+            )?;
             let convention = conventions.get(index).copied().flatten();
             let by_ref = matches!(
                 convention,
@@ -729,7 +752,13 @@ impl FnLowering<'_> {
                 instance,
                 vec![mojito_types::types::TyArg::Ty(element.clone())],
             ));
-            let lowered = lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))?;
+            let lowered = lower_ty(
+                self.name,
+                &ty,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(dest),
+            )?;
             param_handles.push(ptr_ty);
             lowered_params.push(lowered);
             owned_params.push(true);

@@ -213,7 +213,13 @@ impl FnLowering<'_> {
         anchor: Reg,
         constructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        match lower_ty(self.name, ty, &self.layout, self.reg_span(anchor))? {
+        match lower_ty(
+            self.name,
+            ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(anchor),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let value = if let Some(literal) = self.pending_literals.get(&src.0).cloned() {
                     self.materialize_pending(ctx, &literal, scalar, anchor)?
@@ -339,7 +345,13 @@ impl FnLowering<'_> {
             self.emit_variant_tag_guard(ctx, ptr, index, dest)?;
         }
         let payload = self.offset_address(ctx, ptr, layout.payload_offset);
-        match lower_ty(self.name, &selected, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            &selected,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, payload, handle);
@@ -452,7 +464,13 @@ impl FnLowering<'_> {
             .variant_layout(alternatives)
             .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), dest))?;
         let payload = self.offset_address(ctx, address, layout.payload_offset);
-        match lower_ty(self.name, &output, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            &output,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, payload, handle);
@@ -508,7 +526,13 @@ impl FnLowering<'_> {
         self.emit_variant_tag_guard(ctx, ptr, index, dest)?;
         let payload_address = self.offset_address(ctx, ptr, layout.payload_offset);
         let payload = Reg(u32::MAX - 2);
-        match lower_ty(self.name, &selected, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            &selected,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, payload_address, handle);

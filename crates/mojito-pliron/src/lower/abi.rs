@@ -302,7 +302,13 @@ impl FnLowering<'_> {
         ty: &Ty,
         dest: Reg,
     ) -> Result<(), PlironError> {
-        match lower_ty(self.name, ty, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, address, handle);
@@ -333,7 +339,13 @@ impl FnLowering<'_> {
         ty: &Ty,
         dest: Reg,
     ) -> Result<(), PlironError> {
-        match lower_ty(self.name, ty, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, address, handle);
@@ -361,7 +373,13 @@ impl FnLowering<'_> {
         ty: &Ty,
         src: Reg,
     ) -> Result<(), PlironError> {
-        match lower_ty(self.name, ty, &self.layout, self.reg_span(src))? {
+        match lower_ty(
+            self.name,
+            ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(src),
+        )? {
             LowerTy::Scalar(scalar) => {
                 // A pending literal entering literal-typed storage converts
                 // exactly (reject-never-wrap) rather than at the slot kind.

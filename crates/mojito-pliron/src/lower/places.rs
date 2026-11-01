@@ -376,6 +376,31 @@ impl FnLowering<'_> {
         let Some(mut base_ty) = self.func.reg_types.get(&base.0).cloned() else {
             return Err(self.unsupported_reg(format!("untyped field base %r{}", base.0), dest));
         };
+        // A held struct is its one field, so reading that field from a value
+        // is the identity, as upstream's `LowerKGENToLLVM` lowers
+        // `kgen.struct.extract` of a one-element register-passable struct.
+        if let TyKind::Struct(name, _) = base_ty.kind()
+            && self.mir_declarations.register_field(name).is_some()
+        {
+            match lower_ty(
+                self.name,
+                &base_ty,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(dest),
+            )? {
+                LowerTy::Scalar(scalar) => {
+                    let value = self.reg_value(ctx, base, scalar)?;
+                    self.reg_values.insert(dest.0, value);
+                    return Ok(());
+                }
+                LowerTy::ZeroSized => {
+                    self.erased.insert(dest.0);
+                    return Ok(());
+                }
+                LowerTy::Aggregate { .. } => {}
+            }
+        }
         while let TyKind::Ref(reference) = base_ty.kind() {
             base_ty = reference.referent.clone();
         }

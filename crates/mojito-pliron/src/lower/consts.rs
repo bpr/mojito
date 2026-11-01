@@ -94,7 +94,13 @@ impl FnLowering<'_> {
             self.simd_store_vector(ctx, dest, dtype, width, poison.get_result(ctx));
             return Ok(());
         }
-        match lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            &ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let undef = UndefOp::new(ctx, scalar.handle(ctx));
                 self.append(ctx, undef.get_operation(), Some(dest));
@@ -209,6 +215,9 @@ impl FnLowering<'_> {
         value: &mojito_types::ct::CtValue,
     ) -> Result<(), PlironError> {
         use mojito_types::ct::CtValue;
+        if self.held_parameter_value(ctx, dest, value)? {
+            return Ok(());
+        }
         match value {
             // The `NoneType` value is zero-sized, as `MirConst::None` is.
             CtValue::None => {
@@ -221,7 +230,7 @@ impl FnLowering<'_> {
                 self.int_consts.insert(dest.0, *bits as i64);
                 Ok(())
             }
-            CtValue::Index(n) => {
+            CtValue::Int(n) | CtValue::Index(n) => {
                 let constant = self.parameter_scalar(ctx, value, ScalarTy::Int, dest)?;
                 self.reg_values.insert(dest.0, constant);
                 self.int_consts.insert(dest.0, *n);
@@ -259,8 +268,13 @@ impl FnLowering<'_> {
                         self.unsupported_reg(format!("untyped parameter value `{value}`"), dest)
                     })?,
                 };
-                let LowerTy::Aggregate { layout, .. } =
-                    lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))?
+                let LowerTy::Aggregate { layout, .. } = lower_ty(
+                    self.name,
+                    &ty,
+                    &self.layout,
+                    self.mir_declarations,
+                    self.reg_span(dest),
+                )?
                 else {
                     return Err(self.unsupported_reg(format!("parameter value `{value}`"), dest));
                 };
@@ -292,6 +306,51 @@ impl FnLowering<'_> {
                 format!("parameter value `{value}` reached native lowering"),
                 dest,
             )),
+        }
+    }
+
+    /// A frozen held struct (one field, `TrivialRegisterPassable`) lowered
+    /// as its innermost field's value when its type classifies as a scalar
+    /// or as zero-sized, as `lower_ty` holds it; `false` for any other value,
+    /// which keeps its fieldwise storage.
+    fn held_parameter_value(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: &mojito_types::ct::CtValue,
+    ) -> Result<bool, PlironError> {
+        use mojito_types::ct::CtValue;
+        let CtValue::Struct { name, .. } = value else {
+            return Ok(false);
+        };
+        let mut leaf = value;
+        while let CtValue::Struct { name, fields } = leaf
+            && self.mir_declarations.register_field(name).is_some()
+            && let [(_, field)] = fields.as_slice()
+        {
+            leaf = field;
+        }
+        if std::ptr::eq(leaf, value) {
+            return Ok(false);
+        }
+        let ty: Ty = TyKind::Struct(name.clone(), Vec::new()).into();
+        match lower_ty(
+            self.name,
+            &ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
+            LowerTy::Scalar(scalar) => {
+                let constant = self.parameter_scalar(ctx, leaf, scalar, dest)?;
+                self.reg_values.insert(dest.0, constant);
+                Ok(true)
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+                Ok(true)
+            }
+            LowerTy::Aggregate { .. } => Ok(false),
         }
     }
 
@@ -411,8 +470,13 @@ impl FnLowering<'_> {
                 vec![element.clone(); elements.len()],
             ),
             _ => {
-                let LowerTy::Scalar(scalar) =
-                    lower_ty(self.name, ty, &self.layout, self.reg_span(dest))?
+                let LowerTy::Scalar(scalar) = lower_ty(
+                    self.name,
+                    ty,
+                    &self.layout,
+                    self.mir_declarations,
+                    self.reg_span(dest),
+                )?
                 else {
                     return Err(self.unsupported_reg(format!("parameter value `{value}`"), dest));
                 };

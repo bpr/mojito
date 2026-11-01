@@ -273,6 +273,7 @@ pub fn declare_function(
     func: &MirFunction,
     declaration: Option<&mojito_mir::mir::MirFunctionDeclaration>,
     layout: &LayoutCx<'_>,
+    declarations: &MirDeclarations,
 ) -> Result<(FuncOp, FnSignature), PlironError> {
     let ret_ty = func.ret_ty.as_ref().ok_or_else(|| PlironError {
         function: Some(name.to_string()),
@@ -311,7 +312,7 @@ pub fn declare_function(
     } else if func.raises {
         // A raising function returns `void` through a prepended outcome
         // out-pointer; its ok payload (any kind) lives inline in the outcome.
-        let ok = lower_ty(name, ret_ty, layout, None)?;
+        let ok = lower_ty(name, ret_ty, layout, declarations, None)?;
         let composed = layout.outcome_layout(ret_ty).map_err(|error| PlironError {
             function: Some(name.to_string()),
             kind: PlironErrorKind::Unsupported {
@@ -334,7 +335,7 @@ pub fn declare_function(
             Some(outcome),
         )
     } else {
-        match lower_ty(name, ret_ty, layout, None)? {
+        match lower_ty(name, ret_ty, layout, declarations, None)? {
             LowerTy::ZeroSized => (
                 VoidType::get(ctx).to_handle(),
                 false,
@@ -366,7 +367,7 @@ pub fn declare_function(
             declaration.has_receiver && declaration.receiver_convention == Some(ArgConvention::Out)
         });
     for (index, ty) in func.param_types.iter().enumerate() {
-        let lowered = lower_ty(name, ty, layout, None)?;
+        let lowered = lower_ty(name, ty, layout, declarations, None)?;
         if index == 0
             && out_receiver
             && matches!(lowered, LowerTy::Scalar(_))

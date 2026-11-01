@@ -168,6 +168,7 @@ impl FnLowering<'_> {
             self.name,
             self.func.reg_types.get(&dest.0).unwrap_or(&int),
             &self.layout,
+            self.mir_declarations,
             self.reg_span(dest),
         )? {
             LowerTy::Scalar(_) => {
@@ -372,7 +373,13 @@ impl FnLowering<'_> {
         source: Value,
         element: &Ty,
     ) -> Result<(), PlironError> {
-        match lower_ty(self.name, element, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            element,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, source, handle);

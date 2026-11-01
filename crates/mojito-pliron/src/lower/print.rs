@@ -68,13 +68,18 @@ impl<'a> FnLowering<'a> {
         let Some(ty) = self.func.reg_types.get(&reg.0).cloned() else {
             return Err(self.unsupported_reg("untyped `file` argument to print".into(), dest));
         };
-        let storage = self.reg_ptr(ctx, reg)?;
-        let (offset, _) = self.field_offset(&ty, "_value", dest)?;
-        let address = self.gep_byte(ctx, storage, offset, dest);
-        let int_handle = ScalarTy::Int.handle(ctx);
-        let load = LoadOp::new(ctx, address, int_handle);
-        self.append(ctx, load.get_operation(), Some(dest));
-        let value = load.get_result(ctx);
+        // A held descriptor is its `_value` field.
+        let value = if self.holds_struct_value(reg) {
+            self.reg_value(ctx, reg, ScalarTy::Int)?
+        } else {
+            let storage = self.reg_ptr(ctx, reg)?;
+            let (offset, _) = self.field_offset(&ty, "_value", dest)?;
+            let address = self.gep_byte(ctx, storage, offset, dest);
+            let int_handle = ScalarTy::Int.handle(ctx);
+            let load = LoadOp::new(ctx, address, int_handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            load.get_result(ctx)
+        };
         Ok(self.resize_int(ctx, value, (64, true), 32, dest))
     }
 

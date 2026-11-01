@@ -329,6 +329,68 @@ fn simd_lowering_emits_vector_code() {
     }
 }
 
+/// A one-field `TrivialRegisterPassable` struct lowers as its field, as
+/// upstream's `LowerKGENToLLVM` unwraps it: `scaleone` passes and returns
+/// an `i64` by value with no storage. A struct of two fields, or of one
+/// field without `TrivialRegisterPassable`, stays a memory aggregate passed
+/// by address and returned through an sret out-pointer.
+#[test]
+fn held_struct_lowers_as_its_field() {
+    const HELD: &str = r#"
+@fieldwise_init
+struct One(TrivialRegisterPassable):
+    var v: Int
+
+@fieldwise_init
+struct Two(TrivialRegisterPassable):
+    var v: Int
+    var w: Int
+
+@fieldwise_init
+struct Boxed(Copyable):
+    var v: Int
+
+@no_inline
+def scaleone(x: One) -> One:
+    return One(x.v * 2)
+
+@no_inline
+def scaletwo(x: Two) -> Two:
+    return Two(x.v * 2, x.w)
+
+@no_inline
+def scaleboxed(x: Boxed) -> Boxed:
+    return Boxed(x.v * 2)
+
+def main():
+    print(scaleone(One(3)).v, scaletwo(Two(3, 4)).v, scaleboxed(Boxed(3)).v)
+"#;
+    let mut module = native_compile(HELD, &["main"]);
+    let ir = module.llvm_ir(OptLevel::O0).expect("LLVM conversion");
+    let held = llvm_function(&ir, "scaleone");
+    assert!(
+        held.lines()
+            .next()
+            .is_some_and(|line| line.contains("define i64 @") && line.contains("(i64 %0)")),
+        "a held struct is not passed and returned as its field:\n{held}"
+    );
+    for needle in ["memcpy", "alloca"] {
+        assert!(
+            !held.contains(needle),
+            "a held struct still emits `{needle}`:\n{held}"
+        );
+    }
+    for name in ["scaletwo", "scaleboxed"] {
+        let aggregate = llvm_function(&ir, name);
+        assert!(
+            aggregate.lines().next().is_some_and(
+                |line| line.contains("define void @") && line.contains("(ptr %0, ptr %1)")
+            ),
+            "`{name}` is no longer a by-address aggregate:\n{aggregate}"
+        );
+    }
+}
+
 /// Runtime arguments distinguish lane insertion from constructor insertion,
 /// while mutable parameters keep the ABI's lane-aligned memory observable.
 #[test]

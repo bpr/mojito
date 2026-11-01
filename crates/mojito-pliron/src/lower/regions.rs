@@ -266,7 +266,13 @@ impl FnLowering<'_> {
             let Some(ty) = self.func.reg_types.get(&reg.0).cloned() else {
                 return Err(self.unsupported_reg(format!("untyped region value %r{}", reg.0), *reg));
             };
-            let slot = match lower_ty(self.name, &ty, &self.layout, self.reg_span(*reg))? {
+            let slot = match lower_ty(
+                self.name,
+                &ty,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(*reg),
+            )? {
                 LowerTy::Scalar(scalar) => {
                     arguments.push(scalar.handle(ctx));
                     CarrySlot::Scalar(scalar)

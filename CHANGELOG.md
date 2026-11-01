@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The native backend lowers a one-field `TrivialRegisterPassable` struct
+  as its field, as upstream's `LowerKGENToLLVM` does and the VM already
+  held it (R1799): Pliron's type classification goes through
+  `MirDeclarations::translated_type`, so such a struct passes and returns
+  by value (`def twice(x: L) -> L` over `L{v: Int}` is `i64 (i64)`, no
+  `alloca` or `memcpy`), its creation and field reads are the identity,
+  and a lambda's held storage reaches its body by value. Concrete MIR is
+  unchanged, and no program's output changes.
+
 - Below the check a `SIMD` value lowers to its `!kgen.simd` storage, as
   upstream's `LowerKGENToLLVM` lowers the struct to its field (R1798): the
   MIR verifier agrees a storage with the vector it stores, layout and the

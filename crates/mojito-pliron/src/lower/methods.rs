@@ -19,7 +19,13 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("untyped reference result".into(), dest));
         };
         let place = self.reg_ptr(ctx, dest)?;
-        match lower_ty(self.name, &result, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            &result,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, place, handle);
@@ -432,6 +438,7 @@ impl FnLowering<'_> {
                 self.name,
                 &reference.referent,
                 &self.layout,
+                self.mir_declarations,
                 self.reg_span(arg),
             )?
         {
@@ -730,9 +737,13 @@ impl FnLowering<'_> {
             }
             Some(TyKind::Ref(reference)) => {
                 let referent = reference.referent.clone();
-                if let LowerTy::Scalar(scalar) =
-                    lower_ty(self.name, &referent, &self.layout, self.reg_span(arg))?
-                {
+                if let LowerTy::Scalar(scalar) = lower_ty(
+                    self.name,
+                    &referent,
+                    &self.layout,
+                    self.mir_declarations,
+                    self.reg_span(arg),
+                )? {
                     let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
                     let handle = scalar.handle(ctx);
                     let load = LoadOp::new(ctx, pointer, handle);

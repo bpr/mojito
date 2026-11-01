@@ -7291,7 +7291,11 @@ resolves to tuple storage) is LLVM's literal struct, never unwrapped. The
 elaborator asks it of an instance's template, since the instance struct is
 declared only once its body is discovered; the concrete verifier, the VM,
 and Pliron ask the program's declarations. `kgen.struct.extract` lowers to
-the tuple-storage `index.get` MIR already has.
+the tuple-storage `index.get` MIR already has. Each backend's own type
+translation also applies it, as `LowerKGENToLLVM`'s type converter does:
+the VM holds such a struct as its field (below), and Pliron's `lower_ty`
+(`lower/types.rs`) classifies every type through it, so a held struct is
+its field in registers and signatures.
 
 `automatic-inline` (`analysis::AUTOMATIC_INLINE`,
 `analysis/automatic_inline.rs`, R1271) is upstream's `AutomaticInline`
@@ -7557,8 +7561,12 @@ base. `Prog::new` lowers every field projection over one to `Proj::Rebind`
 (`hold_register_fields`), so places and reference handles address the
 field as the struct's whole storage. Concrete MIR keeps the struct's
 operations, as upstream's KGEN keeps `kgen.struct.create` and
-`kgen.struct.extract` until LLVM lowering; the representation is the VM's
-alone. Three VM rules narrow it, each decided in `build_structs`:
+`kgen.struct.extract` until LLVM lowering, and each backend applies
+`translated_type`'s policy in its own translation. Pliron's `lower_ty`
+classifies a held struct as its field, so its `struct.create` and a
+value's `field.get` are the identity, and a `Proj::Field` over it
+addresses offset 0, the field's storage. Three VM rules narrow the VM's
+representation, each decided in `build_structs`, and are the VM's alone:
 
 - A struct whose field is a reference or a pointer stays boxed: either
   may be a `Value::Ref`, which a frame slot holds only as a reference

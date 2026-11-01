@@ -1268,15 +1268,10 @@ change that needs a new `MJRT_ABI_VERSION`.
     raising `lower_input_builtin` that turns it into `Error("EOF")`.
     `assets/ok/pliron_input_echo.mojo` catches the error, so its text is the
     same on both backends in the meantime.
-  - Pliron passes a one-field `TrivialRegisterPassable` struct as an
-    aggregate by reference, where the pin passes its element by value:
-    `define internal i64 @"u2::add(u2::L,u2::L)"(i64, i64)` for a builtin
-    `__add__` on `L{v: Int}`, and `i1` for `B{v: Bool}`.
-  - The fix: `lower/types.rs::lower_ty` lowers a struct
-    `MirDeclarations::register_field` answers as its field, as the VM
-    holds it. `struct.create` and `field.get` forward, a field place adds
-    no GEP, and the layout is unchanged; only the signature classification
-    moves, with the SIMD-by-value change above.
+  - R1799 already moved a one-field `TrivialRegisterPassable` struct's
+    signature classification to its field (`docs/native-abi.md`
+    §Calling convention) without a version bump, since only
+    generated code meets it. The bump records that rule change too.
   - A multi-lane `SIMD` lays out aligned like one lane
     (`docs/native-abi.md` §Layout, `LayoutCx::layout_of`), where the pin
     lays it out as LLVM's vector type: `align_of[SIMD[DType.float32,
@@ -11338,26 +11333,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `assets/ok/simd_inferred_width_binding.mojo` and
     `simd_inferred_width_from_argument.mojo` over `V` instead of `SIMD`.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1799 Holding a one-field `TrivialRegisterPassable` struct as its
-  field is a VM rewrite, where upstream's lowering does it for every
-  backend**
-
-  `hold_register_fields` (`mojito-vm/src/backend/vm.rs`) rewrites a
-  `Proj::Field` on a held struct to `Proj::Rebind`, but Pliron never sees
-  that rewrite and lays the struct out as a memory aggregate.
-  - Lever: move the rewrite into a post-elaboration MIR pass
-    (`mojito-analysis/src/analysis/post_elaboration.rs`), so both backends
-    consume rebound places, as `LowerKGENToLLVM` is one lowering.
-  - Check that Pliron's place lowering handles `Proj::Rebind` on a
-    scalar-held root, and add that handling if it does not.
-  - Pliron's `lower_ty` classifies a held struct through
-    `MirDeclarations::translated_type`. Today it maps only a vector,
-    through `types::storage_ty`.
-  - Probe: R1396's held structs (`assets/ok/` fixtures over a one-field
-    `TrivialRegisterPassable` struct) on `--backend pliron`.
-  - Depends on R1798 (`lower_ty` through `translated_type`).
   - Model: Fable, Not Planned.
 
 - [ ] **R1800 Below the checker a `SIMD` application is the compiler's

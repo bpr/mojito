@@ -122,7 +122,13 @@ impl<'a> FnLowering<'a> {
         let Some(ty) = self.func.reg_types.get(&reg.0).cloned() else {
             return Err(self.unsupported_reg(format!("untyped register %r{}", reg.0), reg));
         };
-        match lower_ty(self.name, &ty, &self.layout, self.reg_span(reg))? {
+        match lower_ty(
+            self.name,
+            &ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(reg),
+        )? {
             LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
             LowerTy::Aggregate { ty, .. } => {
                 if !self.needs_named_drop(&ty, destructor) {

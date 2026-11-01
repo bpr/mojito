@@ -1666,7 +1666,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   representation of a one-field trivially register-passable struct
   (`StructDef::register_field`, decided in `build_structs`), and
   `hold_register_fields` lowers a field projection over one to
-  `Proj::Rebind` when `Prog::new` loads a program.
+  `Proj::Rebind` when `Prog::new` loads a program. Pliron applies the
+  same policy in its own type translation: `lower_ty` (`lower/types.rs`)
+  classifies every type through `MirDeclarations::translated_type`, and a
+  held struct's `lower_struct_create` (`lower/ctors.rs`), value
+  `lower_get_field` (`lower/places.rs`), frozen value
+  (`held_parameter_value`, `lower/consts.rs`), borrow (`lower_use_var` over
+  `FnLowering::holds_struct_value`), and closure-storage capture
+  (`emit_thunk_body`, `lower/support.rs`) are its field's value.
 - `backend/vm/frames.rs` owns call-frame construction and the `drive_frames`
   dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`), which steps
   each frame's `RegionCursor`, and a raising instruction's raise edge:
@@ -2670,7 +2677,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   R1800 deletes), the MIR verifier's `types_compatible`
   (`verify/types.rs`) agrees a storage with the vector it stores, layout
   (`LayoutCx::layout_of`) lays a vector out as its storage, and Pliron's
-  `lower_ty`, `scalar_type`, and `simd_dims` classify the storage, so a
+  `lower_ty` (through `translated_type`), `scalar_type`, and `simd_dims`
+  classify the storage, so a
   one-lane storage stays an SSA scalar. The storage is never read back
   as a vector; the elaborator's `discharge_rebinds` gives an erased
   `Self(mlir_value=s)` chain's root the vector it is rebound to, so a

@@ -19,10 +19,13 @@ impl FnLowering<'_> {
         mode: UseMode,
         constructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        if matches!(mode, UseMode::BorrowShared | UseMode::BorrowMut) {
-            // A borrow is the address of the variable's storage (the VM's
-            // `Value::Ref` handle); ownership already verified the
-            // discipline.
+        // A borrow is the address of the variable's storage (the VM's
+        // `Value::Ref` handle); ownership already verified the discipline. A
+        // held struct's register is its field's value, so its borrow reads
+        // the value, as a register-passable value's `lit.ref.load` does.
+        if matches!(mode, UseMode::BorrowShared | UseMode::BorrowMut)
+            && !self.holds_struct_value(dest)
+        {
             self.reg_values.insert(dest.0, self.var_slots[var as usize]);
             return Ok(());
         }
@@ -154,7 +157,13 @@ impl FnLowering<'_> {
         let Some(ty) = self.func.reg_types.get(&value.0).cloned() else {
             return Err(self.unsupported_reg(format!("untyped copy source %r{}", value.0), dest));
         };
-        match lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            &ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let copied = self.reg_value(ctx, value, scalar)?;
                 self.reg_values.insert(dest.0, copied);
@@ -186,7 +195,13 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("untyped select result".into(), dest));
         };
         let condition = self.reg_value(ctx, condition, ScalarTy::Bool)?;
-        match lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))? {
+        match lower_ty(
+            self.name,
+            &ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
             LowerTy::Scalar(scalar) => {
                 let yes = self.reg_value(ctx, yes, scalar)?;
                 let no = self.reg_value(ctx, no, scalar)?;

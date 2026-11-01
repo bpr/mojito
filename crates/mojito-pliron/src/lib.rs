@@ -131,6 +131,7 @@ pub fn compile(
             function,
             declarations.get(name),
             &layout,
+            &program.declarations,
         )?;
         functions.insert(
             name.to_string(),

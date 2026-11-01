@@ -20,14 +20,35 @@ impl FnLowering<'_> {
         let TyKind::Struct(name, _) = struct_ty.kind() else {
             return Err(self.unsupported_reg(format!("struct creation of `{struct_ty}`"), dest));
         };
-        let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
-        let (LowerTy::Aggregate { layout, .. }, Some(decl)) =
-            (lowered, self.struct_decls.get(name.as_str()))
-        else {
+        let Some(decl) = self.struct_decls.get(name.as_str()) else {
             return Err(self.unsupported_reg(format!("struct creation of `{name}`"), dest));
         };
         let field_tys: Vec<Ty> = decl.fields.iter().map(|(_, t)| t.clone()).collect();
-        self.store_fields(ctx, dest, layout, &field_tys, fields)
+        let held = self.mir_declarations.register_field(name).is_some();
+        match lower_ty(
+            self.name,
+            &struct_ty,
+            &self.layout,
+            self.mir_declarations,
+            self.reg_span(dest),
+        )? {
+            // A held struct is its one field, so creating it is the identity,
+            // as upstream's `LowerKGENToLLVM` lowers `kgen.struct.create`
+            // of a one-element register-passable struct.
+            LowerTy::Scalar(scalar) if held => {
+                let value = self.reg_value(ctx, fields[0], scalar)?;
+                self.reg_values.insert(dest.0, value);
+                Ok(())
+            }
+            LowerTy::ZeroSized if held => {
+                self.erased.insert(dest.0);
+                Ok(())
+            }
+            LowerTy::Aggregate { layout, .. } => {
+                self.store_fields(ctx, dest, layout, &field_tys, fields)
+            }
+            _ => Err(self.unsupported_reg(format!("struct creation of `{name}`"), dest)),
+        }
     }
 
     /// Fresh `layout` storage for `dest`, each of `values` stored at the
@@ -250,9 +271,13 @@ impl FnLowering<'_> {
             return Ok(Some(LowerTy::Scalar(ScalarTy::Ptr)));
         }
         match self.func.ret_ty.as_ref() {
-            Some(ty) if *ty != TyKind::None => {
-                Ok(Some(lower_ty(self.name, ty, &self.layout, None)?))
-            }
+            Some(ty) if *ty != TyKind::None => Ok(Some(lower_ty(
+                self.name,
+                ty,
+                &self.layout,
+                self.mir_declarations,
+                None,
+            )?)),
             _ => Ok(None),
         }
     }

@@ -31,7 +31,7 @@ pub fn emit_thunk_body(
         operands.push(argument(ctx, &mut next_argument));
     }
     let env = argument(ctx, &mut next_argument);
-    for (mode, offset) in modes.chars().zip(capture_offsets) {
+    for (index, (mode, offset)) in modes.chars().zip(capture_offsets).enumerate() {
         let slot = if *offset == 0 {
             env
         } else {
@@ -44,13 +44,23 @@ pub fn emit_thunk_body(
         // `@parameter` closure's body takes as a reference parameter and a
         // `def`'s as its storage `self`; a moved (`m`) slot, a lambda's
         // storage, holds the value inline and passes its own address to the
-        // body's `self`, as the VM's owned-capture re-referencing does.
-        if mode == 'r' {
-            let load = LoadOp::new(ctx, slot, ptr_ty);
-            load.get_operation().insert_at_back(entry, ctx);
-            operands.push(load.get_result(ctx));
-        } else {
-            operands.push(slot);
+        // body's `self`, as the VM's owned-capture re-referencing does. A
+        // held storage struct passes by value, so its slot passes the value
+        // loaded from it, and a zero-sized one passes nothing.
+        let by_reference = target.ref_params.get(index).copied().unwrap_or(false);
+        match target.params.get(index) {
+            _ if mode == 'r' => {
+                let load = LoadOp::new(ctx, slot, ptr_ty);
+                load.get_operation().insert_at_back(entry, ctx);
+                operands.push(load.get_result(ctx));
+            }
+            Some(LowerTy::Scalar(scalar)) if !by_reference => {
+                let load = LoadOp::new(ctx, slot, scalar.handle(ctx));
+                load.get_operation().insert_at_back(entry, ctx);
+                operands.push(load.get_result(ctx));
+            }
+            Some(LowerTy::ZeroSized) if !by_reference => {}
+            _ => operands.push(slot),
         }
     }
     let physical_captures = modes.len();
@@ -101,7 +111,8 @@ pub fn c_abi_type(ctx: &Context, ty: mojito_native::native::rt_abi::CAbiTy) -> T
 /// copy: an aggregate register whose every consumer borrows it. MIR's
 /// aggregate load is a shallow read whose owner stays live through every
 /// consumer, so the address is valid wherever the register is read; a
-/// callable is excluded because its owner is retained for one hop only. Any
+/// callable is excluded because its owner is retained for one hop only, and
+/// a held struct is its field ([`MirDeclarations::translated_type`]). Any
 /// owning or unclassified consumer keeps the byte snapshot, which no later
 /// store to the place reaches; the MIR names the copy an owner needs. A load of a
 /// register-passable trivial value is that value, as upstream's
@@ -148,7 +159,7 @@ pub fn collect_aliased_load_regs(
         .filter(|reg| !owning.contains(reg))
         .filter(|reg| {
             function.reg_types.get(reg).is_some_and(|ty| {
-                is_aggregate_ty(ty)
+                is_aggregate_ty(&mir_declarations.translated_type(ty))
                     && !matches!(ty.kind(), TyKind::Func(_))
                     && !mir_declarations.copy_is_identity(ty)
             })
