@@ -56,7 +56,7 @@ command cannot use both.
 
 2. **`Bool` as a library struct** (R1188's residue). R1188 made
    `__mlir_type.i1` a type of its own and split the port:
-   - R1608 declares `Bool` and its members.
+   - R1608 (landed) declares `Bool` and its members.
    - R1609 (initializers), R1610 (operators), and R1611 (printing)
      follow it.
    - R1612 retires `TyKind::Bool`, after those and R1189.
@@ -107,8 +107,8 @@ command cannot use both.
    declares the compiler-known traits, operators are calls of the
    requirement, and the elaborator reads the witness table. What is left:
    - The members a backend still reaches from a value's type
-     (`mir::TYPE_REACHED_MEMBERS`): display (R1287, R422); the `DType`,
-     `Bool`, and `StringLiteral` hash leaves (R160, R1608, R1654); a
+     (`mir::TYPE_REACHED_MEMBERS`): display (R1287, R422); the `DType`
+     and `StringLiteral` hash leaves (R160, R1654); a
      `SIMD[dt, _](x)` construction's `__int__` (R1544); and a `Variant`
      handler's `__call__` (R1444, R1466).
    - A struct callee's `def(...)` contract still composes its `__call__`

@@ -998,12 +998,15 @@ impl Ty {
     /// ([`bridged_string_literal`]) until R1660 deletes that bridge, and an
     /// `IntLiteral[value]` or `FloatLiteral[value]` one a
     /// [`TyKind::IntLiteral(_)`] or [`TyKind::FloatLiteral(_)`]
-    /// ([`bridged_numeric_literal`]) until R1785 deletes that one.
+    /// ([`bridged_numeric_literal`]) until R1785 deletes that one. The
+    /// declared `Bool` struct is [`TyKind::Bool`] ([`bridged_bool`]) until
+    /// R1612 deletes that bridge.
     pub fn new(kind: TyKind) -> Self {
         Self::dataless(&kind)
             .or_else(|| canonical_simd_application(&kind))
             .or_else(|| bridged_string_literal(&kind))
             .or_else(|| bridged_numeric_literal(&kind))
+            .or_else(|| bridged_bool(&kind))
             .unwrap_or_else(|| Self(Arc::new(TyNode::new(kind))))
     }
 
@@ -1467,6 +1470,10 @@ pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
 
 /// The name of upstream's `SIMD`, declared in `std.simd`.
 pub const SIMD_TYPE_NAME: &str = "SIMD";
+
+/// The name of upstream's `Bool`, declared in `std.builtin.bool`; the struct
+/// is [`TyKind::Bool`].
+pub const BOOL_TYPE_NAME: &str = "Bool";
 
 /// The name `std.builtin.string_literal` declares a string literal's struct
 /// under; its applications are [`TyKind::StringLiteral(_)`]s.
@@ -3573,15 +3580,13 @@ pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, Para
     })
 }
 
-/// The type a `Bool` or `DType` Hashable leaf contributes to its hasher as.
+/// The type a `DType` Hashable leaf contributes to its hasher as.
 ///
-/// A `DType` hashes its code as a `UInt8` (upstream's `DType.__hash__`), a
-/// `Bool` as `Scalar[DType.bool]` (upstream's `Bool.__hash__`). A `SIMD`
-/// hashes through its declared `__hash__`.
+/// A `DType` hashes its code as a `UInt8` (upstream's `DType.__hash__`). A
+/// `Bool` or a `SIMD` hashes through its declared `__hash__`.
 pub fn hash_leaf_ty(ty: &Ty) -> Ty {
     match ty.kind() {
         TyKind::Dtype => canonical_simd_ty(Dtype::UInt8, 1),
-        TyKind::Bool => canonical_simd_ty(Dtype::Bool, 1),
         _ => ty.clone(),
     }
 }
@@ -3612,15 +3617,17 @@ pub fn simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 ///
 /// A struct answers its own, and a string literal whose value the type
 /// carries answers `StringLiteral[value]`, as a numeric literal's answers
-/// `IntLiteral[value]` or `FloatLiteral[value]`. A value-less literal type
+/// `IntLiteral[value]` or `FloatLiteral[value]` and `Bool` answers `Bool`.
+/// A value-less literal type
 /// is no instance: it materializes only where a conversion asks for it.
 ///
 /// Nominal identity is read through this, never by matching
-/// `TyKind::Struct`, while the [`Ty::new`] bridges hold `StringLiteral`
-/// and the numeric literals as the compiler's types.
+/// `TyKind::Struct`, while the [`Ty::new`] bridges hold `Bool`,
+/// `StringLiteral`, and the numeric literals as the compiler's types.
 pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
     match ty.kind() {
         TyKind::Struct(name, args) => Some((name, std::borrow::Cow::Borrowed(args))),
+        TyKind::Bool => Some((BOOL_TYPE_NAME, std::borrow::Cow::Borrowed(&[]))),
         TyKind::StringLiteral(Some(value)) => Some((
             STRING_LITERAL_TYPE_NAME,
             std::borrow::Cow::Owned(vec![TyArg::Val(value.as_ref().clone())]),
@@ -6537,6 +6544,12 @@ fn struct_pack_arguments(decls: &[ParamDecl], arguments: &[TyArg]) -> HashMap<Pa
                 .then(|| (decl.binder().id, elements))
         })
         .collect()
+}
+
+/// The [`TyKind::Bool`] the declared `Bool` struct is.
+fn bridged_bool(kind: &TyKind) -> Option<Ty> {
+    matches!(kind, TyKind::Struct(name, args) if name == BOOL_TYPE_NAME && args.is_empty())
+        .then(Ty::bool)
 }
 
 /// The [`TyKind::StringLiteral(_)`] a `StringLiteral[value]` application is:

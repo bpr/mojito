@@ -270,11 +270,13 @@ pub fn leaf_conforms(
 /// `Bool` and the numeric literals list `Equatable` and `Comparable`, and
 /// `DType` lists `Equatable`.
 ///
-/// `Bool` and the literal structs list `Boolable`; `Bool` and the numeric
-/// literals `Intable`; `Bool` and `FloatLiteral` `Floatable`; `IntLiteral`
-/// `Indexer`; none lists `Identifiable`. `SIMD`'s `Boolable`, `Comparable`,
-/// `Equatable`, `Intable`, `Indexer`, and `Sized` are its declaration's in
-/// `std.simd`, which the checker and the elaborator read instead.
+/// The literal structs list `Boolable`; the numeric literals `Intable`;
+/// `FloatLiteral` `Floatable`; `IntLiteral` `Indexer`; none lists
+/// `Identifiable`. `SIMD`'s `Boolable`, `Comparable`, `Equatable`,
+/// `Intable`, `Indexer`, and `Sized` are its declaration's in `std.simd`,
+/// and `Bool`'s `Boolable`, `Defaultable`, `Floatable`, `Hashable`, and
+/// `Intable` its declaration's in `std.builtin.bool`, which the checker and
+/// the elaborator read instead.
 ///
 /// `SIMD` lists every `std.math` operation trait; its `Absable`,
 /// `Ceilable`, `Floorable`, `Roundable`, and `Truncable` are its
@@ -283,10 +285,9 @@ pub fn leaf_conforms(
 /// `Truncable`. A numeric literal answers `DivModable` and `CeilDivable`
 /// through the type it materializes to.
 ///
-/// `Bool`, `StringLiteral`, and `DType` list `Hashable` (a `SIMD`'s is its
-/// declaration's); none lists `Hasher`.
+/// `StringLiteral` and `DType` list `Hashable`; none lists `Hasher`.
 ///
-/// `SIMD`, `Bool`, the literals, and `NoneType` list `Defaultable`, and
+/// `SIMD`, the literals, and `NoneType` list `Defaultable`, and
 /// `SIMD`, `Bool`, the numeric literals, `NoneType`, and `DType`
 /// `TrivialRegisterPassable`, which refines `RegisterPassable`; `Tuple`
 /// lists `Defaultable` and `RegisterPassable` where every element
@@ -312,16 +313,13 @@ pub fn modelled_conformance(
     {
         "Boolable" => matches!(
             ty.kind(),
-            TyKind::Bool
-                | TyKind::StringLiteral(_)
-                | TyKind::IntLiteral(_)
-                | TyKind::FloatLiteral(_)
+            TyKind::StringLiteral(_) | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
         ),
         "Intable" => matches!(
             ty.kind(),
-            TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Pointer { .. }
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Pointer { .. }
         ),
-        "Floatable" => matches!(ty.kind(), TyKind::Bool | TyKind::FloatLiteral(_)),
+        "Floatable" => matches!(ty.kind(), TyKind::FloatLiteral(_)),
         "Indexer" => ty.is_int_literal(),
         "Equatable" => matches!(
             ty.kind(),
@@ -353,11 +351,7 @@ pub fn modelled_conformance(
                 return every(items, trait_name, element);
             }
             _ => {
-                is_numeric_like(ty)
-                    || matches!(
-                        ty.kind(),
-                        TyKind::Bool | TyKind::StringLiteral(_) | TyKind::None
-                    )
+                is_numeric_like(ty) || matches!(ty.kind(), TyKind::StringLiteral(_) | TyKind::None)
             }
         },
         "TrivialRegisterPassable" => modelled_trivial_register_passable(ty),
@@ -429,10 +423,7 @@ pub fn is_signed_numeric_like(ty: &Ty) -> bool {
 }
 
 pub fn builtin_hashable_ty(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::Bool | TyKind::StringLiteral(_) | TyKind::Dtype
-    )
+    matches!(ty.kind(), TyKind::StringLiteral(_) | TyKind::Dtype)
 }
 
 /// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a

@@ -144,7 +144,8 @@ impl Checker {
         };
         let compatible = !actual.is_simd()
             && match (actual.kind(), expected.as_ref().map(Ty::kind)) {
-                (TyKind::Struct(name, _), None) => name == sname,
+                (_, None) => mojito_types::types::nominal_parts(&actual)
+                    .is_some_and(|(name, _)| name == sname),
                 (
                     TyKind::Struct(name, actual_args),
                     Some(TyKind::Struct(expected_name, expected_args)),

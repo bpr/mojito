@@ -88,11 +88,16 @@ point, as upstream's toolchain does.
   stand in for declare: `SIMD`, `Bool`, and the literals are `Boolable`;
   `SIMD`, `Bool`, and the numeric literals `Intable`; only `Bool` and
   `FloatLiteral` are `Floatable`; `SIMD` and `IntLiteral` are `Indexer`.
+  `SIMD`'s and `Bool`'s are their declarations'.
   Only a scalar `SIMD` is `Intable`, and only an integral one `Indexer`,
   since upstream's methods assert as much (R1397). A scalar answers a
-  requirement through its builtin conversion. `bool.mojo` also holds
-  upstream's `SIMD` overloads of `any` and `all`, which the prelude
-  exports; the `Iterable` overloads wait on R1605.
+  requirement through its builtin conversion. `bool.mojo` also declares
+  upstream's `struct Bool` (storage, `MIN`/`MAX`, the default initializer,
+  and the `__bool__`, `__mlir_bool__`, `__mlir_i1__`, `__int__`,
+  `__float__`, and `__hash__` bodies; the checker holds it as its compiler
+  `Bool` type until R1612) and upstream's `SIMD` overloads of `any` and
+  `all`; the prelude exports `Bool`, `any`, and `all`. The `Iterable`
+  overloads wait on R1605.
 - `std/builtin/simd_length.mojo` — upstream's `SIMDLength`, verbatim, the
   type of `SIMD`'s width: a wrapper of the MLIR `index` that a literal or an
   `Int` converts to, and that converts to any `SIMD` through the compiler
@@ -211,8 +216,9 @@ point, as upstream's toolchain does.
   (R25); the reflective `__hash__` default is still synthesized by the
   compiler (R1481). The compiler
   instantiates the `_update_with_simd` template per hashed vector type, which
-  `std.simd`'s `SIMD.__hash__` calls with `-0.0` folded and which takes a
-  `Bool` or `DType` leaf as `Scalar[DType.bool]` or `UInt8`, and a string's
+  `std.simd`'s `SIMD.__hash__` calls with `-0.0` folded, which
+  `std.builtin.bool`'s `Bool.__hash__` calls with `Scalar[DType.bool]`,
+  and which takes a `DType` leaf as `UInt8`, and a string's
   bytes as a `Span[Byte, _]`
   (`_update_with_bytes`). The containers (`List`, `Array`, `Set`, `Dict`,
   `Optional`, `Variant`, `Tuple`) conform to `Hashable` conditionally in

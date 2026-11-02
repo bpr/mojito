@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Bool` is upstream's `struct Bool` in `std.builtin.bool`, exported by the
+  prelude, with its storage, `MIN`/`MAX`, the default initializer, and the
+  `__bool__`, `__mlir_bool__`, `__mlir_i1__`, `__int__`, `__float__`, and
+  `__hash__` bodies (R1608). `print(Bool.MIN, Bool.MAX)` and
+  `Bool.__int__(False)` now run as at the pin, and the conversion traits,
+  `Defaultable`, and `Hashable` bind through the declaration instead of the
+  compiler's model; the `Bool` hash leaf and conversion rules are gone.
+  The checker still holds the struct as its compiler type (R1612).
+
 - The MIR verifier rejects a `SIMD` struct register on a builtin vector
   instruction (`simd.*` and the `pop` lane ops), as upstream's `pop` ops
   verify only `!pop.simd` operands, instead of reading slots off a vector or

@@ -448,9 +448,8 @@ impl<'a> Flatten<'a> {
     }
 
     /// An argument-free conversion the checker resolved to upstream's MLIR
-    /// storage or builtin form of `object`: `__mlir_index__`,
-    /// `__mlir_bool__`, `__mlir_i1__`, or a collector's
-    /// `get_loaded_kgen_pack`. `None` leaves the call to the later forms.
+    /// storage or builtin form of `object`: an integer literal's
+    /// `__mlir_index__`, or a collector's `get_loaded_kgen_pack`. `None` leaves the call to the later forms.
     fn mlir_conversion(&mut self, call: Node<'a>, object: Node<'a>, method: &str) -> Option<Reg> {
         // `n.__mlir_index__()` on an integer literal is upstream's
         // conversion of the literal, materialized as an `Int`, to the
@@ -462,23 +461,13 @@ impl<'a> Flatten<'a> {
             let storage = self.simd_storage_operand(value, call.location());
             return Some(self.builtin_cast(call.location(), storage, Ty::index()));
         }
-        // `b.__mlir_bool__()` on a `Bool` is its `!kgen.scalar<bool>`
-        // storage.
-        if method == "__mlir_bool__"
+        // A heterogeneous collector's `get_loaded_kgen_pack()` is the
+        // collector itself.
+        if method == "get_loaded_kgen_pack"
             && object
                 .ty()
-                .is_some_and(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Bool))
+                .is_some_and(|ty| mojito_types::types::is_heterogeneous_collector(&ty))
         {
-            return Some(self.bool_storage(object, call.location()));
-        }
-        // `b.__mlir_i1__()` on a `Bool` is the conversion to the builtin
-        // `i1`, held as the `Bool` itself, and a heterogeneous collector's
-        // `get_loaded_kgen_pack()` the collector itself.
-        if object.ty().is_some_and(|ty| match method {
-            "__mlir_i1__" => matches!(ty.kind(), mojito_types::types::TyKind::Bool),
-            "get_loaded_kgen_pack" => mojito_types::types::is_heterogeneous_collector(&ty),
-            _ => false,
-        }) {
             return Some(self.expr(object));
         }
         None

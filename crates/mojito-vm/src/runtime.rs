@@ -463,13 +463,12 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-/// The checked type a runtime `Bool` or `DType` Hashable leaf hashes as.
+/// The checked type a runtime `DType` Hashable leaf hashes as.
 ///
-/// The hasher's `_update_with_simd` instance is selected by it. A `SIMD`
-/// hashes through its declared `__hash__`, so only these two leaves remain.
+/// The hasher's `_update_with_simd` instance is selected by it. A `Bool` or a
+/// `SIMD` hashes through its declared `__hash__`, so only this leaf remains.
 pub fn hash_leaf_ty(value: &Value) -> Option<Ty> {
     Some(match value {
-        Value::Bool(_) => Ty::bool(),
         // Upstream's `DType.__hash__` hashes its code as a `UInt8`.
         Value::Dtype(_) => canonical_simd_ty(Dtype::UInt8, 1),
         _ => return None,
@@ -477,7 +476,7 @@ pub fn hash_leaf_ty(value: &Value) -> Option<Ty> {
 }
 
 /// The value a Hashable leaf contributes to its hasher, typed as `hash_leaf_ty`
-/// names it: a `DType` contributes its code, and a `Bool` itself.
+/// names it: a `DType` contributes its code.
 pub fn hash_leaf_value(value: Value) -> Value {
     match value {
         Value::Dtype(dtype) => Value::Simd {

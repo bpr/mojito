@@ -115,7 +115,10 @@ impl Checker {
             {
                 constructed
             }
-            _ if self.structs.contains_key(name) && name != mojito_types::types::SIMD_TYPE_NAME => {
+            _ if self.structs.contains_key(name)
+                && name != mojito_types::types::SIMD_TYPE_NAME
+                && name != mojito_types::types::BOOL_TYPE_NAME =>
+            {
                 // `String(x)` on a non-literal argument stringifies through
                 // the builtin conversion, which builds the nominal struct
                 // itself: the call routes to the `"String"` builtin (a

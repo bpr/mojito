@@ -114,28 +114,6 @@ impl Checker {
         {
             return Ok(Ty::index());
         }
-        // `Bool.__mlir_i1__()` is upstream's `pop.cast_to_builtin` of its
-        // storage to the builtin `i1`, which both backends hold as the
-        // `Bool` while `Bool` is a compiler type.
-        if method == "__mlir_i1__"
-            && args.is_empty()
-            && kwargs.is_empty()
-            && param_args.is_empty()
-            && matches!(obj_ty.kind(), TyKind::Bool)
-        {
-            return Ok(Ty::i1());
-        }
-        // `Bool.__mlir_bool__()` is upstream's read of its
-        // `!kgen.scalar<bool>` storage, held as the one-lane `bool` vector
-        // the `Bool` splats to while `Bool` is a compiler type.
-        if method == "__mlir_bool__"
-            && args.is_empty()
-            && kwargs.is_empty()
-            && param_args.is_empty()
-            && matches!(obj_ty.kind(), TyKind::Bool)
-        {
-            return Ok(mojito_types::types::kgen_simd_ty(Dtype::Bool, 1));
-        }
         // A heterogeneous collector's `get_loaded_kgen_pack()` is upstream's
         // `VariadicPack` loading its elements into a `!kgen.pack`, which is
         // the collector itself while the collector is compiler storage.
@@ -147,10 +125,10 @@ impl Checker {
         {
             return Ok(obj_ty);
         }
-        // The conversion dunders of `Bool` and the numeric literals are the
-        // methods upstream declares for `Boolable`, `Intable`, and
-        // `Floatable`; the backends answer them through the conversion
-        // built-in. A `SIMD`'s are its declared members.
+        // The conversion dunders of the numeric literals are the methods
+        // upstream declares for `Boolable`, `Intable`, and `Floatable`; the
+        // backends answer them through the conversion built-in. A `SIMD`'s
+        // and a `Bool`'s are their declared members.
         if let Some((trait_name, result)) = match method {
             "__bool__" => Some(("Boolable", Ty::bool())),
             "__int__" => Some(("Intable", Ty::int())),
@@ -161,7 +139,7 @@ impl Checker {
             && param_args.is_empty()
             && matches!(
                 obj_ty.kind(),
-                TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Bool
+                TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
             )
             && mojito_types::conformance::modelled_declares(&obj_ty, trait_name, &mut |_, _| true)
         {

@@ -6608,6 +6608,20 @@ fn simd_declares_roundable() {
 }
 
 #[test]
+fn bool_members_and_conformances_are_its_declaration() {
+    // `Bool` is upstream's `std.builtin.bool` struct: `MIN` types as a
+    // `Bool`, and `Hashable` and `Intable` bind through the traits the
+    // declaration lists rather than a compiler model.
+    ok_std(
+        "def h[T: Hashable & Intable](t: T) -> Int:\n    return t.__int__()\n\ndef main():\n    var b: Bool = Bool.MIN\n    print(b, h(Bool.MAX), Bool.__int__(True))\n",
+    );
+    assert!(matches!(
+        check_with_std("def main():\n    var i: Int = Bool.MIN\n"),
+        Err(TypeError::TypeMismatch { .. })
+    ));
+}
+
+#[test]
 fn operator_traits_gate_generic_numeric_code() {
     // Generic arithmetic bounded by an operation trait type-checks.
     ok(

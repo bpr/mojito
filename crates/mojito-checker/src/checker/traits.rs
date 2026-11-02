@@ -2068,9 +2068,10 @@ impl Checker {
             struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                 self.struct_trait_conformance(ty, name, args, tr)
             }
-            // A `SIMD` answers a trait its declaration lists as the struct it
-            // is; the traits `std.simd` does not declare yet keep the model.
-            simd if simd.is_simd()
+            // A `SIMD` or a `Bool` answers a trait its declaration lists as
+            // the struct it is; the traits its module does not declare yet
+            // keep the model.
+            simd if (simd.is_simd() || matches!(simd, TyKind::Bool))
                 && let Some((name, args)) = self.nominal_struct(ty)
                 && matches!(
                     struct_trait_rule(tr, self.traits.contains_key(tr)),

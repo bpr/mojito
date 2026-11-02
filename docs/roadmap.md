@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1838**.
+Next free ID: **R1840**.
 
 ## Ordered Work
 
@@ -3845,6 +3845,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `var f = Self.st` inside a method of `P`, and `var f = P.st`
     where `P`'s parameters default, give the same error.
   - Probe: `var g = P[Int].gst[3]` over `def gst[k: Int](x: Int)`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1838 A type-receiver call on a `SIMD` receiver is rejected**
+
+  Problem: `Int.__add__(x, x)`, `Int8.__add__(x, x)`, and
+  `Float64.__int__(2.5)` fail with "Undefined variable 'Scalar'", and
+  `SIMD[DType.int8, 1].__add__(x, x)` with "expected Int8, found Int8",
+  where the pin prints `2`, `2`, and `2`.
+  - `infer_type_receiver_instance_call` (`method_calls/statics.rs`)
+    refuses every `SIMD` receiver (`!actual.is_simd()`), and compares an
+    explicit application's type arguments only, never a `SIMD`'s value
+    slots.
+  - A receiver spelled through a `comptime` alias of an application
+    (`Int`, `Int8`, `Float64` over `Scalar[...]`) does not reach that
+    function: the alias's head `Scalar` is looked up as a variable.
+  - Upstream checks `T.method(x, ...)` as `x.method(...)` once `x`
+    converts to `T`, whatever spelling names `T`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11047,46 +11065,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1608 `Bool` has no declaration, so its members are compiler
-  rules and `Bool.MIN` is undefined**
-
-  Problem: `print(Bool.MIN, Bool.MAX)` and `Bool.__eq__(True, False)`
-  fail with "Undefined variable 'Bool'", where the pin prints `False True`
-  and `False`, because there is no `struct Bool` under `stdlib/`.
-  - Declare `struct Bool(Boolable, Defaultable, Floatable, Hashable,
-    ImplicitlyCopyable, Intable, TrivialRegisterPassable)` in
-    `std/builtin/bool.mojo` with upstream's field `var _mlir_value:
-    __mlir_type.`!kgen.scalar<bool>``, `MIN`, `MAX`, the `__*_is_trivial`
-    constants, and the bodies of `__bool__`, `__mlir_bool__`,
-    `__mlir_i1__` (`pop.cast_to_builtin`), `__int__`, `__float__`, and
-    `__hash__`.
-  - Add the `("std.builtin.bool", "Bool")` row to
-    `implicit_public_identity` (`mojito-module`), `PRELUDE_EXPORTS`, and
-    the prelude import. Drop Python interop and
-    `@lldb_formatter_wrapping_type`, as R1549 did for `SIMD`.
-  - Bridge the declaration onto `TyKind::Bool` as R1549 bridges `SIMD`:
-    `Ty::new`, `types::nominal_parts`, `declared_receiver_member`,
-    `decide_type_conforms`, and the VM's `declared_owner`.
-  - Delete the rules the bodies replace: `mc_infer.rs`'s `TyKind::Bool`
-    early returns, `mlir_conversion`'s `__mlir_bool__`/`__mlir_i1__` arms,
-    the VM `invoke.rs` and Pliron `methods.rs` conversion arms on a `Bool`
-    (`runtime::builtin_convert` and `lower_convert` keep their `Int`,
-    `UInt`, and `Float64` targets for a literal receiver's dunders, until
-    a probe shows the declared members serve every literal receiver),
-    `modelled_conformance`'s `Bool` arms for the declared traits, and the
-    `Bool` hash leaf (`builtin_hashable_ty`, both `hash_leaf_ty`s, the VM
-    `__hash__` arm, `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
-  - A `Bool`'s `_mlir_value` stays the read `SemanticAdjustment::BoolStorage`
-    while the bridge holds `Bool` as `i1`.
-  - Probe: `hash(True)` and `hash(False)` stay `7121024052126637824
-    14824966480498192933`.
-  - Trap: check for an import cycle through `std.hash` → `std.simd` →
-    `std.builtin.bool` (R592), and run the members natively, not only on
-    the VM (R1549's `resolved.is_none()` arms).
-  - Plan: `R1188-bool-is-a-compiler-modelled-scalar-plan.md`, entry A.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1609 `Bool`'s initializers are checker rules, so `Bool()` and
   `Bool(None)` are rejected**
 
@@ -11094,8 +11072,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Bool value, found None", where the pin prints `False False`, because
   `Bool(...)` is typed by `infer_unbound_call`'s and `builtins.rs`'s
   conversion rules rather than upstream's overloads.
-  - Declare the six non-Python overloads: `__init__(out self)`,
-    `@implicit __init__(value: __mlir_type.i1)` over
+  - Declare the five non-Python overloads left (R1608 declared
+    `__init__(out self)`): `@implicit __init__(value: __mlir_type.i1)` over
     `pop.cast_from_builtin`, `@implicit __init__(mlir_value: …)`,
     `__init__[T: Boolable, //](value: T)`, `__init__(value: None)`, and
     `@implicit __init__(value: Scalar[DType.bool])`.
@@ -11104,7 +11082,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `self._mlir_value = …` in an initializer lowers as a `scalar.cast` to
     `Bool` into `self`'s place, the store half of `BoolStorage`, which the
     checker rejects outside an initializer today.
-  - Delete the two `"Bool"` arms of `infer_unbound_call` and
+  - Delete the two `"Bool"` arms of `infer_unbound_call`, its struct
+    arm's `BOOL_TYPE_NAME` exclusion, and
     `Checker::infer_bool_conversion` (`builtins.rs`), and narrow the
     elaborator's `Bool` rewrite in `Specializer::rewrite_blocks`.
   - The `@implicit` stand-ins in `Checker::record_implicit_conversion`
@@ -11132,6 +11111,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     whichever of R1551/R1553's routes kept `SIMD`'s operators folding.
   - Probe on the pin whether `True == 1` and `b == mask` take an implicit
     conversion or the reflected dunder.
+  - Probe: `print(Bool.__eq__(True, False))` fails with "Undefined
+    variable 'Bool'" (a type-receiver call of an undeclared member), where
+    the pin prints `False`.
   - Depends on R1608.
   - Model: Opus, Not Planned.
 
@@ -11153,8 +11135,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   Problem: once R1608–R1611 land, the `Ty::new` bridge and the `@implicit`
   stand-ins are all that keep `Bool` a compiler type.
-  - Delete the bridge, so `Bool` resolves to `Struct("Bool", [])`, and
-    `nominal_parts`'s `Bool` arm.
+  - Delete the bridge (`bridged_bool`), so `Bool` resolves to
+    `Struct("Bool", [])`, and `nominal_parts`'s `Bool` arm.
+  - Delete the `TyKind::Bool` guards R1608 added beside `is_simd()` in
+    `Checker::conformance` (`traits.rs`), `declared_receiver_member`
+    (`resolution.rs`), and `decide_type_conforms` (`availability.rs`).
   - Delete the `i1` and `Scalar[DType.bool]` to `Bool` conversions in
     `Checker::record_implicit_conversion` for the declared `@implicit`
     overloads, and `ScalarConversion::casts_from`'s `i1` arm.
@@ -12532,6 +12517,20 @@ I/O residues left behind the landed files, streams, paths, and tempfile stage.
 recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
+
+- [ ] **R1839 `Set` lacks upstream's `List` initializer, so
+  `Set[Int]([1, 2, 1])` has one element**
+
+  Problem: `len(Set[Int]([1, 2, 1]))` prints `1`, where the pin prints
+  `2`, because `stdlib/std/collections/set.mojo` declares no
+  `__init__(out self, elements: List[Self.T])` and the call binds the
+  variadic initializer with the list converted to one element.
+  - Port upstream's overload, with its `where conforms_to(Self.T,
+    Copyable) and conforms_to(Self.T, Deinitable)` clause.
+  - Probe: `len(Set[Bool]([True, False, True]))` fails with "invalid call
+    to 'len': no overload matches", where the pin prints `2`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1690 `StringSpan` declares no ordering comparisons**
 

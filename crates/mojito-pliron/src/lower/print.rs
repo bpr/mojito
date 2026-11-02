@@ -128,13 +128,13 @@ impl<'a> FnLowering<'a> {
         self.append_struct_display(ctx, receiver, name, writer, dest)
     }
 
-    /// Contribute one `Bool`, `DType`, or string-literal Hashable leaf to a
+    /// Contribute one `DType` or string-literal Hashable leaf to a
     /// caller-owned hasher — the VM's non-struct `__hash__` intrinsic. A
-    /// `Bool` or `DType` passes the value `hash_leaf_ty` names to the
-    /// hasher's `_update_with_simd` instance at that type; a string literal
+    /// `DType` passes the value `hash_leaf_ty` names to the hasher's
+    /// `_update_with_simd` instance at that type; a string literal
     /// materializes as a nominal `String` and dispatches to that struct's
-    /// `__hash__` instance bound to the hasher. A `SIMD` hashes through its
-    /// declared `__hash__`.
+    /// `__hash__` instance bound to the hasher. A `Bool` or a `SIMD` hashes
+    /// through its declared `__hash__`.
     pub(super) fn lower_hash_leaf(
         &mut self,
         ctx: &mut Context,
@@ -169,7 +169,7 @@ impl<'a> FnLowering<'a> {
             self.emit_free(ctx, data);
             return Ok(());
         }
-        if !matches!(receiver.kind(), TyKind::Bool | TyKind::Dtype) {
+        if !matches!(receiver.kind(), TyKind::Dtype) {
             return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
         }
         let target = self.hash_leaf_update_instance(dest, hasher_name, receiver)?;

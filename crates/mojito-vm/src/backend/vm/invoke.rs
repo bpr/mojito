@@ -268,8 +268,8 @@ impl VmBackend {
         };
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         // The declared struct whose method the call runs: a struct value's
-        // own, and for a value the VM holds as a builtin (a `SIMD`), the
-        // owner of the declared member the elaborator selected.
+        // own, and for a value the VM holds as a builtin (a `SIMD` or a
+        // `Bool`), the owner of the declared member the elaborator selected.
         let declared_owner = match &recv {
             Value::Struct { name, .. } => Some(name.clone()),
             _ => resolved
@@ -281,10 +281,10 @@ impl VmBackend {
         // its own implementation still dispatches to its method below.
         if declared_owner.is_none() {
             match (method, args.len()) {
-                // Hashable `Bool` or `DType` leaf: contribute the value
+                // Hashable `DType` leaf: contribute the value
                 // `hash_leaf_value` names to the caller-owned hasher through
                 // its `_update_with_simd` instance at `hash_leaf_ty`'s type.
-                // A `SIMD` runs its declared `__hash__` instead.
+                // A `Bool` or a `SIMD` runs its declared `__hash__` instead.
                 ("__hash__", 1) => {
                     // A string literal hashes as the nominal `String` it
                     // materializes to, so literal and nominal keys agree.
@@ -351,8 +351,8 @@ impl VmBackend {
                     return crate::runtime::builtin_round_dir(method, &recv);
                 }
                 // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a
-                // `Bool` or a numeric literal: its conversion; a `SIMD`'s are
-                // its declared members. A string literal is true when
+                // numeric literal: its conversion; a `SIMD`'s and a `Bool`'s
+                // are their declared members. A string literal is true when
                 // non-empty.
                 ("__bool__", 0) if matches!(&recv, Value::Str(_)) => {
                     return Ok(Value::Bool(
@@ -360,10 +360,7 @@ impl VmBackend {
                     ));
                 }
                 ("__bool__" | "__int__" | "__float__" | "__mlir_index__", 0)
-                    if matches!(
-                        &recv,
-                        Value::Bool(_) | Value::IntLiteral(_) | Value::FloatLiteral(_)
-                    ) =>
+                    if matches!(&recv, Value::IntLiteral(_) | Value::FloatLiteral(_)) =>
                 {
                     let target = match method {
                         "__bool__" => ScalarConversion::Bool,

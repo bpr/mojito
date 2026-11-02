@@ -262,13 +262,18 @@ impl Specializer<'_> {
         visiting: &mut HashSet<(String, String)>,
     ) -> Option<bool> {
         let declarations = &self.source.declarations;
-        // A `SIMD` answers a trait its declaration lists, or one such a
-        // trait refines, as the struct it is.
-        let declared_by_simd = ty.is_simd()
-            && declarations.declares_trait(trait_name)
-            && self
-                .structs
-                .get(mojito_types::types::SIMD_TYPE_NAME)
+        // A `SIMD` or a `Bool` answers a trait its declaration lists, or one
+        // such a trait refines, as the struct it is.
+        let bridged = if ty.is_simd() {
+            Some(mojito_types::types::SIMD_TYPE_NAME)
+        } else if matches!(ty.kind(), mojito_types::types::TyKind::Bool) {
+            Some(mojito_types::types::BOOL_TYPE_NAME)
+        } else {
+            None
+        };
+        let declared_by_bridge = declarations.declares_trait(trait_name)
+            && bridged
+                .and_then(|name| self.structs.get(name))
                 .is_some_and(|template| {
                     template.declared.iter().any(|declared| {
                         declared.trait_name == trait_name
@@ -276,7 +281,7 @@ impl Specializer<'_> {
                     })
                 });
         let Some((name, arguments)) = mojito_types::types::nominal_parts(ty)
-            .filter(|_| declared_by_simd || ty.kind().is_non_simd_struct())
+            .filter(|_| declared_by_bridge || ty.kind().is_non_simd_struct())
         else {
             let mut undecided = false;
             let mut element = |element: &Ty, required: &str| {
