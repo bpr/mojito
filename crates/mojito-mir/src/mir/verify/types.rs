@@ -34,21 +34,6 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if found_bool != *found || expected_bool != *expected {
         return types_compatible(&found_bool, &expected_bool);
     }
-    // A `!kgen.simd` storage agrees with the vector it stores, the type
-    // LLVM translation gives the vector, while the checker types a literal
-    // conversion (`#pop.int_literal_convert<…> : Self._mlir_type`) and the
-    // builtin ops over a `SIMD` at the vector (R1801).
-    if matches!(found.kind(), TyKind::KgenSimd { .. })
-        != matches!(expected.kind(), TyKind::KgenSimd { .. })
-    {
-        let (found_storage, expected_storage) = (
-            mojito_types::types::storage_ty(found),
-            mojito_types::types::storage_ty(expected),
-        );
-        if found_storage != *found || expected_storage != *expected {
-            return types_compatible(&found_storage, &expected_storage);
-        }
-    }
     // Every string literal is one held descriptor whatever its text, which
     // the checker owns, value-less or still a parameter (R1660).
     if found.is_string_literal() && expected.is_string_literal() {

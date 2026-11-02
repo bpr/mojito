@@ -110,6 +110,18 @@ impl ParamContext {
         Ok(self.make(meta, ParamKind::Constant(value)))
     }
 
+    /// A constant of the type `ty`: a closed value of a `!kgen.simd`
+    /// storage type is an attribute of that storage, which holds its
+    /// vector's constants, and any other closed value is [`Self::constant`].
+    pub fn typed_constant(&self, value: CtValue, ty: &Ty) -> Result<ParamExpr, ParamError> {
+        if matches!(ty.kind(), TyKind::KgenSimd { .. })
+            && !crate::types::ct_value_is_symbolic(&value)
+        {
+            return Ok(self.make(MetaTy::value(ty.clone()), ParamKind::Constant(value)));
+        }
+        self.constant(value)
+    }
+
     /// A constant after the declaration's expected-type conversion, so the
     /// literal `3` and `Int(3)` bound to `n: Int` are one node.
     pub fn constant_as(&self, value: CtValue, ty: &Ty) -> Result<ParamExpr, ParamError> {
@@ -724,6 +736,14 @@ impl ParamContext {
             {
                 return self.constant(parameter);
             }
+            // A constant `SIMD`'s storage is that constant at the storage
+            // type (upstream's `StructExtractOp::fold`).
+            if name == crate::ct::MLIR_VALUE_FIELD
+                && matches!(value, CtValue::Simd { .. })
+                && let Some(storage) = meta.as_value()
+            {
+                return self.typed_constant(value.clone(), storage);
+            }
             let CtValue::Struct {
                 name: owner,
                 fields,
@@ -924,10 +944,24 @@ impl ParamContext {
     /// declaration order, typed as the construction is. A field read through
     /// it is the field. A construction from a value's own fields, in order,
     /// is that value (`SIMDLength(mlir_value=m._mlir_value)` is `m`), as the
-    /// `struct.create` of a struct's own extracts canonicalizes to it.
+    /// `struct.create` of a struct's own extracts canonicalizes to it, and a
+    /// `SIMD` created from a constant storage is that constant, as
+    /// upstream's `StructCreateOp::fold` folds it.
     pub fn struct_value(&self, fields: &[(String, ParamExpr)], spelling: &ParamExpr) -> ParamExpr {
-        match own_fields_base(fields) {
-            Some(base) if base.meta() == spelling.meta() => base.clone(),
+        match (own_fields_base(fields), fields) {
+            (Some(base), _) if base.meta() == spelling.meta() => base.clone(),
+            (_, [(field, storage)])
+                if field == crate::ct::MLIR_VALUE_FIELD
+                    && spelling
+                        .meta()
+                        .as_value()
+                        .is_some_and(|ty| ty.kind().is_simd())
+                    && let Some(Ok(vector)) = storage
+                        .as_constant()
+                        .map(|value| self.constant(value.clone())) =>
+            {
+                vector
+            }
             _ => self.construction(fields, spelling),
         }
     }
@@ -1853,13 +1887,14 @@ impl ParamContext {
         if let [Some(result), Some(value)] = [operands[0].as_constant(), operands[1].as_constant()]
         {
             self.count_fold();
-            return self.constant(fold_primitive(op, &[result, value])?);
+            return self.typed_constant(fold_primitive(op, &[result, value])?, &ty);
         }
         Ok(self.make(MetaTy::value(ty), ParamKind::Op { op, operands }))
     }
 
     /// `#pop.int_literal_convert` or `#pop<float_literal_convert>` of a
-    /// literal at the vector type its first operand names: the vector once
+    /// literal at the `!kgen.simd` storage type its first operand names:
+    /// the storage of the vector holding the literal in every lane once
     /// both are constant, and otherwise the node, a value of that type.
     fn build_literal_convert(
         &self,
@@ -4351,8 +4386,12 @@ enum IntDomain {
 }
 
 impl IntDomain {
+    /// The domain of a value of type `meta`. `Int`'s and `UInt`'s
+    /// `!kgen.scalar` storage is read as the scalar, since
+    /// `ParamOp::CastToBuiltin` still takes the `Int` (R1815).
     fn of(meta: &MetaTy) -> Option<Self> {
-        match meta.as_value().map(Ty::kind) {
+        let ty = meta.as_value().map(crate::types::storage_value_ty);
+        match ty.as_ref().map(Ty::kind) {
             Some(kind) if kind.is_int() => Some(Self::Int),
             Some(kind) if kind.is_uint() => Some(Self::UInt),
             Some(TyKind::Index) => Some(Self::Index),

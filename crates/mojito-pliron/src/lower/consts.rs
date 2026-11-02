@@ -238,9 +238,15 @@ impl FnLowering<'_> {
             }
             CtValue::Simd { dtype, lanes } => {
                 let vector = self.parameter_vector(ctx, *dtype, lanes, dest)?;
-                // A width-1 SIMD register is its lane scalar, as `lower_ty` lays it out.
-                match self.func.reg_types.get(&dest.0).map(Ty::kind) {
-                    Some(ty) if scalar_simd_dtype(ty).is_some() => {
+                // A width-1 SIMD register, or its storage, is its lane
+                // scalar, as `lower_ty` lays it out.
+                match self
+                    .func
+                    .reg_types
+                    .get(&dest.0)
+                    .map(mojito_types::types::storage_value_ty)
+                {
+                    Some(ty) if scalar_simd_dtype(ty.kind()).is_some() => {
                         self.reg_values.insert(dest.0, vector);
                     }
                     _ => self.simd_store_vector(ctx, dest, *dtype, lanes.len(), vector),

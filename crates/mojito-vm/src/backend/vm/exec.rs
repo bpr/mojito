@@ -359,9 +359,10 @@ impl VmBackend {
                         1,
                         std::slice::from_ref(bit),
                     )?,
-                    lane @ Value::Simd { .. } => {
-                        crate::runtime::builtin_convert(ScalarConversion::Bool, lane.clone())?
-                    }
+                    lane @ Value::Simd {
+                        dtype: mojito_ast::ast::Dtype::Bool,
+                        ..
+                    } => crate::runtime::builtin_convert(ScalarConversion::Bool, lane.clone())?,
                     value => value.clone(),
                 };
             }

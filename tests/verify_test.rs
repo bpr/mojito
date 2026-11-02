@@ -2900,3 +2900,34 @@ fn verifier_accepts_a_drop_of_a_slot_a_region_op_holds() {
     )];
     assert_eq!(slot_end_findings(next), Vec::<String>::new());
 }
+
+#[test]
+fn verifier_rejects_a_vector_bound_to_its_storage_slot() {
+    // A `!kgen.simd` slot holds the storage, never the `SIMD` it stores, as
+    // the checker types a literal conversion at the storage it names.
+    let vector = mojito::types::canonical_simd_ty(mojito::ast::Dtype::Int32, 1);
+    let storage = mojito::types::storage_ty(&vector);
+    let f = function(
+        vec![block(
+            vec![
+                MirInstr::Const {
+                    dest: Reg(0),
+                    k: Const::Value(CtValue::Simd {
+                        dtype: mojito::ast::Dtype::Int32,
+                        lanes: vec![mojito::ct::CtLane::Int(5)],
+                    }),
+                },
+                MirInstr::DefVar {
+                    var: 0,
+                    src: Reg(0),
+                    binding_ty: Some(storage),
+                    in_place: false,
+                },
+            ],
+            MirTerm::Return(None),
+        )],
+        1,
+        &[(0, vector)],
+    );
+    expect_finding(&program(f), "binding of Int32 to a slot of type");
+}

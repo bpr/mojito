@@ -1,0 +1,45 @@
+mojito-mir 1.129
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: add, param_names: [a, b], param_types: [simd { dtype: int32, width: 1 }, simd { dtype: int32, width: 1 }], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: simd { dtype: int32, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: add,
+        registers: 6,
+        vars: 2,
+        var_names: [a, b],
+        params: 2,
+        param_types: [simd { dtype: int32, width: 1 }, simd { dtype: int32, width: 1 }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: simd { dtype: int32, width: 1 } }, var_type { var: $v1, type: simd { dtype: int32, width: 1 } }],
+        return_type: present(simd { dtype: int32, width: 1 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: int32, width: 1 } }, reg_type { reg: %r1, type: simd { dtype: int32, width: 1 } }, reg_type { reg: %r2, type: kgen_simd { dtype: int32, width: 1 } }, reg_type { reg: %r3, type: kgen_simd { dtype: int32, width: 1 } }, reg_type { reg: %r4, type: kgen_simd { dtype: int32, width: 1 } }, reg_type { reg: %r5, type: simd { dtype: int32, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              field.get { dest: %r2, base: %r0, field: _mlir_value },
+              field.get { dest: %r3, base: %r1, field: _mlir_value },
+              binary { op: add, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent },
+              struct.create { dest: %r5, fields: [%r4] }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]
+}

@@ -1308,9 +1308,10 @@ impl Checker {
     }
 
     /// What `SIMD.__init__(IntLiteral)` or `SIMD.__init__(FloatLiteral)`
-    /// folds to at the closed `vector`: `#pop.int_literal_convert` or
-    /// `#pop<float_literal_convert>` of the literal's value, the latter
-    /// failing its `comptime assert` at an integer dtype.
+    /// folds to at the closed `vector`: the vector created from
+    /// `#pop.int_literal_convert` or `#pop<float_literal_convert>` of the
+    /// literal's value at its storage, the latter failing its `comptime
+    /// assert` at an integer dtype.
     fn literal_initializer_body(
         &self,
         vector: &Ty,
@@ -1338,12 +1339,16 @@ impl Checker {
             }
         };
         let context = &self.param_context;
-        context
-            .op(
-                op,
-                &[context.type_shape(vector.clone()), self.ct_param(value)?],
-            )
-            .map_err(param_error)
+        let storage = mojito_types::types::storage_ty(vector);
+        let converted = context
+            .op(op, &[context.type_shape(storage), self.ct_param(value)?])
+            .map_err(param_error)?;
+        // The body's `struct.create` of the converted storage: the vector
+        // holding its value.
+        let value = converted.as_constant().cloned().ok_or_else(|| {
+            TypeError::NotComptime(format!("a {vector} lane needs a closed literal"))
+        })?;
+        self.ct_param(value)
     }
 
     /// The application a local `comptime NAME = f(…)` binding denotes, which
@@ -3154,7 +3159,7 @@ impl Checker {
                 [literal],
             ) => {
                 let literal = self.bracket_operand(literal, recording)?;
-                let storage = context.type_shape(Ty::int());
+                let storage = context.type_shape(mojito_types::types::storage_ty(&Ty::int()));
                 context
                     .op(ParamOp::IntLiteralConvert, &[storage, literal])
                     .and_then(|storage| context.cast_to_builtin(&storage))
@@ -3162,10 +3167,11 @@ impl Checker {
             }
             // A literal in every lane of a `SIMD`'s storage (upstream's
             // `SIMD.__init__(IntLiteral)` and `SIMD.__init__(FloatLiteral)`),
-            // a value of that `SIMD`, as a storage read is.
+            // a value of that storage.
             (shape, [literal, ty]) if let Some(op) = literal_convert_op(shape) => {
-                let vector = self
+                let storage = self
                     .lane_op_result(ty)
+                    .and_then(|vector| mojito_types::types::simd_storage(&vector))
                     .ok_or_else(|| TypeError::TypeMismatch {
                         expected: "a '!kgen.simd' type".to_string(),
                         found: format!("{ty:?}"),
@@ -3173,7 +3179,7 @@ impl Checker {
                     })?;
                 let literal = self.bracket_operand(literal, recording)?;
                 context
-                    .op(op, &[context.type_shape(vector), literal])
+                    .op(op, &[context.type_shape(storage), literal])
                     .map_err(param_error)
             }
             (shape, [literal]) if let Some(op) = literal_attribute_op(shape) => {

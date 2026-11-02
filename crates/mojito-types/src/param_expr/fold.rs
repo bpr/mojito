@@ -335,8 +335,10 @@ pub fn fold_dtype_to_ui8(dtype: &CtValue) -> Result<CtValue, ParamError> {
 }
 
 /// `#pop.int_literal_convert` or `#pop<float_literal_convert>` of a
-/// concrete literal at the vector type `ty`: the literal in every lane,
-/// held as [`fold_lane_op`] holds a vector.
+/// concrete literal at the `!kgen.simd` storage type `ty`.
+///
+/// The value is the literal in every lane of the vector `ty` stores, held
+/// as [`fold_lane_op`] holds a vector.
 ///
 /// An integer lane wraps the integer as the pin does, a float lane rounds
 /// the exact value once, and a `bool` lane is whether the integer is
@@ -352,7 +354,8 @@ pub fn fold_literal_convert(
             op.name()
         ))
     };
-    let (dtype, width) = crate::types::simd_shape(ty.kind()).ok_or_else(no_value)?;
+    let vector_ty = crate::types::storage_value_ty(ty);
+    let (dtype, width) = crate::types::simd_shape(vector_ty.kind()).ok_or_else(no_value)?;
     let lane = match (op, literal) {
         (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value)) if dtype == Dtype::Bool => {
             Some(CtLane::Bool(!value.is_zero()))
@@ -371,7 +374,7 @@ pub fn fold_literal_convert(
         dtype,
         lanes: vec![lane; width],
     };
-    Ok(vector.clone().materialize_as(ty).unwrap_or(vector))
+    Ok(vector.clone().materialize_as(&vector_ty).unwrap_or(vector))
 }
 
 /// A `#pop` attribute over a concrete `!pop.int_literal` or

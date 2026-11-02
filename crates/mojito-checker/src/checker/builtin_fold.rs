@@ -510,8 +510,7 @@ impl Checker {
     /// The fields a builtin `__init__`'s body stores, in declaration order,
     /// over its argument slots, as upstream's fold reads the construction:
     /// each `self.f = e` stores `e`, a later store of a field replacing an
-    /// earlier one, `self = e` stores every field of `e` (a `SIMD`'s
-    /// `_mlir_value`, its storage, is `e` itself), and a read of a stored
+    /// earlier one, `self = e` stores every field of `e`, and a read of a stored
     /// field (`self.b = self.a + 1`) is the value stored. A docstring, a `var` or `comptime` binding, and a
     /// `comptime assert` may stand among the stores. `None` for any other
     /// statement (an augmented store, a store into a field's field), or a
@@ -559,13 +558,9 @@ impl Checker {
                 let whole = self.builtin_value(value, &self_ty)?;
                 for ((field, field_ty), slot) in declared.iter().zip(&mut stored) {
                     *slot = Some(
-                        if mojito_types::types::storage_simd(field_ty).as_ref() == Some(&self_ty) {
-                            whole.clone()
-                        } else {
-                            self.param_context
-                                .field(&whole, field, MetaTy::value(field_ty.clone()))
-                                .ok()?
-                        },
+                        self.param_context
+                            .field(&whole, field, MetaTy::value(field_ty.clone()))
+                            .ok()?,
                     );
                 }
                 continue;
@@ -631,21 +626,25 @@ impl Checker {
     }
 
     /// The parameter expression of a builtin body's value of type `ty`, a
-    /// closed one materialized at it. A value of type `!kgen.simd` is the
-    /// `SIMD` value whose storage it is, as the parameter domain reads a
-    /// vector's storage.
+    /// closed one materialized at it. A closed value of type `!kgen.simd`
+    /// is the `SIMD` value whose storage it is, as the parameter domain
+    /// holds a vector's storage, and a symbolic one is typed at the storage
+    /// or, from a lane op, still at its vector (R1815).
     fn builtin_value(&self, value: &Expr, ty: &Ty) -> Option<ParamExpr> {
-        let storage = mojito_types::types::storage_simd(ty);
-        let ty = storage.as_ref().unwrap_or(ty);
+        let vector = mojito_types::types::storage_value_ty(ty);
         let value = self.builtin_operand(value)?;
         let value = match value.as_constant() {
             Some(closed) => self
                 .param_context
-                .constant(closed.clone().materialize_as(ty)?)
+                .constant(closed.clone().materialize_as(&vector)?)
                 .ok()?,
             None => value,
         };
-        (value.meta().as_value() == Some(ty)).then_some(value)
+        value
+            .meta()
+            .as_value()
+            .is_some_and(|found| *found == vector || found == ty)
+            .then_some(value)
     }
 
     /// The parameter expression of a builtin body's operand, built as a

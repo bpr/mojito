@@ -3552,22 +3552,12 @@ impl<'a> Flatten<'a> {
         self.flush_argument_anchors();
         let writes_through_reference = self.aliases.contains_key(&dest)
             || (self.runtime_aliases.contains(&dest) && !self.pointer_valued_slot(dest));
-        // A `SIMD` literal conversion the checker types at the vector
-        // (R1801) binds a slot of its declared `!kgen.simd` storage type, as
-        // upstream allocates it.
         if !writes_through_reference
             && let Some(ty) = self
                 .f
                 .reg_types
                 .get(&src.0)
-                .map(|found| match binding_ty {
-                    Some(declared)
-                        if mojito_types::types::simd_storage(found).as_ref() == Some(declared) =>
-                    {
-                        declared.clone()
-                    }
-                    _ => found.clone(),
-                })
+                .cloned()
                 .or_else(|| value.ty())
                 .or_else(|| binding_ty.cloned())
         {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1814**.
+Next free ID: **R1817**.
 
 ## Ordered Work
 
@@ -6801,6 +6801,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     declared initializer, as an explicit construction does, so
     the assert fails at instantiation. `mir/calls.rs` and `operators.rs`
     read `splats_to` too.
+  - Probe: `sroa`'s `splittable_slots` keeps a `SIMD` slot whole when an
+    unmaterialized literal register is stored to it (`typed_wholes`).
+    Without that, `4.0 ** 0.5` (`assets/ok/pliron_float_pow.mojo`) fails
+    natively with "unsupported field access on `IntLiteral[8]`".
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11383,39 +11387,75 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1801 MIR's builtin `binary`, `MakeSimd`, lane, and cast
-  instructions take a `SIMD` struct register, where upstream's `pop` ops
-  take only its `!pop.simd` storage**
+- [ ] **R1814 MIR lowering builds a `SIMD` from compiler-built lane ops
+  over the vector, where upstream's initializers apply `pop` ops to the
+  storage and `struct.create` the result**
 
-  Canonicalization folds an inlined dunder back into one `binary` over the
-  struct, so `i < n` over `Int` compares two `SIMD` registers, not their
-  storage fields.
-  - The constant folder must then fold a storage-typed register
-    (`mir/ir.rs`'s `const_ct_value`), as upstream folds `pop` ops over
-    `!pop.simd`. Admitting one today makes the VM fail
-    `SIMD[DType.int32, 4](1, 2, 3, 4)` with "index must be Int, got
-    Bool", so the folder and the VM's constant materialization must
-    agree on a storage register first.
-  - This is why `types::vector_slots` reads slots off either a
-    vector or its storage.
-  - Lever: lower compiler arithmetic as `pop` ops over `_mlir_value` field
-    reads, and let canonicalization fold the `pop` chain without leaving
-    the storage type. `vector_slots` then narrows to `KgenSimd`.
-  - The checker also types a literal conversion
-    (`#pop.int_literal_convert<v> : Self._mlir_type`,
-    `literal_initializer_body`) at the vector, and the MIR types its
-    `const` so. Typing these at the storage deletes the identities that
-    gap forces: `types_compatible`'s storage-agrees-with-its-vector arm,
-    `mem2reg.rs`'s `holds`, `lower_bind`'s storage slot type, and
-    canonicalize's `simd_storage_identity` and `storage_op_vector`.
-  - `sroa`'s `splittable_slots` also keeps a `SIMD` slot whose whole
-    store is an unmaterialized literal register (`typed_wholes`). Probe:
-    without it, `assets/ok/pliron_float_pow.mojo` fails natively with
-    "unsupported field access on `IntLiteral[8]`".
-  - Probe: deleting `types_compatible`'s `KgenSimd` arm fails the bundled
-    stdlib's `SIMD.__init__$ov$IntLiteral` with "store of SIMD[dtype,
-    length] into storage of type `!kgen.simd<length, dtype>`".
-  - Depends on R1800.
+  These sites emit a builtin vector instruction typed at the `SIMD` struct,
+  so its result never passes through `struct.create`.
+  - `Flatten::try_simd_call`, `splat_scalar`, and `simd_from_length`
+    (`mir/lower_expr/calls.rs`).
+  - The `MakeSimd` in `mir/call_defaults.rs` and `mir/type_construction.rs`.
+  - The elaborator's `BinOp` kept over a `SIMD` instance
+    (`mono/specializer.rs`, the `is_non_simd_struct` guards), where
+    upstream calls the witness dunder.
+  - `Flatten::inferred_value_register`'s `binary`/`unary` over `Int`
+    (`mir.rs`), and the augmented-assignment native-scalar fallbacks in
+    `lower_stmt.rs` if a `SIMD` still reaches them.
+  - Lever: one `Flatten` helper that reads `_mlir_value` of each `SIMD`
+    operand, applies the op at the storage type, and `struct.create`s the
+    `SIMD`. Where the stdlib initializer or dunder is reachable, call it
+    instead.
+  - `scalar.cast` of a `SIMD[DType.bool, 1]` to `Bool` stays with R1609
+    and R1612.
+  - Probe: dump the concrete MIR of `@no_inline def f(i: Int, n: Int) ->
+    Bool: return i < n` and count builtin vector instructions with a
+    `simd`-typed register outside `scalar.cast`; only these sites remain.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1815 The checker's parameter domain types `pop.simd.splat`,
+  `pop.cast`, and a `_mlir_value` read at the `SIMD`, where upstream's
+  are its `!kgen.simd` storage**
+
+  A literal conversion is typed at the storage it names, but the other
+  lane ops and storage reads still give a vector-typed `ParamExpr`.
+  - `Checker::lane_op_result` (`checker/constraints.rs`) returns the
+    vector for a typed lane op, and `scalar_storage_expression` reads
+    `x._mlir_value` as `x`.
+  - So `builtin_fold.rs`'s `builtin_value` accepts a `!kgen.simd` field
+    value typed at either the storage or its vector.
+  - `ParamOp::CastToBuiltin` takes an `Int`, so `IntDomain::of`
+    (`param_expr.rs`) reads `Int`'s storage as `Int` for
+    `IntLiteral.__mlir_index__`'s `#pop.int_literal_convert<…> :
+    !kgen.scalar<index>`.
+  - Lever: type the lane ops and the field read at the storage, make
+    `CastToBuiltin` take the storage, and let `ParamContext::struct_value`
+    (which already folds a `SIMD` of a constant storage) wrap a symbolic
+    one.
+  - Probe: `assets/ok/comptime_simd_initializer_applications.mojo` keeps
+    `Tag[SIMD[DType.int32, 2](n)]` and `Tag[SIMD[DType.int32,
+    2](from_int=n)]` one type.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1816 The MIR verifier accepts a `SIMD` struct register on a
+  builtin vector instruction, where upstream's `pop` ops verify only
+  `!pop.simd` operands**
+
+  `types::vector_slots` reads slots off a vector or its storage alike, so
+  every builtin vector instruction's check passes either.
+  - Reject a `SIMD` register on each builtin vector instruction in
+    `verify/instr.rs`, `verify/concrete.rs`, and `verify/calls.rs`.
+  - Re-point the callers that read a signature or intrinsic type at
+    `storage_ty` or `MirDeclarations::translated_type`: Pliron's
+    `abi.rs` and `support.rs`, mono's `symbolic.rs` and `gather.rs`,
+    `llvm_intrinsic.rs`, `lower_expr/mlir_op.rs`, and
+    `verify/types.rs`'s `symbolic_simd_compatible`.
+  - Then delete `vector_slots` in favour of `kgen_simd_slots`.
+  - Only the full corpus finds this change's failures, so it lands with
+    the nightly gate in view.
+  - Depends on R1814 and R1815.
   - Model: Fable, Not Planned.
 
 - [ ] **R1618 A compile-time argument computed by an inlined dunder keeps

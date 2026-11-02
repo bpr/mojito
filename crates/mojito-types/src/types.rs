@@ -1130,7 +1130,7 @@ impl TyKind {
     /// The name and arguments of a struct application other than a `SIMD`
     /// one. A rule written for a declared struct reads this rather than
     /// matching [`TyKind::Struct`], since `SIMD`'s operators, copies, and
-    /// lanes are still the compiler's own rules (R1575, R1801), though its
+    /// lanes are still the compiler's own rules (R1575, R1814), though its
     /// application is the declared struct.
     pub fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
         match self {
@@ -1598,6 +1598,13 @@ pub fn storage_simd(ty: &Ty) -> Option<Ty> {
     }
 }
 
+/// The vector a `!kgen.simd` storage type stores, whose constants and
+/// lanes are the storage's, as upstream's `pop` folds read a `!pop.simd`
+/// attribute; any other type itself.
+pub fn storage_value_ty(ty: &Ty) -> Ty {
+    storage_simd(ty).unwrap_or_else(|| ty.clone())
+}
+
 /// The slots of a `!kgen.simd` storage type.
 pub fn kgen_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     match ty {
@@ -1606,9 +1613,11 @@ pub fn kgen_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     }
 }
 
-/// The slots of a vector or of its `!kgen.simd` storage. Both forms are
-/// read because MIR's builtin vector instructions still take the `SIMD`
-/// register where upstream's `pop` ops take the storage (R1801).
+/// The slots of a vector or of its `!kgen.simd` storage.
+///
+/// Both forms are read because some of MIR's builtin vector instructions
+/// still take the `SIMD` register where upstream's `pop` ops take the
+/// storage (R1814, R1816).
 pub fn vector_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     kgen_simd_slots(ty).or_else(|| simd_slots(ty))
 }

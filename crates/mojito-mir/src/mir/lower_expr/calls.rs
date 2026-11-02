@@ -1005,15 +1005,16 @@ impl<'a> Flatten<'a> {
         dest
     }
 
-    /// Splat a one-lane register across the checked multi-lane `target`, as
-    /// the one-element explicit `SIMD[dt, w](x)` construction does.
+    /// Splat a one-lane register across the checked multi-lane `target`, or
+    /// its `!kgen.simd` storage, as the one-element explicit `SIMD[dt,
+    /// w](x)` construction does.
     pub(in crate::mir) fn splat_scalar(
         &mut self,
         value: Reg,
         target: &Ty,
         source: SourceSpan,
     ) -> Reg {
-        let Some((dtype, width)) = mojito_types::types::simd_slots(target) else {
+        let Some((dtype, width)) = mojito_types::types::vector_slots(target.kind()) else {
             return value;
         };
         let dest = self.fresh_typed(source, None, target.clone());

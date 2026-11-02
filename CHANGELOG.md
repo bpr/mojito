@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR's builtin ops inlined from `SIMD`'s dunders keep their
+  `!kgen.simd` storage type, wrapped in `struct.create`, as upstream's
+  `pop` ops do (R1801): `canonicalize` no longer retypes an op's result to
+  the vector (`storage_op_vector`), and the constant folder reads a
+  storage register as its vector's constants and folds a `SIMD`'s
+  `struct.create` and `field.get` of a constant, upstream's `kgen.struct`
+  folds. The checker types a literal conversion and a typed
+  `#kgen.simd<…> : !kgen.scalar<…>` attribute at the storage they name,
+  and a `Bool`'s `_mlir_value` is its `!kgen.scalar<bool>` storage, so
+  the verifier's storage-agrees-with-its-vector arm, `mem-2-reg`'s
+  `holds`, and `lower_bind`'s storage slot are gone. The elaborator's
+  `rebind` judge takes a `SIMD` and its storage across, as the pin's
+  does. No program's output changes. Compiler-built splats and casts
+  (R1814), the parameter domain's lane ops (R1815), and the verifier's
+  enforcement (R1816) remain.
+
 - `v._mlir_value` on a `SIMD` reads the struct's `_mlir_value` field, as
   upstream does, instead of standing for the vector's own register or
   place (R1811): `SemanticAdjustment::SimdStorage` is gone, and

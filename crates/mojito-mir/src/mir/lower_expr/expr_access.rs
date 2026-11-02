@@ -93,11 +93,11 @@ impl<'a> Flatten<'a> {
     }
 
     /// The `!kgen.scalar<bool>` storage of the `Bool` `object`
-    /// (`b._mlir_value`, `b.__mlir_bool__()`): the one-lane `bool` vector
-    /// the `Bool` splats to.
+    /// (`b._mlir_value`, `b.__mlir_bool__()`): the storage of the one-lane
+    /// `bool` vector the `Bool` splats to.
     pub(in crate::mir) fn bool_storage(&mut self, object: Node<'a>, location: SourceSpan) -> Reg {
         let value = self.expr(object);
-        let storage = mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1);
+        let storage = mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1);
         self.splat_scalar(value, &storage, location)
     }
 

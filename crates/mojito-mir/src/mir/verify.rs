@@ -93,10 +93,19 @@ pub fn verify_concrete_function_in(
     errors
 }
 
-/// Whether two register or place types agree as the verifier compares them
-/// (`types_compatible`): the elaborator judges an instance's `rebind` by it.
+/// Whether two types agree for the elaborator's judge of an instance's
+/// `rebind`.
+///
+/// They agree as the verifier compares them (`types_compatible`), or are
+/// a `SIMD` and its `!kgen.simd` storage, which the pin's `rebind` takes
+/// across (`rebind[Scalar[dtype]]` of a `#kgen.simd<…> : !kgen.scalar<…>`
+/// attribute in `std.utils.numerics.nan`).
 pub fn types_agree(found: &Ty, expected: &Ty) -> bool {
     types_compatible(found, expected)
+        || types_compatible(
+            &mojito_types::types::storage_ty(found),
+            &mojito_types::types::storage_ty(expected),
+        )
 }
 
 mod calls;

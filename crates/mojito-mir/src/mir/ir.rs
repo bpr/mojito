@@ -3312,8 +3312,9 @@ impl MirInstr {
     /// `SIMD.__init__`) or one element per lane (upstream's
     /// `SIMD.__init__(*elems: Scalar[dtype])`), each a literal, a one-lane
     /// constant of its dtype, or a `Bool` into a `bool` vector, a built-in scalar conversion
-    /// ([`Self::ScalarCast`], upstream's inlined `pop.cast`), and a
-    /// forwarded copy fold, and only over values
+    /// ([`Self::ScalarCast`], upstream's inlined `pop.cast`), a `SIMD`'s
+    /// `struct.create` from its storage and `field.get` of it (upstream's
+    /// `kgen.struct` folds), and a forwarded copy fold, and only over values
     /// whose constant kind is the one their register's type names. A
     /// materialization or a one-lane `simd.make` folds to the lane the VM
     /// materializes (`CtValue::materialize_as`), a wider one to the lanes
@@ -3472,6 +3473,22 @@ impl MirInstr {
                 value,
                 target,
             } => (dest, operand(*value)?.folded_conversion(*target)?),
+            // A `SIMD` created from a constant storage is that constant
+            // (upstream's `StructCreateOp::fold`), and a constant `SIMD`'s
+            // storage is its value at the storage type
+            // (`StructExtractOp::fold`).
+            Self::MakeStruct { dest, fields } if reg_types.get(&dest.0)?.is_simd() => {
+                match fields.as_slice() {
+                    [storage] => (dest, operand(*storage)?),
+                    _ => return None,
+                }
+            }
+            Self::GetField { dest, base, field }
+                if field == mojito_types::ct::MLIR_VALUE_FIELD
+                    && reg_types.get(&base.0)?.is_simd() =>
+            {
+                (dest, operand(*base)?)
+            }
             // A host integer cast into one integer lane wraps, as
             // `MakeSimd` builds it (`Int64(n)` through `SIMD`'s cast
             // initializer over a folded `n`).
@@ -3885,8 +3902,10 @@ fn region_counts(blocks: &[MirBlock]) -> (usize, usize) {
 pub struct SpanTable(pub HashMap<u32 /*reg*/, (SourceSpan, Option<VarId>)>);
 
 /// The scalar `constant` denotes in a register of type `ty`, when its kind
-/// is the one `ty` names.
+/// is the one `ty` names. A `!kgen.simd` register holds its vector's
+/// constants.
 fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
+    let ty = &mojito_types::types::storage_value_ty(ty);
     match (constant, ty.kind()) {
         (Const::Int(value), kind) if kind.is_int() => Some(CtValue::Int(*value)),
         (Const::Float(value), kind) if kind.is_float64() => Some(CtValue::Float(value.to_bits())),
@@ -3917,6 +3936,10 @@ fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
 /// (`Int`, `UInt`, `Bool`, or an integral or `bool` vector) folds: a float
 /// may be NaN.
 fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
+    let (operand, dest) = (
+        &mojito_types::types::storage_value_ty(operand),
+        &mojito_types::types::storage_value_ty(dest),
+    );
     let holds = match op {
         InfixOp::Eq | InfixOp::Le | InfixOp::Ge => true,
         InfixOp::Ne | InfixOp::Lt | InfixOp::Gt => false,
@@ -3941,8 +3964,21 @@ fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
 }
 
 /// The constant a register of type `ty` holding the scalar `value` is
-/// defined by, when `ty` names `value`'s kind.
+/// defined by, when `ty` names `value`'s kind. A `!kgen.simd` register
+/// holds its vector's constants, an `Int`, `UInt`, or `Float64` lane is its
+/// host scalar, and a `Bool` placed in a one-lane mask is the mask's lane.
 fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
+    let ty = &mojito_types::types::storage_value_ty(ty);
+    let value = match value {
+        value @ CtValue::Simd { .. } if mojito_types::types::has_host_scalar_value(ty.kind()) => {
+            value.materialize_as(ty)?
+        }
+        CtValue::Bool(value) if ty.kind().known_simd() == Some((Dtype::Bool, 1)) => CtValue::Simd {
+            dtype: Dtype::Bool,
+            lanes: vec![mojito_types::ct::CtLane::Bool(value)],
+        },
+        value => value,
+    };
     match (value, ty.kind()) {
         (CtValue::Int(value), kind) if kind.is_int() => Some(Const::Int(value)),
         (CtValue::Float(bits), kind) if kind.is_float64() => {
@@ -4763,6 +4799,67 @@ mod tests {
             refined_bound: None,
         };
         assert!(dunder.folded_constant(ones, &reg_types, &none).is_none());
+    }
+
+    #[test]
+    fn folded_constant_reads_a_storage_register_as_its_vector() {
+        use mojito_types::ct::CtLane;
+        let storage = |dtype| mojito_types::types::kgen_simd_ty(dtype, 1).kind().clone();
+        assert!(matches!(
+            fold_binary(
+                InfixOp::Add,
+                Const::Int(2),
+                Const::Int(3),
+                storage(Dtype::Int),
+                storage(Dtype::Int)
+            ),
+            Some(Const::Int(5))
+        ));
+        assert!(matches!(
+            fold_binary(
+                InfixOp::Lt,
+                Const::Int(2),
+                Const::Int(3),
+                storage(Dtype::Int),
+                storage(Dtype::Bool)
+            ),
+            Some(Const::Value(CtValue::Simd { dtype: Dtype::Bool, lanes }))
+                if lanes == [CtLane::Bool(true)]
+        ));
+        // A `SIMD` created from a constant storage is that constant, and a
+        // constant `SIMD`'s storage its value at the storage type.
+        let int32 = mojito_types::types::canonical_simd_ty(Dtype::Int32, 1);
+        let reg_types = HashMap::from([(0, mojito_types::types::storage_ty(&int32)), (1, int32)]);
+        let eleven = || {
+            Some(Const::Value(CtValue::Simd {
+                dtype: Dtype::Int32,
+                lanes: vec![CtLane::Int(11)],
+            }))
+        };
+        let none = MirDeclarations::default();
+        let is_eleven = |folded: Option<Const>| {
+            matches!(folded, Some(Const::Value(CtValue::Simd { dtype: Dtype::Int32, lanes }))
+                if lanes == [CtLane::Int(11)])
+        };
+        let create = MirInstr::MakeStruct {
+            dest: Reg(1),
+            fields: vec![Reg(0)],
+        };
+        assert!(is_eleven(create.folded_constant(
+            |_| eleven(),
+            &reg_types,
+            &none
+        )));
+        let extract = MirInstr::GetField {
+            dest: Reg(0),
+            base: Reg(1),
+            field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+        };
+        assert!(is_eleven(extract.folded_constant(
+            |_| eleven(),
+            &reg_types,
+            &none
+        )));
     }
 
     #[test]

@@ -248,7 +248,6 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     let mut creates = HashMap::new();
     let mut extracts = HashMap::new();
     let mut host_comparisons = HashSet::new();
-    let mut vector_ops = HashSet::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
             match instruction {
@@ -265,9 +264,9 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                     resolved: None,
                     raises: None,
                     ..
-                } if reg_types
-                    .get(&a.0)
-                    .is_some_and(|ty| has_host_scalar_value(ty.kind())) =>
+                } if reg_types.get(&a.0).is_some_and(|ty| {
+                    has_host_scalar_value(mojito_types::types::storage_value_ty(ty).kind())
+                }) =>
                 {
                     host_comparisons.insert(dest.0);
                 }
@@ -279,19 +278,6 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 }
                 MirInstr::GetField { dest, base, field } => {
                     extracts.insert(dest.0, (*base, field.clone()));
-                }
-                MirInstr::Const { dest, .. }
-                | MirInstr::UnOp { dest, .. }
-                | MirInstr::BinOp { dest, .. }
-                | MirInstr::MakeSimd { dest, .. }
-                | MirInstr::SimdCast { dest, .. }
-                | MirInstr::SimdBitcast { dest, .. }
-                | MirInstr::SimdShuffle { dest, .. }
-                | MirInstr::SimdSelect { dest, .. }
-                | MirInstr::SimdInsert { dest, .. }
-                | MirInstr::SimdReduce { dest, .. }
-                | MirInstr::CallLlvmIntrinsic { dest, .. } => {
-                    vector_ops.insert(dest.0);
                 }
                 _ => {}
             }
@@ -313,35 +299,25 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
         _ => None,
     };
     // A host scalar's comparison defines its `Bool` directly (`Int`'s
-    // `__lt__` inlined is `Bool` of its one-lane mask): the cast that is the
-    // comparison's sole reader goes, the comparison retyped `Bool`.
+    // `__lt__` inlined is `Bool` of the mask created from the comparison's
+    // storage, which upstream folds through
+    // `struct_extract(struct_create(cmp))`): the cast that is the
+    // comparison's sole reader, directly or through the mask, goes, the
+    // comparison retyped `Bool`.
+    let read_once = |reg: &Reg| reads.get(reg.0 as usize) == Some(&1);
     let comparison_bool = |instruction: &MirInstr| match instruction {
         MirInstr::ScalarCast {
             value,
             target: ScalarConversion::Bool,
             ..
-        } if host_comparisons.contains(&value.0) && reads.get(value.0 as usize) == Some(&1) => {
-            Some(*value)
+        } if read_once(value) => {
+            let comparison = match structs.creates.get(&value.0).map(Vec::as_slice) {
+                Some([storage]) => *storage,
+                _ => *value,
+            };
+            (host_comparisons.contains(&comparison.0) && read_once(&comparison))
+                .then_some(comparison)
         }
-        _ => None,
-    };
-    // A `SIMD` built from the `!kgen.simd` result of a builtin op it
-    // alone reads is that result, retyped the vector, as the MIR types the
-    // builtin ops over a `SIMD` (R1801) and upstream's `LowerKGENToLLVM`
-    // makes a one-element struct its element.
-    let storage_op_vector = |instruction: &MirInstr| match instruction {
-        MirInstr::MakeStruct { dest, fields } => match fields.as_slice() {
-            [storage]
-                if vector_ops.contains(&storage.0)
-                    && reads.get(storage.0 as usize) == Some(&1)
-                    && let Some(vector) = reg_types.get(&dest.0)
-                    && mojito_types::types::simd_storage(vector).as_ref()
-                        == reg_types.get(&storage.0) =>
-            {
-                Some((*dest, *storage, vector.clone()))
-            }
-            _ => None,
-        },
         _ => None,
     };
     let mut folds = HashMap::new();
@@ -356,17 +332,11 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 retyped.push((comparison, Ty::bool()));
                 continue;
             }
-            if let Some((dest, storage, vector)) = storage_op_vector(instruction) {
-                folds.insert(dest.0, storage);
-                retyped.push((storage, vector));
-                continue;
-            }
             if let (Some(operand), [dest]) = (
                 instruction
                     .forwarded_operand(&constant, reg_types, declarations)
                     .or_else(|| copied_closure(instruction))
-                    .or_else(|| structs.extracted(instruction))
-                    .or_else(|| structs.simd_storage_identity(instruction, &constant)),
+                    .or_else(|| structs.extracted(instruction)),
                 results.as_slice(),
             ) {
                 folds.insert(dest.0, operand);
@@ -451,33 +421,6 @@ impl StructFolds<'_> {
         };
         let position = self.position(*base, field)?;
         self.creates.get(&base.0)?.get(position).copied()
-    }
-
-    /// The register a `SIMD`'s storage step reads or builds when that
-    /// register already holds the result: the storage of a constant
-    /// vector, which upstream's `StructExtractOp::fold` reads off the
-    /// constant, and a `SIMD` created from a register of its own type,
-    /// which the checker types a literal conversion's storage at (R1801).
-    fn simd_storage_identity(
-        &self,
-        instruction: &MirInstr,
-        constant: &impl Fn(Reg) -> Option<Const>,
-    ) -> Option<Reg> {
-        let simd = |reg: &Reg| self.reg_types.get(&reg.0).filter(|ty| ty.is_simd());
-        match instruction {
-            MirInstr::GetField { base, field, .. }
-                if field == mojito_types::ct::MLIR_VALUE_FIELD
-                    && simd(base).is_some()
-                    && constant(*base).is_some() =>
-            {
-                Some(*base)
-            }
-            MirInstr::MakeStruct { dest, fields } => match fields.as_slice() {
-                [field] if simd(dest).is_some_and(|ty| simd(field) == Some(ty)) => Some(*field),
-                _ => None,
-            },
-            _ => None,
-        }
     }
 
     /// The container a `struct.create` of every field extracted from it in

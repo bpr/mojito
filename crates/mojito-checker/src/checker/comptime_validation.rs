@@ -512,7 +512,7 @@ pub(super) fn mlir_attribute_expr(
         return Ok((context.current_target(), TyKind::KgenTarget.into()));
     }
     let (value, ty) = mlir_attribute(text)?;
-    Ok((context.constant(value).map_err(param_error)?, ty))
+    Ok((context.typed_constant(value, &ty).map_err(param_error)?, ty))
 }
 
 /// The `name` of an `` __mlir_type.`name` `` spelling.
@@ -2654,17 +2654,6 @@ impl Checker {
                 FoldedBody::Value(value) => replaced(value).map(|folded| {
                     respelled_struct_value(&self.param_context, folded, &application)
                 }),
-                // A vector is its `_mlir_value` storage.
-                FoldedBody::Fields(fields)
-                    if nominal.as_ref().is_some_and(|(owner, _)| {
-                        *owner == mojito_types::types::SIMD_TYPE_NAME
-                    }) =>
-                {
-                    match fields.as_slice() {
-                        [(_, storage)] => replaced(storage),
-                        _ => None,
-                    }
-                }
                 FoldedBody::Fields(fields) => fields
                     .iter()
                     .map(|(name, value)| Some((name.clone(), replaced(value)?)))

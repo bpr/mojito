@@ -6165,3 +6165,39 @@ fn augmented_reference_getter_store_calls_the_dunder_in_place() {
         "{store:#?}"
     );
 }
+
+#[test]
+fn literal_conversion_binds_the_storage_it_names() {
+    // `#pop.int_literal_convert<v> : T._mlir_type` is an attribute of the
+    // `!kgen.simd` storage it names, so the binding's slot is that storage,
+    // as upstream allocates it.
+    let source = "def five() -> Int32:\n    \
+                  var s = __mlir_attr[`#pop.int_literal_convert<`, (5).value, `> : `, Int32._mlir_type]\n    \
+                  return Int32(mlir_value=s)\n\n\
+                  def main():\n    print(five())\n";
+    let checked = mojito::check_program(&linked(source)).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    let five = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "five")
+        .expect("five MIR")
+        .1;
+    let slot = five
+        .var_names
+        .iter()
+        .position(|name| name == "s")
+        .expect("s slot") as u32;
+    assert!(
+        matches!(
+            five.var_tys.get(&slot).map(Ty::kind),
+            Some(TyKind::KgenSimd { .. })
+        ),
+        "{five:#?}"
+    );
+}

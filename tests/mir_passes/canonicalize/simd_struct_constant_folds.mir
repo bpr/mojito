@@ -1,0 +1,44 @@
+mojito-mir 1.129
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: eleven, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: int32, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: eleven,
+        registers: 5,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: int32, width: 1 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: int32, width: 1 } }, reg_type { reg: %r1, type: kgen_simd { dtype: int32, width: 1 } }, reg_type { reg: %r2, type: kgen_simd { dtype: int32, width: 1 } }, reg_type { reg: %r3, type: kgen_simd { dtype: int32, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: int32, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: value(ct_simd { dtype: int32, lanes: [lane_int(5)] }) },
+              field.get { dest: %r1, base: %r0, field: _mlir_value },
+              const { dest: %r2, value: value(ct_simd { dtype: int32, lanes: [lane_int(6)] }) },
+              binary { op: add, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent },
+              struct.create { dest: %r4, fields: [%r3] }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]
+}
