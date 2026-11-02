@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker's parameter domain types `pop.simd.splat`, `pop.cast`, and a
+  vector's `_mlir_value` read at the `!kgen.simd` storage, as upstream's
+  `pop` ops and `struct.extract` are, rather than at the `SIMD` holding it
+  (R1815). `__mlir_index__` in a builtin body takes `Int`'s storage, and a
+  builtin initializer's storage field accepts a vector value only at its
+  storage. An `Int`'s own `_mlir_value` read is still the `Int` (R1835).
+  Program output is unchanged.
+
 - MIR builds a `SIMD` from its storage, as upstream's initializers do: a
   scalar splat, a `SIMDLength` or `index` conversion, a `SIMD[dt, _](x)`
   construction, and a literal default apply their op to each operand's

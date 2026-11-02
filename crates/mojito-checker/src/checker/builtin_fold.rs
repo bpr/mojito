@@ -628,8 +628,9 @@ impl Checker {
     /// The parameter expression of a builtin body's value of type `ty`, a
     /// closed one materialized at it. A closed value of type `!kgen.simd`
     /// is the `SIMD` value whose storage it is, as the parameter domain
-    /// holds a vector's storage, and a symbolic one is typed at the storage
-    /// or, from a lane op, still at its vector (R1815).
+    /// holds a vector's storage, and a symbolic one is typed at the
+    /// storage, or at the `Int`, `UInt`, or `Float64` whose `_mlir_value`
+    /// read the domain still reads as the scalar (R1835).
     fn builtin_value(&self, value: &Expr, ty: &Ty) -> Option<ParamExpr> {
         let vector = mojito_types::types::storage_value_ty(ty);
         let value = self.builtin_operand(value)?;
@@ -643,7 +644,11 @@ impl Checker {
         value
             .meta()
             .as_value()
-            .is_some_and(|found| *found == vector || found == ty)
+            .is_some_and(|found| {
+                found == ty
+                    || (*found == vector
+                        && (vector.is_int() || vector.is_uint() || vector.is_float64()))
+            })
             .then_some(value)
     }
 

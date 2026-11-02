@@ -221,8 +221,9 @@ impl ParamContext {
         self.op(ParamOp::BoolXor, &[operand.clone(), self.boolean(true)])
     }
 
-    /// `operand.__mlir_index__()`: an `Int` (or an integer literal, which
-    /// materializes to one) as an `index`; see [`ParamOp::CastToBuiltin`].
+    /// `operand.__mlir_index__()`: an `Int` or its `!kgen.scalar<index>`
+    /// storage (or an integer literal, which materializes to an `Int`) as
+    /// an `index`; see [`ParamOp::CastToBuiltin`].
     pub fn cast_to_builtin(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
         self.op(ParamOp::CastToBuiltin, std::slice::from_ref(operand))
     }
@@ -3098,13 +3099,13 @@ pub enum ParamOp {
     /// nul-terminated bytes, which live for the whole program (upstream's
     /// `StringLiteral.ptr`).
     StringAddress,
-    /// `pop.simd.splat`: a one-lane value across every lane of the vector
-    /// type its first operand names, a type shape (upstream's `_type=`).
-    /// The domain reads a vector's `!kgen.simd` storage as the vector, so
-    /// the node is a value of that `SIMD` type.
+    /// `pop.simd.splat`: a one-lane value across every lane of the
+    /// `!kgen.simd` storage type its first operand names, a type shape
+    /// (upstream's `_type=`); the node is a value of that storage.
     SimdSplat,
-    /// `pop.cast`: a one-lane value converted to the scalar type its first
-    /// operand names, a type shape ([`crate::ct::CtLane::cast`]).
+    /// `pop.cast`: a one-lane value converted to the one-lane `!kgen.simd`
+    /// storage type its first operand names, a type shape
+    /// ([`crate::ct::CtLane::cast`]).
     Cast,
     /// KGEN's `target_get_field`: the field of a `!kgen.target` its second
     /// operand names, a `!kgen.string` ([`crate::ct::KgenTarget::field`]).
@@ -3124,16 +3125,16 @@ pub enum ParamOp {
     /// ([`CtValue::StoreToMem`]).
     StoreToMem,
     /// `#pop.int_literal_convert<v> : T`: a `!pop.int_literal`, the second
-    /// operand, converted into every lane of the vector type the first
-    /// operand names, a type shape read as [`ParamOp::SimdSplat`]'s is
+    /// operand, converted into every lane of the `!kgen.simd` storage type
+    /// the first operand names, a type shape as [`ParamOp::SimdSplat`]'s is
     /// (upstream's `SIMD.__init__(IntLiteral)`, and
     /// `IntLiteral.__mlir_index__` at `!kgen.scalar<index>`). A lane wraps
     /// to its dtype ([`crate::ct::CtLane::of_int_literal`]); a `bool` lane
     /// is whether the literal is nonzero.
     IntLiteralConvert,
     /// `#pop<float_literal_convert<v>> : T`: a `!pop.float_literal`, the
-    /// second operand, rounded once into every lane of the float vector
-    /// type the first operand names (upstream's
+    /// second operand, rounded once into every lane of the float
+    /// `!kgen.simd` storage type the first operand names (upstream's
     /// `SIMD.__init__(FloatLiteral)`).
     FloatLiteralConvert,
     /// `#pop<int_to_float_literal>`: a `!pop.int_literal` as the
@@ -4387,8 +4388,8 @@ enum IntDomain {
 
 impl IntDomain {
     /// The domain of a value of type `meta`. `Int`'s and `UInt`'s
-    /// `!kgen.scalar` storage is read as the scalar, since
-    /// `ParamOp::CastToBuiltin` still takes the `Int` (R1815).
+    /// `!kgen.scalar` storage is read as the scalar, since an `Int`'s
+    /// `_mlir_value` read is still the `Int` itself (R1835).
     fn of(meta: &MetaTy) -> Option<Self> {
         let ty = meta.as_value().map(crate::types::storage_value_ty);
         match ty.as_ref().map(Ty::kind) {

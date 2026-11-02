@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1835**.
+Next free ID: **R1836**.
 
 ## Ordered Work
 
@@ -6826,7 +6826,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `simd_from_length`). Pointing them at the declared overloads fails to
     package std ("not a compile-time Int constant: not an associated
     comptime expression"): the parameter domain folds only the reserved
-    splat (R1815). On landing, delete
+    splat (R1835). On landing, delete
     `SemanticAdjustment::{SplatScalar, SimdFromLength}`, their
     `CheckedCallValueAdjustment` twins, and both symbols.
   - Depends on nothing.
@@ -11535,28 +11535,41 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1815 The checker's parameter domain types `pop.simd.splat`,
-  `pop.cast`, and a `_mlir_value` read at the `SIMD`, where upstream's
-  are its `!kgen.simd` storage**
+- [ ] **R1835 The parameter domain reads an `Int`'s `_mlir_value` as the
+  `Int`, where upstream's is its `!kgen.scalar<index>` storage**
 
-  A literal conversion is typed at the storage it names, but the other
-  lane ops and storage reads still give a vector-typed `ParamExpr`.
-  - `Checker::lane_op_result` (`checker/constraints.rs`) returns the
-    vector for a typed lane op, and `scalar_storage_expression` reads
-    `x._mlir_value` as `x`.
-  - So `builtin_fold.rs`'s `builtin_value` accepts a `!kgen.simd` field
-    value typed at either the storage or its vector.
-  - `ParamOp::CastToBuiltin` takes an `Int`, so `IntDomain::of`
-    (`param_expr.rs`) reads `Int`'s storage as `Int` for
-    `IntLiteral.__mlir_index__`'s `#pop.int_literal_convert<…> :
-    !kgen.scalar<index>`.
-  - Lever: type the lane ops and the field read at the storage, make
-    `CastToBuiltin` take the storage, and let `ParamContext::struct_value`
-    (which already folds a `SIMD` of a constant storage) wrap a symbolic
-    one.
-  - Probe: `assets/ok/comptime_simd_initializer_applications.mojo` keeps
-    `Tag[SIMD[DType.int32, 2](n)]` and `Tag[SIMD[DType.int32,
-    2](from_int=n)]` one type.
+  A vector's `_mlir_value` read is a `struct.extract` at its storage, but
+  an `Int`'s, `UInt`'s, or `Float64`'s is still the scalar itself.
+  - `Checker::scalar_storage_expression` (`checker/constraints.rs`) reads
+    an `is_scalar_value` object's `_mlir_value` as the object, and
+    `Int(mlir_value=s)` over an `Int`-typed `s` as `s`.
+  - So `IntDomain::of` (`param_expr.rs`) reads `Int`'s and `UInt`'s
+    storage as the scalar, `ParamOp::CastFromBuiltin` gives an `Int`
+    where upstream's gives `!kgen.scalar<index>`, and `builtin_value`
+    (`builtin_fold.rs`) still accepts a scalar's field value at its
+    vector.
+  - Typing the read at the storage alone fails to package std ("invalid
+    call to '_shuffle_list'"): std's folded `SIMDLength.__init__(Int)`
+    body becomes `cast_to_builtin(n._mlir_value)` while
+    `types::simd_length_converted` builds `cast_to_builtin(n)`.
+  - Lever: add `IntDomain::{IntStorage, UIntStorage}` and make
+    `struct.extract`/`struct.create` between `Int` and its storage a ring
+    isomorphism on the canonical polynomial, as `build_cast` already
+    makes `CastToBuiltin`/`CastFromBuiltin` between `Int` and `index`.
+  - It changes the canonical node of `Int(mlir_value=i)` to a
+    construction over a storage-typed `CastFromBuiltin`: update
+    `simd_length_image`/`simd_length_of_image`/`simd_length_converted`,
+    `write_expr` (keep printing `n.__mlir_index__()` and
+    `Int(mlir_value=…)`), the MIR text round trip, and mono's
+    `struct_value_agrees`.
+  - Then drop `builtin_value`'s scalar exception.
+  - Probe: with a temporary `eprintln!` on `builtin_value` refusing a
+    `!kgen.simd` field, std packaging drops the fold of
+    `SIMD.__init__(out self: Int, *, mlir_value: index)` (found `Int`,
+    expected `!kgen.simd<length, dtype>`).
+  - Probe: `Tag[Int(mlir_value=(n + 1).__mlir_index__())]` and
+    `Tag[n + 1]` stay one type, as does `Tag[2 * Int(n)]` against
+    `Tag[Int(2 * n)]` for `n: SIMDLength`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

@@ -2404,17 +2404,19 @@ impl Checker {
     }
 
     /// The parameter expression of a compile-time scalar's storage read, as
-    /// an `@always_inline("builtin")` body spells its arithmetic: a scalar's
-    /// or a vector's `_mlir_value` is the value, since a vector's storage is
-    /// its value, `Int(mlir_value=s)` the scalar its storage `s` holds, and
-    /// ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
+    /// an `@always_inline("builtin")` body spells its arithmetic: a
+    /// vector's `_mlir_value` is the field at its `!kgen.simd` storage
+    /// (`struct.extract`), an `Int`'s, `UInt`'s, or `Float64`'s still the
+    /// scalar itself (R1835), `Int(mlir_value=s)` the scalar its storage `s`
+    /// holds, and ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
     /// ([`super::builtin_fold::mlir_op_operator`]), and the typed
     /// ``__mlir_op.`pop.simd.splat` `` and ``__mlir_op.`pop.cast` `` are
-    /// `ParamOp::SimdSplat` and `ParamOp::Cast` at the `SIMD` whose storage
-    /// their `_type=` names. Between an `Int` and the
-    /// MLIR builtin `index`, `x.__mlir_index__()` (`pop.cast_to_builtin`,
-    /// of an `Int` or an `IntLiteral`) and `Int(mlir_value=i)` over an `index` (`pop.cast_from_builtin`)
-    /// are the parameter domain's casts. `None` for any other expression.
+    /// `ParamOp::SimdSplat` and `ParamOp::Cast` at the storage their
+    /// `_type=` names. Between an `Int` and the MLIR builtin `index`,
+    /// `x.__mlir_index__()` (`pop.cast_to_builtin`, of an `Int`, its
+    /// storage, or an `IntLiteral`) and `Int(mlir_value=i)` over an `index`
+    /// (`pop.cast_from_builtin`) are the parameter domain's casts. `None`
+    /// for any other expression.
     fn scalar_storage_expression(
         &self,
         expr: &Expr,
@@ -2427,7 +2429,7 @@ impl Checker {
         };
         match &expr.kind {
             _ if let Some((op, ty, operand)) = super::builtin_fold::typed_lane_op(expr) => {
-                let ty = self.lane_op_result(ty)?;
+                let ty = self.lane_op_storage(ty)?;
                 let operand = self.build_ct(operand, recording).ok()?;
                 Some(
                     self.param_context
@@ -2439,15 +2441,16 @@ impl Checker {
                 Some(self.build_ct(&operator, recording))
             }
             ExprKind::Member { object, field } if field == mojito_types::ct::MLIR_VALUE_FIELD => {
-                let vector = |value: &ParamExpr| {
-                    value
-                        .meta()
-                        .as_value()
-                        .is_some_and(|ty| mojito_types::types::simd_storage(ty).is_some())
-                };
-                scalar(object)
-                    .or_else(|| self.build_ct(object, recording).ok().filter(vector))
-                    .map(Ok)
+                if let Some(scalar) = scalar(object) {
+                    return Some(Ok(scalar));
+                }
+                let value = self.build_ct(object, recording).ok()?;
+                let storage = mojito_types::types::simd_storage(value.meta().as_value()?)?;
+                Some(
+                    self.param_context
+                        .field(&value, field, MetaTy::value(storage))
+                        .map_err(param_error),
+                )
             }
             ExprKind::MethodCall {
                 object,
@@ -2464,11 +2467,9 @@ impl Checker {
                     Some(CtValue::UInt(bits)) => self.ct_param(CtValue::Int(*bits as i64)).ok()?,
                     _ => value,
                 };
-                if !value
-                    .meta()
-                    .as_value()
-                    .is_some_and(|ty| ty.is_int() || ty.is_int_literal())
-                {
+                if !value.meta().as_value().is_some_and(|ty| {
+                    mojito_types::types::storage_value_ty(ty).is_int() || ty.is_int_literal()
+                }) {
                     return None;
                 }
                 Some(
@@ -2508,23 +2509,24 @@ impl Checker {
         }
     }
 
-    /// The `SIMD` type a typed lane op's `_type=` names the storage of:
-    /// `T` for `T._mlir_type` (`Self._mlir_type`,
+    /// The `!kgen.simd` storage a typed lane op's `_type=` names: `T`'s
+    /// for `T._mlir_type` (`Self._mlir_type`,
     /// `Scalar[Self.dtype]._mlir_type`), read before the struct's own
-    /// `comptime` members resolve, or the vector a spelled `!kgen.simd`
-    /// stores.
-    fn lane_op_result(&self, attribute: &mojito_ast::ast::ParamArg) -> Option<Ty> {
+    /// `comptime` members resolve, or a spelled `!kgen.simd`.
+    fn lane_op_storage(&self, attribute: &mojito_ast::ast::ParamArg) -> Option<Ty> {
         if let mojito_ast::ast::ParamArg::Value(Expr {
             kind: ExprKind::Member { object, field },
             ..
         }) = attribute
             && field == "_mlir_type"
             && let Ok(ty) = self.denoted_type(object, "attribute '_type'")
-            && mojito_types::types::simd_storage(&ty).is_some()
+            && let Some(storage) = mojito_types::types::simd_storage(&ty)
         {
-            return Some(ty);
+            return Some(storage);
         }
-        mojito_types::types::storage_simd(&self.mlir_result_type(attribute).ok()?)
+        self.mlir_result_type(attribute)
+            .ok()
+            .filter(|ty| matches!(ty.kind(), TyKind::KgenSimd { .. }))
     }
 
     /// The literal whose `value` parameter `object.value` reads: a closed
@@ -3175,8 +3177,7 @@ impl Checker {
             // a value of that storage.
             (shape, [literal, ty]) if let Some(op) = literal_convert_op(shape) => {
                 let storage = self
-                    .lane_op_result(ty)
-                    .and_then(|vector| mojito_types::types::simd_storage(&vector))
+                    .lane_op_storage(ty)
                     .ok_or_else(|| TypeError::TypeMismatch {
                         expected: "a '!kgen.simd' type".to_string(),
                         found: format!("{ty:?}"),

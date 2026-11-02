@@ -2161,17 +2161,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   through `simd_dunder_is_builtin`). The elaborator's `Specializer::demand_application` passes a
   method's receiver as its first runtime argument. `build_ct` reads the body's
   ``__mlir_op`` arithmetic through `builtin_fold::mlir_op_operator` (over
-  `MlirOp::lowering`), a scalar's or a vector's `_mlir_value`, and
-  `Int(mlir_value=)`, and `constraint_operand` takes a folded call as a
-  `where` operand. The typed ``__mlir_op.`pop.simd.splat` `` and
-  ``__mlir_op.`pop.cast` `` (`builtin_fold::typed_lane_op`) build
-  `ParamOp::SimdSplat` and `ParamOp::Cast` over the `SIMD` type their
-  `_type=` stores (`Checker::lane_op_result`, `types::storage_simd`),
-  which `param_expr::fold::fold_lane_op` folds over `ct::CtLane::{of_scalar,
-  cast}`. A builtin `SIMD` initializer folds to its `_mlir_value`, a
-  vector's storage being the vector: `folded_construction` reads `self = e`
-  as every field of `e`, `builtin_value` compares a `!kgen.simd` field as
-  its vector, `folded_leading_statement` drops a call of a builtin function
+  `MlirOp::lowering`), a vector's `_mlir_value` (a `ParamKind::Field` at
+  its `!kgen.simd` storage; an `Int`'s, `UInt`'s, or `Float64`'s is still
+  the scalar, R1835), and `Int(mlir_value=)`, and `constraint_operand`
+  takes a folded call as a `where` operand. The typed
+  ``__mlir_op.`pop.simd.splat` `` and ``__mlir_op.`pop.cast` ``
+  (`builtin_fold::typed_lane_op`) build `ParamOp::SimdSplat` and
+  `ParamOp::Cast` at the storage their `_type=` names
+  (`Checker::lane_op_storage`), which `param_expr::fold::fold_lane_op`
+  folds over `ct::CtLane::{of_scalar, cast}` at the vector the storage
+  holds. A builtin `SIMD` initializer folds to its `_mlir_value`:
+  `folded_construction` reads `self = e` as every field of `e`,
+  `builtin_value` takes a `!kgen.simd` field's value only at that storage
+  (or at a scalar's vector, R1835), `folded_leading_statement` drops a call of a builtin function
   with no result (`Checker::builtin_procedures`), a non-`Self` struct
   argument's field reads its type from `Checker::builtin_struct_fields`,
   and a fold-time conversion takes the `@implicit` initializer

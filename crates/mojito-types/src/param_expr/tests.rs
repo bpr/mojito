@@ -196,8 +196,9 @@ fn lane_ops_fold_closed_and_stay_nodes_over_a_binder() {
     use crate::ct::CtLane;
     use mojito_ast::ast::Dtype;
     let context = ParamContext::new();
-    let vector = context.type_shape(crate::types::canonical_simd_ty(Dtype::Int32, 4));
-    let scalar = context.type_shape(crate::types::canonical_simd_ty(Dtype::UInt8, 1));
+    let storage = crate::types::kgen_simd_ty(Dtype::Int32, 4);
+    let vector = context.type_shape(storage.clone());
+    let scalar = context.type_shape(crate::types::kgen_simd_ty(Dtype::UInt8, 1));
     let wrapped = context
         .op(
             ParamOp::Cast,
@@ -214,8 +215,12 @@ fn lane_ops_fold_closed_and_stay_nodes_over_a_binder() {
             lanes: vec![CtLane::Int(44)],
         })
     );
+    assert_eq!(
+        wrapped.meta().as_value(),
+        Some(&crate::types::kgen_simd_ty(Dtype::UInt8, 1))
+    );
     let n = int_param(&context, "f", 0, "n");
-    let int32 = context.type_shape(crate::types::canonical_simd_ty(Dtype::Int32, 1));
+    let int32 = context.type_shape(crate::types::kgen_simd_ty(Dtype::Int32, 1));
     let cast = context
         .op(ParamOp::Cast, &[int32, n.clone()])
         .expect("a cast node");
@@ -229,10 +234,7 @@ fn lane_ops_fold_closed_and_stay_nodes_over_a_binder() {
             ..
         }
     ));
-    assert_eq!(
-        splat.meta().as_value(),
-        Some(&crate::types::canonical_simd_ty(Dtype::Int32, 4))
-    );
+    assert_eq!(splat.meta().as_value(), Some(&storage));
     let mut bindings = ParamBindings::new();
     bindings.bind(
         n.as_decl_ref().expect("a reference").id.clone(),
