@@ -56,9 +56,9 @@ command cannot use both.
 
 2. **`Bool` as a library struct** (R1188's residue). R1188 made
    `__mlir_type.i1` a type of its own and split the port:
-   - R1608 (landed) declares `Bool` and its members.
-   - R1609 (initializers), R1610 (operators), and R1611 (printing)
-     follow it.
+   - R1608 (landed) declares `Bool` and its members, and R1609 (landed)
+     its initializers.
+   - R1610 (operators) and R1611 (printing) follow them.
    - R1612 retires `TyKind::Bool`, after those and R1189.
 
    ```sh

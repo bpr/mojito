@@ -5630,14 +5630,11 @@ current Mojo:
   takes it, and `_ = [M(1)]` discards it. An `in` test's container is its
   `__contains__` receiver, lowered by `lower_method_receiver`, so
   `"b" in strs()` destroys the list after the test. A `Bool(x)`
-  conversion reads its argument as a read parameter does, as `Int(x)` and
-  `Float64(x)` do through their declared `SIMD` initializers'
-  read parameter: `infer_bool_conversion` marks a temporary argument
-  `ReadTemporaryArgument`, so `Bool(make())` destroys `make()`'s result
-  after the conversion, from a slot, not a register, and it reads a named
-  `x: T` bounded by the conversion's trait where it lies
-  (`borrow_parameter_place_argument`), as it reads a named struct
-  (`borrow_nominal_place_argument`), so `Bool(x)` copies nothing.
+  conversion is `Bool.__init__[T: Boolable]`'s call, so it reads its
+  argument as that read parameter, as `Int(x)` and `Float64(x)` do
+  through their declared `SIMD` initializers: `Bool(make())` destroys
+  `make()`'s result after the conversion, from a slot, not a register,
+  and `Bool(x)` over a named `x` copies nothing.
 - A construction is its `__init__`'s call, so its arguments bind the same
   way: `record_constructor_call` (`checker/declarations.rs`) runs every
   `infer_construction` path through `record_argument_borrows`, so

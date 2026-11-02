@@ -359,25 +359,32 @@ fn contains_temporary_container_binds_a_read_temporary() {
 
 #[test]
 fn conversion_temporary_argument_binds_a_read_temporary() {
-    // `Bool(make())` reads its temporary argument from its call-result
-    // slot, which dies after the conversion; `Bool(o)` over a named `o` reads
-    // `o` where it lies and binds none.
+    // `Bool(make())`, the inlined `Bool.__init__[T: Boolable]`, reads its
+    // temporary argument from its call-result slot, which dies after the
+    // conversion; `Bool(o)` over a named `o` reads `o` where it lies and
+    // binds none.
     let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef make() -> Optional[M]:\n    return Optional(M(1))\n\ndef main():\n    print(Bool(make()))\n";
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    let is_bool = |instr: &MirInstr| match instr {
-        MirInstr::Call { func, args, .. } if func.0 == "Bool" => Some(args.clone()),
-        _ => None,
+    let drops_a_call_result = |function: &MirFunction| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .any(|instr| {
+                matches!(instr, MirInstr::DropVar { var, .. }
+                if function.var_names[*var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT))
+            })
     };
-    assert!(reads_a_read_temporary(main, is_bool), "{main:#?}");
+    assert!(drops_a_call_result(main), "{main:#?}");
     let named = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef main():\n    var o = Optional(M(1))\n    print(Bool(o))\n";
     let compiled = Compiler::default()
         .compile_source(named, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    assert!(!reads_a_read_temporary(main, is_bool), "{main:#?}");
+    assert!(!drops_a_call_result(main), "{main:#?}");
 }
 
 #[test]

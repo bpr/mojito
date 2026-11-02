@@ -1,4 +1,4 @@
-# expect: does not conform to trait 'Boolable'
+# expect: invalid call to 'Bool': no constructor overload matches
 # `Bool(x)` binds `Bool.__init__[T: Boolable]`, so a struct whose
 # `__bool__` raises, and which therefore cannot declare `Boolable`, does not
 # convert, as at the pin.

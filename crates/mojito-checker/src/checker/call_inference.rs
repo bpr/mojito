@@ -115,10 +115,17 @@ impl Checker {
             {
                 constructed
             }
-            _ if self.structs.contains_key(name)
-                && name != mojito_types::types::SIMD_TYPE_NAME
-                && name != mojito_types::types::BOOL_TYPE_NAME =>
+            // `Bool(copy=b)`: the synthesized `Copyable` initializer, the
+            // builtin copy while the checker holds `Bool` as its compiler
+            // type (R1612).
+            _ if name == mojito_types::types::BOOL_TYPE_NAME
+                && args.is_empty()
+                && param_args.is_empty()
+                && matches!(kwargs, [keyword] if keyword.name == "copy") =>
             {
+                self.infer_builtin_copy_construction(span, name, &Ty::bool(), &kwargs[0])
+            }
+            _ if self.structs.contains_key(name) && name != mojito_types::types::SIMD_TYPE_NAME => {
                 // `String(x)` on a non-literal argument stringifies through
                 // the builtin conversion, which builds the nominal struct
                 // itself: the call routes to the `"String"` builtin (a
@@ -204,52 +211,6 @@ impl Checker {
                 };
                 let value = self.conformance_query(subject, traits)?;
                 self.record_member_value(span, value);
-                Ok(Ty::bool())
-            }
-            // `Bool(copy=b)`: the compiler's `Bool`'s `Copyable`
-            // initializer.
-            "Bool"
-                if args.is_empty()
-                    && param_args.is_empty()
-                    && matches!(kwargs, [keyword] if keyword.name == "copy") =>
-            {
-                self.infer_builtin_copy_construction(span, name, &Ty::bool(), &kwargs[0])
-            }
-            // `Bool(value=i)`: upstream's initializer from an `i1`, or its
-            // `Boolable` initializer at a `Bool`, the overload the keyword
-            // also names.
-            "Bool"
-                if args.is_empty()
-                    && param_args.is_empty()
-                    && matches!(kwargs, [keyword] if keyword.name == "value") =>
-            {
-                let source = if self.infer(&kwargs[0].value)? == Ty::i1() {
-                    Ty::i1()
-                } else {
-                    Ty::bool()
-                };
-                self.infer_storage_construction(span, name, &source, &kwargs[0])
-                    .map(|_| Ty::bool())
-            }
-            // `Bool(mlir_value=s)`: upstream's initializer from the
-            // `!kgen.scalar<bool>` a `pop.simd.reduce_and` gives, which
-            // Mojito holds as the one-lane `bool` vector the `Bool` casts.
-            "Bool"
-                if args.is_empty()
-                    && param_args.is_empty()
-                    && matches!(kwargs, [keyword] if keyword.name == "mlir_value") =>
-            {
-                self.infer_storage_construction(
-                    span.clone(),
-                    name,
-                    &simd_ty(Dtype::Bool, 1),
-                    &kwargs[0],
-                )?;
-                self.record_at(span).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::ScalarCast(
-                        mojito_types::ct::ScalarConversion::Bool,
-                    ),
-                ));
                 Ok(Ty::bool())
             }
             _ if !kwargs.is_empty() => Err(TypeError::BadCall {
@@ -374,7 +335,6 @@ impl Checker {
             "input" => self.infer_input(span, args),
             "len" => self.infer_len(args),
             "range" => self.infer_range(args),
-            "Bool" => self.infer_bool_conversion(&span, args),
             "divmod" => self.infer_divmod(args),
             "SIMD" => self.infer_simd_construction(&span, param_args, args),
             "List" => self.infer_list_construction(&span, param_args, args),
@@ -924,41 +884,6 @@ impl Checker {
             });
         }
         Ok(found)
-    }
-
-    /// `Bool(mlir_value=s)` at the one-lane `bool` vector, or
-    /// `Bool(value=i)` at `ty` the `i1` or `Bool` it takes: upstream's
-    /// initializer from the `!kgen.scalar<bool>` storage, or from the `i1`
-    /// both backends hold as a `Bool`, so the argument must already be that
-    /// storage, never a literal, a value of the type, or another width or
-    /// dtype.
-    fn infer_storage_construction(
-        &self,
-        span: SourceSpan,
-        name: &str,
-        ty: &Ty,
-        storage: &mojito_ast::ast::KwArg,
-    ) -> Result<Ty, TypeError> {
-        let found = self.infer(&storage.value)?;
-        let expected = match storage.name.as_str() {
-            "mlir_value" => mojito_types::types::simd_storage(ty).unwrap_or_else(|| ty.clone()),
-            _ => ty.clone(),
-        };
-        if found != expected {
-            return Err(TypeError::TypeMismatch {
-                expected: expected.to_string(),
-                found: if mojito_types::types::default_literal(&found) == found {
-                    found.to_string()
-                } else {
-                    "a literal".to_string()
-                },
-                context: format!("argument '{}' of '{name}'", storage.name),
-            });
-        }
-        self.record_at(span).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
-        ));
-        Ok(ty.clone())
     }
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]

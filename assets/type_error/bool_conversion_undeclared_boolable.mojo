@@ -1,4 +1,4 @@
-# expect: does not conform to trait 'Boolable'
+# expect: invalid call to 'Bool': no constructor overload matches
 # `Bool(x)` is upstream's `Bool.__init__[T: Boolable]`, so a struct with a
 # `__bool__` that does not declare `Boolable` is rejected.
 @fieldwise_init

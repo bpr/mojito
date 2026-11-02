@@ -2408,7 +2408,8 @@ impl Checker {
     /// vector's `_mlir_value` is the field at its `!kgen.simd` storage
     /// (`struct.extract`), an `Int`'s, `UInt`'s, or `Float64`'s still the
     /// scalar itself (R1835), `Int(mlir_value=s)` the scalar its storage `s`
-    /// holds, and ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
+    /// holds, `Bool(value=b)` over the `i1` an `index.cmp` folds to its
+    /// `Bool`, and ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
     /// ([`super::builtin_fold::mlir_op_operator`]), and the typed
     /// ``__mlir_op.`pop.simd.splat` `` and ``__mlir_op.`pop.cast` `` are
     /// `ParamOp::SimdSplat` and `ParamOp::Cast` at the storage their
@@ -2486,7 +2487,9 @@ impl Checker {
             } if param_args.is_empty()
                 && args.is_empty()
                 && let [storage] = kwargs.as_slice()
-                && storage.name == "mlir_value" =>
+                && (storage.name == "mlir_value"
+                    || (storage.name == "value"
+                        && name == mojito_types::types::BOOL_TYPE_NAME)) =>
             {
                 let target = scalar_type_name(name)?;
                 let value = self.build_ct(&storage.value, recording).ok()?;

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Bool(...)` binds upstream's declared `Bool` initializers in
+  `std.builtin.bool` (the `i1`, `!kgen.scalar<bool>`, `Boolable`, `None`,
+  and `@implicit` `Scalar[.bool]` overloads beside the default) instead of
+  the checker's conversion rule (R1609). `print(Bool(), Bool(None))` prints
+  `False False`, which was "expected a numeric or Bool value, found None",
+  and an initializer's `self._mlir_value = …` store builds the `Bool`. A
+  non-`Boolable` argument now reports "no constructor overload matches".
+
 - `Bool` is upstream's `struct Bool` in `std.builtin.bool`, exported by the
   prelude, with its storage, `MIN`/`MAX`, the default initializer, and the
   `__bool__`, `__mlir_bool__`, `__mlir_i1__`, `__int__`, `__float__`, and

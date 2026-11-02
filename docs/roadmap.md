@@ -11065,34 +11065,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1609 `Bool`'s initializers are checker rules, so `Bool()` and
-  `Bool(None)` are rejected**
-
-  Problem: `print(Bool(), Bool(None))` fails with "expected a numeric or
-  Bool value, found None", where the pin prints `False False`, because
-  `Bool(...)` is typed by `infer_unbound_call`'s and `builtins.rs`'s
-  conversion rules rather than upstream's overloads.
-  - Declare the five non-Python overloads left (R1608 declared
-    `__init__(out self)`): `@implicit __init__(value: __mlir_type.i1)` over
-    `pop.cast_from_builtin`, `@implicit __init__(mlir_value: …)`,
-    `__init__[T: Boolable, //](value: T)`, `__init__(value: None)`, and
-    `@implicit __init__(value: Scalar[DType.bool])`.
-  - Construction is declared-first with the rule fallback, as R1555 did
-    for `SIMD`.
-  - `self._mlir_value = …` in an initializer lowers as a `scalar.cast` to
-    `Bool` into `self`'s place, the store half of `BoolStorage`, which the
-    checker rejects outside an initializer today.
-  - Delete the two `"Bool"` arms of `infer_unbound_call`, its struct
-    arm's `BOOL_TYPE_NAME` exclusion, and
-    `Checker::infer_bool_conversion` (`builtins.rs`), and narrow the
-    elaborator's `Bool` rewrite in `Specializer::rewrite_blocks`.
-  - The `@implicit` stand-ins in `Checker::record_implicit_conversion`
-    (`i1` and `Scalar[DType.bool]` to `Bool`) stay until R1612.
-  - Probe: `Bool(Foo(3))` over a user `Boolable`, `Bool(3)`, `Bool(0.0)`,
-    and `Bool(value=t)` still print as at the pin.
-  - Depends on R1608.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1610 `Bool`'s comparison and bitwise operators are checker rules,
   so `t.__eq__(f)` has no method**
 
@@ -11133,8 +11105,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R1612 `Bool` is `TyKind::Bool` in the checker, where upstream's is
   the declared struct**
 
-  Problem: once R1608–R1611 land, the `Ty::new` bridge and the `@implicit`
-  stand-ins are all that keep `Bool` a compiler type.
+  Problem: once R1608–R1611 land, the `Ty::new` bridge, the `@implicit`
+  stand-ins, and the initializer bridges below are all that keep `Bool` a
+  compiler type.
   - Delete the bridge (`bridged_bool`), so `Bool` resolves to
     `Struct("Bool", [])`, and `nominal_parts`'s `Bool` arm.
   - Delete the `TyKind::Bool` guards R1608 added beside `is_simd()` in
@@ -11151,6 +11124,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `field_offset` and `lower_get_field`, which read `val._mlir_value` of a
     generic `Scalar[DType.bool]` elaborated to `Bool` as the `Bool`.
     Probe: `assets/ok/simd_bool_masks.mojo`'s `f.mask[1] = True`.
+  - Delete the bridges R1609 left for the declared initializers:
+    `infer_unbound_call`'s `Bool(copy=b)` builtin copy arm, the
+    `BoolStorage` store an initializer's `self._mlir_value = …` records
+    (`check_bool_storage_store`, `lower_set_place`'s `scalar.cast` into
+    `self`), the VM's `Value::Bool(false)` skeleton in
+    `Prog::constructed`, and `scalar_storage_expression`'s
+    `Bool(value=b)` arm, which reads a folded `i1` as the `Bool`.
   - Depends on R1608, R1609, R1610, R1611, and R1189.
   - Model: Fable, Not Planned.
 

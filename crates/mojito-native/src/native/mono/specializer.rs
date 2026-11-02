@@ -2721,9 +2721,10 @@ impl<'a> Specializer<'a> {
                 // the shared resolver and the `MethodCall` arm below
                 // monomorphize the dunder instance like any other method.
                 // A `SIMD` operand's `divmod` is its declared `__divmod__`.
-                // `Bool(x)` over a scalar operand is its `scalar.cast`; other
-                // non-struct operands pass through for the backend's scalar
-                // interception.
+                // MIR's truthiness conversion `Bool(x)` (a spelled `Bool(x)`
+                // calls its declared initializer) over a scalar operand is its
+                // `scalar.cast`; other non-struct operands pass through for
+                // the backend's scalar interception.
                 if let MirInstr::Call {
                     dest,
                     func,
@@ -2737,8 +2738,8 @@ impl<'a> Specializer<'a> {
                         "abs" => Some("__abs__"),
                         "round" => Some("__round__"),
                         "divmod" => Some("__divmod__"),
-                        // `Bool(x)` over a nominal receiver is upstream's
-                        // `__init__[T: Boolable]` body, the dunder's call.
+                        // A truthiness `Bool(x)` over a nominal receiver
+                        // is the dunder's call.
                         "Bool" => Some("__bool__"),
                         _ => None,
                     };
@@ -2785,9 +2786,9 @@ impl<'a> Specializer<'a> {
                             .get(&value.0)
                             .is_some_and(|ty| bool_cast.casts_from(ty))
                     {
-                        // `Bool(x)` a template spelled over a type parameter
-                        // is, at a scalar instance, the cast the check
-                        // records where the operand is spelled scalar.
+                        // A truthiness `Bool(x)` a template tests over a
+                        // type parameter is, at a scalar instance, the cast
+                        // MIR emits where the operand is spelled scalar.
                         casts.insert(dest.0);
                         *instruction = MirInstr::ScalarCast {
                             dest: *dest,

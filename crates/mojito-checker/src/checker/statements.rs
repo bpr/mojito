@@ -2698,17 +2698,14 @@ impl Checker {
         // rooted at a mutable variable or `mut self`); the value must
         // keep the place's type. A width-1 SIMD target (a lane write, or
         // a scalar-alias field) additionally accepts a splatting literal.
-        // A `Bool`'s storage is a read of the `Bool` while `Bool` is a
-        // compiler type, never a place.
+        // A `Bool`'s storage is no place while `Bool` is a compiler type:
+        // an initializer's store to its own storage builds the `Bool`
+        // from it, and any other store is outside the subset.
         if let ExprKind::Member { object, field } = &place.kind
             && field == mojito_types::ct::MLIR_VALUE_FIELD
             && *self.infer(object)? == TyKind::Bool
         {
-            return Err(TypeError::Unsupported(
-                "a store to a `Bool`'s `_mlir_value` storage is outside the subset; \
-                 construct the `Bool` with `Bool(mlir_value=...)` instead"
-                    .to_string(),
-            ));
+            return self.check_bool_storage_store(place, object, value);
         }
         let target = self.check_place(place)?;
         if let ExprKind::Call { name, .. } | ExprKind::MethodCall { method: name, .. } = &place.kind
@@ -4182,6 +4179,44 @@ fn dependent_projection_spelling(annotation: &SourceType) -> String {
 }
 
 impl Checker {
+    /// Check the store `object._mlir_value = value` to a `Bool`'s
+    /// `!kgen.scalar<bool>` storage: inside an initializer of `Bool`, the
+    /// store to `self`'s builds `self` from the storage, recorded on the
+    /// place as [`SemanticAdjustment::BoolStorage`] for MIR to lower as the
+    /// cast into `self`; anywhere else it is outside the subset.
+    ///
+    /// [`SemanticAdjustment::BoolStorage`]: mojito_checked::checked::SemanticAdjustment::BoolStorage
+    fn check_bool_storage_store(
+        &self,
+        place: &Expr,
+        object: &Expr,
+        value: &Expr,
+    ) -> Result<Ty, TypeError> {
+        if !(self.self_initializing
+            && matches!(&object.kind, ExprKind::Identifier(name) if name == "self"))
+        {
+            return Err(TypeError::Unsupported(
+                "a store to a `Bool`'s `_mlir_value` storage outside its initializer is \
+                 outside the subset; construct the `Bool` with `Bool(mlir_value=...)` instead"
+                    .to_string(),
+            ));
+        }
+        let storage = mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1);
+        let found = self.infer_with_expected(value, &storage, true)?;
+        if found != storage {
+            return Err(TypeError::TypeMismatch {
+                expected: storage.to_string(),
+                found: found.to_string(),
+                context: "store to a `Bool`'s `_mlir_value`".to_string(),
+            });
+        }
+        self.record_at(place.source_span()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::BoolStorage,
+        ));
+        self.record_place_write_invalidation(place.source_span(), place);
+        Ok(storage)
+    }
+
     /// Erase one occurrence's record and its entries in the checker's own
     /// occurrence-keyed tables: the augmented store drops what it recorded
     /// at a synthesized receiver.

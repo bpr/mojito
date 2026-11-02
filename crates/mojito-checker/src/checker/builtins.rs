@@ -889,67 +889,6 @@ impl Checker {
         Ok(true)
     }
 
-    /// Type `Bool(x)`, which `std.builtin.bool` does not declare yet
-    /// (R1609): no argument is `False`, and one argument is of a numeric or
-    /// `Bool` type, recorded as the `ScalarCast` upstream's inlined
-    /// `pop.cast` is, or a value whose `Boolable` bound or declared
-    /// `__bool__` promises the conversion.
-    pub(super) fn infer_bool_conversion(
-        &self,
-        span: &SourceSpan,
-        args: &[Expr],
-    ) -> Result<Ty, TypeError> {
-        let target = Ty::bool();
-        if args.is_empty() {
-            return Ok(target);
-        }
-        if args.len() != 1 {
-            return Err(TypeError::ArityMismatch {
-                name: target.to_string(),
-                expected: 1,
-                got: args.len(),
-            });
-        }
-        let arg_ty = self.infer(&args[0])?;
-        let arg_ty = self.opaque_element(&arg_ty).unwrap_or(arg_ty);
-        let mismatch = || TypeError::TypeMismatch {
-            expected: "a numeric or Bool value".to_string(),
-            found: arg_ty.to_string(),
-            context: format!("argument to '{target}'"),
-        };
-        if mojito_types::ct::ScalarConversion::Bool.casts_from(&arg_ty) {
-            self.record_at(span.clone()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::ScalarCast(
-                    mojito_types::ct::ScalarConversion::Bool,
-                ),
-            ));
-            return Ok(target);
-        }
-        // A concrete value routes through its `__bool__`, the same protocol
-        // an opaque `T: Boolable` uses; upstream's overload is
-        // `__init__[T: Boolable]`, so the struct must declare the trait.
-        if let Some(result) = self.struct_dunder(&arg_ty, "__bool__", &[]) {
-            require_dunder_ret(result?, &target, "__bool__")?;
-            if !self.conforms_to(&arg_ty, "Boolable") {
-                return Err(TypeError::TraitNotSatisfied {
-                    param: "T".to_string(),
-                    ty: arg_ty.to_string(),
-                    trait_name: "Boolable".to_string(),
-                    reason: None,
-                });
-            }
-            self.borrow_nominal_place_argument(&args[0], &arg_ty);
-            self.record_read_temporary_argument(&args[0]);
-            return Ok(target);
-        }
-        if !self.param_has_bound(&arg_ty, "Boolable") {
-            return Err(mismatch());
-        }
-        self.borrow_parameter_place_argument(&args[0], &arg_ty);
-        self.record_read_temporary_argument(&args[0]);
-        Ok(target)
-    }
-
     /// Type the prelude built-in `divmod(a, b)` (`DivModable`) → `Tuple[T, T]`:
     /// two numeric arguments of a common type (like an operator), a literal
     /// one materialized to its default (`Int`, `Float64`) as upstream's `T`
