@@ -1155,11 +1155,25 @@ fn verify_simd_lane_instruction(
 /// A `struct.create` builds a declared struct of as many fields as it
 /// passes, each typed as declared. A generic struct's field types would
 /// need substitution the verifier does not re-derive, as a field
-/// projection's do.
+/// projection's do. A `SIMD` is created from its one `_mlir_value`
+/// storage, which a closed `SIMD` has no declared instance below the
+/// elaborator to name until a member is demanded (R1812).
 fn verify_struct_creation(cx: &InstrCx<'_>, dest: Reg, fields: &[Reg], errors: &mut Vec<String>) {
     let prefix = cx.prefix;
+    if let Some(storage) = cx.reg_ty(dest).and_then(mojito_types::types::simd_storage) {
+        match fields {
+            [field]
+                if cx
+                    .reg_ty(*field)
+                    .is_none_or(|found| types_compatible(found, &storage)) => {}
+            _ => errors.push(format!(
+                "{prefix}: struct creation of a SIMD passes other than its {storage} storage"
+            )),
+        }
+        return;
+    }
     let declared = cx.reg_ty(dest).and_then(|ty| match ty.kind() {
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => cx
+        TyKind::Struct(name, arguments) => cx
             .declarations
             .structure(name)
             .map(|declaration| (declaration, arguments.is_empty())),

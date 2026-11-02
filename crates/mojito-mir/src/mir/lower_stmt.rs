@@ -1620,23 +1620,6 @@ impl<'a> Flatten<'a> {
         if let Some(target_ty) = target.ty() {
             value = self.materialize_register(value, &target_ty, value_expression.location());
         }
-        // `v._mlir_value = s` stores the whole `SIMD` value, which its
-        // storage is: the stored register is retyped, never converted.
-        if target.is_simd_storage()
-            && self
-                .f
-                .reg_types
-                .get(&value.0)
-                .is_some_and(|stored| matches!(stored.kind(), TyKind::KgenSimd { .. }))
-            && let Some(vector) = target.object().and_then(Node::ty)
-        {
-            let retyped = self.fresh_typed(value_expression.location(), None, vector);
-            self.emit(MirInstr::Rebind {
-                dest: retyped,
-                value,
-            });
-            value = retyped;
-        }
         self.yield_stored_value(value_expression, value);
         (value, value_place)
     }
@@ -3569,12 +3552,22 @@ impl<'a> Flatten<'a> {
         self.flush_argument_anchors();
         let writes_through_reference = self.aliases.contains_key(&dest)
             || (self.runtime_aliases.contains(&dest) && !self.pointer_valued_slot(dest));
+        // A `SIMD` literal conversion the checker types at the vector
+        // (R1801) binds a slot of its declared `!kgen.simd` storage type, as
+        // upstream allocates it.
         if !writes_through_reference
             && let Some(ty) = self
                 .f
                 .reg_types
                 .get(&src.0)
-                .cloned()
+                .map(|found| match binding_ty {
+                    Some(declared)
+                        if mojito_types::types::simd_storage(found).as_ref() == Some(declared) =>
+                    {
+                        declared.clone()
+                    }
+                    _ => found.clone(),
+                })
                 .or_else(|| value.ty())
                 .or_else(|| binding_ty.cloned())
         {

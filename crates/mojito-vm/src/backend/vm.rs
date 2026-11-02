@@ -816,6 +816,18 @@ fn held_field<'s>(structs: &'s HashMap<String, StructDef>, ty: &Ty) -> Option<(&
     Some((name.as_str(), declaration.register_field.as_deref()?))
 }
 
+/// Whether a field step on a value of `ty` is the value itself: `ty` is a
+/// held struct, or a `SIMD`, whose `_mlir_value` the VM holds as the
+/// vector. A closed `SIMD` has no declared instance below the elaborator
+/// for [`held_field`] to read until a member is demanded (R1812), and a
+/// `Scalar[DType.bool]` a generic body reads `_mlir_value` of is the
+/// compiler's `Bool` once elaborated (R1612).
+fn field_is_whole(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
+    ty.kind().as_simd().is_some()
+        || *ty.kind() == mojito_types::types::TyKind::Bool
+        || held_field(structs, ty).is_some()
+}
+
 /// Lower every field step whose base is a held struct to [`Proj::Rebind`]:
 /// the held field is the struct's whole storage, as upstream's
 /// `LowerKGENToLLVM` makes a one-element struct's `struct_gep` the
@@ -830,9 +842,7 @@ fn hold_register_fields(structs: &HashMap<String, StructDef>, blocks: &mut [MirB
                         _ => place.projection_tys.get(position - 1),
                     };
                     if matches!(place.proj[position], Proj::Field(_))
-                        && base.is_some_and(|base| {
-                            held_field(structs, peel_references(base)).is_some()
-                        })
+                        && base.is_some_and(|base| field_is_whole(structs, peel_references(base)))
                     {
                         place.proj[position] = Proj::Rebind;
                     }
@@ -887,6 +897,12 @@ impl Prog {
     /// `ty` is a struct held as its one field ([`StructDef::register_field`]).
     fn held_field(&self, ty: Option<&Ty>) -> Option<(&str, &str)> {
         held_field(&self.structs, ty?)
+    }
+
+    /// Whether a field read of a value of `ty` is the value itself
+    /// ([`field_is_whole`]).
+    fn field_is_whole(&self, ty: Option<&Ty>) -> bool {
+        ty.is_some_and(|ty| field_is_whole(&self.structs, ty))
     }
 
     /// `value`, a value of `ty`, as the [`Value::Struct`] the VM's

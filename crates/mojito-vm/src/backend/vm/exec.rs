@@ -1036,7 +1036,7 @@ impl VmBackend {
                 let base_ty = prog.mir.functions[function].1.reg_types.get(&base.0);
                 let base = regs[base.0 as usize].clone();
                 // A held struct's field is the struct's value.
-                if prog.held_field(base_ty).is_some() {
+                if prog.field_is_whole(base_ty) {
                     regs[dest.0 as usize] = prog.unboxed(base, base_ty);
                     return Ok(());
                 }
@@ -1049,7 +1049,7 @@ impl VmBackend {
                     base
                 };
                 let referent_ty = base_ty.map(peel_references);
-                regs[dest.0 as usize] = if prog.held_field(referent_ty).is_some() {
+                regs[dest.0 as usize] = if prog.field_is_whole(referent_ty) {
                     prog.unboxed(base, referent_ty)
                 } else {
                     get_field(&base, field)?
@@ -1387,13 +1387,16 @@ impl VmBackend {
                 };
             }
             MirInstr::MakeStruct { dest, fields } => {
-                let name = prog
-                    .declared_struct(prog.mir.functions[function].1.reg_types.get(&dest.0))
-                    .ok_or_else(|| {
-                        RuntimeError::TypeError(
-                            "struct.create builds no declared struct".to_string(),
-                        )
-                    })?;
+                let dest_ty = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                // A `SIMD` is held as its one `_mlir_value` storage.
+                if let ([field], true) = (fields.as_slice(), dest_ty.is_some_and(|ty| ty.is_simd()))
+                {
+                    regs[dest.0 as usize] = regs[field.0 as usize].clone();
+                    return Ok(());
+                }
+                let name = prog.declared_struct(dest_ty).ok_or_else(|| {
+                    RuntimeError::TypeError("struct.create builds no declared struct".to_string())
+                })?;
                 let values = fields.iter().map(|r| regs[r.0 as usize].clone()).collect();
                 regs[dest.0 as usize] = calls::struct_value(&prog.structs[name], name, values)?;
             }

@@ -61,7 +61,7 @@ use mojito_mir::mir::{
 };
 use mojito_symbol::symbol::is_initializer_symbol;
 use mojito_types::origin::CallableEnvironment;
-use mojito_types::types::Ty;
+use mojito_types::types::{Ty, TyKind};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -366,11 +366,11 @@ impl Facts {
             && (thin || stores_closures || identity)
             && entry.mentions.iter().all(|(_, mention)| match *mention {
                 Mention::Store(src) => {
-                    function.reg_types.get(&src.0) == typed
+                    holds(function.reg_types.get(&src.0), typed)
                         && self.definitions.get(src.0 as usize) == Some(&1)
                         && (identity || self.reads.get(src.0 as usize) == Some(&1))
                 }
-                Mention::Read { dest } => function.reg_types.get(&dest.0) == typed,
+                Mention::Read { dest } => holds(function.reg_types.get(&dest.0), typed),
                 Mention::CalleeRead { dest } => {
                     callable_value && function.reg_types.get(&dest.0) == typed
                 }
@@ -378,6 +378,18 @@ impl Facts {
                 Mention::Declare | Mention::Kill | Mention::Address => true,
             })
     }
+}
+
+/// Whether a register of type `found` is a value of a slot of type
+/// `slot`: the slot's own type, or, for a `!kgen.simd` slot, the vector
+/// whose storage it is, as the checker types a literal conversion
+/// (`#pop.int_literal_convert<…> : Self._mlir_type`) at the vector (R1801).
+fn holds(found: Option<&Ty>, slot: Option<&Ty>) -> bool {
+    found == slot
+        || found.zip(slot).is_some_and(|(found, slot)| {
+            matches!(slot.kind(), TyKind::KgenSimd { .. })
+                && mojito_types::types::simd_storage(found).as_ref() == Some(slot)
+        })
 }
 
 /// Promote the slots of the structured body `function` that upstream's

@@ -410,9 +410,20 @@ impl MirDeclarations {
 
     /// The fields of a value of the declared struct type `ty` at its
     /// arguments ([`mojito_types::types::struct_field_types`]); `None` for
-    /// any other type, or one whose fields its arguments do not close.
+    /// any other type, or one whose fields its arguments do not close. A
+    /// `SIMD`'s one field is its `_mlir_value` storage at its own slots,
+    /// symbolic ones included, which a closed `SIMD` has no declared
+    /// instance below the elaborator to name (R1812).
     pub fn field_types(&self, ty: &Ty) -> Option<Cow<'_, [(String, Ty)]>> {
-        let (name, arguments) = ty.kind().as_non_simd_struct()?;
+        if let Some(storage) = mojito_types::types::simd_storage(ty) {
+            return Some(Cow::Owned(vec![(
+                mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+                storage,
+            )]));
+        }
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return None;
+        };
         let declaration = self.structure(name)?;
         mojito_types::types::struct_field_types(
             &declaration.param_decls,

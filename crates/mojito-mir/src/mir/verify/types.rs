@@ -35,8 +35,9 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         return types_compatible(&found_bool, &expected_bool);
     }
     // A `!kgen.simd` storage agrees with the vector it stores, the type
-    // LLVM translation gives the vector, while a `SIMD`'s `_mlir_value`
-    // reads the vector's own register (R1811).
+    // LLVM translation gives the vector, while the checker types a literal
+    // conversion (`#pop.int_literal_convert<…> : Self._mlir_type`) and the
+    // builtin ops over a `SIMD` at the vector (R1801).
     if matches!(found.kind(), TyKind::KgenSimd { .. })
         != matches!(expected.kind(), TyKind::KgenSimd { .. })
     {
@@ -288,20 +289,29 @@ fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
 }
 
 /// Whether `actual` fits the vector or `!kgen.simd` storage `pattern` when
-/// one of the pattern's slots is symbolic; `None` when the pattern is not
-/// such a vector.
+/// one of the pattern's slots is symbolic, read in the pattern's own form:
+/// a vector's slots off a vector (a `Bool` one lane of `bool`), a
+/// storage's off a storage; `None` when the pattern is neither.
 fn symbolic_simd_compatible(pattern: &Ty, actual: &Ty) -> Option<bool> {
-    let (dtype, width) = mojito_types::types::vector_slots(pattern.kind())?;
+    let storage = matches!(pattern.kind(), TyKind::KgenSimd { .. });
+    let slots = |ty: &Ty| {
+        if storage {
+            mojito_types::types::kgen_simd_slots(ty.kind())
+        } else {
+            ty.kind().as_simd()
+        }
+    };
+    let (dtype, width) = slots(pattern)?;
 
     if !dtype.is_symbolic() && !width.is_symbolic() {
         return None;
     }
     let (actual_dtype, actual_width) = match actual.kind() {
-        TyKind::Bool => (
+        TyKind::Bool if !storage => (
             mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Bool),
             mojito_types::types::SimdWidth::Known(1),
         ),
-        other => match mojito_types::types::vector_slots(other) {
+        _ => match slots(actual) {
             Some(slots) => slots,
             None => return Some(false),
         },

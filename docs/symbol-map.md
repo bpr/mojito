@@ -2668,9 +2668,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`mlir_simd_annotation`) and keys it `__KgenSimd$…` as `ty_raw` keys the
   storage type, and spells an `` __mlir_type.`name` `` by
   `types::mlir_type_named`, so an overload over either keys alike at its
-  declaration and its call. The check's `SemanticAdjustment::SimdStorage`
-  makes `v._mlir_value` the vector's own value or place
-  (`Node::project_member`, `mir/facts.rs`). Below the check a vector
+  declaration and its call. `v._mlir_value` is the declared struct's
+  field read (`Checker::member_type`'s struct-field lookup), a
+  `Proj::Field` or `field.get` in MIR, and `self._mlir_value = s` a field
+  initialization of `out self`. `MirDeclarations::field_types` answers a
+  `SIMD`'s one field at its own slots, symbolic ones included, so `sroa`
+  splits a `SIMD` slot into that field, `mem-2-reg` promotes a storage slot whose value the checker typed
+  at the vector (`mem2reg.rs`'s `holds`, R1801), and `canonicalize` folds
+  a `SIMD`'s `struct.create`/`field.get` pair, the storage of a constant,
+  and a `SIMD` built from a builtin op's storage result
+  (`StructFolds::simd_storage_identity`, `storage_op_vector`). Until a
+  closed `SIMD` always has a declared instance (R1812), the verifier's
+  `verify_struct_creation`, the VM's `field_is_whole` (place steps,
+  `field.get`, `struct.create`), and Pliron's `field_offset`,
+  `lower_get_field`, and `lower_struct_create` answer a `SIMD`'s one
+  `_mlir_value` field as its whole value, and a `Bool`'s too, which a
+  generic body's `Scalar[DType.bool]` becomes once elaborated (R1612). Below the check a vector
   lowers to its storage, as upstream's `LowerKGENToLLVM` lowers the
   `SIMD` struct to its field: `types::storage_ty` is the mapping (the
   vector arm of `MirDeclarations::translated_type`, which stays until a
@@ -2681,8 +2694,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   classify the storage, so a
   one-lane storage stays an SSA scalar. The storage is never read back
   as a vector; the elaborator's `discharge_rebinds` gives an erased
-  `Self(mlir_value=s)` chain's root the vector it is rebound to, so a
-  display reads the `SIMD`.
+  `Self(mlir_value=s)` chain's root, read only by the chain, the vector it
+  is rebound to, so a display reads the `SIMD`.
   The bundled struct conforms to `Writable` where its element type does
   (`_write_elements`, `write_to`, `write_repr_to`, upstream's members).
   `ParameterList.get_span` takes the elements' static address from the

@@ -1024,6 +1024,12 @@ take theirs, and adds `float_literal_convert` of the same shape: upstream's
 which `SIMD`'s literal initializers read. The package format moves to
 `mojito-package 173`.
 
+The MIR schema is unchanged now that `v._mlir_value` on a `SIMD` is a
+`field(_mlir_value)` projection or `field.get` of the struct, which the
+checked `SimdStorage` adjustment no longer makes the vector's own register
+or place (R1811). A packaged body's `SIMD` stores and reads change shape, so
+the package format moves to `mojito-package 174`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `v._mlir_value` on a `SIMD` reads the struct's `_mlir_value` field, as
+  upstream does, instead of standing for the vector's own register or
+  place (R1811): `SemanticAdjustment::SimdStorage` is gone, and
+  `self._mlir_value = s` is a field initialization of `out self`. `sroa`
+  splits a `SIMD` slot into its storage and `canonicalize` folds the
+  field's create/extract pairs, so inlined constructors still fold to
+  constants (`SIMD.slice`'s `llvm.vector.extract` offset stays an
+  immediate). The elaborator's `discharge_rebinds` no longer retypes a
+  storage root other instructions read. No program's output changes.
+
 - A `SIMD[dtype, length]` application is the declared struct's
   `TyKind::Struct` everywhere, as upstream holds it (R1800):
   `TyKind::Simd`, its `INT`/`UINT`/`FLOAT64` constants, and the `Ty::new`

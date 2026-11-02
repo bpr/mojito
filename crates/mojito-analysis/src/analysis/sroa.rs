@@ -304,9 +304,22 @@ fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> V
     let fields = judged_slots(function, declarations, |var| {
         var as usize >= function.n_params && function.error_slot != Some(var)
     });
+    // A `SIMD` slot a register of another type is stored to or read into
+    // (an unmaterialized literal) keeps its whole accesses: its field has
+    // no such value to take apart.
+    let typed_wholes = |var: VarId, entry: &Census| {
+        let slot = function.var_tys.get(&var);
+        slot.is_none_or(|slot| !slot.is_simd())
+            || entry.stores.iter().chain(&entry.reads).all(|reg| {
+                function
+                    .reg_types
+                    .get(&reg.0)
+                    .is_none_or(|ty| Some(ty) == slot)
+            })
+    };
     let mut slots: Vec<Candidate> = unkept_census(function, &fields)
         .into_iter()
-        .filter(|(_, entry)| entry.defined)
+        .filter(|(var, entry)| entry.defined && typed_wholes(*var, entry))
         .filter_map(|(var, entry)| {
             Some(Candidate {
                 var,
@@ -407,9 +420,6 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
                 )
             });
     }
-    if !ty.kind().is_non_simd_struct() {
-        return None;
-    }
     let fields = declarations.field_types(ty)?;
     // A struct declaring `TrivialRegisterPassable` copies and drops whole
     // without naming a member, which a field whose type records one cannot
@@ -433,7 +443,7 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
 /// Whether the struct `ty` declares `TrivialRegisterPassable`, or a trait
 /// refining it, unconditionally.
 fn declares_trivially_register_passable(ty: &Ty, declarations: &MirDeclarations) -> bool {
-    let Some((name, _)) = ty.kind().as_non_simd_struct() else {
+    let TyKind::Struct(name, _) = ty.kind() else {
         return false;
     };
     declarations.structure(name).is_some_and(|declaration| {

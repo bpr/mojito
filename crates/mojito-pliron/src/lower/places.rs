@@ -335,6 +335,19 @@ impl FnLowering<'_> {
         field: &str,
         dest: Reg,
     ) -> Result<(u64, Ty), PlironError> {
+        // A `SIMD`'s `_mlir_value` is its `!kgen.simd` storage, the whole
+        // value: a closed `SIMD` has no declared instance below the
+        // elaborator until a member is demanded (R1812), and a
+        // `Scalar[DType.bool]` is the compiler's `Bool` once elaborated
+        // (R1612).
+        if field == mojito_types::ct::MLIR_VALUE_FIELD
+            && let Some(storage) = mojito_types::types::simd_storage(ty).or_else(|| {
+                (*ty.kind() == TyKind::Bool)
+                    .then(|| mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1))
+            })
+        {
+            return Ok((0, storage));
+        }
         let Some((name, _)) = ty.kind().as_non_simd_struct() else {
             return Err(self.unsupported_reg(format!("field access on `{ty}`"), dest));
         };
@@ -379,8 +392,13 @@ impl FnLowering<'_> {
         // A held struct is its one field, so reading that field from a value
         // is the identity, as upstream's `LowerKGENToLLVM` lowers
         // `kgen.struct.extract` of a one-element register-passable struct.
-        if let Some((name, _)) = base_ty.kind().as_non_simd_struct()
-            && self.mir_declarations.register_field(name).is_some()
+        // A `SIMD` is held as its storage ([`Self::field_offset`]).
+        if base_ty.kind().as_simd().is_some()
+            || *base_ty.kind() == TyKind::Bool
+            || base_ty
+                .kind()
+                .as_non_simd_struct()
+                .is_some_and(|(name, _)| self.mir_declarations.register_field(name).is_some())
         {
             match lower_ty(
                 self.name,

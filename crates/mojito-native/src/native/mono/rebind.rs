@@ -22,9 +22,7 @@ impl Specializer<'_> {
     /// storage's own. A chain's root takes the type of its outermost rebind,
     /// the one the program reads the value at, when only the chain reads it:
     /// a `SIMD` built from its storage (`Self(mlir_value=...)`), built from
-    /// a `SIMD`, is the `SIMD`. A `!kgen.simd` root other instructions read
-    /// too takes the vector it is rebound to all the same, as `_mlir_value`
-    /// reads a vector's own register (R1811).
+    /// a `SIMD`, is the `SIMD`.
     pub(super) fn discharge_rebinds(
         &self,
         template: &str,
@@ -57,12 +55,7 @@ impl Specializer<'_> {
                 .filter(|(_, root)| !aliases.contains_key(&root.0))
                 .filter_map(|(dest, root)| {
                     let read_at = function.reg_types.get(&outermost(*dest))?;
-                    let own = function.reg_types.get(&root.0);
-                    (reads.get(root.0 as usize) == Some(&1)
-                        || own.is_some_and(|own| {
-                            mojito_types::types::simd_storage(read_at).as_ref() == Some(own)
-                        }))
-                    .then(|| (root.0, read_at.clone()))
+                    (reads.get(root.0 as usize) == Some(&1)).then(|| (root.0, read_at.clone()))
                 })
                 .collect();
             function.reg_types.extend(retyped);

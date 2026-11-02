@@ -248,6 +248,7 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     let mut creates = HashMap::new();
     let mut extracts = HashMap::new();
     let mut host_comparisons = HashSet::new();
+    let mut vector_ops = HashSet::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
             match instruction {
@@ -278,6 +279,19 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 }
                 MirInstr::GetField { dest, base, field } => {
                     extracts.insert(dest.0, (*base, field.clone()));
+                }
+                MirInstr::Const { dest, .. }
+                | MirInstr::UnOp { dest, .. }
+                | MirInstr::BinOp { dest, .. }
+                | MirInstr::MakeSimd { dest, .. }
+                | MirInstr::SimdCast { dest, .. }
+                | MirInstr::SimdBitcast { dest, .. }
+                | MirInstr::SimdShuffle { dest, .. }
+                | MirInstr::SimdSelect { dest, .. }
+                | MirInstr::SimdInsert { dest, .. }
+                | MirInstr::SimdReduce { dest, .. }
+                | MirInstr::CallLlvmIntrinsic { dest, .. } => {
+                    vector_ops.insert(dest.0);
                 }
                 _ => {}
             }
@@ -311,6 +325,25 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
         }
         _ => None,
     };
+    // A `SIMD` built from the `!kgen.simd` result of a builtin op it
+    // alone reads is that result, retyped the vector, as the MIR types the
+    // builtin ops over a `SIMD` (R1801) and upstream's `LowerKGENToLLVM`
+    // makes a one-element struct its element.
+    let storage_op_vector = |instruction: &MirInstr| match instruction {
+        MirInstr::MakeStruct { dest, fields } => match fields.as_slice() {
+            [storage]
+                if vector_ops.contains(&storage.0)
+                    && reads.get(storage.0 as usize) == Some(&1)
+                    && let Some(vector) = reg_types.get(&dest.0)
+                    && mojito_types::types::simd_storage(vector).as_ref()
+                        == reg_types.get(&storage.0) =>
+            {
+                Some((*dest, *storage, vector.clone()))
+            }
+            _ => None,
+        },
+        _ => None,
+    };
     let mut folds = HashMap::new();
     let mut copies = HashMap::new();
     let mut retyped = Vec::new();
@@ -320,14 +353,20 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
             instruction_result_regs(instruction, &mut results);
             if let (Some(comparison), [dest]) = (comparison_bool(instruction), results.as_slice()) {
                 folds.insert(dest.0, comparison);
-                retyped.push(comparison);
+                retyped.push((comparison, Ty::bool()));
+                continue;
+            }
+            if let Some((dest, storage, vector)) = storage_op_vector(instruction) {
+                folds.insert(dest.0, storage);
+                retyped.push((storage, vector));
                 continue;
             }
             if let (Some(operand), [dest]) = (
                 instruction
                     .forwarded_operand(&constant, reg_types, declarations)
                     .or_else(|| copied_closure(instruction))
-                    .or_else(|| structs.extracted(instruction)),
+                    .or_else(|| structs.extracted(instruction))
+                    .or_else(|| structs.simd_storage_identity(instruction, &constant)),
                 results.as_slice(),
             ) {
                 folds.insert(dest.0, operand);
@@ -381,9 +420,9 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
             None
         })
         .collect();
-    for comparison in retyped {
-        if roots.values().any(|root| *root == comparison) {
-            reg_types.insert(comparison.0, Ty::bool());
+    for (root, ty) in retyped {
+        if roots.values().any(|candidate| *candidate == root) {
+            reg_types.insert(root.0, ty);
         }
     }
     forward(blocks, &roots);
@@ -414,6 +453,33 @@ impl StructFolds<'_> {
         self.creates.get(&base.0)?.get(position).copied()
     }
 
+    /// The register a `SIMD`'s storage step reads or builds when that
+    /// register already holds the result: the storage of a constant
+    /// vector, which upstream's `StructExtractOp::fold` reads off the
+    /// constant, and a `SIMD` created from a register of its own type,
+    /// which the checker types a literal conversion's storage at (R1801).
+    fn simd_storage_identity(
+        &self,
+        instruction: &MirInstr,
+        constant: &impl Fn(Reg) -> Option<Const>,
+    ) -> Option<Reg> {
+        let simd = |reg: &Reg| self.reg_types.get(&reg.0).filter(|ty| ty.is_simd());
+        match instruction {
+            MirInstr::GetField { base, field, .. }
+                if field == mojito_types::ct::MLIR_VALUE_FIELD
+                    && simd(base).is_some()
+                    && constant(*base).is_some() =>
+            {
+                Some(*base)
+            }
+            MirInstr::MakeStruct { dest, fields } => match fields.as_slice() {
+                [field] if simd(dest).is_some_and(|ty| simd(field) == Some(ty)) => Some(*field),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The container a `struct.create` of every field extracted from it in
     /// order copies, when the extracts, each read once, are its only
     /// readers: upstream's `foldTrivialStructCopy`.
@@ -433,9 +499,17 @@ impl StructFolds<'_> {
     }
 
     /// The declaration position of the field `field` of the struct `base`
-    /// holds.
+    /// holds. A `SIMD`'s one field is its `_mlir_value` storage, which a
+    /// closed `SIMD` has no declared instance below the elaborator to
+    /// name (R1812).
     fn position(&self, base: Reg, field: &str) -> Option<usize> {
-        let (name, _) = self.reg_types.get(&base.0)?.kind().as_non_simd_struct()?;
+        let ty = self.reg_types.get(&base.0)?;
+        if ty.is_simd() {
+            return (field == mojito_types::ct::MLIR_VALUE_FIELD).then_some(0);
+        }
+        let mojito_types::types::TyKind::Struct(name, _) = ty.kind() else {
+            return None;
+        };
         self.declarations
             .structure(name)?
             .fields

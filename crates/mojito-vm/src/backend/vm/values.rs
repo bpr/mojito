@@ -386,10 +386,12 @@ impl VmBackend {
     /// `uninitmem`, upstream's `undef`: a struct with no fields is whole
     /// with nothing stored, so it is that struct, a `!pop.array` is its
     /// elements' placeholders, which stores through `pop.array.gep` fill
-    /// one by one, and a vector is one of its type, whose lanes
-    /// `pop.simd.insertelement` writes one by one; anything else is
-    /// uninitialized storage.
+    /// one by one, and a vector or its `!kgen.simd` storage is one of the
+    /// vector's type, whose lanes `pop.simd.insertelement` writes one by
+    /// one; anything else is uninitialized storage.
     pub(super) fn uninit_mem_value(prog: &Prog, ty: Option<&Ty>) -> Value {
+        let ty = ty.map(|ty| mojito_types::types::storage_simd(ty).unwrap_or_else(|| ty.clone()));
+        let ty = ty.as_ref();
         let elements = ty
             .is_some_and(|ty| matches!(ty.kind(), TyKind::PopArray { .. }) || ty.kind().is_simd());
         ty.and_then(|ty| Self::uninitialized_value(prog, ty))

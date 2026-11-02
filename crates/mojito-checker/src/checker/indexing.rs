@@ -1937,16 +1937,6 @@ impl Checker {
         {
             return Ok(read);
         }
-        // `v._mlir_value` is upstream's `!kgen.simd` storage field, which
-        // both backends hold as they hold the vector.
-        if field == mojito_types::ct::MLIR_VALUE_FIELD
-            && let Some(storage) = mojito_types::types::simd_storage(&obj_ty)
-        {
-            self.record_at(span).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::SimdStorage,
-            ));
-            return Ok(storage);
-        }
         // `p._mlir_value` is upstream's `!kgen.pointer` field of a `Pointer`.
         if field == mojito_types::ct::MLIR_VALUE_FIELD
             && let TyKind::Pointer { element, .. } = obj_ty.kind()
@@ -1980,7 +1970,9 @@ impl Checker {
             ));
             return Ok(Ty::dtype());
         }
-        if let Some((sname, targs)) = obj_ty.kind().as_non_simd_struct() {
+        // A `SIMD` application is the declared struct, whose `_mlir_value`
+        // field is its `!kgen.simd` storage.
+        if let TyKind::Struct(sname, targs) = obj_ty.kind() {
             let info = self.structs.get(sname).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
             })?;

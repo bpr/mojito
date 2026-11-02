@@ -104,9 +104,6 @@ impl<'a> Flatten<'a> {
     /// Read member node `e`, `object.field`.
     pub(super) fn member_expr(&mut self, e: Node<'a>, object: Node<'a>, field: &str) -> Reg {
         let node = e.checked;
-        if e.is_simd_storage() {
-            return self.expr(object);
-        }
         if e.is_bool_storage() {
             return self.bool_storage(object, e.location());
         }

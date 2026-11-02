@@ -31,7 +31,7 @@ command cannot use both.
      `!kgen.simd` field in the verifier and both backends, and R1799 did
      the same for every one-field register-passable struct. R1800
      deleted `TyKind::Simd`, so `SIMD` is the declared struct below the
-     checker. R1811 makes `_mlir_value` its field read, R1812 declares
+     checker. R1811 made `_mlir_value` its field read, R1812 declares
      every closed instance, and R1801 then gives MIR's builtin ops the
      storage, not the struct.
 

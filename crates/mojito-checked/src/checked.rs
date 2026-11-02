@@ -1007,14 +1007,9 @@ pub enum SemanticAdjustment {
     SimdLength {
         length: mojito_types::param_expr::ParamExpr,
     },
-    /// `v._mlir_value` on a SIMD value — its `!kgen.simd` storage, which
-    /// both backends hold as the vector while `SIMD` is a compiler type: the
-    /// read, borrow, or store of `v`.
-    SimdStorage,
     /// `b._mlir_value` on a `Bool` — its `!kgen.scalar<bool>` storage, the
     /// one-lane `bool` vector the `Bool` splats to while `Bool` is a
-    /// compiler type. Unlike [`Self::SimdStorage`] the two are held
-    /// differently, so it is a read of `b`, never a place.
+    /// compiler type, so it is a read of `b`, never a place.
     BoolStorage,
     /// `DType.<name>` read as a runtime value, or the `dtype` of a `SIMD` type
     /// or value (`Int32.dtype`, `v.dtype`) — the dtype, lowered as a dtype

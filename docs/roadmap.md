@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1813**.
+Next free ID: **R1814**.
 
 ## Ordered Work
 
@@ -11006,6 +11006,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     one-field register-passable hold), and with it `types::i1_as_bool`, `require_bool`'s `i1` arm, and the VM's
     `builtin.cast` conversion between `Value::Bool` and a one-lane mask.
   - Like R1557 for `SIMD`.
+  - Delete the `Bool` arms of the VM's `field_is_whole` and Pliron's
+    `field_offset` and `lower_get_field`, which read `val._mlir_value` of a
+    generic `Scalar[DType.bool]` elaborated to `Bool` as the `Bool`.
+    Probe: `assets/ok/simd_bool_masks.mojo`'s `f.mask[1] = True`.
   - Depends on R1608, R1609, R1610, R1611, and R1189.
   - Model: Fable, Not Planned.
 
@@ -11335,36 +11339,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1811 `v._mlir_value` on a `SIMD` is the vector's own register,
-  where upstream reads the struct's field**
+- [ ] **R1813 `Int32(copy=x)` is a checked value read
+  (`BuiltinCopyConstruction`), where upstream calls `SIMD`'s synthesized
+  copy initializer**
 
-  The check records `SemanticAdjustment::SimdStorage`, so the access is
-  the value or place itself, and every pass below the check treats a
-  `SIMD` register as its own storage.
-  - Now that `SIMD` is a struct (R1800), the access projects
-    `Proj::Field("_mlir_value")`, which the VM's `hold_register_fields`
-    and Pliron's held-struct `places.rs` path already turn into the
-    struct's storage.
-  - Delete `SimdStorage`, its record in `checker/indexing.rs`,
-    `is_simd_storage`, and the early returns in `project_member`,
-    `member_expr`, and `lower_assignment_value`.
-  - `SIMD(mlir_value=s)`'s `self._mlir_value = mlir_value` becomes a field
-    initialization of `out self`.
-  - Delete the identities `SimdStorage` forces: `discharge_rebinds`' arm
-    giving a `!kgen.simd` root the vector it is rebound to,
-    `types_compatible`'s storage-agrees-with-its-vector arm,
-    `verify_scalar_cast`'s one-lane storage source, and
-    `symbolic_simd_compatible`'s storage pattern.
-  - Probe: `assets/ok/mlir_builtin_casts.mojo` natively.
-    `Int(mlir_value=storage)` over a `storage` another op reads displays
-    only through that `discharge_rebinds` arm today, and must print
-    `5 10 …` with it deleted.
-  - Probe: `Int32(copy=x)` records `BuiltinCopyConstruction`, since
-    `types::builtin_copy_is_value_read` still answers for `SIMD`. Following
-    the pin, MIR's `struct_copy` serves it once that predicate and
-    `expr_call.rs`'s `copy_construction` stop excluding `SIMD`.
-  - Depends on R1800.
-  - Model: Fable, Planned.
+  `types::builtin_copy_is_value_read` still answers for `SIMD`, and
+  `type_construction.rs`'s `copy_construction` keeps `SIMD` off MIR's
+  `struct_copy`.
+  - The direct `Name(copy=x)` path (`checker/declarations.rs`'s
+    `infer_copy_construction`) has no declared or synthesized copy
+    initializer for `SIMD` to resolve, and does not convert its argument.
+  - Probe: narrowing both makes `Int32(copy=x)` print `0`, reading an
+    uninitialized `self`.
+  - Probe: it also rejects `assets/ok/type_param_copy_construction.mojo`'s
+    `Int(copy=7)`, which the pin accepts through `copy: Self`'s implicit
+    conversion.
+  - Lever: resolve the synthesized `TrivialRegisterPassable` copy
+    initializer on that path, converting the argument to `Self`, and let
+    `struct_copy` serve it.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1812 Below the elaborator a closed `SIMD` application has a
   struct declaration only once a member is demanded, where upstream's
@@ -11381,6 +11375,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `declare_simd_instance`, and `translated_type` reads a `SIMD`'s
     instance through `symbol::member_table_name`. `emit-mir` then gains
     the instance declarations.
+  - Then delete the `SIMD` arms that stand in for the instance's one
+    `_mlir_value` field: `MirDeclarations::field_types`',
+    `verify_struct_creation`'s, canonicalize's `StructFolds::position`,
+    the VM's `field_is_whole` and `struct.create`, and Pliron's
+    `field_offset`, `lower_get_field`, and `lower_struct_create`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11402,7 +11401,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: lower compiler arithmetic as `pop` ops over `_mlir_value` field
     reads, and let canonicalization fold the `pop` chain without leaving
     the storage type. `vector_slots` then narrows to `KgenSimd`.
-  - Depends on R1800 and R1811.
+  - The checker also types a literal conversion
+    (`#pop.int_literal_convert<v> : Self._mlir_type`,
+    `literal_initializer_body`) at the vector, and the MIR types its
+    `const` so. Typing these at the storage deletes the identities that
+    gap forces: `types_compatible`'s storage-agrees-with-its-vector arm,
+    `mem2reg.rs`'s `holds`, `lower_bind`'s storage slot type, and
+    canonicalize's `simd_storage_identity` and `storage_op_vector`.
+  - `sroa`'s `splittable_slots` also keeps a `SIMD` slot whose whole
+    store is an unmaterialized literal register (`typed_wholes`). Probe:
+    without it, `assets/ok/pliron_float_pow.mojo` fails natively with
+    "unsupported field access on `IntLiteral[8]`".
+  - Probe: deleting `types_compatible`'s `KgenSimd` arm fails the bundled
+    stdlib's `SIMD.__init__$ov$IntLiteral` with "store of SIMD[dtype,
+    length] into storage of type `!kgen.simd<length, dtype>`".
+  - Depends on R1800.
   - Model: Fable, Not Planned.
 
 - [ ] **R1618 A compile-time argument computed by an inlined dunder keeps
