@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1832**.
+Next free ID: **R1833**.
 
 ## Ordered Work
 
@@ -11477,26 +11477,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1813 `Int32(copy=x)` is a checked value read
-  (`BuiltinCopyConstruction`), where upstream calls `SIMD`'s synthesized
-  copy initializer**
+- [ ] **R1832 A struct's synthesized `copy` without a `__copyinit__`
+  calls the checker's `__mojito_fieldwise_copy` intrinsic, where upstream's
+  `Copyable.copy` default is `Self(copy=self)`**
 
-  `types::builtin_copy_is_value_read` still answers for `SIMD`, and
-  `type_construction.rs`'s `copy_construction` keeps `SIMD` off MIR's
-  `struct_copy`.
-  - The direct `Name(copy=x)` path (`checker/declarations.rs`'s
-    `infer_copy_construction`) has no declared or synthesized copy
-    initializer for `SIMD` to resolve, and does not convert its argument.
-  - Probe: narrowing both makes `Int32(copy=x)` print `0`, reading an
-    uninitialized `self`.
-  - Probe: it also rejects `assets/ok/type_param_copy_construction.mojo`'s
-    `Int(copy=7)`, which the pin accepts through `copy: Self`'s implicit
-    conversion.
-  - Lever: resolve the synthesized `TrivialRegisterPassable` copy
-    initializer on that path, converting the argument to `Self`, and let
-    `struct_copy` serve it.
+  `synthesize_copyable_copy` (`mojito-comptime/src/comptime/synth.rs`)
+  spells `Self(copy=self)` only for a struct with a copy constructor.
+  - Every other `Copyable` struct's `copy` calls `__mojito_fieldwise_copy`,
+    which the checker (`call_inference.rs`) and MIR (`expr_call.rs`) each
+    special-case as a value read.
+  - Since R1813, `S(copy=s)` at a struct whose copy is synthesized
+    (a `SIMD` application included) reaches `struct_copy`, so the
+    intrinsic has no remaining job.
+  - Lever: spell `Self(copy=self)` for every struct, then delete the
+    intrinsic's checker and MIR arms.
+  - Probe: `x.copy()` on a `@fieldwise_init` struct, an `Int32`, a
+    `SIMD[DType.float32, 4]`, and a generic struct, on both backends.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1812 Below the elaborator a closed `SIMD` application has a
   struct declaration only once a member is demanded, where upstream's

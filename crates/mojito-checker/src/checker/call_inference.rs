@@ -423,8 +423,8 @@ impl Checker {
 
     /// A `SIMD` construction through the `__init__` overloads `std.simd`
     /// declares, or `None` when it is the checker's rule's: no declared one
-    /// matches and a rule serves its keyword (`copy=`) or its one
-    /// positional argument into a width not known here (`SIMD[dt, _]`,
+    /// matches and the rule serves its one positional argument into a
+    /// width not known here (`SIMD[dt, _]`,
     /// R1544); any other miss is the declared selection's error, so
     /// `Int8(x)` over a struct whose `__int__` raises but which does not
     /// declare `IntableRaising` is rejected as at the pin. `constructed` is
@@ -897,6 +897,21 @@ impl Checker {
         ty: &Ty,
         source: &mojito_ast::ast::KwArg,
     ) -> Result<Ty, TypeError> {
+        self.copy_argument(name, ty, source)?;
+        self.record_at(span).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
+        ));
+        Ok(ty.clone())
+    }
+
+    /// The `copy: Self` argument of a synthesized copy initializer at `ty`,
+    /// converted to `ty` as any argument is; answers the argument's own type.
+    pub(super) fn copy_argument(
+        &self,
+        name: &str,
+        ty: &Ty,
+        source: &mojito_ast::ast::KwArg,
+    ) -> Result<Ty, TypeError> {
         let found = self.infer_with_expected(&source.value, ty, true)?;
         if !self.record_implicit_conversion(&source.value, &found, ty)? {
             return Err(TypeError::TypeMismatch {
@@ -905,10 +920,7 @@ impl Checker {
                 context: format!("argument 'copy' of '{name}'"),
             });
         }
-        self.record_at(span).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
-        ));
-        Ok(ty.clone())
+        Ok(found)
     }
 
     /// `Bool(mlir_value=s)` at the one-lane `bool` vector, or

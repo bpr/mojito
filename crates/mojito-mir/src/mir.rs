@@ -351,7 +351,7 @@ impl MirDeclarations {
     /// trivial fieldwise copy, and any other type.
     pub fn copy_initializer(&self, ty: &Ty) -> Option<&str> {
         match ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+            TyKind::Struct(name, _) => {
                 self.lifecycle_member(mojito_types::types::struct_template(name), "__copyinit__")
             }
             _ => None,

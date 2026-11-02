@@ -1041,7 +1041,8 @@ impl<'a> Flatten<'a> {
     /// so the copy initializer runs on the live source exactly once, where an
     /// ordinary value read would run a user's copy initializer a second time
     /// for the argument itself — observable through its side effects. `None`
-    /// for any other keyword list or a source that is not a simple place.
+    /// for any other keyword list, a source that is not a simple place, or a
+    /// source converted to `Self`, which is a value rather than the place.
     pub(super) fn copy_construction_keywords(
         &mut self,
         arguments: &[(&str, Node<'a>)],
@@ -1049,6 +1050,9 @@ impl<'a> Flatten<'a> {
         let [("copy", value)] = arguments else {
             return None;
         };
+        if value.implicit_conversion().is_some() {
+            return None;
+        }
         let place = self.simple_place(*value)?;
         let source = self.fresh_typed(
             value.location(),

@@ -36,8 +36,8 @@ command cannot use both.
    - What is left is the storage, not the struct, at each builtin site:
      - R1812: a closed instance is declared only once a member is
        demanded, so concrete MIR still reads a `SIMD` as its storage.
-     - R1813: `Int32(copy=x)` is still a checked value read, not the
-       synthesized copy initializer.
+     - R1813 (done): `Int32(copy=x)` is the synthesized copy
+       initializer, lowered as the trivial struct copy.
      - R1814 (MIR lowering's lane ops typed at the struct) and R1815
        (the checker's parameter domain typed at the vector), then R1816
        (the verifier rejects a `SIMD` register on a builtin vector

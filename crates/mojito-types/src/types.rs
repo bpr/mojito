@@ -4047,16 +4047,14 @@ pub fn callable_environment_coerces(
     }
 }
 
-/// Whether a *concrete* built-in type has an intrinsic `__hash__` — the scalar
-/// set the VM can hash directly (`Int`/`UInt`/`Bool`/`String`/`Float64`).
+/// Whether `Copyable.copy` on a value of this type has no callee.
 ///
-/// This lets a user key struct combine `self.field.__hash__()` values. Whether
-/// `Copyable.copy` on a value of this type has no callee: built-in scalars,
-/// literals, tuples, packs, and variants copy by the ordinary value read.
-/// Nominal, parametric, associated, and reference types resolve their `copy`
-/// through declarations or trait dispatch instead.
-pub fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
-    !ty.is_non_simd_struct()
+/// The compiler's own value types (`Bool`, literals, tuples, packs, and
+/// variants) copy by the ordinary value read. Structs (a `SIMD` application
+/// included), parametric, associated, and reference types resolve their
+/// `copy` through declarations or trait dispatch instead.
+pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
+    !matches!(ty, TyKind::Struct(..))
         && !matches!(
             ty,
             TyKind::Param { .. }

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Int32(copy=x)` and `SIMD[dt, n](copy=v)` call `SIMD`'s synthesized copy
+  initializer, lowered as the trivial struct copy every synthesized copy
+  takes, rather than a checked value read (R1813). A synthesized copy now
+  converts its argument to `Self` as any argument does, so `Q(copy=p)`
+  through `Q`'s `@implicit` initializer from `P` is accepted, as at the pin.
+
 - The differential pin is now Mojo `1.3.0.dev2026110105` (upstream
   `a431ffa8af`, 2026-11-01), and the window's renames, removals, and fixes
   reach Mojito in place. `ParameterList` declares `length` where it declared

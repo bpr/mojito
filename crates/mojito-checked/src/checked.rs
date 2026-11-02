@@ -635,8 +635,9 @@ pub enum SemanticAdjustment {
     ConstructType {
         ty: Ty,
     },
-    /// `Int(copy=x)`, the `Copyable` initializer of a built-in value type,
-    /// whose copy is the read of its source, or `SIMD[dt, n](mlir_value=v)`,
+    /// `Bool(copy=b)` or a literal instance's copy, the `Copyable`
+    /// initializer of a compiler-owned value type, whose copy is the read of
+    /// its source, or `SIMD[dt, n](mlir_value=v)`,
     /// the storage initializer over a storage held as the vector: MIR lowers
     /// the call as its one keyword argument's value.
     BuiltinCopyConstruction,

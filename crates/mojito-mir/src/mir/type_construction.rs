@@ -322,7 +322,7 @@ fn copy_construction<C: ConstructionTypes>(
             value: *source,
             constructor: None,
         }),
-        struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => Some(struct_copy(
+        TyKind::Struct(..) => Some(struct_copy(
             *dest,
             bound,
             (*source, kwarg_places.first().cloned().flatten()),

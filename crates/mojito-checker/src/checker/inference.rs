@@ -518,9 +518,15 @@ impl Checker {
                     .borrow_mut()
                     .insert(expr.source_span());
             }
+            // The `SIMD` rule takes no keyword, so a keyword call (the
+            // synthesized `copy=`) is never its construction.
             if let ExprKind::Call {
-                name, param_args, ..
+                name,
+                param_args,
+                kwargs,
+                ..
             } = &expr.kind
+                && kwargs.is_empty()
                 && self
                     .node_facts
                     .borrow()

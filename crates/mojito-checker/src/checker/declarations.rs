@@ -6,7 +6,7 @@ use super::patterns::StmtReach;
 use super::*;
 use mojito_ast::ast::DeclaredParam;
 use mojito_types::types::{FuncTy, GenericFuncTy};
-use mojito_types::types::{TyKind, builtin_copy_is_value_read, nominal_parts};
+use mojito_types::types::{TyKind, nominal_parts};
 
 /// A method body as its check binds and walks it, whether the method was
 /// spelled or is a struct's wrapper of a trait default it inherits.
@@ -4559,10 +4559,12 @@ impl Checker {
     }
 
     /// `P(copy=other)`: the explicit copy constructor when the struct declares
-    /// one, else the synthesized `Copyable` copy; the result keeps the
-    /// source's origin tail. The synthesized copy of an instance held as a
-    /// value (`Int32(copy=x)`, `SIMD[dt, n](copy=v)`) is the read of its
-    /// source, which converts to the instance as any argument does.
+    /// one, else the synthesized `Copyable` copy `__init__(out self, *, copy:
+    /// Self)`; the result keeps the source's origin tail. When the call names
+    /// its instance (`Int32(copy=x)`, `SIMD[dt, n](copy=v)`, a struct without
+    /// parameters), the synthesized copy's argument converts to `Self` as any
+    /// argument does (`Int(copy=7)`, `Q(copy=p)` through an `@implicit`
+    /// initializer).
     fn infer_copy_construction(
         &self,
         span: &SourceSpan,
@@ -4598,40 +4600,38 @@ impl Checker {
             };
             let instance = match constructed {
                 Some(instance) => Some(instance.clone()),
+                None if param_args.is_empty() && info.decls.is_empty() => {
+                    Some(Self::struct_instance_type(name, Vec::new()))
+                }
                 None if param_args.is_empty() => None,
                 None => self
                     .probe(resolve)
                     .ok()
                     .map(|bound| Self::struct_instance_type(name, bound.arguments)),
             };
-            if let Some(instance) =
-                instance.filter(|instance| builtin_copy_is_value_read(instance.kind()))
-            {
-                if constructed.is_none() {
+            if let Some(instance) = instance {
+                if constructed.is_none() && !param_args.is_empty() {
                     let attributes = resolve()?.attributes;
                     self.record_bracket_attributes(
                         span.clone(),
                         partitioned.brackets.scatter(attributes),
                     );
                 }
-                return self.infer_builtin_copy_construction(
-                    span.clone(),
-                    name,
-                    &instance,
-                    &kwargs[0],
+                let found = self.copy_argument(name, &instance, &kwargs[0])?;
+                self.record_read_temporary_argument(&kwargs[0].value);
+                // A source already of the instance keeps its origin tail.
+                return Ok(
+                    if coerces(&found, &instance) && matches!(found.kind(), TyKind::Struct(..)) {
+                        found
+                    } else {
+                        instance
+                    },
                 );
             }
             let arg_ty = self.infer(&kwargs[0].value)?;
             self.record_read_temporary_argument(&kwargs[0].value);
             return match nominal_parts(&arg_ty) {
-                Some((actual, _)) if actual == name => {
-                    if builtin_copy_is_value_read(arg_ty.kind()) {
-                        self.record_at(span.clone()).adjustment = Some(Box::new(
-                            mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
-                        ));
-                    }
-                    Ok(arg_ty)
-                }
+                Some((actual, _)) if actual == name => Ok(arg_ty),
                 _ => Err(TypeError::TypeMismatch {
                     expected: name.to_string(),
                     found: arg_ty.to_string(),

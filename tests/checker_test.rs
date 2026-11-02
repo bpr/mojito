@@ -532,6 +532,18 @@ fn rejects_construction_arity_and_type() {
 }
 
 #[test]
+fn synthesized_copy_converts_its_argument_to_self() {
+    // `Int32(copy=x)` is `SIMD`'s synthesized `copy: Self`, which takes a
+    // literal that converts to `Self` and rejects one that does not.
+    ok_std("def main():\n    var x: Int32 = 5\n    print(Int32(copy=x), Int32(copy=7))\n");
+    let e = err_std("def main():\n    print(Int32(copy=\"s\"))\n");
+    assert!(
+        matches!(&e, TypeError::TypeMismatch { context, .. } if context.contains("'copy'")),
+        "got {e:?}"
+    );
+}
+
+#[test]
 fn rejects_struct_without_constructor() {
     let e = err("struct P:\n    var x: Int\n\nvar p: P = P(1)\n");
     assert_eq!(e, TypeError::NoConstructor("P".into()));
