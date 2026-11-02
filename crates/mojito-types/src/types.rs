@@ -1129,9 +1129,9 @@ impl TyKind {
 
     /// The name and arguments of a struct application other than a `SIMD`
     /// one. A rule written for a declared struct reads this rather than
-    /// matching [`TyKind::Struct`], since `SIMD`'s operators, copies, and
-    /// lanes are still the compiler's own rules (R1575, R1814), though its
-    /// application is the declared struct.
+    /// matching [`TyKind::Struct`], since `SIMD`'s copies and lanes are
+    /// still the compiler's own rules (R1575), though its application is
+    /// the declared struct.
     pub fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
         match self {
             Self::Struct(name, arguments) if !self.is_simd() => Some((name, arguments)),
@@ -1617,7 +1617,7 @@ pub fn kgen_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 ///
 /// Both forms are read because some of MIR's builtin vector instructions
 /// still take the `SIMD` register where upstream's `pop` ops take the
-/// storage (R1814, R1816).
+/// storage (R1816, R1834).
 pub fn vector_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     kgen_simd_slots(ty).or_else(|| simd_slots(ty))
 }

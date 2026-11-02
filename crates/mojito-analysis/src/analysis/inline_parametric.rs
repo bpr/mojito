@@ -3527,14 +3527,7 @@ fn instantiated<'c>(
     let mut instantiation = Instantiation::new(declaration, owner, arguments)?;
     let mut function = callee.clone();
     walk_function_mut(&mut instantiation, &mut function).ok()?;
-    construct_type_parameters(
-        &mut function.blocks,
-        &mut function.n_regs,
-        &mut function.reg_types,
-        &instantiation,
-        declarations,
-    )
-    .ok()?;
+    construct_type_parameters(&mut function.blocks, &instantiation, declarations).ok()?;
     if constructs_binder(&function.blocks, &instantiation.types) {
         return None;
     }

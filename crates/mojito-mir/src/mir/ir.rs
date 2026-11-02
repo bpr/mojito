@@ -3438,7 +3438,11 @@ impl MirInstr {
                     [literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))]
                         if width == 1 =>
                     {
-                        literal.clone().materialize_as(reg_types.get(&dest.0)?)?
+                        literal
+                            .clone()
+                            .materialize_as(&mojito_types::types::storage_value_ty(
+                                reg_types.get(&dest.0)?,
+                            ))?
                     }
                     // A host integer into one integer lane wraps, as the
                     // VM builds it (`Int64(n)` over a folded `n`).

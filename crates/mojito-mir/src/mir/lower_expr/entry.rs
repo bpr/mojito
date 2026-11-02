@@ -367,7 +367,7 @@ impl<'a> Flatten<'a> {
                 spread: None,
                 refined_bound: None,
             });
-            return self.builtin_cast(e.location(), dest, Ty::int());
+            return self.int_from_index(dest, e.location());
         }
         if let Some(target) = e.literal_materialization() {
             let value = self.expr_unconverted(e);

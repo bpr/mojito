@@ -23,6 +23,7 @@
 //! `_insert` per collected keyword, and the filled collector passed as the
 //! call's one `**` operand.
 
+use crate::mir::type_construction::storage_construction;
 use crate::mir::variadic_list::{
     FrameTables, ListElement, build_variadic_list, element_pointer_type,
 };
@@ -1754,7 +1755,8 @@ fn literal_constant(literal: &CheckedConst) -> Const {
 
 /// `value`, a literal of type `found`, materialized at the parameter type
 /// `target` as a written literal argument is: a numeric scalar through
-/// `MaterializeLiteral`, a multi-lane vector as the one-element splat.
+/// `MaterializeLiteral`, a multi-lane vector as the one-element splat of
+/// its storage.
 fn materialize(
     function: &mut MirFunction,
     value: Reg,
@@ -1770,12 +1772,17 @@ fn materialize(
     if let Some((dtype, width)) = mojito_types::types::simd_slots(target)
         && width.known().is_none_or(|width| width > 1)
     {
-        prelude.push(MirInstr::MakeSimd {
+        let storage = fresh_register(function, mojito_types::types::storage_ty(target), location);
+        prelude.extend(storage_construction(
             dest,
-            dtype,
-            width,
-            elems: vec![value],
-        });
+            storage,
+            MirInstr::MakeSimd {
+                dest: storage,
+                dtype,
+                width,
+                elems: vec![value],
+            },
+        ));
     } else {
         prelude.push(MirInstr::MaterializeLiteral {
             dest,

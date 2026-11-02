@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR builds a `SIMD` from its storage, as upstream's initializers do: a
+  scalar splat, a `SIMDLength` or `index` conversion, a `SIMD[dt, _](x)`
+  construction, and a literal default apply their op to each operand's
+  `_mlir_value` and `struct.create` the result, rather than a builtin vector
+  instruction typed at the struct (R1814). A `SIMD`'s default construction
+  calls its declared `__init__`, and an operator through a bound at a `SIMD`
+  instance calls the witness dunder. Program output is unchanged.
+
 - The elaborator now declares the struct instance of every closed `SIMD` a
   body holds, not only one whose member is demanded, as upstream's every
   `SIMD[dt, n]` is the struct (R1812). Concrete MIR reads a `SIMD`'s

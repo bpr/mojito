@@ -71,12 +71,10 @@ impl FrameTables for FrameSlots<'_> {
 /// not yet unrolled — stays for the copy that binds it.
 pub(super) fn default_construct_parameters(
     blocks: &mut [MirBlock],
-    n_regs: &mut u32,
-    reg_types: &mut HashMap<u32, Ty>,
     bindings: &Bindings,
     declarations: &MirDeclarations,
 ) -> Result<(), MonoError> {
-    mojito_mir::mir::construct_type_parameters(blocks, n_regs, reg_types, bindings, declarations)
+    mojito_mir::mir::construct_type_parameters(blocks, bindings, declarations)
 }
 
 /// Substitute `bindings` through `function`, whose declaration declares the

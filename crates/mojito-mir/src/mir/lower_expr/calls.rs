@@ -254,9 +254,10 @@ impl<'a> Flatten<'a> {
     /// If `name(...)` is a SIMD construction the checker's rule serves — a
     /// nullary construction, a literal splat, or a `_`-width or instance
     /// conversion (`SIMD[DType.<dt>, _](x)`) — resolve its
-    /// dtype/width and emit a [`MirInstr::MakeSimd`], returning its result
-    /// register. Otherwise `None`, and the caller lowers it as an ordinary
-    /// call.
+    /// dtype/width and splat or build its storage with a
+    /// [`MirInstr::MakeSimd`] over the operands' storage, creating the
+    /// `SIMD` from it, returning its result register. Otherwise `None`, and
+    /// the caller lowers it as an ordinary call.
     pub(in crate::mir) fn try_simd_call(
         &mut self,
         call: Node<'a>,
@@ -279,14 +280,28 @@ impl<'a> Flatten<'a> {
             [] => vec![self.constant(call, Const::IntLiteral(0.into()))],
             _ => args.iter().map(|arg| self.read_operand(*arg)).collect(),
         };
-        let d = self.fresh(call.location(), None);
-        self.emit(MirInstr::MakeSimd {
-            dest: d,
-            dtype,
-            width,
-            elems,
-        });
-        Some(d)
+        let Some(target) = call.ty().filter(|ty| ty.is_simd()) else {
+            let d = self.fresh(call.location(), None);
+            self.emit(MirInstr::MakeSimd {
+                dest: d,
+                dtype,
+                width,
+                elems,
+            });
+            return Some(d);
+        };
+        let elems = elems
+            .into_iter()
+            .map(|elem| self.simd_storage_operand(elem, call.location()))
+            .collect();
+        Some(
+            self.simd_through_storage(&target, call.location(), |dest| MirInstr::MakeSimd {
+                dest,
+                dtype,
+                width,
+                elems,
+            }),
+        )
     }
 
     /// Lower a call of a nested `def` by name. A body whose storage this
@@ -1007,7 +1022,8 @@ impl<'a> Flatten<'a> {
 
     /// Splat a one-lane register across the checked multi-lane `target`, or
     /// its `!kgen.simd` storage, as the one-element explicit `SIMD[dt,
-    /// w](x)` construction does.
+    /// w](x)` construction does: a `SIMD` target splats the operand's
+    /// storage (`pop.simd.splat`) and creates the struct from it.
     pub(in crate::mir) fn splat_scalar(
         &mut self,
         value: Reg,
@@ -1017,6 +1033,15 @@ impl<'a> Flatten<'a> {
         let Some((dtype, width)) = mojito_types::types::vector_slots(target.kind()) else {
             return value;
         };
+        if target.is_simd() {
+            let elem = self.simd_storage_operand(value, source.clone());
+            return self.simd_through_storage(target, source, |dest| MirInstr::MakeSimd {
+                dest,
+                dtype,
+                width,
+                elems: vec![elem],
+            });
+        }
         let dest = self.fresh_typed(source, None, target.clone());
         self.emit(MirInstr::MakeSimd {
             dest,
@@ -1028,9 +1053,12 @@ impl<'a> Flatten<'a> {
     }
 
     /// Convert a `SIMDLength` register to the checked vector `target` as
-    /// upstream's `@implicit SIMD.__init__(SIMDLength)` body does: its
-    /// `index` cast to `Int`, that cast to the vector's dtype, and the scalar
-    /// splat across the vector's lanes.
+    /// upstream's `@implicit SIMD.__init__(SIMDLength)` body does, all at
+    /// the storage: its `index` cast to `Int`'s storage
+    /// (`pop.cast_from_builtin`), that cast to the vector's dtype
+    /// (`pop.cast`), the scalar splat across the vector's lanes
+    /// (`pop.simd.splat`), and the `SIMD` created from the result. A
+    /// target that is no vector takes the `Int`.
     pub(in crate::mir) fn simd_from_length(
         &mut self,
         value: Reg,
@@ -1043,28 +1071,102 @@ impl<'a> Flatten<'a> {
             base: value,
             field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
         });
-        let int = self.builtin_cast(source.clone(), index, Ty::int());
         let Some((dtype, width)) = mojito_types::types::simd_slots(target) else {
-            return int;
+            return self.int_from_index(index, source);
         };
+        let int = self.builtin_cast(
+            source.clone(),
+            index,
+            mojito_types::types::storage_ty(&Ty::int()),
+        );
         let one = mojito_types::types::SimdWidth::Known(1);
-        let scalar = match mojito_types::types::simd_ty_from_slots(dtype.clone(), one.clone()) {
-            Ok(scalar) if scalar != Ty::int() => {
-                let dest = self.fresh_typed(source.clone(), None, scalar);
-                self.emit(MirInstr::SimdCast {
-                    dest,
-                    value: int,
-                    dtype,
-                    width: one.clone(),
-                });
-                dest
+        let scalar = if dtype.known() == Some(Dtype::Int) {
+            int
+        } else {
+            let scalar_ty = TyKind::KgenSimd {
+                dtype: dtype.clone(),
+                width: one.clone(),
             }
-            _ => int,
+            .into();
+            let dest = self.fresh_typed(source.clone(), None, scalar_ty);
+            self.emit(MirInstr::SimdCast {
+                dest,
+                value: int,
+                dtype: dtype.clone(),
+                width: one.clone(),
+            });
+            dest
         };
         if width == one {
-            return scalar;
+            let dest = self.fresh_typed(source, None, target.clone());
+            self.emit(MirInstr::MakeStruct {
+                dest,
+                fields: vec![scalar],
+            });
+            return dest;
         }
-        self.splat_scalar(scalar, target, source)
+        self.simd_through_storage(target, source, |dest| MirInstr::MakeSimd {
+            dest,
+            dtype,
+            width,
+            elems: vec![scalar],
+        })
+    }
+
+    /// The `Int` an `index` register builds, as upstream's `Int(mlir_value=
+    /// idx)` does: the `index` cast to `Int`'s storage
+    /// (`pop.cast_from_builtin`), and the struct created from it.
+    pub(in crate::mir) fn int_from_index(&mut self, index: Reg, source: SourceSpan) -> Reg {
+        let int = Ty::int();
+        self.simd_through_storage(&int, source, |dest| MirInstr::BuiltinCast {
+            dest,
+            value: index,
+        })
+    }
+
+    /// The `!kgen.simd` storage of `value` as an operand of a `pop` op: a
+    /// `SIMD` register's `_mlir_value`, and any other register (a literal,
+    /// a `Bool`, an `Intable` struct) itself.
+    pub(in crate::mir) fn simd_storage_operand(&mut self, value: Reg, source: SourceSpan) -> Reg {
+        let Some(storage) = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .and_then(mojito_types::types::simd_storage)
+        else {
+            return value;
+        };
+        let dest = self.fresh_typed(source, None, storage);
+        self.emit(MirInstr::GetField {
+            dest,
+            base: value,
+            field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+        });
+        dest
+    }
+
+    /// The `SIMD` `target` built from its storage, as its initializers
+    /// build it: `build`'s op writes a fresh `!kgen.simd` register, and the
+    /// struct is created over it
+    /// ([`type_construction::storage_construction`]).
+    pub(in crate::mir) fn simd_through_storage(
+        &mut self,
+        target: &Ty,
+        source: SourceSpan,
+        build: impl FnOnce(Reg) -> MirInstr,
+    ) -> Reg {
+        let storage = self.fresh_typed(
+            source.clone(),
+            None,
+            mojito_types::types::storage_ty(target),
+        );
+        let dest = self.fresh_typed(source, None, target.clone());
+        for instruction in
+            crate::mir::type_construction::storage_construction(dest, storage, build(storage))
+        {
+            self.emit(instruction);
+        }
+        dest
     }
 
     /// The type of the closure of the body `info` as a function value: its

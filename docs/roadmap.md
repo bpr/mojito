@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1834**.
+Next free ID: **R1835**.
 
 ## Ordered Work
 
@@ -4018,6 +4018,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     R1557's alias.
   - On landing, restore upstream's `Scalar(True)` and `Scalar(False)` in
     `stdlib/std/utils/numerics.mojo`'s `bool` arms.
+  - The rule's `SemanticAdjustment::ConstructSimd` is what MIR's
+    `Flatten::try_simd_call` lowers, as a storage splat or build and
+    `struct.create`, in place of a declared initializer's call. It also
+    serves `SIMD.__init__`'s own `comptime res = SIMD[Self.dtype,
+    Self.length](0)` through the parameter domain's `simd_construction`
+    (`checker/constraints.rs`), so every program reaches it; delete
+    `try_simd_call` with the rule.
   - Found while landing R186 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6811,6 +6818,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     unmaterialized literal register is stored to it (`typed_wholes`).
     Without that, `4.0 ** 0.5` (`assets/ok/pliron_float_pow.mojo`) fails
     natively with "unsupported field access on `IntLiteral[8]`".
+  - Probe: the same function answers a scalar splat and a `SIMDLength`
+    conversion with the reserved `symbol::SCALAR_SPLAT_CONVERSION` and
+    `SIMD_LENGTH_CONVERSION` ahead of the declared `@implicit
+    __init__(Scalar[Self.dtype])` and `__init__(SIMDLength)`; MIR lowers
+    each as that initializer's storage body (`Flatten::splat_scalar`,
+    `simd_from_length`). Pointing them at the declared overloads fails to
+    package std ("not a compile-time Int constant: not an associated
+    comptime expression"): the parameter domain folds only the reserved
+    splat (R1815). On landing, delete
+    `SemanticAdjustment::{SplatScalar, SimdFromLength}`, their
+    `CheckedCallValueAdjustment` twins, and both symbols.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11517,33 +11535,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1814 MIR lowering builds a `SIMD` from compiler-built lane ops
-  over the vector, where upstream's initializers apply `pop` ops to the
-  storage and `struct.create` the result**
-
-  These sites emit a builtin vector instruction typed at the `SIMD` struct,
-  so its result never passes through `struct.create`.
-  - `Flatten::try_simd_call`, `splat_scalar`, and `simd_from_length`
-    (`mir/lower_expr/calls.rs`).
-  - The `MakeSimd` in `mir/call_defaults.rs` and `mir/type_construction.rs`.
-  - The elaborator's `BinOp` kept over a `SIMD` instance
-    (`mono/specializer.rs`, the `is_non_simd_struct` guards), where
-    upstream calls the witness dunder.
-  - `Flatten::inferred_value_register`'s `binary`/`unary` over `Int`
-    (`mir.rs`), and the augmented-assignment native-scalar fallbacks in
-    `lower_stmt.rs` if a `SIMD` still reaches them.
-  - Lever: one `Flatten` helper that reads `_mlir_value` of each `SIMD`
-    operand, applies the op at the storage type, and `struct.create`s the
-    `SIMD`. Where the stdlib initializer or dunder is reachable, call it
-    instead.
-  - `scalar.cast` of a `SIMD[DType.bool, 1]` to `Bool` stays with R1609
-    and R1612.
-  - Probe: dump the concrete MIR of `@no_inline def f(i: Int, n: Int) ->
-    Bool: return i < n` and count builtin vector instructions with a
-    `simd`-typed register outside `scalar.cast`; only these sites remain.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1815 The checker's parameter domain types `pop.simd.splat`,
   `pop.cast`, and a `_mlir_value` read at the `SIMD`, where upstream's
   are its `!kgen.simd` storage**
@@ -11585,7 +11576,34 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Then delete `vector_slots` in favour of `kgen_simd_slots`.
   - Only the full corpus finds this change's failures, so it lands with
     the nightly gate in view.
-  - Depends on R1814 and R1815.
+  - Probe: the concrete MIR of `assets/ok/simd_slice_insert_split_interleave.mojo`
+    and `math_log.mojo` keeps an `llvm.intrinsic` over `SIMD` registers
+    (`SIMD.reduce_*`, splices).
+  - Depends on R1814, R1815, and R1834.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1834 MIR's `literal.materialize` writes a `SIMD` register, where
+  upstream's literal initializers convert at the storage and
+  `struct.create` the result**
+
+  `@implicit SIMD.__init__(IntLiteral)` and `__init__(FloatLiteral)` write
+  a `#pop.int_literal_convert` or `float_literal_convert` attribute typed
+  at `!kgen.simd` and initialize the struct from it. MIR's
+  `MaterializeLiteral` writes the `Int`, `UInt`, `Float64`, or
+  `Scalar[dt]` register itself.
+  - Emitters: `Flatten::materialize_literal` (`lower_expr/calls.rs`),
+    `call_defaults::materialize`'s one-lane arm, and the call-boundary
+    `CheckedCallValueAdjustment::MaterializeLiteral` (`mir/calls.rs`).
+  - Lever: write the storage through `Flatten::simd_through_storage` and
+    `type_construction::storage_construction`, as the splats and the
+    `SIMDLength` conversion do. SCCP's `MaterializeLiteral` fold, the VM,
+    and Pliron's literal lowering then read the storage type
+    (`types::storage_value_ty`).
+  - Probe: the concrete MIR of `assets/ok/int_literal_struct.mojo` keeps
+    `literal.materialize { …, target: Int }` in `IntLiteral.__int__`.
+  - The fan-out reaches every literal, so the nightly gate is this
+    change's real check.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1618 A compile-time argument computed by an inlined dunder keeps

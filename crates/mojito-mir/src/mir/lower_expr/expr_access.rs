@@ -140,7 +140,7 @@ impl<'a> Flatten<'a> {
             return match folded {
                 Ok(constant) => self.constant(e, constant),
                 Err(expr) => {
-                    if let Some(value) = self.inferred_value_register(&expr, &e.location()) {
+                    if let Some(value) = self.dtype_slot_register(&expr, &e.location()) {
                         return value;
                     }
                     let dest = self.fresh(e.location(), None);

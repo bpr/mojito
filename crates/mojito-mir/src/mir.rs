@@ -335,7 +335,9 @@ impl MirDeclarations {
     /// substitution folds that witness; `None` for any other type, or a
     /// struct that records none.
     pub fn default_initializer(&self, ty: &Ty) -> Option<&str> {
-        let (name, _) = ty.kind().as_non_simd_struct()?;
+        let TyKind::Struct(name, _) = ty.kind() else {
+            return None;
+        };
         let requirement = self
             .trait_declaration("Defaultable")?
             .requirements
@@ -4647,13 +4649,11 @@ impl<'a> Flatten<'a> {
             .collect()
     }
 
-    /// The evaluation of an `Int` parameter expression over the enclosing
-    /// value binders: its constants, binder reads, the applications the
-    /// elaborator answers, and the `+`, `*`, `-`, and negation it is built
-    /// from. `None` for any other shape.
-    fn inferred_value_register(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
-        // A binder of any scalar type is its parameter constant; a `DType`
-        // constant is its own; the arithmetic below is over `Int` alone.
+    /// The register of a symbolic `DType` slot (`v.dtype`) as upstream's
+    /// `kgen.param.constant` of the slot: a binder read, a `DType`
+    /// constant, or a parameter constant the elaborator answers. `None` for
+    /// any other shape.
+    fn dtype_slot_register(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
         if let mojito_types::param_expr::ParamKind::DeclRef(_) = expr.kind() {
             return self.enclosing_value_binder_read(expr, site);
         }
@@ -4676,71 +4676,13 @@ impl<'a> Flatten<'a> {
             mojito_types::param_expr::ParamKind::ListGet { .. }
                 | mojito_types::param_expr::ParamKind::Apply { .. }
         ) || mojito_types::types::simd_length_of_image(expr).is_some();
-        if answered && let Some(ty) = expr.meta().as_value() {
-            let dest = self.fresh_typed(site.clone(), None, ty.clone());
-            self.emit(MirInstr::Const {
-                dest,
-                k: Const::Param(expr.clone()),
-            });
-            return Some(dest);
-        }
-        if *expr.meta() != mojito_types::param_expr::MetaTy::value(Ty::int()) {
-            return None;
-        }
-        let (op, operands) = match expr.kind() {
-            mojito_types::param_expr::ParamKind::Constant(value) => {
-                let value = match value {
-                    mojito_types::ct::CtValue::Int(value) => *value,
-                    mojito_types::ct::CtValue::IntLiteral(value) => value.to_i64()?,
-                    _ => return None,
-                };
-                let dest = self.fresh_typed(site.clone(), None, Ty::int());
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::Int(value),
-                });
-                return Some(dest);
-            }
-            mojito_types::param_expr::ParamKind::Op { op, operands } => (op, operands),
-            _ => return None,
-        };
-        let infix = match op {
-            mojito_types::param_expr::ParamOp::Add => InfixOp::Add,
-            mojito_types::param_expr::ParamOp::Mul => InfixOp::Mul,
-            mojito_types::param_expr::ParamOp::Sub => InfixOp::Sub,
-            mojito_types::param_expr::ParamOp::Neg => {
-                let [operand] = operands.as_slice() else {
-                    return None;
-                };
-                let a = self.inferred_value_register(operand, site)?;
-                let dest = self.fresh_typed(site.clone(), None, Ty::int());
-                self.emit(MirInstr::UnOp {
-                    op: PrefixOp::Neg,
-                    dest,
-                    a,
-                    raises: None,
-                });
-                return Some(dest);
-            }
-            _ => return None,
-        };
-        let (first, rest) = operands.split_first()?;
-        let mut accumulated = self.inferred_value_register(first, site)?;
-        for operand in rest {
-            let b = self.inferred_value_register(operand, site)?;
-            let dest = self.fresh_typed(site.clone(), None, Ty::int());
-            self.emit(MirInstr::BinOp {
-                op: infix,
-                dest,
-                a: accumulated,
-                b,
-                resolved: None,
-                raises: None,
-                refined_bound: None,
-            });
-            accumulated = dest;
-        }
-        Some(accumulated)
+        let ty = expr.meta().as_value().filter(|_| answered)?;
+        let dest = self.fresh_typed(site.clone(), None, ty.clone());
+        self.emit(MirInstr::Const {
+            dest,
+            k: Const::Param(expr.clone()),
+        });
+        Some(dest)
     }
 
     /// A read of the enclosing value binder `expr` names, when it is exactly

@@ -1251,13 +1251,7 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
     ) -> Result<MirFunction, MonoError> {
         let mut function = template.clone();
-        default_construct_parameters(
-            &mut function.blocks,
-            &mut function.n_regs,
-            &mut function.reg_types,
-            bindings,
-            &self.source.declarations,
-        )?;
+        default_construct_parameters(&mut function.blocks, bindings, &self.source.declarations)?;
         self.elaborate_comptime_ops(name, &mut function, scope, bindings)?;
         self.erase_valueless_removed_arguments(&mut function.blocks, bindings);
         substitute_function(&mut function, bindings, scope).map_err(|mut e| {
@@ -2802,9 +2796,9 @@ impl<'a> Specializer<'a> {
                         };
                     }
                 }
-                // A prefix `-`/`~` on a nominal operand is the VM's dunder
-                // dispatch (`apply_prefix` → `__neg__`/`__invert__`); `not`
-                // arrives already converted through `Bool(x)` by MIR.
+                // A prefix `-`/`~` on a struct operand, a `SIMD` among them,
+                // calls its dunder (`__neg__`/`__invert__`); `not` arrives
+                // already converted through `Bool(x)` by MIR.
                 if let MirInstr::UnOp {
                     op,
                     dest,
@@ -2821,14 +2815,15 @@ impl<'a> Specializer<'a> {
                         .reg_types
                         .get(&a.0)
                         .map(peel_refs)
-                        .is_some_and(|ty| ty.kind().is_non_simd_struct())
+                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
                 {
                     let raises = raises.take();
                     *instruction =
                         dunder_method_call(*dest, *a, op.dunder(), None, raises, Vec::new());
                 }
-                // A comparison through a bound names its requirement; the
-                // builtin an instance binds answers it itself.
+                // A comparison through a bound names its requirement, which a
+                // struct instance (a `SIMD` among them) answers with its
+                // witness dunder below; any other builtin answers it itself.
                 if let MirInstr::BinOp { a, resolved, .. } = instruction
                     && resolved
                         .as_deref()
@@ -2837,14 +2832,14 @@ impl<'a> Specializer<'a> {
                         .reg_types
                         .get(&a.0)
                         .map(peel_refs)
-                        .is_some_and(|ty| ty.kind().is_non_simd_struct())
+                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
                 {
                     *resolved = None;
                 }
-                // A binary operator on a nominal left operand is the same VM
-                // dunder dispatch (`apply_binop` → `call_dunder`): rewrite to
-                // the operator method so the shared resolver monomorphizes
-                // the compiled instance (`String.__add__`, user `__eq__`, …).
+                // A binary operator on a struct left operand, a `SIMD` among
+                // them, calls its operator method, so the shared resolver
+                // monomorphizes the compiled instance (`String.__add__`,
+                // `SIMD.__lt__`, user `__eq__`, …).
                 // `in`/`not in` dispatch on the right operand and stay
                 // untouched (they keep their contextual rejection).
                 if let MirInstr::BinOp {
@@ -2861,7 +2856,7 @@ impl<'a> Specializer<'a> {
                         .reg_types
                         .get(&a.0)
                         .map(peel_refs)
-                        .is_some_and(|ty| ty.kind().is_non_simd_struct())
+                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
                 {
                     let (resolved, raises) = (resolved.take(), raises.take());
                     *instruction =

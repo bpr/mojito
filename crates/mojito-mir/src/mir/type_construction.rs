@@ -3,8 +3,8 @@
 //! Upstream rewrites `T()` and `T(copy=x)` when substitution binds `T`,
 //! wherever substitution happens. Mojito substitutes in two places, the
 //! elaborator's instance and `inline-parametric`'s binding of an inlined
-//! call, and both write the construction here: a scalar's zero, a vector's
-//! zero splat, a struct's call of its `Defaultable` witness, a built-in's
+//! call, and both write the construction here: a scalar's zero, a struct's
+//! call of its `Defaultable` witness, a built-in's
 //! value copy, or a struct's call of its copy initializer, as upstream's
 //! substitution folds the `Defaultable` and `Copyable` witnesses to the
 //! member symbols.
@@ -13,13 +13,10 @@ use crate::mir::{
     Const, FuncRef, MirBlock, MirDeclarations, MirInstr, MirParamArg, MirPlace, Reg,
     instruction_regions_mut,
 };
-use mojito_ast::ast::Dtype;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::ParamRef;
-use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, TyKind};
-use std::collections::HashMap;
+use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
 use std::fmt;
-use std::hash::BuildHasher;
 
 /// The types a construction's binder and pack element are bound to.
 pub trait ConstructionTypes {
@@ -48,8 +45,6 @@ pub enum TypeConstructionError {
         index: usize,
         len: usize,
     },
-    /// A default construction of a vector type whose dtype or width is open.
-    OpenVector(Ty),
     /// A default construction of a type that has no default.
     NotAStruct(Ty),
 }
@@ -64,7 +59,6 @@ impl fmt::Display for TypeConstructionError {
                 f,
                 "element {index} of pack `{pack}` is out of range for its {len} elements"
             ),
-            Self::OpenVector(ty) => write!(f, "default-constructing the open vector type `{ty}`"),
             Self::NotAStruct(ty) => write!(f, "default-constructing `{ty}`, which is no struct"),
         }
     }
@@ -79,9 +73,7 @@ impl std::error::Error for TypeConstructionError {}
 /// `blocks` and their regions; the rest are left.
 ///
 /// A nullary construction is the type's default construction: a scalar's
-/// zero value, a SIMD type's zero vector (a splat of one zero lane held in
-/// a fresh register, as a single instruction cannot spell the splat), or a
-/// struct's call of the `__init__` its `Defaultable` witness table records
+/// zero value, or a struct's (a `SIMD` vector's among them) call of the `__init__` its `Defaultable` witness table records
 /// ([`MirDeclarations::default_initializer`]); a struct recording none, as
 /// one an untaken `comptime if` arm constructs, stays the construction of
 /// the decided type, which branch selection erases with its arm and the
@@ -98,10 +90,8 @@ impl std::error::Error for TypeConstructionError {}
 ///
 /// When the decided type cannot be constructed, or `types` cannot close a
 /// selected pack element.
-pub fn construct_type_parameters<C: ConstructionTypes, S: BuildHasher>(
+pub fn construct_type_parameters<C: ConstructionTypes>(
     blocks: &mut [MirBlock],
-    n_regs: &mut u32,
-    reg_types: &mut HashMap<u32, Ty, S>,
     types: &C,
     declarations: &MirDeclarations,
 ) -> Result<(), C::Error> {
@@ -116,20 +106,20 @@ pub fn construct_type_parameters<C: ConstructionTypes, S: BuildHasher>(
                     element,
                     ..
                 } if kwargs.is_empty() => constructed_type(param, element.as_ref(), types)?
-                    .map(|ty| default_construction(*dest, &ty, n_regs, reg_types, declarations))
+                    .map(|ty| default_construction(*dest, &ty, declarations))
                     .transpose()?,
                 MirInstr::ConstructType { dest, ty } => types
                     .close(ty)
                     .ok()
                     .filter(|ty| !mojito_types::types::is_symbolic(ty))
-                    .map(|ty| default_construction(*dest, &ty, n_regs, reg_types, declarations))
+                    .map(|ty| default_construction(*dest, &ty, declarations))
                     .transpose()?,
                 instruction @ MirInstr::ConstructTypeParam { .. } => {
                     copy_construction(instruction, types, declarations).map(|copy| vec![copy])
                 }
                 instruction => {
                     for region in instruction_regions_mut(instruction) {
-                        construct_type_parameters(region, n_regs, reg_types, types, declarations)?;
+                        construct_type_parameters(region, types, declarations)?;
                     }
                     None
                 }
@@ -175,6 +165,19 @@ pub fn struct_copy(
     )
 }
 
+/// A `SIMD` built as its initializers build it: `op`, a `pop` op writing
+/// the `!kgen.simd` register `storage`, then the struct `dest` created over
+/// that storage (`struct.create`).
+pub(in crate::mir) fn storage_construction(dest: Reg, storage: Reg, op: MirInstr) -> [MirInstr; 2] {
+    [
+        op,
+        MirInstr::MakeStruct {
+            dest,
+            fields: vec![storage],
+        },
+    ]
+}
+
 /// The type a nullary construction builds under `types`: the binder's own
 /// binding, or for `Ts[i]()` the element its index selects from the pack's.
 /// `None` while either is open.
@@ -210,11 +213,9 @@ fn constructed_type<C: ConstructionTypes>(
 }
 
 /// The default construction of the concrete `ty` into `dest`.
-fn default_construction<S: BuildHasher>(
+fn default_construction(
     dest: Reg,
     ty: &Ty,
-    n_regs: &mut u32,
-    reg_types: &mut HashMap<u32, Ty, S>,
     declarations: &MirDeclarations,
 ) -> Result<Vec<MirInstr>, TypeConstructionError> {
     let zero = match ty.kind() {
@@ -244,50 +245,21 @@ fn default_construction<S: BuildHasher>(
         return Ok(vec![MirInstr::Const { dest, k }]);
     }
     match ty.kind() {
-        kind if let Some((dtype, width)) = kind.as_simd() => {
-            let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
-                return Err(TypeConstructionError::OpenVector(ty.clone()));
-            };
-            let (zero, lane_ty) = match dtype {
-                Dtype::Bool => (Const::Bool(false), Ty::bool()),
-                Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
-                    (Const::Float(0.0), Ty::float64())
-                }
-                _ => (Const::Int(0), Ty::int()),
-            };
-            let lane = Reg(*n_regs);
-            *n_regs += 1;
-            reg_types.insert(lane.0, lane_ty);
-            Ok(vec![
-                MirInstr::Const {
-                    dest: lane,
-                    k: zero,
-                },
-                MirInstr::MakeSimd {
+        TyKind::Struct(..) => Ok(vec![declarations.default_initializer(ty).map_or_else(
+            || MirInstr::ConstructType {
+                dest,
+                ty: ty.clone(),
+            },
+            |initializer| {
+                initializer_call(
                     dest,
-                    dtype: SimdDtype::Known(dtype),
-                    width: SimdWidth::Known(width),
-                    elems: vec![lane],
-                },
-            ])
-        }
-        struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {
-            Ok(vec![declarations.default_initializer(ty).map_or_else(
-                || MirInstr::ConstructType {
-                    dest,
-                    ty: ty.clone(),
-                },
-                |initializer| {
-                    initializer_call(
-                        dest,
-                        initializer,
-                        struct_arguments(ty, declarations),
-                        Vec::new(),
-                        Vec::new(),
-                    )
-                },
-            )])
-        }
+                    initializer,
+                    struct_arguments(ty, declarations),
+                    Vec::new(),
+                    Vec::new(),
+                )
+            },
+        )]),
         _ => Err(TypeConstructionError::NotAStruct(ty.clone())),
     }
 }
@@ -337,7 +309,7 @@ fn copy_construction<C: ConstructionTypes>(
 /// pack the type spells element by element (`Tuple[Int, Bool]`) passed
 /// whole as a direct call passes it.
 fn struct_arguments(ty: &Ty, declarations: &MirDeclarations) -> Vec<TyArg> {
-    let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
+    let TyKind::Struct(name, arguments) = ty.kind() else {
         return Vec::new();
     };
     let lone_pack = declarations

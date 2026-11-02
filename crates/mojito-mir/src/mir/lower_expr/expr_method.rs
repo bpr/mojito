@@ -454,11 +454,13 @@ impl<'a> Flatten<'a> {
     fn mlir_conversion(&mut self, call: Node<'a>, object: Node<'a>, method: &str) -> Option<Reg> {
         // `n.__mlir_index__()` on an integer literal is upstream's
         // conversion of the literal, materialized as an `Int`, to the
-        // builtin `index`; a `SIMD`'s is its declared member.
+        // builtin `index`: `Int.__mlir_index__`'s `pop.cast_to_builtin` of
+        // the `Int`'s storage. A `SIMD`'s is its declared member.
         if method == "__mlir_index__" && object.ty().is_some_and(|ty| ty.is_int_literal()) {
             let value = self.expr(object);
             let value = self.materialize_literal(value, &Ty::int(), call.location());
-            return Some(self.builtin_cast(call.location(), value, Ty::index()));
+            let storage = self.simd_storage_operand(value, call.location());
+            return Some(self.builtin_cast(call.location(), storage, Ty::index()));
         }
         // `b.__mlir_bool__()` on a `Bool` is its `!kgen.scalar<bool>`
         // storage.

@@ -1324,8 +1324,8 @@ and MIR lowers it as `ConstructTypeParam` with its `element` index (schema
 elaborator's `default_construct_parameters` (`mono/substitute.rs`) wraps
 `mir::construct_type_parameters` (`mojito-mir/src/mir/type_construction.rs`),
 which writes every construction whose type the bindings decide as that
-type's own — a nullary one as its default construction, at a struct the
-call of the `__init__` its `Defaultable` witness table records
+type's own — a nullary one as its default construction, at a struct (a
+`SIMD` among them) the call of the `__init__` its `Defaultable` witness table records
 (`MirDeclarations::default_initializer`), `T(copy=x)` as the value copy or
 `mir::struct_copy`'s, each call passing the struct's arguments as
 `instantiated_args`, as upstream's substitution folds the witness to the
@@ -2064,16 +2064,24 @@ nullary `UInt()`, binds the other declared `__init__` overloads (the
 `Intable`, `Floatable`, `SIMDLength`, and default initializers), as any
 `SIMD` construction does.
 
-A runtime scalar meets a multi-lane vector of its dtype through upstream's
-implicit `SIMD.__init__(Scalar[dtype])`, which the builtin `SIMD` cannot
-declare. `types::scalar_splats_into` owns the rule, and the checker's
+A runtime scalar meets a multi-lane vector of its dtype through the
+declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, which the checker
+does not yet select by name (R1789). `types::scalar_splats_into` owns the rule, and the checker's
 `implicit_conversion_constructor` selects it as an ordinary implicit
 conversion under the reserved target `symbol::SCALAR_SPLAT_CONVERSION`, so
 overload filtering, template realization, and argument contracts see one
 conversion. The checked arena turns that target into
 `SemanticAdjustment::SplatScalar(vector)` (a call argument's
-`CheckedCallValueAdjustment::SplatScalar`), which MIR lowers to the
-one-element `MakeSimd` an explicit `SIMD[dt, w](x)` emits.
+`CheckedCallValueAdjustment::SplatScalar`), which MIR lowers as that
+initializer's body: a `MakeSimd` (`pop.simd.splat`) of the scalar's
+`_mlir_value` at the `!kgen.simd` storage and a `MakeStruct`
+(`struct.create`) of the `SIMD` over it. Every `SIMD` MIR lowering builds
+itself — a splat, a `SIMDLength` or `index` conversion, a `SIMD[dt, _](x)`
+construction, a literal default — takes that storage shape
+(`type_construction::storage_construction`); a `SIMD`'s default
+construction calls its declared `Defaultable` `__init__`, and the
+elaborator turns an operator over a `SIMD` instance into its dunder's
+call, as over any struct.
 
 Generic value parameters are also materialization boundaries. Their resolved
 `ParamDecl`s cross `CheckedProgram` through stable declaration-owned

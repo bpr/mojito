@@ -897,7 +897,7 @@ impl<'a> Flatten<'a> {
                         spread: None,
                         refined_bound: None,
                     });
-                    self.builtin_cast(site.clone(), dest, Ty::int())
+                    self.int_from_index(dest, site.clone())
                 }
                 mojito_checked::checked::CheckedCallValueAdjustment::MaterializeLiteral {
                     target,

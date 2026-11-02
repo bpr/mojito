@@ -71,17 +71,19 @@ pub const WRITE_FORMATTED: &str = "$write_formatted";
 
 /// The implicit-conversion target that splats a scalar across a vector.
 ///
-/// It stands for upstream's `@implicit SIMD.__init__(Scalar[dtype])`, which
-/// the builtin `SIMD` declares no constructor to name; MIR lowers it to a
-/// one-element `MakeSimd`.
+/// It stands for `std.simd`'s declared `@implicit
+/// SIMD.__init__(Scalar[Self.dtype])`, which the checker does not yet select
+/// (R1789); MIR lowers it as that initializer's body, a `pop.simd.splat` of
+/// the scalar's storage and the `SIMD` created from it.
 pub const SCALAR_SPLAT_CONVERSION: &str = "SIMD.__init__$splat";
 
 /// The implicit-conversion target that converts a `SIMDLength` to a vector.
 ///
-/// It stands for upstream's `@implicit SIMD.__init__(SIMDLength)`, which the
-/// builtin `SIMD` declares no constructor to name; MIR lowers it as that
-/// constructor's body: the length's `index` cast to `Int`, then to the
-/// vector's dtype, then splat across its lanes.
+/// It stands for `std.simd`'s declared `@implicit SIMD.__init__(SIMDLength)`,
+/// which the checker does not yet select (R1789); MIR lowers it as that
+/// initializer's body, all at the storage: the length's `index` cast to
+/// `Int`'s storage, then to the vector's dtype, then splat across its
+/// lanes, and the `SIMD` created from the result.
 pub const SIMD_LENGTH_CONVERSION: &str = "SIMD.__init__$simd_length";
 
 /// The symbol of upstream's `@implicit SIMDLength.__init__(Int)`, which
