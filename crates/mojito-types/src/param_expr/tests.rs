@@ -1206,8 +1206,8 @@ fn type_comparison_is_a_bool_decided_by_type_identity() {
     let boxed = |name: &str, element: TyKind| -> Ty {
         TyKind::Struct(name.to_string(), vec![TyArg::Ty(element.into())]).into()
     };
-    let minted = CtValue::Type(boxed("Box$mono$TInt", TyKind::INT.clone()));
-    let spelled = CtValue::Type(boxed("Box", TyKind::INT.clone()));
+    let minted = CtValue::Type(boxed("Box$mono$TInt", Ty::int().kind().clone()));
+    let spelled = CtValue::Type(boxed("Box", Ty::int().kind().clone()));
     let other = CtValue::Type(boxed("Box", TyKind::Bool));
     let fold = |left, right| fold::fold_infix(InfixOp::Eq, left, right).expect("folds");
     assert_eq!(fold(&minted, &spelled), CtValue::Bool(true));

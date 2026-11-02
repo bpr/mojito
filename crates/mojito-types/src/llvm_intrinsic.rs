@@ -794,6 +794,7 @@ const fn lane_mask(width: u32) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::canonical_simd_ty;
 
     #[test]
     fn upstream_spellings_parse() {
@@ -907,10 +908,7 @@ mod tests {
 
     #[test]
     fn signatures_follow_llvm() {
-        let int8 = Ty::from(TyKind::Simd {
-            dtype: SimdDtype::Known(Dtype::Int8),
-            width: SimdWidth::Known(1),
-        });
+        let int8 = canonical_simd_ty(Dtype::Int8, 1);
         assert_eq!(
             LlvmIntrinsic::Bswap.signature_error(&int8, std::slice::from_ref(&int8)),
             Some("bswap must be an even number of bytes".to_string())
@@ -937,12 +935,7 @@ mod tests {
             LlvmIntrinsic::Donothing.signature_error(&Ty::none(), &[]),
             None
         );
-        let simd = |dtype, width| {
-            Ty::from(TyKind::Simd {
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(width),
-            })
-        };
+        let simd = canonical_simd_ty;
         let mask = simd(Dtype::Bool, 4);
         for reduction in [VectorReduction::And, VectorReduction::Or] {
             assert_eq!(
@@ -1042,12 +1035,7 @@ mod tests {
 
     #[test]
     fn shuffle_signatures_follow_llvm() {
-        let simd = |dtype, width| {
-            Ty::from(TyKind::Simd {
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(width),
-            })
-        };
+        let simd = canonical_simd_ty;
         let (quad, octet) = (simd(Dtype::Int32, 4), simd(Dtype::Int32, 8));
         let (index, offset) = (simd(Dtype::Int64, 1), simd(Dtype::Int32, 1));
         assert_eq!(

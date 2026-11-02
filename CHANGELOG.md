@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `SIMD[dtype, length]` application is the declared struct's
+  `TyKind::Struct` everywhere, as upstream holds it (R1800):
+  `TyKind::Simd`, its `INT`/`UINT`/`FLOAT64` constants, and the `Ty::new`
+  bridge are gone. `Ty::new` folds closed slots, so `Int`,
+  `Scalar[DType.int]`, and `SIMD[DType.int, SIMDLength(1)]` stay one type,
+  and the elaborator keeps a closed `SIMD`'s name and arguments. Displays,
+  instance symbols, and MIR text keep their `SIMD` spelling, and no
+  program's output or MIR changes. `SIMD`'s lazily declared instances
+  (R1812) and its storage read (R1811) remain.
+
 - Every rule written for a declared struct other than `SIMD` reads the
   type through `TyKind::as_non_simd_struct`, not by matching
   `TyKind::Struct` (R1800's first stage): about 415 checker, MIR,

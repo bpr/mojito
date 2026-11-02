@@ -236,7 +236,7 @@ impl Specializer<'_> {
     }
 
     /// Whether the declared struct `receiver` is an instance of answers the
-    /// requirement `dispatch` with a body: `SIMD`'s, for a `TyKind::Simd`
+    /// requirement `dispatch` with a body: `SIMD`'s, for a `SIMD`
     /// receiver, once `std.simd` declares the witness. Any other requirement
     /// is the builtin's to answer.
     pub(super) fn declares_witness(&self, receiver: &Ty, dispatch: &str) -> bool {

@@ -136,7 +136,7 @@ pub fn lower_ty(
     declarations: &MirDeclarations,
     location: Option<SourceSpan>,
 ) -> Result<LowerTy, PlironError> {
-    if matches!(ty.kind(), TyKind::Simd { .. } | TyKind::Struct(..)) {
+    if matches!(ty.kind(), TyKind::Struct(..)) {
         let translated = declarations.translated_type(ty);
         if translated != *ty {
             return lower_ty(function, &translated, layout, declarations, location);

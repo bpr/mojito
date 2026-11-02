@@ -35,8 +35,8 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         return types_compatible(&found_bool, &expected_bool);
     }
     // A `!kgen.simd` storage agrees with the vector it stores, the type
-    // LLVM translation gives the vector, while `SIMD` is a compiler type
-    // whose `_mlir_value` reads the vector's own register (R1800).
+    // LLVM translation gives the vector, while a `SIMD`'s `_mlir_value`
+    // reads the vector's own register (R1811).
     if matches!(found.kind(), TyKind::KgenSimd { .. })
         != matches!(expected.kind(), TyKind::KgenSimd { .. })
     {
@@ -92,7 +92,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // Two residual sizes over the same binders are one type only when they
     // are one canonical expression: a parameter occurring in both does not
     // make `Buf[n + 1]` and `Buf[n + 2]` interchangeable.
-    if residual_arguments_conflict(found, expected) {
+    if !found.is_simd() && !expected.is_simd() && residual_arguments_conflict(found, expected) {
         return false;
     }
     if contains_type_param(found) || contains_type_param(expected) {

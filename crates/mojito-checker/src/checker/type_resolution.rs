@@ -4743,10 +4743,11 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Dependent(_)
         | TyKind::SelfType
         | TyKind::Infer => true,
-        TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
-        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
+        kind if let Some((dtype, width)) = kind.as_simd() => {
             dtype.is_symbolic() || width.is_symbolic()
         }
+        TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
+        TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::Bool
         | TyKind::StringLiteral(_)
         | TyKind::None

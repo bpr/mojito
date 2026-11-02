@@ -16,9 +16,7 @@
 use crate::origin::{Mutability, OriginParamId};
 use crate::param_expr::{ParamExpr, ParamRef};
 use crate::types::TyKind;
-use crate::types::{
-    SimdDtype, SimdWidth, Ty, TyArg, dict_elements, list_element, set_element, tuple_elements,
-};
+use crate::types::{Ty, TyArg, dict_elements, list_element, set_element, tuple_elements};
 use mojito_ast::ast::{Expr, ExprKind, KwArg, ParamArg, Type};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::Span;
@@ -406,9 +404,9 @@ impl ScalarConversion {
     /// The conversion producing `ty`, or `None` for any other type.
     pub fn to(ty: &Ty) -> Option<Self> {
         Some(match ty.kind() {
-            TyKind::INT => Self::Int,
-            TyKind::UINT => Self::UInt,
-            TyKind::FLOAT64 => Self::Float64,
+            kind if kind.is_int() => Self::Int,
+            kind if kind.is_uint() => Self::UInt,
+            kind if kind.is_float64() => Self::Float64,
             TyKind::Bool => Self::Bool,
             _ => return None,
         })
@@ -441,12 +439,7 @@ impl ScalarConversion {
     pub fn casts_from(self, ty: &Ty) -> bool {
         matches!(
             ty.kind(),
-            TyKind::INT
-                | TyKind::UINT
-                | TyKind::FLOAT64
-                | TyKind::IntLiteral(_)
-                | TyKind::FloatLiteral(_)
-                | TyKind::Bool
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Bool
         ) || crate::types::is_scalar_simd(ty.kind())
             || (self == Self::Bool && *ty.kind() == TyKind::I1)
     }
@@ -1305,10 +1298,10 @@ impl CtValue {
     /// type, which the type lattice forbids.
     pub fn materialize_as(self, ty: &Ty) -> Option<Self> {
         match (self, ty.kind()) {
-            (value @ Self::Int(_), TyKind::INT)
-            | (value @ Self::UInt(_), TyKind::UINT)
-            | (value @ Self::Index(_), TyKind::Index)
-            | (value @ Self::Float(_), TyKind::FLOAT64)
+            (value @ Self::Int(_), kind) if kind.is_int() => Some(value),
+            (value @ Self::UInt(_), kind) if kind.is_uint() => Some(value),
+            (value @ Self::Float(_), kind) if kind.is_float64() => Some(value),
+            (value @ Self::Index(_), TyKind::Index)
             | (value @ Self::IntLiteral(_), TyKind::IntLiteral(_))
             | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral(_))
             | (value @ Self::Bool(_), TyKind::Bool | TyKind::I1)
@@ -1343,8 +1336,9 @@ impl CtValue {
             (value @ Self::Generator(_), TyKind::Generator(_)) => Some(value),
             // `Int`, `UInt`, and `Float64` hold their one lane as the host
             // scalar.
-            (Self::Simd { dtype, lanes }, TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
-                if lanes.len() == 1
+            (Self::Simd { dtype, lanes }, kind)
+                if crate::types::has_host_scalar_value(kind)
+                    && lanes.len() == 1
                     && crate::types::scalar_simd_dtype(ty.kind()) == Some(dtype) =>
             {
                 match (dtype, &lanes[0]) {
@@ -1358,17 +1352,11 @@ impl CtValue {
                     _ => None,
                 }
             }
-            (
-                value @ Self::Simd { .. },
-                TyKind::Simd {
-                    dtype: SimdDtype::Known(target),
-                    width: SimdWidth::Known(width),
-                },
-            ) => {
+            (value @ Self::Simd { .. }, kind) if let Some((target, width)) = kind.known_simd() => {
                 let Self::Simd { dtype, lanes } = &value else {
                     unreachable!("guard established a SIMD value");
                 };
-                (dtype == target && lanes.len() as i64 == *width).then_some(value)
+                (*dtype == target && lanes.len() as i64 == width).then_some(value)
             }
             // A frozen instance of a generic struct names its
             // backend-monomorphized instance; the target names the template.
@@ -1379,14 +1367,16 @@ impl CtValue {
                 (crate::types::struct_template(name) == crate::types::struct_template(target))
                     .then_some(value)
             }
-            (Self::IntLiteral(value), TyKind::INT) => value.wrapping_signed(64).map(CtValue::Int),
-            (Self::IntLiteral(value), TyKind::UINT) => {
+            (Self::IntLiteral(value), kind) if kind.is_int() => {
+                value.wrapping_signed(64).map(CtValue::Int)
+            }
+            (Self::IntLiteral(value), kind) if kind.is_uint() => {
                 value.wrapping_unsigned(64).map(CtValue::UInt)
             }
-            (Self::IntLiteral(value), TyKind::FLOAT64) => {
+            (Self::IntLiteral(value), kind) if kind.is_float64() => {
                 value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
-            (Self::FloatLiteral(value), TyKind::FLOAT64) => {
+            (Self::FloatLiteral(value), kind) if kind.is_float64() => {
                 value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
             (Self::IntLiteral(value), kind)
@@ -1747,28 +1737,25 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
     Some(match ty.kind() {
         // A literal whose type carries its value has no closed spelling:
         // `IntLiteral[v]`'s attribute is no source expression.
-        TyKind::INT | TyKind::IntLiteral(None) => Type::Named("Int".to_string(), Vec::new()),
-        TyKind::UINT => Type::Named("UInt".to_string(), Vec::new()),
+        kind if kind.is_int() => Type::Named("Int".to_string(), Vec::new()),
+        TyKind::IntLiteral(None) => Type::Named("Int".to_string(), Vec::new()),
+        kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
         TyKind::Bool => Type::Bool,
         TyKind::StringLiteral(_) => Type::StringLiteral,
-        TyKind::FLOAT64 | TyKind::FloatLiteral(None) => {
-            Type::Named("Float64".to_string(), Vec::new())
-        }
+        kind if kind.is_float64() => Type::Named("Float64".to_string(), Vec::new()),
+        TyKind::FloatLiteral(None) => Type::Named("Float64".to_string(), Vec::new()),
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
-        TyKind::Simd {
-            dtype: SimdDtype::Known(dtype),
-            width: SimdWidth::Known(width),
-        } => Type::Named(
+        kind if let Some((dtype, width)) = kind.known_simd() => Type::Named(
             "SIMD".to_string(),
             vec![
-                ParamArg::Value(CtValue::Dtype(*dtype).materialize(span)?),
-                ParamArg::Value(CtValue::Int(*width).materialize(span)?),
+                ParamArg::Value(CtValue::Dtype(dtype).materialize(span)?),
+                ParamArg::Value(CtValue::Int(width).materialize(span)?),
             ],
         ),
         // A symbolic slot has no source spelling: its declaration is still
         // a template.
-        TyKind::Simd { .. } => return None,
+        kind if kind.is_simd() => return None,
         // A generated public-Tuple specialization keeps its element types
         // behind an argument-less symbol: spell the canonical `Tuple[...]`
         // application, which the checker maps back onto the specialization.

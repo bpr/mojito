@@ -579,15 +579,10 @@ impl ScopeCx<'_> {
             TyKind::Dependent(DependentType::Parameter(expr)) => {
                 self.expr(role, "dependent type", expr, &MetaTy::Type, nested);
             }
-            TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
-                if let SimdDtype::Expr(expr) = dtype {
-                    self.expr(role, "lane", expr, &MetaTy::value(Ty::dtype()), nested);
-                }
-                if let SimdWidth::Expr(expr) = width {
-                    let length = MetaTy::value(mojito_types::types::simd_length_ty());
-                    self.expr(role, "width", expr, &length, nested);
-                }
+            TyKind::Struct(..) if let Some((dtype, width)) = ty.kind().as_simd() => {
+                self.simd_slots(role, &dtype, &width, nested);
             }
+            TyKind::KgenSimd { dtype, width } => self.simd_slots(role, dtype, width, nested),
             TyKind::Struct(name, args) => {
                 let declared = self
                     .declarations
@@ -727,6 +722,24 @@ impl ScopeCx<'_> {
             | TyKind::I1
             | TyKind::SelfType
             | TyKind::Error => {}
+        }
+    }
+
+    /// The symbolic slots of a `SIMD` application or its `!kgen.simd`
+    /// storage: a lane `DType` and a `SIMDLength` width.
+    fn simd_slots(
+        &mut self,
+        role: &str,
+        dtype: &SimdDtype,
+        width: &SimdWidth,
+        nested: &mut Vec<(ParamId, MetaTy)>,
+    ) {
+        if let SimdDtype::Expr(expr) = dtype {
+            self.expr(role, "lane", expr, &MetaTy::value(Ty::dtype()), nested);
+        }
+        if let SimdWidth::Expr(expr) = width {
+            let length = MetaTy::value(mojito_types::types::simd_length_ty());
+            self.expr(role, "width", expr, &length, nested);
         }
     }
 

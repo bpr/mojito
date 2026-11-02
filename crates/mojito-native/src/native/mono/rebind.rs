@@ -24,8 +24,7 @@ impl Specializer<'_> {
     /// a `SIMD` built from its storage (`Self(mlir_value=...)`), built from
     /// a `SIMD`, is the `SIMD`. A `!kgen.simd` root other instructions read
     /// too takes the vector it is rebound to all the same, as `_mlir_value`
-    /// reads a vector's own register while `SIMD` is a compiler type
-    /// (R1800).
+    /// reads a vector's own register (R1811).
     pub(super) fn discharge_rebinds(
         &self,
         template: &str,

@@ -45,7 +45,7 @@ impl Checker {
     }
 
     /// The declaration a compiler-typed receiver's member `method` is read
-    /// from before the compiler's rule: `SIMD`'s, for a `TyKind::Simd`
+    /// from before the compiler's rule: `SIMD`'s, for a `SIMD`
     /// receiver whose struct declares it, and `StringLiteral`'s,
     /// `IntLiteral`'s, or `FloatLiteral`'s, for a literal whose type
     /// carries its value. A value-less literal is no instance. A member the

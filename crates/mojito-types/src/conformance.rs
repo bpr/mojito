@@ -204,16 +204,17 @@ pub fn leaf_conformance(
     trait_name: &str,
     element: &mut dyn FnMut(&Ty, &str) -> Conformance,
 ) -> Option<Conformance> {
-    if matches!(
-        ty.kind(),
-        TyKind::Struct(..)
-            | TyKind::Param { .. }
-            | TyKind::Assoc { .. }
-            | TyKind::Dependent(_)
-            | TyKind::SelfType
-            | TyKind::Infer
-            | TyKind::Error
-    ) {
+    if ty.kind().is_non_simd_struct()
+        || matches!(
+            ty.kind(),
+            TyKind::Param { .. }
+                | TyKind::Assoc { .. }
+                | TyKind::Dependent(_)
+                | TyKind::SelfType
+                | TyKind::Infer
+                | TyKind::Error
+        )
+    {
         return None;
     }
     Some(match trait_name {
@@ -405,14 +406,8 @@ pub fn is_scalar(ty: &Ty) -> bool {
 
 /// Whether `ty` is a numeric type (concrete or literal).
 pub fn is_numeric(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::INT
-            | TyKind::UINT
-            | TyKind::FLOAT64
-            | TyKind::IntLiteral(_)
-            | TyKind::FloatLiteral(_)
-    )
+    matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+        || crate::types::has_host_scalar_value(ty.kind())
 }
 
 pub fn is_numeric_like(ty: &Ty) -> bool {
@@ -422,13 +417,15 @@ pub fn is_numeric_like(ty: &Ty) -> bool {
 /// Integer-kind scalars — the operands of bitwise and shift operators
 /// (`IntLiteral` materializes to `Int`).
 pub fn is_integer_like(ty: &Ty) -> bool {
-    matches!(default_literal(ty).kind(), TyKind::INT | TyKind::UINT)
+    let ty = default_literal(ty);
+    ty.kind().is_int() || ty.kind().is_uint()
 }
 
 /// Signed numeric scalars — the operands of arithmetic negation (`-x`); `UInt`
 /// is excluded.
 pub fn is_signed_numeric_like(ty: &Ty) -> bool {
-    matches!(default_literal(ty).kind(), TyKind::INT | TyKind::FLOAT64)
+    let ty = default_literal(ty);
+    ty.kind().is_int() || ty.kind().is_float64()
 }
 
 pub fn builtin_hashable_ty(ty: &Ty) -> bool {
@@ -441,7 +438,7 @@ pub fn builtin_hashable_ty(ty: &Ty) -> bool {
 /// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a
 /// `SIMD[dtype, width]` — the types the hidden `$SIMD` bound admits.
 pub fn simd_valued_ty(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Simd { .. }) || simd_shape(ty).is_some()
+    ty.kind().is_simd() || simd_shape(ty).is_some()
 }
 
 /// Whether `ty` is a thin function's type, generic or not: a bare function

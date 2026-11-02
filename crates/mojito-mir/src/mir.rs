@@ -478,10 +478,11 @@ impl MirDeclarations {
     /// arguments ([`Self::field_types`]), unwrapped again while the field is
     /// such a struct, as upstream's `LowerKGENToLLVM` lowers it; any other
     /// type is itself. A literal struct (`TyKind::Tuple`, upstream's
-    /// `!kgen.struct`) is never unwrapped, even of one element. A vector is
-    /// its `!kgen.simd` storage ([`mojito_types::types::storage_ty`]), the
-    /// field `register_field` gives once `SIMD` is a declared struct
-    /// (R1800).
+    /// `!kgen.struct`) is never unwrapped, even of one element. A `SIMD`
+    /// application is its `!kgen.simd` storage
+    /// ([`mojito_types::types::storage_ty`]), the `_mlir_value` field
+    /// `register_field` would give, since below the elaborator a closed
+    /// `SIMD` has a declared instance only once a member is demanded (R1812).
     pub fn translated_type(&self, ty: &Ty) -> Ty {
         let mut translated = ty.clone();
         while let Some((name, _)) = translated.kind().as_non_simd_struct()
@@ -2091,11 +2092,12 @@ fn lower_function(
 /// The type of `self` in a member of struct `name` declaring `parameters`:
 /// the struct at its own binders, which parametric MIR spells by the bare
 /// name and each instance replaces. `SIMD` and the literal structs are the
-/// exceptions while the `Ty::new` bridge holds their applications as the
-/// compiler's `TyKind::Simd` (R1558), `TyKind::StringLiteral` (R1660),
-/// `TyKind::IntLiteral`, and `TyKind::FloatLiteral` (R1785):
-/// the receiver is that type at the binders, which an instance substitutes
-/// as any other type.
+/// exceptions: the checker types their `Self` as the application at the
+/// binders, as upstream's is, since `SIMD`'s lane rules read its slots off
+/// it and the `Ty::new` bridges hold a literal's application as the
+/// compiler's `TyKind::StringLiteral` (R1660), `TyKind::IntLiteral`, and
+/// `TyKind::FloatLiteral` (R1785). The receiver is that type at the
+/// binders, which an instance substitutes as any other type.
 fn self_receiver_ty(name: &str, parameters: &[ParamDecl]) -> Ty {
     let arguments = if [
         mojito_types::types::SIMD_TYPE_NAME,

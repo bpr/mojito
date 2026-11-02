@@ -1455,6 +1455,9 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(None)) => {
             "Float64".to_string()
         }
+        // A `SIMD` application spells as its display (`Int32`,
+        // `SIMD[DType.int32, 4]`), not as a struct's arguments.
+        kind if kind.is_simd() => kind.to_string(),
         TyKind::Bool => "Bool".to_string(),
         TyKind::StringLiteral(None) => "StringLiteral".to_string(),
         // A literal whose type carries its value spells as the application
@@ -1722,7 +1725,7 @@ fn ast_raw(
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
         // A scalar alias (`Byte`), a `Scalar`/`SIMD` application over
         // concrete or binder arguments, spells as `ty_raw` displays the
-        // resolved `TyKind::Simd`.
+        // resolved `SIMD` application.
         Type::Named(name, args)
             if let Some(spelling) =
                 simd_annotation_spelling(name, args, type_bounds, comptimes) =>
@@ -2018,7 +2021,7 @@ fn func_annotation_raw(
 /// Render one annotation as the checked `Ty` Display would, for use inside
 /// [`func_annotation_raw`] only: binders in `scope` print bare (no bounds),
 /// nominal arguments print bracketed and comma-separated, and a vector
-/// prints as its `TyKind::Simd` does.
+/// prints as its `SIMD` application does.
 fn annotation_display(
     ty: &Type,
     comptimes: &dyn ModuleNames,
@@ -2117,7 +2120,7 @@ fn value_display(
     }
 }
 
-/// A vector annotation as the checker displays the resolved `TyKind::Simd`:
+/// A vector annotation as the checker displays the resolved `SIMD` type:
 /// a scalar alias (`Byte`) or a concrete `Scalar`/`SIMD` application in its
 /// canonical spelling, and one over binders of the signature (`Scalar[dt]`,
 /// `SIMD[dt, width]`, `Self.width`) symbolically; `None` for any other
@@ -2195,7 +2198,7 @@ fn param_arg_width(argument: &ParamArg, comptimes: &dyn ModuleNames) -> Option<i
 
 /// The canonical checked spelling of a scalar/SIMD annotation: width-1
 /// `int`/`float64` canonicalize to the native scalars, everything else uses
-/// the `TyKind::Simd` display (the scalar alias where one exists).
+/// the `SIMD` application's display (the scalar alias where one exists).
 fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
     canonical_simd_ty(dtype, width).to_string()
 }

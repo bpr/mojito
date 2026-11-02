@@ -3563,13 +3563,9 @@ impl MetaTy {
             ),
             CtValue::Set { elements, .. } => Self::Set(all(elements)),
             CtValue::Dtype(_) => Self::value(Ty::dtype()),
-            CtValue::Simd { dtype, lanes } => Self::value(
-                TyKind::Simd {
-                    dtype: crate::types::SimdDtype::Known(*dtype),
-                    width: crate::types::SimdWidth::Known(lanes.len() as i64),
-                }
-                .into(),
-            ),
+            CtValue::Simd { dtype, lanes } => {
+                Self::value(crate::types::canonical_simd_ty(*dtype, lanes.len() as i64))
+            }
             CtValue::Struct { name, .. } => {
                 Self::value(TyKind::Struct(name.clone(), Vec::new()).into())
             }
@@ -3606,10 +3602,10 @@ impl MetaTy {
     }
 
     pub fn is_integer(&self) -> bool {
-        matches!(
-            self.as_value().map(Ty::kind),
-            Some(TyKind::INT | TyKind::UINT | TyKind::IntLiteral(_))
-        )
+        matches!(self.as_value().map(Ty::kind), Some(TyKind::IntLiteral(_)))
+            || self
+                .as_value()
+                .is_some_and(|ty| ty.kind().is_int() || ty.kind().is_uint())
     }
 
     /// A constant aggregate bound to a parameter list: every member has the
@@ -4357,8 +4353,8 @@ enum IntDomain {
 impl IntDomain {
     fn of(meta: &MetaTy) -> Option<Self> {
         match meta.as_value().map(Ty::kind) {
-            Some(TyKind::INT) => Some(Self::Int),
-            Some(TyKind::UINT) => Some(Self::UInt),
+            Some(kind) if kind.is_int() => Some(Self::Int),
+            Some(kind) if kind.is_uint() => Some(Self::UInt),
             Some(TyKind::Index) => Some(Self::Index),
             Some(TyKind::IntLiteral(_)) => Some(Self::Literal),
             _ => None,
@@ -4623,18 +4619,14 @@ fn require_bool(op: ParamOp, operand: &ParamExpr) -> Result<(), ParamError> {
 fn is_scalar_domain(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::INT
-            | TyKind::UINT
-            | TyKind::Index
+        TyKind::Index
             | TyKind::IntLiteral(_)
-            | TyKind::FLOAT64
             | TyKind::FloatLiteral(_)
             | TyKind::Bool
             | TyKind::I1
             | TyKind::StringLiteral(_)
             | TyKind::Dtype
-            | TyKind::Simd { .. }
-    )
+    ) || ty.kind().is_simd()
 }
 
 fn carries_transfers(ty: &Ty) -> bool {

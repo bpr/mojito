@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1812**.
+Next free ID: **R1813**.
 
 ## Ordered Work
 
@@ -11335,56 +11335,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1800 Below the checker a `SIMD` application is the compiler's
-  vector type `TyKind::Simd`, where upstream holds the declared struct**
-
-  The `Ty::new` bridge (`types::bridged_simd`) interns the declared
-  struct's `SIMD[...]` application as `TyKind::Simd`.
-  - Constructors (`canonical_simd_ty`, `simd_ty_from_slots`, `Ty::simd`,
-    `Ty::int()` and its siblings) build `TyKind::Struct("SIMD", …)`, and
-    `TyKind`'s accessors (`as_simd`, `known_simd`, `is_simd`, `is_int`, …)
-    decode it. They and `as_non_simd_struct` lose `const`.
-  - Replace the bridge with struct-argument canonicalization, so `Int`,
-    `Scalar[DType.int]`, and `SIMD[DType.int, SIMDLength(1)]` stay one
-    type. `closed_argument` must count a closed `SIMDLength` value.
-  - Delete `TyKind::Simd`, its `INT`, `UINT`, and `FLOAT64` constants,
-    `simd_struct_arguments`, `nominal_parts`' `Simd` arm, and
-    `self_receiver_ty`'s `SIMD` arm.
-  - Delete `translated_type`'s transitional vector arm
-    (`types::storage_ty`) once `register_field` answers for `SIMD`.
-  - The four exhaustive walks naming the variant (`mir::text`'s
-    `type_spelling`, `text/write.rs`'s type record, `verify/scope.rs`'s
-    walk, the checker's `type_is_symbolic`) keep their spelling through an
-    accessor arm above their `TyKind::Struct` arm, as `TyKind`'s `Display`
-    does, so diagnostics, instance symbols, and MIR-text fixtures do not
-    change.
-  - `coerces`' `SIMD` implicit-initializer arms must run before its
-    `(Struct, Struct)` arm.
-  - The elaborator keeps a closed `SIMD`'s name and arguments
-    (`substitute_ty`), as upstream names the application, so `Ty::int()`
-    stays one type below it. The discovered-types loop sends a `SIMD` to
-    `declare_simd_instance`.
-  - SROA's `splittable_type` must not split a struct `register_field`
-    answers for, or every `Int` slot splits.
-  - The VM's `freeze_value` must freeze a `SIMD` register as the scalar or
-    `CtValue::Simd` it freezes to today, not as a boxed struct.
-  - Probe: `Int32(copy=x)` records `BuiltinCopyConstruction`. Following
-    the pin, MIR's `struct_copy` serves it once `expr_call.rs`'s
-    `copy_construction` stops excluding `SIMD`.
-  - Start from `target/r1800-flip.diff` if it survives (a draft of the
-    `mojito-types` half and the elaborator fixes, written before R1810's
-    conversion), else from the plan file. The probe set is the plan's;
-    stop on byte-identical VM, native, and `emit-mir` outputs.
-  - Depends on R1798, R1799, and R1810.
-  - Model: Fable, Planned.
-
 - [ ] **R1811 `v._mlir_value` on a `SIMD` is the vector's own register,
   where upstream reads the struct's field**
 
   The check records `SemanticAdjustment::SimdStorage`, so the access is
   the value or place itself, and every pass below the check treats a
   `SIMD` register as its own storage.
-  - Once R1800 makes `SIMD` a struct, the access projects
+  - Now that `SIMD` is a struct (R1800), the access projects
     `Proj::Field("_mlir_value")`, which the VM's `hold_register_fields`
     and Pliron's held-struct `places.rs` path already turn into the
     struct's storage.
@@ -11402,8 +11359,30 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Int(mlir_value=storage)` over a `storage` another op reads displays
     only through that `discharge_rebinds` arm today, and must print
     `5 10 …` with it deleted.
+  - Probe: `Int32(copy=x)` records `BuiltinCopyConstruction`, since
+    `types::builtin_copy_is_value_read` still answers for `SIMD`. Following
+    the pin, MIR's `struct_copy` serves it once that predicate and
+    `expr_call.rs`'s `copy_construction` stop excluding `SIMD`.
   - Depends on R1800.
   - Model: Fable, Planned.
+
+- [ ] **R1812 Below the elaborator a closed `SIMD` application has a
+  struct declaration only once a member is demanded, where upstream's
+  every application is the struct type**
+
+  `declare_simd_instance` runs when a backend first reads a member table,
+  and the discovered-types loop (`mono/specializer.rs`) skips a `SIMD`.
+  - So `MirDeclarations::register_field` cannot answer for `SIMD` in
+    concrete MIR, and `translated_type` keeps reading a `SIMD` as its
+    storage through `types::storage_ty`.
+  - Probe: deleting that `storage_ty` call makes Pliron fail `print(1 + 2)`
+    with "unsupported type `Struct("SIMD", …)`" in `_write_float`.
+  - Lever: the discovered-types loop sends a `SIMD` to
+    `declare_simd_instance`, and `translated_type` reads a `SIMD`'s
+    instance through `symbol::member_table_name`. `emit-mir` then gains
+    the instance declarations.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1801 MIR's builtin `binary`, `MakeSimd`, lane, and cast
   instructions take a `SIMD` struct register, where upstream's `pop` ops

@@ -136,7 +136,7 @@ impl DependentType {
     }
 }
 
-/// The element type of a [`TyKind::Simd`]: a concrete dtype, or a `DType`-valued
+/// The element type of a `SIMD` application: a concrete dtype, or a `DType`-valued
 /// parameter expression while the enclosing declaration is still symbolic
 /// (`Scalar[dt]` under source validation).
 ///
@@ -189,7 +189,7 @@ impl fmt::Display for SimdDtype {
     }
 }
 
-/// The length of a [`TyKind::Simd`]: a concrete lane count, or the
+/// The length of a `SIMD` application: a concrete lane count, or the
 /// `SIMDLength` value the slot holds while the declaration is symbolic.
 ///
 /// Upstream's slot is `SIMD[dtype, length: SIMDLength]`. The value is
@@ -574,10 +574,10 @@ impl fmt::Display for LaneMask {
 
 /// The variants of a [`Ty`], the storage its handle shares.
 ///
-/// `Int`, `UInt`, and `Float64` are width-one [`TyKind::Simd`]s, as
-/// upstream's `Scalar[DType.int]`, `Scalar[DType.uint]`, and
-/// `Scalar[DType.float64]` aliases are ([`TyKind::INT`], [`TyKind::UINT`],
-/// [`TyKind::FLOAT64`]). `Func` is synthesized from a `def` signature or
+/// A `SIMD[dtype, length]` application is the declared struct's
+/// [`TyKind::Struct`], as upstream's is, so `Int`, `UInt`, and `Float64` are
+/// its width-one applications, upstream's `Scalar[DType.int]`,
+/// `Scalar[DType.uint]`, and `Scalar[DType.float64]`. `Func` is synthesized from a `def` signature or
 /// lowered from a function-type annotation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TyKind {
@@ -671,13 +671,6 @@ pub enum TyKind {
         #[serde(serialize_with = "crate::symbol_ref::serialize")] String,
         Vec<TyArg>,
     ),
-    /// A SIMD vector type `SIMD[DType.<dtype>, width]`. Either slot is a
-    /// parameter expression while the declaration it belongs to is symbolic;
-    /// a symbolic slot never crosses the MIR waist.
-    Simd {
-        dtype: SimdDtype,
-        width: SimdWidth,
-    },
     /// The built-in `Error` type.
     Error,
     /// Compile-time-only list shape used while materializing `CtValue::List`.
@@ -750,7 +743,7 @@ pub enum TyKind {
     /// Upstream's KGEN vector storage `!kgen.simd<width, dtype>`, the type
     /// of a `SIMD`'s `_mlir_value` field, displayed
     /// ``__mlir_type.`!kgen.simd<4, si32>` `` (``__mlir_type.`!kgen.scalar<index>` ``
-    /// at width one). It is distinct from the [`TyKind::Simd`] it stores:
+    /// at width one). It is distinct from the `SIMD` that stores it:
     /// `pop` ops take it, and it has no members and conforms to no
     /// numeric trait. Either slot is a parameter expression while its
     /// declaration is symbolic. Both backends hold it as they hold the
@@ -863,9 +856,6 @@ macro_rules! dataless_types {
                     TyKind::StringLiteral(None) => Some(Self::string_literal()),
                     TyKind::IntLiteral(None) => Some(Self::int_literal()),
                     TyKind::FloatLiteral(None) => Some(Self::float_literal()),
-                    TyKind::INT => Some(Self::int()),
-                    TyKind::UINT => Some(Self::uint()),
-                    TyKind::FLOAT64 => Some(Self::float64()),
                     _ => None,
                 }
             }
@@ -895,12 +885,27 @@ shared_scalar_types! {
     int_literal => INT_LITERAL,
     /// The value-less `FloatLiteral` ([`TyKind::FloatLiteral(_)`]).
     float_literal => FLOAT_LITERAL,
+}
+
+impl Ty {
     /// `Int`, `Scalar[DType.int]`.
-    int => INT,
+    pub fn int() -> Self {
+        static TY: LazyLock<Ty> =
+            LazyLock::new(|| simd_node(SimdDtype::Known(Dtype::Int), SimdWidth::Known(1)));
+        TY.clone()
+    }
     /// `UInt`, `Scalar[DType.uint]`.
-    uint => UINT,
+    pub fn uint() -> Self {
+        static TY: LazyLock<Ty> =
+            LazyLock::new(|| simd_node(SimdDtype::Known(Dtype::UInt), SimdWidth::Known(1)));
+        TY.clone()
+    }
     /// `Float64`, `Scalar[DType.float64]`.
-    float64 => FLOAT64,
+    pub fn float64() -> Self {
+        static TY: LazyLock<Ty> =
+            LazyLock::new(|| simd_node(SimdDtype::Known(Dtype::Float64), SimdWidth::Known(1)));
+        TY.clone()
+    }
 }
 
 dataless_types! {
@@ -986,18 +991,17 @@ impl Ty {
     /// The type of variant `kind`. A variant that carries no data shares one
     /// node per compilation.
     ///
-    /// A `SIMD[dtype, length]` application of the declared struct is the
-    /// compiler's [`TyKind::Simd`] ([`bridged_simd`]), so the declaration's
-    /// `Self` and every substitution of it keep one representation until
-    /// R1558 makes the struct the only one. A `StringLiteral[value]`
-    /// application is likewise a [`TyKind::StringLiteral(_)`]
+    /// A `SIMD[dtype, length]` application canonicalizes its slots
+    /// ([`canonical_simd_application`]): a closed slot folds, so `Int`,
+    /// `Scalar[DType.int]`, and `SIMD[DType.int, SIMDLength(1)]` are one
+    /// type. A `StringLiteral[value]` application is a [`TyKind::StringLiteral(_)`]
     /// ([`bridged_string_literal`]) until R1660 deletes that bridge, and an
     /// `IntLiteral[value]` or `FloatLiteral[value]` one a
     /// [`TyKind::IntLiteral(_)`] or [`TyKind::FloatLiteral(_)`]
     /// ([`bridged_numeric_literal`]) until R1785 deletes that one.
     pub fn new(kind: TyKind) -> Self {
         Self::dataless(&kind)
-            .or_else(|| bridged_simd(&kind))
+            .or_else(|| canonical_simd_application(&kind))
             .or_else(|| bridged_string_literal(&kind))
             .or_else(|| bridged_numeric_literal(&kind))
             .unwrap_or_else(|| Self(Arc::new(TyNode::new(kind))))
@@ -1089,7 +1093,7 @@ impl Ty {
     /// another vector or a MIR instruction, already canonical. New slots go
     /// through [`simd_ty_from_slots`].
     pub fn simd(dtype: SimdDtype, width: SimdWidth) -> Self {
-        Self::new(TyKind::Simd { dtype, width })
+        simd_ty_from_slots(dtype.clone(), width.clone()).unwrap_or_else(|_| simd_node(dtype, width))
     }
 }
 
@@ -1100,50 +1104,35 @@ impl TyKind {
     pub const INT_LITERAL: &'static Self = &Self::IntLiteral(None);
     /// The value-less `FloatLiteral` ([`TyKind::FloatLiteral(_)`]).
     pub const FLOAT_LITERAL: &'static Self = &Self::FloatLiteral(None);
-    /// `Int`, upstream's `Scalar[DType.int]`.
-    pub(crate) const INT: &'static Self = &Self::Simd {
-        dtype: SimdDtype::Known(Dtype::Int),
-        width: SimdWidth::Known(1),
-    };
-    /// `UInt`, upstream's `Scalar[DType.uint]`.
-    pub(crate) const UINT: &'static Self = &Self::Simd {
-        dtype: SimdDtype::Known(Dtype::UInt),
-        width: SimdWidth::Known(1),
-    };
-    /// `Float64`, upstream's `Scalar[DType.float64]`.
-    pub(crate) const FLOAT64: &'static Self = &Self::Simd {
-        dtype: SimdDtype::Known(Dtype::Float64),
-        width: SimdWidth::Known(1),
-    };
 
     /// Whether this is `Int`.
-    pub const fn is_int(&self) -> bool {
-        matches!(self, Self::INT)
+    pub fn is_int(&self) -> bool {
+        self.known_simd() == Some((Dtype::Int, 1))
     }
 
     /// Whether this is `UInt`.
-    pub const fn is_uint(&self) -> bool {
-        matches!(self, Self::UINT)
+    pub fn is_uint(&self) -> bool {
+        self.known_simd() == Some((Dtype::UInt, 1))
     }
 
     /// Whether this is `Float64`.
-    pub const fn is_float64(&self) -> bool {
-        matches!(self, Self::FLOAT64)
+    pub fn is_float64(&self) -> bool {
+        self.known_simd() == Some((Dtype::Float64, 1))
     }
 
     /// Whether this is a `SIMD` vector, its slots symbolic or not. An exact
     /// numeric literal is not one ([`simd_shape`] reports what it
     /// materializes to).
-    pub const fn is_simd(&self) -> bool {
-        matches!(self, Self::Simd { .. })
+    pub fn is_simd(&self) -> bool {
+        simd_struct_slots(self).is_some()
     }
 
     /// The name and arguments of a struct application other than a `SIMD`
     /// one. A rule written for a declared struct reads this rather than
     /// matching [`TyKind::Struct`], since `SIMD`'s operators, copies, and
-    /// lanes are still the compiler's own rules (R1575, R1801): it keeps
-    /// excluding `SIMD` once that application is the struct (R1800).
-    pub const fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
+    /// lanes are still the compiler's own rules (R1575, R1801), though its
+    /// application is the declared struct.
+    pub fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
         match self {
             Self::Struct(name, arguments) if !self.is_simd() => Some((name, arguments)),
             _ => None,
@@ -1152,26 +1141,20 @@ impl TyKind {
 
     /// Whether this is a struct application other than a `SIMD` one
     /// ([`TyKind::as_non_simd_struct`]).
-    pub const fn is_non_simd_struct(&self) -> bool {
+    pub fn is_non_simd_struct(&self) -> bool {
         self.as_non_simd_struct().is_some()
     }
 
     /// The dtype and width slots of a `SIMD` vector, symbolic or not.
     pub fn as_simd(&self) -> Option<(SimdDtype, SimdWidth)> {
-        match self {
-            Self::Simd { dtype, width } => Some((dtype.clone(), width.clone())),
-            _ => None,
-        }
+        simd_struct_slots(self)
     }
 
     /// The dtype and lane count of a `SIMD` vector whose slots are both
     /// known. Unlike [`simd_shape`], an exact literal answers `None`.
-    pub const fn known_simd(&self) -> Option<(Dtype, i64)> {
-        match self {
-            Self::Simd {
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(width),
-            } => Some((*dtype, *width)),
+    pub fn known_simd(&self) -> Option<(Dtype, i64)> {
+        match simd_struct_slots(self)? {
+            (SimdDtype::Known(dtype), SimdWidth::Known(width)) => Some((dtype, width)),
             _ => None,
         }
     }
@@ -1602,16 +1585,8 @@ pub fn kgen_simd_ty(dtype: Dtype, width: i64) -> Ty {
 /// The `!kgen.simd` storage type of a SIMD type, its `_mlir_value`
 /// field's type, or `None` for any other type.
 pub fn simd_storage(ty: &Ty) -> Option<Ty> {
-    match ty.kind() {
-        TyKind::Simd { dtype, width } => Some(
-            TyKind::KgenSimd {
-                dtype: dtype.clone(),
-                width: width.clone(),
-            }
-            .into(),
-        ),
-        _ => None,
-    }
+    let (dtype, width) = ty.kind().as_simd()?;
+    Some(TyKind::KgenSimd { dtype, width }.into())
 }
 
 /// The SIMD type whose storage is the `!kgen.simd` type `ty`, or `None`
@@ -2006,7 +1981,7 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
         TyKind::IntLiteral(_) => "SIMD[DType.int, 1]".to_string(),
         TyKind::FloatLiteral(_) => "SIMD[DType.float64, 1]".to_string(),
         TyKind::Bool => "Bool".to_string(),
-        TyKind::Simd { dtype, width } => format!("SIMD[{dtype}, {width}]"),
+        kind if let Some((dtype, width)) = kind.as_simd() => format!("SIMD[{dtype}, {width}]"),
         TyKind::StringLiteral(_) => "StringLiteral".to_string(),
         TyKind::None => "NoneType".to_string(),
         TyKind::Struct(name, args) => {
@@ -2980,6 +2955,9 @@ impl fmt::Display for Ty {
 
 impl fmt::Display for TyKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some((dtype, width)) = self.as_simd() {
+            return fmt_simd(f, &dtype, &width);
+        }
         match self {
             Self::IntLiteral(None) => write!(f, "Int"),
             Self::IntLiteral(Some(value)) => write!(f, "IntLiteral[{value}]"),
@@ -3026,18 +3004,6 @@ impl fmt::Display for TyKind {
             }
             Self::Dependent(dependent) => write!(f, "{}", dependent.expr()),
             Self::SelfType => write!(f, "Self"),
-            Self::Simd {
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(1),
-            } => match dtype.repr_alias() {
-                Some(alias) => write!(f, "{alias}"),
-                None => write!(f, "SIMD[DType.{}, 1]", dtype.name()),
-            },
-            Self::Simd {
-                dtype,
-                width: SimdWidth::Known(1),
-            } => write!(f, "Scalar[{dtype}]"),
-            Self::Simd { dtype, width } => write!(f, "SIMD[{dtype}, {width}]"),
             Self::Error => write!(f, "Error"),
             Self::Pointer { element, origin } => {
                 write!(f, "Pointer[{element}, ")?;
@@ -3468,18 +3434,118 @@ pub fn value_coerces(from: &Ty, to: &Ty) -> bool {
 /// runtime leaf classification, the hasher's leaf instances) agrees through this
 /// one function.
 pub fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
-    TyKind::Simd {
-        dtype: SimdDtype::Known(dtype),
-        width: SimdWidth::Known(width),
+    match (dtype, width) {
+        (Dtype::Int, 1) => Ty::int(),
+        (Dtype::UInt, 1) => Ty::uint(),
+        (Dtype::Float64, 1) => Ty::float64(),
+        _ => simd_node(SimdDtype::Known(dtype), SimdWidth::Known(width)),
     }
-    .into()
+}
+
+/// The `SIMD[dtype, length]` struct node of two canonical slots: a
+/// `DType` value or expression, and a `SIMDLength` value or expression.
+/// It is built directly, since its slots are already canonical.
+fn simd_node(dtype: SimdDtype, width: SimdWidth) -> Ty {
+    let dtype = match dtype {
+        SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
+        SimdDtype::Expr(expr) => CtValue::Expr(expr),
+    };
+    let length = match width {
+        SimdWidth::Known(lanes) => simd_length_value(lanes),
+        SimdWidth::Expr(length) => CtValue::Expr(length),
+    };
+    Ty(Arc::new(TyNode::new(TyKind::Struct(
+        SIMD_TYPE_NAME.to_string(),
+        vec![TyArg::Val(dtype), TyArg::Val(length)],
+    ))))
+}
+
+/// The slots of a canonical `SIMD[dtype, length]` application, as
+/// [`simd_node`] spells them, or `None` for any other type.
+fn simd_struct_slots(kind: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
+    let TyKind::Struct(name, args) = kind else {
+        return None;
+    };
+    if name != SIMD_TYPE_NAME {
+        return None;
+    }
+    let [TyArg::Val(dtype), TyArg::Val(length)] = args.as_slice() else {
+        return None;
+    };
+    let width = match length {
+        CtValue::Struct { .. } => SimdWidth::Known(known_simd_length(length)?),
+        CtValue::Expr(expr) => SimdWidth::Expr(expr.clone()),
+        _ => return None,
+    };
+    Some((simd_dtype_slot(dtype)?, width))
+}
+
+/// A `SIMD` application's dtype argument as its slot: a `DType` value, or a
+/// `DType`-typed expression.
+fn simd_dtype_slot(value: &CtValue) -> Option<SimdDtype> {
+    match value {
+        CtValue::Dtype(dtype) => Some(SimdDtype::Known(*dtype)),
+        CtValue::Expr(expr)
+            if matches!(expr.meta().as_value().map(Ty::kind), Some(TyKind::Dtype)) =>
+        {
+            Some(SimdDtype::Expr(expr.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// The lane count of a closed `SIMDLength` value in its canonical form,
+/// its one field an `Index`.
+fn known_simd_length(value: &CtValue) -> Option<i64> {
+    match value {
+        CtValue::Struct { name, fields } if name == SIMD_LENGTH_TYPE_NAME => {
+            match fields.as_slice() {
+                [(_, CtValue::Index(lanes))] => Some(*lanes),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The canonical form of a `SIMD[dtype, length]` application, upstream's
+/// struct applied to a dtype value and a `SIMDLength` value, closed or
+/// symbolic: a closed slot folds, so `Int`, `Scalar[DType.int]`, and
+/// `SIMD[DType.int, SIMDLength(1)]` are one type. Any other shape (the
+/// bare template, an erased or deferred argument) is not rewritten.
+fn canonical_simd_application(kind: &TyKind) -> Option<Ty> {
+    let TyKind::Struct(name, args) = kind else {
+        return None;
+    };
+    let [TyArg::Val(dtype), TyArg::Val(length)] = args.as_slice() else {
+        return None;
+    };
+    if name != SIMD_TYPE_NAME {
+        return None;
+    }
+    let dtype = simd_dtype_slot(dtype)?;
+    let width = match (length, known_simd_length(length)) {
+        (_, Some(lanes)) => SimdWidth::Known(lanes),
+        (CtValue::Struct { name, .. }, None) if name == SIMD_LENGTH_TYPE_NAME => {
+            SimdWidth::of_length(
+                &ParamContext::detached(),
+                ParamContext::detached().constant(length.clone()).ok()?,
+            )
+            .ok()?
+        }
+        (CtValue::Expr(expr), None) => {
+            SimdWidth::of_length(&ParamContext::detached(), expr.clone()).ok()?
+        }
+        _ => return None,
+    };
+    simd_ty_from_slots(dtype, width).ok()
 }
 
 /// The SIMD type of two slots that may still be symbolic.
 ///
 /// A slot whose expression is a closed constant becomes `Known`, and two
 /// known slots canonicalize through [`canonical_simd_ty`]. This is the
-/// constructor of a symbolic `TyKind::Simd` from new slots, so `Expr` never
+/// constructor of a symbolic `SIMD` application from new slots, so `Expr` never
 /// holds a closed expression; [`Ty::simd`] only reassembles slots read
 /// off a vector or a MIR instruction.
 pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, ParamError> {
@@ -3503,7 +3569,7 @@ pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, Para
     };
     Ok(match (dtype, width) {
         (SimdDtype::Known(dtype), SimdWidth::Known(width)) => canonical_simd_ty(dtype, width),
-        (dtype, width) => TyKind::Simd { dtype, width }.into(),
+        (dtype, width) => simd_node(dtype, width),
     })
 }
 
@@ -3526,64 +3592,35 @@ pub fn hash_leaf_ty(ty: &Ty) -> Ty {
 ///
 /// `Bool` is not a SIMD value (upstream's `Bool` is its own struct;
 /// `Scalar[DType.bool]` is the vector).
-pub const fn simd_shape(ty: &TyKind) -> Option<(Dtype, i64)> {
+pub fn simd_shape(ty: &TyKind) -> Option<(Dtype, i64)> {
     Some(match ty {
         TyKind::IntLiteral(_) => (Dtype::Int, 1),
         TyKind::FloatLiteral(_) => (Dtype::Float64, 1),
-        TyKind::Simd {
-            dtype: SimdDtype::Known(dtype),
-            width: SimdWidth::Known(width),
-        } => (*dtype, *width),
-        _ => return None,
+        _ => return ty.known_simd(),
     })
 }
 
 /// The slots of a SIMD-valued type, symbolic or not — [`simd_shape`] for a
 /// declaration that is still a template.
 pub fn simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
-    match ty {
-        TyKind::Simd { dtype, width } => Some((dtype.clone(), width.clone())),
-        _ => {
-            simd_shape(ty).map(|(dtype, width)| (SimdDtype::Known(dtype), SimdWidth::Known(width)))
-        }
-    }
-}
-
-/// The `[dtype, length]` arguments of the `SIMD` a SIMD-valued type applies.
-///
-/// It is the inverse of the [`Ty::new`] bridge. A known width is its closed
-/// `SIMDLength`, and a symbolic one the length its slot holds.
-pub fn simd_struct_arguments(ty: &TyKind) -> Option<Vec<TyArg>> {
-    let (dtype, width) = simd_slots(ty)?;
-    let dtype = match dtype {
-        SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
-        SimdDtype::Expr(expr) => CtValue::Expr(expr),
-    };
-    let length = match width {
-        SimdWidth::Known(lanes) => simd_length_value(lanes),
-        SimdWidth::Expr(length) => CtValue::Expr(length),
-    };
-    Some(vec![TyArg::Val(dtype), TyArg::Val(length)])
+    ty.as_simd().or_else(|| {
+        simd_shape(ty).map(|(dtype, width)| (SimdDtype::Known(dtype), SimdWidth::Known(width)))
+    })
 }
 
 /// The declared struct `ty` is an instance of, and its arguments.
 ///
-/// A struct answers its own, a [`TyKind::Simd`] answers `SIMD`'s
-/// ([`simd_struct_arguments`]), and a string literal whose value the type
+/// A struct answers its own, and a string literal whose value the type
 /// carries answers `StringLiteral[value]`, as a numeric literal's answers
 /// `IntLiteral[value]` or `FloatLiteral[value]`. A value-less literal type
 /// is no instance: it materializes only where a conversion asks for it.
 ///
 /// Nominal identity is read through this, never by matching
-/// `TyKind::Struct`, while the [`Ty::new`] bridge holds `SIMD` and
-/// `StringLiteral` as the compiler's types.
+/// `TyKind::Struct`, while the [`Ty::new`] bridges hold `StringLiteral`
+/// and the numeric literals as the compiler's types.
 pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
     match ty.kind() {
         TyKind::Struct(name, args) => Some((name, std::borrow::Cow::Borrowed(args))),
-        kind @ TyKind::Simd { .. } => Some((
-            SIMD_TYPE_NAME,
-            std::borrow::Cow::Owned(simd_struct_arguments(kind)?),
-        )),
         TyKind::StringLiteral(Some(value)) => Some((
             STRING_LITERAL_TYPE_NAME,
             std::borrow::Cow::Owned(vec![TyArg::Val(value.as_ref().clone())]),
@@ -3610,16 +3647,10 @@ pub fn static_string_address_ty() -> Ty {
     .into()
 }
 
-/// Whether `ty` is a width-one `TyKind::Simd` (a scalar alias such as `Int`
+/// Whether `ty` is a width-one `SIMD` (a scalar alias such as `Int`
 /// or `Float32`), whatever its dtype slot.
-pub const fn is_scalar_simd(ty: &TyKind) -> bool {
-    matches!(
-        ty,
-        TyKind::Simd {
-            width: SimdWidth::Known(1),
-            ..
-        }
-    )
+pub fn is_scalar_simd(ty: &TyKind) -> bool {
+    matches!(ty.as_simd(), Some((_, SimdWidth::Known(1))))
 }
 
 /// Whether `ty` is `Int`, `UInt`, or `Float64`: a width-one `int`, `uint`,
@@ -3630,8 +3661,8 @@ pub const fn is_scalar_simd(ty: &TyKind) -> bool {
 /// and materializes a literal operand. Below it, a host
 /// scalar's `binary` comparison defines its `Bool` directly, where any
 /// other vector's defines a lane mask.
-pub const fn has_host_scalar_value(ty: &TyKind) -> bool {
-    matches!(ty, TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
+pub fn has_host_scalar_value(ty: &TyKind) -> bool {
+    ty.is_int() || ty.is_uint() || ty.is_float64()
 }
 
 /// The message of the `comptime assert Self.length == 1` of upstream's
@@ -3652,13 +3683,10 @@ pub const FLOAT_LITERAL_CONVERSION_MESSAGE: &str = "the SIMD type must be floati
 pub const INTABLE_CONVERSION_MESSAGE: &str =
     "constructing from an `Intable` value requires an integral dtype";
 
-/// The known dtype of a width-one `TyKind::Simd`.
-pub const fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
-    match ty {
-        TyKind::Simd {
-            dtype: SimdDtype::Known(dtype),
-            width: SimdWidth::Known(1),
-        } => Some(*dtype),
+/// The known dtype of a width-one `SIMD`.
+pub fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
+    match ty.known_simd()? {
+        (dtype, 1) => Some(dtype),
         _ => None,
     }
 }
@@ -3736,6 +3764,9 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
     }
     if from == to {
         return true;
+    }
+    if let Some((to_dtype, to_width)) = to.kind().as_simd() {
+        return coerces_to_simd(from.kind(), &to_dtype, &to_width);
     }
     match (from.kind(), to.kind()) {
         (TyKind::Param { binder: a, .. }, TyKind::Param { binder: b, .. }) => a == b,
@@ -3862,43 +3893,6 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                     .all(|(from, to)| from == to)
                 && from_ret == to_ret
         }
-        (
-            _,
-            TyKind::Simd {
-                dtype,
-                width: SimdWidth::Known(1),
-            },
-        ) if splats_to(from, dtype) => true,
-        // Upstream's `@implicit SIMD.__init__(out self: SIMD[.bool,
-        // Self.length], value: Bool)`, whose `comptime assert` of one lane
-        // each reached instance judges.
-        (
-            TyKind::Bool,
-            TyKind::Simd {
-                dtype: SimdDtype::Known(Dtype::Bool),
-                width,
-            },
-        ) if !width.is_inferred() => true,
-        // Upstream's `@implicit SIMD.__init__(IntLiteral)` and
-        // `(FloatLiteral)` splat an exact literal across every lane, a
-        // symbolic lane count included.
-        (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), TyKind::Simd { dtype, width })
-            if !width.is_inferred() && splats_to(from, dtype) =>
-        {
-            true
-        }
-        (
-            TyKind::Simd {
-                dtype: from_dtype,
-                width: from_width,
-            },
-            TyKind::Simd {
-                dtype: to_dtype,
-                width: to_width,
-            },
-        ) if to_width.is_inferred() => {
-            from_dtype == to_dtype && from_width.known().is_none_or(|width| width > 0)
-        }
         // A tuple coerces element-wise (same arity) — so a literal element
         // materializes: `(1, 2.0)` fits `Tuple[Float64, Float64]`.
         (TyKind::Tuple(a), TyKind::Tuple(b)) => {
@@ -3906,6 +3900,30 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         }
         (TyKind::Variant(a), TyKind::Variant(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| coerces(x, y))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a value of type `from` coerces to `SIMD[to_dtype, to_width]`
+/// through one of the struct's `@implicit` initializers.
+fn coerces_to_simd(from: &TyKind, to_dtype: &SimdDtype, to_width: &SimdWidth) -> bool {
+    match (from, from.as_simd()) {
+        (_, _) if matches!(to_width, SimdWidth::Known(1)) && splats_to(from, to_dtype) => true,
+        // Upstream's `@implicit SIMD.__init__(out self: SIMD[.bool,
+        // Self.length], value: Bool)`, whose `comptime assert` of one lane
+        // each reached instance judges.
+        (TyKind::Bool, _) => *to_dtype == SimdDtype::Known(Dtype::Bool) && !to_width.is_inferred(),
+        // Upstream's `@implicit SIMD.__init__(IntLiteral)` and
+        // `(FloatLiteral)` splat an exact literal across every lane, a
+        // symbolic lane count included.
+        (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), _) => {
+            !to_width.is_inferred() && splats_to(from, to_dtype)
+        }
+        (_, Some((from_dtype, from_width))) => {
+            to_width.is_inferred()
+                && from_dtype == *to_dtype
+                && from_width.known().is_none_or(|width| width > 0)
         }
         _ => false,
     }
@@ -3924,14 +3942,9 @@ pub fn splats_to(ty: &TyKind, dtype: &SimdDtype) -> bool {
         (TyKind::FloatLiteral(_), SimdDtype::Known(dtype)) => dtype.is_float(),
         (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), SimdDtype::Expr(_)) => true,
         (TyKind::Bool, SimdDtype::Known(dtype)) => *dtype == Dtype::Bool,
-        (
-            TyKind::Simd {
-                dtype: d,
-                width: SimdWidth::Known(1),
-            },
-            dtype,
-        ) => d == dtype,
-        _ => false,
+        (kind, dtype) => {
+            matches!(kind.as_simd(), Some((d, SimdWidth::Known(1))) if d == *dtype)
+        }
     }
 }
 
@@ -3944,14 +3957,14 @@ pub fn splats_to(ty: &TyKind, dtype: &SimdDtype) -> bool {
 /// its own initializer instead.
 pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
     matches!(
-        to.kind(),
-        TyKind::Simd { dtype, width }
+        to.kind().as_simd(),
+        Some((dtype, width))
             if width.known().is_none_or(|width| width > 1)
                 && !matches!(
                     from.kind(),
                     TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
                 )
-                && splats_to(from, dtype)
+                && splats_to(from, &dtype)
     )
 }
 
@@ -4033,20 +4046,20 @@ pub fn callable_environment_coerces(
 /// literals, tuples, packs, and variants copy by the ordinary value read.
 /// Nominal, parametric, associated, and reference types resolve their `copy`
 /// through declarations or trait dispatch instead.
-pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
-    !matches!(
-        ty,
-        TyKind::Struct(..)
-            | TyKind::Param { .. }
-            | TyKind::Assoc { .. }
-            | TyKind::Dependent(_)
-            | TyKind::Ref(_)
-            | TyKind::SelfType
-            | TyKind::Func(_)
-            | TyKind::GenericFunc(_)
-            | TyKind::Overload(_)
-            | TyKind::Error
-    )
+pub fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
+    !ty.is_non_simd_struct()
+        && !matches!(
+            ty,
+            TyKind::Param { .. }
+                | TyKind::Assoc { .. }
+                | TyKind::Dependent(_)
+                | TyKind::Ref(_)
+                | TyKind::SelfType
+                | TyKind::Func(_)
+                | TyKind::GenericFunc(_)
+                | TyKind::Overload(_)
+                | TyKind::Error
+        )
 }
 
 /// Whether a body reads a value binder of this type from a frame slot
@@ -4072,7 +4085,7 @@ pub const fn binder_read_takes_slot(ty: &TyKind) -> bool {
 /// instance closes it to a scalar. A copy of a value held in storage is the
 /// identity too when its type is register-passable trivial:
 /// `MirDeclarations::copy_is_identity` answers for those.
-pub const fn copy_is_identity(ty: &TyKind) -> bool {
+pub fn copy_is_identity(ty: &TyKind) -> bool {
     matches!(
         ty,
         TyKind::Bool
@@ -4085,26 +4098,20 @@ pub const fn copy_is_identity(ty: &TyKind) -> bool {
             | TyKind::Pointer { .. }
             | TyKind::KgenPointer(_)
             | TyKind::LitRef { .. }
-            | TyKind::Simd {
-                width: SimdWidth::Known(1),
-                ..
-            }
             | TyKind::KgenSimd {
                 width: SimdWidth::Known(1),
                 ..
             }
-    )
+    ) || is_scalar_simd(ty)
 }
 
 /// Whether this compiler-known type is one upstream declares
 /// `TrivialRegisterPassable`: a [`copy_is_identity`] value, a SIMD vector
 /// of any dtype and width, or a `StringLiteral`. Its copy is a bit copy.
-pub const fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
+pub fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
     copy_is_identity(ty)
-        || matches!(
-            ty,
-            TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral(_)
-        )
+        || ty.is_simd()
+        || matches!(ty, TyKind::KgenSimd { .. } | TyKind::StringLiteral(_))
 }
 
 /// Whether this KGEN type's values are attributes only.
@@ -4754,7 +4761,6 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             ty.reusing(TyKind::Struct(name.clone(), args))
         }
         TyKind::Dependent(_)
-        | TyKind::Simd { .. }
         | TyKind::KgenSimd { .. }
         | TyKind::StringLiteral(Some(_))
         | TyKind::IntLiteral(Some(_))
@@ -4986,6 +4992,17 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             .into(),
         },
         TyKind::Struct(..) if ty.is_closed() && !rewrite.visits_closed() => ty.clone(),
+        kind if let Some((dtype, width)) = kind.as_simd() => {
+            let dtype = match dtype {
+                SimdDtype::Expr(expr) => SimdDtype::Expr(rewrite.expr(&expr)?),
+                known @ SimdDtype::Known(_) => known,
+            };
+            let width = match width {
+                SimdWidth::Expr(expr) => SimdWidth::Expr(rewrite.expr(&expr)?),
+                known @ SimdWidth::Known(_) => known,
+            };
+            simd_ty_from_slots(dtype, width)?
+        }
         // A spread list closes into its elements once the rewrite knows
         // every length in it.
         TyKind::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => ty
@@ -5080,26 +5097,8 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             rewrite.exit_signature();
             Ty::new(rebuilt?)
         }
-        TyKind::Simd { dtype, width } => {
-            let dtype = match dtype {
-                SimdDtype::Expr(expr) => SimdDtype::Expr(rewrite.expr(expr)?),
-                known @ SimdDtype::Known(_) => known.clone(),
-            };
-            let width = match width {
-                SimdWidth::Expr(expr) => SimdWidth::Expr(rewrite.expr(expr)?),
-                known @ SimdWidth::Known(_) => known.clone(),
-            };
-            simd_ty_from_slots(dtype, width)?
-        }
         TyKind::KgenSimd { dtype, width } => {
-            let vector = rewrite_ty(
-                &TyKind::Simd {
-                    dtype: dtype.clone(),
-                    width: width.clone(),
-                }
-                .into(),
-                rewrite,
-            )?;
+            let vector = rewrite_ty(&simd_node(dtype.clone(), width.clone()), rewrite)?;
             simd_storage(&vector).unwrap_or(vector)
         }
         TyKind::StringLiteral(Some(value)) => Ty::new(TyKind::Struct(
@@ -5725,9 +5724,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::LitRef { element, .. } => is_symbolic(element),
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
-        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
-            dtype.is_symbolic() || width.is_symbolic()
-        }
+        TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::Dtype
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)
@@ -6047,7 +6044,7 @@ fn decorated(ty: &Ty) -> bool {
         }
         TyKind::Ref(reference) => reference.referent.carries_decorations(),
         TyKind::Dependent(dependent) => dependent.expr().carries_decorations(),
-        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
+        TyKind::KgenSimd { dtype, width } => {
             matches!(dtype, SimdDtype::Expr(expr) if expr.carries_decorations())
                 || matches!(width, SimdWidth::Expr(expr) if expr.carries_decorations())
         }
@@ -6114,18 +6111,20 @@ impl TyNode {
 fn closed_argument(argument: &TyArg) -> bool {
     match argument {
         TyArg::Ty(ty) => ty.is_closed(),
-        TyArg::Val(value) => matches!(
-            value,
-            CtValue::Int(_)
-                | CtValue::UInt(_)
-                | CtValue::Index(_)
-                | CtValue::Float(_)
-                | CtValue::Bool(_)
-                | CtValue::None
-                | CtValue::Str(_)
-                | CtValue::Dtype(_)
-                | CtValue::Simd { .. }
-        ),
+        TyArg::Val(value) => {
+            matches!(
+                value,
+                CtValue::Int(_)
+                    | CtValue::UInt(_)
+                    | CtValue::Index(_)
+                    | CtValue::Float(_)
+                    | CtValue::Bool(_)
+                    | CtValue::None
+                    | CtValue::Str(_)
+                    | CtValue::Dtype(_)
+                    | CtValue::Simd { .. } // A `SIMD`'s known lane count.
+            ) || known_simd_length(value).is_some()
+        }
         TyArg::Origin(origin) => matches!(origin, crate::origin::Origin::Unbound),
     }
 }
@@ -6140,9 +6139,7 @@ fn closed_kind(kind: &TyKind) -> bool {
         | TyKind::Index
         | TyKind::I1
         | TyKind::Error => true,
-        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
-            !dtype.is_expr() && !width.is_expr()
-        }
+        TyKind::KgenSimd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         TyKind::Struct(_, arguments) => arguments.iter().all(closed_argument),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().all(Ty::is_closed)
@@ -6343,8 +6340,7 @@ fn expand_packs<S: std::hash::BuildHasher>(
         }
         // A lane dtype or width naming a folded value binder closes and
         // re-canonicalizes (`Scalar[dt]` at `dt = DType.int` is `Int`).
-        TyKind::Simd { .. }
-        | TyKind::KgenSimd { .. }
+        TyKind::KgenSimd { .. }
         | TyKind::StringLiteral(Some(_))
         | TyKind::IntLiteral(Some(_))
         | TyKind::FloatLiteral(Some(_))
@@ -6545,39 +6541,6 @@ fn struct_pack_arguments(decls: &[ParamDecl], arguments: &[TyArg]) -> HashMap<Pa
         .collect()
 }
 
-/// The [`TyKind::Simd`] a `SIMD[dtype, length]` application is: a dtype
-/// value and a `SIMDLength` value, closed or symbolic. Any other shape (the
-/// bare template, an erased or deferred argument) stays the struct.
-fn bridged_simd(kind: &TyKind) -> Option<Ty> {
-    let TyKind::Struct(name, args) = kind else {
-        return None;
-    };
-    let [TyArg::Val(dtype), TyArg::Val(length)] = args.as_slice() else {
-        return None;
-    };
-    if name != SIMD_TYPE_NAME {
-        return None;
-    }
-    let dtype = match dtype {
-        CtValue::Dtype(dtype) => SimdDtype::Known(*dtype),
-        CtValue::Expr(expr)
-            if matches!(expr.meta().as_value().map(Ty::kind), Some(TyKind::Dtype)) =>
-        {
-            SimdDtype::Expr(expr.clone())
-        }
-        _ => return None,
-    };
-    let length = match length {
-        CtValue::Struct { name, .. } if name == SIMD_LENGTH_TYPE_NAME => {
-            ParamContext::detached().constant(length.clone()).ok()?
-        }
-        CtValue::Expr(expr) => expr.clone(),
-        _ => return None,
-    };
-    let width = SimdWidth::of_length(&ParamContext::detached(), length).ok()?;
-    simd_ty_from_slots(dtype, width).ok()
-}
-
 /// The [`TyKind::StringLiteral(_)`] a `StringLiteral[value]` application is:
 /// a known KGEN string, or a symbolic `!kgen.string` expression. Any other
 /// shape (the bare template, an erased or deferred argument) stays the
@@ -6690,6 +6653,19 @@ fn mlir_bracket_pieces(
         })
         .collect();
     (text, operands)
+}
+
+/// A `SIMD` application as diagnostics spell it: a scalar alias
+/// (`Int`, `Float32`), `Scalar[dtype]` at width one, else `SIMD[dtype, width]`.
+fn fmt_simd(f: &mut fmt::Formatter<'_>, dtype: &SimdDtype, width: &SimdWidth) -> fmt::Result {
+    match (dtype, width) {
+        (SimdDtype::Known(dtype), SimdWidth::Known(1)) => match dtype.repr_alias() {
+            Some(alias) => write!(f, "{alias}"),
+            None => write!(f, "SIMD[DType.{}, 1]", dtype.name()),
+        },
+        (dtype, SimdWidth::Known(1)) => write!(f, "Scalar[{dtype}]"),
+        (dtype, width) => write!(f, "SIMD[{dtype}, {width}]"),
+    }
 }
 
 /// A pointer origin as a `Pointer` or a `!lit.ref` displays it.
@@ -6809,24 +6785,15 @@ mod simd_slot_tests {
         ] {
             assert!(!splats_to(&scalar, &lane), "{scalar}");
         }
-        let same = Ty::new(TyKind::Simd {
-            dtype: lane.clone(),
-            width: SimdWidth::Known(1),
-        });
+        let same = Ty::simd(lane.clone(), SimdWidth::Known(1));
         assert!(splats_to(&same, &lane));
         assert!(coerces(&Ty::float_literal(), &same));
         assert!(!coerces(&same, &Ty::float64()));
-        let vector = Ty::new(TyKind::Simd {
-            dtype: lane.clone(),
-            width: SimdWidth::Expr(width_binder(&context)),
-        });
+        let vector = Ty::simd(lane.clone(), SimdWidth::Expr(width_binder(&context)));
         assert!(!coerces(&vector, &canonical_simd_ty(Dtype::Int32, 4)));
         assert!(coerces(
             &vector,
-            &Ty::new(TyKind::Simd {
-                dtype: lane,
-                width: SimdWidth::inferred(&context),
-            })
+            &Ty::simd(lane, SimdWidth::inferred(&context))
         ));
     }
 
@@ -6880,10 +6847,10 @@ mod simd_slot_tests {
     #[test]
     fn replacement_closes_symbolic_slots_through_the_canonical_form() {
         let context = ParamContext::detached();
-        let scalar = Ty::new(TyKind::Simd {
-            dtype: SimdDtype::Expr(dtype_binder(&context)),
-            width: SimdWidth::Expr(width_binder(&context)),
-        });
+        let scalar = Ty::simd(
+            SimdDtype::Expr(dtype_binder(&context)),
+            SimdWidth::Expr(width_binder(&context)),
+        );
         let mut referenced = std::collections::HashSet::new();
         referenced_parameters(&scalar, &mut referenced);
         assert!(referenced.contains("dt") && referenced.contains("width"));
@@ -7261,10 +7228,10 @@ mod struct_field_types_tests {
         };
         assert_eq!(
             at(&[TyArg::Val(CtValue::Int(4))]),
-            Some(Ty::new(TyKind::Simd {
-                dtype: SimdDtype::Known(Dtype::Int64),
-                width: SimdWidth::Known(4),
-            }))
+            Some(Ty::simd(
+                SimdDtype::Known(Dtype::Int64),
+                SimdWidth::Known(4)
+            ))
         );
         let caller = value_param("plain_nested");
         let forwarded =

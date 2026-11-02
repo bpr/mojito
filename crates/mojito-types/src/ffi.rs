@@ -324,7 +324,7 @@ pub fn accepts_arg(kind: CType, ty: &Ty) -> bool {
 pub fn accepts_ret(kind: CType, ty: &Ty) -> bool {
     match kind {
         CType::Int | CType::UInt | CType::SizeT | CType::SSizeT | CType::OffT => {
-            matches!(ty.kind(), TyKind::INT | TyKind::UINT)
+            (ty.kind().is_int() || ty.kind().is_uint())
                 || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
         }
         CType::IntPtr => matches!(ty.kind(), TyKind::Pointer { element, .. }
@@ -342,10 +342,10 @@ pub fn is_c_string_slice_struct(name: &str) -> bool {
 }
 
 fn is_integer_scalar(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::INT | TyKind::UINT | TyKind::Bool | TyKind::IntLiteral(_)
-    ) || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
+    matches!(ty.kind(), TyKind::Bool | TyKind::IntLiteral(_))
+        || ty.kind().is_int()
+        || ty.kind().is_uint()
+        || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
 }
 
 const fn is_integer_dtype(dtype: Dtype) -> bool {

@@ -402,6 +402,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             // applications stay for a later substitution or a contextual
             // rejection.
             let concrete_name = if args.iter().any(arg_has_symbolic)
+                || name == mojito_types::types::SIMD_TYPE_NAME
                 || nominal_template(name) != name
                 || !bindings.structs.is_generic(name)
             {

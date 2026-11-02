@@ -185,7 +185,7 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     output
 }
 
-/// The concrete lane dtype and width of a `TyKind::Simd` register type, of
+/// The concrete lane dtype and width of a `SIMD` register type, of
 /// its `!kgen.simd` storage, or of the builtin `index`, held as the `Int`
 /// it casts from. A symbolic slot never reaches lowering: the MIR verifier
 /// refuses it.
@@ -222,7 +222,7 @@ pub fn scalar_type(
         TyKind::Bool | TyKind::I1 => Ok(ScalarTy::Bool),
         TyKind::Dtype => Ok(ScalarTy::Dtype),
         TyKind::Index => Ok(ScalarTy::Int),
-        TyKind::Simd { .. } => {
+        kind if kind.is_simd() => {
             scalar_type(function, &mojito_types::types::storage_ty(ty), location)
         }
         TyKind::KgenSimd {

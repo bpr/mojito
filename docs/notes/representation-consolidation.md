@@ -30,9 +30,10 @@ command cannot use both.
    - What is left is one chain. R1798 lowered a `SIMD` register to its
      `!kgen.simd` field in the verifier and both backends, and R1799 did
      the same for every one-field register-passable struct. R1800
-     deletes `TyKind::Simd`, so `SIMD` is the declared struct below the
-     checker. R1801 then gives MIR's builtin ops the storage, not the
-     struct.
+     deleted `TyKind::Simd`, so `SIMD` is the declared struct below the
+     checker. R1811 makes `_mlir_value` its field read, R1812 declares
+     every closed instance, and R1801 then gives MIR's builtin ops the
+     storage, not the struct.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1801 -n 0

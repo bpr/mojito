@@ -520,9 +520,8 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
         TyKind::Assoc { .. } => "assoc",
         TyKind::Dependent(_) => "dependent_parameter",
         TyKind::SelfType => "Self",
+        kind if kind.is_simd() => "simd",
         TyKind::Struct(_, _) => "struct_type",
-        TyKind::Simd { .. } => "simd",
-
         TyKind::KgenSimd { .. } => "kgen_simd",
         TyKind::Error => "Error",
         TyKind::ComptimeList(_) => "comptime_list",

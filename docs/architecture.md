@@ -1434,8 +1434,9 @@ there is no per-instantiation check to leave it to (R519). `docs/notes/param-exp
 **A SIMD lane is symbolic too.** A body keyed on a `DType` parameter, or on a
 vector width naming its own parameter (`def total[dt: DType, width:
 Int](v: SIMD[dt, width])`, a struct field `SIMD[Self.dt, Self.width]`), is
-validated like any other. `TyKind::Simd` holds typed slots (`SimdDtype`,
-`SimdWidth`): a slot is a known dtype or width, or the parameter expression
+validated like any other. A `SIMD` application is the declared struct's
+`TyKind::Struct("SIMD", [dtype, length])`, which `TyKind::as_simd` reads as
+typed slots (`SimdDtype`, `SimdWidth`): a slot is a known dtype or width, or the parameter expression
 the template names (`dtype_from_arg`, `simd_width` in the checker). A
 symbolic width is the `SIMDLength` upstream's slot holds, an `Int` width
 the struct value of its implicit `SIMDLength(n)` conversion: its fields are
@@ -1620,7 +1621,7 @@ pointer to storage its context uniques (`mojito_types::types`):
   is each of the three named scalars.
 - `Int`, `UInt`, and `Float64` are no variants of their own: as upstream's
   `Scalar[DType.int]`, `Scalar[DType.uint]`, and `Scalar[DType.float64]`
-  aliases are, each is the width-one `TyKind::Simd` of its dtype
+  aliases are, each is the width-one `SIMD` struct application of its dtype
   (`Ty::int()`, `uint()`, and `float64()` build them, and code outside
   `mojito-types` tests them by `TyKind::{is_int, is_uint, is_float64}`
   rather than matching a pattern), displayed by its alias
@@ -4968,9 +4969,9 @@ forwarding through `StringSpan(self)`) is pure library code.
 The `StringLiteral`-vs-`String` split is realized at the type level. A
 string literal `"ab"` is upstream's `StringLiteral["ab"]`, the application of
 the struct `std/builtin/string_literal.mojo` declares; the `Ty::new` bridge
-holds that application as `TyKind::StringLiteral(Some(value))`, as it holds
-`SIMD`'s as `TyKind::Simd`, so the compiler's descriptor representation and
-the struct's library members serve one type, and `nominal_parts` answers it
+holds that application as `TyKind::StringLiteral(Some(value))`, so the
+compiler's descriptor representation and the struct's library members serve
+one type, and `nominal_parts` answers it
 as the struct's instance. Literal-only operations stay on it. The value-less
 `TyKind::StringLiteral(None)`, which upstream has no type for, still types
 comptime strings, `[text: String]` value parameters, a bare run-time

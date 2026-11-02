@@ -2300,21 +2300,21 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::Dependent(DependentType::Parameter(expr)) => {
             positional("dependent_parameter", &param_expr(expr))
         }
+        // A `SIMD` application keeps its compact record. A symbolic slot is
+        // spelled as its parameter expression; the verifier keeps one out of
+        // every artifact, so the form only serves lossless round trips.
+        kind if let Some((dtype, width)) = kind.as_simd() => record(
+            "simd",
+            &[
+                ("dtype", simd_dtype_slot(&dtype)),
+                ("width", simd_width_slot(&width)),
+            ],
+        ),
         TyKind::Struct(name, args) => record(
             "struct_type",
             &[
                 ("name", symbol(name)),
                 ("arguments", list(args.iter().map(ty_arg))),
-            ],
-        ),
-        // A symbolic slot is spelled as its parameter expression; the
-        // verifier keeps one out of every artifact, so the form only serves
-        // lossless round trips.
-        TyKind::Simd { dtype, width } => record(
-            "simd",
-            &[
-                ("dtype", simd_dtype_slot(dtype)),
-                ("width", simd_width_slot(width)),
             ],
         ),
         TyKind::KgenSimd { dtype, width } => record(
