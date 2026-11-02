@@ -3324,7 +3324,7 @@ impl MirInstr {
     /// An operator over `UInt` or SIMD lanes folds by the VM's own lane rule
     /// (`mojito_types::ct::int_lane_binop` and its siblings), and a lane
     /// comparison folds to a `bool` mask. A scalar comparison of a NaN or an
-    /// infinity folds by `pop.cmp`'s ordered predicates, as the VM runs it.
+    /// infinity folds by `pop.cmp`'s predicates, as the VM runs it.
     /// The fold is the compile-time folder's; where it and the VM could
     /// disagree (a zero scalar divisor, an out-of-range shift, an
     /// overflowing `**`, `Float64` `//`, `%`, `**`, float-lane `//`, `%`, `**`, and

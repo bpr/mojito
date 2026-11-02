@@ -1,7 +1,6 @@
-# `SIMD.ne` is the ordered predicate: a NaN lane is unequal to nothing, itself
-# included, while the infix `!=` on a scalar stays IEEE. The NaN is made at run
-# time, because the pin folds a constant `0.0 / 0.0` receiver's `ne` to the
-# unordered answer instead.
+# `SIMD.ne` is the unordered predicate: a NaN lane is unequal to everything,
+# itself included, as the infix `!=` on a scalar is. The NaN is made at run
+# time, so the run-time predicate is the one compared.
 def runtime_zero() -> Float64:
     var total = 0.0
     for i in range(3):

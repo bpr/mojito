@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1022
+# swept-count	1023
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -127,22 +127,22 @@ assets/parse_error/comptime_assert_struct_body.mojo	compile-reject	agree	error: 
 assets/parse_error/comptime_if_module_level.mojo	compile-reject	agree	error: 'comptime if' must be contained in a function
 assets/parse_error/comptime_match_module_level.mojo	compile-reject	agree	error: 'comptime match' must be contained in a function
 assets/parse_error/for_target_trailing_comma.mojo	compile-reject	agree	error: unexpected token in expression
-assets/parse_error/function_type_bound_then_trait.mojo	compile-reject	agree	error: invalid call to '__and__': value passed to 'self' cannot be converted from 'AnyStruct[Int]' to 'SIMD[dtype, length]', it depends on an unresolved parameter 'dtype'
+assets/parse_error/function_type_bound_then_trait.mojo	compile-reject	agree	error: invalid call to '__and__': value passed to 'self' cannot be converted from type value 'Int' to an instance of 'Int'; did you mean to instantiate 'Int'?
 assets/parse_error/generator_type_missing_result.mojo	compile-reject	agree	error: unexpected token in expression
-assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises', 'capturing', or 'thin'
+assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises' or 'thin'
 assets/parse_error/lambda_unparenthesized_args.mojo	compile-reject	agree	error: unparenthesized lambda arguments are not supported; write them in parentheses, with types, e.g. `lambda (x: Int, y: Int) -> Int: x + y`
 assets/parse_error/match_mapping_pattern.mojo	compile-reject	agree	error: expression is not a valid match pattern; use '==' to compare against its value
 assets/parse_error/missing_colon.mojo	compile-reject	agree	error: expected ':' in function definition
-assets/parse_error/parameter_closure_capture_list.mojo	compile-reject	agree	error: expected ':' in function definition
+assets/parse_error/parameter_closure_capture_list.mojo	compile-reject	ledgered	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
 assets/parse_error/read_convention_removed.mojo	compile-reject	agree	error: 'read' was removed; use 'imm'
 assets/parse_error/reserved_word_binding_name.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/ref_type_argument_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
-assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises', 'capturing', or 'thin'
+assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises' or 'thin'
 assets/runtime_error/allocation_use_after_dealloc.mojo	runs	subset	the pin runs it; Mojito rejects: use after Pointer deallocation
 assets/runtime_error/div_by_zero.mojo	runs	subset	the pin runs it; Mojito traps on integer division or modulo by zero
 assets/runtime_error/file_open_invalid_mode.mojo	trap	agree	invalid mode: "z". Can only be one of: {"r", "w", "rw", "a"}
 assets/runtime_error/file_open_missing.mojo	trap	agree	Failed to open file 'mojito_missing_dir/nothing.txt': No such file or directory
-assets/runtime_error/file_read_closed_handle.mojo	trap	agree	invalid file handle
+assets/runtime_error/file_read_closed_handle.mojo	compile-reject	ledgered	error: no matching function in initialization
 assets/runtime_error/file_read_write_only_handle.mojo	trap	agree	Failed to read from file: Bad file descriptor
 assets/runtime_error/int_truediv_zero_divisor.mojo	trap	agree	error: execution crashed
 assets/runtime_error/list_contiguous_slice_negative.mojo	trap	agree	error: execution crashed
@@ -164,10 +164,11 @@ assets/runtime_error/pliron_raise_error_value.mojo	trap	agree	boom from a var
 assets/runtime_error/pliron_raise_iter_body.mojo	trap	agree	boom at 2
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	compile-reject	skip	error: 'main()' can only raise 'Error'; remove the explicit error type
 assets/runtime_error/pliron_raise_unhandled.mojo	trap	agree	negative input
+assets/runtime_error/pliron_trap_pow_negative.mojo	trap	agree	error: execution crashed
 assets/runtime_error/pointer_dangling.mojo	trap	agree	error: execution crashed
 assets/runtime_error/pointer_double_free.mojo	runs	subset	the pin runs it; Mojito rejects: double free
 assets/runtime_error/pointer_use_after_free.mojo	runs	subset	the pin runs it; Mojito rejects: use after
-assets/runtime_error/simd_element_list_too_few.mojo	trap	agree	error: execution crashed
+assets/runtime_error/simd_element_list_too_few.mojo	timeout	skip	timed out after 60s
 assets/runtime_error/span_index_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/span_slice_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	trap	agree	error: execution crashed
@@ -246,18 +247,18 @@ assets/type_error/borrowed_loop_binder_transfer.mojo	compile-reject	agree	error:
 assets/type_error/callable_struct_def_typed_argument.mojo	compile-reject	agree	error: invalid call to 'keep': value passed to 'callback' cannot be converted from 'Scale' to 'def(Int) -> Int'
 assets/type_error/call_result_pointer_field_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/captured_origin_specialization_rejected.mojo	compile-reject	agree	error: member method closures are not supported; add '()' to call '__call__'
-assets/type_error/capturing_closure_plain_def_param.mojo	compile-reject	agree	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
-assets/type_error/capturing_field_rejected.mojo	compile-reject	agree	error: function type missing required origin set parameter
+assets/type_error/capturing_closure_plain_def_param.mojo	compile-reject	agree	error: invalid call to '__call__': parameter '_Self' has 'def(Int) -> None' type, but value has type 'AnyTrait[def(Int) -> None]'
+assets/type_error/capturing_field_rejected.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/type_error/capturing_lambda_array_reassignment.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/capturing_lambda_display_distinct_types.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' is not compatible with value of type 'def(x: Int) -> Int'
 assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
-assets/type_error/capturing_lambda_parameter_argument.mojo	compile-reject	agree	error: cannot use a capturing lambda in type parameter
+assets/type_error/capturing_lambda_parameter_argument.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/type_error/chained_comparison_middle_not_deinitable.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
 assets/type_error/chained_comparison_middle_not_implicitly_copyable.mojo	compile-reject	agree	error: value of type 'P' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	error: cannot implicitly convert 'def() -> Int' value to 'Int'
 assets/type_error/closure_storage_not_trivially_register_passable.mojo	compile-reject	agree	error: invalid call to 'call': value passed to 'f' cannot be converted from 'def(a: Int) -> Int' to 'F', argument type 'def(a: Int) -> Int' does not conform to trait 'def(Int) -> Int & TrivialRegisterPassable'
-assets/type_error/closure_storage_parameter_argument.mojo	compile-reject	agree	error: invalid call to 'invoke': cannot use a dynamic value in a parameter list
-assets/type_error/closure_storage_reference_parameter_argument.mojo	compile-reject	agree	error: invalid call to 'apply': cannot use a dynamic value in a parameter list
+assets/type_error/closure_storage_parameter_argument.mojo	compile-reject	ledgered	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
+assets/type_error/closure_storage_reference_parameter_argument.mojo	compile-reject	ledgered	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/type_error/collection_display_default_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/compilation_target_riscv_extension_case.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comprehension_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
@@ -298,7 +299,7 @@ assets/type_error/comptime_for_runtime_pack_length.mojo	compile-reject	agree	err
 assets/type_error/comptime_for_runtime_pack_length_value_binder.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument
 assets/type_error/comptime_for_runtime_variadic.mojo	compile-reject	agree	error: cannot use a dynamic value in 'for' iterator expression
 assets/type_error/comptime_for_tuple.mojo	compile-reject	agree	error: 'Tuple[String, String, String]' does not implement the '__iter__' method
-assets/type_error/comptime_for_value_pack_not_implicitly_copyable.mojo	compile-reject	agree	error: cannot materialize comptime value of type '_ParameterListIter[ParameterList()].Element' to runtime because it is not 'ImplicitlyCopyable'
+assets/type_error/comptime_for_value_pack_not_implicitly_copyable.mojo	compile-reject	agree	error: cannot materialize comptime value of type '_ParameterListIter[*ParameterList()].Element' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_for_without_iter.mojo	compile-reject	agree	error: 'Count' does not implement the '__iter__' method
 assets/type_error/comptime_if_arm_conditional_destroy.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
 assets/type_error/comptime_if_constructor_arm_leaves_field_uninitialized.mojo	compile-reject	agree	error: 'self.x' is uninitialized at the implicit return from this function
@@ -529,11 +530,11 @@ assets/type_error/kgen_string_no_concatenation.mojo	compile-reject	agree	error: 
 assets/type_error/kgen_string_no_equality.mojo	compile-reject	agree	error: '__mlir_type.`!kgen.string`' does not implement the '__eq__' method
 assets/type_error/kgen_string_parameter_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Tag["Some"]' value to 'Tag["None"]'
 assets/type_error/kgen_type_type_binder_not_any_type.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type '__TypeOfAllTypes'
-assets/type_error/lambda_capturing_thin_contract.mojo	compile-reject	agree	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
+assets/type_error/lambda_capturing_thin_contract.mojo	compile-reject	agree	error: invalid call to '__call__': parameter '_Self' has 'def(x: Int) -> Int' type, but value has type 'AnyTrait[def(x: Int) -> Int]'
 assets/type_error/lambda_empty_capture_list.mojo	compile-reject	agree	error: Could not infer capture convention of the captured value z
 assets/type_error/lambda_fixed_none.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[2]' value to 'None' in return value
 assets/type_error/lambda_mut_immutable_capture.mojo	compile-reject	agree	error: register passible value 'seed' can not be captured by 'mut'. Do you mean 'imm'?
-assets/type_error/lambda_partial_parameter_application.mojo	compile-reject	agree	error: invalid call to 'apply': value passed to 'f' cannot be converted from unknown overload to 'def(x: Int) capturing thin -> Int'
+assets/type_error/lambda_partial_parameter_application.mojo	compile-reject	ledgered	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/type_error/lane_gather_template_shuffle_count.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/lane_gather_template_slice_bounds.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/legacy_implicitly_deletable.mojo	compile-reject	agree	error: use of unknown declaration 'ImplicitlyDestructible'
@@ -702,7 +703,7 @@ assets/type_error/owned_iteration_linear_element.mojo	compile-reject	agree	error
 assets/type_error/owned_iteration_linear_user_iterator.mojo	compile-reject	agree	error: constraint for 'Iterator' does not imply constraint for ancestor trait 'Deinitable'; strengthen the derived constraint by adding the ancestor's constraint with 'and'
 assets/type_error/owned_pack_element_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/owned_pack_iteration_linear_break.mojo	compile-reject	agree	error: value of type 'Conn' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
-assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-reject	agree	error: 'leaked' abandoned without being explicitly destroyed: Use `into_inner()` (for a `Movable` `T`) or `unsafe_take_allocation()` to consume an `OwnedPointer` whose element type is not `Deinitable`
+assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-reject	agree	error: 'leaked' abandoned without being explicitly destroyed: Use `deinit_with()` or `into_inner()` (for a `Movable` `T`) to consume an `OwnedPointer` whose element type is not `Deinitable`
 assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error: 'OwnedPointer[Int]' value has no attribute 'take'
 assets/type_error/pack_alias_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
@@ -715,7 +716,7 @@ assets/type_error/pack_field_unqualified.mojo	compile-reject	agree	error: unqual
 assets/type_error/pack_forwarding_bound_widening.mojo	compile-reject	agree	error: invalid call to 'inner': cannot unpack a pack of type 'Writable' ('Ts.values') into a call that expects a pack of type 'Writable & Copyable' ('Ts.values')
 assets/type_error/pack_forwarding_fills_regular_slot.mojo	compile-reject	agree	error: invalid call to 'sink': unpack is only supported when the callee accepts a variadic; to forward a runtime pack to a fixed-arity callee, route the call through a dispatcher whose argument is itself a variadic pack (e.g. `def shim[Ts: TypeList[Trait=AnyType, ...], //, callee: def(*args: *Ts) thin](...): callee(*pack)`)
 assets/type_error/pack_forwarding_fixed_arity.mojo	compile-reject	agree	error: invalid call to 'two': unpack is only supported when the callee accepts a variadic; to forward a runtime pack to a fixed-arity callee, route the call through a dispatcher whose argument is itself a variadic pack (e.g. `def shim[Ts: TypeList[Trait=AnyType, ...], //, callee: def(*args: *Ts) thin](...): callee(*pack)`)
-assets/type_error/pack_forwarding_homogeneous_collector.mojo	compile-reject	agree	error: invalid call to 'sink': value passed to 'b' cannot be converted from 'VariadicPack[False, Ts]' to 'VariadicList[Int, False]', it depends on an unresolved parameter 'origin_of(b.origin)'
+assets/type_error/pack_forwarding_homogeneous_collector.mojo	compile-reject	agree	error: invalid call to 'sink': value passed to 'b' cannot be converted from 'VariadicPack[False, *Ts]' to 'VariadicList[Int, False]', it depends on an unresolved parameter 'origin_of(b.origin)'
 assets/type_error/pack_forwarding_owned_without_transfer.mojo	compile-reject	agree	error: value of type 'VariadicPack[True, *Ts.values]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/pack_forwarding_ownership_mismatch.mojo	compile-reject	agree	error: invalid call to 'sink': cannot unpack a variadic pack into a call that requires a different ownership. Expected 'False', got 'True'
 assets/type_error/pack_forwarding_transfer_of_read_pack.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
@@ -729,7 +730,7 @@ assets/type_error/pack_read_spread_into_tuple.mojo	compile-reject	agree	error: n
 assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	agree	error: invalid call to '__getitem__': cannot use a dynamic value in a parameter list
 assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list
-assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	ledgered	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
 assets/type_error/parameter_default_none_application_read.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/parameter_default_none_application_struct_read.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/parameter_field_transfer.mojo	compile-reject	agree	error: cannot transfer from a parameter expression; did you want to introduce a local 'var'?
@@ -769,7 +770,7 @@ assets/type_error/pointer_origin_cast_no_downgrade.mojo	compile-reject	agree	err
 assets/type_error/pointer_origin_cast_no_upgrade.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_param_symbolic_origin_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_placeholder_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
-assets/type_error/pointer_placeholder_mutable_forward.mojo	compile-reject	agree	error: invalid call to 'w': value passed to 'q' cannot be converted from 'Pointer[Int, origin]' to 'Pointer[Int, q.origin]'
+assets/type_error/pointer_placeholder_mutable_forward.mojo	compile-reject	agree	error: invalid call to 'w': value passed to 'q' cannot be converted from 'Pointer[Int, origin]' to 'MutPointer[Int, q.origin]'
 assets/type_error/pointer_placeholder_return.mojo	compile-reject	agree	error: 'Pointer[Int, _]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/pointer_take_tracked_nontrivial.mojo	runs	subset	the pin runs it; Mojito rejects: requires a trivially destructible element
 assets/type_error/pointer_to_place_offset_rejected.mojo	runs	subset	the pin runs it;Mojito rejects: designates a single value
@@ -807,7 +808,7 @@ assets/type_error/reference_method_read_param_assignment_target.mojo	compile-rej
 assets/type_error/reference_write_explicit_destroy.mojo	compile-reject	agree	error: value abandoned without being explicitly destroyed: call close()
 assets/type_error/refined_implicit_conversion_mismatch.mojo	compile-reject	agree	error: invalid call to 'take_three': value passed to 'w' cannot be converted from 'Bool' to 'W[Int(3)]'
 assets/type_error/refined_out_self_not_an_instance.mojo	compile-reject	agree	error: 'self' argument must have type 'W[n]', but actually has type 'Int'
-assets/type_error/refined_out_self_overload_on_result.mojo	compile-reject	agree	error: redefinition of function '__init__', cannot overload on return type
+assets/type_error/refined_out_self_overload_on_result.mojo	runs	divergence	the pin runs it and prints 7; Mojito rejects initializers overloaded on a refined out self (R1830)
 assets/type_error/refined_out_self_parameter_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/refined_out_self_redefines_parameter.mojo	compile-reject	agree	error: cannot use Self parameter 'b' in constructor whose result defines it to 'a'
 assets/type_error/refined_out_self_uninferred_parameter.mojo	compile-reject	agree	error: no matching function in initialization
@@ -973,15 +974,15 @@ assets/type_error/trait_result_origin_read_self.mojo	compile-reject	agree	error:
 assets/type_error/trait_value_member_not_required.mojo	compile-reject	agree	error: 'HasK' value has no attribute 'Z'
 assets/type_error/transfer_into_mut_parameter.mojo	compile-reject	agree	error: invalid call to 'poke': value passed to mutable argument 't' must be mutable
 assets/type_error/trivial_register_passable_bound_undeclared.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'S' to 'T', argument type 'S' does not conform to trait 'TrivialRegisterPassable'
-assets/type_error/tstring_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'TString[Int]' value to 'String'
+assets/type_error/tstring_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'TString[origin_of(anonymous*), origin_of(__call_result_tmp__)]' value to 'String'
 assets/type_error/tstring_concat.mojo	compile-reject	agree	error: 'TString[ImmUntrackedOrigin, origin_of(__call_result_tmp__)]' does not implement the '__add__' method
 assets/type_error/tstring.mojo	compile-reject	agree	error: no matching function in initialization
-assets/type_error/tuple_concat_non_tuple.mojo	compile-reject	agree	error: invalid call to 'concat': value passed to 'other' cannot be converted from 'IntLiteral[3]' to 'Tuple[OtherTs]', it depends on an unresolved parameter 'OtherTs.values'
-assets/type_error/tuple_consume_elements_discard.mojo	compile-reject	handler-argument	error: invalid call to 'consume_elements': missing required argument: 'elt_handler'
-assets/type_error/tuple_consume_elements_len.mojo	compile-reject	handler-argument	error: invalid call to 'consume_elements': missing required argument: 'elt_handler'
-assets/type_error/tuple_consume_elements_print.mojo	compile-reject	handler-argument	error: invalid call to 'consume_elements': missing required argument: 'elt_handler'
+assets/type_error/tuple_concat_non_tuple.mojo	compile-reject	agree	error: invalid call to 'concat': value passed to 'other' cannot be converted from 'IntLiteral[3]' to 'Tuple[*OtherTs]', it depends on an unresolved parameter 'OtherTs.values'
+assets/type_error/tuple_consume_elements_discard.mojo	compile-reject	handler-argument	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
+assets/type_error/tuple_consume_elements_len.mojo	compile-reject	handler-argument	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
+assets/type_error/tuple_consume_elements_print.mojo	compile-reject	handler-argument	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
 assets/type_error/tuple_default_element_not_defaultable.mojo	compile-reject	agree	error: no matching function in initialization
-assets/type_error/tuple_deinit_with_abandoned_element.mojo	compile-reject	handler-argument	error: invalid call to 'deinit_with': missing required argument: 'deinit_func'
+assets/type_error/tuple_deinit_with_abandoned_element.mojo	compile-reject	handler-argument	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
 assets/type_error/tuple_literal_elements_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'Tuple[Span[Int, origin_of(xs)], Span[Int, origin_of(xs)]]' initializer call
 assets/type_error/tuple_reverse_explicit_parameter.mojo	compile-reject	agree	error: invalid call to 'reverse': unexpected parameter
 assets/type_error/tuple_reverse_requires_transfer.mojo	compile-reject	agree	error: value of type 'Tuple[Token, Token]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
@@ -1033,7 +1034,7 @@ assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agre
 assets/type_error/variadic_elements_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'show' call
 assets/type_error/variadic_list_not_copyable.mojo	compile-reject	agree	error: value of type 'VariadicList[Int, False]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/variadic_pack_all_conforms_to_false.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Bag[Int, Opaque]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
-assets/type_error/variant_deinit_with_bad_handler.mojo	compile-reject	skip	error: rejected without a diagnostic
+assets/type_error/variant_deinit_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'deinit_with': value passed to 'deinit_func' cannot be converted from 'def `lambda_0(a: Int) thin -> Int' to 'F'
 assets/type_error/variant_init_with_no_match.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/variant_operation_non_member.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/variant_pack_def_non_member.mojo	compile-reject	agree	error: function instantiation failed

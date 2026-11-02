@@ -2346,8 +2346,9 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
         Le => Value::Bool(x <= y),
         Ge => Value::Bool(x >= y),
         Eq => Value::Bool(x == y),
-        // `pop.cmp ne` is the ordered predicate: a NaN is unequal to nothing.
-        Ne => Value::Bool(x.partial_cmp(&y).is_some_and(std::cmp::Ordering::is_ne)),
+        // `pop.cmp ne` is the unordered predicate: a NaN is unequal to
+        // everything.
+        Ne => Value::Bool(x != y),
         Pow | MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for float dispatch"

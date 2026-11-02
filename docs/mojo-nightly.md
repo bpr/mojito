@@ -8,40 +8,40 @@ differential runner must likewise report its actual `mojo --version`. Advancing
 the audit boundary records work to do—it does not claim that Mojito already
 implements every change at that boundary.
 
-## Current Audit — `cfd79ca736` (2026-10-17)
+## Current Audit — `a431ffa8af` (2026-11-01)
 
 | Role | Immutable revision |
 |---|---|
-| Audited Mojo dev head | [`cfd79ca736884aefbb5636bc8eacc79888b233c6`](https://github.com/modular/modular/commit/cfd79ca736884aefbb5636bc8eacc79888b233c6), whose lockfiles pin `Mojo 1.2.0.dev2026101705` |
-| Previous upstream audit boundary | [`26cfe94f400b71afd2cccf439fde95488910c48d`](https://github.com/modular/modular/commit/26cfe94f400b71afd2cccf439fde95488910c48d), `Mojo 1.2.0.dev2026092105` |
-| Mojito baseline audited | `643802dc` (working tree at re-pin, 2026-10-17) |
-| Source delta | [Upstream comparison `26cfe94f40…cfd79ca736`](https://github.com/modular/modular/compare/26cfe94f400b71afd2cccf439fde95488910c48d...cfd79ca736884aefbb5636bc8eacc79888b233c6) |
+| Audited Mojo dev head | [`a431ffa8af8ef7cb5bb4a11ec6409fed203107bb`](https://github.com/modular/modular/commit/a431ffa8af8ef7cb5bb4a11ec6409fed203107bb), whose lockfiles pin `Mojo 1.3.0.dev2026110105` |
+| Previous upstream audit boundary | [`cfd79ca736884aefbb5636bc8eacc79888b233c6`](https://github.com/modular/modular/commit/cfd79ca736884aefbb5636bc8eacc79888b233c6), `Mojo 1.2.0.dev2026101705` |
+| Mojito baseline audited | `3379d712` (working tree at re-pin, 2026-11-01) |
+| Source delta | [Upstream comparison `cfd79ca736…a431ffa8af`](https://github.com/modular/modular/compare/cfd79ca736884aefbb5636bc8eacc79888b233c6...a431ffa8af8ef7cb5bb4a11ec6409fed203107bb) |
 
-The window's evidence is the staged 1.2.0 release document
-([`Mojo/docs/site/releases/v1.2.0.md`](https://github.com/modular/modular/blob/cfd79ca736884aefbb5636bc8eacc79888b233c6/Mojo/docs/site/releases/v1.2.0.md),
-dated 2026-10-22, which absorbed the nightly changelog from the 1.1.0
-cutover) plus the nightly changelog reset after it, which carries one entry
-(`Tuple` elements need not be `Movable`; `Tuple(init_with=...)`). A local
-pinned worktree lives at `~/src/mojo/repos/modular-cfd79ca7` and the
-differential Pixi environment at `~/src/mojo/envs/mojo-2026101705`.
+The window crosses the 1.2.0 release (2026-10-22), so its evidence is two
+documents: the entries the released
+[`Mojo/docs/site/releases/v1.2.0.md`](https://github.com/modular/modular/blob/a431ffa8af8ef7cb5bb4a11ec6409fed203107bb/Mojo/docs/site/releases/v1.2.0.md)
+gained after the previous audit's staged copy, and the 1.3.0 nightly
+changelog reset after it. The stdlib diff of every module Mojito bundles was
+read beside them. A local pinned worktree lives at
+`~/src/mojo/repos/modular-a431ffa8` and the differential Pixi environment at
+`~/src/mojo/envs/mojo-2026110105`.
 
-The window is dominated by one language feature: pattern matching left its
-experimental `__match` spelling and shipped as `match`/`case`, with
-`comptime match`, `if case`/`while case`, list destructuring and list
-patterns, and `EnumLike` case patterns. Its vocabulary reaches Mojito
-first: `match` and `case` are keywords (as `class`, `del`, and `yield`
-already were at the pin), so none may name a binding without backticks.
-Two renames reach the bundled library — `std.hashlib` is `std.hash`, and
-`FileDescriptor` is `RawFileDescriptor` over a `c_int` — and `()` is
-always a tuple value, `Tuple[]` the empty tuple's type. The library
-movement is broad: `Tuple` elements need not be `Movable`, `Tuple` gains
-`init_with` and `first_of`, `consume_elements`/`deinit_with`/`SIMD.reduce`
-take their handler as a runtime closure, `Defaultable` synthesizes
-`__init__`, `Array` slices into a `Span`, `Hasher` drops `__init__` and
-`finish` borrows, and most of `std.math` stopped calling the system libm.
-`async`/`await` became `__async`/`__await`. Two upstream regressions
-surfaced in the differential run and are recorded as probes rather than
-matched (section 7).
+The window's largest change removes legacy closures: the `capturing` effect
+and the `@parameter`, `@__parameter`, `@__copy_capture`, and
+`@__move_capture` decorators are errors, a nested function declares a
+capture list instead, and a function passed as a compile-time parameter must
+be `thin`. Mojito still runs both (R1823). The language otherwise gains a
+`with` that borrows a named manager, a consuming error-taking `__exit__`,
+`var` case bindings that take a payload out of an rvalue subject, `_` holes
+nested in parameterized types, a float result for an integer literal to a
+negative power, and negative number literals as patterns, and deprecates
+`@explicit_destroy("...")` and `__del__`. The library renames
+`ParameterList.size` to `length` and `isspace` to `is_ascii_whitespace`,
+removes `Powable`, `CeilDivableRaising`, and `_Expable`, makes an integer
+power abort on a negative exponent, and reshapes the descriptor, file,
+`OwnedPointer`, and `Layout` surfaces. The compiler's `pop.cmp ne` over
+floats became unordered, an unread `if` keeps the call in its `elif`
+condition, and a nested residual match completes its enclosing case.
 
 ## Prioritized Changeset
 
@@ -49,153 +49,118 @@ The order below is the recommended implementation order. Compatibility
 aliases may be retained deliberately only while upstream itself keeps the
 deprecated form.
 
-### 0. `match`, `case`, `class`, `del`, and `yield` are keywords
+### 0. The library's renames and removals
 
-Status 2026-10-17: DONE — the five words lex as keywords (`Token::keyword`),
-so a variable, parameter, field, or imported name spelled by one is a parse
-error unless stropped, a free or nested `def` named by one is rejected by
-the checker as before (now including `case`), and a method may still be
-named `match` or `case` and called as one (`expect_member_name`).
-`assets/parse_error/reserved_word_binding_name.mojo` and
-`conformance/fixtures/reserved_method_name.mojo` pin both sides.
+Status 2026-11-01: DONE — the bundled `ParameterList` declares `length`
+(upstream renamed `size`), and the checker no longer reads a value pack's
+`length` as a `TypeList`'s, so `values.length` reaches the declared member.
+`String` and `StringSpan` declare `is_ascii_whitespace`, keeping `isspace` as
+upstream's deprecated forward. `Powable` and `CeilDivableRaising` are gone
+from `std.math`, the prelude, `SIMD`'s conformance list, and the checker's
+modelled conformances: `**` on a type parameter reaches a user trait's
+`__pow__`. `exp[T: _Expable]` is gone, as upstream replaced it with a
+`ComplexSIMD` overload Mojito does not bundle. Fixtures and probes followed.
 
-Probed at the pin: `var match = 1`, `def f(match: Int)`, and a `match`
-field each fail to parse ("escape keyword 'match' with backticks to use it
-as an identifier"), `def match` and `def case` are rejected ("cannot be
-used as a function name in this context"), and `s.match()` / `s.case()`
-run. `class`, `del`, and `yield` behave identically, which the previous
-audits had not probed as binding names.
+### 1. Integer powers abort on a negative exponent
 
-### 1. `std.hashlib` is `std.hash`
+Status 2026-11-01: DONE — `_powi` and `SIMDLength.__pow__` abort with
+upstream's message, an integral base with a float exponent is a compile-time
+error, and `_powf_scalar` takes an integral exponent past `Int32` through
+`exp(log)` with the base's sign. The same port brings `SIMD.slice`'s offset
+check (a multiple of the output width, where it was the target's vector
+width) and `__divmod__`'s unguarded mask. `assets/ok/pliron_trap_pow_negative.mojo`
+moved to `assets/runtime_error`. An integer literal to a negative literal
+power is a float literal upstream (R1821).
 
-Status 2026-10-17: DONE — the bundled package, every import in the stdlib,
-fixtures, probes, tests, and docs, and the `__module$std$hash$…` symbol
-spellings moved. The pin has no `hashlib` ("unable to locate module
-'hashlib'"), which had flipped two probes to rejection.
+### 2. `pop.cmp ne` over floats is unordered
 
-### 2. `FileDescriptor` is `RawFileDescriptor`
+Status 2026-11-01: DONE — the pin now runs `ne` unordered as well as folding
+it so, so `Bool(NaN)`, `n.ne(n)`, and `any` over a NaN lane are `True`. The
+VM, Pliron, and both compile-time folders follow, and MIR schema 1.154 gives
+a float `binary ne` that meaning.
 
-Status 2026-10-17: DONE for the name — the bundled struct, `std.io` and
-prelude exports, `sys.stdout`/`stderr`/`stdin`, the checker's `print(file=)`
-type name, the VM and Pliron descriptor readers, and the fixtures moved,
-and the field is `_value` as upstream's. The pin takes its descriptor as a
-`c_int`, aborts on a negative value, and exposes `-1` as a niche
-(`UnsafeSingleNicheable`); that is R1127. The same change made
-`external_call["write", c_ssize_t](1, …)` in a fixture conflict with the
-stdlib's own `write(c_int, …)` declaration ("existing function with
-conflicting signature"), so the fixture spells `c_int(1)` and
-`c_size_t(len)` as upstream's `write_bytes` does.
+### 3. Negative number literals are match patterns
 
-### 3. `match`/`case` pattern matching
+Status 2026-11-01: DONE — `case -1:` and `case - 2.5:` parse as literal
+patterns, where any other signed operand still needs `==`.
 
-`match subject:` with `case` arms over literals, `|` alternatives, guards,
-name/`as`/`var`/`ref` bindings, tuple, struct, and list patterns,
-`.Some(x)` cases of `EnumLike` types, explicit `== value` patterns, and
-`comptime match`; `if case`/`while case`; `var [first, *middle, last] =
-values`. The window's one large feature landed in slices: `match`, `if
-case`, and `while case` run, and R1132–R1143 are the entries and residues
-that remain (enum cases, sequences, iteration targets, `comptime match`).
+### 4. An unread `if` keeps the call in its `elif` condition
 
-### 4. `where <cond> else "<message>"` and `not <Trait>`
+Status 2026-11-01: DONE — `HoistYieldResults` erases an `if` with no read
+result only when no `elif` condition region computes anything;
+`assets/ok/if_unread_elif_call_skipped.mojo` became
+`if_unread_elif_call_runs.mojo`.
 
-Carried from the previous window, where they were described but never
-filed: R1115 (the constraint-message spelling) and R1114 (the opt-out
-spelling, now the manual's only spelling for explicit destruction,
-`not Deinitable else "call 'cleanup()'"`).
+### 5. Legacy closures are removed
 
-### 5. `Tuple` shape
+R1823: reject the `capturing` effect and the `@parameter` family with the
+pin's texts and move the corpus onto capture lists, after the bundled
+handler APIs (R1433) and the run-time capturing leniencies (R176).
 
-`()` is a tuple value and `Tuple[]` the empty tuple's type (Mojito already
-rejects `()` as a type; the spelling is R1120). `Tuple[*Ts: AnyType]` with
-`Movable`/`Deinitable`/`Defaultable`/`RegisterPassable`/`ImplicitlyCopyable`
-conditional on every element (R1121), `Tuple(init_with=…)` (R1122),
-`Tuple.first_of[T]()` (R1123), and `consume_elements`/`deinit_with`/
-`VariadicPack.consume_elements` taking the handler as a runtime closure
-argument (R1124). `SIMD.reduce(closure)` has no Mojito surface: the
-bundled vector exposes the `reduce_add` family only.
+### 6. Language changes still to follow
 
-### 6. Align in-subset library surfaces
+- A `with` over a named manager borrows it (R1819).
+- An error-taking `__exit__` may take `var self` or `deinit self` (R1820).
+- An integer literal to a negative literal power is a float literal (R1821).
+- A `match` cluster no longer keys an `== expr` or a concatenated string
+  under the empty spelling (R1822).
+- Initializers that differ only in a refined `out self` overload on the
+  result (R1830).
+- `@explicit_destroy("...")` is deprecated for `not Deinitable else
+  "..."`, and a conditional `Deinitable where ... else "..."` reports its
+  message when a value is abandoned (R1115, then the bundled library).
+- A `_` hole nested in a parameterized argument type auto-parameterizes, as
+  in Mojito, which prints a wrong value for it at a single caller (R1817).
 
-- `Hasher` requires neither `__init__` nor a consuming `finish`; the
-  collections bound `H: Hasher & Defaultable & Deinitable` (R1125).
-- `Defaultable` provides a default `__init__()` over reflected fields
-  (R1119).
-- `Array` slices into a `Span` (R1126).
-- Carried from the previous window with no Mojito spelling yet:
-  `hash_bytes(ImmSpan[Byte])`, `TypeList.any()`/`all()`, `fill_with=`
-  constructors, `deinit()`, the `Span` `unsafe_init_*`/`unsafe_assume_init`/
-  `unsafe_deinit_elements` helpers, `CStringSpan`/`as_c_string_span` (the
-  pin now warns on every `as_c_string_slice` in the corpus; the old names
-  remain aliases), and the `std.simd` module home.
-- No Mojito surface: `Endian` and `SIMD.to_endian`/`from_endian`
-  (`from_bytes`/`as_bytes` are not bundled), `Coord.product[T]()`/
-  `replace_dynamic`, `TargetAccelerator`, the kernel and GPU moves.
+### 7. Library surfaces still to follow
 
-### 7. Two upstream regressions, recorded rather than matched
+`FileDescriptor`, `BorrowedFileDescriptor`, and a consuming
+`FileHandle.close` (R1824); `OwnedPointer(init_with=)` and `deinit_with`
+(R1825); `Layout(length=)` and `Sized` (R1826); the plugin hooks' `__enum`
+math ops (R1828); `pow` as two `SIMD` overloads (R1458); and the
+`OptionalPointer` aliases' deprecation (R230).
 
-- A `for … else` over `range` skips its `else` clause at the pin, while the
-  same loop over a `List` runs it and the previous pin ran both.
-  `conformance/cases.tsv` carries `loop-completion` as `output-diff`, and
-  `conformance/probes/for_else_over_range.mojo` flips it back.
-- The explicit application `Tuple[*Ts](*args^)` no longer constructs from a
-  bounded pack ("cannot unpack a pack of type 'Movable' ('Ts.values') into
-  a call that expects a pack of type 'AnyType'"), for every bound tried,
-  while the inferred `Tuple(*args^)` runs. Every fixture, probe, and the
-  bundled `std.collections.pack_tuple` spell the inferred form; Mojito
-  accepts both, and `conformance/probes/tuple_explicit_pack_application.mojo`
-  watches the pin.
-- `Tuple.reverse()` declared `-> Tuple[*Ts.reverse()]`
-  (`assets/ok/tuple_reverse_concat.mojo`) is rejected with "cannot
-  implicitly convert" between two identically printed `Tuple[*…tabulate…]`
-  types. The fixture sits in `conformance/assets-mojo-rejects.tsv` under the
-  new `upstream-regression` family, which the sweep clears the day the pin
-  accepts it again.
-- The pin segfaults on `assets/type_error/variant_deinit_with_bad_handler.mojo`
-  (a lambda of the wrong shape handed to `Variant.deinit_with`), which the
-  error ledger records as `skip`, "rejected without a diagnostic".
+### 8. One upstream regression, recorded rather than matched
 
-**Close-out record (2026-10-17).** The differential conformance run passes
-551/551 `conformance/cases.tsv` cases against the exact audited build:
-`mojo --version` reports `Mojo 1.2.0.dev2026101705 (46f49943)` from the
-`~/src/mojo/envs/mojo-2026101705` Pixi environment (pinning the conda nightly
-that `cfd79ca736884aefbb5636bc8eacc79888b233c6`'s lockfiles pin); the Mojito
-side is commit `643802dc` plus this uncommitted pass. The first run reported
-nine failures, every one the window's own movement: `tuple-values`,
-`empty-runtime-pack`, `variadic-method-type-params`,
-`variadic-pack-upstream-spellings`, and `pack-bare-in-struct-header` on the
-explicit `Tuple[*Ts](…)` regression (respelled), `print-keywords-file` and
-`file-descriptor-stdout-order` on the `RawFileDescriptor` rename (followed),
-`external-call-write-stdout` on the `write(c_int, …)` signature conflict
-(respelled), and `loop-completion` on the `for … else` regression (now an
-`output-diff` row), and the torn tenth was the runner reading `cases.tsv`
-while it was being edited. One row was added (`reserved-word-binding-name`).
+A `var` binding beside a literal in a tuple pattern over an rvalue subject
+fails the pin's lifetime check ("use of uninitialized value '(pattern
+child)'"); a named subject runs. Three fixtures sit in
+`conformance/assets-mojo-rejects.tsv` as `upstream-regression`, and
+`conformance/probes/var_case_rvalue_tuple_literal_sibling.mojo` watches the
+pin. Of the previous window's three regressions, the `for … else` over
+`range` is fixed (`loop-completion` is a `run` row again), and the explicit
+`Tuple[*Ts](*args^)` application and `Tuple.reverse()` still fail.
+
+**Close-out record (2026-11-01).** The differential conformance run against
+the exact audited build (`mojo --version` reports `Mojo 1.3.0.dev2026110105
+(ce3afc14)` from `~/src/mojo/envs/mojo-2026110105`) passed 546/561 before
+this pass. The fifteen failures were the window's own movement: nine
+callable cases on the removed closures (now `mojito-only`, R1823), two on
+the `FileHandle` change (`mojito-only`, R1824), two on the unordered `ne`
+(fixed), one on `Powable` (respelled), and `loop-completion`, back to `run`.
+One row was added (`match-cluster-nested-completion`, promoted from its
+probe).
 
 The three `assets/` sweeps ran against the same build. `--extensions`
-passes: the pin still rejects all 71 extension fixtures (one by
-segfaulting). The ordinary `_ok` sweep runs 1082 fixtures: the pin rejects
-nine — the five `hasher-protocol` and one `layout-alignment` rows carried
-from the previous re-pin, `template_method_binder_construction.mojo` joining
-`hasher-protocol` (the pin's `Hasher` no longer requires `__init__`, R1125),
-`tuple_reverse_concat.mojo` as the first `upstream-regression` row, and
-`external_call_write_stdout.mojo`, since respelled — and Mojito's output
-differs on 20, three of them new to the ledger: the window's own t-string
-change (`tstring_lazy.mojo`, R1130) and two Mojito divergences the previous
-pin shared but no sweep had ledgered, a late-initialized local's destruction
-order (`try_raise_edge_drop_order.mojo`, R1129) and the move initializer of
-a temporary handed to an owning collector
-(`variadic_collector_forwarded_and_borrowed.mojo`, R1131). `--errors` passes
-over 602 fixtures with no verdict changed; ten first complaints were
-reworded by the re-pin and refreshed, four of them moving to the new
-`handler-argument` burn-down family because the pin now rejects
-`consume_elements[handler]()` and `deinit_with[…]()` for their spelling
-before it reaches the defect each fixture pins (R1124), one to `skip` for the
-segfault above, and `pliron_raise_iter_stop_unhandled.mojo` keeping `skip`
-with a new reason the pin states and Mojito lacks: `main()` may raise only
-`Error` (R1128).
+passes: the pin rejects all 86. The `_ok` sweep runs 1556 fixtures: the pin
+rejects 43, 35 of them new. Seventeen were followed in place (the
+`ParameterList` rename, `Powable`, `_Expable`, and the integer powers), and
+eighteen are ledgered rows with roadmap tasks: eleven on the removed
+closures, two on `FileHandle`, two on the plugin ops, and three on the
+upstream regression above. Mojito's output differs on 18, two of them new:
+the `elif` call (fixed) and the cluster keying (R1822). `--errors` runs 1022
+fixtures: three verdicts changed (`file_read_closed_handle.mojo` now fails
+to compile on the `FileHandle` change, `simd_element_list_too_few.mojo`
+times out, and `refined_out_self_overload_on_result.mojo` runs, R1830), and
+eighteen first complaints were reworded. Five are now masked by the closure
+removal and moved to `ledgered`, and four keep `handler-argument` behind the
+same complaint. `--benchmarks` passes over 11.
 
 Every probe in `conformance/probes/` ran; the README records the result.
-The default Rust gate (`cargo build`, Clippy, the manifest checker) ran in
-the same state; the full suite is the nightly gate's.
+The native CPU table was regenerated (`scripts/gen-x86-cpu-table`) and lists
+the same 79 CPUs and 230 features. The default Rust gate (`cargo build`,
+Clippy, the manifest checker) ran in the same state; the full suite is the
+nightly gate's.
 
 ## Confirmed Alignment And Audit-Only Work
 
@@ -293,6 +258,19 @@ already covers:
   They are warnings today, so the fixtures still compile; the next window that
   turns one into an error is the one that reaches Mojito.
 
+- From the `a431ffa8af` window: `List.insert` and `List.clear` are
+  stabilized upstream and already bundled; a precompiled package no longer
+  leaks names (`std.os.getenv` after `from std.os import getenv`), which
+  Mojito already rejects; contextual member calls with run-time arguments
+  (#7204), a trailing `finally` after a nested `try` (#6718), the folded
+  `Int(UInt32.MAX)` (#7154), the Python-matching `startswith`/`endswith`
+  edges, and `split("")` already agree. `String.isspace` was renamed in the
+  previous window, which its audit missed. The `Optional` niche sizes,
+  `normpath`, `ConvertibleToPython`, `ArcPointer.deinit_with`, the Apple M6
+  targets, the AMD intrinsic moves, `CompiledFunctionInfo`, and the removed
+  `StringSpan` mutability have no Mojito surface. `__del__` warns as
+  deprecated for `__deinit__`, which Mojito already accepts.
+
 ## Monitored Or Deferred Movement
 
 These changes should remain visible without displacing the CPU language work:
@@ -384,6 +362,195 @@ Before closing a language-parity milestone:
    pin's LLVM major or minor version moves, re-diff
    `crates/mojito-native-core/src/target/x86_host.rs` against that LLVM's
    `llvm/lib/TargetParser/Host.cpp`, whose `sys::getHostCPUName` it ports.
+
+## Historical Audit — `cfd79ca736` (2026-10-17)
+
+| Role | Immutable revision |
+|---|---|
+| Audited Mojo dev head | [`cfd79ca736884aefbb5636bc8eacc79888b233c6`](https://github.com/modular/modular/commit/cfd79ca736884aefbb5636bc8eacc79888b233c6), whose lockfiles pin `Mojo 1.2.0.dev2026101705` |
+| Previous upstream audit boundary | [`26cfe94f400b71afd2cccf439fde95488910c48d`](https://github.com/modular/modular/commit/26cfe94f400b71afd2cccf439fde95488910c48d), `Mojo 1.2.0.dev2026092105` |
+| Mojito baseline audited | `643802dc` (working tree at re-pin, 2026-10-17) |
+| Source delta | [Upstream comparison `26cfe94f40…cfd79ca736`](https://github.com/modular/modular/compare/26cfe94f400b71afd2cccf439fde95488910c48d...cfd79ca736884aefbb5636bc8eacc79888b233c6) |
+
+The window's evidence is the staged 1.2.0 release document
+([`Mojo/docs/site/releases/v1.2.0.md`](https://github.com/modular/modular/blob/cfd79ca736884aefbb5636bc8eacc79888b233c6/Mojo/docs/site/releases/v1.2.0.md),
+dated 2026-10-22, which absorbed the nightly changelog from the 1.1.0
+cutover) plus the nightly changelog reset after it, which carries one entry
+(`Tuple` elements need not be `Movable`; `Tuple(init_with=...)`). A local
+pinned worktree lives at `~/src/mojo/repos/modular-cfd79ca7` and the
+differential Pixi environment at `~/src/mojo/envs/mojo-2026101705`.
+
+The window is dominated by one language feature: pattern matching left its
+experimental `__match` spelling and shipped as `match`/`case`, with
+`comptime match`, `if case`/`while case`, list destructuring and list
+patterns, and `EnumLike` case patterns. Its vocabulary reaches Mojito
+first: `match` and `case` are keywords (as `class`, `del`, and `yield`
+already were at the pin), so none may name a binding without backticks.
+Two renames reach the bundled library — `std.hashlib` is `std.hash`, and
+`FileDescriptor` is `RawFileDescriptor` over a `c_int` — and `()` is
+always a tuple value, `Tuple[]` the empty tuple's type. The library
+movement is broad: `Tuple` elements need not be `Movable`, `Tuple` gains
+`init_with` and `first_of`, `consume_elements`/`deinit_with`/`SIMD.reduce`
+take their handler as a runtime closure, `Defaultable` synthesizes
+`__init__`, `Array` slices into a `Span`, `Hasher` drops `__init__` and
+`finish` borrows, and most of `std.math` stopped calling the system libm.
+`async`/`await` became `__async`/`__await`. Two upstream regressions
+surfaced in the differential run and are recorded as probes rather than
+matched (section 7).
+
+### Changeset — sections 0–2 closed; 3–6 filed (R1114–R1143); 7's `for … else` regression fixed upstream at the next pin
+
+The order below is the recommended implementation order. Compatibility
+aliases may be retained deliberately only while upstream itself keeps the
+deprecated form.
+
+#### 0. `match`, `case`, `class`, `del`, and `yield` are keywords
+
+Status 2026-10-17: DONE — the five words lex as keywords (`Token::keyword`),
+so a variable, parameter, field, or imported name spelled by one is a parse
+error unless stropped, a free or nested `def` named by one is rejected by
+the checker as before (now including `case`), and a method may still be
+named `match` or `case` and called as one (`expect_member_name`).
+`assets/parse_error/reserved_word_binding_name.mojo` and
+`conformance/fixtures/reserved_method_name.mojo` pin both sides.
+
+Probed at the pin: `var match = 1`, `def f(match: Int)`, and a `match`
+field each fail to parse ("escape keyword 'match' with backticks to use it
+as an identifier"), `def match` and `def case` are rejected ("cannot be
+used as a function name in this context"), and `s.match()` / `s.case()`
+run. `class`, `del`, and `yield` behave identically, which the previous
+audits had not probed as binding names.
+
+#### 1. `std.hashlib` is `std.hash`
+
+Status 2026-10-17: DONE — the bundled package, every import in the stdlib,
+fixtures, probes, tests, and docs, and the `__module$std$hash$…` symbol
+spellings moved. The pin has no `hashlib` ("unable to locate module
+'hashlib'"), which had flipped two probes to rejection.
+
+#### 2. `FileDescriptor` is `RawFileDescriptor`
+
+Status 2026-10-17: DONE for the name — the bundled struct, `std.io` and
+prelude exports, `sys.stdout`/`stderr`/`stdin`, the checker's `print(file=)`
+type name, the VM and Pliron descriptor readers, and the fixtures moved,
+and the field is `_value` as upstream's. The pin takes its descriptor as a
+`c_int`, aborts on a negative value, and exposes `-1` as a niche
+(`UnsafeSingleNicheable`); that is R1127. The same change made
+`external_call["write", c_ssize_t](1, …)` in a fixture conflict with the
+stdlib's own `write(c_int, …)` declaration ("existing function with
+conflicting signature"), so the fixture spells `c_int(1)` and
+`c_size_t(len)` as upstream's `write_bytes` does.
+
+#### 3. `match`/`case` pattern matching
+
+`match subject:` with `case` arms over literals, `|` alternatives, guards,
+name/`as`/`var`/`ref` bindings, tuple, struct, and list patterns,
+`.Some(x)` cases of `EnumLike` types, explicit `== value` patterns, and
+`comptime match`; `if case`/`while case`; `var [first, *middle, last] =
+values`. The window's one large feature landed in slices: `match`, `if
+case`, and `while case` run, and R1132–R1143 are the entries and residues
+that remain (enum cases, sequences, iteration targets, `comptime match`).
+
+#### 4. `where <cond> else "<message>"` and `not <Trait>`
+
+Carried from the previous window, where they were described but never
+filed: R1115 (the constraint-message spelling) and R1114 (the opt-out
+spelling, now the manual's only spelling for explicit destruction,
+`not Deinitable else "call 'cleanup()'"`).
+
+#### 5. `Tuple` shape
+
+`()` is a tuple value and `Tuple[]` the empty tuple's type (Mojito already
+rejects `()` as a type; the spelling is R1120). `Tuple[*Ts: AnyType]` with
+`Movable`/`Deinitable`/`Defaultable`/`RegisterPassable`/`ImplicitlyCopyable`
+conditional on every element (R1121), `Tuple(init_with=…)` (R1122),
+`Tuple.first_of[T]()` (R1123), and `consume_elements`/`deinit_with`/
+`VariadicPack.consume_elements` taking the handler as a runtime closure
+argument (R1124). `SIMD.reduce(closure)` has no Mojito surface: the
+bundled vector exposes the `reduce_add` family only.
+
+#### 6. Align in-subset library surfaces
+
+- `Hasher` requires neither `__init__` nor a consuming `finish`; the
+  collections bound `H: Hasher & Defaultable & Deinitable` (R1125).
+- `Defaultable` provides a default `__init__()` over reflected fields
+  (R1119).
+- `Array` slices into a `Span` (R1126).
+- Carried from the previous window with no Mojito spelling yet:
+  `hash_bytes(ImmSpan[Byte])`, `TypeList.any()`/`all()`, `fill_with=`
+  constructors, `deinit()`, the `Span` `unsafe_init_*`/`unsafe_assume_init`/
+  `unsafe_deinit_elements` helpers, `CStringSpan`/`as_c_string_span` (the
+  pin now warns on every `as_c_string_slice` in the corpus; the old names
+  remain aliases), and the `std.simd` module home.
+- No Mojito surface: `Endian` and `SIMD.to_endian`/`from_endian`
+  (`from_bytes`/`as_bytes` are not bundled), `Coord.product[T]()`/
+  `replace_dynamic`, `TargetAccelerator`, the kernel and GPU moves.
+
+#### 7. Two upstream regressions, recorded rather than matched
+
+- A `for … else` over `range` skips its `else` clause at the pin, while the
+  same loop over a `List` runs it and the previous pin ran both.
+  `conformance/cases.tsv` carries `loop-completion` as `output-diff`, and
+  `conformance/probes/for_else_over_range.mojo` flips it back.
+- The explicit application `Tuple[*Ts](*args^)` no longer constructs from a
+  bounded pack ("cannot unpack a pack of type 'Movable' ('Ts.values') into
+  a call that expects a pack of type 'AnyType'"), for every bound tried,
+  while the inferred `Tuple(*args^)` runs. Every fixture, probe, and the
+  bundled `std.collections.pack_tuple` spell the inferred form; Mojito
+  accepts both, and `conformance/probes/tuple_explicit_pack_application.mojo`
+  watches the pin.
+- `Tuple.reverse()` declared `-> Tuple[*Ts.reverse()]`
+  (`assets/ok/tuple_reverse_concat.mojo`) is rejected with "cannot
+  implicitly convert" between two identically printed `Tuple[*…tabulate…]`
+  types. The fixture sits in `conformance/assets-mojo-rejects.tsv` under the
+  new `upstream-regression` family, which the sweep clears the day the pin
+  accepts it again.
+- The pin segfaults on `assets/type_error/variant_deinit_with_bad_handler.mojo`
+  (a lambda of the wrong shape handed to `Variant.deinit_with`), which the
+  error ledger records as `skip`, "rejected without a diagnostic".
+
+**Close-out record (2026-10-17).** The differential conformance run passes
+551/551 `conformance/cases.tsv` cases against the exact audited build:
+`mojo --version` reports `Mojo 1.2.0.dev2026101705 (46f49943)` from the
+`~/src/mojo/envs/mojo-2026101705` Pixi environment (pinning the conda nightly
+that `cfd79ca736884aefbb5636bc8eacc79888b233c6`'s lockfiles pin); the Mojito
+side is commit `643802dc` plus this uncommitted pass. The first run reported
+nine failures, every one the window's own movement: `tuple-values`,
+`empty-runtime-pack`, `variadic-method-type-params`,
+`variadic-pack-upstream-spellings`, and `pack-bare-in-struct-header` on the
+explicit `Tuple[*Ts](…)` regression (respelled), `print-keywords-file` and
+`file-descriptor-stdout-order` on the `RawFileDescriptor` rename (followed),
+`external-call-write-stdout` on the `write(c_int, …)` signature conflict
+(respelled), and `loop-completion` on the `for … else` regression (now an
+`output-diff` row), and the torn tenth was the runner reading `cases.tsv`
+while it was being edited. One row was added (`reserved-word-binding-name`).
+
+The three `assets/` sweeps ran against the same build. `--extensions`
+passes: the pin still rejects all 71 extension fixtures (one by
+segfaulting). The ordinary `_ok` sweep runs 1082 fixtures: the pin rejects
+nine — the five `hasher-protocol` and one `layout-alignment` rows carried
+from the previous re-pin, `template_method_binder_construction.mojo` joining
+`hasher-protocol` (the pin's `Hasher` no longer requires `__init__`, R1125),
+`tuple_reverse_concat.mojo` as the first `upstream-regression` row, and
+`external_call_write_stdout.mojo`, since respelled — and Mojito's output
+differs on 20, three of them new to the ledger: the window's own t-string
+change (`tstring_lazy.mojo`, R1130) and two Mojito divergences the previous
+pin shared but no sweep had ledgered, a late-initialized local's destruction
+order (`try_raise_edge_drop_order.mojo`, R1129) and the move initializer of
+a temporary handed to an owning collector
+(`variadic_collector_forwarded_and_borrowed.mojo`, R1131). `--errors` passes
+over 602 fixtures with no verdict changed; ten first complaints were
+reworded by the re-pin and refreshed, four of them moving to the new
+`handler-argument` burn-down family because the pin now rejects
+`consume_elements[handler]()` and `deinit_with[…]()` for their spelling
+before it reaches the defect each fixture pins (R1124), one to `skip` for the
+segfault above, and `pliron_raise_iter_stop_unhandled.mojo` keeping `skip`
+with a new reason the pin states and Mojito lacks: `main()` may raise only
+`Error` (R1128).
+
+Every probe in `conformance/probes/` ran; the README records the result.
+The default Rust gate (`cargo build`, Clippy, the manifest checker) ran in
+the same state; the full suite is the nightly gate's.
 
 ## Historical Audit — `26cfe94f40` (2026-09-21)
 

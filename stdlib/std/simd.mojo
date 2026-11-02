@@ -92,7 +92,6 @@ from std.math import (
     CeilDivable,
     DivModable,
     Floorable,
-    Powable,
     Roundable,
     Truncable,
     abs,
@@ -111,6 +110,7 @@ from std.collections.optional import Optional
 from std.string import StaticString
 from std.builtin.enum_like import EnumLike
 from std.memory import bitcast, pack_bits
+from std.os import abort
 from std.bit import pop_count
 from std.utils import IndexList, StaticTuple
 from std.utils.numerics import FPUtils
@@ -126,6 +126,7 @@ from std.utils.numerics import max_finite as _max_finite
 from std.utils.numerics import max_or_inf as _max_or_inf
 from std.utils.numerics import min_finite as _min_finite
 from std.utils.numerics import min_or_neg_inf as _min_or_neg_inf
+from std.utils.numerics import isnan as _isnan
 from std.utils.numerics import nan as _nan
 
 # ===----------------------------------------------------------------------=== #
@@ -325,7 +326,7 @@ struct FastMathFlag(EnumLike, Equatable, ImplicitlyCopyable, RegisterPassable):
     ].values
 
     # Upstream spells this `TypeList.splat[ParameterList[
-    # Self._enum_case_names].size, NoneType].values` (R1181).
+    # Self._enum_case_names].length, NoneType].values` (R1181).
     comptime _enum_case_types = TypeList.of[
         Trait=AnyType,
         NoneType,
@@ -404,7 +405,6 @@ struct SIMD[dtype: DType, length: SIMDLength](
     Hashable,
     Indexer,
     Intable,
-    Powable,
     Roundable,
     Sized,
     TrivialRegisterPassable,
@@ -1090,8 +1090,7 @@ struct SIMD[dtype: DType, length: SIMDLength](
         var mod = self - div * denominator
         var mask = (denominator.lt(0) ^ self.lt(0)) & mod.ne(0)
 
-        if any(mask):
-            div = div - mask.cast[Self.dtype]()
+        div = div - mask.cast[Self.dtype]()
 
         var div_res = is_zero_mask.select(Self(0), div)
         var mod_res = mod + mask.select(denominator, Self(0))
@@ -1100,6 +1099,12 @@ struct SIMD[dtype: DType, length: SIMDLength](
     @inline(.nodebug)
     def __pow__(self, exp: SIMD[_, _]) -> Self:
         """Computes the vector raised to the power of the input integer value.
+
+        For an integral vector, a negative exponent aborts.
+
+        Constraints:
+            The SIMD dtype must be numeric. An integral vector requires an
+            integral exponent.
 
         Args:
             exp: The exponent value.
@@ -1149,6 +1154,11 @@ struct SIMD[dtype: DType, length: SIMDLength](
     @inline(.nodebug)
     def __pow__(self, exp: Self) -> Self:
         """Computes the vector raised elementwise to the right hand side power.
+
+        For an integral vector, a negative exponent aborts.
+
+        Constraints:
+            The SIMD dtype must be numeric.
 
         Args:
             exp: The exponent value.
@@ -2320,7 +2330,7 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
 
         comptime assert (
-            output_size == mask.size
+            output_size == mask.length
         ), "size of the mask must match the output SIMD size"
 
         # FIXME: Support parameters on initializers better, removing __init__.
@@ -2533,7 +2543,9 @@ struct SIMD[dtype: DType, length: SIMDLength](
 
         comptime if output_width == 1:
             return self[offset]
-        elif offset % simd_width_of[Self.dtype]():
+        elif offset % output_width:
+            # `llvm.vector.extract` wants an index that is a multiple of the
+            # result element count, which is what `insert` asserts as well.
             return slice_body()
 
         if __is_run_in_comptime_interpreter:
@@ -3282,6 +3294,11 @@ def _pow[
 
         comptime for i in range(width):
             result[i] = _powi(base[i], exp[i].cast[DType.int32]())
+    elif base.dtype.is_integral() and exp.dtype.is_floating_point():
+        comptime assert False, (
+            "an integer cannot be raised to a floating point power; use a"
+            " floating point base, e.g. 'Float64(x) ** n'"
+        )
     else:
         comptime assert False, "unsupported type combination"
 
@@ -3297,7 +3314,17 @@ def _powf_scalar(
     var integral, fractional = _modf_scalar(exponent)
 
     if integral == exponent:
-        return _powi(base, integral.cast[DType.int32]())
+        if abs(integral) < 2147483648.0:
+            return _powi(base, integral.cast[DType.int32]())
+        # Too large for `_powi`: |base| ** exponent, with the sign of `base`
+        # for odd ones (so `-0.0` keeps its sign too).
+        var mag = abs(base)
+        if mag != 1 and not _isnan(mag):
+            mag = std.math.exp(exponent.cast[base.dtype]() * std.math.log(mag))
+        var half = integral * 0.5
+        if _floor(half) != half:
+            return std.math.copysign(mag, base)
+        return mag
 
     if fractional and base < 0:
         return _nan[base.dtype]()
@@ -3323,16 +3350,14 @@ def _powf[
 
 @inline(.always)
 def _powi(base: Scalar, exp: Int32) -> type_of(base):
-    if base.dtype.is_integral() and exp < 0:
-        if base == 1:
-            return 1
-        if base == -1:
-            # (-1) ** n is 1 for even n, -1 for odd n.
-            return Scalar[base.dtype](1 if (-exp) & 1 == 0 else -1)
-        # For |base| > 1, this is the integer truncation of
-        # 1 / base^|exp|. Note: 0 ** negative is mathematically
-        # undefined, but we return 0 here for now.
-        return 0
+    comptime if base.dtype.is_integral():
+        if exp < 0:
+            # Trap rather than return a truncated result, the way NumPy rejects
+            # integers to negative powers.
+            abort(
+                "an integer cannot be raised to a negative power; use a"
+                " floating point base, e.g. 'Float64(x) ** n'"
+            )
 
     var a = base
     var b = abs(exp) if base.dtype.is_floating_point() else exp

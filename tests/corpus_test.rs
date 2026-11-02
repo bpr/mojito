@@ -462,8 +462,6 @@ const fn on_off(run: bool) -> &'static str {
 /// always runs: without it, a run differs or does not elaborate by design,
 /// so only the run with it is checked.
 const PIPELINE_DECIDES: &[&str] = &[
-    // `HoistYieldResults` erases an unread `if` with its `elif` call.
-    "if_unread_elif_call_skipped",
     // `RemoveUnusedParams` drops an unused argument's default, which prints.
     "unused_argument_instances",
     // `RemoveUnusedParams` removes a forwarded parameter, so `10 // n` at

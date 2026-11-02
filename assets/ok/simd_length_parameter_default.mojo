@@ -16,7 +16,7 @@ struct Lanes[length: SIMDLength]:
         return n
 
     def total[*mask: SIMDLength, n: Int = Self.length](self) -> Int:
-        return mask.size + n
+        return mask.length + n
 
     def forward[*mask: SIMDLength](self) -> Int:
         return self.total[*mask]()

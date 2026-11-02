@@ -1,6 +1,5 @@
-# `Bool` of a NaN is `__bool__`'s ordered `pop.cmp ne`, so a NaN made at
-# run time is `False`; the pin's own compile-time fold of the same compare
-# answers `True` (`conformance/probes/nan_truth_folded.mojo`).
+# `Bool` of a NaN is `__bool__`'s unordered `pop.cmp ne`, so a NaN made at
+# run time is `True`, as the pin's compile-time fold of the same compare is.
 def runtime_zero() -> Float64:
     var total = 0.0
     for i in range(2):

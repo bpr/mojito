@@ -25,36 +25,52 @@ seventeen probes; their answers live in `cases.tsv` claims
 `span-parameter-bare-element`, `len-string-units`, `subtree-origin-cast`,
 `raise-caught-error`) and the parity rows they reference.
 
-## Re-run at the `cfd79ca736` re-pin (2026-10-17)
+## Re-run at the `a431ffa8af` re-pin (2026-11-01)
 
-Every probe in this directory ran against `Mojo 1.2.0.dev2026101705
-(46f49943)`. Every row below holds, after three probes were respelled to
-the window's vocabulary: `mut_self_hash_witness.mojo` and
-`imported_alias_in_generic_method.mojo` (since promoted to `assets/ok`)
-import from `std.hash` (upstream renamed `std.hashlib`), and the `pack_*` probes build their storage with
-the inferred `Tuple(*args^)`, because the explicit `Tuple[*Ts](*args^)`
-application regressed upstream. The window's two upstream regressions are
-probes of their own:
+Every probe in this directory ran against `Mojo 1.3.0.dev2026110105
+(ce3afc14)`, beside `Mojo 1.2.0.dev2026101705` and Mojito. Every row not
+named below holds. One probe was respelled to the window's vocabulary:
+`enum_like_optional_bool.mojo` reads `ParameterList.length`, which upstream
+renamed from `size`.
+
+Answers that moved:
+
+- `for_else_over_range.mojo` is deleted: the pin runs a `for ... else` over
+  `range`'s `else` again, and `cases.tsv` carries `loop-completion` as `run`.
+- `nan_truth_folded.mojo` is deleted: the pin's `pop.cmp ne` is now
+  unordered at run time as well as when folded, so a NaN is truthy, and
+  Mojito follows (MIR schema 1.154).
+- `match_cluster_nested_completion.mojo` became the `cases.tsv` claim
+  `match-cluster-nested-completion`: the pin completes the enclosing case
+  where it used to crash, and prints what Mojito prints.
+- `match_cluster_unspelled_members.mojo` now **differs**: the pin prints
+  `cd`, keying a concatenated string pattern by its value (R1822).
+- `callable_parameter_thin_to_capturing.mojo`, `decorator_warnings.mojo`, and
+  `generic_closure_in_generic_body_callable_parameter.mojo` now **differ**:
+  the pin removed the `capturing` effect and `@parameter` closures, which
+  Mojito still runs (R1823). The last also panics Mojito's elaborator.
+
+Two probes are new: `autoparam_nested_hole_single_caller.mojo` (R1817, a
+wrong value in Mojito) and `var_case_rvalue_tuple_literal_sibling.mojo` (an
+upstream regression three `assets/ok` fixtures are ledgered behind).
+
+The previous window's other two regressions still hold at this pin:
 
 | Probe | Question | Answer |
 |---|---|---|
-| `for_else_over_range.mojo` | Does a `for ... else` over `range` run its `else` when the loop completes? | **differs**: the previous pin and Mojito print `range else`; `46f49943` skips it (a `List` loop's `else` still runs). `cases.tsv` carries `loop-completion` as `output-diff` until this prints `range else` again. |
-| `tuple_explicit_pack_application.mojo` | Does `Tuple[*Ts](*args^)` construct from a `*Ts: Movable` pack? | **differs**: the previous pin and Mojito print `2` twice; `46f49943` rejects ("cannot unpack a pack of type 'Movable' ('Ts.values') into a call that expects a pack of type 'AnyType'") for every bound tried, while `Tuple(*args^)` runs. Every fixture spells the inferred form until this runs again. |
-| `nan_truth_folded.mojo` | Is `Bool` of a NaN the same whether or not the pin folds the compare? | **differs** (found 2026-10-28): the pin prints `True` for a NaN its folder sees and `False` for one made at run time, as its `pop.cmp ne` lowers to the ordered `fcmp one`; Mojito prints `False` twice. `assets/ok/pliron_convert_bool.mojo` makes its NaN at run time. |
+| `tuple_explicit_pack_application.mojo` | Does `Tuple[*Ts](*args^)` construct from a `*Ts: Movable` pack? | **differs**: `1.2.0.dev2026092105` and Mojito print `2` twice; both later pins reject ("cannot unpack a pack of type 'Movable' ('Ts.values') into a call that expects a pack of type 'AnyType'") for every bound tried, while `Tuple(*args^)` runs. Every fixture spells the inferred form until this runs again. |
 
-Hand checks the same day: `match`, `case`, `class`, `del`, and `yield` are
-keywords (a binding named by one fails to parse with "escape keyword
-'match' with backticks to use it as an identifier"; a method may still be
-named `match` or `case`), `()` is never a type ("use 'Tuple[...]' to write a
-tuple type"), and passing `x^` to a borrowed argument warns rather than
-errors ("this value is borrowed here, so the transfer has no effect and can
-be removed") — Mojito has no warning channel and accepts it silently.
+`assets/ok/tuple_reverse_concat.mojo` (`Tuple.reverse()` typed
+`Tuple[*Ts.reverse()]`) still fails at the pin with an error naming the same
+type on both sides, and stays in `conformance/assets-mojo-rejects.tsv` as
+`upstream-regression`.
 
-A third regression needs no probe of its own: `assets/ok/tuple_reverse_concat.mojo`
-(`Tuple.reverse()` typed `Tuple[*Ts.reverse()]`) ran at the previous pin
-and `46f49943` rejects it with an error naming the same type on both sides.
-It sits in `conformance/assets-mojo-rejects.tsv` as `upstream-regression`,
-and the sweep reports the row the day the pin accepts it again.
+Hand checks the same day: `__del__` warns as deprecated ("use
+'__deinit__'"), which Mojito accepts silently beside `__deinit__`;
+`@explicit_destroy("...")` warns too ("use an 'else' message on the
+'Deinitable' conformance", R1115); `from std.os import getenv` no longer
+makes `std.os.getenv` resolve, as Mojito already rejects; and a negative
+number literal is a match pattern (`case -1:`), which Mojito now parses.
 
 ## Deprecation / vocabulary tracking (re-run at every re-pin)
 

@@ -11,17 +11,17 @@ struct S[n: Int]:
 def f[*vs: Int]():
     comptime raw = vs.values
     var pl = ParameterList[vs.values]()
-    print(len(pl), pl[0], ParameterList[vs.values].size)
+    print(len(pl), pl[0], ParameterList[vs.values].length)
     for v in pl:
         print(v)
     print(vs)
-    print(ParameterList[raw].size, S[7].n)
+    print(ParameterList[raw].length, S[7].n)
 
 
 def g[*vs: Int]():
     comptime pl = ParameterList[vs.values]()
-    comptime n = pl.size
-    print(n, vs.size, len(vs), vs[1])
+    comptime n = pl.length
+    print(n, vs.length, len(vs), vs[1])
     var l = ParameterList[vs.values]()
     print(l)
     print(repr(l))

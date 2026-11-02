@@ -1,7 +1,7 @@
 # Upstream's `SIMD` comparison members are library bodies: `__eq__` and
 # `__ne__` compare whole vectors, the ordered dunders compare `Scalar`s, and
-# `eq` … `le` are `pop.cmp` masks, whose `ne` is the ordered predicate, so a
-# NaN lane is unequal to nothing and a NaN is falsy.
+# `eq` … `le` are `pop.cmp` masks, whose `ne` is the unordered predicate, so a
+# NaN lane is unequal to everything and a NaN is truthy.
 
 
 def runtime_zero() -> Float64:

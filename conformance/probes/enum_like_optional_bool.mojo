@@ -15,7 +15,7 @@
 # Run:    mojo run enum_like_optional_bool.mojo
 #         cargo run -- run conformance/probes/enum_like_optional_bool.mojo
 def count[T: EnumLike]() -> Int:
-    return ParameterList[T._enum_case_names]().size
+    return ParameterList[T._enum_case_names]().length
 
 
 def main():

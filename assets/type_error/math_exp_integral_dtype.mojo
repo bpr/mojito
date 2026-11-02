@@ -1,6 +1,6 @@
 # expect: no overload matches
-# `exp`'s SIMD overload requires a floating-point dtype, and an `int32`
-# vector is no `_Expable`, so no overload matches, as at the pin.
+# `exp`'s SIMD overload requires a floating-point dtype, so an `int32`
+# vector matches no overload, as at the pin.
 from std.math import exp
 
 

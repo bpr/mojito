@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1817**.
+Next free ID: **R1832**.
 
 ## Ordered Work
 
@@ -4653,6 +4653,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     conformances in the tuple form, where upstream's use `where ... else`.
   - Found at the 2026-09-21 re-pin and left unfiled; refiled at the
     2026-10-17 re-pin.
+  - At `1.3.0.dev2026110105` `@explicit_destroy("<message>")` warns as
+    deprecated. Upstream's `Tuple`, `Array`, `List`, `Dict`, and `Set` give
+    the message on the conformance instead (`Deinitable where ... else
+    "..."`), and it is reported when a value is abandoned for parameters
+    that fail the condition. Respell the bundled library's
+    `@explicit_destroy` uses the same way once this lands.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7537,13 +7543,14 @@ Track: `divergences`.
   re-probed at every re-pin; every other Mojito-only acceptance is a
   divergence on the ledger below, waiting to be withdrawn. Both keep their
   fixtures under `assets/extensions/`.
-- The `cfd79ca736` re-pin (2026-10-17, Mojo `1.2.0.dev2026101705`) closed
-  the spelling changes its window forced: `match`, `case`, `class`, `del`,
-  and `yield` are keywords, `std.hashlib` is `std.hash`, and
-  `FileDescriptor` is `RawFileDescriptor`. The window's unimplemented
-  features are R1114–R1127, and its two upstream regressions are probes
-  (`for_else_over_range.mojo`, `tuple_explicit_pack_application.mojo`)
-  re-run at the next re-pin, not entries here.
+- The `a431ffa8af` re-pin (2026-11-01, Mojo `1.3.0.dev2026110105`)
+  followed the window's renames and fixes in place: `ParameterList.length`,
+  `is_ascii_whitespace`, the removed `Powable`, `CeilDivableRaising`, and
+  `_Expable`, integer powers that abort on a negative exponent, the
+  unordered `pop.cmp ne`, negative literal patterns, and an unread `if`'s
+  `elif` call. Its unimplemented changes are R1817–R1830, and its one
+  upstream regression is a probe
+  (`var_case_rvalue_tuple_literal_sibling.mojo`), not an entry here.
 
 Behavioral divergences from the pinned Mojo, to burn to zero. Every new
 divergence lands here with a probe or a `cases.tsv` `mojito-only` /
@@ -7552,6 +7559,130 @@ fixture. Each entry's `Ledger name` is the slug `conformance/cases.tsv` uses
 for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R1817 With one caller, a function over `Optional[Pointer[Int, _]]`
+  prints `None` for `p.value()[]`**
+
+  A wrong-output bug: `process(Pointer(to=x))` over `def process(p:
+  Optional[Pointer[Int, _]]): print(p.value()[])` prints `None`, where
+  the pin prints `5`.
+  - With a second call, or a `print(Bool(p))` before the read, Mojito
+    prints `5`.
+  - The `_` hole nested inside `Optional` is upstream's auto-parameterized
+    origin, new at the `a431ffa8af` pin (the previous pin rejected it).
+  - Probe: `conformance/probes/autoparam_nested_hole_single_caller.mojo`.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1819 `with c:` copies a named context manager, where the pin
+  enters and exits `c` itself**
+
+  `with c:` over a local `c` copies it, so `__enter__(mut self)` mutates
+  the copy, and a manager that is not `ImplicitlyCopyable` is rejected
+  ("cannot be implicitly copied").
+  - At `1.3.0.dev2026110105` a `with` over a reference to a manager no
+    longer copies: an `ImplicitlyCopyable` manager prints no `copy`, and
+    `c.n` reads `1` after an incrementing `__enter__`, where Mojito prints
+    `copy` and `0`.
+  - Lever: the HIR `with` lowering binds the manager by reference when the
+    subject is a place, and materializes a temporary only for an rvalue.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1820 An error-taking `__exit__` cannot consume its manager**
+
+  `def __exit__(var self, error: Error) -> Bool` on a `with Ctx():` is
+  rejected ("cannot copy non-Copyable type 'Ctx' (consuming receiver of
+  method '__exit__')"), where the pin runs it, as it runs `deinit self`.
+  - The non-error `__exit__` already takes `var self` and `deinit self`.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1821 An integer literal to a negative literal power is a type
+  error, where the pin computes a float literal**
+
+  `var a = 2**-1` fails ("integer literal exponent must be a non-negative
+  u32"), where the pin prints `0.5`, and `(-1)**-3` is `-1.0`.
+  - Upstream's `IntLiteral.__pow__` is two overloads selected by a
+    `where` on the exponent's sign. The negative one returns the type of
+    `1.0 / IntLiteral[base ** -exp]`, a `FloatLiteral`.
+  - Port both overloads to `stdlib/std/builtin/int_literal.mojo` once a
+    literal's power is the declared dunder, not the checker's rule.
+  - Zero to a negative power is `nan`.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1822 A `match` cluster keys an unspelled `Equal` member under the
+  empty spelling, where the pin no longer does**
+
+  Since `1.3.0.dev2026110105` the pin treats an `== expr` or an implicitly
+  concatenated string pattern differently from the previous pin, which
+  Mojito still follows (R1140).
+  - `match String("cd")` over `case "zz"`, `case "a" "b"`, `case "c" "d"`
+    prints nothing in Mojito, where the pin prints `cd`.
+  - `match S(2)` over `case 1`, `case == expected(2)` tests `1` first at
+    the pin, where Mojito sorts the empty spelling first and calls
+    `expected(2)` first.
+  - Find the new keying in upstream's `findClusterSize` / `emitCaseCluster`
+    at the pinned worktree, follow it, and update
+    `docs/notes/pattern-matching-evidence.md`.
+  - Probe: `conformance/probes/match_cluster_unspelled_members.mojo`.
+    `assets/ok/match_literal_clusters.mojo` is ledgered in
+    `conformance/assets-mojo-output-diffs.tsv` until this lands.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1823 Mojito accepts the `capturing` effect and `@parameter`
+  closures, which the pin removed**
+
+  At `1.3.0.dev2026110105` a `capturing` effect is an error ("the
+  'capturing' function effect is no longer supported; use a closure
+  capture list like '{var}' or '{mut x}' instead"), and so are
+  `@parameter`, `@__parameter`, `@__copy_capture`, and `@__move_capture`
+  on a nested function ("'@parameter' closures are no longer supported;
+  remove the decorator and declare the captures in a capture list").
+  - Mojito still parses and runs both, and the bundled library's handler
+    APIs take `capturing[_]` arguments (R1433).
+  - A function passed as a compile-time parameter must now be `thin`.
+  - Reject both with the pin's texts, move the fixtures that use them to
+    capture lists, and delete the `capturing` surface from the parser,
+    checker, and `docs/grammar.md`.
+  - Probes: `callable_parameter_thin_to_capturing.mojo`,
+    `decorator_warnings.mojo`, and
+    `generic_closure_in_generic_body_callable_parameter.mojo`, which also
+    panics Mojito's elaborator (`mono/catalog.rs`).
+  - Eleven `assets/ok` fixtures sit in `conformance/assets-mojo-rejects.tsv`
+    as `divergence` for it. In `conformance/assets-mojo-errors.tsv` five
+    error fixtures are `ledgered` and four `handler-argument` behind the
+    removal's complaint.
+  - Ledger name: `nominal-reference-callable`, `callable-effect-order`,
+    `parametric-capture-origins`, `generic-anonymous-callables`,
+    `callable-comptime-specialization`, `parameter-closure-capture-model`,
+    `parameter-closure-reads-immutable-capture`, `lambda-higher-order`,
+    `capturing-callable-parameter-with-locals`.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on R1433 and R176.
+  - Model: Fable, Planned.
+
+- [ ] **R1830 Two initializers that differ only in their refined `out self`
+  types are rejected, where the pin now selects by the result type**
+
+  `def __init__(out self: W[2], *, two: Int)` beside `def __init__(out self:
+  W[3], *, two: Int)` is rejected ("redefinition of function '__init__',
+  cannot overload on return type"), where `1.3.0.dev2026110105` runs
+  `W[2](two=7).v` and prints `7`.
+  - `assets/type_error/refined_out_self_overload_on_result.mojo` pins the
+    old rejection, and `conformance/assets-mojo-errors.tsv` carries it as
+    `divergence`.
+  - On the fix, move the fixture to `assets/ok` and drop its ledger row.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R1624 An integer literal's `//` or `%` by zero is an error, where
   the pin folds it to `0`**
@@ -9738,8 +9869,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   `pow(2, 10)` is an undefined variable, where the pin prints `1024`, and
   `divmod` is checked by name (`Checker::infer_divmod`).
-  - Upstream declares `divmod[T: DivModable]` and `pow[T: Powable]`
-    beside the traits, each returning the requirement's result.
+  - Upstream declares `divmod[T: DivModable]` beside the trait, returning
+    the requirement's result. Since `1.3.0.dev2026110105` `Powable` is
+    gone, and `pow` is two `SIMD` overloads, `pow(base: SIMD, exp: SIMD[_,
+    _])` and `pow(base: SIMD, exp: FloatLiteral)`, each calling
+    `base.__pow__(exp)`.
   - The elaborator rewrites every operand's `divmod` into its
     `__divmod__` call; the VM's `dispatch.rs` arm and Pliron's
     `lower/calls.rs` arm keep only an unsupported error for any other.
@@ -12974,11 +13108,16 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R230 `OptionalPointer` is missing**
+- [ ] **R230 A nullable pointer result is a raw address, where upstream's
+  is an `Optional[Pointer[T, origin]]`**
 
-  Problem: upstream's `OptionalPointer` is not ported, so null tests spell
-  `Int(ptr) == 0`.
-  - A small port.
+  The bundled `getenv` and `Path` helpers test a null result as
+  `Int(ptr) == 0`, where upstream returns an `Optional` of the pointer.
+  - Upstream deprecated the `OptionalPointer` aliases at
+    `1.3.0.dev2026110105`, so port the `Optional[Pointer[...]]` spelling,
+    not the alias.
+  - `stdlib/std/os/env.mojo` and `stdlib/std/pathlib/path.mojo` name the
+    sites.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13050,6 +13189,8 @@ residue found inside a task moves to the task that owns its fix.
   Problem: the context-manager surface lacks upstream's generic
   `__exit__[E]`.
   - A small port.
+  - Since `1.3.0.dev2026110105` the error-taking form also takes `var
+    self` and `deinit self` (R1820).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13274,6 +13415,78 @@ residue found inside a task moves to the task that owns its fix.
     keep their output.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R1824 `std.io` has no owning `FileDescriptor`, and `FileHandle` is
+  `Defaultable` with a non-consuming `close`**
+
+  At `1.3.0.dev2026110105` upstream's descriptor surface is three types,
+  where the bundled `std.io` has only `RawFileDescriptor`.
+  - `FileDescriptor` owns a descriptor and is linear: `fd^.close()`
+    raises if the close fails, and `FileDescriptor(copy_borrowed=)`
+    duplicates one with close-on-exec.
+  - `BorrowedFileDescriptor` is a copyable view carrying its owner's
+    origin.
+  - `RawFileDescriptor` gains a raising `close()`, and the descriptor
+    reads, `fchdir`, and closes raise `IOError`.
+  - `FileHandle` owns a `FileDescriptor`, is no longer `Defaultable`, and
+    its `close()` consumes it. `NamedTemporaryFile` follows.
+  - Port `stdlib/std/io/file_descriptor.mojo`, `file.mojo`, and
+    `stdlib/std/tempfile/` from the pinned worktree, then the fixtures that
+    call `close()` on a `mut` handle.
+  - `assets/ok/file_handle_roundtrip.mojo` and
+    `assets/ok/file_descriptor_stdout_order.mojo` are `ledgered` in
+    `conformance/assets-mojo-rejects.tsv`, and
+    `assets/runtime_error/file_read_closed_handle.mojo` in
+    `conformance/assets-mojo-errors.tsv`, until this lands.
+  - Ledger name: `file-handle-roundtrip`, `file-descriptor-stdout-order`.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1825 `OwnedPointer` has no in-place `init_with` initializer or
+  `deinit_with`**
+
+  At `1.3.0.dev2026110105` `OwnedPointer(init_with=)` constructs its value
+  in place, so the element need not be `Movable`, and `deinit_with()`
+  destroys one whose element is not `Deinitable`.
+  - The initializers that copy a value into the allocation are deprecated
+    upstream.
+  - Port both from the pinned `std/memory/owned_pointer.mojo`.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1826 `Layout` names its element count `count`, where the pin's is
+  `length` and `Layout` is `Sized`**
+
+  `Layout[T](count=n)` and `layout.count()` are deprecated at
+  `1.3.0.dev2026110105`. Upstream constructs one with `Layout[T](length=n)`
+  and reads it back with `len(layout)`, and `ManagedAllocation` is `Sized`
+  too.
+  - Port the pinned `std/memory/alloc.mojo` surface: the `length=`
+    initializer, `__len__`, and the `Sized` conformances, keeping `count=`
+    as upstream's deprecated spelling.
+  - Respell the corpus's `count=` uses.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1828 The plugin hooks name their math ops by string, where upstream's
+  are `__enum` cases**
+
+  `CurrentPlugin.unary_math_fn["sqrt", dtype, width]` and
+  `binary_math_fn["pow", ...]` take a `StringLiteral` op, where
+  `1.3.0.dev2026110105` declares `__enum _UnaryMathOp` and `__enum
+  _BinaryMathOp` in `std.math` and spells the call `unary_math_fn[.sqrt,
+  ...]`.
+  - Port both enums and the hook signatures in `stdlib/std/_plugin/` and
+    `stdlib/std/math/math.mojo`, and respell every call site.
+  - `assets/ok/std_plugin_hooks.mojo` and
+    `assets/ok/dtype_value_member_argument.mojo` are `ledgered` in
+    `conformance/assets-mojo-rejects.tsv` until this lands.
+  - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Packaging, Artifacts, And Developer Tooling
 

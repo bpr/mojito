@@ -19,14 +19,14 @@ nested-recursive-call	run	assets/ok/nested_recursive_call.mojo
 origin-specialized-function-value	run	conformance/fixtures/origin_specialized_function_value.mojo
 nested-origin-specialized-function-value	run	conformance/fixtures/nested_origin_specialized_function_value.mojo
 captured-nested-origin-specialization	reject	conformance/fixtures/captured_nested_origin_specialization.mojo
-nominal-reference-callable	run	conformance/fixtures/nominal_reference_callable.mojo
-callable-effect-order	run	conformance/fixtures/callable_effect_order.mojo
+nominal-reference-callable	mojito-only	conformance/fixtures/nominal_reference_callable.mojo
+callable-effect-order	mojito-only	conformance/fixtures/callable_effect_order.mojo
 generic-callable-bounds	run	conformance/fixtures/generic_callable_bounds.mojo
-parametric-capture-origins	run	conformance/fixtures/parametric_capture_origins.mojo
+parametric-capture-origins	mojito-only	conformance/fixtures/parametric_capture_origins.mojo
 explicit-origin-callable-selection	run	conformance/fixtures/explicit_origin_callable_selection.mojo
 callable-parameter-defaults	run	conformance/fixtures/callable_parameter_defaults.mojo
-generic-anonymous-callables	run	conformance/fixtures/generic_anonymous_callables.mojo
-callable-comptime-specialization	run	conformance/fixtures/callable_comptime_specialization.mojo
+generic-anonymous-callables	mojito-only	conformance/fixtures/generic_anonymous_callables.mojo
+callable-comptime-specialization	mojito-only	conformance/fixtures/callable_comptime_specialization.mojo
 pack-origin-specialization	run	conformance/fixtures/pack_origin_specialization.mojo
 hello-world	run	assets/ok/hello_world.mojo
 legacy-fn	reject	conformance/fixtures/legacy_fn.mojo
@@ -159,7 +159,7 @@ legacy-reflected-field-type	reject	conformance/fixtures/legacy_reflected_field_t
 reflected-field-handles	run	conformance/fixtures/reflected_field_handles.mojo
 late-initialization	reject	conformance/fixtures/late_initialization.mojo
 context-managers	run	conformance/fixtures/context_managers.mojo
-loop-completion	output-diff	conformance/fixtures/loop_completion.mojo
+loop-completion	run	conformance/fixtures/loop_completion.mojo
 reference-iteration	run	conformance/fixtures/reference_iteration.mojo
 pattern-completion	run	conformance/fixtures/pattern_completion.mojo
 string-interpolation	run	conformance/fixtures/string_interpolation.mojo
@@ -420,8 +420,8 @@ with-multiple-dependent	run	assets/ok/with_multiple_dependent.mojo
 with-statement	run	assets/ok/with_statement.mojo
 with-multiple	run	assets/ok/with_multiple.mojo
 print-keywords-file	run	assets/ok/print_keywords_file.mojo
-file-handle-roundtrip	run	assets/ok/file_handle_roundtrip.mojo
-file-descriptor-stdout-order	run	assets/ok/file_descriptor_stdout_order.mojo
+file-handle-roundtrip	mojito-only	assets/ok/file_handle_roundtrip.mojo
+file-descriptor-stdout-order	mojito-only	assets/ok/file_descriptor_stdout_order.mojo
 path-operations	run	assets/ok/path_operations.mojo
 tempfile-mkdtemp	run	assets/ok/tempfile_mkdtemp.mojo
 print-unknown-keyword	reject	assets/type_error/print_unknown_keyword.mojo
@@ -431,8 +431,8 @@ with-consuming-enter-and-exit	reject	assets/type_error/with_consuming_enter_and_
 discarded-result-destruction	run	assets/ok/discarded_result_destruction.mojo
 print-argument-drop-order	run	assets/ok/print_argument_drop_order.mojo
 deinit-param-destruction-timing	run	assets/ok/deinit_param_destruction_timing.mojo
-parameter-closure-capture-model	run	conformance/fixtures/parameter_closure_capture_model.mojo
-parameter-closure-reads-immutable-capture	run	conformance/fixtures/parameter_closure_reads_immutable_capture.mojo
+parameter-closure-capture-model	mojito-only	conformance/fixtures/parameter_closure_capture_model.mojo
+parameter-closure-reads-immutable-capture	mojito-only	conformance/fixtures/parameter_closure_reads_immutable_capture.mojo
 parameter-closure-capture-list	reject	assets/parse_error/parameter_closure_capture_list.mojo
 parameter-closure-immutable-capture-write	reject	assets/type_error/parameter_closure_immutable_capture_write.mojo
 untracked-pointer-ref-params	run	assets/ok/untracked_pointer_ref_params.mojo
@@ -505,8 +505,8 @@ struct-value-param-frozen	run	assets/ok/struct_value_param_frozen.mojo
 copyinit-moveinit	run	assets/ok/copyinit_moveinit.mojo
 generic-copyable-iterator-refinement	run	assets/ok/generic_copyable_iterator_refinement.mojo
 input-prompt	run	assets/ok/input.mojo
-lambda-higher-order	run	assets/ok/lambda_hof.mojo
-capturing-callable-parameter-with-locals	run	assets/ok/capturing_callable_parameter_with_locals.mojo
+lambda-higher-order	mojito-only	assets/ok/lambda_hof.mojo
+capturing-callable-parameter-with-locals	mojito-only	assets/ok/capturing_callable_parameter_with_locals.mojo
 loop-binding-consuming-copy	run	assets/ok/loop_binding_consuming_copy.mojo
 nominal-string-codepoint-from-u32	run	assets/ok/nominal_string_codepoint_from_u32.mojo
 nominal-string-codepoint-type	run	assets/ok/nominal_string_codepoint_type.mojo
@@ -564,3 +564,4 @@ recursive-always-inline	mojito-only	conformance/fixtures/recursive_always_inline
 contiguous-slice-result	reject	conformance/fixtures/contiguous_slice_result.mojo
 for-destructuring-tuple-not-copied	run	assets/ok/for_destructuring_tuple_not_copied.mojo
 int-is-floatable	reject	conformance/fixtures/int_is_floatable.mojo
+match-cluster-nested-completion	run	conformance/fixtures/match_cluster_nested_completion.mojo

@@ -1,6 +1,7 @@
 # Upstream's `std/builtin/simd_length.mojo`, verbatim.
 """Implements `SIMDLength`, which is a wrapper around the MLIR `index` type."""
 
+from std.os import abort
 from std.utils._select import _select_register_value as select
 
 
@@ -280,6 +281,7 @@ struct SIMDLength(
         """Return the value raised to the power of the given exponent.
 
         Computes the power of an integer using the Russian Peasant Method.
+        A negative exponent aborts.
 
         Args:
             exp: The exponent value.
@@ -288,9 +290,10 @@ struct SIMDLength(
             The value of `self` raised to the power of `exp`.
         """
         if exp < 0:
-            # Not defined for Integers, this should raise an
-            # exception.
-            return 0
+            abort(
+                "an integer cannot be raised to a negative power; use a"
+                " floating point base, e.g. 'Float64(x) ** n'"
+            )
         var res: Int = 1
         var x = self
         var n = exp

@@ -90,7 +90,7 @@ struct Unit(EnumLike):
 def show[T: EnumLike](ref x: T) -> Int:
     print(
         x._get_enum_discriminant(),
-        ParameterList[T._enum_case_names]().size,
+        ParameterList[T._enum_case_names]().length,
         TypeList[Trait=AnyType, T._enum_case_types]().length,
         T._enum_is_exhaustive,
     )

@@ -1,8 +1,8 @@
 # An operator over a type parameter or an associated projection is the call
 # of the requirement its bounds declare, as any method call through a bound
 # is: `a + b` over a user trait declaring `__add__` is `a.__add__(b)`, a
-# reflected `2 + a` is `a.__radd__(2)`, and a comparison or `**` through a
-# library trait is its requirement's call, also under a `where` clause.
+# reflected `2 + a` is `a.__radd__(2)`, and a comparison through a library
+# trait is its requirement's call, also under a `where` clause.
 
 
 trait Arith:
@@ -91,10 +91,6 @@ def same[T: Copyable](a: T, b: T) -> Bool where conforms_to(T, Equatable):
     return a == b
 
 
-def power[T: Powable](a: T, b: T) -> T:
-    return a**b
-
-
 trait Holder:
     comptime Elem: Comparable & ImplicitlyCopyable & Deinitable
 
@@ -125,5 +121,4 @@ def main() raises:
     print(ascending(N(1), N(2), N(3)), ascending(N(1), N(3), N(2)))
     print(ascending(1, 2, 3), ascending(UInt8(3), UInt8(2), UInt8(1)))
     print(same(N(2), N(2)), same(String("a"), String("b")), same(4, 4))
-    print(power(2, 10), power(3.0, 2.0))
     print(bigger(H(3), H(2)), bigger(H(1), H(2)))

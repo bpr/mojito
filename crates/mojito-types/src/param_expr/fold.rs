@@ -18,8 +18,8 @@
 //! [`float_lane_binop`], [`lane_compare`], [`bool_lane_binop`]): a literal or
 //! a width-1 operand beside a lane splats through
 //! [`CtLane::of_int_literal`]/[`CtLane::of_float_literal`], and a comparison
-//! is `pop.cmp`, which gives a `bool` mask under the ordered predicates
-//! (a NaN lane is unequal to nothing).
+//! is `pop.cmp`, which gives a `bool` mask under its predicates (a NaN lane
+//! is unequal to everything, and ordered under no other predicate).
 
 use super::{ParamError, ParamOp};
 use crate::ct::{
@@ -188,7 +188,7 @@ pub fn compare(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<bool, Par
     }
     let (Some(exact_left), Some(exact_right)) = (exact(left), exact(right)) else {
         // A NaN or an infinity has no exact value: it compares as
-        // `pop.cmp`'s ordered predicates do.
+        // `pop.cmp`'s predicates do.
         let float = |value: &CtValue| match value {
             CtValue::Float(bits) => Some(f64::from_bits(*bits)),
             _ => machine_float(value).ok(),
@@ -217,7 +217,7 @@ pub fn compare(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<bool, Par
 /// reads its mask as a `Bool`: `==` when every lane holds, and an ordered
 /// operator when any lane holds, as a folded call drops its `comptime
 /// assert` that the operands be scalars. `!=` is `not ==` over every
-/// operand kind, so a NaN makes it hold where `pop.cmp ne` does not. Any
+/// operand kind, so a NaN makes it hold, as `pop.cmp ne` does. Any
 /// other operator, and a non-SIMD comparison, folds as [`fold_infix`]
 /// folds it.
 pub fn fold_comparison(

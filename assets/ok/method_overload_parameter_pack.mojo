@@ -11,7 +11,7 @@ struct Picker:
 
     def pick[*ks: Int](self) -> Int:
         var total = self.base
-        comptime for i in range(ks.size):
+        comptime for i in range(ks.length):
             total += ks[i]
         return total
 

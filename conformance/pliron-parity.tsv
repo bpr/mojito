@@ -435,7 +435,7 @@ assets/ok/homogeneous_variadic_loan_carrying_element.mojo	main	exe-differential	
 assets/ok/if_case_and_while_case.mojo	main	exe-differential	sanitized
 assets/ok/if_case_elif_chains_and_while_case.mojo	main	exe-differential	sanitized
 assets/ok/if_case_mixed_with_boolean_elif.mojo	main	exe-differential	sanitized
-assets/ok/if_unread_elif_call_skipped.mojo	main	exe-differential	sanitized
+assets/ok/if_unread_elif_call_runs.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
@@ -861,7 +861,6 @@ assets/ok/pliron_struct_fieldwise.mojo	main	exe-differential	sanitized
 assets/ok/pliron_struct_init_method.mojo	main	exe-differential	sanitized
 assets/ok/pliron_subscript_ref.mojo	main	exe-differential	sanitized
 assets/ok/pliron_thin_callables.mojo	main	exe-differential	sanitized
-assets/ok/pliron_trap_pow_negative.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_cleanup_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_handled_error.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_loop_escape.mojo	main	exe-differential	sanitized
@@ -1652,6 +1651,7 @@ assets/runtime_error/pliron_raise_error_value.mojo	main,__toplevel__	error-diffe
 assets/runtime_error/pliron_raise_iter_body.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/pliron_raise_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/pliron_trap_pow_negative.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/pointer_dangling.mojo	main,__toplevel__	error-differential	category=PointerDangling
 assets/runtime_error/pointer_double_free.mojo	main,__toplevel__	error-differential	category=PointerDoubleFree
 assets/runtime_error/pointer_use_after_free.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree

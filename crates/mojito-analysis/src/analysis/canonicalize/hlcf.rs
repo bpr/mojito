@@ -629,8 +629,8 @@ impl Walk<'_> {
     /// yielding constant true and false a `Bool` result becomes the
     /// condition. A result nothing reads has no use to replace, which
     /// `RemoveUnusedResults` removes instead. An `if` left without a read
-    /// result goes, its elif condition regions with it, as upstream erases
-    /// the op whole: the pin skips a call in such a condition.
+    /// result goes when no elif condition region computes anything: the pin
+    /// runs a call in such a condition.
     fn hoist_yield_results(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::If {
             results,
@@ -687,7 +687,10 @@ impl Walk<'_> {
                 None => unread = false,
             }
         }
-        if unread {
+        let conditions_compute = elifs
+            .iter()
+            .any(|elif| elif.cond.iter().any(|block| !block.instrs.is_empty()));
+        if unread && !conditions_compute {
             let removed = block.instrs.remove(index);
             self.erase_ops(std::slice::from_ref(&removed));
             self.counts.yield_results += 1;

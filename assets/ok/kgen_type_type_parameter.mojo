@@ -33,7 +33,7 @@ def take[T: __mlir_type.`!kgen.type`](x: T) -> Int:
 
 
 def count[t: AnyType, //, raw: Meta.ListOf[t]]() -> Int:
-    return ParameterList[raw].size
+    return ParameterList[raw].length
 
 
 def pack[*vs: Int]() -> Int:

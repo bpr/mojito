@@ -274,8 +274,8 @@ pub fn unsigned_predicate(op: InfixOp) -> ICmpPredicateAttr {
 pub fn float_predicate(op: InfixOp) -> FCmpPredicateAttr {
     match op {
         InfixOp::Eq => FCmpPredicateAttr::OEQ,
-        // `pop.cmp ne` is ordered: a NaN operand is unequal to nothing.
-        InfixOp::Ne => FCmpPredicateAttr::ONE,
+        // `pop.cmp ne` is unordered: a NaN operand is unequal to everything.
+        InfixOp::Ne => FCmpPredicateAttr::UNE,
         InfixOp::Lt => FCmpPredicateAttr::OLT,
         InfixOp::Le => FCmpPredicateAttr::OLE,
         InfixOp::Gt => FCmpPredicateAttr::OGT,

@@ -435,7 +435,7 @@ assets/ok/homogeneous_variadic_loan_carrying_element.mojo	-	ineligible	no-scalar
 assets/ok/if_case_and_while_case.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/if_case_elif_chains_and_while_case.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/if_case_mixed_with_boolean_elif.mojo	-	ineligible	no-scalar-entry-shape
-assets/ok/if_unread_elif_call_skipped.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/if_unread_elif_call_runs.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/imm_origin_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/imm_origin_cast_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape
@@ -861,7 +861,6 @@ assets/ok/pliron_struct_fieldwise.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_struct_init_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_subscript_ref.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_thin_callables.mojo	-	ineligible	no-scalar-entry-shape
-assets/ok/pliron_trap_pow_negative.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_try_cleanup_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_try_handled_error.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_try_loop_escape.mojo	-	ineligible	no-scalar-entry-shape
@@ -1629,6 +1628,7 @@ assets/runtime_error/pliron_raise_error_value.mojo	-	ineligible	no-scalar-entry-
 assets/runtime_error/pliron_raise_iter_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_raise_unhandled.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/pliron_trap_pow_negative.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_dangling.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_double_free.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_use_after_free.mojo	-	ineligible	no-scalar-entry-shape

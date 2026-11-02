@@ -22,3 +22,4 @@ assets/ok/self_hosted_dict.mojo	one-off	the raised-error text differs: DictKeyEr
 assets/ok/type_names_applied_elements.mojo	one-off	reflection prints <unprintable> upstream where Mojito prints the element types
 assets/ok/tstring_lazy.mojo	one-off	upstream's TString holds references and prints the current value (x=2); Mojito snapshots at creation (x=1), new at the 2026-10-17 re-pin; roadmap R1130
 assets/ok/variadic_collector_forwarded_and_borrowed.mojo	one-off	a temporary handed to a `var *xs` collector runs its move initializer upstream (i 1009 1); Mojito hands its storage over (i 9 1); roadmap R1131
+assets/ok/match_literal_clusters.mojo	one-off	since 1.3.0.dev2026110105 an `== expr` after a spelled literal no longer joins the cluster under the empty spelling, so the pin tests `1` before `expected(2)` (R1822)

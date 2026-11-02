@@ -448,7 +448,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// One pattern operand: a binding, `_`, a literal, `== expr`, a
     /// parenthesized or bracketed pattern, `{field=p}`, or a call-shaped or
-    /// member head. A signed number is not a pattern: it needs `==`.
+    /// member head. A negative number literal is a literal pattern, as at the
+    /// pin; any other signed operand needs `==`.
     fn parse_closed_pattern(&mut self) -> Result<MatchPattern, ParseError> {
         let start = self.peek_start();
         let kind = match self.peek_token()? {
@@ -474,6 +475,24 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             ) => {
                 let (value, spelling) = self.parse_spelled_operand(Self::parse_prefix)?;
                 MatchPatternKind::Literal { value, spelling }
+            }
+            Some(Token::Minus) => {
+                let minus = self.next_token()?;
+                if !matches!(
+                    self.peek_token()?,
+                    Some(Token::IntLiteral(..) | Token::FloatLiteral(..))
+                ) {
+                    return Err(ParseError::UnexpectedToken(
+                        minus,
+                        NOT_A_PATTERN.to_string(),
+                    ));
+                }
+                let operand = self.parse_prefix()?;
+                let value = self.node(ExprKind::Prefix(PrefixOp::Neg, Box::new(operand)), start);
+                MatchPatternKind::Literal {
+                    value,
+                    spelling: None,
+                }
             }
             Some(Token::EqEq) => {
                 self.next_token()?;
@@ -548,8 +567,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let token = self.next_token()?;
                 return Err(ParseError::UnexpectedToken(
                     token,
-                    "expression is not a valid match pattern; use '==' to compare against its value"
-                        .to_string(),
+                    NOT_A_PATTERN.to_string(),
                 ));
             }
         };
@@ -857,8 +875,9 @@ pub(super) fn expr_to_target(value: Expr) -> Result<DestructureTarget, ParseErro
 
 /// Upstream's rejection of an expression in pattern position that is no
 /// pattern.
+const NOT_A_PATTERN: &str =
+    "expression is not a valid match pattern; use '==' to compare against its value";
+
 fn not_a_pattern() -> ParseError {
-    ParseError::Message(
-        "expression is not a valid match pattern; use '==' to compare against its value".into(),
-    )
+    ParseError::Message(NOT_A_PATTERN.into())
 }

@@ -10,9 +10,6 @@ def absolute[T: Absable](x: T) -> T:
 def rounded[T: Roundable](x: T) -> T:
     return round(x)
 
-def powit[T: Powable](x: T, y: T) -> T:
-    return x ** y
-
 def to_int[T: Intable](x: T) -> Int:
     return Int(x)
 
@@ -23,6 +20,5 @@ def main():
     print(absolute(-7))
     print(absolute(-3.5))
     print(rounded(2.7))
-    print(powit(2, 10))
     print(to_int(3.9))
     print(to_flt(4.0))

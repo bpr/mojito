@@ -33,5 +33,5 @@ def main():
     print(StringSpan(padded).lstrip().rstrip("o "))
     var blank = String("  \t")
     var digits = String("42")
-    print(view.isupper(), view.islower(), StringSpan(blank).isspace(), StringSpan(digits).is_ascii_digit(), view.is_ascii_printable())
+    print(view.isupper(), view.islower(), StringSpan(blank).is_ascii_whitespace(), StringSpan(digits).is_ascii_digit(), view.is_ascii_printable())
     print("[" + view.ascii_rjust(7) + "]", "[" + view.ascii_ljust(7, "*") + "]", "[" + view.ascii_center(8, "-") + "]")

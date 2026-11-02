@@ -47,7 +47,7 @@ struct H[*Ts: AnyType]:
 
 
 def count[*vs: Int]() -> Int:
-    return ParameterList[vs.values].size
+    return ParameterList[vs.values].length
 
 
 def main():

@@ -88,7 +88,8 @@ pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> 
 /// scalars and user structs. `None` for operators that do not route this way:
 /// `and`/`or` (Bool short-circuit), `in`/`not in` (`__contains__` on the right
 /// operand), `is`/`is not` (identity — `__is__`/`__isnot__` struct dunders
-/// only, no scalar meaning), and `@`/matmul (struct dunder only).
+/// only, no scalar meaning), `@`/matmul (struct dunder only), and `**`, which
+/// upstream declares no trait for since it removed `Powable`.
 pub(super) const fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Option<&'static str> {
     use mojito_ast::ast::InfixOp::{
         Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, MatMul,
@@ -101,7 +102,6 @@ pub(super) const fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Optio
         Div => "Divisible",
         FloorDiv => "FloorDivisible",
         Mod => "Modable",
-        Pow => "Powable",
         Shl => "ShiftLeftable",
         Shr => "ShiftRightable",
         BitAnd => "Andable",
@@ -109,7 +109,7 @@ pub(super) const fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Optio
         BitXor => "Xorable",
         Lt | Gt | Le | Ge => "Comparable",
         Eq | Ne => "Equatable",
-        MatMul | And | Or | In | NotIn | Is | IsNot => return None,
+        Pow | MatMul | And | Or | In | NotIn | Is | IsNot => return None,
     })
 }
 
@@ -300,7 +300,7 @@ fn common_literal(a: &Ty, b: &Ty) -> Option<Ty> {
 impl Checker {
     /// Whether `ty` is an opaque type parameter conforming to the named trait
     /// `bound`, by a bound that is or refines it, or an assumed conformance.
-    /// The numeric-operation traits (`Absable`/`Roundable`/`Powable`/
+    /// The numeric-operation traits (`Absable`/`Roundable`/
     /// `Intable`/`Floatable`/`Boolable`/`DivModable`) gate a corresponding
     /// built-in or operator on an opaque `T` this way: the concrete type's
     /// implementation runs after type erasure.

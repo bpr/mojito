@@ -991,8 +991,12 @@ struct String(
     def islower(self) -> Bool:
         return StringSpan(self).islower()
 
+    def is_ascii_whitespace(self) -> Bool:
+        return StringSpan(self).is_ascii_whitespace()
+
+    @deprecated(use=is_ascii_whitespace)
     def isspace(self) -> Bool:
-        return StringSpan(self).isspace()
+        return self.is_ascii_whitespace()
 
     def is_ascii_digit(self) -> Bool:
         return StringSpan(self).is_ascii_digit()
@@ -1802,9 +1806,9 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def islower(self) -> Bool:
         return self._size > 0 and self._all_cased_as(False)
 
-    # Non-empty and made only of Python-space codepoints (the audited head
-    # declares no `single_character` fast-path parameter either).
-    def isspace(self) -> Bool:
+    # Non-empty and made only of Python-space codepoints. Upstream's
+    # `single_character` fast-path parameter is not ported.
+    def is_ascii_whitespace(self) -> Bool:
         var at = 0
         while at < self._size:
             var width = self._space_width_at(at)
@@ -1812,6 +1816,10 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
                 return False
             at += width
         return self._size > 0
+
+    @deprecated(use=is_ascii_whitespace)
+    def isspace(self) -> Bool:
+        return self.is_ascii_whitespace()
 
     def is_ascii_digit(self) -> Bool:
         var i = 0

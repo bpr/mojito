@@ -1030,6 +1030,14 @@ checked `SimdStorage` adjustment no longer makes the vector's own register
 or place (R1811). A packaged body's `SIMD` stores and reads change shape, so
 the package format moves to `mojito-package 174`.
 
+Schema 1.154 gives `binary { op: ne }` over float operands the meaning
+upstream's `pop.cmp ne` has at `1.3.0.dev2026110105`, the unordered
+predicate (`fcmp une`): a NaN operand is unequal to everything, and a float
+`scalar.cast` to `Bool` is `__bool__`'s unordered `pop.cmp ne` against
+zero, so a NaN is `True`. Every other float comparison stays ordered. A
+1.153 artifact's float `binary ne` is read with the 1.154 meaning. The
+package format moves to `mojito-package 175`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

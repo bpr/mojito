@@ -276,10 +276,10 @@ pub fn leaf_conforms(
 /// `Equatable`, `Intable`, `Indexer`, and `Sized` are its declaration's in
 /// `std.simd`, which the checker and the elaborator read instead.
 ///
-/// `SIMD` lists every `std.math` operation trait but `CeilDivableRaising`;
-/// its `Absable`, `Ceilable`, `Floorable`, `Powable`, `Roundable`, and
-/// `Truncable` are its declaration's, as are its `DivModable` and
-/// `CeilDivable`, and `IntLiteral` lists `Ceilable`, `Floorable`, and
+/// `SIMD` lists every `std.math` operation trait; its `Absable`,
+/// `Ceilable`, `Floorable`, `Roundable`, and `Truncable` are its
+/// declaration's, as are its `DivModable` and `CeilDivable`, and
+/// `IntLiteral` lists `Ceilable`, `Floorable`, and
 /// `Truncable`. A numeric literal answers `DivModable` and `CeilDivable`
 /// through the type it materializes to.
 ///
@@ -332,7 +332,7 @@ pub fn modelled_conformance(
             TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
         ),
         "Ceilable" | "Floorable" | "Truncable" => ty.is_int_literal(),
-        "Absable" | "Powable" | "Roundable" => false,
+        "Absable" | "Roundable" => false,
         "Hashable" => builtin_hashable_ty(ty),
         "Writable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {

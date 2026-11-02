@@ -42,7 +42,7 @@ def generic_local[n: Int]():
 
 
 def raw[names: __mlir_type[`!kgen.param_list<`, KGENString, `>`]]() -> Int:
-    return ParameterList[names]().size
+    return ParameterList[names]().length
 
 
 def count[*names: KGENString]() -> Int:

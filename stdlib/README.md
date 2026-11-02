@@ -222,13 +222,12 @@ point, as upstream's toolchain does.
 - `std/math/` — upstream's `std.math` package: `__init__.mojo` re-exports
   the ported names, `constants.mojo` holds `pi`, `e`, `tau`, and `log2e`
   (`from std.math.constants import log2e`; the package does not re-export
-  it), and `math.mojo` holds upstream's nine operation traits (`Absable`,
-  `Powable`, `Roundable`, `DivModable`, `Ceilable`, `Floorable`,
-  `Truncable`, `CeilDivable`, `CeilDivableRaising`), the rounding helpers
+  it), and `math.mojo` holds upstream's seven operation traits (`Absable`,
+  `Roundable`, `DivModable`, `Ceilable`, `Floorable`, `Truncable`, and
+  `CeilDivable`), the rounding helpers
   `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait, `copysign`,
   `ldexp` over `_ldexp_impl` (with its AVX-512 `scalef` arm), `exp` over
-  `_exp_impl` and `_exp_taylor`'s `polynomial_evaluate`, with the
-  `_Expable` trait of its generic overload, and the libm
+  `_exp_impl` and `_exp_taylor`'s `polynomial_evaluate`, and the libm
   constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and
   `_LN2_LO_F64`. `polynomial.mojo` holds `polynomial_evaluate` and
   `_horner_evaluate` over compile-time `Span` coefficients
@@ -236,11 +235,11 @@ point, as upstream's toolchain does.
   not re-export it). The package also re-exports `std.utils.numerics`' `inf`,
   `nan`, `isnan`, `isinf`, and `isfinite`, whose classifiers call
   `llvm.is.fpclass`. The prelude
-  exports `Absable`, `Powable`, `Roundable`, `abs`, `max`, `min`, and
+  exports `Absable`, `Roundable`, `abs`, `max`, `min`, and
   `round`, as upstream's does; the rest must be imported
   (`from std.math import floor`). `divmod` is still a compiler builtin
   (R1458). Every `SIMD` declares `Absable`, `Ceilable`, `CeilDivable`,
-  `DivModable`, `Floorable`, `Powable`, `Roundable`, and `Truncable` in
+  `DivModable`, `Floorable`, `Roundable`, and `Truncable` in
   `std/simd.mojo`, with upstream's `__ceildiv__`, `__divmod__`, `__mod__`,
   `__rmod__`, and `__imod__` bodies.
 - `std/span.mojo` — the prelude-exported borrowed view `Span[mut: Bool, //,

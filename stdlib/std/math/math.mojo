@@ -2,28 +2,27 @@
 # its operation traits, the rounding helpers `floor`/`ceil`/`trunc`/
 # `ceildiv`, the plugin-hook signatures `_UnaryMathPluginHookFnType` and
 # `_BinaryMathPluginHookFnType`, `_ldexp_impl` and `ldexp` (with its
-# AVX-512 `scalef` arm), `_Expable`, `_exp_taylor`, both overloads of
-# `exp`, `_exp_impl`, `copysign`, the `SIMD` overload of `iota`,
+# AVX-512 `scalef` arm), `_exp_taylor`, the `SIMD` overload of `exp` (the
+# `ComplexSIMD` one is omitted), `_exp_impl`, `copysign`, the `SIMD` overload of `iota`,
 # `fma`, `modf` over `std.simd`'s `_modf`, `clamp`, both overloads each of
 # `max` and `min`, `abs`, both overloads of `round`, and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
 # `_frexp_mask1`, `_frexp_mask2`, `frexp`, `_log_base`, `log`, and their
 # kernels `_assert_float64_supported`, `_log_kernel`, `_is_zero_bits`,
 # `_is_subnormal_bits`, `_frexp_bits`, `_log_reduce`, `_log_combine`, and
 # `_log_accurate`, verbatim (the buffer overload of `iota` is omitted).
-# The traits precede the functions, where upstream interleaves them, save
-# `_Expable`, which keeps upstream's position. The
+# The traits precede the functions, where upstream interleaves them. The
 # masks' `bfloat16` cases are omitted (R65), and so
 # are `log`'s `is_nvidia_gpu()` arm through `log2` and `exp`'s `is_gpu()`
 # arm through `exp2`, which are not ported (R1760). The
 # `std.string` import is explicit, as bundled modules' are. Upstream's
 # `from . import` line omits `nextafter`, which the package does not yet
-# re-export. The prelude exports `Absable`, `Powable`, `Roundable`, `abs`, `max`,
-# `min`, and `round`, as upstream's does; `divmod` is still a compiler
-# builtin (R1458).
+# re-export. The prelude exports `Absable`, `Roundable`, `abs`, `max`, `min`,
+# and `round`, as upstream's does; `divmod` is still a compiler builtin
+# (R1458), and `pow` is not declared yet.
 #
 # Each helper is generic over the trait that supplies its dunder. `SIMD`
 # declares `Absable`, `Ceilable`, `CeilDivable`, `DivModable`, `Floorable`,
-# `Powable`, `Roundable`, and `Truncable` in `std.simd`.
+# `Roundable`, and `Truncable` in `std.simd`.
 
 from std.sys import (
     CompilationTarget,
@@ -63,11 +62,6 @@ trait CeilDivable:
         ...
 
 
-trait CeilDivableRaising:
-    def __ceildiv__(self, denominator: Self) raises -> Self:
-        ...
-
-
 trait Truncable:
     def __trunc__(self) -> Self:
         ...
@@ -80,11 +74,6 @@ trait Absable:
 
 trait DivModable(ImplicitlyCopyable):
     def __divmod__(self, denominator: Self) -> Tuple[Self, Self]:
-        ...
-
-
-trait Powable:
-    def __pow__(self, exp: Self) -> Self:
         ...
 
 
@@ -225,18 +214,6 @@ def ldexp[
 # ===----------------------------------------------------------------------=== #
 
 
-trait _Expable:
-    """Trait for types that support the exp function."""
-
-    def __exp__(self) -> Self:
-        """Computes the exponential of the input value.
-
-        Returns:
-            The exponential of the input value.
-        """
-        ...
-
-
 @inline(.always)
 def _exp_taylor[
     dtype: DType, width: SIMDLength, //
@@ -321,22 +298,6 @@ def _exp_impl[
     var k = floor(xc.fma(log2e, 0.5))
     var r = k.fma(neg_ln2, xc)
     return max(_ldexp_impl(_exp_taylor(r), k), xc)
-
-
-@inline(.always)
-def exp[T: _Expable](x: T) -> T:
-    """Computes the exponential of the input value.
-
-    Parameters:
-        T: The type of the input value.
-
-    Args:
-        x: The input value.
-
-    Returns:
-        The exponential of the input value.
-    """
-    return x.__exp__()
 
 
 # ===----------------------------------------------------------------------=== #

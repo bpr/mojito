@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The differential pin is now Mojo `1.3.0.dev2026110105` (upstream
+  `a431ffa8af`, 2026-11-01), and the window's renames, removals, and fixes
+  reach Mojito in place. `ParameterList` declares `length` where it declared
+  `size`, and a value pack's `length` reaches it rather than the checker's
+  `TypeList` arm. `String` and `StringSpan` gain `is_ascii_whitespace`, with
+  `isspace` as its deprecated forward. `Powable`, `CeilDivableRaising`, and
+  `exp[T: _Expable]` are gone. An integer power aborts on a negative
+  exponent, an integral base with a float exponent is a compile-time error,
+  `_powf_scalar` takes an exponent past `Int32` through `exp(log)`, and
+  `SIMD.slice` and `__divmod__` follow upstream's fixes. `pop.cmp ne` over
+  floats is unordered on both backends and in both folders, so a NaN is
+  truthy (MIR schema 1.154, `mojito-package 175`). A negative number literal
+  is a match pattern, and an unread `if` keeps the call in its `elif`
+  condition. `docs/mojo-nightly.md` carries the audit, and the window's
+  unimplemented changes are R1817–R1830, the removal of legacy closures
+  (R1823) first among them.
+
 - MIR's builtin ops inlined from `SIMD`'s dunders keep their
   `!kgen.simd` storage type, wrapped in `struct.create`, as upstream's
   `pop` ops do (R1801): `canonicalize` no longer retypes an op's result to

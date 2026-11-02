@@ -5,7 +5,7 @@ from std.builtin.variadics import _MLIR
 
 
 def h[t: AnyType, //, raw: _MLIR.KGENParamListType[t]]():
-    print(ParameterList[raw].size)
+    print(ParameterList[raw].length)
 
 
 def show[t: Copyable & Writable, //, raw: _MLIR.KGENParamListType[t]]():

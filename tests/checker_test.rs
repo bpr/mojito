@@ -6504,7 +6504,11 @@ fn numeric_operation_traits_permit_their_operation() {
     // an opaque `T`, returning the operation's result type.
     ok_std("def absolute[T: Absable](x: T) -> T:\n    return abs(x)\n");
     ok_std("def rounded[T: Roundable](x: T) -> T:\n    return round(x)\n");
-    ok_std("def powit[T: Powable](x: T, y: T) -> T:\n    return x ** y\n");
+    // Upstream removed `Powable`: `**` over a bound reaches a user trait's
+    // `__pow__`.
+    ok_std(
+        "trait Pow:\n    def __pow__(self, exp: Self) -> Self:\n        ...\n\ndef powit[T: Pow](x: T, y: T) -> T:\n    return x ** y\n",
+    );
     ok_std("def to_int[T: Intable](x: T) -> Int:\n    return Int(x)\n");
     ok_std("def to_flt[T: Floatable](x: T) -> Float64:\n    return Float64(x)\n");
     // `Boolable` -> `Bool(x)`, and `DivModable` -> `divmod(a, b)` (prelude
@@ -6524,10 +6528,6 @@ fn numeric_operation_traits_permit_their_operation() {
     );
     ok_std(
         "from std.math import CeilDivable\n\ndef cd[T: CeilDivable](a: T, b: T) -> T:\n    return a.__ceildiv__(b)\n",
-    );
-    // The raising sibling's requirement raises.
-    ok_std(
-        "from std.math import CeilDivableRaising\n\ndef cdr[T: CeilDivableRaising](a: T, b: T) raises -> T:\n    return a.__ceildiv__(b)\n",
     );
     // Concrete numerics also convert/divmod directly.
     ok("def main():\n    print(Bool(0), divmod(7, 2)[0])\n");
@@ -8799,7 +8799,7 @@ fn parameter_list_takes_a_packs_raw_list() {
     // a `comptime` binding of `vs.values` is that list, and a struct's
     // value parameter reads through its type (`S[7].n`).
     ok_std(
-        "struct S[n: Int]:\n    def __init__(out self):\n        pass\n\n\ndef f[*vs: Int]() -> Int:\n    comptime raw = vs.values\n    var p = ParameterList[vs.values]()\n    return len(p) + ParameterList[raw].size + S[7].n\n\n\ndef main():\n    print(f[1, 2]())\n",
+        "struct S[n: Int]:\n    def __init__(out self):\n        pass\n\n\ndef f[*vs: Int]() -> Int:\n    comptime raw = vs.values\n    var p = ParameterList[vs.values]()\n    return len(p) + ParameterList[raw].length + S[7].n\n\n\ndef main():\n    print(f[1, 2]())\n",
     );
 }
 
@@ -8885,7 +8885,7 @@ fn comptime_member_read_through_an_instance() {
     // A compile-time value member read through an instance is the member of
     // the instance's type, as `args.size` reads `ParameterList.size`.
     ok_std(
-        "struct Foo[k: Int]:\n    comptime K: Int = Self.k + 1\n\n    def __init__(out self):\n        pass\n\n\ndef f[k: Int, *vs: Int]() -> Int:\n    var foo = Foo[k]()\n    comptime n = vs.size\n    return foo.K + n + vs.size\n\n\ndef main():\n    print(f[2, 1, 2, 3]())\n",
+        "struct Foo[k: Int]:\n    comptime K: Int = Self.k + 1\n\n    def __init__(out self):\n        pass\n\n\ndef f[k: Int, *vs: Int]() -> Int:\n    var foo = Foo[k]()\n    comptime n = vs.length\n    return foo.K + n + vs.length\n\n\ndef main():\n    print(f[2, 1, 2, 3]())\n",
     );
 }
 

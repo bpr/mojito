@@ -64,25 +64,6 @@ lists them under *Implementation status* as not yet implemented.
 
 ## Kept On Purpose
 
-### A cluster's nested residual match completes its enclosing case
-
-When a cluster of cases sits inside an enclosing `hlcf.match` case and one
-group's residual cases form a nested `hlcf.match`, the pinned Mojo follows
-the nested match with `hlcf.match.next`, or with `hlcf.unreachable` when the
-residuals conclude (`emitCases`, `ParserStmts.cpp`). A residual body that
-runs therefore falls into the next enclosing case or into an unreachable
-op: the pin prints the body's output and then crashes, or runs a later
-case's test first, which is undefined behavior.
-
-- Mojito emits the intended semantics: the nested match's else region
-  advances the enclosing case, and `match.complete` of the enclosing case
-  follows the nested match.
-- Fixtures avoid the shape, so the corpus pins nothing the pin cannot run.
-  `conformance/probes/match_cluster_nested_completion.mojo` records the
-  pin's crash.
-- Reopen if a re-pin shows upstream completing the enclosing case there;
-  the probe's shape may then move into a fixture.
-
 ### Direct `ref` struct fields stay a Mojito extension
 
 Not to be removed: upstream rejects `var f: ref[o] T` fields (`'ref' patterns

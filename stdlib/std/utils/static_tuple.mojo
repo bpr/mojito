@@ -138,7 +138,7 @@ struct StaticTuple[
         """
         _static_tuple_construction_checks[Self.element_type, Self.size]()
 
-        comptime num_values = values.size
+        comptime num_values = values.length
         if num_values == 1:
             return Self(fill=values[0])
 

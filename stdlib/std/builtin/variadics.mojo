@@ -7,7 +7,7 @@
 #
 # A pack's `Ts.length` and `Ts[i]` read `TypeList`'s `length` and
 # `__getitem_param__`. `TypeList`'s `_mlir_type`, `_raw_length`, `length`,
-# and `_get_type_at_index`, and `ParameterList`'s `_mlir_type` and `size`,
+# and `_get_type_at_index`, and `ParameterList`'s `_mlir_type` and `length`,
 # are upstream's `#kgen.param_list` bodies. `TypeList.__getitem_param__`
 # takes an `Int` and subscripts the raw list, where upstream's takes a
 # `SIMDLength` into `#kgen.param_list.get` (R1540).
@@ -173,7 +173,7 @@ struct _ParameterListIter[type: Copyable, //, *values: type](
     ) raises StopIteration -> ref[ImmStaticOrigin] Self.type:
         var index = self.index
 
-        if index >= Self.values.size:
+        if index >= Self.values.length:
             raise StopIteration()
         self.index = index + 1
         return Self.values[index]
@@ -183,7 +183,7 @@ struct _ParameterListIter[type: Copyable, //, *values: type](
 
     @inline(.always)
     def bounds(self) -> Tuple[Int, Optional[Int]]:
-        var len = Self.values.size - self.index
+        var len = Self.values.length - self.index
         return (len, {len})
 
 
@@ -206,7 +206,7 @@ struct ParameterList[type: AnyType, //, values: _MLIR.KGENParamListType[type]](
     comptime _mlir_type = _MLIR.KGENParamListType[Self.type]
     """The low-level MLIR type of the parameter list."""
 
-    comptime size: Int = Int(
+    comptime length: Int = Int(
         mlir_value=__mlir_attr[
             `#kgen.param_list.size<:`,
             Self._mlir_type,
@@ -228,7 +228,7 @@ struct ParameterList[type: AnyType, //, values: _MLIR.KGENParamListType[type]](
         Returns:
             The number of elements on the variadic list.
         """
-        return Self.size
+        return Self.length
 
     @staticmethod
     def get_span() -> Span[Self.type, ImmStaticOrigin]:
@@ -238,7 +238,7 @@ struct ParameterList[type: AnyType, //, values: _MLIR.KGENParamListType[type]](
             A span of the elements on the variadic list.
         """
         var first_elt = __param_list_address[Self.values]()
-        return Span(unsafe_ptr=first_elt, length=Self.size)
+        return Span(unsafe_ptr=first_elt, length=Self.length)
 
     @inline(.always)
     def __getitem__(self, idx: Int) -> ref[ImmStaticOrigin] Self.type:

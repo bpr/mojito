@@ -2782,6 +2782,27 @@ fn literal_patterns_keep_their_spelling() {
     );
 }
 
+/// A negative number literal is a literal pattern, as at the pin, with no
+/// spelling of its own; the sign may stand apart from the literal.
+#[test]
+fn negative_number_literals_are_literal_patterns() {
+    let cases =
+        match_cases("def f(x: Int):\n    match x:\n    case -0x10 | - 2.5:\n        pass\n");
+    let MatchPatternKind::Or(alternatives) = &cases[0].pattern.kind else {
+        panic!(
+            "expected an alternative pattern, got {:?}",
+            cases[0].pattern.kind
+        );
+    };
+    for alternative in alternatives {
+        let MatchPatternKind::Literal { value, spelling } = &alternative.kind else {
+            panic!("expected a literal pattern, got {:?}", alternative.kind);
+        };
+        assert!(matches!(value.kind, ExprKind::Prefix(PrefixOp::Neg, _)));
+        assert_eq!(spelling, &None);
+    }
+}
+
 #[test]
 fn parses_pattern_forms_and_precedence() {
     // `|` binds tighter than `as`, which binds per comma element; a guard
@@ -2972,7 +2993,11 @@ fn rejects_malformed_match_forms() {
         ),
         ("def f(x: Int):\n    case 1: pass\n", "outside of a 'match'"),
         (
-            "def f(x: Int):\n    match x:\n    case -3: pass\n",
+            "def f(x: Int):\n    match x:\n    case -x: pass\n",
+            "use '=='",
+        ),
+        (
+            "def f(x: Int):\n    match x:\n    case -(3): pass\n",
             "use '=='",
         ),
         (

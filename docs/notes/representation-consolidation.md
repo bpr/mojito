@@ -27,16 +27,24 @@ command cannot use both.
      `std.utils.numerics`.
    - R1558 made code outside `mojito-types` independent of the vector
      variant's layout.
-   - What is left is one chain. R1798 lowered a `SIMD` register to its
-     `!kgen.simd` field in the verifier and both backends, and R1799 did
-     the same for every one-field register-passable struct. R1800
-     deleted `TyKind::Simd`, so `SIMD` is the declared struct below the
-     checker. R1811 made `_mlir_value` its field read, R1812 declares
-     every closed instance, and R1801 then gives MIR's builtin ops the
-     storage, not the struct.
+   - The chain R1798–R1801 landed 11-01. A `SIMD` register lowers to
+     its `!kgen.simd` field in the verifier and both backends, as every
+     one-field register-passable struct does. `TyKind::Simd` is gone, so
+     `SIMD` is the declared struct below the checker. `_mlir_value` is
+     its field read (R1811), and MIR's builtin ops inlined from its
+     dunders keep the storage type (R1801).
+   - What is left is the storage, not the struct, at each builtin site:
+     - R1812: a closed instance is declared only once a member is
+       demanded, so concrete MIR still reads a `SIMD` as its storage.
+     - R1813: `Int32(copy=x)` is still a checked value read, not the
+       synthesized copy initializer.
+     - R1814 (MIR lowering's lane ops typed at the struct) and R1815
+       (the checker's parameter domain typed at the vector), then R1816
+       (the verifier rejects a `SIMD` register on a builtin vector
+       instruction).
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1801 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1812 --task R1813 --task R1816 -n 0
    ```
 
 2. **`Bool` as a library struct** (R1188's residue). R1188 made
@@ -110,14 +118,18 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1280 --task R1466 --task R1287 --task R1461 -n 0
    ```
 
-7. **Gap G: a capture-list closure is a capture list** (size). Its cores
-   landed (R1376–R1378, R1427, R1428, R533, R1344, R1345). What is left:
+7. **Gap G: a capture-list closure is a capture list** (size, and
+   conformance since the 11-01 re-pin). Its cores landed (R1376–R1378,
+   R1427, R1428, R533, R1344, R1345). What is left:
    - R1436 moves the closure's storage struct into the check.
    - R1433 → R176 → R1434 withdraw run-time `capturing[...]` values,
      which still convert the struct to a closure of its body.
+   - R1823 then rejects the `capturing` effect and `@parameter` closures,
+     which `1.3.0.dev2026110105` removed. Eleven `assets/ok` fixtures and
+     nine `cases.tsv` claims wait on it.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1436 --task R1434 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1436 --task R1434 --task R1823 -n 0
    ```
 
 8. **Gap H's residues** (size, partial). The chain R1379–R1388 landed:
@@ -191,10 +203,14 @@ command cannot use both.
   scalar block is steps 1–3.
 - The stale-entry sweeps R1400–R1406 have landed.
 - The library `SIMD` is complete: every member is a library body, and
-  `SIMD` and its aliases are the declared struct in the checker. Below
-  the checker it is still `TyKind::Simd` (step 1).
+  `SIMD` and its aliases are the declared struct in the checker and
+  below it. Its builtin sites still read the struct where upstream reads
+  its storage (step 1).
 - The 10-30/31 runs' corpus regressions are repaired (11-01 gate fix),
   with R1805–R1809 filed as residues.
+- The differential pin is `1.3.0.dev2026110105` (11-01 re-pin). Its
+  removal of legacy closures makes gap G a conformance block too (R1823).
+  Its other unimplemented changes, R1817–R1830, sit outside the gaps.
 
 `enum` (10-25) moves no gap: each enum is an ordinary struct whose
 members `mojito_parser::enums` generates as Mojo text, over the
@@ -305,7 +321,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1798, R1799 → R1800 → R1801, R1608 → R1612, R1785, R1657 → R1660), R160 | R1408, R1019, R423, R1352, R851, R171, R1189, R427, R1681 (`Pointer`) |
+| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1812, R1813, R1814 and R1815 → R1816, R1608 → R1612, R1785, R1657 → R1660), R160 | R1408, R1019, R423, R1352, R851, R171, R1189, R427, R1681 (`Pointer`) |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R18, R159 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R77, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
@@ -350,14 +366,14 @@ scripts/claude_loop.py --model opus --only R1411 --only R1413 -n 0
 Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
 `scripts/instantiation-report`. The overnight gate says when it is stale.
 
-| counter | 10-13 | 10-17 | 10-21 | 10-24 | 10-29 | 11-01 |
-|---|---|---|---|---|---|---|
-| fixtures | | | | 1,200 | 1,379 | 1,538 |
-| concrete functions | 42,409 | 24,864 | 25,859 | 26,934 | 18,743 | 41,010 |
-| concrete instructions | 892,391 | 402,905 | 386,579 | 401,799 | 859,746 | 1,821,334 |
-| generators | 16,553 | 8,801 | 9,213 | 9,500 | 5,841 | 17,667 |
-| generator instances | 26,868 | 13,804 | 13,989 | 14,619 | 9,164 | 26,483 |
-| instances per generator | 1.62 | 1.57 | 1.52 | 1.54 | 1.57 | 1.50 |
+| counter | 10-13 | 10-17 | 10-21 | 10-24 | 10-29 | 11-01 | 11-01 re-pin |
+|---|---|---|---|---|---|---|---|
+| fixtures | | | | 1,200 | 1,379 | 1,538 | 1,537 |
+| concrete functions | 42,409 | 24,864 | 25,859 | 26,934 | 18,743 | 41,010 | 42,159 |
+| concrete instructions | 892,391 | 402,905 | 386,579 | 401,799 | 859,746 | 1,821,334 | 2,108,848 |
+| generators | 16,553 | 8,801 | 9,213 | 9,500 | 5,841 | 17,667 | 18,665 |
+| generator instances | 26,868 | 13,804 | 13,989 | 14,619 | 9,164 | 26,483 | 27,496 |
+| instances per generator | 1.62 | 1.57 | 1.52 | 1.54 | 1.57 | 1.50 | 1.47 |
 
 - Compare runs with `scripts/instantiation-report --check`, over the
   fixtures both runs elaborate, not with the raw totals.
@@ -371,8 +387,12 @@ Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
   both the 10-29 and 11-01 baselines elaborate, concrete functions grew
   2.0× and instructions 1.85×, and generators and their instances about
   2.7×. That is the size gaps D′–I now have to win back.
-- The 11-01 baseline is from after the library `SIMD` was finished, so it
-  is the starting point for step 1.
+- The 11-01 re-pin baseline follows the step-1 chain (R1798–R1801,
+  R1811) and the re-pin's library ports. Over the 1,525 fixtures both
+  11-01 baselines elaborate, concrete instructions grew 16% and generators
+  6%. The largest single jump is the ported `_powf_scalar`'s
+  large-exponent branch (`simd_pow_dunders.mojo`, 35,102 to 84,689
+  instructions); the rest is spread across the corpus.
 - `assets/ok/pointer_tuple_field_write.mojo` elaborates differently from
   run to run (R1069), so `--check` can report a few instructions of
   growth there with no change.
@@ -407,3 +427,7 @@ Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
   `%`, `divmod`, and `ceildiv` (R1623, closing R850), native display
   through `write_to` (R1664), an initializer called without inlining
   (R1617), `SIMD(copy=x)` (R1793), and `_dynamic_shuffle` (R1777).
+  Then `SIMD` as the declared struct below the checker: `!kgen.simd`
+  storage in the verifier and both backends (R1798, R1799), `TyKind::Simd`
+  deleted (R1800, R1810), the `_mlir_value` field read (R1811), and
+  builtin ops over the storage (R1801).

@@ -2810,9 +2810,14 @@ impl Checker {
                         .map_err(param_error)
                 }))
             }
-            ExprKind::Member { object, field } if field == "length" => {
-                Some(receiver(object)?.and_then(|receiver| self.type_list_length(receiver)))
-            }
+            // A value pack's `length` is its `ParameterList`'s declared member,
+            // which the ordinary member read answers.
+            ExprKind::Member { object, field } if field == "length" => match receiver(object)? {
+                Ok(TypeListReceiver::Pack(pack)) if self.pack_reference(&pack.name).is_none() => {
+                    None
+                }
+                receiver => Some(receiver.and_then(|receiver| self.type_list_length(receiver))),
+            },
             ExprKind::Call { name, args, .. } if name == "len" && args.len() == 1 => {
                 Some(receiver(&args[0])?.and_then(|receiver| self.type_list_length(receiver)))
             }
@@ -4294,6 +4299,8 @@ impl Checker {
                     None => Ok(None),
                 }
             }
+            // A value pack's list is a `ParameterList`, never a `TypeList`.
+            ExprKind::Identifier(name) if self.value_pack_in_scope(name).is_some() => Ok(None),
             ExprKind::Identifier(name) => Ok(Some(TypeListReceiver::Pack(ParamRef::unbound(name)))),
             // The element types a specialization wrote in a bound pack's
             // place.

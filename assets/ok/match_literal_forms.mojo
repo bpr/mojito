@@ -1,5 +1,5 @@
 # Comma subjects and patterns, `case Int` binding, `== -3` for a signed
-# literal, no-match fallthrough, a guarded literal, `()` and `(n,)` tuples,
+# literal, negative int and float literal patterns, no-match fallthrough, a guarded literal, `()` and `(n,)` tuples,
 # `1 | 2` alternatives, and a float literal.
 def main():
     var a = True
@@ -21,6 +21,16 @@ def main():
             print("neg")
         case _:
             print("pos")
+    match -16:
+        case 1 | -0x10:
+            print("negative literal")
+        case _:
+            print("other")
+    match -2.5:
+        case - 2.5:
+            print("negative float")
+        case _:
+            print("nf")
     match 2:
         case 1:
             print("one")

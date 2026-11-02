@@ -33,7 +33,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_MOJO = os.path.expanduser(
-    "~/src/mojo/envs/mojo-2026101705/.pixi/envs/default/bin/mojo"
+    "~/src/mojo/envs/mojo-2026110105/.pixi/envs/default/bin/mojo"
 )
 DEFAULT_OUT = os.path.join(
     ROOT, "crates", "mojito-native-core", "src", "target", "x86_cpus.rs"

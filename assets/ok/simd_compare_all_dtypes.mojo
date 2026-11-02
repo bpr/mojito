@@ -1,9 +1,9 @@
 # All six elementwise comparisons yield bool masks: signed and unsigned
-# integer lanes compare by value, float lanes use the ordered predicates (a
-# NaN lane compares False under every method, `ne` included), and a scalar
-# operand splats. They are methods because upstream's infix `<` is
+# integer lanes compare by value, float lanes use `pop.cmp`'s predicates (a
+# NaN lane compares False under every method but the unordered `ne`), and a
+# scalar operand splats. They are methods because upstream's infix `<` is
 # `Scalar`-only and its `==` compares whole vectors. The NaN is made at run
-# time: the pin folds a constant `0.0 / 0.0` receiver's `ne` to True.
+# time.
 def runtime_zero() -> Float64:
     var total = 0.0
     for i in range(3):

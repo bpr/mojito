@@ -844,6 +844,7 @@ closed_pattern:
     | NAME                                              # binds the value (`case Int:` binds `Int`)
     | 'var' NAME | 'ref' NAME                           # binds a mutable copy / a reference
     | literal                                           # INT | FLOAT | STRING | 'True' | 'False' | 'None' (rejected: `== None`)
+    | '-' (INT | FLOAT)                                 # a negative number literal (`-1`, `- 2.5`)
     | '==' unary_expression                             # explicit equality (`== -3`, `== f(x)`)
     | '(' ')' | '(' pattern ')' | '(' pattern (',' pattern)* ','? ')'   # grouping or tuple
     | '[' [seq_pattern (',' seq_pattern)* ','?] ']'     # sequence, at most one star
@@ -860,9 +861,11 @@ the cases in order; the first whose pattern matches and whose guard is true
 runs. Cases either share the `match` indent (Mojo style) or sit one level
 in (Python style); a case body may follow the `case` line. A `match` needs
 at least one case, and `case` outside a `match` is an error. A bare name
-binds (immutably) rather than naming a value; a signed number, an
-arithmetic expression, or a subscript is not a pattern — write `== expr`,
-whose operand is parsed at unary precedence (`== a | b` is `(== a) | b`).
+binds (immutably) rather than naming a value. A negative number literal
+(`-1`, `- 0x10`, `-2.5`) is a literal pattern, as at the pin. Any other
+signed operand (`-x`, `-(1)`, `+1`), an arithmetic expression, or a
+subscript is not a pattern — write `== expr`, whose operand is parsed at
+unary precedence (`== a | b` is `(== a) | b`).
 `var`/`ref` take one name (`var ref x` is rejected as redundant). The
 checker decides whether a call-shaped head is a struct pattern (keyword
 fields, `Point(x=0, y=yv)`) or an enum case with one positional payload

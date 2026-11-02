@@ -1,12 +1,12 @@
 # The `std.math` operation traits are upstream's library traits, bundled in
-# `std/math.mojo`: a struct conforms by declaring one, and `abs`, `**`,
-# `round`, `divmod`, and the `std.math` rounding helpers reach its
-# requirement through a bound. Only `Absable`, `Powable`, and `Roundable`
-# are prelude names; the other six need their import. The scalars conform
-# as upstream's `SIMD` declares, and answer each requirement as a method.
+# `std/math.mojo`: a struct conforms by declaring one, and `abs`, `round`,
+# `divmod`, and the `std.math` rounding helpers reach its requirement
+# through a bound. Only `Absable` and `Roundable` are prelude names; the
+# other five need their import. The scalars conform as upstream's `SIMD`
+# declares, and answer each requirement as a method. A struct's `__pow__`
+# serves `**` with no trait, since upstream removed `Powable`.
 from std.math import (
     CeilDivable,
-    CeilDivableRaising,
     Ceilable,
     DivModable,
     Floorable,
@@ -19,7 +19,7 @@ from std.math import (
 
 
 @fieldwise_init
-struct A(Absable, ImplicitlyCopyable, Powable, Roundable, Writable):
+struct A(Absable, ImplicitlyCopyable, Roundable, Writable):
     var v: Int
 
     def __abs__(self) -> Self:
@@ -65,10 +65,6 @@ def ab[T: Absable](x: T) -> T:
     return abs(x)
 
 
-def pw[T: Powable](x: T, y: T) -> T:
-    return x**y
-
-
 def rd[T: Roundable](x: T) -> T:
     return round(x)
 
@@ -89,8 +85,6 @@ def names[T: AnyType]() -> String:
     var s = String("")
     comptime if conforms_to(T, Absable):
         s += "abs "
-    comptime if conforms_to(T, Powable):
-        s += "pow "
     comptime if conforms_to(T, Roundable):
         s += "round "
     comptime if conforms_to(T, DivModable):
@@ -103,15 +97,13 @@ def names[T: AnyType]() -> String:
         s += "trunc "
     comptime if conforms_to(T, CeilDivable):
         s += "ceildiv "
-    comptime if conforms_to(T, CeilDivableRaising):
-        s += "ceildivr "
     return s
 
 
 def main():
     comptime a_abs = conforms_to(A, Absable)
     print(ab(A(-3)), a_abs)
-    print(pw(A(2), A(5)), rd(A(1)), abs(A(-5)), A(2) ** A(3), round(A(4)))
+    print(rd(A(1)), abs(A(-5)), A(2) ** A(3), round(A(4)))
     var q = dm(B(7), B(2))
     print(q[0], q[1])
     var d = divmod(B(9), B(4))
@@ -125,7 +117,7 @@ def main():
     print(names[Bool]())
     print(names[Tuple[Int, Int]]())
     print(names[String]())
-    print(ab(-4), rd(2.5), rd(7), rd(UInt(9)), pw(2, 3), dm(7, 2)[1])
+    print(ab(-4), rd(2.5), rd(7), rd(UInt(9)), dm(7, 2)[1])
     print(ab_method(-6), dm_method(-7, 2)[0], dm_method(7.5, 2.0)[1])
     var x = 7
     print(

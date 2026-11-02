@@ -1,18 +1,8 @@
 # `std.math`'s `exp` over `_exp_impl`: `float64` and `float32` scalars and
 # vectors, `float16` through the `float32` arm, the clamped extremes, a
-# 16-lane `float32` vector an AVX-512 host scales through `scalef`, the
-# `exp[T: _Expable]` overload over a user `__exp__`, and a compile-time
-# call.
+# 16-lane `float32` vector an AVX-512 host scales through `scalef`, and a
+# compile-time call.
 from std.math import exp, ldexp
-from std.math.math import _Expable
-
-
-@fieldwise_init
-struct Growth(_Expable, ImplicitlyCopyable):
-    var rate: Float64
-
-    def __exp__(self) -> Self:
-        return Growth(exp(self.rate))
 
 
 def main():
@@ -26,7 +16,6 @@ def main():
         exp(Float32(100)).cast[DType.float64](),
     )
     print(exp(SIMD[DType.float32, 16](0.5)).cast[DType.float64]())
-    print(exp(Growth(0.5)).rate)
     print(
         ldexp(Float64(1.5), Int32(3)),
         ldexp(
