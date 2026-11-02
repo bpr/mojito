@@ -15,8 +15,8 @@ impl Checker {
         operand: &Expr,
     ) -> Result<Ty, TypeError> {
         let t = self.infer(operand)?;
-        // `-x`, `~x`, and `+x` over a `SIMD` are its declared `x.__neg__()`,
-        // `x.__invert__()`, and `x.__pos__()`, as upstream's
+        // `-x`, `~x`, and `+x` over a `SIMD` or a `Bool` are its declared
+        // `x.__neg__()`, `x.__invert__()`, and `x.__pos__()`, as upstream's
         // `UnaryOpNode::emitArith` emits them.
         if op != PrefixOp::Not
             && self.declared_receiver_member(&t, op.dunder()).is_some()
@@ -37,12 +37,11 @@ impl Checker {
             (PrefixOp::Not, _) if is_numeric(&t) || is_scalar_simd(&t) => {
                 return Ok(Ty::bool());
             }
-            // A literal's and a `Bool`'s inversion keep their type; a
-            // `SIMD`'s is its `__invert__` above.
+            // A literal's inversion keeps its type; a `SIMD`'s and a
+            // `Bool`'s are their `__invert__` above.
             (PrefixOp::Invert, TyKind::IntLiteral(_)) => {
                 return Ok(mojito_types::types::value_less_literal(&t));
             }
-            (PrefixOp::Invert, TyKind::Bool) => return Ok(t),
             _ => {}
         }
         // `-x` and `~x` over a type parameter or a projection are the calls
@@ -197,6 +196,21 @@ impl Checker {
                 .infer_operator_call(span, op, left, right, &receiver, Some(&rt))?
                 .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
         }
+        // An operator beside a `Bool` is `Bool`'s declared dunder,
+        // `a.__and__(b)` else the reflected `b.__rand__(a)`, as upstream's
+        // `emitBinOpCall` resolves it. In a compile-time position its value
+        // is the shared folder's (`infix_value`).
+        let declares = |ty: &Ty, dunder: Option<&str>| {
+            *ty == TyKind::Bool
+                && dunder.is_some_and(|dunder| self.declared_receiver_member(ty, dunder).is_some())
+        };
+        if let Some(span) = &span
+            && (declares(&lt, op.dunder()) || declares(&rt, op.reflected_dunder()))
+        {
+            return self
+                .infer_operator_call(span, op, left, right, &lt, Some(&rt))?
+                .ok_or_else(|| bad_infix_operator(op, &lt, &rt));
+        }
         // Arithmetic and identity comparison reason about allocation layout,
         // which an origin-bearing pointer to a single checked value does not
         // have; Mojo leaves such use undefined, so Mojito rejects it early.
@@ -295,8 +309,6 @@ impl Checker {
                 .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
         }
         let result = match op {
-            // Upstream's `Bool.__and__`/`__or__`/`__xor__`: the eager `i1` op.
-            BitAnd | BitOr | BitXor if lt == TyKind::Bool && rt == TyKind::Bool => Some(Ty::bool()),
             // Two literals concatenate through `StringLiteral.__add__`, except
             // in an unlinked program (a phase test's), whose two texts
             // concatenate here, and beside the value-less `StringLiteral`,
@@ -347,13 +359,11 @@ impl Checker {
                     ty
                 }
             }),
-            // Ordering between numbers, or between `Bool`s (upstream's `Bool`
-            // is `Comparable`).
-            Lt | Gt | Le | Ge if common.is_some() || (lt == rt && lt == TyKind::Bool) => {
-                Some(Ty::bool())
-            }
+            // Ordering between numbers.
+            Lt | Gt | Le | Ge if common.is_some() => Some(Ty::bool()),
             // Equality: between numbers (any common type), or equal non-numeric
-            // scalars (`Bool`, `None`). A string literal compares through
+            // scalars (`None`, and a `Bool` in an unlinked program, which
+            // declares no `Bool`). A string literal compares through
             // `StringLiteral`'s dunders, except in an unlinked program (a
             // phase test's) or for the value-less `StringLiteral`, neither
             // of which declares them.

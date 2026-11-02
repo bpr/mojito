@@ -1023,8 +1023,10 @@ impl Checker {
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key(dunder)),
-            kind if kind.is_simd() => self.declared_receiver_member(operand_ty, dunder).is_some(),
-            _ => self.bound_inplace_operator(operand_ty, op),
+            _ => {
+                self.declared_receiver_member(operand_ty, dunder).is_some()
+                    || self.bound_inplace_operator(operand_ty, op)
+            }
         };
         if !has_method {
             return Err(missing());
@@ -1834,11 +1836,11 @@ impl Checker {
                         "immutable reference field".to_string(),
                     ));
                 }
-                // A user-defined value, or a `SIMD` declaring the operator's
-                // in-place dunder, dispatches augmented assignment to it
-                // (`x += y` → `x.__iadd__(y)`), which mutates `mut self`; Mojo
-                // does not fall back to the binary operator. Any other target
-                // (`Bool &=`) keeps the operator path below.
+                // A user-defined value, or a `SIMD` or `Bool` declaring the
+                // operator's in-place dunder, dispatches augmented assignment
+                // to it (`x += y` → `x.__iadd__(y)`), which mutates `mut
+                // self`; Mojo does not fall back to the binary operator. Any
+                // other target keeps the operator path below.
                 let inplace_operand = target
                     .kind()
                     .as_non_simd_struct()

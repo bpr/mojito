@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Bool`'s comparison and bitwise operators, their `__i*__` and `__r*__`
+  forms, and `Comparable` are upstream's declarations in `std.builtin.bool`
+  instead of checker rules (R1610). `t.__eq__(f)`, `t.__invert__()`, and
+  `Bool.__eq__(True, False)` now run as at the pin, where they failed with
+  "type 'Bool' has no method '__eq__'", and `True | x` reaches a reflected
+  `x.__ror__`.
+
 - `Bool(...)` binds upstream's declared `Bool` initializers in
   `std.builtin.bool` (the `i1`, `!kgen.scalar<bool>`, `Boolable`, `None`,
   and `@implicit` `Scalar[.bool]` overloads beside the default) instead of

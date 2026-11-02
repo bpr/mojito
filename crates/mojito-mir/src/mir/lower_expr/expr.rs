@@ -32,7 +32,7 @@ pub(in crate::mir) struct OperatorContract {
     pub(in crate::mir) refined_bound: Option<Vec<String>>,
 }
 
-/// The method a struct or `SIMD` value `receiver` answers a chained
+/// The method a struct, `SIMD`, or `Bool` value `receiver` answers a chained
 /// comparison's link `op` with, as upstream's parser spells the link: `a <
 /// b` is `a.__lt__(b)`. `None` for any other receiver, whose link stays a
 /// `binary`.
@@ -45,7 +45,10 @@ pub(in crate::mir) fn struct_operator_method(
             ty.is_simd()
                 || matches!(
                     ty.kind(),
-                    TyKind::Struct(..) | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
+                    TyKind::Struct(..)
+                        | TyKind::Bool
+                        | TyKind::IntLiteral(_)
+                        | TyKind::FloatLiteral(_)
                 )
         })
     })

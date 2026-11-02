@@ -36,7 +36,7 @@
 # tuple pattern over an rvalue subject the pin rejects ("use of uninitialized
 # value '(pattern child)'") and the previous pin ran
 # (`conformance/probes/var_case_rvalue_tuple_literal_sibling.mojo`).
-# swept-count	1557
+# swept-count	1558
 fixture	family	first-error
 assets/ok/callable_contract_names_other_parameters.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/ok/capturing_callable_parameter_with_locals.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead

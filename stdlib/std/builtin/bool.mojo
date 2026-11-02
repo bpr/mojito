@@ -3,12 +3,12 @@
 # `Boolable`, `any`, and `all`, as upstream's does.
 #
 # `Bool` declares upstream's storage, `MIN`/`MAX`, the trivial bits, the
-# initializers but the Python one, and the `__bool__`, `__mlir_bool__`,
-# `__mlir_i1__`, `__int__`, `__float__`, and `__hash__` bodies. The checker
-# holds the struct as its compiler `Bool` type until R1612. Still compiler
-# rules: the operators and `Comparable` (R1610), `Writable` (R1611), and
-# `EnumLike` (R1189). Python interop and `@lldb_formatter_wrapping_type` are
-# absent.
+# initializers but the Python one, `Comparable` with the comparison and
+# bitwise operators, and the `__bool__`, `__mlir_bool__`, `__mlir_i1__`,
+# `__int__`, `__float__`, and `__hash__` bodies. The checker holds the
+# struct as its compiler `Bool` type until R1612. Still compiler rules:
+# `Writable` (R1611) and `EnumLike` (R1189). Python interop and
+# `@lldb_formatter_wrapping_type` are absent.
 #
 # Upstream's `Iterable` overloads of `any` and `all` are absent: their
 # `where conforms_to(IterableType.IteratorType[origin_of(iterable)].Element,
@@ -25,6 +25,7 @@ trait Boolable:
 
 struct Bool(
     Boolable,
+    Comparable,
     Defaultable,
     Floatable,
     Hashable,
@@ -160,6 +161,213 @@ struct Bool(
             1.0 if True else 0.0 otherwise.
         """
         return select[Float64](self, 1, 0)
+
+    @always_inline("builtin")
+    def __eq__(self, rhs: Bool) -> Bool:
+        """Compare this Bool to RHS.
+
+        Performs an equality comparison between the Bool value and the argument.
+        This method gets invoked when a user uses the `==` infix operator.
+
+        Args:
+            rhs: The rhs value of the equality statement.
+
+        Returns:
+            True if the two values match and False otherwise.
+        """
+        return ~(self != rhs)
+
+    @always_inline("builtin")
+    def __ne__(self, rhs: Bool) -> Bool:
+        """Compare this Bool to RHS.
+
+        Performs a non-equality comparison between the Bool value and the
+        argument. This method gets invoked when a user uses the `!=` infix
+        operator.
+
+        Args:
+            rhs: The rhs value of the non-equality statement.
+
+        Returns:
+            False if the two values do match and True otherwise.
+        """
+        return self ^ rhs
+
+    @always_inline("builtin")
+    def __lt__(self, rhs: Self) -> Bool:
+        """Compare this Bool to RHS using less-than comparison.
+
+        Args:
+            rhs: The rhs of the operation.
+
+        Returns:
+            True if self is False and rhs is True.
+        """
+
+        return ~self & rhs
+
+    @always_inline("builtin")
+    def __le__(self, rhs: Self) -> Bool:
+        """Compare this Bool to RHS using less-than-or-equal comparison.
+
+        Args:
+            rhs: The rhs of the operation.
+
+        Returns:
+            True if self is False and rhs is True or False.
+        """
+
+        return ~self | rhs
+
+    @always_inline("builtin")
+    def __gt__(self, rhs: Self) -> Bool:
+        """Compare this Bool to RHS using greater-than comparison.
+
+        Args:
+            rhs: The rhs of the operation.
+
+        Returns:
+            True if self is True and rhs is False.
+        """
+
+        return rhs < self
+
+    @always_inline("builtin")
+    def __ge__(self, rhs: Self) -> Bool:
+        """Compare this Bool to RHS using greater-than-or-equal comparison.
+
+        Args:
+            rhs: The rhs of the operation.
+
+        Returns:
+            True if self is True and rhs is True or False.
+        """
+
+        return rhs <= self
+
+    # ===-------------------------------------------------------------------===#
+    # Bitwise operations
+    # ===-------------------------------------------------------------------===#
+
+    @always_inline("builtin")
+    def __invert__(self) -> Bool:
+        """Inverts the Bool value.
+
+        Returns:
+            True if the object is false and False otherwise.
+        """
+        return __mlir_op.`pop.simd.xor`(
+            self._mlir_value,
+            __mlir_attr.`#kgen.simd<true> : !kgen.scalar<bool>`,
+        )
+
+    @always_inline("builtin")
+    def __and__(self, rhs: Bool) -> Bool:
+        """Returns `self & rhs`.
+
+        Bitwise and's the Bool value with the argument. This method gets invoked
+        when a user uses the `and` infix operator.
+
+        Args:
+            rhs: The right hand side of the `and` statement.
+
+        Returns:
+            `self & rhs`.
+        """
+        return __mlir_op.`pop.simd.and`(self._mlir_value, rhs._mlir_value)
+
+    @inline(.nodebug)
+    def __iand__(mut self, rhs: Bool):
+        """Computes `self & rhs` and store the result in `self`.
+
+        Args:
+            rhs: The right hand side of the `and` statement.
+        """
+        self = self & rhs
+
+    @always_inline("builtin")
+    def __rand__(self, lhs: Bool) -> Bool:
+        """Returns `lhs & self`.
+
+        Args:
+            lhs: The left hand side of the `and` statement.
+
+        Returns:
+            `lhs & self`.
+        """
+        return lhs & self
+
+    @always_inline("builtin")
+    def __or__(self, rhs: Bool) -> Bool:
+        """Returns `self | rhs`.
+
+        Bitwise or's the Bool value with the argument. This method gets invoked
+        when a user uses the `or` infix operator.
+
+        Args:
+            rhs: The right hand side of the `or` statement.
+
+        Returns:
+            `self | rhs`.
+        """
+        return __mlir_op.`pop.simd.or`(self._mlir_value, rhs._mlir_value)
+
+    @inline(.nodebug)
+    def __ior__(mut self, rhs: Bool):
+        """Computes `self | rhs` and store the result in `self`.
+
+        Args:
+            rhs: The right hand side of the `or` statement.
+        """
+        self = self | rhs
+
+    @always_inline("builtin")
+    def __ror__(self, lhs: Bool) -> Bool:
+        """Returns `lhs | self`.
+
+        Args:
+            lhs: The left hand side of the `or` statement.
+
+        Returns:
+            `lhs | self`.
+        """
+        return lhs | self
+
+    @always_inline("builtin")
+    def __xor__(self, rhs: Bool) -> Bool:
+        """Returns `self ^ rhs`.
+
+        Bitwise Xor's the Bool value with the argument. This method gets invoked
+        when a user uses the `^` infix operator.
+
+        Args:
+            rhs: The right hand side of the `xor` statement.
+
+        Returns:
+            `self ^ rhs`.
+        """
+        return __mlir_op.`pop.simd.xor`(self._mlir_value, rhs._mlir_value)
+
+    @inline(.nodebug)
+    def __ixor__(mut self, rhs: Bool):
+        """Computes `self ^ rhs` and stores the result in `self`.
+
+        Args:
+            rhs: The right hand side of the `xor` statement.
+        """
+        self = self ^ rhs
+
+    @always_inline("builtin")
+    def __rxor__(self, lhs: Bool) -> Bool:
+        """Returns `lhs ^ self`.
+
+        Args:
+            lhs: The left hand side of the `xor` statement.
+
+        Returns:
+            `lhs ^ self`.
+        """
+        return lhs ^ self
 
     def __hash__[H: Hasher](self, mut hasher: H):
         """Updates hasher with the underlying bytes.

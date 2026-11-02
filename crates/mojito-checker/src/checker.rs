@@ -1825,9 +1825,15 @@ impl Checker {
                 own_arguments: Vec::new(),
             }));
         }
-        let Some((name, args)) = to.kind().as_non_simd_struct() else {
+        // `Bool`'s `@implicit` initializers are its declared ones.
+        let Some((name, args)) = mojito_types::types::nominal_parts(to)
+            .filter(|_| to.kind().is_non_simd_struct() || *to == TyKind::Bool)
+        else {
             return Ok(None);
         };
+        let name = name.to_string();
+        let name = &name;
+        let args = args.as_ref();
         let Some(info) = self.structs.get(name) else {
             return Ok(None);
         };

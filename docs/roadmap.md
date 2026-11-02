@@ -1032,6 +1032,8 @@ the `pmir` track, staged in
     and the spliced builtin body per instance in `inline-parametric`.
   - Measure with `--timings` on that fixture and on `b_cmp`-style loops;
     R1551's `+` and R1552's `&` pay the same cost.
+  - Since R1610 `a == b` over `Bool`s splices `__eq__`, `__ne__`,
+    `__xor__`, and `__invert__`: probe a `Bool`-comparison loop too.
   - Found while landing R1553 (2026-10-28).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -11065,30 +11067,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1610 `Bool`'s comparison and bitwise operators are checker rules,
-  so `t.__eq__(f)` has no method**
-
-  Problem: `t.__eq__(f)` and `t.__invert__()` over `Bool`s fail with "type
-  'Bool' has no method '__eq__'", where the pin prints `False` and the
-  inverse, because `==` and `~` over a `Bool` are `infer_infix` and
-  `infer_prefix` arms (`checker/operators.rs`).
-  - Declare upstream's `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__`,
-    `__ge__`, `__invert__` (over a typed
-    ``__mlir_attr.`#kgen.simd<true> : !kgen.scalar<bool>` ``), the
-    `and`/`or`/`xor` dunders with their `__i*__` and `__r*__` forms, and
-    `Comparable`.
-  - Delete the `TyKind::Bool` arms of `infer_prefix` and `infer_infix`.
-    `not` stays a rule, since upstream's is not a dunder.
-  - `comptime x = True == False` and `~True` must keep folding: follow
-    whichever of R1551/R1553's routes kept `SIMD`'s operators folding.
-  - Probe on the pin whether `True == 1` and `b == mask` take an implicit
-    conversion or the reflected dunder.
-  - Probe: `print(Bool.__eq__(True, False))` fails with "Undefined
-    variable 'Bool'" (a type-receiver call of an undeclared member), where
-    the pin prints `False`.
-  - Depends on R1608.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1611 `Bool.write_to` and `write_repr_to` are compiler printing
   where upstream's are library bodies**
 
@@ -11124,6 +11102,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `field_offset` and `lower_get_field`, which read `val._mlir_value` of a
     generic `Scalar[DType.bool]` elaborated to `Bool` as the `Bool`.
     Probe: `assets/ok/simd_bool_masks.mojo`'s `f.mask[1] = True`.
+  - Delete the `Type::Bool` arms R1610 added beside a conformer's own
+    name in `synthesize_equatable_eq`'s `takes_self` and the trait
+    defaults' `overload_key`, which read a `rhs: Bool` parameter as `Self`.
+  - Delete `implicit_conversion_constructor`'s `TyKind::Bool` filter, which
+    reads `Bool`'s `@implicit` initializers off the declaration for the
+    compiler type.
   - Delete the bridges R1609 left for the declared initializers:
     `infer_unbound_call`'s `Bool(copy=b)` builtin copy arm, the
     `BoolStorage` store an initializer's `self._mlir_value = …` records

@@ -267,16 +267,16 @@ pub fn leaf_conforms(
 /// `trait_name`, as the upstream struct it stands in for declares.
 ///
 /// Upstream's `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`.
-/// `Bool` and the numeric literals list `Equatable` and `Comparable`, and
-/// `DType` lists `Equatable`.
+/// The numeric literals list `Equatable` and `Comparable`, and `DType`
+/// lists `Equatable`.
 ///
 /// The literal structs list `Boolable`; the numeric literals `Intable`;
 /// `FloatLiteral` `Floatable`; `IntLiteral` `Indexer`; none lists
 /// `Identifiable`. `SIMD`'s `Boolable`, `Comparable`, `Equatable`,
 /// `Intable`, `Indexer`, and `Sized` are its declaration's in `std.simd`,
-/// and `Bool`'s `Boolable`, `Defaultable`, `Floatable`, `Hashable`, and
-/// `Intable` its declaration's in `std.builtin.bool`, which the checker and
-/// the elaborator read instead.
+/// and `Bool`'s `Boolable`, `Comparable`, `Defaultable`, `Equatable`,
+/// `Floatable`, `Hashable`, and `Intable` its declaration's in
+/// `std.builtin.bool`, which the checker and the elaborator read instead.
 ///
 /// `SIMD` lists every `std.math` operation trait; its `Absable`,
 /// `Ceilable`, `Floorable`, `Roundable`, and `Truncable` are its
@@ -323,12 +323,9 @@ pub fn modelled_conformance(
         "Indexer" => ty.is_int_literal(),
         "Equatable" => matches!(
             ty.kind(),
-            TyKind::Bool | TyKind::Dtype | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
+            TyKind::Dtype | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
         ),
-        "Comparable" => matches!(
-            ty.kind(),
-            TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-        ),
+        "Comparable" => matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)),
         "Ceilable" | "Floorable" | "Truncable" => ty.is_int_literal(),
         "Absable" | "Roundable" => false,
         "Hashable" => builtin_hashable_ty(ty),
