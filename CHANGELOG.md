@@ -12,8 +12,10 @@ to evolve under the `0.x` compatibility rules.
   type through `TyKind::as_non_simd_struct`, not by matching
   `TyKind::Struct` (R1800's first stage): about 415 checker, MIR,
   elaborator, VM, and native-backend sites, so they keep excluding `SIMD`
-  once its application is the declared struct, as upstream holds it. No
-  program's output or MIR changes.
+  once its application is the declared struct, as upstream holds it. The
+  patterns the accessor cannot express — alternations, tuple scrutinees,
+  and by-value matches — carry a `SIMD`-excluding guard instead (R1810).
+  No program's output or MIR changes.
 
 - The native backend lowers a one-field `TrivialRegisterPassable` struct
   as its field, as upstream's `LowerKGENToLLVM` does and the VM already

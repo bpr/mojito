@@ -523,7 +523,7 @@ impl Checker {
             root.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
         ) && match self.infer(root).as_ref().map(Ty::kind) {
-            Ok(TyKind::Struct(..)) => true,
+            Ok(kind) if kind.is_non_simd_struct() => true,
             Ok(TyKind::Pointer { .. }) => formed_pointer(),
             _ => false,
         } {

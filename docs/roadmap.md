@@ -11335,34 +11335,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1810 The `TyKind::Struct` patterns `as_non_simd_struct` cannot
-  express still read "a struct" as "not a `SIMD`"**
-
-  Once R1800 makes a `SIMD` application `TyKind::Struct("SIMD", …)`,
-  every pattern that means a declared struct starts catching `Int` too.
-  - About 415 sites already read `TyKind::as_non_simd_struct` or
-    `is_non_simd_struct`, which agree with `TyKind::Struct` today and keep
-    excluding `SIMD` after the flip.
-  - About 70 remain, in shapes the accessor cannot replace mechanically:
-    alternations (`TyKind::Struct(..) | TyKind::Param { .. }` in the
-    checker's `indexing.rs`, `operators.rs`, `builtins.rs`, and
-    `comptime_validation.rs`, MIR's `calls.rs` and `lower_expr/expr.rs`,
-    Pliron's `support.rs` and `types.rs`), tuple scrutinees
-    (`(TyKind::Struct(..), TyKind::Struct(..))` in mono's `equiv.rs`, the
-    checker's `generics.rs`, `origins/solve.rs`, `origins/construct.rs`,
-    `method_calls/statics.rs`, and the verifier's `types.rs`), and
-    by-value or mutable matches (`equiv::erase_callable_environments`,
-    `call_inference.rs`'s callable contract).
-  - Each gets a `SIMD`-excluding guard or an accessor arm above it, so the
-    probe outputs stay byte-identical.
-  - The four exhaustive walks R1800 rewrites (`mir::text::type_spelling`,
-    `text/write.rs`'s `ty_value`, `verify/scope.rs`'s walk, the checker's
-    `type_is_symbolic`) are R1800's, since they name the variant.
-  - List: `rg -n 'TyKind::Struct\(' crates --glob '!crates/mojito-types/**'`,
-    less the constructors.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1800 Below the checker a `SIMD` application is the compiler's
   vector type `TyKind::Simd`, where upstream holds the declared struct**
 

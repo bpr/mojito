@@ -179,19 +179,23 @@ pub fn lower_ty(
         | TyKind::Variant(_)
         | TyKind::StringLiteral(_)
         | TyKind::KgenString
-        | TyKind::Func(_) => match layout.layout_of(ty) {
-            Ok(computed) => Ok(LowerTy::Aggregate {
-                ty: ty.clone(),
-                layout: computed,
-            }),
-            Err(error) => Err(PlironError {
-                function: Some(function.to_string()),
-                kind: PlironErrorKind::Unsupported {
-                    construct: format!("type `{ty:?}` ({error})"),
-                },
-                location,
-            }),
-        },
+        | TyKind::Func(_)
+            if !ty.is_simd() =>
+        {
+            match layout.layout_of(ty) {
+                Ok(computed) => Ok(LowerTy::Aggregate {
+                    ty: ty.clone(),
+                    layout: computed,
+                }),
+                Err(error) => Err(PlironError {
+                    function: Some(function.to_string()),
+                    kind: PlironErrorKind::Unsupported {
+                        construct: format!("type `{ty:?}` ({error})"),
+                    },
+                    location,
+                }),
+            }
+        }
         other => Err(PlironError {
             function: Some(function.to_string()),
             kind: PlironErrorKind::Unsupported {

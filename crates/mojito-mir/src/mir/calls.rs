@@ -100,17 +100,17 @@ pub(super) fn literal_materializes_to(found: &Ty, target: &Ty) -> bool {
 /// type). Kept textually aligned with the drop analysis'
 /// `may_alias_owned_storage`.
 pub(super) fn owns_droppable_storage(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::Struct(..)
-            | TyKind::Error
-            | TyKind::Tuple(_)
-            | TyKind::RuntimePack(_)
-            | TyKind::Variant(_)
-            | TyKind::ComptimeList(_)
-            | TyKind::Param { .. }
-            | TyKind::Assoc { .. }
-    )
+    ty.is_non_simd_struct()
+        || matches!(
+            ty.kind(),
+            TyKind::Error
+                | TyKind::Tuple(_)
+                | TyKind::RuntimePack(_)
+                | TyKind::Variant(_)
+                | TyKind::ComptimeList(_)
+                | TyKind::Param { .. }
+                | TyKind::Assoc { .. }
+        )
 }
 
 impl<'a> Flatten<'a> {
@@ -2161,10 +2161,10 @@ impl<'a> Flatten<'a> {
         );
         if closure_storage != Some(true)
             && !storage_value
+            && !ty.is_non_simd_struct()
             && !matches!(
                 ty.kind(),
-                TyKind::Struct(..)
-                    | TyKind::Error
+                TyKind::Error
                     | TyKind::Tuple(_)
                     | TyKind::RuntimePack(_)
                     | TyKind::VariadicPack(_)

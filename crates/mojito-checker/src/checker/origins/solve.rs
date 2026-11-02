@@ -568,7 +568,8 @@ fn reconcile_origin_tails(
             TyKind::Struct(found_name, found_args),
             TyKind::Struct(declared_name, declared_args),
             TyKind::Struct(bound_name, bound_args),
-        ) if found_name == declared_name
+        ) if !found.is_simd()
+            && found_name == declared_name
             && declared_name == bound_name
             && found_args.len() == declared_args.len()
             && declared_args.len() == bound_args.len() =>

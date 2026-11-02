@@ -209,7 +209,7 @@ impl Checker {
         }
         if protocol.borrowed_origin.is_none()
             && protocol.prepare.is_some()
-            && matches!(iter_ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })
+            && (iter_ty.is_non_simd_struct() || matches!(iter_ty.kind(), TyKind::Param { .. }))
             && let Some(mut origin) = source.cloned()
         {
             // Loan granularity is the iterator's declared yielded-origin

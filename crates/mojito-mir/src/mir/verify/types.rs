@@ -193,9 +193,10 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // instantiations that differ only in their origin arguments, or spell
     // them on one side alone (an instance's own spelling holds none), are
     // one type here.
-    if let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
-        (found.kind(), expected.kind())
-        && found_name == expected_name
+    if let (Some((found_name, found_args)), Some((expected_name, expected_args))) = (
+        found.kind().as_non_simd_struct(),
+        expected.kind().as_non_simd_struct(),
+    ) && found_name == expected_name
     {
         if found_args.is_empty() || expected_args.is_empty() {
             return true;

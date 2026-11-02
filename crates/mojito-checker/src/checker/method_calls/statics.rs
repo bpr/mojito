@@ -142,24 +142,25 @@ impl Checker {
                     Self::struct_instance_type(sname, bound.arguments)
                 })
         };
-        let compatible = match (actual.kind(), expected.as_ref().map(Ty::kind)) {
-            (TyKind::Struct(name, _), None) => name == sname,
-            (
-                TyKind::Struct(name, actual_args),
-                Some(TyKind::Struct(expected_name, expected_args)),
-            ) => {
-                let type_args = |args: &[TyArg]| {
-                    args.iter()
-                        .filter_map(|arg| match arg {
-                            TyArg::Ty(ty) => Some(ty.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                };
-                name == expected_name && type_args(actual_args) == type_args(expected_args)
-            }
-            _ => false,
-        };
+        let compatible = !actual.is_simd()
+            && match (actual.kind(), expected.as_ref().map(Ty::kind)) {
+                (TyKind::Struct(name, _), None) => name == sname,
+                (
+                    TyKind::Struct(name, actual_args),
+                    Some(TyKind::Struct(expected_name, expected_args)),
+                ) => {
+                    let type_args = |args: &[TyArg]| {
+                        args.iter()
+                            .filter_map(|arg| match arg {
+                                TyArg::Ty(ty) => Some(ty.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    name == expected_name && type_args(actual_args) == type_args(expected_args)
+                }
+                _ => false,
+            };
         if !compatible {
             return Err(TypeError::TypeMismatch {
                 expected: expected.map_or_else(|| sname.to_string(), |ty| ty.to_string()),

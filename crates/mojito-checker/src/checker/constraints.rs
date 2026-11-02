@@ -1740,9 +1740,8 @@ impl Checker {
     /// the enclosing struct declares that field, and a field needs an
     /// instance.
     pub(super) fn instance_field_without_instance(&self, field: &str) -> Option<TypeError> {
-        let Some(self_ty @ TyKind::Struct(name, _)) = self.self_ty.as_ref().map(Ty::kind) else {
-            return None;
-        };
+        let self_ty = self.self_ty.as_ref()?;
+        let (name, _) = self_ty.kind().as_non_simd_struct()?;
         self.structs
             .get(name)
             .is_some_and(|info| info.declared_field_names.iter().any(|f| f == field))
@@ -3626,7 +3625,7 @@ impl Checker {
                 self.lookup_trait_assoc_value_ty(&self.refined_bound(&subject)?, field)
             }
             TyKind::SelfType => self.trait_self_value_ty(field),
-            TyKind::Struct(name, arguments) => {
+            TyKind::Struct(name, arguments) if !subject.is_simd() => {
                 let info = self.structs.get(name)?;
                 let declared = info.associated_value_types.get(field).or_else(|| {
                     info.decls.iter().find_map(|decl| match decl {

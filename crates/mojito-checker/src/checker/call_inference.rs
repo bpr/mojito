@@ -1504,6 +1504,7 @@ impl Checker {
         if matches!(ty.kind(), TyKind::GenericFunc(_)) {
             return self.infer_generic_call(span, name, &ty, param_args, args, kwargs);
         }
+        let simd = ty.is_simd();
         let (
             params,
             names,
@@ -1525,32 +1526,11 @@ impl Checker {
             } => {
                 return self.infer_callable_ty(span, name, bound, param_args, args, kwargs);
             }
-            TyKind::Struct(struct_name, arguments) => {
+            TyKind::Struct(struct_name, arguments) if !simd => {
                 let actual = Ty::new(TyKind::Struct(struct_name.clone(), arguments));
-                let callable = self.declared_callable_contract(&actual).ok_or_else(|| {
-                    // Value brackets over an indexable runtime value were
-                    // re-dispatched as an element call before reaching here,
-                    // so this shape carries type, named, or empty bracket
-                    // arguments — neither a runtime subscript nor parameter
-                    // application on a callable.
-                    if !param_args.is_empty()
-                        && self
-                            .structs
-                            .get(&struct_name)
-                            .is_some_and(|info| info.methods.contains_key("__getitem__"))
-                    {
-                        return TypeError::Unsupported(format!(
-                            "'{name}' is a runtime value of type '{struct_name}': \
-                             '{name}[…](…)' dispatches a subscripted element call only \
-                             for runtime index arguments, and a value takes no \
-                             compile-time parameters"
-                        ));
-                    }
-                    TypeError::NotCallable {
-                        name: name.to_string(),
-                        ty: struct_name.clone(),
-                    }
-                })?;
+                let callable = self
+                    .declared_callable_contract(&actual)
+                    .ok_or_else(|| self.struct_not_callable(name, &struct_name, param_args))?;
                 return self.infer_callable_ty(span, name, callable, param_args, args, kwargs);
             }
             // A non-generic function takes no compile-time parameters.
@@ -2515,6 +2495,36 @@ impl Checker {
             });
         }
         Ok(Ty::int())
+    }
+
+    /// The rejection of a call on a value of struct `struct_name` that
+    /// declares no `__call__`. Value brackets over an indexable runtime
+    /// value were re-dispatched as an element call before reaching here, so
+    /// bracket arguments are type, named, or empty ones: neither a runtime
+    /// subscript nor parameter application on a callable.
+    fn struct_not_callable(
+        &self,
+        name: &str,
+        struct_name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> TypeError {
+        if !param_args.is_empty()
+            && self
+                .structs
+                .get(struct_name)
+                .is_some_and(|info| info.methods.contains_key("__getitem__"))
+        {
+            return TypeError::Unsupported(format!(
+                "'{name}' is a runtime value of type '{struct_name}': \
+                 '{name}[…](…)' dispatches a subscripted element call only \
+                 for runtime index arguments, and a value takes no \
+                 compile-time parameters"
+            ));
+        }
+        TypeError::NotCallable {
+            name: name.to_string(),
+            ty: struct_name.to_string(),
+        }
     }
 }
 

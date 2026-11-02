@@ -201,15 +201,15 @@ pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {
 }
 
 pub fn is_aggregate_ty(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::Struct(..)
-            | TyKind::Tuple(..)
-            | TyKind::PopArray { .. }
-            | TyKind::RuntimePack(..)
-            | TyKind::Variant(..)
-            | TyKind::Func(_)
-    )
+    ty.is_non_simd_struct()
+        || matches!(
+            ty.kind(),
+            TyKind::Tuple(..)
+                | TyKind::PopArray { .. }
+                | TyKind::RuntimePack(..)
+                | TyKind::Variant(..)
+                | TyKind::Func(_)
+        )
 }
 
 /// Map a checked type to its scalar lowering, or reject it.

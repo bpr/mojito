@@ -3215,7 +3215,7 @@ impl Checker {
                     attribute == bound
                         && matches!(attribute, TyArg::Val(CtValue::Expr(application))
                         if application.meta().as_value().is_some_and(|ty| {
-                            matches!(ty.kind(), TyKind::Struct(..))
+                            ty.is_non_simd_struct()
                         }) || mojito_types::types::simd_length_of_image(application).is_some())
                 }),
             ParamArg::Type(_) => None,
@@ -4184,7 +4184,9 @@ impl Checker {
                     .unwrap_or_else(|| declared.clone())
             }
             (TyKind::Struct(name, declared_args), TyKind::Struct(found_name, found_args))
-                if name == found_name && declared_args.len() == found_args.len() =>
+                if !declared.is_simd()
+                    && name == found_name
+                    && declared_args.len() == found_args.len() =>
             {
                 declared.reusing(TyKind::Struct(
                     name.clone(),
@@ -4226,9 +4228,10 @@ impl Checker {
                 expected: expected.to_string(),
             });
         }
-        let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
-            (found.kind(), expected.kind())
-        else {
+        let (Some((found_name, found_args)), Some((expected_name, expected_args))) = (
+            found.kind().as_non_simd_struct(),
+            expected.kind().as_non_simd_struct(),
+        ) else {
             return None;
         };
         if found_name != expected_name || found_args.len() != expected_args.len() {

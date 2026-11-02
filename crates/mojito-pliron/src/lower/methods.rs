@@ -67,7 +67,8 @@ impl FnLowering<'_> {
             && args.len() == 1
             && kwargs.is_empty()
             && let Some(receiver) = self.func.reg_types.get(&recv.0).cloned()
-            && !matches!(receiver.kind(), TyKind::Struct(..) | TyKind::Ref(..))
+            && !receiver.is_non_simd_struct()
+            && !matches!(receiver.kind(), TyKind::Ref(..))
         {
             return self.lower_hash_leaf(
                 ctx,
@@ -412,10 +413,12 @@ impl FnLowering<'_> {
             );
             return Ok(());
         }
-        if !matches!(
-            self.func.reg_types.get(&arg.0).map(Ty::kind),
-            Some(TyKind::Struct(..) | TyKind::Ref(..))
-        ) && let Some(scalar) = self.concrete_scalar_ty(arg)?
+        if !self
+            .func
+            .reg_types
+            .get(&arg.0)
+            .is_some_and(|ty| ty.is_non_simd_struct() || matches!(ty.kind(), TyKind::Ref(..)))
+            && let Some(scalar) = self.concrete_scalar_ty(arg)?
         {
             let value = self.reg_value(ctx, arg, scalar)?;
             let (source, len) = if scalar == ScalarTy::Dtype {

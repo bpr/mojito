@@ -478,7 +478,10 @@ impl Checker {
             (
                 TyKind::Struct(pattern_name, pattern_args),
                 TyKind::Struct(actual_name, actual_args),
-            ) if pattern_name == actual_name && pattern_args.len() == actual_args.len() => {
+            ) if !pattern.is_simd()
+                && pattern_name == actual_name
+                && pattern_args.len() == actual_args.len() =>
+            {
                 for (pattern, actual) in pattern_args.iter().zip(actual_args) {
                     match (pattern, actual) {
                         (TyArg::Ty(pattern), TyArg::Ty(actual)) => Self::bind_origin_pattern(
@@ -568,7 +571,9 @@ fn bind_callable_tail_pattern(
 ) -> Result<(), TypeError> {
     match (pattern.kind(), actual.kind()) {
         (TyKind::Struct(pattern_name, pattern_args), TyKind::Struct(actual_name, actual_args))
-            if pattern_name == actual_name && pattern_args.len() == actual_args.len() =>
+            if !pattern.is_simd()
+                && pattern_name == actual_name
+                && pattern_args.len() == actual_args.len() =>
         {
             for (pattern, actual) in pattern_args.iter().zip(actual_args) {
                 match (pattern, actual) {

@@ -352,10 +352,9 @@ fn unpack_in_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>, retir
                     spread: Some(position),
                     args,
                     ..
-                } if !matches!(
-                    reg_types.get(&recv.0).map(|ty| peel_refs(ty).kind()),
-                    Some(TyKind::Struct(..))
-                ) =>
+                } if !reg_types
+                    .get(&recv.0)
+                    .is_some_and(|ty| peel_refs(ty).is_non_simd_struct()) =>
                 {
                     args.get(*position).map(|register| (*position, *register))
                 }

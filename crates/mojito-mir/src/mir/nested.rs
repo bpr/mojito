@@ -1220,8 +1220,8 @@ fn lower_storage_call_witness(
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) {
-    let (TyKind::Struct(name, _), Some(method)) = (
-        storage.ty.kind(),
+    let (Some((name, _)), Some(method)) = (
+        storage.ty.kind().as_non_simd_struct(),
         storage
             .method
             .as_deref()

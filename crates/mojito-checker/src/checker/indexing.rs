@@ -1082,7 +1082,7 @@ impl Checker {
                         .to_string(),
                 ));
             }
-            TyKind::Struct(..) | TyKind::Param { .. } => {
+            TyKind::Struct(..) | TyKind::Param { .. } if !object_type.is_simd() => {
                 let descriptor = self.synthetic_slice_descriptor(&span, 0, [lower, upper, step])?;
                 let result = self.infer_method_call(
                     &span,
@@ -1132,10 +1132,8 @@ impl Checker {
                     .to_string(),
             ));
         }
-        if !matches!(
-            object_type.kind(),
-            TyKind::Struct(..) | TyKind::Param { .. }
-        ) {
+        if !object_type.is_non_simd_struct() && !matches!(object_type.kind(), TyKind::Param { .. })
+        {
             return Err(TypeError::NotIndexable(object_type.to_string()));
         }
         let mut actual_arguments = Vec::with_capacity(arguments.len());
@@ -1654,7 +1652,7 @@ impl Checker {
     /// upstream's `index()` casts to `Int`.
     pub(super) fn is_index_type(&self, ty: &Ty) -> bool {
         coerces(ty, &Ty::int())
-            || matches!(ty.kind(), TyKind::Param { .. } | TyKind::Struct(..))
+            || (ty.is_non_simd_struct() || matches!(ty.kind(), TyKind::Param { .. }))
                 && self.conforms_to(ty, "Indexer")
     }
 

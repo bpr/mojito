@@ -1212,7 +1212,8 @@ impl Checker {
             }
 
             TyKind::Bool | TyKind::Param { .. } | TyKind::Struct(..)
-                if !mojito_types::types::is_simd_length(&aty)
+                if !aty.is_simd()
+                    && !mojito_types::types::is_simd_length(&aty)
                     && (*aty == TyKind::Bool || self.conforms_to(&aty, "Intable")) =>
             {
                 if !dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) {
@@ -1247,7 +1248,7 @@ impl Checker {
         }
         let intable_object = width.known() == Some(1)
             && dtype.licenses(|d| d != Dtype::Bool && !d.is_float())
-            && matches!(aty.kind(), TyKind::Param { .. } | TyKind::Struct(..))
+            && (aty.is_non_simd_struct() || matches!(aty.kind(), TyKind::Param { .. }))
             && self.conforms_to(&aty, "Intable");
         if !intable_object {
             return Err(simd_argument_error(dtype, width, &aty));

@@ -1997,8 +1997,8 @@ fn subject_binder(payload: Ty, subject: &Ty) -> Ty {
     else {
         return payload;
     };
-    let (mojito_types::param_expr::ParamKind::DeclRef(reference), TyKind::Struct(_, arguments)) =
-        (expr.kind(), subject.kind())
+    let (mojito_types::param_expr::ParamKind::DeclRef(reference), Some((_, arguments))) =
+        (expr.kind(), subject.kind().as_non_simd_struct())
     else {
         return payload;
     };

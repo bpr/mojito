@@ -440,7 +440,9 @@ impl FnLowering<'_> {
                 }
                 return Ok(());
             }
-            (CtValue::Struct { .. } | CtValue::Tuple(_), TyKind::Struct(name, _)) => {
+            (CtValue::Struct { .. } | CtValue::Tuple(_), TyKind::Struct(name, _))
+                if !ty.is_simd() =>
+            {
                 let Some(decl) = self.struct_decls.get(name.as_str()) else {
                     return Err(self.unsupported_reg(format!("parameter value of `{name}`"), dest));
                 };

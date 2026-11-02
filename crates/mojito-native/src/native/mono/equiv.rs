@@ -55,7 +55,9 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
         (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability && ty_equivalent(&a.referent, &b.referent)
         }
-        (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args)) => {
+        (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args))
+            if !a.is_simd() && !b.is_simd() =>
+        {
             a_name == b_name
                 && a_args.len() == b_args.len()
                 && a_args.iter().zip(b_args).all(|(a, b)| match (a, b) {
@@ -150,7 +152,9 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
         | (TyKind::LitRef { element: a, .. }, TyKind::LitRef { element: b, .. }) => {
             ty_equal_modulo_origins(a, b)
         }
-        (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args)) => {
+        (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args))
+            if !a.is_simd() && !b.is_simd() =>
+        {
             a_name == b_name
                 && a_args.len() == b_args.len()
                 && a_args.iter().zip(b_args).all(|(a, b)| match (a, b) {

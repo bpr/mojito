@@ -79,18 +79,18 @@ pub(super) fn active_register_loan_roots(
 /// bits; a bare `Pointer` read aliases by design (the `unsafe_*`
 /// vocabulary makes its lifetime the user's obligation).
 pub(super) fn may_alias_owned_storage(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::Struct(..)
-            | TyKind::Error
-            | TyKind::Tuple(_)
-            | TyKind::RuntimePack(_)
-            | TyKind::Variant(_)
-            | TyKind::ComptimeList(_)
-            | TyKind::Param { .. }
-            | TyKind::Assoc { .. }
-            | TyKind::SelfType
-    )
+    ty.is_non_simd_struct()
+        || matches!(
+            ty.kind(),
+            TyKind::Error
+                | TyKind::Tuple(_)
+                | TyKind::RuntimePack(_)
+                | TyKind::Variant(_)
+                | TyKind::ComptimeList(_)
+                | TyKind::Param { .. }
+                | TyKind::Assoc { .. }
+                | TyKind::SelfType
+        )
 }
 
 /// The parts of roots one instruction consumes through its operand

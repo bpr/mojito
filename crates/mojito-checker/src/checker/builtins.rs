@@ -238,7 +238,7 @@ pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
         (_, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) if a.is_simd() && coerces(b, a) => {
             Some(a.clone())
         }
-        (TyKind::Struct(..), TyKind::Struct(..)) if a != b => {
+        (TyKind::Struct(..), TyKind::Struct(..)) if a != b && !a.is_simd() && !b.is_simd() => {
             let materialized = mojito_types::types::default_literal(a);
             (materialized == mojito_types::types::default_literal(b)).then_some(materialized)
         }
@@ -410,10 +410,9 @@ impl Checker {
         {
             return true;
         }
-        if matches!(
-            ty.kind(),
-            TyKind::Struct(..) | TyKind::Param { .. } | TyKind::Assoc { .. }
-        ) || self.opaque_element(ty).is_some()
+        if ty.is_non_simd_struct()
+            || matches!(ty.kind(), TyKind::Param { .. } | TyKind::Assoc { .. })
+            || self.opaque_element(ty).is_some()
         {
             return self.conforms_to(ty, "Writable");
         }

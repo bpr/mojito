@@ -811,9 +811,7 @@ fn peel_references(ty: &mojito_types::types::Ty) -> &mojito_types::types::Ty {
 
 /// The struct `ty` is and the field it is held as, among `structs`.
 fn held_field<'s>(structs: &'s HashMap<String, StructDef>, ty: &Ty) -> Option<(&'s str, &'s str)> {
-    let mojito_types::types::TyKind::Struct(name, _) = ty.kind() else {
-        return None;
-    };
+    let (name, _) = ty.kind().as_non_simd_struct()?;
     let (name, declaration) = structs.get_key_value(name)?;
     Some((name.as_str(), declaration.register_field.as_deref()?))
 }
@@ -945,10 +943,9 @@ impl Prog {
     /// struct (a `SIMD`) enters as. `None` for any other function.
     fn constructed<'s>(&'s self, name: &'s str, param_types: &'s [Ty]) -> Option<Constructed<'s>> {
         let receiver = param_types.first();
-        let declared = match receiver.map(Ty::kind) {
-            Some(mojito_types::types::TyKind::Struct(receiver, _)) => Some(receiver.as_str()),
-            _ => None,
-        };
+        let declared = receiver
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .map(|(receiver, _)| receiver.as_str());
         if let Some((constructed, member)) = self.lifecycle_constructor(name, declared) {
             return (member == "__init__").then_some(Constructed::Struct(constructed));
         }
@@ -1026,12 +1023,12 @@ impl Prog {
 
     /// The declared struct a value of type `ty` is, through references.
     fn declared_struct<'t>(&self, ty: Option<&'t mojito_types::types::Ty>) -> Option<&'t str> {
-        match peel_references(ty?).kind() {
-            mojito_types::types::TyKind::Struct(name, _) if self.structs.contains_key(name) => {
-                Some(name.as_str())
-            }
-            _ => None,
-        }
+        peel_references(ty?)
+            .kind()
+            .as_non_simd_struct()
+            .map(|(name, _)| name)
+            .filter(|name| self.structs.contains_key(*name))
+            .map(String::as_str)
     }
 
     /// The `hasher`'s `_update_with_simd` a scalar `__hash__` leaf of type

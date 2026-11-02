@@ -661,8 +661,10 @@ impl<'a> Specializer<'a> {
     /// other function.
     fn table_owner(&mut self, template: &str, bindings: &Bindings) -> Option<(String, String)> {
         let key = self.table_key(template)?;
-        let name = if let Some(TyKind::Struct(name, _)) =
-            bindings.self_instance.as_ref().map(|(_, ty)| ty.kind())
+        let name = if let Some((name, _)) = bindings
+            .self_instance
+            .as_ref()
+            .and_then(|(_, ty)| ty.kind().as_non_simd_struct())
         {
             name.clone()
         } else {
@@ -2765,10 +2767,9 @@ impl<'a> Specializer<'a> {
                         && kwargs.is_empty()
                         && args.len() == 1 + usize::from(method == "__divmod__")
                         && operand.is_some_and(|operand| {
-                            matches!(
-                                operand.kind(),
-                                TyKind::Struct(..) | TyKind::StringLiteral(Some(_))
-                            ) || vector(operand)
+                            operand.is_non_simd_struct()
+                                || matches!(operand.kind(), TyKind::StringLiteral(Some(_)))
+                                || vector(operand)
                                 || (method == "__divmod__" && operand.is_simd())
                         })
                     {
@@ -3673,7 +3674,7 @@ impl<'a> Specializer<'a> {
             }
             let mut nested = Vec::new();
             collect_nested_types(&ty, &mut nested);
-            let opaque = matches!(ty.kind(), TyKind::Struct(..) | TyKind::Pointer { .. });
+            let opaque = ty.is_non_simd_struct() || matches!(ty.kind(), TyKind::Pointer { .. });
             types.extend(nested.into_iter().map(|nested| (nested, held && !opaque)));
             let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                 continue;
