@@ -817,15 +817,29 @@ fn held_field<'s>(structs: &'s HashMap<String, StructDef>, ty: &Ty) -> Option<(&
 }
 
 /// Whether a field step on a value of `ty` is the value itself: `ty` is a
-/// held struct, or a `SIMD`, whose `_mlir_value` the VM holds as the
-/// vector. A closed `SIMD` has no declared instance below the elaborator
-/// for [`held_field`] to read until a member is demanded (R1812), and a
-/// `Scalar[DType.bool]` a generic body reads `_mlir_value` of is the
-/// compiler's `Bool` once elaborated (R1612).
+/// held struct, or a `SIMD` whose instance holds it as its one
+/// `_mlir_value` field ([`simd_instance`]). A `Scalar[DType.bool]` a
+/// generic body reads `_mlir_value` of is the compiler's `Bool` once
+/// elaborated (R1612).
 fn field_is_whole(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
-    ty.kind().as_simd().is_some()
+    simd_instance(structs, ty).is_some_and(|(_, declaration)| declaration.register_field.is_some())
         || *ty.kind() == mojito_types::types::TyKind::Bool
         || held_field(structs, ty).is_some()
+}
+
+/// The declared instance a closed `SIMD` type `ty` is, among `structs`
+/// ([`mojito_symbol::symbol::member_table_name`]).
+fn simd_instance<'s>(
+    structs: &'s HashMap<String, StructDef>,
+    ty: &Ty,
+) -> Option<(&'s str, &'s StructDef)> {
+    if !ty.is_simd() {
+        return None;
+    }
+    let name = mojito_symbol::symbol::member_table_name(ty)?;
+    structs
+        .get_key_value(name.as_ref())
+        .map(|(name, declaration)| (name.as_str(), declaration))
 }
 
 /// Lower every field step whose base is a held struct to [`Proj::Rebind`]:

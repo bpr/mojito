@@ -442,19 +442,12 @@ impl StructFolds<'_> {
     }
 
     /// The declaration position of the field `field` of the struct `base`
-    /// holds. A `SIMD`'s one field is its `_mlir_value` storage, which a
-    /// closed `SIMD` has no declared instance below the elaborator to
-    /// name (R1812).
+    /// holds ([`MirDeclarations::struct_instance`]).
     fn position(&self, base: Reg, field: &str) -> Option<usize> {
-        let ty = self.reg_types.get(&base.0)?;
-        if ty.is_simd() {
-            return (field == mojito_types::ct::MLIR_VALUE_FIELD).then_some(0);
-        }
-        let mojito_types::types::TyKind::Struct(name, _) = ty.kind() else {
-            return None;
-        };
-        self.declarations
-            .structure(name)?
+        let (declaration, _) = self
+            .declarations
+            .struct_instance(self.reg_types.get(&base.0)?)?;
+        declaration
             .fields
             .iter()
             .position(|(candidate, _)| candidate == field)

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1833**.
+Next free ID: **R1834**.
 
 ## Ordered Work
 
@@ -11496,28 +11496,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1812 Below the elaborator a closed `SIMD` application has a
-  struct declaration only once a member is demanded, where upstream's
-  every application is the struct type**
+- [ ] **R1833 `struct_field_types` answers no fields for a struct
+  applied to its own binders, where upstream's `Self` inside a struct's
+  methods is the parametric struct with its declared fields**
 
-  `declare_simd_instance` runs when a backend first reads a member table,
-  and the discovered-types loop (`mono/specializer.rs`) skips a `SIMD`.
-  - So `MirDeclarations::register_field` cannot answer for `SIMD` in
-    concrete MIR, and `translated_type` keeps reading a `SIMD` as its
-    storage through `types::storage_ty`.
-  - Probe: deleting that `storage_ty` call makes Pliron fail `print(1 + 2)`
-    with "unsupported type `Struct("SIMD", …)`" in `_write_float`.
-  - Lever: the discovered-types loop sends a `SIMD` to
-    `declare_simd_instance`, and `translated_type` reads a `SIMD`'s
-    instance through `symbol::member_table_name`. `emit-mir` then gains
-    the instance declarations.
-  - Then delete the `SIMD` arms that stand in for the instance's one
-    `_mlir_value` field: `MirDeclarations::field_types`',
-    `verify_struct_creation`'s, canonicalize's `StructFolds::position`,
-    the VM's `field_is_whole` and `struct.create`, and Pliron's
-    `field_offset`, `lower_get_field`, and `lower_struct_create`.
+  An identity application (`SIMD[dtype, length]` inside `SIMD`'s own
+  methods) names its own binders, which `types::struct_field_types`
+  treats as unclosed.
+  - So `MirDeclarations::field_types` keeps a `SIMD` arm answering a
+    symbolic `SIMD`'s `_mlir_value` at its own slots.
+  - Probe: deleting that arm makes `assets/ok/simd_to_bits.mojo`,
+    `simd_hash_member.mojo`, and `template_method_simd_leaf.mojo` fail
+    elaboration ("function instantiation of
+    `_unsigned_integral_type_of` failed").
+  - Lever: `struct_field_types` returns the declared fields when every
+    argument is the declaration's own binder in order; then delete the
+    arm.
+  - Risk: it changes the answer for every generic struct inside its own
+    methods (drop elaboration, SROA, `drop_runs_no_code_within`).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1814 MIR lowering builds a `SIMD` from compiler-built lane ops
   over the vector, where upstream's initializers apply `pop` ops to the

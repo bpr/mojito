@@ -408,23 +408,41 @@ impl MirDeclarations {
         )
     }
 
+    /// The declaration a value of the struct type `ty` instantiates, beside
+    /// the arguments it is read at. Upstream's `SIMD[dt, n]` is its
+    /// instance, which the elaborator declares for every closed `SIMD` a
+    /// body holds ([`mojito_symbol::symbol::member_table_name`]), read at no
+    /// arguments; any other application, and a `SIMD` with no declared
+    /// instance (the source program's, or one no body holds), reads the
+    /// template it names at its own arguments.
+    pub fn struct_instance<'t>(&self, ty: &'t Ty) -> Option<(&MirStructDeclaration, &'t [TyArg])> {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return None;
+        };
+        mojito_symbol::symbol::member_table_name(ty)
+            .filter(|instance| instance != name)
+            .and_then(|instance| self.structure(&instance))
+            .map(|declaration| (declaration, &[][..]))
+            .or_else(|| Some((self.structure(name)?, arguments.as_slice())))
+    }
+
     /// The fields of a value of the declared struct type `ty` at its
-    /// arguments ([`mojito_types::types::struct_field_types`]); `None` for
-    /// any other type, or one whose fields its arguments do not close. A
+    /// arguments ([`Self::struct_instance`],
+    /// [`mojito_types::types::struct_field_types`]); `None` for any other
+    /// type, or one whose fields its arguments do not close. A symbolic
     /// `SIMD`'s one field is its `_mlir_value` storage at its own slots,
-    /// symbolic ones included, which a closed `SIMD` has no declared
-    /// instance below the elaborator to name (R1812).
+    /// which the template's field substitution does not answer for an
+    /// application to the struct's own binders (R1833).
     pub fn field_types(&self, ty: &Ty) -> Option<Cow<'_, [(String, Ty)]>> {
-        if let Some(storage) = mojito_types::types::simd_storage(ty) {
+        if ty.kind().known_simd().is_none()
+            && let Some(storage) = mojito_types::types::simd_storage(ty)
+        {
             return Some(Cow::Owned(vec![(
                 mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
                 storage,
             )]));
         }
-        let TyKind::Struct(name, arguments) = ty.kind() else {
-            return None;
-        };
-        let declaration = self.structure(name)?;
+        let (declaration, arguments) = self.struct_instance(ty)?;
         mojito_types::types::struct_field_types(
             &declaration.param_decls,
             arguments,
@@ -484,26 +502,24 @@ impl MirDeclarations {
         }
     }
 
-    /// The type LLVM translation sees for a value of `ty`: a struct
-    /// [`Self::register_field`] answers for is its one field at the struct's
-    /// arguments ([`Self::field_types`]), unwrapped again while the field is
-    /// such a struct, as upstream's `LowerKGENToLLVM` lowers it; any other
-    /// type is itself. A literal struct (`TyKind::Tuple`, upstream's
-    /// `!kgen.struct`) is never unwrapped, even of one element. A `SIMD`
-    /// application is its `!kgen.simd` storage
-    /// ([`mojito_types::types::storage_ty`]), the `_mlir_value` field
-    /// `register_field` would give, since below the elaborator a closed
-    /// `SIMD` has a declared instance only once a member is demanded (R1812).
+    /// The type LLVM translation sees for a value of `ty`: a struct whose
+    /// declaration ([`Self::struct_instance`]) [`Self::register_field`]
+    /// answers for is its one field at the struct's arguments
+    /// ([`Self::field_types`]), unwrapped again while the field is such a
+    /// struct, as upstream's `LowerKGENToLLVM` lowers it; any other type is
+    /// itself. A `SIMD` is its instance's `!kgen.simd` storage field. A
+    /// literal struct (`TyKind::Tuple`, upstream's `!kgen.struct`) is never
+    /// unwrapped, even of one element.
     pub fn translated_type(&self, ty: &Ty) -> Ty {
         let mut translated = ty.clone();
-        while let Some((name, _)) = translated.kind().as_non_simd_struct()
-            && self.register_field(name).is_some()
+        while let Some((declaration, _)) = self.struct_instance(&translated)
+            && self.register_field(&declaration.name).is_some()
             && let Some(fields) = self.field_types(&translated)
             && let [(_, field)] = fields.as_ref()
         {
             translated = field.clone();
         }
-        mojito_types::types::storage_ty(&translated)
+        translated
     }
 
     /// Whether a value of `ty` is register-passable, as upstream's

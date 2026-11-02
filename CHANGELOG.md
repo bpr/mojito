@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator now declares the struct instance of every closed `SIMD` a
+  body holds, not only one whose member is demanded, as upstream's every
+  `SIMD[dt, n]` is the struct (R1812). Concrete MIR reads a `SIMD`'s
+  `_mlir_value` through that instance in the verifier, canonicalization, the
+  VM, and the native backend, replacing their `SIMD`-only stand-in arms.
+
 - `Int32(copy=x)` and `SIMD[dt, n](copy=v)` call `SIMD`'s synthesized copy
   initializer, lowered as the trivial struct copy every synthesized copy
   takes, rather than a checked value read (R1813). A synthesized copy now

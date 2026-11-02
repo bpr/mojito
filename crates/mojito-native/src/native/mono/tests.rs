@@ -2768,20 +2768,32 @@ fn a_displayed_simd_value_tables_its_display_members_in_its_instance() {
 }
 
 #[test]
-fn an_undisplayed_simd_type_declares_no_instance() {
-    let source = "def main():\n\
-         \x20   var x = Int32(1) + 2\n\
+fn an_undisplayed_simd_type_declares_its_instance() {
+    let source = "@no_inline\n\
+         def bump(x: Int32) -> Int32:\n\
+         \x20   return x + 2\n\
+         def main():\n\
+         \x20   var x = bump(Int32(1))\n\
          \x20   _ = x\n";
     let specialized = specialized_with_removed(source, &[]).expect("specialize");
-    let declared: Vec<&str> = specialized
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let ty = mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Int32, 1);
+    let name = mojito_symbol::symbol::member_table_name(&ty).expect("a closed SIMD names one");
+    let declaration = specialized
         .program
         .declarations
-        .structs
-        .iter()
-        .map(|declaration| declaration.name.as_str())
-        .filter(|name| name.starts_with("SIMD$mono"))
-        .collect();
-    assert_eq!(declared, Vec::<&str>::new());
+        .structure(&name)
+        .unwrap_or_else(|| panic!("`{name}` is declared"));
+    assert_eq!(
+        declaration.fields,
+        [(
+            mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+            mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Int32, 1)
+        )]
+    );
 }
 
 /// `source`'s `owner[1]` and `owner[2]` share one owner-less `instance` of

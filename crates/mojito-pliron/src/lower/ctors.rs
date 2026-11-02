@@ -17,41 +17,14 @@ impl FnLowering<'_> {
         let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned() else {
             return Err(self.unsupported_reg("untyped struct creation".into(), dest));
         };
-        // A `SIMD` is held as its one `_mlir_value` storage, which a closed
-        // `SIMD` has no declared instance below the elaborator to name
-        // (R1812).
-        if let (Some(storage_ty), [storage]) =
-            (mojito_types::types::simd_storage(&struct_ty), fields)
-        {
-            return match lower_ty(
-                self.name,
-                &struct_ty,
-                &self.layout,
-                self.mir_declarations,
-                self.reg_span(dest),
-            )? {
-                LowerTy::Scalar(scalar) => {
-                    let value = self.reg_value(ctx, *storage, scalar)?;
-                    self.reg_values.insert(dest.0, value);
-                    Ok(())
-                }
-                LowerTy::Aggregate { layout, .. } => {
-                    self.store_fields(ctx, dest, layout, &[storage_ty], fields)
-                }
-                LowerTy::ZeroSized => {
-                    self.erased.insert(dest.0);
-                    Ok(())
-                }
-            };
-        }
-        let Some((name, _)) = struct_ty.kind().as_non_simd_struct() else {
+        let TyKind::Struct(name, _) = struct_ty.kind() else {
             return Err(self.unsupported_reg(format!("struct creation of `{struct_ty}`"), dest));
         };
-        let Some(decl) = self.struct_decls.get(name.as_str()) else {
+        let Some((decl, _)) = self.mir_declarations.struct_instance(&struct_ty) else {
             return Err(self.unsupported_reg(format!("struct creation of `{name}`"), dest));
         };
         let field_tys: Vec<Ty> = decl.fields.iter().map(|(_, t)| t.clone()).collect();
-        let held = self.mir_declarations.register_field(name).is_some();
+        let held = self.mir_declarations.register_field(&decl.name).is_some();
         match lower_ty(
             self.name,
             &struct_ty,

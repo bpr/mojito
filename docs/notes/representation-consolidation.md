@@ -34,8 +34,9 @@ command cannot use both.
      its field read (R1811), and MIR's builtin ops inlined from its
      dunders keep the storage type (R1801).
    - What is left is the storage, not the struct, at each builtin site:
-     - R1812: a closed instance is declared only once a member is
-       demanded, so concrete MIR still reads a `SIMD` as its storage.
+     - R1812 (done): every closed `SIMD` a body holds has its declared
+       instance below the elaborator, which concrete MIR reads its field
+       through.
      - R1813 (done): `Int32(copy=x)` is the synthesized copy
        initializer, lowered as the trivial struct copy.
      - R1814 (MIR lowering's lane ops typed at the struct) and R1815

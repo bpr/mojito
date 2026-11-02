@@ -1389,15 +1389,15 @@ impl VmBackend {
             }
             MirInstr::MakeStruct { dest, fields } => {
                 let dest_ty = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                // A `SIMD` is held as its one `_mlir_value` storage.
-                if let ([field], true) = (fields.as_slice(), dest_ty.is_some_and(|ty| ty.is_simd()))
-                {
-                    regs[dest.0 as usize] = regs[field.0 as usize].clone();
-                    return Ok(());
-                }
-                let name = prog.declared_struct(dest_ty).ok_or_else(|| {
-                    RuntimeError::TypeError("struct.create builds no declared struct".to_string())
-                })?;
+                let name = dest_ty
+                    .and_then(|ty| super::simd_instance(&prog.structs, ty))
+                    .map(|(name, _)| name)
+                    .or_else(|| prog.declared_struct(dest_ty))
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError(
+                            "struct.create builds no declared struct".to_string(),
+                        )
+                    })?;
                 let values = fields.iter().map(|r| regs[r.0 as usize].clone()).collect();
                 regs[dest.0 as usize] = calls::struct_value(&prog.structs[name], name, values)?;
             }

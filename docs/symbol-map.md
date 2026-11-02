@@ -2672,7 +2672,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   field read (`Checker::member_type`'s struct-field lookup), a
   `Proj::Field` or `field.get` in MIR, and `self._mlir_value = s` a field
   initialization of `out self`. `MirDeclarations::field_types` answers a
-  `SIMD`'s one field at its own slots, symbolic ones included, so `sroa`
+  `SIMD`'s one field through `MirDeclarations::struct_instance` (the
+  instance the elaborator declares for every closed `SIMD` a discovered
+  body holds, in `discover_structs` through `declare_simd_instance`, or
+  else the `SIMD` template at its arguments), and a symbolic `SIMD`'s at
+  its own slots (R1833), so `sroa`
   splits a `SIMD` slot into that field, and `canonicalize` folds a
   `SIMD`'s `struct.create`/`field.get` pair (`StructFolds::extracted`)
   and, through `MirInstr::folded_constant`, a `struct.create` of a
@@ -2690,20 +2694,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ParamContext::field` reads a constant `SIMD`'s storage. A `Bool`'s
   `_mlir_value` is its `!kgen.scalar<bool>` storage (`bool_storage`). The
   elaborator's `rebind` judge (`verify::types_agree`) takes a `SIMD` and
-  its storage across, as the pin's `rebind` does. Until a
-  closed `SIMD` always has a declared instance (R1812), the verifier's
-  `verify_struct_creation`, the VM's `field_is_whole` (place steps,
-  `field.get`, `struct.create`), and Pliron's `field_offset`,
-  `lower_get_field`, and `lower_struct_create` answer a `SIMD`'s one
-  `_mlir_value` field as its whole value, and a `Bool`'s too, which a
-  generic body's `Scalar[DType.bool]` becomes once elaborated (R1612). Below the check a vector
-  lowers to its storage, as upstream's `LowerKGENToLLVM` lowers the
-  `SIMD` struct to its field: `types::storage_ty` is the mapping (the
-  vector arm of `MirDeclarations::translated_type`, which stays until a
-  closed `SIMD` always has a declared instance, R1812), layout
-  (`LayoutCx::layout_of`) lays a vector out as its storage, and Pliron's
-  `lower_ty` (through `translated_type`), `scalar_type`, and `simd_dims`
-  classify the storage, so a
+  its storage across, as the pin's `rebind` does. The verifier's
+  `verify_struct_creation`, `canonicalize`'s `StructFolds::position`,
+  the VM's `field_is_whole` and `struct.create` (through its
+  `simd_instance`), and Pliron's `field_offset`, `lower_get_field`, and
+  `lower_struct_create` read a closed `SIMD` as its declared instance
+  (`MirDeclarations::struct_instance`), and answer a `Bool`'s
+  `_mlir_value` as its whole value, which a generic body's
+  `Scalar[DType.bool]` becomes once elaborated (R1612). Below the check a
+  vector lowers to its storage, as upstream's `LowerKGENToLLVM` lowers
+  the `SIMD` struct to its field: `MirDeclarations::translated_type`
+  unwraps a `SIMD` to its instance's one `!kgen.simd` field as it does
+  any one-field register-passable struct, layout (`LayoutCx::layout_of`)
+  lays a vector out as its storage, and Pliron's `lower_ty` (through
+  `translated_type`), `scalar_type`, and `simd_dims` classify the storage, so a
   one-lane storage stays an SSA scalar. The storage is never read back
   as a vector; the elaborator's `discharge_rebinds` gives an erased
   `Self(mlir_value=s)` chain's root, read only by the chain, the vector it

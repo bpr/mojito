@@ -3676,6 +3676,9 @@ impl<'a> Specializer<'a> {
             collect_nested_types(&ty, &mut nested);
             let opaque = ty.is_non_simd_struct() || matches!(ty.kind(), TyKind::Pointer { .. });
             types.extend(nested.into_iter().map(|nested| (nested, held && !opaque)));
+            if ty.kind().known_simd().is_some() {
+                self.declare_simd_instance(owner, &ty)?;
+            }
             let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                 continue;
             };
@@ -3765,10 +3768,10 @@ impl<'a> Specializer<'a> {
     /// Declare the `SIMD` instance the closed `SIMD` type `ty` names
     /// ([`mojito_symbol::symbol::member_table_name`]), unless it is
     /// declared: upstream's `SIMD[dt, n]` is a struct instance whose
-    /// witness tables name its members, and a backend reaching a member
-    /// from a value's type reads the instance's table. It is declared when
-    /// such a member is first demanded, and the member instances already
-    /// filed under its name join its table then.
+    /// fields and witness tables a backend reads from a value's type. It is
+    /// declared for every closed `SIMD` a discovered body holds, and for a
+    /// member demanded from a type no body holds; the member instances
+    /// already filed under its name join its table then.
     pub(super) fn declare_simd_instance(&mut self, owner: &str, ty: &Ty) -> Result<(), MonoError> {
         let Some(name) = mojito_symbol::symbol::member_table_name(ty) else {
             return Ok(());
