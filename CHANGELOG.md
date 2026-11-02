@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR materializes a literal at a scalar by converting it at the
+  `!kgen.simd` storage and `struct.create`-ing the scalar over it, as
+  upstream's `SIMD.__init__(IntLiteral)` and `__init__(FloatLiteral)` write
+  their convert attribute at `Self._mlir_type`, rather than writing the
+  `Int`, `UInt`, `Float64`, or `Scalar[dt]` register directly (R1834). The
+  verifier, the SCCP fold, the VM, and the native backend read the storage
+  target, and the elaborator's and the parametric inliner's constant tracers
+  see through the `struct.create`. Program output is unchanged.
+
 - The checker's parameter domain types `pop.simd.splat`, `pop.cast`, and a
   vector's `_mlir_value` read at the `!kgen.simd` storage, as upstream's
   `pop` ops and `struct.extract` are, rather than at the `SIMD` holding it

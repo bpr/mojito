@@ -996,8 +996,10 @@ impl<'a> Flatten<'a> {
     }
 
     /// Materialize an exact-literal register as the checked `target`: a
-    /// numeric scalar through `MaterializeLiteral`, a multi-lane vector as the
-    /// one-element splat explicit `SIMD[dt, w](literal)` construction emits.
+    /// scalar converted at its `!kgen.simd` storage and the struct created
+    /// over it, as `SIMD.__init__(IntLiteral)` writes
+    /// `#pop.int_literal_convert`, a multi-lane vector as the one-element
+    /// splat explicit `SIMD[dt, w](literal)` construction emits.
     /// A vector whose width is still a parameter expression splats too: the
     /// instance's width may be above one.
     pub(in crate::mir) fn materialize_literal(
@@ -1010,6 +1012,15 @@ impl<'a> Flatten<'a> {
             .is_some_and(|(_, width)| width.known().is_none_or(|width| width > 1))
         {
             return self.splat_scalar(value, target, source);
+        }
+        if let Some(storage) = mojito_types::types::simd_storage(target) {
+            return self.simd_through_storage(target, source, |dest| {
+                MirInstr::MaterializeLiteral {
+                    dest,
+                    value,
+                    target: storage,
+                }
+            });
         }
         let dest = self.fresh_typed(source, None, target.clone());
         self.emit(MirInstr::MaterializeLiteral {

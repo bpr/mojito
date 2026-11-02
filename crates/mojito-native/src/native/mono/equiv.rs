@@ -5,6 +5,7 @@
 use super::*;
 use mojito_types::types::FuncTy;
 use mojito_types::types::TyKind;
+use mojito_types::types::{simd_storage, storage_value_ty};
 
 /// Field-list equivalence for name-colliding struct instances: strict
 /// structural equality except that pointer types collapse (one opaque
@@ -83,6 +84,7 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
 /// arguments spelled as materialized literal registers.
 pub(super) fn const_reg_value(function: &MirFunction, reg: Reg) -> Option<CtValue> {
     register_constant(
+        &function.reg_types,
         &nested_instructions(&function.blocks),
         reg,
         &mut HashSet::new(),
@@ -95,8 +97,13 @@ pub(super) fn function_constant_values(function: &MirFunction) -> HashMap<u32, C
         .reg_types
         .keys()
         .filter_map(|reg| {
-            register_constant(&instructions, Reg(*reg), &mut HashSet::new())
-                .map(|value| (*reg, value))
+            register_constant(
+                &function.reg_types,
+                &instructions,
+                Reg(*reg),
+                &mut HashSet::new(),
+            )
+            .map(|value| (*reg, value))
         })
         .collect()
 }
@@ -369,8 +376,10 @@ pub(super) fn reg_ty<'a>(
 }
 
 /// The compile-time value `reg` holds when `instructions` define it by a
-/// constant, directly or through a literal materialization.
+/// constant, directly, through a literal materialization, or as the
+/// `SIMD` created over a constant storage (`StructCreateOp::fold`).
 fn register_constant(
+    reg_types: &HashMap<u32, Ty>,
     instructions: &[&MirInstr],
     reg: Reg,
     visiting: &mut HashSet<u32>,
@@ -401,9 +410,23 @@ fn register_constant(
                 target,
             } if *dest == reg => Some(
                 literal_constant(instructions, *value)
-                    .and_then(|literal| literal.materialize_as(target))
-                    .or_else(|| register_constant(instructions, *value, visiting)),
+                    .and_then(|literal| literal.materialize_as(&storage_value_ty(target)))
+                    .or_else(|| register_constant(reg_types, instructions, *value, visiting)),
             ),
+            MirInstr::MakeStruct { dest, fields }
+                if *dest == reg
+                    && fields.len() == 1
+                    && reg_types
+                        .get(&dest.0)
+                        .is_some_and(|ty| simd_storage(ty).is_some()) =>
+            {
+                Some(register_constant(
+                    reg_types,
+                    instructions,
+                    fields[0],
+                    visiting,
+                ))
+            }
             _ => None,
         })
         .flatten()

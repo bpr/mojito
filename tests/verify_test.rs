@@ -635,6 +635,57 @@ fn verifier_rejects_untyped_registers() {
     expect_finding(&program(f), "untyped register r0");
 }
 
+/// The literal-materialization findings of `literal`, typed `found`,
+/// converted at the `!kgen.simd` storage of `target`.
+fn storage_materialization_findings(literal: Const, found: Ty, target: &Ty) -> Vec<String> {
+    let storage = mojito::types::storage_ty(target);
+    let f = function(
+        vec![block(
+            vec![
+                MirInstr::Const {
+                    dest: Reg(0),
+                    k: literal,
+                },
+                MirInstr::MaterializeLiteral {
+                    dest: Reg(1),
+                    value: Reg(0),
+                    target: storage.clone(),
+                },
+            ],
+            MirTerm::Return(None),
+        )],
+        2,
+        &[(0, found), (1, storage)],
+    );
+    verify(&program(f))
+        .into_iter()
+        .filter(|error| error.contains("materializ"))
+        .collect()
+}
+
+#[test]
+fn verifier_checks_a_literal_materialized_at_its_storage() {
+    // `#pop<float_literal_convert>` is typed at `Float32`'s storage.
+    let float =
+        || Const::FloatLiteral(mojito::FloatLiteral::parse_decimal("0.5").expect("decimal"));
+    let float_ty = || Ty::new(TyKind::FloatLiteral(None));
+    let lanes = |width| mojito::types::canonical_simd_ty(mojito::ast::Dtype::Float32, width);
+    assert_eq!(
+        storage_materialization_findings(float(), float_ty(), &lanes(1)),
+        Vec::<String>::new()
+    );
+    let wide = storage_materialization_findings(float(), float_ty(), &lanes(4));
+    assert!(
+        wide.iter().any(|error| error.contains("non-scalar target")),
+        "{wide:?}"
+    );
+    let int = storage_materialization_findings(float(), float_ty(), &Ty::int());
+    assert!(
+        int.iter().any(|error| error.contains("cannot materialize")),
+        "{int:?}"
+    );
+}
+
 #[test]
 fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
     let f = function(

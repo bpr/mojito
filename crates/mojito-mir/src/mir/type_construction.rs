@@ -168,7 +168,7 @@ pub fn struct_copy(
 /// A `SIMD` built as its initializers build it: `op`, a `pop` op writing
 /// the `!kgen.simd` register `storage`, then the struct `dest` created over
 /// that storage (`struct.create`).
-pub(in crate::mir) fn storage_construction(dest: Reg, storage: Reg, op: MirInstr) -> [MirInstr; 2] {
+pub fn storage_construction(dest: Reg, storage: Reg, op: MirInstr) -> [MirInstr; 2] {
     [
         op,
         MirInstr::MakeStruct {

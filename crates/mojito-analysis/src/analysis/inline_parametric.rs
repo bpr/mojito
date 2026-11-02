@@ -189,7 +189,7 @@ use mojito_mir::mir::{
     instruction_regions_mut, instruction_regs_mut, instruction_slots, instruction_subscript_call,
     instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
     member_receiver_ty, name_constructors, operator_method, region_exit, removed_argument_operands,
-    renumber_block_slots, subscript_store_call, terminator_regs_mut,
+    renumber_block_slots, storage_construction, subscript_store_call, terminator_regs_mut,
     with_removed_argument_forwards_erased, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
@@ -202,7 +202,7 @@ use mojito_types::types::{
     default_literal, erase_origins, is_scalar_simd, list_spread_argument, names_binder,
     nominal_parts, pack_spread, pack_spread_argument, replace_argument_parameters,
     replace_constraint_parameters, replace_parameters, replace_value_parameters, rewrite_ty,
-    scalar_simd_dtype,
+    scalar_simd_dtype, simd_storage,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -749,11 +749,25 @@ impl Literal {
         };
         let value = dest;
         let dest = fresh_register(function, target.clone(), span);
-        instructions.push(MirInstr::MaterializeLiteral {
-            dest,
-            value,
-            target: target.clone(),
-        });
+        match simd_storage(target) {
+            Some(storage_ty) => {
+                let storage = fresh_register(function, storage_ty.clone(), span);
+                instructions.extend(storage_construction(
+                    dest,
+                    storage,
+                    MirInstr::MaterializeLiteral {
+                        dest: storage,
+                        value,
+                        target: storage_ty,
+                    },
+                ));
+            }
+            None => instructions.push(MirInstr::MaterializeLiteral {
+                dest,
+                value,
+                target: target.clone(),
+            }),
+        }
         dest
     }
 }
@@ -1125,7 +1139,12 @@ impl<'c> Inliner<'_, 'c> {
                 *dest,
                 Cow::Borrowed(accessor.target.as_str()),
                 subscript.as_ref()?.arguments(),
-                Cow::Owned(subscript_parameter_arguments(block, index, accessor)?),
+                Cow::Owned(subscript_parameter_arguments(
+                    &self.function.reg_types,
+                    block,
+                    index,
+                    accessor,
+                )?),
                 &[][..],
                 Some(Receiver::Argument(*base)),
                 base_place.as_deref(),
@@ -1529,7 +1548,11 @@ impl<'c> Inliner<'_, 'c> {
             Some((function, true)) => Some(CallableArgument::Function(function.clone())),
             Some((_, false)) => None,
             None => {
-                match defined_constant(&block.instrs[run_start(block, index)..index], argument)? {
+                match defined_constant(
+                    &self.function.reg_types,
+                    &block.instrs[run_start(block, index)..index],
+                    argument,
+                )? {
                     Const::Function(function) => Some(CallableArgument::Function(function.clone())),
                     _ => None,
                 }
@@ -3654,6 +3677,7 @@ fn witness_of(
 /// records, a literal index taking the value it materializes to at the
 /// parameter's `Int`; `None` when one is neither.
 fn subscript_parameter_arguments(
+    reg_types: &HashMap<u32, Ty>,
     block: &MirBlock,
     index: usize,
     call: &MirSubscriptCall,
@@ -3665,7 +3689,7 @@ fn subscript_parameter_arguments(
             match (
                 argument
                     .value
-                    .and_then(|reg| defined_constant(preceding, reg)),
+                    .and_then(|reg| defined_constant(reg_types, preceding, reg)),
                 &argument.expr,
             ) {
                 (Some(Const::Int(value)), _) => Some(CtValue::Int(*value)),
@@ -3764,15 +3788,29 @@ fn subscript_operands(instruction: &MirInstr) -> Option<SubscriptOperands> {
 }
 
 /// The constant the last of `instructions` defining `reg` gives it, through
-/// a literal's materialization.
-fn defined_constant(instructions: &[MirInstr], reg: Reg) -> Option<&Const> {
+/// a literal's materialization and the `SIMD` created over its storage
+/// (`StructCreateOp::fold`); `reg_types` are the function's.
+fn defined_constant<'a>(
+    reg_types: &HashMap<u32, Ty>,
+    instructions: &'a [MirInstr],
+    reg: Reg,
+) -> Option<&'a Const> {
     instructions
         .iter()
         .rev()
         .find_map(|instruction| match instruction {
             MirInstr::Const { dest, k } if *dest == reg => Some(Some(k)),
             MirInstr::MaterializeLiteral { dest, value, .. } if *dest == reg => {
-                Some(defined_constant(instructions, *value))
+                Some(defined_constant(reg_types, instructions, *value))
+            }
+            MirInstr::MakeStruct { dest, fields }
+                if *dest == reg
+                    && fields.len() == 1
+                    && reg_types
+                        .get(&dest.0)
+                        .is_some_and(|ty| simd_storage(ty).is_some()) =>
+            {
+                Some(defined_constant(reg_types, instructions, fields[0]))
             }
             _ => None,
         })

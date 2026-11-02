@@ -6,6 +6,7 @@
 use super::*;
 use mojito_mir::mir::verify::instruction_places;
 use mojito_types::types::TyKind;
+use mojito_types::types::storage_value_ty;
 
 impl VmBackend {
     /// Execute one straight-line MIR instruction against the current frame.
@@ -323,8 +324,10 @@ impl VmBackend {
                 value,
                 target,
             } => {
-                regs[dest.0 as usize] =
-                    crate::runtime::materialize_literal(regs[value.0 as usize].clone(), target)?;
+                regs[dest.0 as usize] = crate::runtime::materialize_literal(
+                    regs[value.0 as usize].clone(),
+                    &storage_value_ty(target),
+                )?;
             }
             MirInstr::ScalarCast {
                 dest,

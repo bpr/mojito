@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1836**.
+Next free ID: **R1837**.
 
 ## Ordered Work
 
@@ -11589,33 +11589,38 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Then delete `vector_slots` in favour of `kgen_simd_slots`.
   - Only the full corpus finds this change's failures, so it lands with
     the nightly gate in view.
+  - Reject a struct target on `MaterializeLiteral`, which today reads its
+    target through `storage_value_ty`, and rewrite the `literal.materialize
+    … target: Int` sites of `tests/mir_passes/**` and
+    `tests/snapshots/mir/control_flow.mir` as a storage conversion and a
+    `struct.create`.
   - Probe: the concrete MIR of `assets/ok/simd_slice_insert_split_interleave.mojo`
     and `math_log.mojo` keeps an `llvm.intrinsic` over `SIMD` registers
     (`SIMD.reduce_*`, splices).
   - Depends on R1814, R1815, and R1834.
   - Model: Fable, Not Planned.
 
-- [ ] **R1834 MIR's `literal.materialize` writes a `SIMD` register, where
-  upstream's literal initializers convert at the storage and
-  `struct.create` the result**
+- [ ] **R1836 A multi-lane literal conversion splats the unconverted
+  literal, where upstream's attribute converts at the full `!kgen.simd`
+  storage**
 
-  `@implicit SIMD.__init__(IntLiteral)` and `__init__(FloatLiteral)` write
-  a `#pop.int_literal_convert` or `float_literal_convert` attribute typed
-  at `!kgen.simd` and initialize the struct from it. MIR's
-  `MaterializeLiteral` writes the `Int`, `UInt`, `Float64`, or
-  `Scalar[dt]` register itself.
-  - Emitters: `Flatten::materialize_literal` (`lower_expr/calls.rs`),
-    `call_defaults::materialize`'s one-lane arm, and the call-boundary
-    `CheckedCallValueAdjustment::MaterializeLiteral` (`mir/calls.rs`).
-  - Lever: write the storage through `Flatten::simd_through_storage` and
-    `type_construction::storage_construction`, as the splats and the
-    `SIMDLength` conversion do. SCCP's `MaterializeLiteral` fold, the VM,
-    and Pliron's literal lowering then read the storage type
-    (`types::storage_value_ty`).
-  - Probe: the concrete MIR of `assets/ok/int_literal_struct.mojo` keeps
-    `literal.materialize { …, target: Int }` in `IntLiteral.__int__`.
-  - The fan-out reaches every literal, so the nightly gate is this
-    change's real check.
+  `SIMD[DType.int32, 4](7)` writes `#pop.int_literal_convert<7> :
+  Self._mlir_type`, one value at the four-lane storage. MIR emits
+  `simd.make { elems: [%literal] }` at the storage over the `IntLiteral`
+  or `FloatLiteral` register itself, an op upstream does not have.
+  - Emitters: the splat arms of `Flatten::materialize_literal`
+    (`lower_expr/calls.rs`) and `call_defaults::materialize`.
+  - Lever: `MaterializeLiteral` at the multi-lane storage, then
+    `struct.create`. The VM's `runtime::materialize_literal` already
+    splats; the verifier's "non-scalar target" check,
+    `MirInstr::folded_constant`'s `MaterializeLiteral` arm, and Pliron's
+    `lower_materialize` are scalar-only and need a lane-count arm.
+  - Then `MakeSimd`'s literal-element arms (`folded_constant`, Pliron's
+    multi-lane lowering) lose their last emitter.
+  - Probe: `ones` in `assets/ok/simd_literal_splat.mojo` (`return 1` at
+    `SIMD[DType.int32, 4]`) lowers to `simd.make` over the `int_literal`
+    register in `mir::lower_checked_program`'s MIR. SCCP folds it before
+    `emit-mir` prints, so the probe is a phase test, not the CLI.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

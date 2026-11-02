@@ -2046,8 +2046,12 @@ quota.
 
 Contextual typing selects the one transition to a runtime scalar. The checker
 records `SemanticAdjustment::MaterializeLiteral(target)`, HIR retains that
-decision, and MIR emits `MaterializeLiteral { value, target }`; the verifier
-requires an exact-literal source and compatible concrete target. Integer targets
+decision, and MIR converts the literal at the target's `!kgen.simd` storage
+(`MaterializeLiteral { value, target: storage }`) and `struct.create`s the
+scalar over it, as `SIMD.__init__(IntLiteral)` writes
+`#pop.int_literal_convert` at `Self._mlir_type`; the verifier requires an
+exact-literal source and compatible concrete target, read through the storage,
+and still accepts a struct target until R1816. Integer targets
 use destination-width two's-complement wrapping. Floating targets round once
 from the exact rational directly to binary32 or binary64, preserving signed
 zero and producing IEEE infinity on overflow. Bindings, stores, calls, returns,

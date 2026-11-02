@@ -1617,7 +1617,7 @@ pub fn kgen_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 ///
 /// Both forms are read because some of MIR's builtin vector instructions
 /// still take the `SIMD` register where upstream's `pop` ops take the
-/// storage (R1816, R1834).
+/// storage (R1816).
 pub fn vector_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     kgen_simd_slots(ty).or_else(|| simd_slots(ty))
 }

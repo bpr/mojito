@@ -44,9 +44,10 @@ command cannot use both.
      - R1815 (done): the checker's parameter domain types lane ops and
        a vector's `_mlir_value` read at the storage. R1835 (an `Int`'s
        read, and `Int` ↔ storage as a ring isomorphism) remains.
-     - R1834 (MIR's literal materialization typed at the struct), then
-       R1816 (the verifier rejects a `SIMD` register on a builtin vector
-       instruction).
+     - R1834 (done): MIR's literal materialization converts at the
+       storage and creates the struct over it.
+     - R1816 (the verifier rejects a `SIMD` register on a builtin vector
+       instruction) remains.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1812 --task R1813 --task R1816 -n 0

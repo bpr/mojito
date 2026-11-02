@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
+use mojito_types::types::storage_value_ty;
 
 impl FnLowering<'_> {
     pub(super) fn lower_const(
@@ -604,6 +605,7 @@ impl FnLowering<'_> {
         value: Reg,
         target_ty: &Ty,
     ) -> Result<(), PlironError> {
+        let target_ty = &storage_value_ty(target_ty);
         let (target, literal_storage) = match target_ty.kind() {
             kind if kind.is_int() => (ScalarTy::Int, false),
             kind if kind.is_uint() => (ScalarTy::UInt, false),

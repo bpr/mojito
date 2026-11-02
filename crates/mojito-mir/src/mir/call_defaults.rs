@@ -1754,9 +1754,9 @@ fn literal_constant(literal: &CheckedConst) -> Const {
 }
 
 /// `value`, a literal of type `found`, materialized at the parameter type
-/// `target` as a written literal argument is: a numeric scalar through
-/// `MaterializeLiteral`, a multi-lane vector as the one-element splat of
-/// its storage.
+/// `target` as a written literal argument is: a scalar converted at its
+/// storage and the struct created over it, a multi-lane vector as the
+/// one-element splat of its storage.
 fn materialize(
     function: &mut MirFunction,
     value: Reg,
@@ -1781,6 +1781,17 @@ fn materialize(
                 dtype,
                 width,
                 elems: vec![value],
+            },
+        ));
+    } else if let Some(storage_ty) = mojito_types::types::simd_storage(target) {
+        let storage = fresh_register(function, storage_ty.clone(), location);
+        prelude.extend(storage_construction(
+            dest,
+            storage,
+            MirInstr::MaterializeLiteral {
+                dest: storage,
+                value,
+                target: storage_ty,
             },
         ));
     } else {

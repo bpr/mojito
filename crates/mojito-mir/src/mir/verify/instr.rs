@@ -5,7 +5,7 @@ use super::*;
 use crate::mir::{MirCaptureMode, MirClosureCapture};
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::TyKind;
-use mojito_types::types::{i1_as_bool, storage_ty};
+use mojito_types::types::{i1_as_bool, storage_ty, storage_value_ty};
 
 pub(super) fn verify_instruction(
     name: &str,
@@ -546,6 +546,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
     let prefix = cx.prefix;
     match instruction {
         MirInstr::MaterializeLiteral { value, target, .. } => {
+            let target = &storage_value_ty(target);
             let valid_target = target.is_int()
                 || target.is_uint()
                 || target.is_float64()

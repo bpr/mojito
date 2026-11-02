@@ -2490,9 +2490,22 @@ fn literal_materialization_is_explicit_in_typed_mir() {
             ..
         } if value.to_string() == "18446744073709551623"
     )));
+    // The literal converts at `Int`'s storage and `Int` is created over
+    // it, as `SIMD.__init__(IntLiteral)` does.
+    let int_storage = mojito::types::storage_ty(&Ty::int());
+    let storage = instructions
+        .clone()
+        .find_map(|instruction| match instruction {
+            MirInstr::MaterializeLiteral { dest, target, .. } if *target == int_storage => {
+                Some(*dest)
+            }
+            _ => None,
+        })
+        .expect("materialization at the storage");
     assert!(instructions.clone().any(|instruction| matches!(
         instruction,
-        MirInstr::MaterializeLiteral { target, .. } if target.is_int()
+        MirInstr::MakeStruct { dest, fields }
+            if fields.as_slice() == [storage] && main.reg_types.get(&dest.0) == Some(&Ty::int())
     )));
 }
 
@@ -2639,6 +2652,7 @@ fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
+    let int_storage = mojito::types::storage_ty(&Ty::int());
     let materializations = main
         .blocks
         .iter()
@@ -2646,7 +2660,7 @@ fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
         .filter(|instruction| {
             matches!(
                 instruction,
-                MirInstr::MaterializeLiteral { target, .. } if target.is_int()
+                MirInstr::MaterializeLiteral { target, .. } if *target == int_storage
             )
         })
         .count();

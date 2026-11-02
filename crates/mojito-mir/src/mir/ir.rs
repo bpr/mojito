@@ -3402,6 +3402,7 @@ impl MirInstr {
                 value,
                 target,
             } => {
+                let target = &mojito_types::types::storage_value_ty(target);
                 let literal = operand(*value)?;
                 let materializes = target.is_int()
                     || target.is_uint()
@@ -4946,6 +4947,23 @@ mod tests {
             ),
             Some(Const::Value(CtValue::Simd { lanes, .. }))
                 if lanes == [CtLane::Float(f64::from(0.1f32).to_bits())]
+        ));
+        // At the `!kgen.simd` storage, as `#pop.int_literal_convert` is typed.
+        let storage = mojito_types::types::storage_ty;
+        assert!(matches!(
+            materialize(storage(&Ty::int()).kind().clone()),
+            Some(Const::Int(i64::MIN))
+        ));
+        assert!(matches!(
+            (
+                materialize_into(
+                    literal(300),
+                    TyKind::IntLiteral(None),
+                    storage(&lane(Dtype::UInt8))
+                ),
+                simd(Dtype::UInt8, CtLane::Int(44))
+            ),
+            (Some(Const::Value(a)), Const::Value(b)) if a == b
         ));
         assert!(into_lane(1, Dtype::Bool).is_none());
         assert!(into_lane(1, Dtype::Int32).is_some());
