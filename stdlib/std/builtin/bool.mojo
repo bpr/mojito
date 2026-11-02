@@ -4,17 +4,19 @@
 #
 # `Bool` declares upstream's storage, `MIN`/`MAX`, the trivial bits, the
 # initializers but the Python one, `Comparable` with the comparison and
-# bitwise operators, and the `__bool__`, `__mlir_bool__`, `__mlir_i1__`,
-# `__int__`, `__float__`, and `__hash__` bodies. The checker holds the
-# struct as its compiler `Bool` type until R1612. Still compiler rules:
-# `Writable` (R1611) and `EnumLike` (R1189). Python interop and
-# `@lldb_formatter_wrapping_type` are absent.
+# bitwise operators, `Writable` with `write_to` and `write_repr_to`, and
+# the `__bool__`, `__mlir_bool__`, `__mlir_i1__`, `__int__`, `__float__`,
+# and `__hash__` bodies. The checker holds the struct as its compiler
+# `Bool` type until R1612. Still a compiler rule: `EnumLike` (R1189).
+# Python interop and `@lldb_formatter_wrapping_type` are absent.
 #
 # Upstream's `Iterable` overloads of `any` and `all` are absent: their
 # `where conforms_to(IterableType.IteratorType[origin_of(iterable)].Element,
 # Boolable & Deinitable)` clause takes a projection subject (R792).
 
+from std.format import Writable, Writer
 from std.hash.hasher import Hasher
+from std.string import StaticString
 from std.utils._select import _select_register_value as select
 
 
@@ -32,6 +34,7 @@ struct Bool(
     ImplicitlyCopyable,
     Intable,
     TrivialRegisterPassable,
+    Writable,
 ):
     """The primitive Bool scalar value used in Mojo."""
 
@@ -143,6 +146,35 @@ struct Bool(
         return __mlir_op.`pop.cast_to_builtin`[_type=__mlir_type.i1](
             self._mlir_value
         )
+
+    @inline(.never)
+    def write_to(self, mut writer: Some[Writer]):
+        """
+        Formats this boolean to the provided Writer.
+
+        Args:
+            writer: The object to write to.
+        """
+
+        # `write_string` rather than `write` so the literal reaches the writer
+        # without becoming a `String`. The arms name `StaticString` because the
+        # two literals have distinct types, and a conditional over the bare
+        # literals unifies them through `String`.
+        writer.write_string(
+            StaticString("True") if self else StaticString("False")
+        )
+
+    @inline(.never)
+    def write_repr_to(self, mut writer: Some[Writer]):
+        """Writes the repr of this boolean to a writer.
+
+        The repr of a boolean is the same as its string representation:
+        `True` or `False`.
+
+        Args:
+            writer: The object to write to.
+        """
+        self.write_to(writer)
 
     @always_inline("builtin")
     def __int__(self) -> Int:

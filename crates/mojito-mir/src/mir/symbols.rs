@@ -17,7 +17,7 @@
 use crate::mir::{Const, MirBlock, MirFunction, MirInstr, instruction_regions_mut};
 use mojito_symbol::symbol::member_table_name;
 use mojito_types::symbol_ref::SYMBOL_REF;
-use mojito_types::types::{Ty, mentions};
+use mojito_types::types::{Ty, TyKind, mentions};
 use serde::Serialize;
 use serde::ser;
 use std::cell::RefCell;
@@ -115,23 +115,25 @@ impl<'t> SymbolTable<'t> {
         &self.types[ty]
     }
 
-    /// The member-table declarations the closed `SIMD` types in `ty` use
-    /// ([`member_table_name`]), which their serialized dtype and width do
-    /// not spell as a struct type spells its name, and the `SIMD` template
-    /// a program declaring it names by any `SIMD` type.
+    /// The member-table declarations the closed `SIMD` types and the
+    /// `Bool`s in `ty` use ([`member_table_name`]), which their serialized
+    /// spelling does not name as a struct type spells its name, and the
+    /// `SIMD` template a program declaring it names by any `SIMD` type.
     fn member_table_uses(&self, ty: &Ty) -> Vec<&'t str> {
-        let simds = RefCell::new(Vec::new());
+        let tabled = RefCell::new(Vec::new());
         mentions(ty, &|nested| {
-            if nested.is_simd() {
-                simds.borrow_mut().push(nested.clone());
+            if nested.is_simd() || matches!(nested.kind(), TyKind::Bool) {
+                tabled.borrow_mut().push(nested.clone());
             }
             false
         });
-        let simds = simds.into_inner();
-        let template = (!simds.is_empty())
+        let tabled = tabled.into_inner();
+        let template = tabled
+            .iter()
+            .any(|nested| nested.is_simd())
             .then(|| self.lookup(mojito_types::types::SIMD_TYPE_NAME))
             .flatten();
-        simds
+        tabled
             .iter()
             .filter_map(member_table_name)
             .filter_map(|name| self.lookup(&name))

@@ -69,6 +69,7 @@ assets/ok/bool_bitwise_operators.mojo	main	exe-differential	sanitized
 assets/ok/bool_declared_initializers.mojo	main	exe-differential	sanitized
 assets/ok/bool_declared_members.mojo	main	exe-differential	sanitized
 assets/ok/bool_declared_operators.mojo	main	exe-differential	sanitized
+assets/ok/bool_declared_writable.mojo	main	exe-differential	sanitized
 assets/ok/bool_storage_primitives.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized

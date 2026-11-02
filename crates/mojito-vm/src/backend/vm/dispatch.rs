@@ -663,8 +663,8 @@ impl VmBackend {
     /// instance bound to the builtin string writer that the member table
     /// of its type names ([`mojito_symbol::symbol::member_table_name`]): a
     /// struct's own or synthesized `Writable` member, by its runtime name,
-    /// and a `SIMD` value's declared member, by its runtime dtype and
-    /// width, which are its type. Only the literals, `Bool`, `DType`,
+    /// a `Bool`'s declared member, and a `SIMD` value's, by its runtime
+    /// dtype and width, which are its type. Only the literals, `DType`,
     /// strings, and the VM's internal values keep host text.
     pub(super) fn format_value(
         &mut self,
@@ -835,11 +835,14 @@ fn scalar_repr(value: &Value) -> String {
 }
 
 /// The member table that displays `value` ([`VmBackend::format_value`]): a
-/// struct's, by its runtime name, and a `SIMD` value's, by its dtype and
-/// width. `None` for a value with host text.
+/// struct's, by its runtime name, `Bool`'s declaration's, and a `SIMD`
+/// value's, by its dtype and width. `None` for a value with host text.
 fn display_table(value: &Value) -> Option<std::borrow::Cow<'_, str>> {
     match value {
         Value::Struct { name, .. } => Some(std::borrow::Cow::Borrowed(name)),
+        Value::Bool(_) => Some(std::borrow::Cow::Borrowed(
+            mojito_types::types::BOOL_TYPE_NAME,
+        )),
         Value::Int(_) | Value::UInt(_) | Value::Float64(_) | Value::Simd { .. } => {
             let (dtype, lanes) = crate::runtime::simd_parts(value)?;
             let ty = mojito_types::types::canonical_simd_ty(dtype, lanes.width() as i64);

@@ -8181,8 +8181,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - A writer that counts or frames its calls prints different output.
   - The bundled scalar `write_to`s write whole values, where upstream's
     write sign and digit pieces separately.
-  - Fix: respell the bundled `Int`, `Bool`, and float `write_to`s after
-    upstream's, then promote a probe to an `assets/ok` fixture.
+  - Fix: respell the bundled `Int` and float `write_to`s after
+    upstream's, then promote a probe to an `assets/ok` fixture. `Bool`'s
+    is upstream's since R1611, and `w.write(True)` writes `True` once, as
+    at the pin.
   - Found while planning R1003 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11066,19 +11068,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     writes `|DType.|uint16`.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R1611 `Bool.write_to` and `write_repr_to` are compiler printing
-  where upstream's are library bodies**
-
-  Problem: `Bool`'s `Writable` is a modelled conformance, because
-  upstream's body writes `StaticString("True") if self else
-  StaticString("False")` and `StaticString` is undefined (R432).
-  - Declare both members and `Writable`, and delete `Writable`'s `Bool`
-    arm in `modelled_conformance`.
-  - Pliron's `print`, `String`, `repr`, and `Writer.write` keep their
-    `Bool` text (`format_scalar`) only until then.
-  - Depends on R1608 and R432.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1612 `Bool` is `TyKind::Bool` in the checker, where upstream's is
   the declared struct**

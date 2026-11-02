@@ -1006,7 +1006,7 @@ impl<'p> CallEdges<'p, '_> {
 
     /// The display member `method` a lowered expansion calls for a value
     /// of type `ty`: a nominal struct's, the nominal String's excepted,
-    /// or a `SIMD` value's ([`Self::push_simd_members`]).
+    /// or a `SIMD` or `Bool` value's ([`Self::push_declared_members`]).
     fn push_display_members(&mut self, ty: &Ty, method: &str) {
         match ty.kind() {
             struct_ty
@@ -1016,20 +1016,20 @@ impl<'p> CallEdges<'p, '_> {
                 self.push_members(name, method);
             }
             struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {}
-            _ => self.push_simd_members(ty, method),
+            _ => self.push_declared_members(ty, method),
         }
     }
 
-    /// The display member `method` of the `SIMD` type that displays a
-    /// value of type `ty`: its own, its referent's, or the type a literal
-    /// materializes to, found in that type's member table.
-    fn push_simd_members(&mut self, ty: &Ty, method: &str) {
+    /// The display member `method` of the `SIMD` type or `Bool` that
+    /// displays a value of type `ty`: its own, its referent's, or the type a
+    /// literal materializes to, found in that type's member table.
+    fn push_declared_members(&mut self, ty: &Ty, method: &str) {
         let ty = match ty.kind() {
             TyKind::Ref(reference) => &reference.referent,
             _ => ty,
         };
         let ty = mojito_types::types::default_literal(ty);
-        if ty.kind().is_simd()
+        if (ty.kind().is_simd() || matches!(ty.kind(), TyKind::Bool))
             && let Some(table) = mojito_symbol::symbol::member_table_name(&ty)
         {
             self.push_members(&table, method);
@@ -1072,7 +1072,7 @@ impl<'p> CallEdges<'p, '_> {
                         ),
                         _ => {
                             if let Some(ty) = self.function.reg_types.get(&arg.0) {
-                                self.push_simd_members(ty, "write_repr_to");
+                                self.push_declared_members(ty, "write_repr_to");
                             }
                         }
                     }

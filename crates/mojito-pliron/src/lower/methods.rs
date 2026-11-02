@@ -398,8 +398,8 @@ impl FnLowering<'_> {
             );
             return Ok(());
         }
-        // A `SIMD` value's repr is its declared `write_repr_to`'s.
-        if let Some((_, data, len)) = self.simd_display_text(ctx, arg, "write_repr_to", dest)? {
+        // A `SIMD` or `Bool` value's repr is its declared `write_repr_to`'s.
+        if let Some((_, data, len)) = self.declared_display_text(ctx, arg, "write_repr_to", dest)? {
             self.str_runtime.insert(
                 dest.0,
                 RuntimeStr {
@@ -681,7 +681,7 @@ impl FnLowering<'_> {
                     parts
                 }
             } else if let Some((_, data, len)) =
-                self.simd_display_text(ctx, *arg, "write_to", dest)?
+                self.declared_display_text(ctx, *arg, "write_to", dest)?
             {
                 temporary = Some(data);
                 (data, len)

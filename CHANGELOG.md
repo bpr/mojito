@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Bool` declares upstream's `Writable` with its `write_to` and
+  `write_repr_to` bodies in `std.builtin.bool`, and `print`, `String`,
+  `repr`, and `Writer.write` of a `Bool` call them on the VM and natively
+  instead of each backend's own `True`/`False` text (R1611). Output is
+  unchanged; `Writable`'s model for `Bool` and Pliron's `Bool` display
+  text are gone.
+
 - `Bool`'s comparison and bitwise operators, their `__i*__` and `__r*__`
   forms, and `Comparable` are upstream's declarations in `std.builtin.bool`
   instead of checker rules (R1610). `t.__eq__(f)`, `t.__invert__()`, and

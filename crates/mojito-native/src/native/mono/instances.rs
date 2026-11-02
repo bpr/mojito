@@ -144,7 +144,7 @@ impl Specializer<'_> {
         method_bindings: &[Ty],
         argument_types: &[Ty],
     ) -> Result<Option<String>, MonoError> {
-        let Some((name, arguments)) = receiver.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = struct_receiver(receiver) else {
             return Ok(None);
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
@@ -163,13 +163,13 @@ impl Specializer<'_> {
         let mut bindings = self.base_bindings();
         let mut owner_covered = 0;
         if let Some(struct_decl) = self.structs.get(nominal_template(name)) {
-            bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
+            bind_ty_args(&struct_decl.param_decls, &arguments, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing receiver for `{target}`: {e}"),
                 )
             })?;
-            if nominal_template(name) != name.as_str() {
+            if nominal_template(name) != name {
                 bindings.self_instance =
                     Some((nominal_template(name).to_string(), receiver.clone()));
                 owner_covered =
@@ -303,13 +303,16 @@ impl Specializer<'_> {
         if mojito_types::types::simd_shape(ty.kind()).is_some() && ty.is_simd() {
             return self.enqueue_simd_format_instance(owner, ty, method);
         }
-        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = struct_receiver(ty) else {
             return Ok(());
         };
         let exact = format!("{name}.{method}");
         if self.functions.contains_key(exact.as_str()) {
             if self.writes_protocol(&exact) {
                 self.enqueue_nominal_method_instance(owner, ty, method, 1, &[])?;
+                if matches!(ty.kind(), TyKind::Bool) {
+                    self.declare_bool_declaration();
+                }
             }
             return Ok(());
         }
@@ -339,13 +342,13 @@ impl Specializer<'_> {
         let mut bindings = self.base_bindings();
         let mut owner_covered = 0;
         if let Some(struct_decl) = self.structs.get(nominal_template(name)) {
-            bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
+            bind_ty_args(&struct_decl.param_decls, &arguments, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing receiver for `{target}`: {e}"),
                 )
             })?;
-            if nominal_template(name) != name.as_str() {
+            if nominal_template(name) != name {
                 bindings.self_instance = Some((nominal_template(name).to_string(), ty.clone()));
                 owner_covered =
                     owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
@@ -483,4 +486,12 @@ impl Specializer<'_> {
                 .is_some_and(mojito_types::types::is_writer_parameter)
         })
     }
+}
+
+/// The struct and arguments whose member table a receiver of type `ty`
+/// reads: a non-`SIMD` struct's own, and `Bool`'s declaration, which the
+/// checker holds as its compiler type until R1612.
+fn struct_receiver(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [mojito_types::types::TyArg]>)> {
+    mojito_types::types::nominal_parts(ty)
+        .filter(|_| ty.kind().is_non_simd_struct() || matches!(ty.kind(), TyKind::Bool))
 }

@@ -299,15 +299,17 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
 /// reads for a value of type `ty`.
 ///
 /// Upstream's witness tables hang off the struct instance a type names: a
-/// struct names its own, and a closed `SIMD` type the `SIMD` instance its
-/// dtype and width apply, so a scalar alias and its `SIMD[dt, 1]` spelling
-/// name one table. `None` for any other type, a symbolic `SIMD` included.
+/// struct names its own, `Bool` its declaration's, and a closed `SIMD` type
+/// the `SIMD` instance its dtype and width apply, so a scalar alias and its
+/// `SIMD[dt, 1]` spelling name one table. `None` for any other type, a
+/// symbolic `SIMD` included.
 /// This is the only mapping from a type to that declaration.
 pub fn member_table_name(ty: &Ty) -> Option<Cow<'_, str>> {
     match ty.kind() {
         struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
             Some(Cow::Borrowed(name))
         }
+        TyKind::Bool => Some(Cow::Borrowed(mojito_types::types::BOOL_TYPE_NAME)),
         kind if let Some((dtype, width)) = kind.known_simd() => {
             let canonical = canonical_simd_ty(dtype, width);
             let (_, arguments) = mojito_types::types::nominal_parts(&canonical)?;

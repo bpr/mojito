@@ -319,7 +319,7 @@ impl<'a> FnLowering<'a> {
                 self.append_struct_via_write_to(ctx, *arg, name, descriptor, dest)?;
                 continue;
             }
-            if self.append_simd_display(ctx, *arg, "write_to", descriptor, dest)? {
+            if self.append_declared_display(ctx, *arg, "write_to", descriptor, dest)? {
                 continue;
             }
             let (chunk, chunk_len) = self.writer_argument_text(ctx, *arg, dest)?;
@@ -432,10 +432,10 @@ impl<'a> FnLowering<'a> {
         {
             return self.print_struct_via_write_to(ctx, arg, name, dest);
         }
-        // A `SIMD` value displays through its declared `write_to`, the
-        // instance its type's member table names — the VM's
+        // A `SIMD` or `Bool` value displays through its declared
+        // `write_to`, the instance its type's member table names — the VM's
         // `format_value` dispatch, as upstream's `print` calls it.
-        if let Some((_, data, len)) = self.simd_display_text(ctx, arg, "write_to", dest)? {
+        if let Some((_, data, len)) = self.declared_display_text(ctx, arg, "write_to", dest)? {
             self.write_stdout(ctx, data, len, dest);
             self.emit_free(ctx, data);
             return Ok(());
@@ -454,7 +454,7 @@ impl<'a> FnLowering<'a> {
         self.print_scalar(ctx, ty, value, dest)
     }
 
-    /// Emit the display bytes of one `Bool` or `DType` value.
+    /// Emit the display bytes of one `DType` value.
     pub(super) fn print_scalar(
         &mut self,
         ctx: &mut Context,
@@ -467,9 +467,10 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// The display bytes of one `Bool` or `DType` value as a `(data, len)`
-    /// pair over interned constants. A numeric value is a `SIMD` one, which
-    /// displays through its declared members ([`Self::simd_display_text`]).
+    /// The display bytes of one `DType` value as a `(data, len)` pair over
+    /// interned constants. A numeric value is a `SIMD` one and a `Bool` the
+    /// declared struct, which display through their declared members
+    /// ([`Self::declared_display_text`]).
     pub(super) fn format_scalar(
         &mut self,
         ctx: &mut Context,
@@ -479,20 +480,10 @@ impl<'a> FnLowering<'a> {
     ) -> Result<(Value, Value), PlironError> {
         match ty {
             ScalarTy::Dtype => Ok(self.dtype_text(ctx, value, false, dest)),
-            ScalarTy::Bool => {
-                let true_global = self.shared.intern_string(ctx, b"True");
-                let false_global = self.shared.intern_string(ctx, b"False");
-                let true_ptr = self.global_address(ctx, &true_global, dest);
-                let false_ptr = self.global_address(ctx, &false_global, dest);
-                let data = SelectOp::new(ctx, value, true_ptr, false_ptr);
-                self.append(ctx, data.get_operation(), Some(dest));
-                let true_len = self.uint_constant(ctx, 4);
-                let false_len = self.uint_constant(ctx, 5);
-                let len = SelectOp::new(ctx, value, true_len, false_len);
-                self.append(ctx, len.get_operation(), Some(dest));
-                Ok((data.get_result(ctx), len.get_result(ctx)))
-            }
             ScalarTy::Ptr => Err(self.unsupported_reg("display of a Pointer".into(), dest)),
+            ScalarTy::Bool => {
+                Err(self.unsupported_reg("display of a `Bool` value without its type".into(), dest))
+            }
             ScalarTy::Int | ScalarTy::UInt | ScalarTy::Float64 | ScalarTy::Sized(_) => {
                 Err(self.unsupported_reg("display of a `SIMD` value without its type".into(), dest))
             }
@@ -844,35 +835,35 @@ impl<'a> FnLowering<'a> {
         }
     }
 
-    /// The display text of a `SIMD` value through its declared member
-    /// `method` (`write_to`, `write_repr_to`), accumulated into a fresh
-    /// builtin-string writer: the writer and its owned `(data, len)` bytes.
-    /// `None` when `arg` is no `SIMD` value ([`Self::append_simd_display`]).
-    pub(super) fn simd_display_text(
+    /// The display text of a `SIMD` or `Bool` value through its declared
+    /// member `method` (`write_to`, `write_repr_to`), accumulated into a
+    /// fresh builtin-string writer: the writer and its owned `(data, len)`
+    /// bytes. `None` when `arg` is neither ([`Self::append_declared_display`]).
+    pub(super) fn declared_display_text(
         &mut self,
         ctx: &mut Context,
         arg: Reg,
         method: &str,
         dest: Reg,
     ) -> Result<Option<(Value, Value, Value)>, PlironError> {
-        if self.simd_display_ty(arg).is_none() {
+        if self.declared_display_ty(arg).is_none() {
             return Ok(None);
         }
         let writer = self.entry_alloca(ctx, 16, 8);
         self.mem_zero(ctx, writer, 16);
-        self.append_simd_display(ctx, arg, method, writer, dest)?;
+        self.append_declared_display(ctx, arg, method, writer, dest)?;
         let (data, len) = self.string_parts(ctx, writer, dest);
         Ok(Some((writer, data, len)))
     }
 
-    /// Append the display text of a `SIMD` value into the builtin-string
-    /// `writer` through its declared member `method`: the instance the
+    /// Append the display text of a `SIMD` or `Bool` value into the
+    /// builtin-string `writer` through its declared member `method`: the instance the
     /// member table of its type names, which the elaborator declares and
     /// fills. A reference displays its referent, and an `IntLiteral` or
     /// `FloatLiteral` displays as the `Int` or `Float64` it materializes
     /// to, as upstream's literal `write_to` and `write_repr_to` do.
     /// `Ok(false)` when `arg` is none of these.
-    pub(super) fn append_simd_display(
+    pub(super) fn append_declared_display(
         &mut self,
         ctx: &mut Context,
         arg: Reg,
@@ -880,7 +871,7 @@ impl<'a> FnLowering<'a> {
         writer: Value,
         dest: Reg,
     ) -> Result<bool, PlironError> {
-        let Some(ty) = self.simd_display_ty(arg) else {
+        let Some(ty) = self.declared_display_ty(arg) else {
             return Ok(false);
         };
         let Some(table) = mojito_symbol::symbol::member_table_name(&ty) else {
@@ -937,16 +928,17 @@ impl<'a> FnLowering<'a> {
         Ok(true)
     }
 
-    /// The closed `SIMD` type whose display members display `arg`: its
-    /// own, its referent's, or the type a literal materializes to.
-    fn simd_display_ty(&self, arg: Reg) -> Option<Ty> {
+    /// The closed `SIMD` type or `Bool` whose display members display
+    /// `arg`: its own, its referent's, or the type a literal materializes
+    /// to.
+    fn declared_display_ty(&self, arg: Reg) -> Option<Ty> {
         let ty = self.func.reg_types.get(&arg.0)?;
         let ty = match ty.kind() {
             TyKind::Ref(reference) => &reference.referent,
             _ => ty,
         };
         let ty = mojito_types::types::default_literal(ty);
-        ty.kind().is_simd().then_some(ty)
+        (ty.kind().is_simd() || matches!(ty.kind(), TyKind::Bool)).then_some(ty)
     }
 }
 

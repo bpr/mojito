@@ -57,8 +57,8 @@ command cannot use both.
 2. **`Bool` as a library struct** (R1188's residue). R1188 made
    `__mlir_type.i1` a type of its own and split the port:
    - R1608 (landed) declares `Bool` and its members, R1609 (landed)
-     its initializers, and R1610 (landed) its operators.
-   - R1611 (printing) follows them.
+     its initializers, R1610 (landed) its operators, and R1611 (landed)
+     its `Writable` members.
    - R1612 retires `TyKind::Bool`, after those and R1189.
 
    ```sh
@@ -329,7 +329,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 | block | core | members |
 |---|---|---|
 | Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1812, R1813, R1814, R1834 → R1816 → R1837, R1835, R1608 → R1612, R1785, R1657 → R1660), R160 | R1408, R1019, R423, R1352, R851, R171, R1189, R427, R1681 (`Pointer`) |
-| `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R18, R159 |
+| `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R18, R159 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R77, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
 | The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768 |

@@ -202,7 +202,7 @@ impl FnLowering<'_> {
             return Ok(());
         }
         // A `SIMD` value converts through its declared `write_to`.
-        if let Some((writer, data, len)) = self.simd_display_text(ctx, arg, "write_to", dest)? {
+        if let Some((writer, data, len)) = self.declared_display_text(ctx, arg, "write_to", dest)? {
             self.str_runtime.insert(
                 dest.0,
                 RuntimeStr {
