@@ -635,10 +635,14 @@ pub(super) fn validate_dependent_bindings_in(
             }
             TyKind::Assoc { base, .. } => walk(base, bound, frames)?,
             TyKind::Ref(reference) => walk(&reference.referent, bound, frames)?,
-            // A symbolic lane or width is a parameter expression like a
-            // struct's value argument; `verify/scope.rs` checks its binders
-            // and kind, and the concrete mode rejects it.
-            kind if let Some((dtype, width)) = mojito_types::types::vector_slots(kind) => {
+            // A symbolic lane or width of a vector or its `!kgen.simd`
+            // storage is a parameter expression like a struct's value
+            // argument; `verify/scope.rs` checks its binders and kind, and
+            // the concrete mode rejects it.
+            kind if let Some((dtype, width)) = kind
+                .as_simd()
+                .or_else(|| mojito_types::types::kgen_simd_slots(kind)) =>
+            {
                 if let mojito_types::types::SimdDtype::Expr(expr) = dtype {
                     check_expr(&expr, frames)?;
                 }

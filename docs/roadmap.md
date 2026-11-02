@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1837**.
+Next free ID: **R1838**.
 
 ## Ordered Work
 
@@ -11573,31 +11573,34 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1816 The MIR verifier accepts a `SIMD` struct register on a
-  builtin vector instruction, where upstream's `pop` ops verify only
-  `!pop.simd` operands**
+- [ ] **R1837 The MIR verifier accepts a `literal.materialize` whose
+  target is a `SIMD` struct, where upstream's `pop.int_literal_convert`
+  and `float_literal_convert` attributes are typed at the `!pop.simd`
+  storage**
 
-  `types::vector_slots` reads slots off a vector or its storage alike, so
-  every builtin vector instruction's check passes either.
-  - Reject a `SIMD` register on each builtin vector instruction in
-    `verify/instr.rs`, `verify/concrete.rs`, and `verify/calls.rs`.
-  - Re-point the callers that read a signature or intrinsic type at
-    `storage_ty` or `MirDeclarations::translated_type`: Pliron's
-    `abi.rs` and `support.rs`, mono's `symbolic.rs` and `gather.rs`,
-    `llvm_intrinsic.rs`, `lower_expr/mlir_op.rs`, and
-    `verify/types.rs`'s `symbolic_simd_compatible`.
-  - Then delete `vector_slots` in favour of `kgen_simd_slots`.
-  - Only the full corpus finds this change's failures, so it lands with
-    the nightly gate in view.
-  - Reject a struct target on `MaterializeLiteral`, which today reads its
-    target through `storage_value_ty`, and rewrite the `literal.materialize
-    … target: Int` sites of `tests/mir_passes/**` and
-    `tests/snapshots/mir/control_flow.mir` as a storage conversion and a
-    `struct.create`.
-  - Probe: the concrete MIR of `assets/ok/simd_slice_insert_split_interleave.mojo`
-    and `math_log.mojo` keeps an `llvm.intrinsic` over `SIMD` registers
-    (`SIMD.reduce_*`, splices).
-  - Depends on R1814, R1815, and R1834.
+  `verify_value_instruction` reads the target through `storage_value_ty`,
+  so `Int`, `UInt`, `Float64`, and `Scalar[dt]` targets pass beside their
+  storage. Lowering emits only storage targets (R1834), but hand-written
+  MIR still holds about 640 struct-target sites.
+  - Verifier: require `TyKind::KgenSimd` in the `MaterializeLiteral` arm,
+    with its own finding for a struct target.
+  - Emitters: drop the non-storage arms of `materialize_literal`
+    (`lower_expr/calls.rs`), `call_defaults::materialize`, and
+    `analysis/inline_parametric.rs`.
+  - Readers: the VM, Pliron's `lower/instr.rs` and `lower/support.rs`,
+    `analysis/sccp.rs`, and `MirInstr::folded_constant` read
+    `storage_simd(target)` directly.
+  - Hand MIR: rewrite the `target: Int` (or `UInt`, `Float64`, `simd`)
+    sites of about 257 `tests/mir_passes/**` artifacts as a storage
+    conversion plus `struct.create`, declaring the `SIMD` struct each
+    needs, and re-bless their `.expected`.
+  - `tests/snapshots/mir/control_flow.mir` changes through
+    `tests/mir_disassembler_test.rs::control_flow_program`.
+  - Probe: `mojito opt --pass canonicalize
+    tests/mir_passes/canonicalize/simd_struct_constant_folds.mir` fails
+    at load with "struct creation's result is no declared struct"; the
+    rewrite's `SIMD` declaration repairs it.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1836 A multi-lane literal conversion splats the unconverted

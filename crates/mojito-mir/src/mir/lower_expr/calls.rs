@@ -1041,10 +1041,7 @@ impl<'a> Flatten<'a> {
         target: &Ty,
         source: SourceSpan,
     ) -> Reg {
-        let Some((dtype, width)) = mojito_types::types::vector_slots(target.kind()) else {
-            return value;
-        };
-        if target.is_simd() {
+        if let Some((dtype, width)) = target.kind().as_simd() {
             let elem = self.simd_storage_operand(value, source.clone());
             return self.simd_through_storage(target, source, |dest| MirInstr::MakeSimd {
                 dest,
@@ -1053,6 +1050,9 @@ impl<'a> Flatten<'a> {
                 elems: vec![elem],
             });
         }
+        let Some((dtype, width)) = mojito_types::types::kgen_simd_slots(target.kind()) else {
+            return value;
+        };
         let dest = self.fresh_typed(source, None, target.clone());
         self.emit(MirInstr::MakeSimd {
             dest,

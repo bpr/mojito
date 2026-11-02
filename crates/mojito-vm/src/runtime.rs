@@ -1196,9 +1196,10 @@ pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value
 /// and `tbl1` the table lanes their indices name, a reduction one
 /// lane of it, a shuffle the lanes its sources name, `llvm.stepvector` the
 /// result's lane positions, and `llvm.donothing` `None`. `result` is the
-/// type LLVM translation sees (`MirDeclarations::translated_type`): a
-/// literal struct result (`vector.deinterleave2`'s) is the tuple of its
-/// elements' lanes, each a slice of the sources.
+/// type LLVM translation sees
+/// (`MirDeclarations::translated_intrinsic_type`), a vector its
+/// `!kgen.simd` storage: a literal struct result (`vector.deinterleave2`'s)
+/// is the tuple of its elements' storage, each a slice of the sources.
 pub fn llvm_intrinsic(
     intrinsic: mojito_types::llvm_intrinsic::LlvmIntrinsic,
     result: Option<&Ty>,
@@ -1219,7 +1220,7 @@ pub fn llvm_intrinsic(
         .and_then(<[Ty]>::first)
         .or(result)
         .map(Ty::kind)
-        .and_then(mojito_types::types::vector_slots)
+        .and_then(mojito_types::types::kgen_simd_slots)
     {
         Some((
             mojito_types::types::SimdDtype::Known(dtype),

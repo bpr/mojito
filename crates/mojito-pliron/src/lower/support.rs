@@ -185,18 +185,18 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     output
 }
 
-/// The concrete lane dtype and width of a `SIMD` register type, of
-/// its `!kgen.simd` storage, or of the builtin `index`, held as the `Int`
-/// it casts from. A symbolic slot never reaches lowering: the MIR verifier
+/// The concrete lane dtype and width of a register type as LLVM
+/// translation sees it: a `SIMD` struct is its `!kgen.simd` storage
+/// (`types::storage_ty`), and the builtin `index` is held as the `Int` it
+/// casts from. A symbolic slot never reaches lowering: the MIR verifier
 /// refuses it.
 pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {
-    match ty.kind() {
-        kind if let Some((dtype, width)) = mojito_types::types::vector_slots(kind) => {
+    match mojito_types::types::storage_ty(ty).kind() {
+        TyKind::Index => Some((Dtype::Int, 1)),
+        kind => {
+            let (dtype, width) = mojito_types::types::kgen_simd_slots(kind)?;
             Some((dtype.known()?, width.known()?))
         }
-
-        TyKind::Index => Some((Dtype::Int, 1)),
-        _ => None,
     }
 }
 

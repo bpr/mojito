@@ -884,6 +884,40 @@ fn verifier_types_simd_lane_instructions() {
 }
 
 #[test]
+fn verifier_reads_simd_lane_operands_as_storage() {
+    let source = "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    print(Int32(mlir_value=__mlir_op.`pop.simd.extractelement`(v._mlir_value, Int(1).__mlir_index__())))\n";
+    let mir = lower_linked_source(source);
+    let main_errors: Vec<String> = verify(&mir)
+        .into_iter()
+        .filter(|error| error.contains("'main'"))
+        .collect();
+    assert!(main_errors.is_empty(), "{main_errors:?}");
+
+    // Upstream's `pop.simd.extractelement` verifies a `!pop.simd` operand,
+    // never the `SIMD` struct around it.
+    let mut struct_operand = mir;
+    let (_, main) = struct_operand
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let vector = leaf_instructions_mut(&mut main.blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::SimdExtract { value, .. } => Some(*value),
+            _ => None,
+        })
+        .expect("SIMD lane read lowered");
+    let structure = mojito::types::storage_simd(&main.reg_types[&vector.0])
+        .expect("the lane read's vector is its !kgen.simd storage");
+    main.reg_types.insert(vector.0, structure);
+    expect_finding(
+        &struct_operand,
+        "simd.extract vector is the struct SIMD[DType.int32, 4], not its !kgen.simd storage",
+    );
+}
+
+#[test]
 fn verifier_types_select() {
     let mut mir = lower_linked_source(
         "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c.__mlir_bool__(), Int(1), Int(2)))\n",

@@ -2051,7 +2051,7 @@ decision, and MIR converts the literal at the target's `!kgen.simd` storage
 scalar over it, as `SIMD.__init__(IntLiteral)` writes
 `#pop.int_literal_convert` at `Self._mlir_type`; the verifier requires an
 exact-literal source and compatible concrete target, read through the storage,
-and still accepts a struct target until R1816. Integer targets
+and still accepts a struct target until R1837. Integer targets
 use destination-width two's-complement wrapping. Floating targets round once
 from the exact rational directly to binary32 or binary64, preserving signed
 zero and producing IEEE infinity on overflow. Bindings, stores, calls, returns,
@@ -2085,7 +2085,13 @@ construction, a literal default — takes that storage shape
 (`type_construction::storage_construction`); a `SIMD`'s default
 construction calls its declared `Defaultable` `__init__`, and the
 elaborator turns an operator over a `SIMD` instance into its dunder's
-call, as over any struct.
+call, as over any struct. The MIR verifier holds every builtin vector
+instruction (`simd.*` and the `pop` lane ops) to that storage: a `SIMD`
+struct register there is a finding, as upstream's `pop` ops verify only
+`!pop.simd` operands. An `llvm.intrinsic` and a `select` take struct
+values, as upstream's `pop.call_llvm_intrinsic` and `pop.select` do, and
+their checks read the types LLVM translation sees
+(`MirDeclarations::translated_intrinsic_type`).
 
 Generic value parameters are also materialization boundaries. Their resolved
 `ParamDecl`s cross `CheckedProgram` through stable declaration-owned

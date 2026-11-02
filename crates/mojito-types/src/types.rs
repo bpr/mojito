@@ -1613,15 +1613,6 @@ pub fn kgen_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     }
 }
 
-/// The slots of a vector or of its `!kgen.simd` storage.
-///
-/// Both forms are read because some of MIR's builtin vector instructions
-/// still take the `SIMD` register where upstream's `pop` ops take the
-/// storage (R1816).
-pub fn vector_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
-    kgen_simd_slots(ty).or_else(|| simd_slots(ty))
-}
-
 /// The type LLVM translation sees for a vector, its `!kgen.simd` storage,
 /// as upstream's `LowerKGENToLLVM` lowers the `SIMD` struct to its field;
 /// any other type itself.

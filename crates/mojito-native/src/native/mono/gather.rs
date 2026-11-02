@@ -185,7 +185,7 @@ fn verify_shuffle_op(
     let width = |register: Reg| {
         reg_types
             .get(&register.0)
-            .and_then(|ty| mojito_types::types::vector_slots(ty.kind()))
+            .and_then(|ty| mojito_types::types::kgen_simd_slots(ty.kind()))
             .and_then(|(_, width)| width.known())
             .and_then(|width| usize::try_from(width).ok())
     };

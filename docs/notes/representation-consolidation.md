@@ -46,11 +46,12 @@ command cannot use both.
        read, and `Int` ↔ storage as a ring isomorphism) remains.
      - R1834 (done): MIR's literal materialization converts at the
        storage and creates the struct over it.
-     - R1816 (the verifier rejects a `SIMD` register on a builtin vector
-       instruction) remains.
+     - R1816 (done): the verifier rejects a `SIMD` register on a builtin
+       vector instruction. R1837 (a struct `literal.materialize` target)
+       remains.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1812 --task R1813 --task R1816 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1812 --task R1813 --task R1837 -n 0
    ```
 
 2. **`Bool` as a library struct** (R1188's residue). R1188 made
@@ -327,7 +328,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1812, R1813, R1814, R1834 → R1816, R1835, R1608 → R1612, R1785, R1657 → R1660), R160 | R1408, R1019, R423, R1352, R851, R171, R1189, R427, R1681 (`Pointer`) |
+| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | steps 1–3 (R1812, R1813, R1814, R1834 → R1816 → R1837, R1835, R1608 → R1612, R1785, R1657 → R1660), R160 | R1408, R1019, R423, R1352, R851, R171, R1189, R427, R1681 (`Pointer`) |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 | R1461, R1462, R1463, R1409, R1611, R18, R159 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R77, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |

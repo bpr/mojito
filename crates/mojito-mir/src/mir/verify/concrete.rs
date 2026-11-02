@@ -585,7 +585,7 @@ fn bitcast_width(
     let source = function
         .reg_types
         .get(&value.0)
-        .and_then(|ty| mojito_types::types::vector_slots(ty.kind()));
+        .and_then(|ty| mojito_types::types::kgen_simd_slots(ty.kind()));
     if let (Some(dtype), Some(width), Some((source_dtype, source_width))) =
         (dtype.known(), width.known(), source)
         && let (Some(source_dtype), Some(source_width)) =
@@ -647,7 +647,7 @@ fn concrete_llvm_intrinsic(
         && let Some(result) = ty(dest)
         && let Some(operands) = args.iter().map(ty).collect::<Option<Vec<_>>>()
         && let Some(reason) =
-            called.signature_error(&declarations.translated_type(&result), &operands)
+            called.signature_error(&declarations.translated_intrinsic_type(&result), &operands)
     {
         errors.push(format!("{head}: {reason}"));
     }
@@ -745,7 +745,8 @@ fn translation_blocks(
                 function
                     .reg_types
                     .get(&reg.0)
-                    .and_then(|ty| mojito_types::types::vector_slots(ty.kind()))
+                    .map(mojito_types::types::storage_ty)
+                    .and_then(|ty| mojito_types::types::kgen_simd_slots(ty.kind()))
                     .and_then(|(_, width)| width.known())
                     .and_then(|width| usize::try_from(width).ok())
             };

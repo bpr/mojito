@@ -1,4 +1,4 @@
-mojito-mir 1.118
+mojito-mir 1.154
 artifact {
   features: [],
   files: [
@@ -9,12 +9,12 @@ artifact {
   ],
   decls: [
     decl { lowered_name: mask, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Bool, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: single_sum, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: float32, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: single_sum, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: kgen_simd { dtype: float32, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
     decl { lowered_name: unsigned_wrap, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: UInt, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
     decl { lowered_name: unsigned_zero_divisor, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: UInt, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: wide_shift, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: wrapped_add, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: zero_divisor, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+    decl { lowered_name: wide_shift, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: kgen_simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: wrapped_add, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: kgen_simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: zero_divisor, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: kgen_simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
   ],
   functions: [
       fn {
@@ -29,10 +29,10 @@ artifact {
         ref_params: [],
         returns_reference: false,
         var_types: [],
-        return_type: present(simd { dtype: uint8, width: 1 }),
+        return_type: present(kgen_simd { dtype: uint8, width: 1 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: uint8, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: kgen_simd { dtype: uint8, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 45, end: 48, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 39, end: 49, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 52, end: 54, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 39, end: 54, origin: absent }) }],
         blocks: [
           bb0 {
@@ -58,10 +58,10 @@ artifact {
         ref_params: [],
         returns_reference: false,
         var_types: [],
-        return_type: present(simd { dtype: uint8, width: 1 }),
+        return_type: present(kgen_simd { dtype: uint8, width: 1 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: uint8, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: kgen_simd { dtype: uint8, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 102, end: 103, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 96, end: 104, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 114, end: 115, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 108, end: 116, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 96, end: 116, origin: absent }) }],
         blocks: [
           bb0 {
@@ -88,10 +88,10 @@ artifact {
         ref_params: [],
         returns_reference: false,
         var_types: [],
-        return_type: present(simd { dtype: float32, width: 1 }),
+        return_type: present(kgen_simd { dtype: float32, width: 1 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: FloatLiteral }, reg_type { reg: %r3, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: float32, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: FloatLiteral }, reg_type { reg: %r3, type: kgen_simd { dtype: float32, width: 1 } }, reg_type { reg: %r4, type: kgen_simd { dtype: float32, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 166, end: 169, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 158, end: 170, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 181, end: 184, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 173, end: 185, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 158, end: 185, origin: absent }) }],
         blocks: [
           bb0 {
@@ -121,7 +121,7 @@ artifact {
         return_type: present(Bool),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: bool, width: 1 } }, reg_type { reg: %r5, type: Bool }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r5, type: Bool }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 224, end: 225, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 218, end: 226, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 235, end: 236, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 229, end: 237, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 218, end: 237, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 218, end: 237, origin: absent }) }],
         blocks: [
           bb0 {
@@ -149,10 +149,10 @@ artifact {
         ref_params: [],
         returns_reference: false,
         var_types: [],
-        return_type: present(simd { dtype: uint8, width: 1 }),
+        return_type: present(kgen_simd { dtype: uint8, width: 1 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: uint8, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: kgen_simd { dtype: uint8, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 283, end: 284, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 277, end: 285, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 295, end: 296, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 289, end: 297, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 277, end: 297, origin: absent }) }],
         blocks: [
           bb0 {

@@ -12,7 +12,7 @@
 //! [`LlvmIntrinsic::shuffle_sources`], [`step_lanes`], [`scalef_lane`],
 //! and [`LlvmIntrinsic::table_lookup`], and the native backend calls the intrinsic, mangled by [`LlvmIntrinsic::overloads`].
 
-use crate::types::{SimdDtype, SimdWidth, Ty, TyKind, i1_as_bool, storage_ty, vector_slots};
+use crate::types::{SimdDtype, SimdWidth, Ty, TyKind, i1_as_bool, kgen_simd_slots, storage_ty};
 use mojito_ast::ast::Dtype;
 
 /// One LLVM intrinsic in the table, named after its LLVM spelling.
@@ -351,12 +351,18 @@ impl LlvmIntrinsic {
     /// translates as its `!kgen.simd` storage, as upstream's
     /// `LowerKGENToLLVM` lowers the `SIMD` struct to its field, the builtin
     /// `index` as the `Int` it casts from, and the builtin `i1` as the
-    /// `Bool` (R1612).
+    /// `Bool` (R1612). A literal struct's elements translate each, as
+    /// `LowerKGENToLLVM` lowers a `!kgen.struct` element-wise.
     pub fn signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
-        let translated = |ty: &Ty| match ty.kind() {
-            TyKind::Index => storage_ty(&Ty::int()),
-            _ => storage_ty(&i1_as_bool(ty)),
-        };
+        fn translated(ty: &Ty) -> Ty {
+            match ty.kind() {
+                TyKind::Index => storage_ty(&Ty::int()),
+                TyKind::Tuple(elements) => {
+                    TyKind::Tuple(elements.iter().map(translated).collect()).into()
+                }
+                _ => storage_ty(&i1_as_bool(ty)),
+            }
+        }
         let operands: Vec<Ty> = operands.iter().map(translated).collect();
         self.translated_signature_error(&translated(result), &operands)
     }
@@ -371,7 +377,7 @@ impl LlvmIntrinsic {
                 operands.len()
             ));
         }
-        let lanes = |ty: &Ty| match vector_slots(ty.kind()) {
+        let lanes = |ty: &Ty| match kgen_simd_slots(ty.kind()) {
             Some((SimdDtype::Known(dtype), SimdWidth::Known(width))) => Some((dtype, width)),
             _ => None,
         };
@@ -513,7 +519,7 @@ impl LlvmIntrinsic {
     /// operands' width, and `vector.deinterleave2` two vectors of half its
     /// operand's width.
     fn shuffle_signature(self, result: &Ty, operands: &[Ty]) -> bool {
-        let vector = |ty: &Ty| match vector_slots(ty.kind()) {
+        let vector = |ty: &Ty| match kgen_simd_slots(ty.kind()) {
             Some((SimdDtype::Known(dtype), SimdWidth::Known(width))) if width >= 2 => {
                 Some((dtype, width))
             }
@@ -522,7 +528,7 @@ impl LlvmIntrinsic {
         let index = self.index_operand();
         if let Some((position, bits)) = index
             && !matches!(
-                operands.get(position).map(|ty| vector_slots(ty.kind())),
+                operands.get(position).map(|ty| kgen_simd_slots(ty.kind())),
                 Some(Some((SimdDtype::Known(dtype), SimdWidth::Known(1))))
                     if dtype.is_integral() && dtype.bit_width() == bits
             )

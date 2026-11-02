@@ -1,4 +1,4 @@
-mojito-mir 1.118
+mojito-mir 1.154
 artifact {
   features: [],
   files: [
@@ -116,7 +116,7 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: Int }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 216, end: 219, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 210, end: 220, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 206, end: 221, origin: absent }) }],
         blocks: [
           bb0 {

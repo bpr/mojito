@@ -304,6 +304,37 @@ pub(super) fn verify_instruction(
     verify_effect_instruction(&cx, instruction, errors);
 }
 
+/// The slots of a builtin vector instruction's `register`, which upstream's
+/// `pop` vector ops verify as a `!pop.simd` value: a `SIMD` struct or any
+/// other type is a finding.
+fn storage_slots(
+    cx: &InstrCx<'_>,
+    register: Reg,
+    mnemonic: &str,
+    role: &str,
+    errors: &mut Vec<String>,
+) -> Option<(
+    mojito_types::types::SimdDtype,
+    mojito_types::types::SimdWidth,
+)> {
+    let ty = cx.reg_ty(register)?;
+    let slots = mojito_types::types::kgen_simd_slots(ty.kind());
+    if slots.is_none() {
+        errors.push(non_storage_finding(cx.prefix, mnemonic, role, ty));
+    }
+    slots
+}
+
+/// A builtin vector instruction's `role` register of the type `ty`, which
+/// is not `!kgen.simd` storage.
+fn non_storage_finding(prefix: &str, mnemonic: &str, role: &str, ty: &Ty) -> String {
+    if ty.kind().as_simd().is_some() {
+        format!("{prefix}: {mnemonic} {role} is the struct {ty}, not its !kgen.simd storage")
+    } else {
+        format!("{prefix}: {mnemonic} {role} has the non-SIMD type {ty}")
+    }
+}
+
 /// A raising site in a nonraising function must sit under a handler; a
 /// region op verifies each of its regions under that region's protection.
 fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
@@ -967,15 +998,53 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
         // phase-boundary backstop for assembled artifacts. A width that is
         // still a parameter expression is checked once an instance closes
         // it; `verify/scope.rs` checks its binders and kind here.
-        MirInstr::MakeSimd { width, .. }
-        | MirInstr::SimdCast { width, .. }
-        | MirInstr::SimdBitcast { width, .. } => {
+        MirInstr::MakeSimd {
+            dest, dtype, width, ..
+        }
+        | MirInstr::SimdCast {
+            dest, dtype, width, ..
+        }
+        | MirInstr::SimdBitcast {
+            dest, dtype, width, ..
+        } => {
             if let Some(width) = width.known()
                 && !usize::try_from(width).is_ok_and(valid_simd_width)
             {
                 errors.push(format!(
                     "{prefix}: SIMD width {width} is not a positive power of two"
                 ));
+            }
+            let mnemonic = crate::mir::text::instruction_mnemonic(instruction);
+            if let Some((found_dtype, found_width)) =
+                storage_slots(cx, *dest, mnemonic, "result", errors)
+                && let (Some(found_dtype), Some(expected_dtype)) =
+                    (found_dtype.known(), dtype.known())
+                && let (Some(found_width), Some(expected_width)) =
+                    (found_width.known(), width.known())
+                && (found_dtype, found_width) != (expected_dtype, expected_width)
+            {
+                errors.push(format!(
+                    "{prefix}: {mnemonic} defines {}, not {}",
+                    cx.reg_ty(*dest)
+                        .map_or_else(String::new, ToString::to_string),
+                    mojito_types::types::kgen_simd_ty(expected_dtype, expected_width)
+                ));
+            }
+            match instruction {
+                MirInstr::SimdCast { value, .. } | MirInstr::SimdBitcast { value, .. } => {
+                    storage_slots(cx, *value, mnemonic, "operand", errors);
+                }
+                // A literal element converts at the lane until R1836.
+                MirInstr::MakeSimd { elems, .. } => {
+                    for element in elems {
+                        if let Some(ty) = cx.reg_ty(*element)
+                            && ty.kind().as_simd().is_some()
+                        {
+                            errors.push(non_storage_finding(prefix, mnemonic, "element", ty));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         // A template's mask is checked by the instance that closes it.
@@ -992,9 +1061,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
                         mask.len()
                     ));
                 }
-                if let Some((_, width)) = cx
-                    .reg_ty(*dest)
-                    .and_then(|ty| mojito_types::types::vector_slots(ty.kind()))
+                if let Some((_, width)) = storage_slots(cx, *dest, "simd.shuffle", "result", errors)
                     && let Some(width) = width.known()
                     && width != mask.len() as i64
                 {
@@ -1003,9 +1070,8 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
                         mask.len()
                     ));
                 }
-                if let Some((_, width)) = cx
-                    .reg_ty(*value)
-                    .and_then(|ty| mojito_types::types::vector_slots(ty.kind()))
+                if let Some((_, width)) =
+                    storage_slots(cx, *value, "simd.shuffle", "vector", errors)
                     && let Some(width) = width.known()
                 {
                     let lanes = if other.is_some() { width * 2 } else { width };
@@ -1018,7 +1084,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
             }
             if let Some(source) = cx.reg_ty(*value)
                 && let Some(joined) = other.as_ref().and_then(|register| cx.reg_ty(*register))
-                && storage_ty(joined) != storage_ty(source)
+                && joined != source
             {
                 errors.push(format!(
                     "{prefix}: SIMD join operand {joined} does not match {source}"
@@ -1042,31 +1108,18 @@ fn verify_simd_lane_instruction(
 ) {
     let prefix = cx.prefix;
     let mnemonic = crate::mir::text::instruction_mnemonic(instruction);
-    let slots = |register: Reg| {
-        cx.reg_ty(register)
-            .map(|ty| (ty, mojito_types::types::vector_slots(ty.kind())))
-    };
-    let mut expect_vector = |register: Reg, role: &str| match slots(register) {
-        Some((ty, None)) => {
-            errors.push(format!(
-                "{prefix}: {mnemonic} {role} has the non-SIMD type {ty}"
-            ));
-            None
-        }
-        Some((_, Some(slots))) => Some(slots),
-        None => None,
-    };
+    let mut expect_vector =
+        |register: Reg, role: &str| storage_slots(cx, register, mnemonic, role, errors);
     let lane_of = |dtype: &mojito_types::types::SimdDtype| {
-        mojito_types::types::simd_ty_from_slots(
-            dtype.clone(),
-            mojito_types::types::SimdWidth::Known(1),
-        )
-        .ok()
+        Some(Ty::from(TyKind::KgenSimd {
+            dtype: dtype.clone(),
+            width: mojito_types::types::SimdWidth::Known(1),
+        }))
     };
     let mut mismatches = Vec::new();
     let mut expect_type = |register: Reg, expected: Option<Ty>, role: &str| {
         if let (Some(found), Some(expected)) = (cx.reg_ty(register), expected)
-            && storage_ty(found) != storage_ty(&expected)
+            && *found != expected
         {
             mismatches.push(format!(
                 "{prefix}: {mnemonic} {role} has type {found}, expected {expected}"
@@ -1102,7 +1155,7 @@ fn verify_simd_lane_instruction(
                 &mask_slots,
                 result
                     .as_ref()
-                    .map(|ty| mojito_types::types::vector_slots(ty.kind())),
+                    .map(|ty| mojito_types::types::kgen_simd_slots(ty.kind())),
             ) && *mask_width != width
             {
                 errors.push(format!(
@@ -1126,9 +1179,11 @@ fn verify_simd_lane_instruction(
             index,
         } => {
             let lane = expect_vector(value, "vector").and_then(|(dtype, _)| lane_of(&dtype));
-            // A `Bool` is a `bool` lane, as the checker coerces it.
+            // A `Bool` is a `bool` lane while the two are one register
+            // type (R1612).
             let bool_lane = lane.as_ref().and_then(|lane| {
-                mojito_types::types::vector_slots(lane.kind()).and_then(|(dtype, _)| dtype.known())
+                mojito_types::types::kgen_simd_slots(lane.kind())
+                    .and_then(|(dtype, _)| dtype.known())
             }) == Some(mojito_ast::ast::Dtype::Bool)
                 && cx.reg_ty(element) == Some(&Ty::bool());
             if !bool_lane {
@@ -1311,15 +1366,13 @@ fn verify_pop(
         return;
     }
     // `index.divs` divides `index` values.
-    if mojito_types::types::vector_slots(result.kind()).is_none() && *result != Ty::index() {
-        errors.push(format!(
-            "{prefix}: pop.{} defines a register of the non-SIMD type {result}",
-            op.mnemonic()
-        ));
+    if mojito_types::types::kgen_simd_slots(result.kind()).is_none() && *result != Ty::index() {
+        let mnemonic = format!("pop.{}", op.mnemonic());
+        errors.push(non_storage_finding(prefix, &mnemonic, "result", result));
     }
     for operand in operands {
         if let Some(found) = cx.reg_ty(*operand)
-            && storage_ty(found) != storage_ty(result)
+            && found != result
         {
             errors.push(format!(
                 "{prefix}: pop.{} operand of type {found} where its result is {result}",

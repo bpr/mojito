@@ -623,10 +623,11 @@ impl FnLowering<'_> {
     }
 }
 
-/// The lane type and width of a value that lowers to a whole LLVM vector:
+/// The lane type and width of a value that lowers to a whole LLVM vector,
+/// a `SIMD` read as its `!kgen.simd` storage as LLVM translation sees it:
 /// width-one aliases are scalars and never take the vector-storage path.
 fn multi_lane_simd(ty: &Ty) -> Option<(Dtype, usize)> {
-    match mojito_types::types::vector_slots(ty.kind()) {
+    match mojito_types::types::kgen_simd_slots(mojito_types::types::storage_ty(ty).kind()) {
         Some((SimdDtype::Known(dtype), SimdWidth::Known(width))) if width > 1 => {
             Some((dtype, width as usize))
         }

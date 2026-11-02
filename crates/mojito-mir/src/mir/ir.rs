@@ -3276,7 +3276,8 @@ impl MirInstr {
                 ..
             } if held_alike(dest, a) => {
                 let identity = *op == InfixOp::Eq;
-                let width = match mojito_types::types::vector_slots(reg_types.get(&b.0)?.kind())? {
+                let width = match mojito_types::types::kgen_simd_slots(reg_types.get(&b.0)?.kind())?
+                {
                     (
                         mojito_types::types::SimdDtype::Known(Dtype::Bool),
                         mojito_types::types::SimdWidth::Known(width),

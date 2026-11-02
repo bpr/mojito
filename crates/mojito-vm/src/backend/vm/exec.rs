@@ -432,7 +432,7 @@ impl VmBackend {
                     .1
                     .reg_types
                     .get(&dest.0)
-                    .map(|ty| prog.mir.declarations.translated_type(ty));
+                    .map(|ty| prog.mir.declarations.translated_intrinsic_type(ty));
                 regs[dest.0 as usize] =
                     crate::runtime::llvm_intrinsic(called, result.as_ref(), &operands)?;
             }

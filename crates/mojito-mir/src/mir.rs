@@ -525,6 +525,24 @@ impl MirDeclarations {
         translated
     }
 
+    /// The type LLVM translation sees for an LLVM intrinsic call's operand
+    /// or result of `ty`: [`Self::translated_type`], with a literal
+    /// struct's elements each translated, as `LowerKGENToLLVM` lowers a
+    /// `!kgen.struct` element-wise (`vector.deinterleave2`'s result).
+    pub fn translated_intrinsic_type(&self, ty: &Ty) -> Ty {
+        let translated = self.translated_type(ty);
+        match translated.kind() {
+            TyKind::Tuple(elements) => TyKind::Tuple(
+                elements
+                    .iter()
+                    .map(|element| self.translated_intrinsic_type(element))
+                    .collect(),
+            )
+            .into(),
+            _ => translated,
+        }
+    }
+
     /// Whether a value of `ty` is register-passable, as upstream's
     /// `getRegisterPassability` answers anything but `MemoryOnly`: a type
     /// whose copy is the value itself ([`Self::copy_is_identity`]), a

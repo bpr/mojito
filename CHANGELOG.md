@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier rejects a `SIMD` struct register on a builtin vector
+  instruction (`simd.*` and the `pop` lane ops), as upstream's `pop` ops
+  verify only `!pop.simd` operands, instead of reading slots off a vector or
+  its storage alike (R1816). An `llvm.intrinsic`'s checks read the types
+  LLVM translation sees, a literal struct element-wise. A struct
+  `literal.materialize` target is still accepted (R1837). Program output is
+  unchanged.
+
 - MIR materializes a literal at a scalar by converting it at the
   `!kgen.simd` storage and `struct.create`-ing the scalar over it, as
   upstream's `SIMD.__init__(IntLiteral)` and `__init__(FloatLiteral)` write

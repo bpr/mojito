@@ -760,7 +760,7 @@ impl FnLowering<'_> {
     /// ([`LlvmIntrinsic::index_operand`]) is its register's value, which
     /// LLVM's verifier rejects as an `immarg` unless it is a constant.
     /// `llvm.donothing` returns nothing. A result LLVM translation sees as a
-    /// literal struct (`MirDeclarations::translated_type`, a
+    /// literal struct (`MirDeclarations::translated_intrinsic_type`, a
     /// `_RegisterPackType`'s) is LLVM's literal struct of its elements'
     /// vectors, each extracted into the destination's storage at its
     /// offset.
@@ -806,7 +806,7 @@ impl FnLowering<'_> {
             .func
             .reg_types
             .get(&dest.0)
-            .map(|ty| self.mir_declarations.translated_type(ty))
+            .map(|ty| self.mir_declarations.translated_intrinsic_type(ty))
             .as_ref()
             .map(Ty::kind)
         {

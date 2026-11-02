@@ -203,7 +203,10 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::LitRef { element: v, .. } => is_symbolic(v),
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         TyKind::Ref(v) => is_symbolic(&v.referent),
-        kind if let Some((dtype, width)) = mojito_types::types::vector_slots(kind) => {
+        kind if let Some((dtype, width)) = kind
+            .as_simd()
+            .or_else(|| mojito_types::types::kgen_simd_slots(kind)) =>
+        {
             dtype.is_symbolic() || width.is_symbolic()
         }
         TyKind::Func(func) => {
