@@ -593,6 +593,10 @@ impl Checker {
                 }
                 | mojito_checked::checked::SemanticAdjustment::PointerConvert {
                     materialized, ..
+                }
+                | mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses {
+                    materialized,
+                    ..
                 },
             ) => {
                 if let Some(owner) = materialized {

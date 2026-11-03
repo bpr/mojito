@@ -138,14 +138,14 @@ struct Set[
 
     # Drain every element front-to-back through the caller-supplied consuming
     # handler, leaving the set empty and reusable.
-    def clear_with(mut self, elt_handler: def(var element: Self.T) capturing[_], /):
+    def clear_with[F: def(var Self.T)](mut self, destroy_func: F, /):
         while len(self.items) > 0:
-            elt_handler(self.items.pop(0))
+            destroy_func(self.items.pop(0))
 
     # Consuming teardown: `clear_with` under a consumed receiver.
-    def deinit_with(deinit self, elt_handler: def(var element: Self.T) capturing[_], /):
+    def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         while len(self.items) > 0:
-            elt_handler(self.items.pop(0))
+            deinit_func(self.items.pop(0))
 
     # Consume the set for its element list.
     def _take_items(deinit self) -> List[Self.T]:

@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled collections' handler APIs take their closure through a
+  closure-trait binder with upstream's argument names, as upstream's do:
+  `List`, `Array`, `Set`, `Dict`, and `StringDict` `deinit_with(deinit_func)`,
+  `Set` and `Dict` `clear_with(destroy_func)`, and `Optional`'s
+  `deinit_with`, `__init__(init_with=)`, and `map`/`and_then` over a
+  `Mapper` binder, instead of a run-time `def(...) capturing[_]` value the
+  closure was converted to (R1433). Along the way: a nested `def` passed to
+  a method's closure-trait parameter no longer inherits the method's
+  binders in the elaborator, a constructor's callable bound reads the
+  struct's explicit arguments (`Optional[Int](init_with=make)`), and a
+  reference-returning call on the result of a call taking a capturing
+  closure materializes that result. The binders stay explicit where
+  upstream spells `Some[def(...)]` (R813).
+
 - `print` is now upstream's `@inline(.never)` library function in the
   bundled `std/io/io.mojo`, re-exported by the prelude, writing its pack
   through the newly bundled `_FlushingWriteBuffer` over a

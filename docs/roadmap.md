@@ -8020,8 +8020,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   `@parameter`, `@__parameter`, `@__copy_capture`, and `@__move_capture`
   on a nested function ("'@parameter' closures are no longer supported;
   remove the decorator and declare the captures in a capture list").
-  - Mojito still parses and runs both, and the bundled library's handler
-    APIs take `capturing[_]` arguments (R1433).
+  - Mojito still parses and runs both, and the bundled
+    `Tuple.consume_elements` and `deinit_with` take a `capturing`
+    parameter (R1124).
   - A function passed as a compile-time parameter must now be `thin`.
   - Reject both with the pin's texts, move the fixtures that use them to
     capture lists, and delete the `capturing` surface from the parser,
@@ -8944,8 +8945,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Three corpus fixtures moved to `assets/extensions/`.
   - Three more were respelled onto `thin` contracts and `@parameter def`
     arguments.
-  - The bundled library's own run-time handler parameters come first
-    (R1433).
   - Ledger name: `capturing-lambda-argument`, `capturing-lambda-locals`,
     `owned-capture-closure-locals`, `mut-self-callable-struct`.
   - Depends on R1433.
@@ -9486,26 +9485,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     rejected; do not close `verify_direct_call`'s declared types under
     the call's arguments, which would make the binder shapes run.
   - Found while landing R1767 (2026-10-31).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1433 The bundled handler APIs take run-time `def(...)
-  capturing[_]` arguments, where upstream's take closure-trait arguments**
-
-  `List.deinit_with`, `Optional.map`, `and_then`, `deinit_with` and
-  `__init__(init_with=)`, `Set.clear_with`, `Dict.deinit_with` and
-  `reap_with`, and `Array.deinit_with` take a run-time callable, so a
-  closure passed to one converts to the closure of its body
-  (`SemanticAdjustment::ClosureCallable`), where upstream takes the
-  storage through a closure trait (`deinit_func: Some[def(var Self.T)]`,
-  `map[To: Movable, //, Mapper: def(var Self.T) -> To]`).
-  - Port each signature and argument name (`deinit_func`, `destroy_func`,
-    `Mapper`) in `stdlib/std/collections/` to upstream's.
-  - `Some[def(...)]` is "unknown type 'Some'" today (R813), so spell an
-    explicit binder until it lands.
-  - Probe: `l^.deinit_with(h)` over `def h(var e: Int) {mut total}` and
-    `[1, 2, 3]` prints `6` on both, through a converted closure in Mojito.
-  - Found while landing R1378 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13069,6 +13048,12 @@ residue found inside a task moves to the task that owns its fix.
   - `IndexList.write_repr_to` is omitted (`stdlib/std/utils/index.mojo`):
     restore it with its `import std.format._utils as fmt`.
   - Done when they and `ParameterList` use upstream's builder text.
+  - Probe: `def f(g: Some[def(var Int)])` is the same "unknown type
+    'Some'". `List`, `Array`, `Set`, `Dict`, and `StringDict`
+    `deinit_with` and `Set`/`Dict` `clear_with` spell an explicit
+    `[F: def(var Self.T)]` binder where upstream spells
+    `Some[def(var Self.T)]`; respell them when it lands (found while
+    landing R1433, 2026-11-03).
   - Found while landing R493 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

@@ -63,11 +63,7 @@ impl Checker {
         let captures = self.call_capture_effects(&argument_types);
         let parameter_arguments = self.checked_parameter_arguments(param_args);
         if reference_result.is_none() && !captures.is_empty() {
-            self.record_at(span.clone()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(
-                    captures.clone(),
-                ),
-            ));
+            self.record_capture_accesses(span.clone(), &captures);
         }
         let return_type = self.rebase_self_place_pointer(resolved.return_type.clone(), object);
         if reference_result.is_none() && captures.is_empty() {

@@ -171,10 +171,10 @@ struct Array[T: AnyType, length: Int](
         self.data.unsafe_free()
 
     # Consuming teardown for any element; see `List.deinit_with`.
-    def deinit_with(deinit self, elt_handler: def(var element: Self.T) capturing[_], /):
+    def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         var i = 0
         while i < self._size:
-            elt_handler(self.data.unsafe_offset(i).unsafe_take_pointee())
+            deinit_func(self.data.unsafe_offset(i).unsafe_take_pointee())
             i += 1
         self.data.unsafe_free()
         self._size = 0

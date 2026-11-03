@@ -4885,7 +4885,7 @@ impl Checker {
         let decls = sig
             .decls
             .iter()
-            .map(|decl| substituted_value_decl(decl, struct_subst).unwrap_or_else(|| decl.clone()))
+            .map(|decl| substituted_own_decl(decl, struct_subst))
             .collect::<Vec<_>>();
         let (patterns, actuals): (Vec<Ty>, Vec<Ty>) = bound.unzip();
         let BoundParameters {
@@ -5417,6 +5417,20 @@ fn substituted_value_decl(decl: &ParamDecl, subst: &TySubst) -> Option<ParamDecl
     };
     let solved = mojito_types::types::substitute(ty, subst);
     (solved != **ty).then(|| decl.with_value_type(solved))
+}
+
+/// A constructor's own `decl` under its struct's solved binders: a value
+/// binder's type, and a type binder's callable bound (`F: def() -> Self.T`).
+fn substituted_own_decl(decl: &ParamDecl, struct_subst: &TySubst) -> ParamDecl {
+    let mut solved = substituted_value_decl(decl, struct_subst).unwrap_or_else(|| decl.clone());
+    if let ParamDecl::Type {
+        callable_bound: Some(bound),
+        ..
+    } = &mut solved
+    {
+        *bound = mojito_types::types::substitute(bound, struct_subst);
+    }
+    solved
 }
 
 /// Each of `decls`' bracket arguments in `param_args`, with its source

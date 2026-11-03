@@ -855,7 +855,12 @@ pub enum SemanticAdjustment {
     /// call. The checker derives these from the selected callable and any
     /// non-escaping callable arguments; MIR translates stable owner identities
     /// to function-local slots and loan analysis treats them as call effects.
-    CallableCaptureAccesses(Vec<mojito_types::origin::CaptureOrigin>),
+    /// `materialized` is the hidden owner of the call's result when a borrow
+    /// of the temporary (a reference-returning method on it) needs a place.
+    CallableCaptureAccesses {
+        captures: Vec<mojito_types::origin::CaptureOrigin>,
+        materialized: Option<mojito_types::origin::OwnerId>,
+    },
     /// Every compile-time argument a call of a generic `def` or a
     /// construction solved, in declaration order
     /// ([`GenericInstantiation::arguments`]), those it inferred from its
@@ -6891,6 +6896,10 @@ pub fn materialized_borrow_owner(
             ..
         }
         | SemanticAdjustment::PointerConvert {
+            materialized: Some(owner),
+            ..
+        }
+        | SemanticAdjustment::CallableCaptureAccesses {
             materialized: Some(owner),
             ..
         } => Some(*owner),

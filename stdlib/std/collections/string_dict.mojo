@@ -153,14 +153,12 @@ struct StringDict[V: Movable](
 
     # Consuming teardown: every entry is handed front-to-back to the consuming
     # handler; the bucket index holds only integers and drops with the shell.
-    def deinit_with(
-        deinit self,
-        elt_handler: def(var key: String, var value: Self.V) capturing[_],
-        /,
+    def deinit_with[F: def(var String, var Self.V)](
+        deinit self, deinit_func: F, /
     ):
         while len(self.entries) > 0:
             var entry = self.entries.pop(0)
-            entry^.reap_with(elt_handler)
+            entry^.reap_with(deinit_func)
 
     def get(self, key: String) -> Optional[Self.V] where conforms_to(
         Self.V, Copyable

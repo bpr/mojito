@@ -46,12 +46,8 @@ struct DictEntry[
         return self.value^
 
     # Consume the entry through a handler that takes both parts.
-    def reap_with(
-        deinit self,
-        elt_handler: def(var key: Self.K, var value: Self.V) capturing[_],
-        /,
-    ):
-        elt_handler(self.key^, self.value^)
+    def reap_with[F: def(var Self.K, var Self.V)](deinit self, reap_func: F, /):
+        reap_func(self.key^, self.value^)
 
 # The `items` borrowing view: yields whole-entry references at `element`
 # interior granularity, read-only.
@@ -427,25 +423,21 @@ struct Dict[
 
     # Drain every entry front-to-back through the caller-supplied consuming
     # handler, leaving the dictionary empty and reusable.
-    def clear_with(
-        mut self,
-        elt_handler: def(var key: Self.K, var value: Self.V) capturing[_],
-        /,
+    def clear_with[F: def(var Self.K, var Self.V)](
+        mut self, destroy_func: F, /
     ):
         while len(self.entries) > 0:
             var entry = self.entries.pop(0)
-            entry^.reap_with(elt_handler)
+            entry^.reap_with(destroy_func)
         self._reset_index()
 
     # Consuming teardown: `clear_with` under a consumed receiver.
-    def deinit_with(
-        deinit self,
-        elt_handler: def(var key: Self.K, var value: Self.V) capturing[_],
-        /,
+    def deinit_with[F: def(var Self.K, var Self.V)](
+        deinit self, deinit_func: F, /
     ):
         while len(self.entries) > 0:
             var entry = self.entries.pop(0)
-            entry^.reap_with(elt_handler)
+            entry^.reap_with(deinit_func)
 
     @inline(.always)
     def get(self, key: Self.K) -> Optional[Self.V] where conforms_to(Self.V, Copyable):

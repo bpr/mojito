@@ -472,10 +472,10 @@ struct List[T: AnyType](
     # caller-supplied consuming handler (no `Deinitable` requirement), then
     # the buffer is freed. The caller's trailing consumption sees the drained
     # write-back state, so only trivial residual fields remain.
-    def deinit_with(deinit self, elt_handler: def(var element: Self.T) capturing[_], /):
+    def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         var i = 0
         while i < self.size:
-            elt_handler(self.data.unsafe_offset(i).unsafe_take_pointee())
+            deinit_func(self.data.unsafe_offset(i).unsafe_take_pointee())
             i += 1
         self.data.unsafe_free()
         self.size = 0

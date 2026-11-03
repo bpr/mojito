@@ -1172,9 +1172,10 @@ impl<'a> Flatten<'a> {
                 node.adjustments()
                     .iter()
                     .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(
+                        mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses {
                             captures,
-                        ) => Some(captures.clone()),
+                            ..
+                        } => Some(captures.clone()),
                         _ => None,
                     })
             });

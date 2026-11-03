@@ -1286,10 +1286,31 @@ impl Checker {
         if captures.is_empty() {
             return captures;
         }
-        self.record_at(span).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(captures.clone()),
-        ));
+        self.record_capture_accesses(span, &captures);
         captures
+    }
+
+    /// Record a call's environment accesses at `span`, keeping the hidden
+    /// result owner an earlier inference materialized for a borrow of it.
+    fn record_capture_accesses(
+        &self,
+        span: SourceSpan,
+        captures: &[mojito_types::origin::CaptureOrigin],
+    ) {
+        let mut record = self.record_at(span);
+        let materialized = match record.adjustment.as_deref() {
+            Some(mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses {
+                materialized,
+                ..
+            }) => *materialized,
+            _ => None,
+        };
+        record.adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses {
+                captures: captures.to_vec(),
+                materialized,
+            },
+        ));
     }
 
     fn record_call_environment_effects(

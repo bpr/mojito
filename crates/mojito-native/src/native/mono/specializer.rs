@@ -2654,6 +2654,18 @@ impl<'a> Specializer<'a> {
         generator
     }
 
+    /// Whether the declaration `target` is nested, at any depth, in the
+    /// declaration `scope`.
+    fn nested_within(&self, target: &str, scope: &str) -> bool {
+        std::iter::successors(Some(target), |name| {
+            self.declarations
+                .get(name)
+                .and_then(|declaration| declaration.enclosing.as_deref())
+        })
+        .skip(1)
+        .any(|enclosing| enclosing == scope)
+    }
+
     /// The instance of the generic struct whose method the outermost
     /// declaration `target` is nested in is, under `bindings`: `None` when
     /// it is no such method or `bindings` leave a struct parameter unbound.
@@ -3246,12 +3258,20 @@ impl<'a> Specializer<'a> {
                             // A generic nested body's value is named as its
                             // generator under the instance or unrolled
                             // region copy it is declared in.
+                            // One with no generator is declared under no
+                            // binders, or in this body: a callable parameter
+                            // reaches a body nested elsewhere, which inherits
+                            // nothing from this instance.
                             let (target, region) = match self.nested_generators.get(&target) {
                                 Some((template, bindings)) => {
                                     (template.clone(), Some(bindings.clone()))
                                 }
                                 None => (target, None),
                             };
+                            let scope = region.as_ref().or_else(|| {
+                                self.nested_within(&target, owner)
+                                    .then_some(&self.enclosing)
+                            });
                             // A closure over folded value parameters already
                             // names its lifted body's instance.
                             let concrete = if self.functions.contains_key(target.as_str()) {
@@ -3277,7 +3297,7 @@ impl<'a> Specializer<'a> {
                                     kwargs,
                                     param_arg_regs,
                                     &contract_values,
-                                    Some(region.as_ref().unwrap_or(&self.enclosing)),
+                                    scope.cloned().as_ref(),
                                 )?;
                                 // As at a direct call, a callable parameter
                                 // bound to a capturing closure becomes the

@@ -127,7 +127,7 @@ struct Optional[T: AnyType](
         self.data = unsafe_alloc[Self.T](1)
         self.data[0] = value^
 
-    def __init__(out self, *, init_with: def() capturing[_] -> Self.T):
+    def __init__[F: def() -> Self.T](out self, *, init_with: F):
         self._size = 1
         self.data = unsafe_alloc[Self.T](1)
         self.data[0] = init_with()
@@ -293,30 +293,38 @@ struct Optional[T: AnyType](
             _mojito_abort("Optional.deinit_assert_empty on a non-empty Optional")
         self.data.unsafe_free()
 
-    def deinit_with(deinit self, elt_handler: def(var element: Self.T) capturing[_], /):
+    def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         if self._size == 1:
-            elt_handler(self.data.unsafe_take_pointee())
+            deinit_func(self.data.unsafe_take_pointee())
         self.data.unsafe_free()
 
-    def map[U: Movable](
-        deinit self, f: def(var element: Self.T) capturing[_] -> U, /
-    ) -> Optional[U]:
+    def map[
+        To: Movable,
+        //,
+        Mapper: def(var Self.T) -> To,
+    ](deinit self, mapper: Mapper) -> Optional[To] where conforms_to(
+        Self.T, Movable
+    ):
         if self._size == 1:
-            var result = Optional[U](f(self.data.unsafe_take_pointee()))
+            var result = Optional[To](mapper(self.data.unsafe_take_pointee()))
             self.data.unsafe_free()
             return result^
         self.data.unsafe_free()
-        return Optional[U]()
+        return Optional[To]()
 
-    def and_then[U: Movable](
-        deinit self, f: def(var element: Self.T) capturing[_] -> Optional[U], /
-    ) -> Optional[U]:
+    def and_then[
+        To: Movable,
+        //,
+        Mapper: def(var Self.T) -> Optional[To],
+    ](deinit self, mapper: Mapper) -> Optional[To] where conforms_to(
+        Self.T, Movable
+    ):
         if self._size == 1:
-            var result = f(self.data.unsafe_take_pointee())
+            var result = mapper(self.data.unsafe_take_pointee())
             self.data.unsafe_free()
             return result^
         self.data.unsafe_free()
-        return Optional[U]()
+        return Optional[To]()
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.T, Copyable

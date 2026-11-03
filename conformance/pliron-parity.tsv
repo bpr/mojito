@@ -117,6 +117,7 @@ assets/ok/closure_storage_method_binders.mojo	main	exe-differential	sanitized
 assets/ok/closure_storage_values.mojo	main	exe-differential	sanitized
 assets/ok/closures.mojo	main	exe-differential	sanitized
 assets/ok/collection_display_default.mojo	main	exe-differential	sanitized
+assets/ok/collection_handler_closure_traits.mojo	main	exe-differential	sanitized
 assets/ok/collection_truthiness.mojo	main	exe-differential	sanitized
 assets/ok/collector_runtime_index.mojo	main	exe-differential	sanitized
 assets/ok/comparable_library_traits.mojo	main	exe-differential	sanitized
