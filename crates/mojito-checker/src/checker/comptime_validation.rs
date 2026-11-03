@@ -644,7 +644,7 @@ pub(super) fn applicable_declarations<'a>(
                     };
                 if mojito_checked::unit::synthesizes_fieldwise_constructor(
                     *fieldwise_init,
-                    methods.iter().map(|method| method.name.as_str()),
+                    methods.iter().map(super::calls::lifecycle_method_name),
                 ) {
                     let params: Vec<_> = fields
                         .iter()

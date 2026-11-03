@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1871**.
+Next free ID: **R1873**.
 
 ## Ordered Work
 
@@ -1482,33 +1482,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - A field transfer an owned parameter takes (`take(self.a^)`) already
     matches the pin, which runs no move initializer there.
   - Found while landing R730 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1095 A copy or move of a compile-time value parameter's slot
-  runs no constructor**
-
-  `var r = q` over a struct value parameter `q: Q` whose `__init__(copy)`
-  prints runs no copy constructor, where the pin materializes `q` and
-  calls it.
-  - A read of a value parameter is its parameter constant (R662), which
-    the elaborator materializes, a constructed value through its
-    constructor, so `var r = q` copies the constant's register and no
-    copy constructor runs.
-  - Probe at 2026-10-26: a `Q(ImplicitlyCopyable)` whose
-    `__init__(out self, *, copy: Self)` prints, read `var r = q`, prints
-    no copy on the pin either. Recheck the claim before fixing.
-  - Probe: `assets/ok/value_parameter_field_read.mojo` (`var r = q`),
-    `assets/ok/def_aggregate_value_binder_served.mojo` (`p[0]` over a
-    `Tuple[Int, Int]` binder).
-  - Probe: `print(T.S)` over a `comptime S: String` member materializes
-    the `String` as a register constant that a `deinit` call destroys,
-    which R1445's rule rejects
-    (`assets/ok/trait_comptime_requirement_default.mojo`, `show`).
-  - Materialize the parameter's value into storage once per read, as
-    upstream's `kgen.param.constant` is a value, and lower the copy or
-    move of it to the constructor call as any other.
-  - Found while landing R1046 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5697,6 +5670,47 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     pin rejects the member with "cannot implicitly convert
     '__mlir_type.index' value to 'Int'".
   - Found while landing R1184 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1871 A `String`-annotated `comptime` name over a string literal
+  keeps the literal's type**
+
+  `comptime G: String = "glob"` at module scope, then `var u = G` or
+  `take(G)` over `def take(var s: String)`, fails the MIR verifier
+  ("binding of StringLiteral["glob"] to a slot of type String"), and
+  `G.byte_length()` fails with "field access on non-struct String", where
+  the pin prints `glob` and `4`.
+  - The read is the literal's parameter value, typed `StringLiteral`,
+    while the checker types the name `String`.
+  - Upstream converts the initializer to the annotation at the
+    declaration, so every read is a `String` value.
+  - Probe: a struct member, `comptime S: String = "own"` in `struct A`,
+    read as `take(A.S)`, fails with "expected String, found
+    StringLiteral", where the pin prints `take own`.
+  - R1195 checks a member's body against its annotation, and R602 is the
+    sized-scalar local sibling of this conversion.
+  - Found while landing R1095 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1872 A struct-valued `comptime` member read through a type
+  parameter stays a parameter constant after elaboration**
+
+  `print(T.V.a)` in `def show[T: HasP]()`, over a trait requirement
+  `comptime V: P` that `struct A` sets to `P(2)`, stops at `show[A]()`
+  with "keeps the parameter constant `T.V` in elaborated MIR", where the
+  pin prints `2`.
+  - `print(A.V.a)` and `var v = A.V` run, so the gap is the elaborator's
+    answer to a type member whose value is a construction, once the
+    instance binds `T`.
+  - `Specializer::param_constant` (`mono/specializer.rs`) evaluates the
+    member symbolically and keeps it when that fails, where upstream's
+    elaborator runs the construction.
+  - Probe: `print(T.V)`, `look(T.V)` over `def look(p: P)`, and `var v =
+    T.V` fail the same way, where the pin constructs one `P` per read and
+    destroys each.
+  - Found while landing R1095 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

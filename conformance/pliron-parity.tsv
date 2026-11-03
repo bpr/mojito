@@ -1439,6 +1439,7 @@ assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_place_copies.mojo	main	exe-differential	sanitized
 assets/ok/type_comparison_values.mojo	main	exe-differential	sanitized
+assets/ok/type_member_string_materialized.mojo	main	exe-differential	sanitized
 assets/ok/type_member_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/type_names_applied_elements.mojo	main	exe-differential	sanitized
 assets/ok/type_of_comptime_assert.mojo	main	exe-differential	sanitized
@@ -1488,6 +1489,7 @@ assets/ok/value_pack_typed_by_type_param.mojo	main	exe-differential	sanitized
 assets/ok/value_param_forwarded_to_keyed_def.mojo	main	exe-differential	sanitized
 assets/ok/value_param_typed_by_alias_or_sized_scalar.mojo	main	exe-differential	sanitized
 assets/ok/value_param_typed_by_type_param.mojo	main	exe-differential	sanitized
+assets/ok/value_parameter_copy_constructor.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_display_application.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_field_read.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_inferred_from_argument_type.mojo	main	exe-differential	sanitized

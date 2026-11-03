@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `String` compile-time member read through a type parameter (`T.S`),
+  or a module `comptime` `String`, now materializes into storage its
+  readers borrow, as a value parameter's read does, instead of a register
+  destroyed whole (R1095). A struct with `@fieldwise_init` and a
+  hand-written copy `__init__` is now accepted as a value parameter
+  (`f[Q(8)]()`), which failed with "not a compile-time Int constant".
+  `var r = q` over such a parameter runs no copy constructor, as at the
+  pin.
 - A capturing lambda used as a value is now its storage variable, as the
   pin's lambda is an lvalue of it (R1435): a `read` parameter borrows the
   storage instead of receiving a register copy it destroys, and a binding,

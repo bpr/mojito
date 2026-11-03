@@ -1439,6 +1439,7 @@ assets/ok/tuple_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_place_copies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_comparison_values.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/type_member_string_materialized.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_member_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_names_applied_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_comptime_assert.mojo	-	ineligible	no-scalar-entry-shape
@@ -1488,6 +1489,7 @@ assets/ok/value_pack_typed_by_type_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_param_forwarded_to_keyed_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_param_typed_by_alias_or_sized_scalar.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_param_typed_by_type_param.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_parameter_copy_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_display_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_field_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_inferred_from_argument_type.mojo	-	ineligible	no-scalar-entry-shape

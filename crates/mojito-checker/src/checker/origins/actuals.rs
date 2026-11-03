@@ -274,7 +274,8 @@ impl Checker {
     }
 
     /// A run-time read of a compile-time binding (a value parameter, a
-    /// `comptime for` variable), or of a field chain off one (`q.s`), whose
+    /// `comptime for` variable), of a field chain off one (`q.s`), or of a
+    /// type's compile-time member (`T.S`), whose
     /// value is no constant — a struct, a tuple, a `String` — is a temporary
     /// the parameter constant materializes into, as upstream's
     /// `kgen.param.constant` is: the read borrows a hidden slot the
@@ -285,7 +286,7 @@ impl Checker {
     pub(in crate::checker) fn materialize_parameter_read(&self, expr: &Expr, ty: &Ty) {
         let runtime = self.comptime_positions.get() == 0;
         let read = if runtime {
-            self.is_parameter_read(expr)
+            self.is_parameter_read(expr) || self.is_parameter_value_read(expr)
         } else {
             self.is_requested_binding_read(expr)
         };
@@ -307,7 +308,7 @@ impl Checker {
     /// itself, handed to its consumer, and so has no temporary of its own
     /// ([`Self::materialize_parameter_read`]).
     pub(in crate::checker) fn consume_parameter_read(&self, expr: &Expr) {
-        if !self.is_parameter_read(expr) {
+        if !self.is_parameter_read(expr) && !self.is_parameter_value_read(expr) {
             return;
         }
         let mut records = self.node_facts.borrow_mut();
@@ -327,19 +328,25 @@ impl Checker {
         }
     }
 
+    /// Whether the check compiled `expr` to its parameter value: a
+    /// compile-time member of a type (`T.S`, `A.S`, `Self.S`) or a module
+    /// `comptime` name, read as a run-time value.
+    pub(in crate::checker) fn is_parameter_value_read(&self, expr: &Expr) -> bool {
+        matches!(
+            self.node_facts
+                .borrow()
+                .get(&expr.source_span())
+                .and_then(|facts| facts.adjustment.as_deref()),
+            Some(mojito_checked::checked::SemanticAdjustment::ParamValue { .. })
+        )
+    }
+
     /// Whether `expr`, a parameter read ([`Self::is_parameter_read`]), is
     /// one whose value the elaborator materializes: the binding itself, or
     /// a field chain the checker compiled to its parameter expression. A
     /// field chain it could not compile still reads the whole binding.
     pub(in crate::checker) fn is_materialized_parameter_read(&self, expr: &Expr) -> bool {
-        matches!(expr.kind, ExprKind::Identifier(_))
-            || matches!(
-                self.node_facts
-                    .borrow()
-                    .get(&expr.source_span())
-                    .and_then(|facts| facts.adjustment.as_deref()),
-                Some(mojito_checked::checked::SemanticAdjustment::ParamValue { .. })
-            )
+        matches!(expr.kind, ExprKind::Identifier(_)) || self.is_parameter_value_read(expr)
     }
 
     /// A view-returning call's result type with the origin slots its contract
