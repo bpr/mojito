@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1873**.
+Next free ID: **R1874**.
 
 ## Ordered Work
 
@@ -9792,6 +9792,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - An origin-bearing view at a call argument stays in its register
     (`Flatten::operand_expr_c`), whose provenance keeps the viewed storage
     live, so it gets no slot at all.
+  - Probe (from R1873): `Bool(String("").codepoint_slices().peek_next())`
+    destroys its `Optional[StringSpan]` result as a register
+    (`nominal_string_bytes_peek_split.mojo`).
   - Fix: register the call-result slot as the owner's var and put the
     anchor's `EstablishLoans` on it. A register-passable source keeps its
     own `$mat_r`, upstream's `anonymous` materialization.
@@ -9840,6 +9843,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     s.byte_length())[1])` over a `String`, with `F: def() -> Int`, prints
     the pin's `34`, but stops on "double free of Pointer allocation" on the
     VM with `AUTOMATIC_INLINE` removed from `post_elaboration.rs`.
+  - Probe (from R1873): a named memory-only value at a `read` argument is
+    a register the call's end destroys: `divmod(y, d)` over `T:
+    DivModable & Deinitable` moves `y` and copies `d`
+    (`value_traits_library.mojo`, `boolable_and_divmod.mojo`,
+    `math_operation_traits_library.mojo`), `print(e)` moves `e: T.E`
+    (`where_refined_bound_members.mojo`), and `llvm_intrinsic`'s
+    `*args` spread moves the whole `$variadic[*types]` pack.
+  - Probe (from R1873): a memory-only temporary at a `read` argument that
+    `Flatten::result_storage` (`mir/call_results.rs`) leaves in its
+    register: a `__copyinit__` of a reference result in `print(name_of(s))`
+    (`always_inline_nodebug_reference_results.mojo`,
+    `module_reference_result_reads.mojo`) and of a walrus value in
+    `print(names[0] := String("zz"))` (`walrus_place_targets.mojo`), and
+    a call result of pack-element type in `print(first([v, v], v))`
+    (`pack_element_list_display.mojo`).
   - Fix: pass the address as the operand, a `ref.make` of the place, and
     teach the inliner's parameter binding, `sroa`, and `mem-2-reg` to read
     it as an address.
@@ -9882,7 +9900,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1445 The MIR verifier does not reject a destroy of a memory-only
+- [ ] **R1873 The MIR verifier does not reject a destroy of a memory-only
   register**
 
   `verify/drops.rs` accepts a `drop.reg`, or the `deinit`-receiver call
@@ -9895,14 +9913,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `MirDeclarations::register_passable` answers no for.
   - Exempt a receiver a forwarding `var.use` defines: that is the slot's
     storage handed over, the form `lower_drops` gives every slot drop.
-  - A 2026-10-26 census of `assets/ok` with the rule on found 58
-    fixtures, every one a probe of R1440 through R1444, R1435
-    (`capturing_lambda_storage.mojo`), or R1095
-    (`trait_comptime_requirement_default.mojo`).
-  - Re-run the census over `assets/ok` and `assets/ownership_ok`, with
-    `MOJITO_PRE_ELABORATION=0` too, before landing it: the rule runs
-    after every pass in a debug build.
-  - Depends on R1440, R1441, R1442, R1443, R1444, R1435, R1095.
+  - A 2026-11-03 census of `assets/ok` and `assets/ownership_ok` with the
+    rule on found 10 fixtures (35 with `MOJITO_PRE_ELABORATION=0`, the rest
+    `llvm_intrinsic`'s pack spread), each a probe now filed on R1425 or
+    R1418.
+  - Re-run the census, both ways, before landing it: the rule runs after
+    every pass in a debug build.
+  - Depends on R1425, R1418.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler

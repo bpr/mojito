@@ -4550,6 +4550,16 @@ mod tests {
             Ty::int(),
         ]))));
         assert!(declarations.register_passable(&Ty::string_literal()));
+        assert!(declarations.register_passable(&Ty::new(TyKind::KgenString)));
+        let param = |bounds: &[&str]| {
+            Ty::new(TyKind::Param {
+                binder: mojito_types::param_expr::ParamRef::unbound("T"),
+                bounds: bounds.iter().map(|&bound| bound.into()).collect(),
+                callable_bound: None,
+            })
+        };
+        assert!(declarations.register_passable(&param(&["Copyable", "RegisterPassable"])));
+        assert!(!declarations.register_passable(&param(&["Copyable", "Movable"])));
         for memory_only in ["Conditional", "Movable", "String"] {
             assert!(
                 !declarations.register_passable(&struct_ty(memory_only)),

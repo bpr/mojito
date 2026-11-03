@@ -551,24 +551,31 @@ impl MirDeclarations {
     /// Whether a value of `ty` is register-passable, as upstream's
     /// `getRegisterPassability` answers anything but `MemoryOnly`: a type
     /// whose copy is the value itself ([`Self::copy_is_identity`]), a
-    /// `StringLiteral` or `None`, a function value other than a closure's
-    /// storage (a struct), which upstream holds as a raw MLIR value, a
-    /// tuple or pack of register-passable elements, or a struct declaring
-    /// `RegisterPassable` or
-    /// `TrivialRegisterPassable` unconditionally, directly or through a
-    /// refining trait, or conditionally where its conditions hold at the
-    /// struct's arguments, as upstream's `getRegisterPassability` judges a
-    /// conditional conformance at the instance (`Optional[Int]`). Anything
-    /// else is memory-only, which upstream passes to and returns from a call
-    /// by address: a conditional conformance its arguments leave open and a
-    /// type parameter included, as `MemoryOnly` is upstream's default.
+    /// `StringLiteral` or `None`, an MLIR type (`!kgen.string`) or a
+    /// function value other than a closure's storage (a struct), which
+    /// upstream holds as a raw MLIR value, a tuple or pack of
+    /// register-passable elements, a type parameter bound by
+    /// `RegisterPassable` or a refinement of it, or a struct declaring
+    /// `RegisterPassable` or `TrivialRegisterPassable` unconditionally,
+    /// directly or through a refining trait, or conditionally where its
+    /// conditions hold at the struct's arguments, as upstream's
+    /// `getRegisterPassability` judges a conditional conformance at the
+    /// instance (`Optional[Int]`). Anything else is memory-only, which
+    /// upstream passes to and returns from a call by address: a conditional
+    /// conformance its arguments leave open and a type parameter with no
+    /// such bound included, as `MemoryOnly` is upstream's default.
     pub fn register_passable(&self, ty: &Ty) -> bool {
         if self.copy_is_identity(ty) {
             return true;
         }
         match ty.kind() {
             kind if kind.is_string_literal() => true,
-            TyKind::None => true,
+            TyKind::None
+            | TyKind::KgenString
+            | TyKind::KgenDeferred
+            | TyKind::KgenTarget
+            | TyKind::PopIntLiteral
+            | TyKind::PopFloatLiteral => true,
             TyKind::Func(_) | TyKind::GenericFunc(_) => ty.callable().is_some_and(|function| {
                 !matches!(
                     function.environment,
@@ -579,15 +586,13 @@ impl MirDeclarations {
                 items.iter().all(|item| self.register_passable(item))
             }
             TyKind::PopArray { element, .. } => self.register_passable(element),
+            TyKind::Param { bounds, .. } => bounds
+                .iter()
+                .any(|bound| self.refines_register_passable(bound)),
             struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 self.structure(name).is_some_and(|declaration| {
                     declaration.declared.iter().any(|row| {
-                        ["RegisterPassable", "TrivialRegisterPassable"]
-                            .iter()
-                            .any(|required| {
-                                row.trait_name == *required
-                                    || self.trait_refines(&row.trait_name, required)
-                            })
+                        self.refines_register_passable(&row.trait_name)
                             && (matches!(
                                 row.conditions.as_slice(),
                                 [GenericConstraint::Bool(true)]
@@ -632,6 +637,14 @@ impl MirDeclarations {
     fn refines_trivial_register_passable(&self, trait_name: &str) -> bool {
         trait_name == "TrivialRegisterPassable"
             || self.trait_refines(trait_name, "TrivialRegisterPassable")
+    }
+
+    /// Whether `trait_name` is or refines `RegisterPassable` or
+    /// `TrivialRegisterPassable`.
+    fn refines_register_passable(&self, trait_name: &str) -> bool {
+        ["RegisterPassable", "TrivialRegisterPassable"]
+            .iter()
+            .any(|required| trait_name == *required || self.trait_refines(trait_name, required))
     }
 
     /// Whether dropping a value of `ty` runs no code, as upstream's

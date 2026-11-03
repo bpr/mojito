@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR register passability now answers yes for an MLIR type
+  (`!kgen.string`) and for a type parameter bound by `RegisterPassable`
+  or a refinement of it, as upstream's `getRegisterPassability` does;
+  both were memory-only. The verifier rule rejecting a destroy of a
+  memory-only register (R1445) waits on R1425 and R1418, refiled as R1873.
 - A `String` compile-time member read through a type parameter (`T.S`),
   or a module `comptime` `String`, now materializes into storage its
   readers borrow, as a value parameter's read does, instead of a register
