@@ -1400,7 +1400,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   setup (`defer_to_setup`). `calls.rs`'s `temporary_operand`,
   `lower_method_receiver` (with `materialize_receiver` for a `ref self`
   over a register result), `load_temporary_field`, and `discard_result`
-  consume it; `Flatten::transfer`
+  consume it, and `mir.rs`'s `copy_consuming_receiver` binds an implicitly
+  copied `deinit self` receiver's copy to one (`consumed_copy`), whose
+  place the call consumes; `Flatten::transfer`
   (`lower_expr/expr.rs`) lowers a forwarded whole-slot `x^` to `UseVar
   Forward` (`UseMode::Forward`, `UseMode::moves`), and `Flatten::ternary`
   (`lower_expr/ctrl.rs`) forwards a memory-only conditional expression's

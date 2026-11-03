@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A consuming method call over an implicitly copied receiver now copies it
+  into a call-result slot whose place the call consumes, as upstream passes
+  the copy's temporary as the owned operand (R1443): `v.unwrap[Int]()`
+  over an `ImplicitlyCopyable` `Variant[Int, String]`, `t.reverse()` over a
+  `Tuple[Int, String]`, and `o.or_else(d)` over an `Optional[String]` no
+  longer hand the callee a register copy.
 - More memory-only temporaries now live in their call-result slot instead of
   a register destroyed whole (R1442). An `@implicit` conversion whose
   constructor reads its source reads a named place where it lies, so

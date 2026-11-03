@@ -2316,7 +2316,9 @@ impl<'a> Flatten<'a> {
     /// Method call `call`'s receiver value and retained place, copying a
     /// consuming receiver when `copied`: a copied named receiver is read
     /// as an owned argument is, by its slot's copying use, as upstream
-    /// copies argument 0 from the name's memory.
+    /// copies argument 0 from the name's memory. A copied receiver's place
+    /// is its copy's call-result slot, which the call consumes
+    /// ([`Self::copy_consuming_receiver`]), never the copied original's.
     fn lower_receiver_value(
         &mut self,
         call: Node<'a>,
@@ -2333,21 +2335,24 @@ impl<'a> Flatten<'a> {
                 Some(MirInstr::UseVar { dest, mode: UseMode::Copy, .. }) if *dest == value
             );
             if read_copied {
-                return (value, None);
+                let ty = self.f.reg_types.get(&value.0).cloned();
+                return match ty {
+                    Some(ty) if ty.kind().is_non_simd_struct() => {
+                        self.consumed_copy(receiver, value, ty)
+                    }
+                    _ => (value, None),
+                };
             }
-            return (self.copy_consuming_receiver(receiver, value, None), None);
+            return self.copy_consuming_receiver(receiver, value, None);
         }
         let (value, place) = self.lower_method_receiver(call, receiver);
-        let value = if copied {
-            self.copy_consuming_receiver(receiver, value, place.as_ref())
-        } else {
-            value
-        };
+        if copied {
+            return self.copy_consuming_receiver(receiver, value, place.as_ref());
+        }
         // A `SIMD` receiver the method reads is passed by value, as
         // upstream passes a register-passable `read self`: it retains no
         // place, so its owner may die at the read, before the call runs.
         if place.is_some()
-            && !copied
             && call.reference_result().is_none()
             && call.call_contract().is_some_and(|contract| {
                 matches!(

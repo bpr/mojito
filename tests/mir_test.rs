@@ -1916,6 +1916,34 @@ fn repr_text_and_transferred_temporary_receiver_use_call_result_slots() {
 }
 
 #[test]
+fn implicitly_copied_consuming_receiver_is_consumed_in_its_call_result_slot() {
+    // `v.unwrap[Int]()` over an `ImplicitlyCopyable` `Variant` copies `v`
+    // into a call-result slot whose place the `deinit` receiver consumes,
+    // as upstream passes the copy's temporary as the `DeinitMem` operand.
+    let source = "from std.utils import Variant\n\ndef main():\n    var v = Variant[Int, String](3)\n    print(v.unwrap[Int]())\n";
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    let place = nested_instructions(&main.blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method, recv_place, ..
+            } if method == "unwrap" => Some(recv_place.clone()),
+            _ => None,
+        })
+        .expect("the unwrap call")
+        .expect("the copied receiver's place");
+    assert!(
+        place.is_whole_root()
+            && main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT),
+        "{main:#?}"
+    );
+}
+
+#[test]
 fn memory_only_slice_subscript_result_is_read_from_its_call_result_slot() {
     // `xs[::2]` returns a `List` through memory, so `print` reads it in its
     // call-result slot, which drop elaboration destroys after the call.

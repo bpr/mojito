@@ -890,10 +890,12 @@ impl<'a> Flatten<'a> {
         if let Some(dest) = self.lower_elided_receiver_call(call, object, args, kwargs) {
             return dest;
         }
-        let implicitly_copied_receiver = call.implicitly_copies_consuming_receiver();
         let receiver_expr = call.destroyed_receiver(object);
-        let (recv, recv_place) =
-            self.lower_setup_receiver(call, receiver_expr, implicitly_copied_receiver);
+        let (recv, recv_place) = self.lower_setup_receiver(
+            call,
+            receiver_expr,
+            call.implicitly_copies_consuming_receiver(),
+        );
         // A per-call clone has baked its method parameters into
         // the selected symbol. Source brackets remain in the AST,
         // but an empty declaration list means they occupy no MIR
@@ -936,11 +938,7 @@ impl<'a> Flatten<'a> {
                 .map(MirResultAdapter::new),
             args: argument_regs,
             kwargs: keyword_regs,
-            recv_place: if implicitly_copied_receiver {
-                None
-            } else {
-                recv_place.map(Box::new)
-            },
+            recv_place: recv_place.map(Box::new),
             recv_writes: call.receiver_writes(),
             receiver_convention: call.receiver_convention(object),
             arg_places,

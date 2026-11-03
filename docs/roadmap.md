@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1867**.
+Next free ID: **R1868**.
 
 ## Ordered Work
 
@@ -1004,6 +1004,24 @@ which names the upstream pass each one follows. Each is measured by the
     `Bindings` clone per step in `Specializer::trip_elements`.
   - Release numbers were not measured.
   - Found while landing R791 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1867 Two string values of one compile-time parameter can name the
+  same elaborated instance**
+
+  With the pre-elaboration pipeline off (`MOJITO_PRE_ELABORATION=0`),
+  `String("(")` beside `String(")")` stops with "unsupported concrete
+  instance symbol `String.__init__$ov$StringLiteral$V$value$data$mono$V$$$`
+  collides with an existing declaration", where the pin runs it.
+  - Each `StringLiteral[value]` instance of the constructor gets one
+    `$mono$` symbol, and both spell `V$$$`: the instance spelling does
+    not tell the two values apart. Find where the suffix is built and
+    encode the value injectively.
+  - Probe: `print(())` (the empty tuple writes `(` and `)`), as in
+    `assets/ok/tuple_template_served.mojo`.
+  - The default pipeline runs both.
+  - Found while landing R1443 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9820,30 +9838,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     update the MIR tests that pin instruction adjacency next to a raising
     call (`owned_operand_transfers_at_the_call_after_a_raising_operand`,
     `tests/mir_test.rs`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1443 An implicitly copied consuming receiver is copied into a
-  register, where upstream copies it into a temporary the call consumes**
-
-  `v.unwrap[Int]()` over an `ImplicitlyCopyable` `Variant[Int, String]`
-  copies `v` (`var.use copy`, or `copy_consuming_receiver` in `mir.rs`)
-  and hands the `deinit` receiver the copy's register, with no place.
-  - Upstream's owned argument is the address of the copy's temporary,
-    which the callee consumes.
-  - Lever: copy into a call-result slot and pass its place as the
-    receiver place, which the call consumes, as an explicit destroy's
-    receiver place is. Both method-call paths drop the place of a
-    copied receiver (`ordinary_method_call`, `parameterized_method_call`).
-  - Probe: `v.unwrap[Int]()`, `w.unsafe_unwrap[Int]()`, and
-    `x.deinit_with(h)` (`assets/ok/variant_owning_api.mojo`).
-  - Probe: `t.reverse()` and `t.concat(u)` over a `Tuple[Int, String]`
-    (`tuple_template_served.mojo`), and `self.x.or_else(d)` over an
-    `Optional[T]` (`template_method_copied_consuming_receiver.mojo`).
-  - Probe: `note.or_else("")` over the `Optional[String]` parameter of
-    `CompilationTarget.unsupported_target_error`, copied in its
-    compile-time application (`std/sys/info.mojo`; any `print` program).
-  - Found while landing R1356 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

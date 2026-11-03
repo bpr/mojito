@@ -3598,14 +3598,17 @@ impl<'a> Flatten<'a> {
     /// A `deinit self` call whose receiver the checker satisfied by implicit
     /// copy: an `ImplicitlyCopyable` nominal receiver runs its copy lifecycle
     /// (`__init__(copy:)`) into a fresh temporary the callee consumes, so the
-    /// original place keeps its own storage and its ordinary drop. Scalars
-    /// and other non-nominal values copy by plain read.
+    /// original place keeps its own storage and its ordinary drop. A copy
+    /// owning droppable storage lives in a call-result slot whose place the
+    /// call consumes, as upstream passes the copy's temporary as the
+    /// `DeinitMem` operand. Scalars and other non-nominal values copy by
+    /// plain read.
     fn copy_consuming_receiver(
         &mut self,
         receiver: Node<'a>,
         recv: Reg,
         recv_place: Option<&MirPlace>,
-    ) -> Reg {
+    ) -> (Reg, Option<MirPlace>) {
         // The copy has its source's exact type — the receiver place's when
         // the register is a place read (the verifier types that register
         // from the place): the checker's expression type can spell the same
@@ -3621,16 +3624,32 @@ impl<'a> Flatten<'a> {
             .or_else(|| receiver.ty());
         match ty {
             Some(ty) if ty.kind().is_non_simd_struct() => {
-                let copied = self.fresh_typed(receiver.location(), None, ty);
+                let copied = self.fresh_typed(receiver.location(), None, ty.clone());
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: recv,
                     constructor: None,
                 });
-                copied
+                self.consumed_copy(receiver, copied, ty)
             }
-            _ => recv,
+            _ => (recv, None),
         }
+    }
+
+    /// `copied`, a fresh copy of type `ty` a `deinit` receiver consumes, in
+    /// a call-result slot of its own with the slot's place when it owns
+    /// droppable storage, else in its register.
+    fn consumed_copy(
+        &mut self,
+        receiver: Node<'a>,
+        copied: Reg,
+        ty: Ty,
+    ) -> (Reg, Option<MirPlace>) {
+        if !calls::owns_droppable_storage(&ty) {
+            return (copied, None);
+        }
+        let slot = self.call_result_slot(copied, ty, true);
+        self.read_c(receiver, call_results::CValue::Slot(slot))
     }
 
     /// The contract of the parameterized accessor call a type-keyed subscript

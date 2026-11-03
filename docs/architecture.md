@@ -5616,7 +5616,11 @@ current Mojo:
   (`read_temporary_receiver`), and an owned one is `ForwardedArgument`
   (`Flatten::operand_c`). A receiver returned in registers that a `ref
   self` binds is materialized in a `$mat_r` slot, as upstream's
-  `getLValueForResult` gives an rvalue storage. A loan-carrying temporary
+  `getLValueForResult` gives an rvalue storage. An implicitly copied
+  `deinit self` receiver owning droppable storage is copied into a slot
+  of its own whose place the call consumes
+  (`Flatten::copy_consuming_receiver`), as upstream's `DeinitMem` operand
+  is the copy's temporary. A loan-carrying temporary
   keeps its `$arg_loan_r` anchor, a materialized borrow source its `$mat_r`
   slot, and an origin-bearing view at an argument its register, whose
   provenance keeps the viewed storage live.
