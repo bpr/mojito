@@ -1,6 +1,6 @@
 # A generator's parameter types must match the generator-typed parameter's,
 # position by position: a `Bool` parameter is no `Int` one.
-# expect: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type '__generator_type[a: Bool]
+# expect: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type '__generator_type[a: Bool] IntLiteral[1]'
 comptime Flag[a: Bool] = 1
 
 

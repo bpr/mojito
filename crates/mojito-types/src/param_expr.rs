@@ -471,15 +471,27 @@ impl ParamContext {
         }
         // A constant list of one kind of value read at an index still a
         // parameter (`[10, 20, 30][n]`) keeps the residual node, which folds
-        // once the index is bound.
+        // once the index is bound. Differently valued literals of one family
+        // merge at its default type, as upstream's `coerceTypesToEachOther`
+        // does.
         let element = match list.meta() {
             MetaTy::ParamList(element) => Some(element.clone()),
-            MetaTy::Tuple(members) | MetaTy::List(members) => members
-                .split_first()
-                .filter(|(first, rest)| {
-                    first.as_value().is_some() && rest.iter().all(|member| member == *first)
+            MetaTy::Tuple(members) | MetaTy::List(members) => {
+                members.split_first().and_then(|(first, rest)| {
+                    let first_ty = first.as_value()?;
+                    if rest.iter().all(|member| member == first) {
+                        return Some(Box::new(first.clone()));
+                    }
+                    let family = |ty: &Ty| (ty.is_int_literal(), ty.is_float_literal());
+                    let merges = first_ty.is_numeric_literal()
+                        && rest.iter().all(|member| {
+                            member
+                                .as_value()
+                                .is_some_and(|ty| family(ty) == family(first_ty))
+                        });
+                    merges.then(|| Box::new(MetaTy::value(crate::types::default_literal(first_ty))))
                 })
-                .map(|(first, _)| Box::new(first.clone())),
+            }
             _ => None,
         };
         let Some(element) = element else {
@@ -2346,12 +2358,11 @@ impl ParamContext {
                 };
             }
             // A numeric literal bound to an `IntLiteral[v]` or
-            // `FloatLiteral[v]` parameter is likewise its literal (R1785).
-            (MetaTy::Value(ty), Some(CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)))
-                if value
-                    .meta()
-                    .as_value()
-                    .is_some_and(|found| *found == crate::types::value_less_literal(ty)) =>
+            // `FloatLiteral[v]` parameter is likewise its literal, whose
+            // type carries the value the binding of `v` keys.
+            (MetaTy::Value(ty), Some(constant))
+                if matches!(constant, CtValue::IntLiteral(_)) && ty.is_int_literal()
+                    || matches!(constant, CtValue::FloatLiteral(_)) && ty.is_float_literal() =>
             {
                 return if depth == 0 {
                     Ok(value.clone())
@@ -3584,8 +3595,8 @@ impl MetaTy {
             CtValue::UInt(_) => Self::value(Ty::uint()),
             CtValue::Index(_) => Self::value(Ty::index()),
             CtValue::Float(_) => Self::value(Ty::float64()),
-            CtValue::IntLiteral(_) => Self::value(Ty::int_literal()),
-            CtValue::FloatLiteral(_) => Self::value(Ty::float_literal()),
+            CtValue::IntLiteral(value) => Self::value(Ty::int_literal_of(value)),
+            CtValue::FloatLiteral(value) => Self::value(Ty::float_literal_of(value)),
             CtValue::Bool(_) => Self::bool(),
             CtValue::None => Self::value(Ty::none()),
             CtValue::Str(_) => Self::value(Ty::string_literal()),

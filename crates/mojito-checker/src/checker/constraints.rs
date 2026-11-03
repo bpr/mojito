@@ -2289,15 +2289,23 @@ impl Checker {
         right: &ParamExpr,
     ) -> Result<ParamExpr, TypeError> {
         let (left_ty, right_ty) = (left.meta().as_value(), right.meta().as_value());
-        let common = if left_ty == right_ty {
-            left_ty
-        } else {
-            [left_ty, right_ty]
+        // Two differently valued literals of one family merge at its
+        // default type, as upstream's `coerceTypesToEachOther` does.
+        let common = match (left_ty, right_ty) {
+            _ if left_ty == right_ty => left_ty.cloned(),
+            (Some(l), Some(r))
+                if l.is_int_literal() && r.is_int_literal()
+                    || l.is_float_literal() && r.is_float_literal() =>
+            {
+                Some(mojito_types::types::default_literal(l))
+            }
+            _ => [left_ty, right_ty]
                 .into_iter()
                 .flatten()
-                .find(|ty| !matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
+                .find(|ty| !ty.is_numeric_literal())
+                .cloned(),
         };
-        let materialized = |value: &ParamExpr| match (value.as_constant(), common) {
+        let materialized = |value: &ParamExpr| match (value.as_constant(), common.as_ref()) {
             (Some(constant), Some(ty)) => constant.clone().materialize_as(ty),
             _ => None,
         };
@@ -2330,7 +2338,7 @@ impl Checker {
         };
         let operand = |value: &ParamExpr| -> Result<ParamExpr, TypeError> {
             match value.as_constant() {
-                None if value.meta().as_value() == common => Ok(value.clone()),
+                None if value.meta().as_value() == common.as_ref() => Ok(value.clone()),
                 None => Err(unsupported()),
                 Some(_) => materialized(value)
                     .ok_or_else(unsupported)
@@ -2338,11 +2346,11 @@ impl Checker {
             }
         };
         let (left, right) = (operand(left)?, operand(right)?);
-        let condition = match common.map(Ty::kind) {
+        let condition = match common.as_ref().map(Ty::kind) {
             Some(kind) if kind.is_bool() => left.clone(),
             Some(kind) if kind.is_int() || kind.is_uint() || matches!(kind, TyKind::Index) => {
                 let zero = CtValue::IntLiteral(0.into())
-                    .materialize_as(common.ok_or_else(unsupported)?)
+                    .materialize_as(common.as_ref().ok_or_else(unsupported)?)
                     .ok_or_else(unsupported)?;
                 self.param_context
                     .infix(InfixOp::Ne, &left, &self.ct_param(zero)?)

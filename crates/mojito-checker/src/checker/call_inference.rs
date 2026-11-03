@@ -434,7 +434,7 @@ impl Checker {
     /// the type names: the elaborator writes the closed type's default
     /// construction, the literal of its value, while the [`Ty::new`]
     /// bridge holds the instance as the compiler's literal type (R1660,
-    /// R1785).
+    /// R1851).
     fn literal_construction(
         &self,
         span: &SourceSpan,

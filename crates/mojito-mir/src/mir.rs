@@ -2144,7 +2144,7 @@ fn lower_function(
 /// binders, as upstream's is, since `SIMD`'s lane rules read its slots off
 /// it and the `Ty::new` bridges hold a literal's application as the
 /// compiler's `TyKind::StringLiteral` (R1660), `TyKind::IntLiteral`, and
-/// `TyKind::FloatLiteral` (R1785). The receiver is that type at the
+/// `TyKind::FloatLiteral` (R1851). The receiver is that type at the
 /// binders, which an instance substitutes as any other type.
 fn self_receiver_ty(name: &str, parameters: &[ParamDecl]) -> Ty {
     let arguments = if [

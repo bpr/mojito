@@ -605,7 +605,7 @@ pub enum TyKind {
     /// [`CtValue::PopIntLiteral`] once the value is known or a
     /// [`CtValue::Expr`] of type `!pop.int_literal` while it is symbolic.
     /// `None` is the value-less literal upstream has no type for: the join
-    /// of differently valued literals, or the run-time register. R1785
+    /// of differently valued literals, or the run-time register. R1849
     /// retires it.
     IntLiteral(Option<Box<CtValue>>),
     /// A float literal's type, upstream's `FloatLiteral[value]`, held as
@@ -1005,7 +1005,7 @@ impl Ty {
     /// ([`bridged_string_literal`]) until R1660 deletes that bridge, and an
     /// `IntLiteral[value]` or `FloatLiteral[value]` one a
     /// [`TyKind::IntLiteral(_)`] or [`TyKind::FloatLiteral(_)`]
-    /// ([`bridged_numeric_literal`]) until R1785 deletes that one. `Bool`
+    /// ([`bridged_numeric_literal`]) until R1851 deletes that one. `Bool`
     /// shares one node ([`Ty::bool`]).
     pub fn new(kind: TyKind) -> Self {
         Self::dataless(&kind)
@@ -3801,7 +3801,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         // value-less string (R1657).
         (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(None)) => true,
         // A numeric literal of a known value is one of the value-less
-        // literals the join of different values still is (R1785). Two
+        // literals the join of different values still is (R1849). Two
         // carried values agree only when equal,
         // and an integer carries over to the float its
         // `#pop<int_to_float_literal>` is, upstream's

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time literal constant is of the literal type carrying its
+  value instead of the value-less literal type (part of R1785, whose
+  remainder is R1848–R1851): a generator-typed parameter given `5` now
+  reports "value has type 'IntLiteral[5]'" as the pin does, and two
+  differently valued compile-time literals of one family merge at `Int`
+  or `Float64` (`comptime A = 0 or 3` is `Int`).
+
 - A module `comptime` alias that constructs a struct of the same program
   waits for that struct's initializers, and a struct parameter's default
   naming it waits for the alias, as the pin resolves declarations on demand

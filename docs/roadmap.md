@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1848**.
+Next free ID: **R1852**.
 
 ## Ordered Work
 
@@ -6920,29 +6920,84 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1785 The value-less numeric literal type and its run-time register
-  remain**
+- [ ] **R1848 A run-time merge of an int and a float literal is accepted,
+  where upstream reports an ambiguous merge**
 
-  Problem: once a literal's type carries its value (R1779) and a bare
-  parameter instantiates per call (R1780), `TyKind::IntLiteral`/
-  `FloatLiteral` without a value still types a join of differently valued
-  literals and a run-time register, where upstream's struct is empty and
-  register-passable.
-  - The register is the VM's exact `Value::IntLiteral`/`FloatLiteral`,
-    Pliron's `i64`/`f64` (`lower/types.rs`), and an 8-byte layout
-    (`mojito-native-core/src/layout.rs`).
-  - This is the numeric half of R1657, R1659, and R1660.
-  - The bridge's stand-ins go with it: `bridged_numeric_literal`
-    (`types.rs`), `literal_construction`'s numeric arms, and MIR's
-    `materialized_literal_construction`, which reads a materialized
-    `IntLiteral[v]()` off its type because a node carries one adjustment.
-  - A literal constant's `MetaTy` (`MetaTy::of_value`, `param_expr.rs`)
-    is the value-less type too, so `applied_value`
-    (`checker/comptime_validation.rs`) matches it against a carried type
-    through `value_less_literal`.
-  - Done when an `IntLiteral[v]` application is the declared struct, with
-    no bridge onto a compiler kind.
-  - Depends on R1780.
+  Problem: `1 if c else 2.5`, `1.5 if c else 2`, and `[1, 2.5]` run in
+  Mojito (`1.0`, `1.5`, `Array[Float64, 2]`), where the pin rejects each
+  with "ambiguous merge: left value has type 'IntLiteral[1]' and right
+  value has type 'FloatLiteral[2.5]', and both convert to each other".
+  - Cause: `builtins::common_literal` (`checker/builtins.rs`) joins two
+    literals to the value-less literal type instead of upstream's
+    `coerceTypesToEachOther`, which merges two differently valued
+    literals of one family at `Int`/`Float64` and rejects a mixed pair.
+  - The compile-time merges already follow the pin: `short_circuit_value`
+    (`checker/constraints.rs`) and `ParamContext::list_get`'s element
+    meta (`param_expr.rs`).
+  - Lever: split the merge from `common_numeric` (operator typing, R1753)
+    and call it from `common_branch_ty`, `common_elem`,
+    `coerce_to_each_other`, and `common_display_element`.
+  - Probe: `var x = 1 if c else 2; print(_unqualified_type_name[type_of(x)]())`
+    prints `SIMD[DType.int, 1]` at the pin, and `emit-mir` of it holds no
+    `IntLiteral` register.
+  - Depends on R1845.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1849 A value-less `IntLiteral`/`FloatLiteral` type still exists,
+  where upstream's literal type always carries its value**
+
+  Problem: `TyKind::IntLiteral(None)`/`FloatLiteral(None)` still types
+  values the pin types `IntLiteral[v]` or `Int`, so a literal type can
+  lose its value.
+  - Its remaining producers: the run-time merge (R1848), a literal's
+    unary and `/` operators (`checker/operators.rs`, R1753), a tuple
+    display's element (`Checker::tuple_element_ty`, R1786), the
+    symbolic literal polynomial (`IntDomain::Literal::ty`,
+    `param_expr.rs`, upstream's `IntLiteral[#pop.int_literal_bin<…>]`),
+    and MIR text's bare `IntLiteral` decode.
+  - Its consumers go with it: `coerces`'s and `conversion_count`'s
+    `(Some, None)` arms, the `type_of` guard (`constraints.rs`), the
+    numeric arms of `types::value_less_literal`, `applied_value`'s
+    value-less tuple-element tier, mangling, `ct::source_type`, `Display`,
+    `Ty::int_literal()`/`float_literal()`, and `TyKind::INT_LITERAL`/
+    `FLOAT_LITERAL`.
+  - Done when the variants hold `Box<CtValue>`, not an `Option`.
+  - Depends on R1848, R1753, R1786.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1850 A numeric literal register holds its value at run time,
+  where upstream's literal struct is empty**
+
+  Problem: a literal-typed register is the VM's exact
+  `Value::IntLiteral`/`FloatLiteral`, Pliron's `i64`/`f64`
+  (`lower/types.rs`), and an 8-byte layout
+  (`mojito-native-core/src/layout.rs`), where the pin's `IntLiteral[v]`
+  carries no data and its conversion reads `v` from the type.
+  - Lever: `MaterializeLiteral` and the literal coercions read the value
+    off the operand's closed type, `Const::IntLiteral` writes an empty
+    struct, and `lower_ty`/`layout_of` lose their literal arms.
+  - Coordinate with R1834, which reshapes `literal.materialize`.
+  - Done when `rg "Value::(IntLiteral|FloatLiteral)" crates/mojito-vm` is
+    empty.
+  - Depends on R1849.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1851 An `IntLiteral[v]` application is bridged onto a compiler
+  kind, where upstream's is the declared struct**
+
+  Problem: `Ty::new` maps the declared `IntLiteral`/`FloatLiteral`
+  application onto `TyKind::IntLiteral`/`FloatLiteral`
+  (`bridged_numeric_literal`, `types.rs`), so the literal types are not
+  the structs `std.builtin.int_literal` declares.
+  - The bridge's stand-ins go with it: `nominal_parts`' and
+    `rewrite_ty`'s literal arms, `literal_construction`'s numeric arms,
+    and MIR's `materialized_literal_construction`.
+  - This is the numeric half of R1657, R1659, and R1660, and has the
+    shape of R1557 (`SIMD`).
+  - If the site walk overruns a session, split it along the crate DAG.
+  - Done when `rg "TyKind::(IntLiteral|FloatLiteral)|bridged_numeric_literal" crates`
+    is empty.
+  - Depends on R1850.
   - Model: Fable, Not Planned.
 
 - [ ] **R1786 A tuple display's numeric literal elements stay literal

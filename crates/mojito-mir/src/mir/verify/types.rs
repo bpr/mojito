@@ -40,7 +40,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         return true;
     }
     // So is every integer (float) literal one register whatever value its
-    // type carries (R1785).
+    // type carries (R1850).
     if (found.is_int_literal() && expected.is_int_literal())
         || (found.is_float_literal() && expected.is_float_literal())
     {

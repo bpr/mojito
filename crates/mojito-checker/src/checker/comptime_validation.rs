@@ -2876,7 +2876,7 @@ impl Checker {
             if let SlotType::Declared(_, declared) = slot {
                 patterns.push(at_owner(declared.as_ref()?));
                 // A literal constant is of the literal type carrying its
-                // value, which a bare `IntLiteral` parameter binds (R1785).
+                // value, which a bare `IntLiteral` parameter binds (R1780).
                 actuals.push(
                     argument
                         .as_constant()
@@ -3087,11 +3087,15 @@ impl Checker {
                 .materialize_as(ty)
                 .and_then(|closed| self.param_context.constant(closed).ok()),
         };
-        // A literal constant's value type is the value-less literal, which
-        // the literal type carrying its value names (R1785).
+        // A string constant's value type is the value-less `StringLiteral`,
+        // which the literal type carrying its value names (R1657), and a
+        // numeric literal constant meets a tuple display's value-less
+        // element (R1786).
         if let Some(argument) = argument.filter(|argument| {
             argument.meta().as_value().is_some_and(|found| {
-                found == ty || *found == mojito_types::types::value_less_literal(ty)
+                found == ty
+                    || *found == mojito_types::types::value_less_literal(ty)
+                    || mojito_types::types::value_less_literal(found) == *ty
             })
         }) {
             return Some(argument);

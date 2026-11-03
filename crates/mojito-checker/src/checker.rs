@@ -1884,9 +1884,9 @@ impl Checker {
             })
             .collect::<Vec<_>>();
         // Several converting constructors may accept the source; one whose
-        // parameter is exactly the source type wins (a literal's
-        // value-less type, which the pin's `IntLiteral[_]` binds, is
-        // exactly it), and failing that one whose parameter is the
+        // parameter is exactly the source type wins (the pin's
+        // `IntLiteral[_]` solves to the literal's own `IntLiteral[v]`), and
+        // failing that one whose parameter is the
         // literal's default type, as in current Mojo
         // (a literal selects an `IntLiteral` constructor over an `Int` one).
         // Within each tier a constructor without parameters of its own beats
@@ -1900,8 +1900,7 @@ impl Checker {
                 .collect::<Vec<_>>()
         };
         let default_literal = mojito_types::types::default_literal(from);
-        let value_less = mojito_types::types::value_less_literal(from);
-        let tiers = [Some(from), Some(&value_less), Some(&default_literal), None].map(exactly);
+        let tiers = [Some(from), Some(&default_literal), None].map(exactly);
         let matches = tiers
             .iter()
             .flat_map(|tier| {
