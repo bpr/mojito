@@ -901,6 +901,7 @@ assets/ok/pointer_field_ctor_temporary_explicit_init.mojo	main	exe-differential	
 assets/ok/pointer_field_deref_field_store.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_deref_field_store_shapes.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_deref_index.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_deref_receiver_not_self.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_drain_mut_method.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_fieldwise_init_binder.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_imm_origin_cast_read.mojo	main	exe-differential	sanitized
@@ -947,6 +948,7 @@ assets/ok/positional_only.mojo	main	exe-differential	sanitized
 assets/ok/print_argument_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/print_argument_read_in_place.mojo	main	exe-differential	sanitized
 assets/ok/print_keywords_file.mojo	main	exe-differential	sanitized
+assets/ok/print_library_keywords.mojo	main	exe-differential	sanitized
 assets/ok/raise_borrowed_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/raise_exit_destroys_live_values.mojo	main	exe-differential	sanitized
 assets/ok/raising_call_edge_destroys_held_values.mojo	main	exe-differential	sanitized

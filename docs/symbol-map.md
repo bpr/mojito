@@ -52,7 +52,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
 | Phase timing (`--timings`) | `timing::{enable, enabled, span, round, count, report}` (crate `mojito-common`) | Every phase crate records spans; the CLI enables collection and prints the report; `scripts/bench-compile`, `scripts/instantiation-report`, and `tools/bench` parse it. Disabled, a span is one relaxed atomic load. |
-| `print` keywords | `infer_print` (`checker/builtins.rs`) | The VM's `print` arm (`dispatch.rs`; `file=` writes through `host_write_bytes`), pliron's `lower_print` (`lower/print.rs`; a `print_sink` descriptor makes `write_stdout` call libc `write`), `mojito_types::types::is_stdlib_file_descriptor_struct`. |
+| `print` | `stdlib/std/io/io.mojo` (`print`, linked as the bare `print`: `implicit_public_identity`), over `stdlib/std/format/_utils.mojo`'s `_FlushingWriteBuffer` and `RawFileDescriptor.write_bytes`'s `external_call["write"]` | An ordinary library call on every phase; the prelude re-exports it as upstream's does. The elaborator's `effectful_callee` (`mono/specializer.rs`) refuses a compile-time application reaching its template. |
 | Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
 | Evaluated defaults (`s: String = String("a")`) | `mir::lower_default` lowers the default as the zero-parameter function `$default$<owner>$<parameter>` recorded as `CheckedConst::Evaluate`; the checker's `dynamic_default_reference` rejects one naming runtime storage | Every omitted argument is the call's: the lowering of each checked call records its callee (`MirFunction::lowered_calls`, `mir::LoweredCall`, written by `Flatten::record_call` at every call emitter) and `mir::fill_omitted_arguments` (`crates/mojito-mir/src/mir/call_defaults.rs`) writes each omitted argument into the recorded call once every declaration is lowered, before ownership analysis: a literal materialized at the parameter type, a conversion's constructor, or a call of the default function under the call's `instantiated_args`, receiver struct arguments, and enclosing binders, through a read-temporary or forwarding slot; a subscript becomes a `MultiIndex`, a bound call resolves to the trait member body through the requirement's dispatch symbol, and a function value's call to the function its register holds (`mir::callable_targets`). The callee evaluates none: `native::mono` enqueues no default function from a declaration, and the VM's `bind_for_call` and pliron's `default_argument_value` error on an `Evaluate` slot a call left out. A call of a generator without the argument passes none, and the private `erase_unpassed_defaults` (same file) erases a left-out default's `$default$` call and its read temporary, destruction included, from the view `mir::without_removed_argument_forwards`/`with_removed_argument_forwards_erased` build, which `Specializer::materialize_body` takes for every caller of such a callee. The same pass builds each call's positional collector (R1102): the private `build_collector` emits a heterogeneous one's `tuple.make` of the overflow typed by `collector_type`, or a homogeneous one's `VariadicList` (`mojito_types::types::variadic_list_type`) over the `!pop.array` (`MirInstr::MakeArray`, `array.create`, typed `TyKind::PopArray`) of pointers to the elements through `mojito_mir::mir::variadic_list::build_variadic_list` (a `read` element the caller's place, `borrowed_element`), and passes it as the call's `spread` operand (the elaborator's `array_display_construction` builds an `Array` literal's through the same builder, its slots in `FrameSlots`), `collect_through_requirement` builds a call through a bodiless requirement's from `TraitRequirement`'s call shape (`MirDeclarations::trait_declarations` finds it, a package's included), `collect_subscript_store` an `index.multi_set`'s, and `collect_contract_arguments` names the collector in a subscript's contract; `verify_collector_passed` (`verify/calls.rs`) rejects a call of a declared collecting callee that passes none. |
 | Keyword-pack collectors (`var **kwargs: T`) | The callee declaration's `kw_variadic`, collected into the `StringDict` instance `instance_symbol("StringDict", [T])` | The call builds the collector, as upstream's call emission does: `mir::fill_omitted_arguments`'s private `build_keyword_collector` (`mir/call_defaults.rs`, with `collect_through_requirement` for a call through a bound and `collect_through_contract` for one through a function value) emits `symbol::keyword_collector_constructor_symbol()` into a forwarding slot and one `symbol::keyword_collector_insert_symbol()` (`StringDict._insert` over a `StringLiteral` key, `stdlib/std/collections/string_dict.mojo`) per collected keyword, passing the slot as the call's one `**` keyword operand (`ast::FORWARDED_KWARGS_NAME`), the shape a forwarded `**kwargs^` has; `call::bind_keyword_forward` (`mojito-ast`) rejects a keyword beside a forward, and the verifier (`verify/calls.rs`) a call passing no collector. The VM's `bind_args`, Pliron's `bind_call_slots` and `bind_contract_slots` (through `lower/calls.rs`'s `keyword_collector_operand`), and `inline-parametric` bind that operand to the collector slot whole. |
@@ -904,7 +904,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   collector (bounds, ownership, and the recorded `owned_packs`/
   `owned_collectors`), at the overflow loops of
   `call_inference.rs:infer_generic_call`, `generics.rs:instantiate_method_generics`,
-  `method_calls/selection.rs:score_method_call`, and `builtins.rs:infer_print`,
+  and `method_calls/selection.rs:score_method_call`,
   `close_pack_elements` and `positional_pack_binding` bind a callee's pack at
   a use (`types::expand_pack_spread` for a spread such as `other: Self`),
   `infer_unbound_pack_construction` types the private `__RuntimeTuple`
@@ -1320,7 +1320,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   signature and body checking.
 - `checker/annotations.rs` converts AST annotations into checked `Ty` values.
 - `checker/builtins.rs` owns built-in typing/coercion rules and builtin
-  free-function inference (`print`/`range`/…, `len` where the library
+  free-function inference (`range`/`input`/…, `len` where the library
   overload set cannot bind: a type pack, or a program linked without the
   prelude, and `abs`/`min`/`max` (`infer_abs`, `infer_min_max`) where no
   `std.math` binding exists: a module loaded while the prelude
@@ -1743,9 +1743,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   index loads.
 - `backend/vm/invoke.rs` owns writeback/synchronous call machinery, argument
   binding, kwargs collection, and method dispatch.
-- `backend/vm/dispatch.rs` owns named-call dispatch (`print` with its
-  `sep`/`end`/`flush`/`file` keywords through `descriptor_value` and
-  `libc.rs`'s `host_write_bytes`), drops, slice bounds, and value formatting.
+- `backend/vm/dispatch.rs` owns named-call dispatch, drops, slice bounds,
+  and value formatting.
 - `builtins.rs` (`mojito_vm::builtins`) names what that dispatch answers
   without a program function: `BUILTIN_CALLEES` and `INTRINSIC_METHODS`;
   its tests pin each name to the dispatch source. A
@@ -1840,7 +1839,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `append_struct_display` and `append_declared_display` (`lower/print.rs`)
   call the struct's or the `SIMD`'s `write_to`/`write_repr_to` instance,
   which Pliron's `dispatch_edges` (`lib.rs`) makes reachable for every
-  `print`, `String`, `repr`, `write`, and `$write_formatted` argument.
+  `String`, `repr`, `write`, and `$write_formatted` argument.
 - `comptime/auto_parameterize.rs` owns upstream's automatic
   parameterization (`parameterize_unbound_arguments`, upstream's
   `addImplicitTypeParams`): an infer-only `$<param>_<argument>` binder
@@ -2429,8 +2428,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `verify/calls.rs`), the position of the collector operand a call passes,
   and `native::mono::spread` (`mono/spread.rs`: `expand_pack_spreads`, after
   `substitute_function`; `spread_operands` reads either call form) checks
-  the pack is bound and leaves the caller's pack the call's operand,
-  `print` taking its element places as its arguments; the VM's `bind_args` (`backend/vm/calls.rs`) and Pliron's
+  the pack is bound and leaves the caller's pack the call's operand, an
+  LLVM intrinsic call taking its element places as its arguments; the VM's `bind_args` (`backend/vm/calls.rs`) and Pliron's
   `bind_call_slots` take the collector operand whole; `Checker::pack_length_binder`/`pack_length_query`
   (`checker/constraints.rs`) read `args.__len__()` and `len(Ts)` as
   `PackQuery::Length` for the loop bound and as a

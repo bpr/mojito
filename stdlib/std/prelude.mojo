@@ -66,6 +66,7 @@ from std.memory.alloc import alloc
 from std.span import Span
 from std.hash import Hashable, hash
 from std.io import RawFileDescriptor, FileHandle, open
+from std.io.io import print
 
 # Linked for its bodies, not for a name: the compiler calls these by symbol.
 from std.builtin._stubs import (

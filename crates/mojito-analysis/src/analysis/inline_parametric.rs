@@ -256,8 +256,7 @@ pub const INLINE_SIZE_BOUND: usize = 32;
 /// parts. A `for` loop's `__iter__` and `__next__` are ordinary calls,
 /// which this pass inlines into the body before measuring it, as the pin
 /// does, and the `GetIter` that starts compiler-private storage calls
-/// nothing. `print`, a builtin call here where the pin calls the library's,
-/// costs the 30 the pin's `print(s)` call site holds.
+/// nothing.
 pub fn inline_cost(callee: &MirFunction) -> usize {
     let mut constants = BTreeSet::new();
     blocks_cost(&callee.blocks, &mut constants)
@@ -360,10 +359,6 @@ const RAISES_COST: usize = 2;
 /// What a `try` costs at the pin beyond its parts: an empty
 /// `try: pass except: pass` holds four operations there.
 const TRY_COST: usize = 4;
-
-/// What a `print` call costs at the pin: `print(s)` inlines alone and keeps
-/// the call with two `s += x` statements more.
-const PRINT_COST: usize = 30;
 
 /// The caller, its blocks taken out, and where its callees come from.
 struct Inliner<'f, 'c> {
@@ -3473,7 +3468,6 @@ fn instruction_cost<'i>(
         | MirInstr::KeepAlive { .. }
         | MirInstr::ComptimeAssert { .. }
         | MirInstr::GetIter { .. } => 0,
-        MirInstr::Call { func, .. } if func.0 == "print" => PRINT_COST,
         MirInstr::Try { .. } => TRY_COST + regions(constants),
         MirInstr::If { elifs, .. } => 1 + elifs.len() + regions(constants),
         MirInstr::Loop { .. }

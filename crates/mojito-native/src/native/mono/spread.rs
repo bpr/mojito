@@ -1,9 +1,9 @@
 //! Whole-pack spreads in an instance: a call, a method call, or a nested
 //! `def`'s call that spreads the caller's collector (`show(*args)`,
 //! `Sink().take(*args)`, `count(*args^)`) passes that pack itself once the
-//! bindings close it, as upstream's call passes the `VariadicPack`; the
-//! builtin `print` and an LLVM intrinsic call (upstream's loaded
-//! `!kgen.pack` operand) take the bound pack's elements instead. A value pack
+//! bindings close it, as upstream's call passes the `VariadicPack`; an LLVM
+//! intrinsic call (upstream's loaded `!kgen.pack` operand) takes the bound
+//! pack's elements instead. A value pack
 //! spread into a bracket (`f[*vs]()`) retires once the call names its
 //! instance. The collector a call builds (`tuple.make`, wrapped in a
 //! homogeneous collector's `VariadicList`) stays the one operand it passes.
@@ -17,7 +17,7 @@ use mojito_types::types::TyKind;
 /// register, the caller's collector read in place or moved, must be typed
 /// the bound pack's tuple, and the call passes it unchanged. A spread whose
 /// pack the bindings leave open is the instance's unsupported boundary. A
-/// spread into the builtin `print` is expanded: each element is read from
+/// spread into an LLVM intrinsic call is expanded: each element is read from
 /// the collector's element place (or moved out of it, when the caller
 /// transferred the pack) and passed as one of its arguments, the call's
 /// `spread` cleared and the collector's own read gone.
@@ -143,15 +143,12 @@ fn expand_in_block(
             Some(TyKind::Tuple(elements)) => elements.clone(),
             _ => return Err(tables.error("a spread's pack is still a parameter")),
         };
-        // Any callee but the builtin `print` takes the caller's pack itself;
-        // an LLVM intrinsic call passes the loaded pack's elements.
-        if !matches!(&blocks[at].instrs[index],
-            MirInstr::Call { func, .. } if func.0 == "print")
-            && !matches!(
-                &blocks[at].instrs[index],
-                MirInstr::CallLlvmIntrinsic { .. }
-            )
-        {
+        // Any callee takes the caller's pack itself; an LLVM intrinsic call
+        // passes the loaded pack's elements.
+        if !matches!(
+            &blocks[at].instrs[index],
+            MirInstr::CallLlvmIntrinsic { .. }
+        ) {
             index += 1;
             continue;
         }

@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `print` is now upstream's `@inline(.never)` library function in the
+  bundled `std/io/io.mojo`, re-exported by the prelude, writing its pack
+  through the newly bundled `_FlushingWriteBuffer` over a
+  `RawFileDescriptor`, instead of a builtin checked, run, and lowered by
+  rule on every phase (R1287). Its builtin arms (`infer_print`, the VM's
+  dispatch arm, Pliron's `lower_print`, the spread expansion, and
+  `PRINT_COST`) are gone. Along the way: a call spreading a pack fills its
+  callee's omitted defaults, a `read` pack keeps the places its elements
+  load live through the call, a copied `finally` fills its calls'
+  defaults, a construction spelled through a type alias carries its real
+  origins, heterogeneous pack elements no longer alias through carried
+  origins, a pack-bound failure reports upstream's element message for any
+  callee, the bundled `Array` destroys no trivial element, and the VM
+  releases freed storage. `flush=True` does not yet call `_flush` (R1883).
+
 - `print`, `String(x)`, `repr(x)`, and `String.write` now hand a struct's or
   a `SIMD` value's `write_to` a `String` writer, as upstream's `String(x)`
   and `repr(x)` do, instead of a compiler-private string accumulator, on

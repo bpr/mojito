@@ -2856,6 +2856,7 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.format", "Writable") => Some("Writable"),
         ("std.format", "Writer") => Some("Writer"),
         ("std.format.tstring", "TString") => Some("TString"),
+        ("std.io.io", "print") => Some("print"),
         ("std.range", "range") => Some("range"),
         ("std.builtin.builtin_slice", "Slice") => Some("Slice"),
         ("std.builtin.builtin_slice", "slice") => Some("slice"),

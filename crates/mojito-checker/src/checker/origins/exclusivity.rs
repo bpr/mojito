@@ -126,6 +126,9 @@ struct ArgumentAccess {
     carried: Vec<(OriginPlace, bool)>,
     /// The callee only reads the places the argument's type carries.
     carried_read_only: bool,
+    /// A type pack's element, which binds a type of its own: two elements
+    /// share no binder their carried origins could meet in.
+    pack_element: bool,
 }
 
 impl ArgumentAccess {
@@ -136,6 +139,7 @@ impl ArgumentAccess {
             own_judged: false,
             carried: Vec::new(),
             carried_read_only,
+            pack_element: false,
         }
     }
 
@@ -146,6 +150,19 @@ impl ArgumentAccess {
             Some((_, known_mutable)) => *known_mutable |= mutable,
             None => self.carried.push((place, mutable)),
         }
+    }
+
+    /// Whether `self`'s own place is mutable and overlaps `other`'s own.
+    fn own_overlaps(&self, other: &Self) -> bool {
+        self.own
+            .iter()
+            .filter(|(_, mutable)| *mutable)
+            .any(|(place, _)| {
+                other
+                    .own
+                    .iter()
+                    .any(|(theirs, _)| places_overlap(place, theirs))
+            })
     }
 
     /// Whether a mutable path of `self` overlaps any path of `other`,
@@ -402,6 +419,7 @@ impl Checker {
                     callee.nested_origins.read_only(),
                 );
                 access.own_judged = true;
+                access.pack_element = types.first().is_some_and(is_pack_element);
                 access.own = self.own_place(
                     argument,
                     collected.convention,
@@ -416,8 +434,14 @@ impl Checker {
         }
         for (left, first) in accesses.iter().enumerate() {
             for second in &accesses[left + 1..] {
-                let first_mutable = first.mutably_overlaps(second);
-                let second_mutable = second.mutably_overlaps(first);
+                let (first_mutable, second_mutable) = if first.pack_element && second.pack_element {
+                    (first.own_overlaps(second), second.own_overlaps(first))
+                } else {
+                    (
+                        first.mutably_overlaps(second),
+                        second.mutably_overlaps(first),
+                    )
+                };
                 if !first_mutable && !second_mutable {
                     continue;
                 }
@@ -563,10 +587,7 @@ impl Checker {
         resolve: impl Fn(&Ty) -> Result<Ty, TypeError>,
     ) -> Vec<(&'a Expr, Vec<Ty>)> {
         element.map_or_else(Vec::new, |element| {
-            let pack = matches!(
-                element.kind(),
-                TyKind::Param { binder, .. } if binder.name.starts_with('*')
-            );
+            let pack = is_pack_element(element);
             positions
                 .iter()
                 .map(|&position| {
@@ -583,4 +604,13 @@ impl Checker {
                 .collect()
         })
     }
+}
+
+/// Whether a collector's declared element is a type pack's (`*Ts`), each
+/// argument binding an element type of its own.
+fn is_pack_element(element: &Ty) -> bool {
+    matches!(
+        element.kind(),
+        TyKind::Param { binder, .. } if binder.name.starts_with('*')
+    )
 }

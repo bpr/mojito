@@ -190,6 +190,21 @@ impl Flatten<'_> {
                 *register = Reg(fresh);
             }
         });
+        // A copied call is the same checked call, which fills its omitted
+        // arguments as the original does.
+        let copied: Vec<_> = self
+            .f
+            .lowered_calls
+            .iter()
+            .filter_map(|call| {
+                let &fresh = renamed.get(&call.dest.0)?;
+                Some(LoweredCall {
+                    dest: Reg(fresh),
+                    ..call.clone()
+                })
+            })
+            .collect();
+        self.f.lowered_calls.extend(copied);
     }
 }
 

@@ -7,11 +7,16 @@
 # the free `write_to`/`write_repr_to`. The bundled collections'
 # `write_repr_to` bodies write their text directly through
 # `_unqualified_type_name` rather than the builder, so an instance mints no
-# builder or `TypeNames` specialization of its own.
+# builder or `TypeNames` specialization of its own. `_FlushingWriteBuffer`
+# is the buffer the library `print` writes through.
 
+from std.collections.array import Array
 from std.reflection.type_info import _unqualified_type_name
-from std.string import String
+from std.span import Span
+from std.string import String, StringSlice
 from std.range import range
+
+comptime FLUSHING_WRITE_BUFFER_BYTES = 4096
 
 
 # The comma-separated unqualified names of a type pack: `TypeNames[Int,
@@ -77,3 +82,56 @@ struct Named[T: Writable, o: Origin[mut=False]](ImplicitlyCopyable, Writable):
     @inline(.always)
     def write_to(self, mut writer: Some[Writer]):
         writer.write(self._name, "=", self._value[])
+
+
+struct _FlushingWriteBuffer[
+    origin: MutOrigin,
+    W: Writer,
+    //,
+    capacity_bytes: Int = FLUSHING_WRITE_BUFFER_BYTES,
+](Writer):
+    """Batches small writes to a downstream writer, flushing when it fills up.
+
+    This handles output of any size, but the bytes leave in chunks, so callers
+    that need the whole message contiguous want `_FixedWriteBuffer` instead.
+    `flush()` is not automatic; the last write must be followed by one or the
+    tail of the output is dropped.
+    """
+
+    var data: Array[UInt8, Self.capacity_bytes]
+    var pos: Int
+    var writer: Pointer[Self.W, Self.origin]
+
+    def __init__(out self, ref[Self.origin] writer: Self.W):
+        self.data = {uninitialized = True}
+        self.pos = 0
+        self.writer = Pointer(to=writer)
+
+    def flush(mut self):
+        self.writer[].write_string(
+            StringSlice(
+                unsafe_from_utf8=Span(
+                    unsafe_ptr=self.data.unsafe_ptr(), length=self.pos
+                )
+            )
+        )
+        self.pos = 0
+
+    def write_string(mut self, string: StringSlice):
+        var len_bytes = string.byte_length()
+        # If span is too large to fit in buffer, write directly and return
+        if len_bytes > Int(Self.capacity_bytes):
+            self.flush()
+            self.writer[].write_string(string)
+            return
+        # If buffer would overflow, flush writer and reset pos to 0.
+        elif self.pos + len_bytes > Self.capacity_bytes:
+            self.flush()
+        # Continue writing to buffer. Upstream's `unsafe_memcpy`, which
+        # `std.memory` does not port, is the C `memcpy` `String` copies with.
+        var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
+            self.data.unsafe_ptr().unsafe_offset(self.pos),
+            string.as_bytes().unsafe_ptr(),
+            UInt(len_bytes),
+        )
+        self.pos += len_bytes

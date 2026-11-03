@@ -11,6 +11,7 @@ from std.hash import Hasher
 from std.range import range
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 from std.reflection.type_info import _unqualified_type_name
+from std.traits import IsTriviallyDeinitable
 
 @fieldwise_init
 struct _ArrayIter[
@@ -74,10 +75,13 @@ struct _ArrayOwnedIter[T: AnyType](
         return result^
 
     def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
-        var i = self.index
-        while i < self.size:
-            self.data.unsafe_offset(i).unsafe_deinit_pointee()
-            i += 1
+        # As upstream's `unsafe_destroy_n`, a trivial element needs no
+        # destructor call.
+        comptime if not IsTriviallyDeinitable[Self.T]:
+            var i = self.index
+            while i < self.size:
+                self.data.unsafe_offset(i).unsafe_deinit_pointee()
+                i += 1
         self.data.unsafe_free()
 
 @explicit_destroy(
@@ -157,10 +161,13 @@ struct Array[T: AnyType, length: Int](
         self.data = move.data^
 
     def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
-        var i = 0
-        while i < self._size:
-            self.data.unsafe_offset(i).unsafe_deinit_pointee()
-            i += 1
+        # As upstream's `unsafe_destroy_n`, a trivial element needs no
+        # destructor call.
+        comptime if not IsTriviallyDeinitable[Self.T]:
+            var i = 0
+            while i < self._size:
+                self.data.unsafe_offset(i).unsafe_deinit_pointee()
+                i += 1
         self.data.unsafe_free()
 
     # Consuming teardown for any element; see `List.deinit_with`.

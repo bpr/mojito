@@ -479,11 +479,7 @@ fn borrowed_operands(
                     borrowed_slots(declaration, args, kwargs)
                 }
                 Some(_) => Vec::new(),
-                None if matches!(
-                    func.0.as_str(),
-                    "print" | "String" | "repr" | "len" | "abs" | "round"
-                ) =>
-                {
+                None if matches!(func.0.as_str(), "String" | "repr" | "len" | "abs" | "round") => {
                     args.iter()
                         .chain(kwargs.iter().map(|(_, reg)| reg))
                         .map(|reg| reg.0)

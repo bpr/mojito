@@ -901,6 +901,7 @@ assets/ok/pointer_field_ctor_temporary_explicit_init.mojo	-	ineligible	no-scalar
 assets/ok/pointer_field_deref_field_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_deref_field_store_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_deref_index.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_deref_receiver_not_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_fieldwise_init_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_imm_origin_cast_read.mojo	-	ineligible	no-scalar-entry-shape
@@ -947,6 +948,7 @@ assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_argument_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_argument_read_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_keywords_file.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/print_library_keywords.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raise_borrowed_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raise_exit_destroys_live_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raising_call_edge_destroys_held_values.mojo	-	ineligible	no-scalar-entry-shape

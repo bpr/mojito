@@ -1280,14 +1280,14 @@ unrolling and the instance is named by its elements. A value pack
 an element at a compile-time index: the checker records each read as a
 parameter constant over the pack's `ParamList` binder, and `native::mono`
 binds the pack to the tuple of the call's values. A pack spread whole
-into another served `def` or into `print` (`show(*args)`, `drain(*args^)`)
+into another `def` (`show(*args)`, `print(*args)`, `drain(*args^)`)
 is a call whose spread argument is the collector itself, read in place or
 moved, at the position `MirInstr::Call::spread` names; the ownership
 analysis sees the whole collector lent or moved, and the call passes
 that pack itself, as upstream's call passes the `VariadicPack`: the
 elaborator (`expand_pack_spreads`) checks that the bindings close the pack,
-the argument typed its elements' tuple, and expands only a spread into the
-builtin `print` into its elements; a spread `inline-parametric` leaves in an
+the argument typed its elements' tuple, and expands only a spread into an
+LLVM intrinsic call into its elements; a spread `inline-parametric` leaves in an
 inlined body, its collector already bound, is passed the same way. A method
 call carries the same position (`MirInstr::MethodCall::spread`, schema
 1.24). The checker types the spread against the
@@ -1958,7 +1958,7 @@ no dispatch name is composed. The checker still records every closed
 application it reaches as a constructor target or method-call receiver
 (`StructInstantiation`), a checked fact nothing above the waist turns into a
 request. Copying, moving, destruction, and the by-name dispatches the
-backends perform on a runtime struct name (`print`/`String(x)`/`repr(x)`/
+backends perform on a runtime struct name (`String(x)`/`repr(x)`/
 `Writer.write` through `write_to`/`write_repr_to`, and `len`/`abs`/`Bool`/
 `Int` and the prefix operators through their dunders) select the method by
 the instance struct `native::mono` built on concrete MIR.
@@ -2163,7 +2163,13 @@ pack's elements' tuple under the call's bindings (a binder the call records
 no argument for is read off the operands), or a homogeneous collector's
 `VariadicList[T, is_owned]` over pointers to them, and `spread` names that
 operand's position (`mir/call_defaults.rs`'s private `build_collector`).
-The list is built as upstream's call and inlined constructor build it
+A `read` heterogeneous collector holds its elements' values where
+upstream's `VariadicPack` refers to them, so each place an element loads is
+referenced again after the call (`ref.make`), latest-declared owner first:
+the place lives through the call, and owners whose last use that is die
+together in descending `VarId`, as at any one instruction. A call that
+already spreads the caller's pack (`print(*args)`) passes it as the
+collector and is filled like any other. The list is built as upstream's call and inlined constructor build it
 (`mir::variadic_list::build_variadic_list`, which the elaborator's
 display construction shares): a `ref.make` per element, their
 `!pop.array` (`array.create`, MIR's `TyKind::PopArray`) stored in the
@@ -2201,9 +2207,8 @@ the span's pointer one to the array slot's first element, which pointer
 arithmetic moves along that array (`offset_place_handle`). A spread
 (`show(*args)`, `take(*args^)`) passes the caller's pack itself: Pliron
 binds a `read` collector to the caller's storage in place and an owning one
-to the moved pack (`place_backed_arg_value`). The elaborator passes the
-elements of a collector as the arguments of a call to the builtin `print`
-(`expand_pack_spreads`, R1287).
+to the moved pack (`place_backed_arg_value`). A call spreading the caller's
+pack fills its omitted defaults as any call does (`fill_omitted_arguments`).
 
 Current Mojo reflection enters through the zero-sized `reflect[T]` compile-time
 handle. Mojito implements `is_struct`, `field_count`, `field_names`,
@@ -2773,7 +2778,7 @@ invariant violation. The VM displays a `SIMD` value (`Int`, `Float32`, a
 vector) the same way, through `SIMD.write_to`/`write_repr_to` instantiated at the
 `String` writer and found from the value's dtype and width through
 its instance's member table (`symbol::member_table_name`), so it formats no
-lane itself, and so does the native backend: its `print`, `String`, `repr`,
+lane itself, and so does the native backend: its `String`, `repr`,
 and `Writer.write` expansions call those instances, and its reachable set
 takes them from the same table.
 `String.format` supports automatic/manual fields, repr selection, escaped braces,
@@ -4184,7 +4189,7 @@ as its argument. It does not use the value-only `BinOp` form: doing so would los
 the borrow and let a short-lived shallow receiver appear to own pointer-backed
 fields. `not in` negates that checked call's Boolean result.
 
-Intrinsic `print`, `String`, and `repr` formatting retain a nominal argument's
+Intrinsic `String` and `repr` formatting retain a nominal argument's
 place, when one exists, through its `Writable` call. This is a liveness fact,
 not a runtime ownership guess: drop elaboration cannot release the original
 pointer-backed owner after loading the value but before formatting finishes.
@@ -5497,8 +5502,8 @@ counts a `deinit` parameter as consuming, so the forwarded temporary
 transfers instead of being released after the call. Two uses stay uses:
 one naming no constructor, which the backends copy or move by type; and
 the read of a variadic collector
-a call spreads, which the call passes whole (a spread into the builtin
-`print` excepted, whose elements `expand_pack_spreads` reads, finding the
+a call spreads, which the call passes whole (a spread into an LLVM
+intrinsic call excepted, whose elements `expand_pack_spreads` reads, finding the
 collector's read in an earlier block once a pass has split the call's). The parameter-use
 analysis reads a call of the constructed type's recorded `__copyinit__`
 or `__moveinit__` as it read the copy or move: the constructed value's
@@ -5717,7 +5722,7 @@ current Mojo:
   (`downcast(T, Traits)`); Mojito carries it on the call across the MIR
   waist. A
   memory-only parameter takes the argument's address: a generic `T`, a
-  variadic collector, or a callee with no declaration (`t.n` fed to `print`).
+  variadic collector, or a callee with no declaration (`t.n` fed to `repr`).
   Its owner then lives through the call, so the owner's `DropVar` follows the
   call, and owners dying together there drop in descending `VarId`, after
   the call's in-place result binding and its slot, if any. A
@@ -5811,7 +5816,7 @@ Ownership is limited to:
 - locals
 - consuming `var` and `deinit` parameters, receivers included
 - owned registers (`mir::RegisterEnds`) no operand takes: a call result
-  only a `read` parameter borrows, a copy only `print` reads, each
+  only a `read` parameter borrows, a copy only `repr` reads, each
   destroyed by a `drop.reg` at its death, as upstream destroys an owned
   SSA value
 
@@ -6407,9 +6412,8 @@ point where a slot declared in a loop is uninitialized again.
   private `structured_back_edges` counts them), a place's field projection
   one `struct.gep` (a read-modify-write's store reusing its read's), a
   raising body two, a `try` four beside its parts (a `for` loop's `try`
-  around its `__next__` call among them), an `iter.init`, which starts
-  compiler-private storage, nothing, and `print` the 30 its call site
-  costs there (R1287); each other instruction costs one. A loop's
+  around its `__next__` call among them), and an `iter.init`, which starts
+  compiler-private storage, nothing; each other instruction costs one. A loop's
   `__iter__` and `__next__` are ordinary calls, priced as the bodies this
   pass splices for them before it measures the caller. Every body is
   priced as its round's `mem-2-reg` would leave it, where upstream
@@ -7632,8 +7636,8 @@ representation, each decided in `build_structs`, and are the VM's alone:
   struct name, never meet a held value.
 
 Where the VM still dispatches by runtime shape, a held operand is reboxed
-from its static type (`Prog::boxed`): a builtin call's operands (`print`,
-`String`, `repr`), a method receiver and its arguments, a subscript base
+from its static type (`Prog::boxed`): a builtin call's operands (`String`,
+`repr`), a method receiver and its arguments, a subscript base
 and index, a `simd.make` element other than a `Bool` (whose held
 `!kgen.scalar<bool>` is the lane), and a variant handler. A frame's entry
 and a call's result unbox it again at the declared type (`Prog::unboxed`).
@@ -7837,7 +7841,7 @@ Runtime helpers implement:
 - string display
 - list methods
 - SIMD construction and lane access
-- builtin functions such as `print`, `len`, `range`, numeric conversions,
+- builtin functions such as `len`, `range`, numeric conversions,
   and the `abs`/`min`/`max`/`round` that a module loaded while the
   prelude bootstraps still calls (elsewhere they are `std.math`'s library
   functions)

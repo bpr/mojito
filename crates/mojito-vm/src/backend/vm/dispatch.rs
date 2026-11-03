@@ -311,7 +311,7 @@ impl VmBackend {
         prog: &Prog,
         name: &str,
         args: Vec<Value>,
-        kwargs: Vec<(String, Value)>,
+        kwargs: &[(String, Value)],
         types: &CallTypes<'_>,
     ) -> Result<Value, RuntimeError> {
         let CallTypes {
@@ -322,11 +322,7 @@ impl VmBackend {
         // Built-ins take positional arguments only, and user functions handle
         // keywords through their signatures below. Struct constructors get a
         // narrow exception for Mojo's lifecycle copy constructor (`copy:`).
-        if !kwargs.is_empty()
-            && name != "print"
-            && !prog.sigs.contains_key(name)
-            && !prog.structs.contains_key(name)
-        {
+        if !kwargs.is_empty() && !prog.sigs.contains_key(name) && !prog.structs.contains_key(name) {
             return Err(RuntimeError::Unsupported(format!(
                 "vm: keyword arguments to '{name}' are not supported"
             )));
@@ -338,7 +334,7 @@ impl VmBackend {
         if let Some((struct_name, "__init__" | "__copyinit__" | "__moveinit__")) =
             prog.lifecycle_constructor(name, constructed)
         {
-            return self.construct_via_init(prog, struct_name, name, args, &kwargs);
+            return self.construct_via_init(prog, struct_name, name, args, kwargs);
         }
         match name {
             // Unlinked VM-CTFE programs have the checker-known `range` builtin
@@ -379,50 +375,6 @@ impl VmBackend {
                     })?;
                 }
                 Ok(Value::ComptimeList(values))
-            }
-            // `print(*args, sep=, end=, flush=, file=)`: the joined cells go
-            // to the captured stdout, or through the descriptor table when
-            // `file=` names another descriptor (`flush` is a no-op: the
-            // captured stream is unbuffered).
-            "print" => {
-                let mut cells = Vec::with_capacity(args.len());
-                for value in args {
-                    // A tombstone a register carries (a take of storage
-                    // nothing initialized) traps at its read, as one in a
-                    // variable slot does.
-                    if matches!(value, Value::Moved) {
-                        return Err(RuntimeError::TypeError(
-                            "vm: use of a value after it was moved".to_string(),
-                        ));
-                    }
-                    cells.push(self.format_value(prog, value, false)?);
-                }
-                let mut sep = " ".to_string();
-                let mut end = "\n".to_string();
-                let mut fd = 1;
-                for (key, value) in kwargs {
-                    match key.as_str() {
-                        "sep" => sep = self.format_value(prog, value, false)?,
-                        "end" => end = self.format_value(prog, value, false)?,
-                        "flush" => {}
-                        "file" => fd = descriptor_value(&value)?,
-                        other => {
-                            return Err(RuntimeError::Unsupported(format!(
-                                "vm: keyword argument '{other}' to 'print'"
-                            )));
-                        }
-                    }
-                }
-                let mut text = cells.join(&sep);
-                text.push_str(&end);
-                if fd == 1 {
-                    self.output.push_str(&text);
-                } else if let Err(error) = self.host_write_bytes(fd, text.as_bytes()) {
-                    return Err(RuntimeError::Abort(format!(
-                        "expected amount of bytes not written: {error}"
-                    )));
-                }
-                Ok(Value::None)
             }
             // Upstream's libc FFI over the closed callee table: the callee
             // name is the call's first compile-time argument; the result
@@ -639,7 +591,7 @@ impl VmBackend {
                     // defaults, collect `*args`) when a signature is known; else a
                     // plain positional call.
                     let bound = match prog.sigs.get(name) {
-                        Some(sig) => self.bind_for_call(prog, name, sig, &args, &kwargs)?.0,
+                        Some(sig) => self.bind_for_call(prog, name, sig, &args, kwargs)?.0,
                         None => args,
                     };
                     // An initializer of a receiver the VM holds as a value
@@ -864,20 +816,5 @@ fn display_table(value: &Value) -> Option<std::borrow::Cow<'_, str>> {
                 .map(|name| std::borrow::Cow::Owned(name.into_owned()))
         }
         _ => None,
-    }
-}
-
-/// The raw descriptor held by a `RawFileDescriptor` value (`print(file=)`).
-fn descriptor_value(value: &Value) -> Result<i32, RuntimeError> {
-    let Value::Struct { fields, .. } = value else {
-        return Err(RuntimeError::TypeError(
-            "vm: 'file' argument to 'print' is not a RawFileDescriptor".to_string(),
-        ));
-    };
-    match fields.iter().find(|(name, _)| name == "_value") {
-        Some((_, Value::Int(fd))) => Ok(*fd as i32),
-        _ => Err(RuntimeError::TypeError(
-            "vm: RawFileDescriptor value without an Int descriptor".to_string(),
-        )),
     }
 }

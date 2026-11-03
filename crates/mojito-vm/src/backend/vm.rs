@@ -267,8 +267,8 @@ impl VmBackend {
             ));
         }
         region.live = false;
-        region.slots.clear();
-        region.never_written.clear();
+        region.slots = Vec::new();
+        region.never_written = Vec::new();
         Ok(())
     }
 

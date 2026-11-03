@@ -170,7 +170,7 @@ impl VmBackend {
                     prog,
                     target,
                     vec![checked_const_value(arg)],
-                    vec![],
+                    &[],
                     &CallTypes {
                         constructed: prog.declared_struct(sig.param_types.get(i)),
                         ..CallTypes::default()

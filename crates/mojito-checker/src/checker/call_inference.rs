@@ -172,7 +172,6 @@ impl Checker {
                 reject_kwargs(kwargs)?;
                 self.infer_uninit_storage_construction(span, param_args, args)
             }
-            "print" => self.infer_print(args, kwargs),
             // A well-formed `rebind` was erased before checking; one
             // that reaches here is malformed.
             "rebind" => Err(Self::rebind_shape_error(param_args, args)),
@@ -2098,7 +2097,7 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
-        } = self.resolve_use_params(name, decls, param_args, &use_params, &arg_tys)?;
+        } = self.resolve_call_params(name, decls, param_args, &use_params, &arg_tys)?;
         let values = Self::value_argument_environment(decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = super::generics::expand_solved_packs(ty, decls, &tyargs);
@@ -2665,6 +2664,58 @@ impl Checker {
             });
         }
         Ok(Ty::int())
+    }
+
+    /// [`Self::resolve_use_params`] for a call of `name`, reporting an
+    /// argument the element bound of its pack collector refuses
+    /// ([`Self::collector_element_failure`]).
+    fn resolve_call_params(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> Result<BoundParameters, TypeError> {
+        self.resolve_use_params(name, decls, param_args, patterns, actuals)
+            .map_err(|failure| self.collector_element_failure(name, decls, failure))
+    }
+
+    /// Upstream's rejection of an argument the element bound of `name`'s
+    /// pack collector refuses (`*values: *Ts` over `*Ts: Writable`): the
+    /// call names the collector and the element's type, where any other
+    /// `failure` stands.
+    fn collector_element_failure(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        failure: TypeError,
+    ) -> TypeError {
+        let TypeError::TraitNotSatisfied {
+            param,
+            ty,
+            trait_name,
+            ..
+        } = &failure
+        else {
+            return failure;
+        };
+        let Some(collector) = self.collector_names.get(name) else {
+            return failure;
+        };
+        if !decls.iter().any(|decl| {
+            decl.name() == param && matches!(decl, ParamDecl::Type { variadic: true, .. })
+        }) {
+            return failure;
+        }
+        TypeError::BadCall {
+            func: name.to_string(),
+            reason: format!(
+                "an element of '{collector}' with type '{ty}' does not conform to trait \
+                 '{trait_name}'; either prove the conformance with 'conforms_to', or add \
+                 conformance"
+            ),
+        }
     }
 
     /// The rejection of a call on a value of struct `struct_name` that

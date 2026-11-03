@@ -1,117 +1,12 @@
-//! Printing and hashing: `print`, `write_to` bridging, hash leaves,
-//! scalar formatting, and string comparison operators.
+//! Display and hashing: `write_to` bridging, stdout writes (the `input`
+//! prompt), hash leaves, scalar formatting, and string comparison
+//! operators.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
 
 impl<'a> FnLowering<'a> {
-    /// `print(args…, sep=, end=, flush=, file=)`: display each argument —
-    /// a struct or `SIMD` value through its `write_to` instance,
-    /// string-literal, Bool, and None text from the constant pool — joined
-    /// by `sep` (default one space) with a trailing `end` (default
-    /// newline) — composing the same bytes as the VM's `format_value` join
-    /// (`backend/vm.rs`). With
-    /// `file=`, every piece goes through libc `write` on the descriptor's
-    /// value instead of `mjrt_write_stdout` (`flush` is a no-op: the runtime
-    /// stdout writer flushes per call). The destination register is
-    /// `None`-typed and erased.
-    pub(super) fn lower_print(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        args: &[Reg],
-        kwargs: &[(String, Reg)],
-    ) -> Result<(), PlironError> {
-        let mut sep = None;
-        let mut end = None;
-        let mut sink = None;
-        for (name, reg) in kwargs {
-            match name.as_str() {
-                "sep" => sep = Some(*reg),
-                "end" => end = Some(*reg),
-                "flush" => {}
-                "file" => sink = Some(self.descriptor_value(ctx, *reg, dest)?),
-                other => {
-                    return Err(
-                        self.unsupported_reg(format!("print keyword argument '{other}'"), dest)
-                    );
-                }
-            }
-        }
-        self.print_sink = sink;
-        for (i, arg) in args.iter().enumerate() {
-            if i > 0 {
-                match sep {
-                    Some(reg) => self.write_string_reg(ctx, reg, dest)?,
-                    None => self.write_literal_bytes(ctx, b" ", dest),
-                }
-            }
-            self.print_value(ctx, *arg, dest)?;
-        }
-        match end {
-            Some(reg) => self.write_string_reg(ctx, reg, dest)?,
-            None => self.write_literal_bytes(ctx, b"\n", dest),
-        }
-        self.print_sink = None;
-        self.erased.insert(dest.0);
-        Ok(())
-    }
-
-    /// The `_value` field of a `RawFileDescriptor` register as a C `int`.
-    fn descriptor_value(
-        &mut self,
-        ctx: &mut Context,
-        reg: Reg,
-        dest: Reg,
-    ) -> Result<Value, PlironError> {
-        let Some(ty) = self.func.reg_types.get(&reg.0).cloned() else {
-            return Err(self.unsupported_reg("untyped `file` argument to print".into(), dest));
-        };
-        // A held descriptor is its `_value` field.
-        let value = if self.holds_struct_value(reg) {
-            self.reg_value(ctx, reg, ScalarTy::Int)?
-        } else {
-            let storage = self.reg_ptr(ctx, reg)?;
-            let (offset, _) = self.field_offset(&ty, "_value", dest)?;
-            let address = self.gep_byte(ctx, storage, offset, dest);
-            let int_handle = ScalarTy::Int.handle(ctx);
-            let load = LoadOp::new(ctx, address, int_handle);
-            self.append(ctx, load.get_operation(), Some(dest));
-            load.get_result(ctx)
-        };
-        Ok(self.resize_int(ctx, value, (64, true), 32, dest))
-    }
-
-    /// Write a string-valued register's bytes (a `sep`/`end` keyword): the
-    /// checker admits literals, `String`, and `StringSpan`, whose display
-    /// bytes are the string bytes.
-    fn write_string_reg(
-        &mut self,
-        ctx: &mut Context,
-        reg: Reg,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        self.print_value(ctx, reg, dest)
-    }
-
-    /// Display one nominal struct into a fresh `String` writer, then write
-    /// its bytes to stdout and free them.
-    pub(super) fn print_struct_via_write_to(
-        &mut self,
-        ctx: &mut Context,
-        arg: Reg,
-        name: &str,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        let writer = self.display_writer(ctx);
-        self.append_struct_via_write_to(ctx, arg, name, writer, dest)?;
-        let (data, len) = self.string_parts(ctx, writer, dest);
-        self.write_stdout(ctx, data, len, dest);
-        self.emit_free(ctx, data);
-        Ok(())
-    }
-
     /// Append one nominal struct's display text into the `String` writer
     /// stored at `writer`, the VM's `format_value` recursion when a
     /// `Writer.write` argument is itself a struct.
@@ -289,79 +184,6 @@ impl<'a> FnLowering<'a> {
         Ok(false)
     }
 
-    /// Emit the display bytes of one `print` argument.
-    pub(super) fn print_value(
-        &mut self,
-        ctx: &mut Context,
-        arg: Reg,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        if self.try_write_string_bytes(ctx, arg, dest)? {
-            return Ok(());
-        }
-        // An error value prints its bare message (the VM's `format_value`
-        // over `Value::Error`).
-        if matches!(
-            self.func.reg_types.get(&arg.0).map(Ty::kind),
-            Some(TyKind::Error)
-        ) {
-            let ptr = self.reg_ptr(ctx, arg)?;
-            let (data, size) = self.string_parts(ctx, ptr, dest);
-            self.write_stdout(ctx, data, size, dest);
-            return Ok(());
-        }
-        // A `None`-typed argument prints its constant text without reading
-        // the (erased) register.
-        if matches!(
-            self.func.reg_types.get(&arg.0).map(Ty::kind),
-            Some(TyKind::None)
-        ) {
-            self.write_literal_bytes(ctx, b"None", dest);
-            return Ok(());
-        }
-        // A nominal struct displays through its `write_to` conformance over
-        // a `String` writer, the VM's `format_value` dispatch.
-        if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
-            .and_then(|ty| ty.kind().as_non_simd_struct())
-            && !mojito_symbol::symbol::is_stdlib_string_struct(name)
-        {
-            return self.print_struct_via_write_to(ctx, arg, name, dest);
-        }
-        // A `SIMD` or `Bool` value displays through its declared
-        // `write_to`, the instance its type's member table names — the VM's
-        // `format_value` dispatch, as upstream's `print` calls it.
-        if let Some((_, data, len)) = self.declared_display_text(ctx, arg, "write_to", dest)? {
-            self.write_stdout(ctx, data, len, dest);
-            self.emit_free(ctx, data);
-            return Ok(());
-        }
-        if let Some(scalar) = self.referent_scalar_ty(arg)? {
-            let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
-            let handle = scalar.handle(ctx);
-            let load = LoadOp::new(ctx, pointer, handle);
-            self.append(ctx, load.get_operation(), Some(dest));
-            return self.print_scalar(ctx, scalar, load.get_result(ctx), dest);
-        }
-        let Some(ty) = self.concrete_scalar_ty(arg)? else {
-            return Err(self.unsupported_reg("display of a literal".into(), dest));
-        };
-        let value = self.reg_value(ctx, arg, ty)?;
-        self.print_scalar(ctx, ty, value, dest)
-    }
-
-    /// Emit the display bytes of one `DType` value.
-    pub(super) fn print_scalar(
-        &mut self,
-        ctx: &mut Context,
-        ty: ScalarTy,
-        value: Value,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        let (data, len) = self.format_scalar(ctx, ty, value, dest)?;
-        self.write_stdout(ctx, data, len, dest);
-        Ok(())
-    }
-
     /// The display bytes of one `DType` value as a `(data, len)` pair over
     /// interned constants. A numeric value is a `SIMD` one and a `Bool` the
     /// declared struct, which display through their declared members
@@ -446,21 +268,8 @@ impl<'a> FnLowering<'a> {
     }
 
     /// `mjrt_write_stdout(data, len)` — writes exactly the given bytes or
-    /// traps (category 4). Inside a `print(file=)` the bytes go through
-    /// libc `write` on the selected descriptor instead.
+    /// traps (category 4).
     pub(super) fn write_stdout(&mut self, ctx: &mut Context, data: Value, len: Value, dest: Reg) {
-        if let Some(fd) = self.print_sink {
-            let row = mojito_types::ffi::callee("write").expect("`write` is allowlisted");
-            let write_ty = self.shared.ensure_extern(ctx, row);
-            let call = CallOp::new(
-                ctx,
-                CallOpCallable::Direct("write".try_into().expect("valid identifier")),
-                write_ty,
-                vec![fd, data, len],
-            );
-            self.append(ctx, call.get_operation(), Some(dest));
-            return;
-        }
         let write_ty = self.shared.ensure_rt(ctx, "mjrt_write_stdout");
         let call = CallOp::new(
             ctx,

@@ -215,8 +215,16 @@ impl Specializer<'_> {
         }
         let mut dead = op.args;
         defined_registers(std::slice::from_ref(&body), &mut dead);
+        // A dangling operand typed over the index is each clone's own; one
+        // of a closed type may be a shared default another call outside the
+        // loop still reads.
         for_each_register(std::slice::from_mut(&mut body), &mut |reg| {
-            if tables.dangling.contains(&reg.0) {
+            if tables.dangling.contains(&reg.0)
+                && tables
+                    .reg_types
+                    .get(&reg.0)
+                    .is_none_or(|ty| mojito_types::types::names_binder(ty, &op.binder))
+            {
                 dead.push(*reg);
             }
         });

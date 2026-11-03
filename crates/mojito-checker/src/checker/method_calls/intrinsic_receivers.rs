@@ -244,7 +244,7 @@ impl Checker {
         self.check_place(&args[0])?;
         self.record_at(object.source_span())
             .borrowed_read_call_place = true;
-        self.infer_print(std::slice::from_ref(object), &[])?;
+        self.infer_written_operand(object)?;
         self.record_at(span.clone()).adjustment = Some(Box::new(if method == "write_repr_to" {
             mojito_checked::checked::SemanticAdjustment::InvertedReprWrite {
                 repr: self.builtin_string_result(),

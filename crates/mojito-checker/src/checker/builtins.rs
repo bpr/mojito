@@ -15,18 +15,6 @@ pub(super) use mojito_types::conformance::{
 };
 pub(super) use mojito_types::types::default_literal;
 
-/// Upstream's `print` rejection: its variadic `*values` pack element does not
-/// conform to `Writable`.
-pub(super) fn not_writable(ty: &Ty) -> TypeError {
-    TypeError::BadCall {
-        func: "print".to_string(),
-        reason: format!(
-            "an element of 'values' with type '{ty}' does not conform to trait 'Writable'; \
-             either prove the conformance with 'conforms_to', or add conformance"
-        ),
-    }
-}
-
 /// The failed `comptime assert` of upstream's `@implicit
 /// SIMD.__init__(FloatLiteral)` at the integer `target` a float literal
 /// constructs (`Int(3.9)`, `Int8(3.9)`, `SIMD[DType.int, 4](3.9)`).
@@ -37,30 +25,6 @@ pub(super) fn float_literal_conversion_error(target: &impl std::fmt::Display) ->
             "constraint failed: {}",
             mojito_types::types::FLOAT_LITERAL_CONVERSION_MESSAGE
         ),
-    }
-}
-
-/// Whether `print` accepts a value of type `ty` for its keyword `name`, with
-/// the type it expects there: `sep`/`end` take a string, `flush` a `Bool`,
-/// and `file` the stdlib `RawFileDescriptor`. `None` for any other keyword.
-pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)> {
-    match name {
-        "sep" | "end" => Some((
-            ty.is_string_literal()
-                || ty.kind().as_non_simd_struct().is_some_and(|(name, targs)| {
-                    (targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
-                        || mojito_types::types::is_stdlib_string_span_struct(name)
-                }),
-            "String",
-        )),
-        "flush" => Some((ty.is_bool(), "Bool")),
-        "file" => Some((
-            ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
-                mojito_types::types::is_stdlib_file_descriptor_struct(name)
-            }),
-            "RawFileDescriptor",
-        )),
-        _ => None,
     }
 }
 
@@ -336,62 +300,28 @@ impl Checker {
         })
     }
 
-    /// Type `print(...)`. Intrinsic scalars have builtin writing; nominal values,
-    /// including public collections, opt into current `Writable`.
-    /// Type the built-in `print(*args, sep=, end=, flush=, file=)`: every
-    /// positional argument is printable; `sep`/`end` are strings, `flush` a
-    /// `Bool`, and `file` the stdlib `RawFileDescriptor`.
-    pub(super) fn infer_print(
-        &self,
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<Ty, TypeError> {
-        for keyword in kwargs {
-            let ty = self.infer(&keyword.value)?;
-            self.borrow_reference_result_argument(&keyword.value);
-            self.borrow_nominal_place_argument(&keyword.value, &ty);
-            self.borrow_storage_element_argument(&keyword.value);
-            let (accepted, expected) =
-                print_keyword(&keyword.name, &ty).ok_or_else(|| TypeError::BadCall {
-                    func: "print".to_string(),
-                    reason: format!("unexpected keyword argument '{}'", keyword.name),
-                })?;
-            if !accepted {
-                return Err(TypeError::TypeMismatch {
-                    expected: expected.to_string(),
-                    found: ty.to_string(),
-                    context: format!("'{}' argument to 'print'", keyword.name),
-                });
-            }
+    /// Type the receiver of an inverted write (`x.write_to(writer)` over a
+    /// receiver with no `write_to` body): a read of a `Writable` value.
+    pub(super) fn infer_written_operand(&self, operand: &Expr) -> Result<(), TypeError> {
+        let ty = self.infer(operand)?;
+        self.bind_read_builtin_argument(operand, &ty);
+        self.borrow_storage_element_argument(operand);
+        let runtime_ty = default_literal(&ty);
+        if runtime_ty != ty {
+            self.record_literal_materializations(operand, &ty, &runtime_ty)?;
         }
-        let forwarded_pack = self.forwarded_pack_argument("print", args, true)?;
-        for (position, arg) in args.iter().enumerate() {
-            // A forwarded pack prints element by element, so its bound must
-            // give every element `Writable`.
-            if let Some((spread, forwarded)) = &forwarded_pack
-                && *spread == position
-            {
-                if !self.conforms_to(&forwarded.pack, "Writable") {
-                    return Err(not_writable(&forwarded.pack));
-                }
-                continue;
-            }
-            let ty = self.infer(arg)?;
-            // `print` writes through `Writable`, taking no ownership.
-            self.bind_read_builtin_argument(arg, &ty);
-            self.borrow_storage_element_argument(arg);
-            let runtime_ty = default_literal(&ty);
-            if runtime_ty != ty {
-                self.record_literal_materializations(arg, &ty, &runtime_ty)?;
-            }
-            if !self.printable_argument(&ty) {
-                return Err(not_writable(&ty));
-            }
+        if !self.printable_argument(&ty) {
+            return Err(TypeError::TraitNotSatisfied {
+                param: "Self".to_string(),
+                ty: ty.to_string(),
+                trait_name: "Writable".to_string(),
+                reason: None,
+            });
         }
-        Ok(Ty::none())
+        Ok(())
     }
 
-    /// Whether a value of type `ty` may be handed to `print` or a `Writer`: a
+    /// Whether a value of type `ty` may be handed to a `Writer`: a
     /// printable built-in, a built-in aggregate of printable elements, or a
     /// struct or parameter that is `Writable`.
     pub(super) fn printable_argument(&self, ty: &Ty) -> bool {

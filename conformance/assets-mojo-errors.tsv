@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1042
+# swept-count	1044
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -720,6 +720,7 @@ assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-rej
 assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error: 'OwnedPointer[Int]' value has no attribute 'take'
 assets/type_error/pack_alias_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
+assets/type_error/pack_collector_element_not_writable.mojo	compile-reject	agree	error: invalid call to 'show': an element of 'values' with type 'NW' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/pack_element_condition_needs_boolable.mojo	compile-reject	agree	error: 'T' does not implement the '__bool__' method
 assets/type_error/pack_element_construction_not_defaultable.mojo	compile-reject	agree	error: invalid initialization: missing required argument: 'move'
 assets/type_error/pack_element_missing_bound.mojo	compile-reject	agree	error: invalid call to 'write': an element of 'args' with type 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -811,6 +812,7 @@ assets/type_error/rebind_register_passable_bound_inplace_destination.mojo	compil
 assets/type_error/rebind_register_passable_inplace_destination.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/rebind_type_of_target_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/rebound_view_origin_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'P[origin_of(ys)]' value to 'P[origin_of(xs)]'
+assets/type_error/receiver_aliases_alias_spelled_view.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'string' argument in 'write_string' call
 assets/type_error/receiver_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'sink' argument in 'stash' call
 assets/type_error/ref_argument_aliases_pack_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'b' argument and passed immutably to 'rest' argument in 'r' call
 assets/type_error/reference_binding_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin

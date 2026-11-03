@@ -362,36 +362,13 @@ impl Checker {
             }
         }
 
-        // A view-constructor implicit conversion produces a value borrowing
-        // its source place: the conversion result carries that origin exactly
-        // like the explicit construction's `ref [origin]` argument does, so
-        // escape and staleness checks see through the implicit spelling.
-        if self.has_fact(&expression.source_span(), |facts| {
-            facts.conversion_source_borrow.is_some()
-        }) {
-            if let Ok(place) = self.origin_place(expression) {
-                return vec![Origin::Place(place)];
-            }
-            // A reference result lends the referent its origin names.
-            if let Some(reference) = self.infer_reference_value(expression) {
-                return vec![reference.origin];
-            }
-            // A temporary source lends its materialized anonymous owner (a
-            // frame-local slot), so the view cannot escape the frame.
-            if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
-                owner,
-                ..
-            }) = self
-                .node_facts
-                .borrow()
-                .get(&expression.source_span())
-                .and_then(|facts| facts.adjustment.as_deref())
-            {
-                return vec![Origin::Place(mojito_types::origin::OriginPlace {
-                    root: *owner,
-                    path: Vec::new(),
-                })];
-            }
+        // A construction spelled through a type alias (`StringSlice(s)`)
+        // carries what the construction it spells carries.
+        if let Some(construction) = self.spelled_construction(expression) {
+            return self.aggregate_origins(&construction);
+        }
+        if let Some(origins) = self.conversion_borrow_origins(expression) {
+            return origins;
         }
 
         match &expression.kind {
@@ -561,7 +538,10 @@ impl Checker {
                                         append_unique(&mut result, [reference.origin]);
                                     }
                                 } else {
-                                    append_unique(&mut result, self.aggregate_origins(argument));
+                                    append_unique(
+                                        &mut result,
+                                        self.carried_argument_origins(argument),
+                                    );
                                 }
                             }
                             for position in &matched.positional_overflow {
@@ -692,6 +672,48 @@ impl Checker {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The origins a view-constructor implicit conversion's result carries,
+    /// when `expression` is one.
+    fn conversion_borrow_origins(
+        &self,
+        expression: &Expr,
+    ) -> Option<Vec<mojito_types::origin::Origin>> {
+        use mojito_types::origin::Origin;
+        // A view-constructor implicit conversion produces a value borrowing
+        // its source place: the conversion result carries that origin exactly
+        // like the explicit construction's `ref [origin]` argument does, so
+        // escape and staleness checks see through the implicit spelling.
+        if !self.has_fact(&expression.source_span(), |facts| {
+            facts.conversion_source_borrow.is_some()
+        }) {
+            return None;
+        }
+        if let Ok(place) = self.origin_place(expression) {
+            return Some(vec![Origin::Place(place)]);
+        }
+        // A reference result lends the referent its origin names.
+        if let Some(reference) = self.infer_reference_value(expression) {
+            return Some(vec![reference.origin]);
+        }
+        // A temporary source lends its materialized anonymous owner (a
+        // frame-local slot), so the view cannot escape the frame.
+        if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
+            owner,
+            ..
+        }) = self
+            .node_facts
+            .borrow()
+            .get(&expression.source_span())
+            .and_then(|facts| facts.adjustment.as_deref())
+        {
+            return Some(vec![Origin::Place(mojito_types::origin::OriginPlace {
+                root: *owner,
+                path: Vec::new(),
+            })]);
+        }
+        None
     }
 
     /// The origins a view-returning call's result carries when its return

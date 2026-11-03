@@ -978,7 +978,9 @@ fn heterogeneous_pack_bound_failure_names_the_call_element() {
     let src = "def count[*ArgTypes: Intable](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    print(count(1, \"two\", True))\n";
     let error = run(src).unwrap_err();
     assert!(
-        error.contains("type 'StringLiteral[\"two\"]' for parameter '*ArgTypes'"),
+        error.contains(
+            "an element of 'args' with type 'String' does not conform to trait 'Intable'"
+        ),
         "got: {error}"
     );
     assert!(error.contains("'Intable'"), "got: {error}");
@@ -993,7 +995,8 @@ fn heterogeneous_pack_bound_oracle_uses_nominal_user_conformance() {
     let rejected = format!("{declarations}def main():\n    print(count(Number(1), Opaque(2)))\n");
     let error = run(&rejected).unwrap_err();
     assert!(
-        error.contains("type 'Opaque' for parameter '*Types' does not conform to trait 'Valued'"),
+        error
+            .contains("an element of 'args' with type 'Opaque' does not conform to trait 'Valued'"),
         "got: {error}"
     );
     assert!(error.contains("'Valued'"), "got: {error}");

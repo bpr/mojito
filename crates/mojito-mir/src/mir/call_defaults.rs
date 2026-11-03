@@ -905,7 +905,8 @@ fn build_collector(
     prelude: &mut Vec<MirInstr>,
     postlude: &mut Vec<MirInstr>,
 ) {
-    let Some(element) = shape.variadic else {
+    // A call spreading the caller's own pack passes it as the collector.
+    let (Some(element), None) = (shape.variadic, site.spread) else {
         return;
     };
     let skip = site.leading;
@@ -994,6 +995,27 @@ fn build_collector(
             TyKind::Tuple(types) => Some(types.clone()),
             _ => None,
         };
+        // A `read` pack refers to its elements where they lie, as upstream's
+        // `VariadicPack` of references does: each place it reads is
+        // referenced again once the call returns, so the place stays live
+        // through the call. The latest-declared owner is referenced first,
+        // so owners the call last reads die in reverse declaration order,
+        // as at any one instruction.
+        if shape.variadic_convention != Some(ArgConvention::Var) {
+            let mut places: Vec<MirPlace> = elements
+                .iter()
+                .filter_map(|&register| loaded_place(prelude, register))
+                .cloned()
+                .collect();
+            places.sort_by_key(|place| std::cmp::Reverse(place.root));
+            for place in places {
+                let Some(ty) = place.ty.clone() else {
+                    continue;
+                };
+                let dest = fresh_register(function, element_pointer_type(&ty, false), location);
+                postlude.push(MirInstr::MakeRef { dest, place });
+            }
+        }
         let storage = fresh_register(function, ty, location);
         prelude.push(MirInstr::MakeTuple {
             dest: storage,
@@ -1017,6 +1039,26 @@ fn build_collector(
         index += 1;
         !moved.contains(&(index - 1))
     });
+}
+
+/// The place the last `place.load` in `prelude` defining `register` reads,
+/// unless an instruction after it destroys the place's root: a temporary
+/// the call's setup materialized and released.
+fn loaded_place(prelude: &[MirInstr], register: Reg) -> Option<&MirPlace> {
+    let at = prelude.iter().rposition(
+        |instruction| matches!(instruction, MirInstr::LoadPlace { dest, .. } if *dest == register),
+    )?;
+    let MirInstr::LoadPlace { place, .. } = &prelude[at] else {
+        return None;
+    };
+    let released = prelude[at + 1..]
+        .iter()
+        .any(|instruction| match instruction {
+            MirInstr::DropVar { var, .. } => *var == place.root,
+            MirInstr::DropPlace { place: dropped, .. } => dropped.root == place.root,
+            _ => false,
+        });
+    (!released).then_some(place)
 }
 
 /// The element of a `read` collector the call borrows where it lies: the
@@ -1179,7 +1221,7 @@ impl Site {
     ) -> Option<Self> {
         let declarations = caller.declarations;
         let mut leading = record.leading;
-        let (callee, receiver, instantiated, args, kwargs, arg_places, kwarg_places) =
+        let (callee, receiver, instantiated, args, kwargs, arg_places, kwarg_places, spread) =
             match instruction {
                 MirInstr::Call {
                     func,
@@ -1189,7 +1231,7 @@ impl Site {
                     kwarg_places,
                     receiver,
                     instantiated_args,
-                    spread: None,
+                    spread,
                     ..
                 } => (
                     record.callee.clone().unwrap_or_else(|| func.0.clone()),
@@ -1199,6 +1241,7 @@ impl Site {
                     kwargs.clone(),
                     arg_places.clone(),
                     kwarg_places.clone(),
+                    *spread,
                 ),
                 MirInstr::MethodCall {
                     recv,
@@ -1209,7 +1252,7 @@ impl Site {
                     arg_places,
                     kwarg_places,
                     instantiated_args,
-                    spread: None,
+                    spread,
                     ..
                 } => {
                     let named = record.callee.clone().or_else(|| resolved.clone())?;
@@ -1237,6 +1280,7 @@ impl Site {
                         kwargs.clone(),
                         arg_places.clone(),
                         kwarg_places.clone(),
+                        *spread,
                     )
                 }
                 MirInstr::CallIndirect {
@@ -1246,7 +1290,7 @@ impl Site {
                     arg_places,
                     kwarg_places,
                     instantiated_args,
-                    spread: None,
+                    spread,
                     ..
                 } => {
                     // The check names a callable contract's dispatch symbol,
@@ -1278,6 +1322,7 @@ impl Site {
                         kwargs.clone(),
                         arg_places.clone(),
                         kwarg_places.clone(),
+                        *spread,
                     )
                 }
                 MirInstr::MultiIndex {
@@ -1337,7 +1382,7 @@ impl Site {
             arg_places,
             kwarg_places,
             bound,
-            spread: None,
+            spread,
         })
     }
 

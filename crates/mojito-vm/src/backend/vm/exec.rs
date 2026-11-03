@@ -722,7 +722,7 @@ impl VmBackend {
                         prog,
                         &func.0,
                         argv,
-                        kw,
+                        &kw,
                         &CallTypes {
                             instantiated: instantiated_args,
                             arg_types: &arg_types,

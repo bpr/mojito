@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1883**.
+Next free ID: **R1888**.
 
 ## Ordered Work
 
@@ -4662,6 +4662,46 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R1886 A compile-time value's field read as a generic argument
+  fails, where the pin passes it**
+
+  A field of a compile-time struct value (a module `comptime`, a local
+  `comptime` of a generic struct, a `comptime for` binder) passed to a
+  callee taking it as a generic `T` or a pack element is rejected here,
+  where the pin runs it.
+  - Probe: with `comptime FLAG: W = True`, `one(FLAG.n)` over `def one[T:
+    Writable](x: T)` fails MIR verification ("drop.var of slot $v0
+    ('$mat_r0') that some path reaching it does not hold"): the
+    materialized slot's `drop.var` lands before its definition.
+  - Probe: `comptime g = G[Int](5, "gen"); one(g.s)` fails the same way
+    with a `drop.place`.
+  - Probe: `comptime for e in d.items(): one(e.key)` over a compile-time
+    `Dict` fails on the VM ("field access on non-struct None").
+  - Since `print` is a library pack function (R1287), these shapes reach it:
+    `assets/ok/comptime_struct_values.mojo`,
+    `assets/ok/comptime_annotated_implicit_conversion.mojo`, and
+    `assets/ok/comptime_for_borrowing_iterator.mojo` fail until this lands.
+  - Found while landing R1287 (2026-11-03).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1887 A compile-time application building a `StringSpan` from a
+  literal mints a colliding constructor instance**
+
+  `label[pick(3) + "!"]()`, where `label[s: String]` calls a function
+  with a `sep: StringSlice = " "` default, fails to elaborate: "concrete
+  instance symbol `StringSpan.__init__$ov$StringLiteral$V$value$lit$mono$V$$$`
+  collides with an existing declaration".
+  - The owner-less literal constructor is instantiated under an origin
+    argument both by the compile-time fragment and by the default's call,
+    and the two keys mangle to one symbol.
+  - Since `print`'s `sep` and `end` are such defaults (R1287),
+    `assets/ok/comptime_application_string_float_argument.mojo` fails
+    until this lands.
+  - Found while landing R1287 (2026-11-03).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1805 A module binding of a parameter's name captures
   `origin_of(param)` at a call, so `reversed(xs)` fails beside a user
   `def value()`**
@@ -7646,6 +7686,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `std.memory.pointer.Pointer[True, {}, SIMD[DType.int, 1], {}, 0]`:
     `Pointer` is the intrinsic `TyKind::Pointer`, which the speller leaves
     to its `Display`.
+  - Probe: `_unqualified_type_name[type_of(buffer)]()` of `print`'s
+    `_FlushingWriteBuffer` over a `RawFileDescriptor` prints
+    `_FlushingWriteBuffer[RawFileDescriptor, 4096 : SIMD[DType.int, 1]]`,
+    where the pin prints `_FlushingWriteBuffer[{}, {},
+    std.io.file_descriptor.RawFileDescriptor, 4096 : SIMD[DType.int, 1]]`:
+    the infer-only origin and writer parameters are omitted.
   - The module paths in these probes are R1679's.
   - Found while landing R1669 (2026-10-30).
   - Depends on nothing.
@@ -9268,6 +9314,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     writes `<|2>` into the marking writer R159's probe describes, where
     the pin writes `<<|>|2>`: the generic pack's `args[i].write_to(self)`
     is still the inverted write.
+  - Probe: under `print` a `write_to` naming its writer's type
+    (`_unqualified_type_name[type_of(writer)]()`) sees `String`, where the
+    pin's is the library `print`'s `_FlushingWriteBuffer`: the pack's
+    `values[i].write_to(buffer)` is the inverted write.
   - Found while landing R424 (2026-10-26).
   - Depends on R276.
   - Model: Opus, Not Planned.
@@ -9741,6 +9791,17 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `return`, and nested-display callers; the other callers infer the
     display plainly and reach the pin's rejection.
   - Found while landing R1786 (2026-11-02).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1885 `NoneType` conforms to `Writable`, where the pin's does not**
+
+  `print(None)` and `f[T: Writable](None)` run here, where the pin rejects
+  them: "an element of 'values' with type 'None' does not conform to
+  trait 'Writable'".
+  - `mojito_types::conformance::modelled_conformance` lists `Writable` for
+    every modelled leaf but a callable, `TyKind::None` among them.
+  - Found while planning R1287 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10335,6 +10396,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     calls, is a compiler rule typed as the collector itself
     (`mc_infer.rs`), where upstream's `VariadicPack` method loads its
     elements into a `!kgen.pack`.
+  - Probe: a `read` collector holds its elements' values where upstream's
+    `VariadicPack` refers to them, so `build_collector` references each
+    loaded place again after the call to keep its owner live. An element
+    read through a reference-returning call is not such a place:
+    `print("end", o.value().v, c.t.v, h.o.value().v)` destroys `h`'s and
+    `o`'s values before `c`'s, where the pin destroys `c`, `h`, `o`
+    together after the call
+    (`assets/ok/condition_truthiness_reads_in_place.mojo`).
   - Found while planning R743 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -12108,49 +12177,52 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: Pliron's `String(x)` moves the writer's buffer into a fresh
     result slot (`own_string_result`), where upstream's writer is the
     result.
-  - Found while landing R422 (2026-11-03).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1287 `print` is a compiler builtin where upstream's is an
-  `@inline(.never)` library function**
-
-  `print` is checked, run, and lowered as a builtin call
-  (`Checker::infer_print`, the VM's `dispatch.rs`, Pliron's
-  `lower/calls.rs`), where upstream's `std/io/io.mojo` declares `def
-  print[*Ts: Writable](*values: *Ts, sep: StringSlice = " ", end:
-  StringSlice = "\n", flush: Bool = False, var file: RawFileDescriptor =
-  stdout)`.
-  - `inline_cost` prices the builtin call at the figure the pin's
-    `print(s)` call site costs (`PRINT_COST`, 30, in
-    `inline_parametric.rs`), since the call holds none of the pack and
-    defaults the pin's call site builds.
-  - Probe: `@always_inline def show(x: Int): print("show", x)` inlines
-    here and keeps its call at the pin, where a `StringLiteral` value
-    takes `print("a")` past the bound.
-  - The pin prices `print()` at 24 and `print(s, x)` at 31.
-  - Probe: a spread into the builtin `print` (`print(*args)`) is passed as
-    its elements (`expand_pack_spreads`), where every other call passes
-    the caller's pack itself.
-  - Done when `print` is the library function, the caller's MIR holds its
-    pack and defaults, and `PRINT_COST` is gone.
   - Probe (from R1109): `W[n].write_to(self, mut writer: Some[Writer])`
     ignoring `self`, over a field reading `n`, keeps one instance per `n`
     where the pin keeps one: display reaches `write_to`, `write_repr_to`,
     and a writer's `write_string` from the value's type
-    (`mir::TYPE_REACHED_MEMBERS`), so they keep every argument until
-    `print` calls them.
-  - The VM formats a `print`, `String`, or `repr` operand by its runtime
-    struct name (`format_value`), so it reboxes a struct it holds as its
-    one field (`Prog::boxed`) from the operand's static type at the
-    builtin call. The bridge goes with the builtin.
-  - Found while landing R1075 (2026-10-22).
-  - Probe: under `print` a `write_to` naming its writer's type
-    (`_unqualified_type_name[type_of(writer)]()`) sees `String`, where the
-    pin's is `_FlushingWriteBuffer[…, RawFileDescriptor, 4096]`, which the
-    library `print` brings.
-  - Depends on R424 and R422.
+    (`mir::TYPE_REACHED_MEMBERS`), so they keep every argument.
+  - The VM reboxes a held struct operand from its static type at the
+    builtin call (`Prog::boxed`), which now serves `String` and `repr`
+    alone, since `print` is library code (R1287).
+  - Found while landing R422 (2026-11-03).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1883 `print(flush=True)` does not call upstream's `_flush`**
+
+  The bundled `print` (`stdlib/std/io/io.mojo`) takes `flush` and ignores
+  it, where upstream's ends with `if flush: _flush(file=file)`, which
+  `fflush`es a `fdopen`ed `dup` of the descriptor.
+  - Needs `std.sys._libc`'s `dup`, `fdopen`, `fflush`, and `fclose` in
+    `mojito_types::ffi::CALLEES`, the VM's libc shim (`vm/libc.rs`), and
+    `io.mojo`'s `_fdopen` context manager.
+  - Output is unchanged: nothing in Mojito writes through C stdio.
+  - Probe: with `flush` unread, the elaborator removes the argument, which
+    exposed the unroller forgetting a removed argument's shared default
+    (`mono/unroll.rs`, fixed with R1287): `print` in a `comptime for` body
+    after a `print` before it.
+  - Found while landing R1287 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1884 The bundled `print` omits upstream's plugin and GPU branches**
+
+  Upstream's `print` writes through `_FixedWriteBuffer` to
+  `CurrentPlugin.print_emit_fn` when a plugin supplies one, and rejects a
+  GPU target, where the bundled one has only the CPU branch.
+  - Needs `_FixedWriteBuffer`, `CStringSpan`, `_PrintEmitPluginHookFnType`,
+    and the hook in `stdlib/std/_plugin/_trait.mojo`, whose header omits
+    `print_emit_fn` on purpose.
+  - Spell the selection as `std.math` does (`comptime hook = …; comptime
+    if hook:`) until `comptime if case` lands.
+  - Probe: upstream's `comptime assert Ts.all_conforms_to[Writable]()` and
+    `values._write_to(buffer, sep=sep, end=end)` are respelled as a
+    `comptime for` over the pack, which R1302's nominal `VariadicPack`
+    would declare.
+  - Found while landing R1287 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R426 The bundled `_FormatUtils` respells constructs upstream writes
   differently**

@@ -269,7 +269,6 @@ pub fn lower_body(
             .collect(),
         lazy_values: Vec::new(),
         erased: HashSet::new(),
-        print_sink: None,
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         loaded_places: collect_loaded_places(&func.blocks),
         storage_reads: HashSet::new(),
@@ -405,9 +404,6 @@ struct FnLowering<'a> {
     /// markers, void call results). Reading one is an internal invariant
     /// violation surfaced as a diagnostic, never a silent miscompile.
     erased: HashSet<u32>,
-    /// The C `int` descriptor a `print(file=)` currently routes its bytes
-    /// through (`None` outside such a call: `mjrt_write_stdout`).
-    print_sink: Option<Value>,
     /// `LoadPlace` results whose every consumer borrows them: the register
     /// holds its place's address and no copy lifecycle runs (MIR's aggregate
     /// load is a shallow read; `CopyValue` is the copy boundary).

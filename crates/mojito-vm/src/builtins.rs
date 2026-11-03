@@ -10,7 +10,6 @@
 /// function, in the order of its arms.
 pub const BUILTIN_CALLEES: &[&str] = &[
     "range",
-    "print",
     "external_call",
     "_mojito_abort",
     "_mojito_float_text",

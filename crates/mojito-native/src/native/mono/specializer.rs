@@ -1887,7 +1887,13 @@ impl<'a> Specializer<'a> {
                 ),
             )
         })?;
-        if let Some(effectful) = effectful_callee(&fragment, name) {
+        let template_of = |callee: &str| {
+            self.instance_names
+                .get(callee)
+                .map_or(callee, |&index| self.instances[index].0.template.as_str())
+                .to_string()
+        };
+        if let Some(effectful) = effectful_callee(&fragment, name, template_of) {
             return Err(self.error(
                 Some(template),
                 format!(
@@ -2920,19 +2926,12 @@ impl<'a> Specializer<'a> {
                             func.0.clone_from(template);
                         }
                         if !self.functions.contains_key(func.0.as_str()) {
-                            // `print` of a nominal struct displays through
+                            // `String` of a nominal struct displays through
                             // `write_to` over the `String` writer (the VM's
                             // `format_value` dispatch); enqueue the
-                            // instances the lowered expansion calls, its
-                            // `sep` and `end` keywords' too.
-                            if matches!(func.0.as_str(), "print" | "String") {
-                                let shown = kwargs
-                                    .iter()
-                                    .filter(|(keyword, _)| {
-                                        matches!(keyword.as_str(), "sep" | "end")
-                                    })
-                                    .map(|(_, arg)| *arg);
-                                for arg in args.clone().into_iter().chain(shown) {
+                            // instances the lowered expansion calls.
+                            if func.0 == "String" {
+                                for arg in args.clone() {
                                     self.enqueue_display_instance(owner, function, arg)?;
                                 }
                             }
@@ -4409,9 +4408,14 @@ fn erase_constants(blocks: &mut [MirBlock], dead: &HashSet<u32>, erased: &mut Ha
     }
 }
 
-/// The first effectful builtin (`print`, `input`) `entry` reaches in
-/// `program`, through every edge by which one function names another.
-fn effectful_callee(program: &MirProgram, entry: &str) -> Option<String> {
+/// The first effectful callee (the library `print`, the builtin `input`)
+/// `entry` reaches in `program`, through every edge by which one function
+/// names another; `template_of` names the template an instance closes.
+fn effectful_callee(
+    program: &MirProgram,
+    entry: &str,
+    template_of: impl Fn(&str) -> String,
+) -> Option<String> {
     let mut pending = vec![entry.to_string()];
     let mut seen = HashSet::new();
     while let Some(name) = pending.pop() {
@@ -4426,8 +4430,9 @@ fn effectful_callee(program: &MirProgram, entry: &str) -> Option<String> {
             collect_referenced_functions(&block.instrs, &mut referenced);
         }
         for callee in referenced {
-            if matches!(callee.as_str(), "print" | "input") {
-                return Some(callee);
+            let template = template_of(&callee);
+            if matches!(template.as_str(), "print" | "input") {
+                return Some(template);
             }
             pending.push(callee);
         }
