@@ -6691,6 +6691,8 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
                 | ExprKind::Prefix(..)
                 | ExprKind::Infix(..)
                 | ExprKind::Index { .. }
+                | ExprKind::Slice { .. }
+                | ExprKind::MultiIndex { .. }
                 | ExprKind::ListLit(_)
                 | ExprKind::BraceLit(_)
                 | ExprKind::InitializerList { .. }

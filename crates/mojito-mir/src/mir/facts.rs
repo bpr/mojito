@@ -43,7 +43,7 @@ impl<'a> Node<'a> {
             )
             || (matches!(
                 self.op(),
-                CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. }
+                CheckedOp::Index { .. } | CheckedOp::Slice { .. } | CheckedOp::MultiIndex { .. }
             ) && self
                 .call_contract()
                 .is_some_and(|contract| contract.reference_result.is_none()))

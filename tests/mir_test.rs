@@ -1780,6 +1780,75 @@ fn memory_only_slice_literal_is_read_from_its_call_result_slot() {
 }
 
 #[test]
+fn builtin_reads_a_string_parameter_in_place() {
+    // `Error(message)` and `input(prompt)` bind their `String` as
+    // upstream's `read` parameter does: the call retains the parameter's
+    // place, and nothing copies or moves it into a register.
+    let source = "def fail(message: String) raises:\n    raise Error(message)\n\ndef ask(prompt: String) raises -> String:\n    return input(prompt)\n\ndef main():\n    try:\n        fail(String(\"boom\"))\n        print(ask(String(\"? \")))\n    except e:\n        print(e)\n";
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    for (function, builtin) in [("fail", "Error"), ("ask", "input")] {
+        let body = mir_function(compiled.elaborated_mir(), function);
+        let instructions = nested_instructions(&body.blocks);
+        let place = instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func, arg_places, ..
+                } if func.0 == builtin => arg_places.first().cloned(),
+                _ => None,
+            })
+            .expect("builtin call")
+            .expect("the read argument keeps its place");
+        assert!(place.is_whole_root() && place.root == 0, "{body:#?}");
+        assert!(
+            !instructions
+                .iter()
+                .any(|instruction| matches!(instruction, MirInstr::UseVar { var: 0, .. })),
+            "{body:#?}"
+        );
+    }
+}
+
+#[test]
+fn memory_only_slice_subscript_result_is_read_from_its_call_result_slot() {
+    // `xs[::2]` returns a `List` through memory, so `print` reads it in its
+    // call-result slot, which drop elaboration destroys after the call.
+    let source = "def main():\n    var xs: List[Int] = [0, 1, 2, 3]\n    print(xs[::2])\n";
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    let instructions = nested_instructions(&main.blocks);
+    let result = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MultiIndex { dest, .. } => Some(*dest),
+            _ => None,
+        })
+        .expect("slice subscript");
+    assert!(
+        instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::DefVar { var, src, .. }
+                if *src == result
+                    && main.var_names[*var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
+        )),
+        "{main:#?}"
+    );
+    assert!(
+        !instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Drop { reg, .. } if *reg == result
+        )),
+        "{main:#?}"
+    );
+}
+
+#[test]
 fn parameterized_implicit_receiver_copy_drops_the_source_place_metadata() {
     let source = "@fieldwise_init\nstruct Counter(ImplicitlyCopyable):\n    var value: Int\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter.take_param[2]())\n    print(counter.value)\n";
     let mir = lower_program(&linked(source)).expect("checked lowering");

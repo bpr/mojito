@@ -995,6 +995,7 @@ impl Checker {
             });
         }
         let aty = self.infer(&args[0])?;
+        self.bind_read_builtin_argument(&args[0], &aty);
         let nominal_string = aty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
             args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
         });

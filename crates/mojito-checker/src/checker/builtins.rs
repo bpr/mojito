@@ -377,13 +377,9 @@ impl Checker {
                 continue;
             }
             let ty = self.infer(arg)?;
-            self.borrow_reference_result_argument(arg);
-            self.borrow_nominal_place_argument(arg, &ty);
-            self.borrow_parameter_place_argument(arg, &ty);
+            // `print` writes through `Writable`, taking no ownership.
+            self.bind_read_builtin_argument(arg, &ty);
             self.borrow_storage_element_argument(arg);
-            // `print` writes through `Writable`, taking no ownership: it
-            // reads a temporary the caller destroys once it returns.
-            self.record_read_temporary_argument(arg);
             let runtime_ty = default_literal(&ty);
             if runtime_ty != ty {
                 self.record_literal_materializations(arg, &ty, &runtime_ty)?;
@@ -424,6 +420,7 @@ impl Checker {
     /// the nominal `String`, and the call raises `Error` at end of input.
     pub(super) fn infer_input(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("input", 1, args)?;
+        self.bind_read_builtin_argument(&args[0], &tys[0]);
         let nominal_prompt = (tys[0])
             .kind()
             .as_non_simd_struct()
@@ -477,6 +474,18 @@ impl Checker {
             self.record_at(argument.source_span())
                 .borrowed_read_call_place = true;
         }
+    }
+
+    /// Bind `argument`, of type `ty`, as the `read` parameter of upstream's
+    /// library function a builtin stands for (`print`, `input`, `abort`,
+    /// `Error`) binds it: a named place or a reference result is read where
+    /// it lies, and an owned temporary is read in its call-result slot,
+    /// which the caller destroys once the call returns.
+    pub(super) fn bind_read_builtin_argument(&self, argument: &Expr, ty: &Ty) {
+        self.borrow_reference_result_argument(argument);
+        self.borrow_nominal_place_argument(argument, ty);
+        self.borrow_parameter_place_argument(argument, ty);
+        self.record_read_temporary_argument(argument);
     }
 
     /// A read-only builtin (`len`, `print`) over a named nominal place reads

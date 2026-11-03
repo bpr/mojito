@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `input`, `abort`, and `Error(...)` now bind their `String` argument as
+  upstream's `read` parameter does (R1441): `raise Error(message)` and
+  `input(prompt)` over a `read` parameter read it in place rather than
+  copying it into a register. A slice or keyword subscript's memory-only
+  result, as in `print(xs[::2])`, now lives in its call-result slot, as
+  any other by-value subscript's does.
 - A reference result passed to a `read` parameter now binds the parameter
   to the returned reference, as upstream's does (R1440): `show(o.value())`
   and `print(o.value())` no longer copy the referent into a register and

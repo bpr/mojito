@@ -279,6 +279,7 @@ impl Checker {
             "_mojito_float_text" => self.infer_float_text(args),
             "_mojito_abort" => {
                 let tys = self.builtin_args("_mojito_abort", 1, args)?;
+                self.bind_read_builtin_argument(&args[0], &tys[0]);
                 match (tys[0]).kind() {
                     // A literal message avoids an os-module import cycle
                     // for stdlib-internal trap sites; the VM reads either

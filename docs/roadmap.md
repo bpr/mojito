@@ -9823,44 +9823,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1441 A builtin call's memory-only argument reaches it in a
-  register, where upstream's library function reads it in place**
-
-  `print`, `input`, `abort`'s `_mojito_abort`, `Error(...)`, `Int(...)`,
-  and `divmod` are checked and lowered as builtins
-  (`checker/call_inference.rs`), so no argument binds a `read` parameter
-  and MIR lowers each as a plain value.
-  - So a memory-only argument is a register: a copy of a `read` parameter,
-    a moved value, or a call or subscript result kept in its register
-    rather than its call-result slot, which a `deinit` call then destroys.
-  - Upstream declares each as a library function whose `read` parameters
-    bind a place or a `__call_result_tmp__`.
-  - Lever: record a read convention per builtin argument
-    (`BorrowReadArgument` / `ReadTemporaryArgument`), so MIR lowers it
-    through `Flatten::read_operand` (`mir/call_results.rs`). R1287 makes
-    `print` itself a library function.
-  - Probe: `print(s[byte=1:3])` and kin (`assets/ok/nominal_string_graphemes.mojo`,
-    `nominal_string_keyword_slices.mojo`, `slice_literal_constructor_binding.mojo`).
-  - Probe: `print(xs[::2])` over a `List[Int]` (`assets/ok/slice.mojo`,
-    `slice_none_bound.mojo`, `list_strided_slice_normalizes.mojo`,
-    `pliron_slice_desc.mojo`), and `Int(s[0])` over a `Codepoint`
-    (`nominal_string_indexing.mojo`).
-  - Probe: `input(prompt)` (`assets/ok/input.mojo`,
-    `pliron_input_echo.mojo`) and `abort(msg)` (`with_statement.mojo`,
-    `with_multiple.mojo`, `file_handle_roundtrip.mojo`,
-    `file_descriptor_stdout_order.mojo`) copy their `String` parameter.
-  - Probe: `raise Error(message)` in the bundled `atof` moves its `String`
-    into a register (`nominal_string_parse.mojo`,
-    `nominal_string_parse_errors.mojo`, `nominal_string_atof_rounding.mojo`,
-    `list_unsafe_uninit_length.mojo`).
-  - Probe: `divmod(a, b)` over a generic `T` copies its operands
-    (`boolable_and_divmod.mojo`, `numeric_operation_traits.mojo`), a
-    struct's too since R1361 (`math_operation_traits_library.mojo`);
-    R1458 closes it.
-  - Found while landing R1356 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1442 A t-string, conversion, subscript-index, or trait-dispatched
   receiver operand keeps a memory-only call result in its register**
 
@@ -9996,6 +9958,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Slice` was a library struct; they go with it.
   - `CheckedSliceLiteral::indirect_result` goes with it too: the literal's
     node then records its own `IndirectResult`.
+  - Probe: the rebuilt constructor's `Optional` operands carry no
+    checked node, so `xs[::2]` keeps each `Optional.__init__` result in a
+    register a `drop.reg` destroys, where upstream reads it in a
+    `__call_result_tmp__` (`assets/ok/slice.mojo`,
+    `list_strided_slice_normalizes.mojo`).
   - Depends on R1514, which makes every bracket an index of expressions.
   - Model: Fable, Not Planned.
 
@@ -10056,8 +10023,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `dispatch.rs` arm, Pliron's `lower_round_builtin`, the elaborator's
     `"round" => "__round__"` rewrite). Since R1582 only a module loaded
     while the prelude bootstraps reaches it, as `abs`'s does.
-  - Closes R1441's `divmod` probe: a `read` parameter binds the
-    argument in place.
+  - A `read` parameter then binds each operand in place, where the
+    builtin copies a generic `T`'s or a struct's operands
+    (`boolable_and_divmod.mojo`, `numeric_operation_traits.mojo`,
+    `math_operation_traits_library.mojo`).
   - Probe: `divmod(UInt8(7), 3)` is rejected ("'divmod' is not defined for
     UInt8 and Int"), where the pin prints `(2, 1)`: `builtin_args`
     materializes the literal to `Int` before the pair is typed, where
