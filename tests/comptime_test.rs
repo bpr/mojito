@@ -1087,14 +1087,14 @@ fn specialization_retains_defaulted_thin_callable_arguments() {
 }
 
 #[test]
-fn specialization_retains_capturing_callable_and_inferred_origin_set() {
-    let src = "def select[origins: OriginSet, //, enabled: Bool, callback: def(Int) capturing[origins] -> Int](value: Int) -> Int:\n    comptime if enabled:\n        return callback(value)\n    else:\n        return value\n\ndef main():\n    var offset = 1\n    @parameter\n    def add(value: Int) -> Int:\n        return value + offset\n    print(select[True, add](41))\n";
+fn specialization_keeps_a_closure_binder_argument() {
+    let src = "def select[enabled: Bool, F: def(Int) -> Int](callback: F, value: Int) -> Int:\n    comptime if enabled:\n        return callback(value)\n    else:\n        return value\n\ndef main():\n    var offset = 1\n    def add(value: Int) {imm offset} -> Int:\n        return value + offset\n    print(select[True](add, 41))\n";
     assert_eq!(run(src).unwrap(), "42\n");
 }
 
 #[test]
-fn nested_specialization_retains_capturing_callable_arguments() {
-    let src = "def main():\n    var offset = 1\n    @parameter\n    def add(value: Int) -> Int:\n        return value + offset\n    def select[origins: OriginSet, //, enabled: Bool, callback: def(Int) capturing[origins] -> Int](value: Int) -> Int:\n        comptime if enabled:\n            return callback(value)\n        else:\n            return value\n    print(select[True, add](41))\n";
+fn nested_specialization_keeps_a_closure_binder_argument() {
+    let src = "def main():\n    var offset = 1\n    def add(value: Int) {imm offset} -> Int:\n        return value + offset\n    def select[enabled: Bool, F: def(Int) -> Int](callback: F, value: Int) -> Int:\n        comptime if enabled:\n            return callback(value)\n        else:\n            return value\n    print(select[True](add, 41))\n";
     assert_eq!(run(src).unwrap(), "42\n");
 }
 

@@ -26,41 +26,28 @@
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
 #
-# The 2026-11-01 re-pin (`1.3.0.dev2026110105`) added rows in three families.
-# `divergence`: fixtures spelling the `capturing` effect or `@parameter`
-# closures, which the pin removed and Mojito still runs (roadmap R1823
-# respells them onto capture lists). `ledgered`: two that call a
+# The 2026-11-01 re-pin (`1.3.0.dev2026110105`) added rows in two families.
+# `ledgered`: two that call a
 # `FileHandle`'s non-consuming `close` (R1824) and two that name the plugin
 # hooks' math ops by string, where upstream's are enum cases (R1828).
 # `upstream-regression`: three whose `var` binding beside a literal in a
 # tuple pattern over an rvalue subject the pin rejects ("use of uninitialized
 # value '(pattern child)'") and the previous pin ran
 # (`conformance/probes/var_case_rvalue_tuple_literal_sibling.mojo`).
-# swept-count	1586
+# swept-count	1590
 fixture	family	first-error
-assets/ok/callable_contract_names_other_parameters.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
-assets/ok/capturing_callable_parameter_with_locals.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
-assets/ok/capturing_generic_callable_parameter_environment.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/ok/dict_hasher_forwarding.mojo	hasher-protocol	error: 'LoudHasher' does not implement all requirements for 'Hasher'
-assets/ok/distinct_callable_contract_binders.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/ok/dtype_value_member_argument.mojo	ledgered	error: parameter 'op' has '_BinaryMathOp' type, but value has type 'StringLiteral["pow"]'
 assets/ok/file_descriptor_stdout_order.mojo	ledgered	error: value of type 'FileHandle' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/ok/file_handle_roundtrip.mojo	ledgered	error: value of type 'FileHandle' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
-assets/ok/forwarded_capturing_callable_parameter.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/ok/hasher_user_conformer.mojo	hasher-protocol	error: 'SumHasher' does not implement all requirements for 'Hasher'
 assets/ok/if_case_and_while_case.mojo	upstream-regression	error: use of uninitialized value '(pattern child)'
 assets/ok/if_case_mixed_with_boolean_elif.mojo	upstream-regression	error: use of uninitialized value '(pattern child)'
-assets/ok/lambda_hof.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/ok/layout_allocation.mojo	layout-alignment	error: no matching function in initialization
 assets/ok/match_struct_and_initializer_patterns.mojo	upstream-regression	error: use of uninitialized value '(pattern child)'
-assets/ok/method_capturing_callable_parameter.mojo	divergence	error: '@parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
-assets/ok/nested_def_comptime_reads_enclosing_parameter.mojo	divergence	error: '@parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
-assets/ok/nested_def_inline_shapes.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
-assets/ok/nested_def_reads_comptime_for_index.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/ok/std_plugin_hooks.mojo	ledgered	error: parameter 'op' has '_UnaryMathOp' type, but value has type 'StringLiteral["sqrt"]'
 assets/ok/template_method_binder_construction.mojo	hasher-protocol	error: invalid call to '__init__': no candidates found
 assets/ok/template_method_simd_leaf.mojo	hasher-protocol	error: 'FoldHasher' does not implement all requirements for 'Hasher'
 assets/ok/template_method_simd_leaf_default_bits.mojo	hasher-protocol	error: 'BitsHasher' does not implement all requirements for 'Hasher'
 assets/ok/template_method_simd_leaf_default_bits_lanes.mojo	hasher-protocol	error: 'LaneBitsHasher' does not implement all requirements for 'Hasher'
 assets/ok/tuple_reverse_concat.mojo	upstream-regression	error: cannot implicitly convert 'Tuple[*#kgen.param_list.tabulate(len(Ts.values), [idx: __mlir_type.index] Ts.values[(add (mul idx, -1), len(Ts.values), -1)])]' value to 'Tuple[*#kgen.param_list.tabulate(len(Ts.values), [idx: __mlir_type.index] Ts.values[(add (mul idx, -1), len(Ts.values), -1)])]'
-assets/ok/unread_callable_parameter_instances.mojo	divergence	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead

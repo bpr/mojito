@@ -2,8 +2,8 @@
 # callers never show: a copied capture snapshotted before a later
 # assignment, a moved capture whose destructor prints, a copied capture
 # taken afresh on each trip of a loop, a call through a captured sibling,
-# a body declared in a `comptime for`, and a capturing closure passed as a
-# callee's callable parameter.
+# a body declared in a `comptime for`, and a capture-list closure passed to
+# a callee's closure-trait binder.
 
 
 struct Noisy(Movable):
@@ -92,19 +92,16 @@ def in_loop() -> Int:
 
 
 @always_inline("nodebug")
-def apply[
-    origins: OriginSet, //, f: def(Int) capturing[origins] -> Int
-](x: Int) -> Int:
+def apply[F: def(Int) -> Int](f: F, x: Int) -> Int:
     return f(x)
 
 
 def binder(k: Int) -> Int:
     @always_inline("nodebug")
-    @parameter
-    def plus(y: Int) -> Int:
+    def plus(y: Int) {imm k} -> Int:
         return y + k
 
-    return apply[plus](3)
+    return apply(plus, 3)
 
 
 def main():

@@ -1216,7 +1216,8 @@ fn lower_closure_storage(
 /// argument to the storage's method, as `declarations` declares it, and
 /// returning its result, so
 /// the storage conforms to its closure trait and a call through a value of
-/// it devirtualizes to the witness. A generic, variadic, or
+/// it devirtualizes to the witness. A generic closure's witness takes the
+/// method's parameters and forwards them as its own. A variadic or
 /// reference-returning closure gets none: no closure trait spells its
 /// signature.
 fn lower_storage_call_witness(
@@ -1235,11 +1236,7 @@ fn lower_storage_call_witness(
         return;
     };
     let method = &method;
-    if !method.param_decls.is_empty()
-        || method.variadic.is_some()
-        || method.kw_variadic.is_some()
-        || method.returns_reference
-    {
+    if method.variadic.is_some() || method.kw_variadic.is_some() || method.returns_reference {
         return;
     }
     let symbol = format!("{name}.__call__");
@@ -1312,8 +1309,12 @@ fn lower_storage_call_witness(
         kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
-        param_decls: Vec::new(),
-        instantiated_args: Vec::new(),
+        param_decls: method.param_decls.clone(),
+        instantiated_args: method
+            .param_decls
+            .iter()
+            .map(ParamDecl::own_argument)
+            .collect(),
         spread: None,
         refined_bound: None,
     });

@@ -907,13 +907,13 @@ fn nominal_callable_same_arity_overload_uses_the_checked_target_in_both_vm_paths
 
 #[test]
 fn nominal_callable_contract_preserves_mut_parameter_convention() {
-    let src = "@fieldwise_init\nstruct Mutator(def(mut Int) -> None):\n    def __call__(self, mut value: Int, /) capturing:\n        value += 1\n\ndef apply[F: def(mut Int) -> None](callback: F, mut value: Int):\n    callback(value)\n\ndef main():\n    var value = 41\n    apply(Mutator(), value)\n    print(value)\n";
+    let src = "@fieldwise_init\nstruct Mutator(def(mut Int) -> None):\n    def __call__(self, mut value: Int, /):\n        value += 1\n\ndef apply[F: def(mut Int) -> None](callback: F, mut value: Int):\n    callback(value)\n\ndef main():\n    var value = 41\n    apply(Mutator(), value)\n    print(value)\n";
     assert_eq!(vm(src), "42\n");
 }
 
 #[test]
 fn nominal_callable_contract_preserves_reference_return_origin() {
-    let src = "@fieldwise_init\nstruct Borrower(def[origin: Origin[mut=True]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[origin: Origin[mut=True]](self, ref[origin] value: Int, /) capturing -> ref[origin] Int:\n        return value\n\ndef main():\n    var value = 40\n    ref borrowed = Borrower()(value)\n    borrowed += 2\n    print(value)\n";
+    let src = "@fieldwise_init\nstruct Borrower(def[origin: Origin[mut=True]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[origin: Origin[mut=True]](self, ref[origin] value: Int, /) -> ref[origin] Int:\n        return value\n\ndef main():\n    var value = 40\n    ref borrowed = Borrower()(value)\n    borrowed += 2\n    print(value)\n";
     assert_eq!(vm(src), "42\n");
 }
 

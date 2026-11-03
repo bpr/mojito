@@ -10,9 +10,8 @@ struct Res(Movable):
 def main():
     var t = ([Res(5)], 6)
 
-    @__parameter
-    def toss[index: Int](var element: t.element_types[index]):
+    def toss[index: Int](var element: t.Ts[index]):
         pass
 
-    t^.deinit_with[toss]()
+    t^.deinit_with(toss)
     print("done")

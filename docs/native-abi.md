@@ -321,7 +321,7 @@ Rules:
   agree on the result form before binding a value.
 - One thunk is interned per (compiled target, capture-mode vector). The thunk
   rebuilds the target's leading capture arguments from the environment
-  record and calls the target directly. A `@parameter` closure's capture
+  record and calls the target directly. A storage-less body's capture
   parameters are reference parameters, each `Reference` slot passing its
   stored place address. A capture-list `def`'s or capturing lambda's body
   instead takes its closure's storage struct as its one leading `read`

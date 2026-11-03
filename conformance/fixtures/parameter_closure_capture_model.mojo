@@ -1,10 +1,9 @@
-# A `@__parameter` closure captures an enclosing `var` local implicitly
-# mutable and takes no capture list (pinned Mojo a79fbdf59f2, 2026-09-08).
+# A generic nested `def` captures an enclosing `var` local through its
+# `{mut total}` capture list and is called with an explicit parameter.
 def main():
     var total = 0
 
-    @__parameter
-    def bump[n: Int]():
+    def bump[n: Int]() {mut total}:
         total += n
 
     bump[5]()

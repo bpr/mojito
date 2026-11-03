@@ -171,13 +171,12 @@ impl Checker {
                     | DecoratorSite::TraitMethod { .. },
                 ) => return Err(unmodeled(name, site)),
                 (
-                    "__parameter" | "parameter" | "__unsafe_nested_origins_read_only",
+                    "__unsafe_nested_origins_read_only",
                     DecoratorSite::Function | DecoratorSite::Method { .. },
                 ) => {}
-                (
-                    "__parameter" | "parameter" | "__unsafe_nested_origins_read_only",
-                    DecoratorSite::TraitMethod { .. },
-                ) => return Err(unmodeled(name, site)),
+                ("__unsafe_nested_origins_read_only", DecoratorSite::TraitMethod { .. }) => {
+                    return Err(unmodeled(name, site));
+                }
                 ("staticmethod", DecoratorSite::Method { .. }) => {}
                 ("staticmethod", DecoratorSite::Function) => {
                     return Err(invalid("only methods on structs may be declared static"));

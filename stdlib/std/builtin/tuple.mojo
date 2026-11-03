@@ -195,10 +195,8 @@ struct Tuple[*Ts: Movable](
 
     @inline(.nodebug)
     def consume_elements[
-        elt_handler: def[index: Int](
-            var element: Self.Ts[index]
-        ) capturing
-    ](deinit self):
+        F: def[idx: Int](var elt: Self.Ts[idx])
+    ](deinit self, elt_handler: F, /):
         comptime for i in range(len(Self.Ts)):
             elt_handler[i](Pointer(to=self[i]).unsafe_take_pointee())
         __mlir_op.`lit.ownership.mark_destroyed`(
@@ -207,8 +205,6 @@ struct Tuple[*Ts: Movable](
 
     # Current Mojo's family spelling for the same consuming teardown.
     def deinit_with[
-        deinit_func: def[index: Int](
-            var element: Self.Ts[index]
-        ) capturing
-    ](deinit self):
-        self^.consume_elements[deinit_func]()
+        F: def[idx: Int](var elt: Self.Ts[idx])
+    ](deinit self, deinit_func: F, /):
+        self^.consume_elements(deinit_func)

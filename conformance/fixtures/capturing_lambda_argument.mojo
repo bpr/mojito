@@ -1,6 +1,5 @@
 # A run-time parameter typed `def(...) capturing[_]`: both compilers reject
-# it, since a capturing callable has no run-time value of that type (the pin
-# has also removed the `capturing` spelling).
+# the removed `capturing` effect at the parse, with the pin's text.
 def observe(f: def(x: Int) capturing[_] -> Int, value: Int) -> Int:
     return f(value)
 

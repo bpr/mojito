@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pin's removed legacy closures are rejected with its texts (R1823):
+  the `capturing` effect is a parse error wherever it is spelled (a
+  function type, a `def` or method declaration, a lambda), and the
+  `@parameter` and `@__parameter` closure decorators and `@__copy_capture`
+  / `@__move_capture` are parse errors on any `def`. The checker's
+  implicit-capture `@__parameter` model, the AST's `capturing` field, and
+  the run-time `capturing` rejection R176 added are deleted. The corpus
+  moved to upstream's shapes: a capture-free callable passed as a
+  compile-time parameter is `thin`, and a closure goes through a
+  closure-trait binder `F: def(...)` as a run-time argument; nine
+  `mojito-only` conformance cases run again.
+
+- The bundled `Tuple.consume_elements` and `deinit_with` take the handler
+  as a run-time argument through upstream's binder `F: def[idx: Int](var
+  elt: Self.Ts[idx])` (R1124). A method's callable bound over the
+  receiver's pack is closed at the receiver's elements, so a handler over
+  a pack of one element type sees that type, as at the pin;
+  `tuple_consume_elements_{len,print,discard}` moved from `type_error` to
+  `ok`.
+
 - A run-time parameter or local typed `def(...) capturing[...]`, directly
   or nested in a type argument, is now rejected ("capturing closures cannot
   be materialized as runtime values"), and a `def(...)` conformer's
@@ -2894,6 +2914,14 @@ to evolve under the `0.x` compatibility rules.
   the package format is 70.
 
 ### Fixed
+
+- A generic capture-list closure called through a closure-trait binder
+  with explicit parameters (`f[2](40)` over `F: def[n: Int](Int) -> Int`)
+  elaborates: the closure storage's `__call__` witness now takes the
+  closure's own parameters. An inlined call through a callable binder
+  adopts its callee's binder declarations, so a `nodebug` callee passes
+  verification (R303), and a generic closure declared in a generic body
+  runs through such a binder (R532).
 
 - `Int`, `UInt`, and `Float64` are no longer parser types: they resolve
   through `std.simd`'s `comptime` aliases like `Int8`, so a program's own

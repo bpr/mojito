@@ -408,6 +408,7 @@ assets/ok/generator_type_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_value_unapplied.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_alias_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_alias_type_pack.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_closure_in_generic_body_closure_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_constructor_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_conversion_reads_argument_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_copyable_iterator_refinement.mojo	-	ineligible	no-scalar-entry-shape
@@ -1438,6 +1439,9 @@ assets/ok/tstring_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_annotated_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_array_defaultable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_comparison_dunder_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_consume_elements_discard.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_consume_elements_len.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_consume_elements_print.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_hashable_dict_key.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_nested_type_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_of_scalars_comparison.mojo	-	ineligible	no-scalar-entry-shape

@@ -1,9 +1,6 @@
 def select[
-    origins: OriginSet,
-    //,
-    enabled: Bool,
-    callback: def(Int) capturing[origins] -> Int,
-](value: Int) -> Int:
+    enabled: Bool, F: def(Int) -> Int
+](callback: F, value: Int) -> Int:
     comptime if enabled:
         return callback(value)
     else:
@@ -13,9 +10,8 @@ def select[
 def main():
     var offset = 1
 
-    @parameter
-    def add(value: Int) -> Int:
+    def add(value: Int) {imm offset} -> Int:
         return value + offset
 
-    print(select[True, add](41))
-    print(select[False, add](42))
+    print(select[True](add, 41))
+    print(select[False](add, 42))

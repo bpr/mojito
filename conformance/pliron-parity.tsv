@@ -408,6 +408,7 @@ assets/ok/generator_type_parameter.mojo	main	exe-differential	sanitized
 assets/ok/generator_value_unapplied.mojo	main	exe-differential	sanitized
 assets/ok/generic_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/generic_alias_type_pack.mojo	main	exe-differential	sanitized
+assets/ok/generic_closure_in_generic_body_closure_binder.mojo	main	exe-differential	sanitized
 assets/ok/generic_constructor_literal_argument.mojo	main	exe-differential	sanitized
 assets/ok/generic_conversion_reads_argument_in_place.mojo	main	exe-differential	sanitized
 assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	sanitized
@@ -1438,6 +1439,9 @@ assets/ok/tstring_template_served.mojo	main	exe-differential	sanitized
 assets/ok/tuple_annotated_binding.mojo	main	exe-differential	sanitized
 assets/ok/tuple_array_defaultable.mojo	main	exe-differential	sanitized
 assets/ok/tuple_comparison_dunder_call.mojo	main	exe-differential	sanitized
+assets/ok/tuple_consume_elements_discard.mojo	main	exe-differential	sanitized
+assets/ok/tuple_consume_elements_len.mojo	main	exe-differential	sanitized
+assets/ok/tuple_consume_elements_print.mojo	main	exe-differential	sanitized
 assets/ok/tuple_hashable_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/tuple_nested_type_arguments.mojo	main	exe-differential	sanitized
 assets/ok/tuple_of_scalars_comparison.mojo	main	exe-differential	sanitized

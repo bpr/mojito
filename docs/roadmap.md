@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1889**.
+Next free ID: **R1891**.
 
 ## Ordered Work
 
@@ -550,8 +550,8 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `run_thin(double, 2)` over `@always_inline("nodebug") def
     run_thin(f: def(Int) -> Int, x: Int) -> Int` keeps its call in
     concrete MIR, even with `f` unused.
-  - Probe: `run_it(get, 1)` over `@always_inline("nodebug") def run_it(f:
-    def(Int) capturing[_] -> Int, x: Int) -> Int: return f(x)` and a
+  - Probe: `run_it(get, 1)` over `@always_inline("nodebug") def
+    run_it[F: def(Int) -> Int](f: F, x: Int) -> Int: return f(x)` and a
     capture-list `def get(y: Int) {k} -> Int` keeps its call; once
     inlined, `canonicalize` folds the call through the closure to
     `get`'s method call on its storage
@@ -2018,8 +2018,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     init_elt)`, a capture-list closure writing each element in place, so the
     destructor is never instantiated.
   - Port `VariadicList.consume_elements` and `_annihilate`, then both
-    initializers. A `def(idx: Int, var elt: T) capturing[_]` handler stands
-    in for upstream's `Some[def(...)]` until R813.
+    initializers. An `F: def(idx: Int, var elt: T)` binder stands in for
+    upstream's `Some[def(...)]` until R813.
   - Since dcbecf4e every list display calls the literal initializer, so
     this used to work through the compiler-built display.
   - Pinned by `conformance/probes/list_display_linear_elements.mojo`.
@@ -3532,12 +3532,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R1164 The check emits none of the pin's decorator warnings**
 
   Problem: the pin warns at each use of a `@deprecated` declaration (with
-  its message or its `use=` replacement), at a `@parameter` ("'@parameter'
-  is deprecated; use '@__parameter'"), and at an `@export` without an
+  its message or its `use=` replacement), and at an `@export` without an
   `abi()` effect, where Mojito prints nothing.
   - The checker's warning channel already carries the match-coverage
     warnings the CLI prints.
-  - `checker/decorators.rs` accepts all three decorators silently.
+  - `checker/decorators.rs` accepts both decorators silently.
   - Probe: `conformance/probes/decorator_warnings.mojo`.
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
@@ -3545,9 +3544,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
 - [ ] **R1165 A trait method's caller-contract decorators are rejected**
 
-  Problem: `@__unsafe_nested_origins_read_only`, `@__parameter` or
-  `@parameter`, and `@implicit` on an `__init__` requirement are accepted
-  on a trait method at the pin, but Mojito reports each as unsupported.
+  Problem: `@__unsafe_nested_origins_read_only`, and `@implicit` on an
+  `__init__` requirement, are accepted on a trait method at the pin, but
+  Mojito reports each as unsupported.
   - `checker/decorators.rs` accepts only the inline levels and the
     documentation decorators at the trait-method site.
   - A requirement would need to carry the contract, and conformance would
@@ -5263,23 +5262,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     receiver register instead of the struct's parameter value.
   - Found while landing R590 (2026-10-13); HEAD before R590 fails the same
     way.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R532 A generic closure declared in a generic body does not
-  elaborate when bound to a callable parameter**
-
-  Problem: in `def outer[m: Int]()`, a `@parameter def add[n: Int](value:
-  Int)` reading `m`, bound by `invoke[add]()`, fails with "operator Add is
-  not defined for Int and None"; the pin prints 53.
-  - The folded callable names the lifted template alone, so the callee's
-    instance specializes it without the enclosing instance's binders.
-  - A nested body inherits them only where it is called from its defining
-    frame (`declaration.enclosing == Some(owner)` in the `CallIndirect` arm
-    of `mono/specializer.rs`).
-  - Fails whether the closure captures or not.
-  - Pinned by `conformance/probes/generic_closure_in_generic_body_callable_parameter.mojo`.
-  - Found while landing R526 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7324,26 +7306,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R303 A capturing generic callable parameter applied at its own
-  compile-time arguments fails to verify once its callee is inlined**
-
-  Problem: with `invoke_captured` `@always_inline("nodebug")`,
-  `inline-parametric` splices `callback[2](40)` into `main` as a
-  `call.indirect` the verifier rejects ("indirect-call compile-time
-  parameter metadata does not match its callable contract"); the pin runs
-  it.
-  - `def invoke_captured[origins: OriginSet, //, callback: def[n: Int](Int)
-    capturing[origins] -> Int]()`, bound to an `@parameter` closure that
-    captures a local.
-  - Without `nodebug` the elaborator folds the closure and passes its
-    environment, so `assets/ok/capturing_generic_callable_parameter_environment.mojo`
-    runs.
-  - So `canonicalize` folds no call that carries compile-time arguments.
-  - Probe: `assets/ok/capturing_generic_callable_parameter_environment.mojo`
-    with `invoke_captured` `@always_inline("nodebug")`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R327 An out-of-range value-pack index fails as an unsupported
   constant**
 
@@ -8007,40 +7969,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found at the 2026-11-01 re-pin.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R1823 Mojito accepts the `capturing` effect and `@parameter`
-  closures, which the pin removed**
-
-  At `1.3.0.dev2026110105` a `capturing` effect is an error ("the
-  'capturing' function effect is no longer supported; use a closure
-  capture list like '{var}' or '{mut x}' instead"), and so are
-  `@parameter`, `@__parameter`, `@__copy_capture`, and `@__move_capture`
-  on a nested function ("'@parameter' closures are no longer supported;
-  remove the decorator and declare the captures in a capture list").
-  - Mojito still parses and runs both at compile-time callable
-    parameters, and the bundled `Tuple.consume_elements` and
-    `deinit_with` take a `capturing` parameter (R1124). A run-time
-    parameter or local of a `capturing` type already rejects.
-  - A function passed as a compile-time parameter must now be `thin`.
-  - Reject both with the pin's texts, move the fixtures that use them to
-    capture lists, and delete the `capturing` surface from the parser,
-    checker, and `docs/grammar.md`.
-  - Probes: `callable_parameter_thin_to_capturing.mojo`,
-    `decorator_warnings.mojo`, and
-    `generic_closure_in_generic_body_callable_parameter.mojo`, which also
-    panics Mojito's elaborator (`mono/catalog.rs`).
-  - Eleven `assets/ok` fixtures sit in `conformance/assets-mojo-rejects.tsv`
-    as `divergence` for it. In `conformance/assets-mojo-errors.tsv` five
-    error fixtures are `ledgered` and four `handler-argument` behind the
-    removal's complaint.
-  - Ledger name: `nominal-reference-callable`, `callable-effect-order`,
-    `parametric-capture-origins`, `generic-anonymous-callables`,
-    `callable-comptime-specialization`, `parameter-closure-capture-model`,
-    `parameter-closure-reads-immutable-capture`, `lambda-higher-order`,
-    `capturing-callable-parameter-with-locals`.
-  - Found at the 2026-11-01 re-pin.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R1830 Two initializers that differ only in their refined `out self`
   types are rejected, where the pin now selects by the result type**
@@ -9436,11 +9364,32 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1890 A struct's generic `__call__` does not conform to a
+  generic closure trait with value binders**
+
+  `struct Adder(def[n: Int](Int) -> Int)` declaring `def __call__[n:
+  Int](self, value: Int) -> Int` is rejected where a binder takes it
+  ("declared callable contract 'def(Int) -> Int' is incompatible"); the pin
+  prints `43` for `invoke(Adder(1))` calling `f[2](40)`.
+  - The struct's declared contract is lowered by `ty_from_anno` in
+    `Checker::resolve_struct_member_types` (`checker/traits.rs`), which
+    keeps origin binders as reference signatures and drops a value
+    binder, so the recorded `callable_conformance` is monomorphic.
+  - A parameter's callable bound goes through
+    `lower_anonymous_callable_type` instead and keeps its `def[...]`
+    binders; the conformance needs the same lowering, and the `__call__`
+    check against it must compare the binders.
+  - Probe: the shape above, with `invoke[F: def[n: Int](Int) -> Int](f:
+    F) -> Int: return f[2](40)`.
+  - Found while landing R1823 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1772 A bare `def(...)` run-time parameter type is a concrete
   function type, where the pin's is a closure trait**
 
   The pin reads a run-time parameter annotated `def(...)` with no `thin`
-  or `capturing` as a trait, as it reads one on a field or an element;
+  as a trait, as it reads one on a field or an element;
   Mojito checks it as a function type and calls through it.
   - Probe: `def run(h: def(Int32) -> None)` called `run(show)` over `def
     show(v: Int32)` prints `3` here; the pin rejects the argument ("cannot
@@ -9452,9 +9401,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     check and fails MIR verification ("argument 0 of 'run' has type
     def(Int32) thin -> None, declared def(Scalar[d]) -> None"), as does a
     method's `h: def(Scalar[Self.dtype]) -> None` on `C[DType.int32]`.
-  - The `capturing` spelling of the method probe rejects at the
-    parameter ("capturing closures cannot be materialized as runtime
-    values"), as at the pin.
   - Reject the annotation at the parameter, as fields and elements are
     rejected; do not close `verify_direct_call`'s declared types under
     the call's arguments, which would make the binder shapes run.
@@ -11953,8 +11899,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `lit.ownership.mark_initialized` statement and
     `Pointer(to=self[i]).unsafe_write({})`.
   - Mojito has no `unsafe_write_move_from`.
-  - A `@__parameter` closure over the receiver (`init_elt`) is not spelled
-    in Mojito.
+  - Upstream's `init_elt` is a capture-list closure over the receiver,
+    passed to `consume_elements` as a run-time argument.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -12270,8 +12216,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   names, then its own.
   - The binder collection is `closure_binder_uses` (`mir/nested.rs`), which
     a capturing closure's storage already uses.
-  - A `@parameter` closure, upstream's legacy capturing closure, is not
-    this entry's.
   - Probe: `def outer[n: Int]() -> Int:` declaring `def helper() -> Int:
     return n * 2` lowers `outer$helper` with `enclosing: outer`; the pin's
     `helper` is a top-level function parameterized on `n`.
@@ -12313,8 +12257,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`closure_capture_arguments`, `backend/vm/references.rs`), and
     Pliron's value capture slots and `mjdrop_<n>` thunks
     (`lower/closures.rs`).
-  - No checked program reaches them any more: a run-time
-    `capturing[...]` value no longer type-checks, so nothing converts a
+  - No checked program reaches them any more: the `capturing` effect no
+    longer parses, so nothing converts a
     storage to a closure of its body. Delete them, and the MIR verifier's
     rule binding a storage method closure's first capture to its receiver
     (`closure environment for`), whose checked-program test went with
@@ -12322,8 +12266,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Once deleted, `mem-2-reg`'s call-through rule (`Facts::candidate`,
     `analysis/mem2reg.rs`) can admit every function-typed slot, not only
     a thin one or a local holding a closure of reference captures: a
-    call through a parameter of a `capturing` function type still keeps
-    its `callee_place` and the slot it names.
+    call through a function-typed parameter with a capturing environment
+    still keeps its `callee_place` and the slot it names.
   - `canonicalize`'s `fold_known_callees` folds a call through a closure
     of reference captures only: a closure holding a lambda's moved
     storage has no place to pass as its body's `self`, so a call through
@@ -12333,6 +12277,37 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     reference captures keeps its `drop.reg` until `canonicalize` erases
     it once its calls are folded.
   - Found while landing R1378 (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1889 The compile-time capturing-callable environment survives
+  the removal of its only producers**
+
+  A compile-time callable parameter bound to a capturing closure folded the
+  closure's body and passed its captured places as trailing run-time
+  arguments. Since the `capturing` effect and `@parameter` closures no
+  longer parse, no checked program builds that binding: a closure reaches
+  a callee through a closure-trait binder `F: def(...)` as its storage
+  value, and a storage cannot bind a compile-time parameter ("cannot use a
+  dynamic value in a parameter list").
+  - Delete `CaptureOriginSet::{Infer, Param}` and `CaptureSetParamId`
+    (`mojito-types/src/origin.rs`) with their arms in `types.rs` and
+    `checker/origins/ref_params.rs`.
+  - Delete the MIR text tags `capture_set_infer` / `capture_set_param`
+    (`mir/text/write.rs`, `mir/text/parse/origins.rs`) and respell or drop
+    the pass cases that spell them:
+    `inline-parametric/capturing_callable_binder`,
+    `canonicalize/dead_reference_closure`, and
+    `mem-2-reg/reference_closure_slot`.
+  - Delete `Specializer::bind_capturing_callables`,
+    `pass_capturing_arguments`, `CapturingArguments`, and
+    `Bindings::callable_environments` (`native/mono/specializer.rs`,
+    `mono/equiv.rs`), after confirming no binding reaches them.
+  - Respell the comments that still describe a `@parameter` closure's
+    storage-less lowering (`mir/nested.rs`, `mir/lower_expr/calls.rs`,
+    `mir/ir.rs`, `mir/verify/instr.rs`, `native/mono/environment.rs`,
+    `checked.rs`, `pliron/lower/support.rs`) to the paths that remain, or
+    delete those paths if only a `@parameter` closure took them.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -12779,24 +12754,6 @@ residue found inside a task moves to the task that owns its fix.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1124 `consume_elements` and `deinit_with` take the handler as a
-  runtime closure argument**
-
-  Problem: the bundled `Tuple.consume_elements[handler]()` is a
-  compile-time parameter, where the pin takes `t^.consume_elements(handler)`
-  for `def handler[idx: Int](var elt: t.Ts[idx]) {mut collected}` and
-  rejects the parameter spelling ("missing required argument:
-  'elt_handler'"); `Tuple.deinit_with` and `VariadicPack.consume_elements`
-  changed the same way, matching `List.deinit_with`.
-  - `conformance/fixtures/tuple_consume_elements.mojo` and the three
-    `assets/type_error/tuple_consume_elements_*.mojo` keep the parameter
-    spelling until this lands.
-  - The handler is a generic callable argument whose binder indexes the
-    receiver's pack, as R1122's is.
-  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1125 `Hasher` drops `__init__` and `finish` reads `self`**
 

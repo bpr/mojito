@@ -1,6 +1,5 @@
-# A `capturing[...]`-annotated callable field is rejected like any other
-# `def(...)`-typed field: current Mojo has no callable-value storage positions.
-# expect: type of struct field 'callback'
+# The removed `capturing` effect rejects in a field's function type.
+# expect: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 @fieldwise_init
 struct Env:
     var callback: def(Int) capturing[_] -> Int

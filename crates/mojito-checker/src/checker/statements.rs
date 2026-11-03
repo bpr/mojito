@@ -1448,12 +1448,7 @@ impl Checker {
                 // Current Mojo reads a bare `def(...)` local annotation as
                 // trait-typed storage, like fields and collection elements;
                 // a stored callable spells `def(...) thin`.
-                if let Some(mojito_ast::ast::Type::Func {
-                    thin: false,
-                    capturing: None,
-                    ..
-                }) = ty
-                {
+                if let Some(mojito_ast::ast::Type::Func { thin: false, .. }) = ty {
                     return Err(TypeError::Unsupported(format!(
                         "a 'def(...)' type names a trait in the annotation of variable \
                          '{name}' in current Mojo, not a storable callable value; spell \
@@ -1461,7 +1456,6 @@ impl Checker {
                          unannotated"
                     )));
                 }
-                let annotation_position = format!("the annotation of variable '{name}'");
                 if matches!(value.kind, ExprKind::Uninitialized) {
                     let Some(annotation) = ty else {
                         return Err(TypeError::Unsupported(
@@ -1470,10 +1464,6 @@ impl Checker {
                     };
                     let declared = self
                         .resolve_storage_annotation(annotation, super::StorageStrictness::Full)?;
-                    super::type_resolution::reject_runtime_capturing_callable(
-                        &declared,
-                        &annotation_position,
-                    )?;
                     self.record_at(stmt.source_span()).binding_ty = Some(declared.clone());
                     self.declare(name, declared)?;
                     self.record_statement_binding(stmt, name);
@@ -1505,10 +1495,6 @@ impl Checker {
                         let (contextual, demands) = self.resolve_storage_annotation_with_origins(
                             annotation,
                             super::StorageStrictness::AllowBare,
-                        )?;
-                        super::type_resolution::reject_runtime_capturing_callable(
-                            &contextual,
-                            &annotation_position,
                         )?;
                         (Some(contextual), demands)
                     }
@@ -2959,7 +2945,6 @@ impl Checker {
             captures,
             ret: ret_anno,
             body,
-            decorators,
             ..
         } = &stmt.kind
         else {
@@ -2996,7 +2981,6 @@ impl Checker {
             named_result,
             ..
         } = def_shape(params);
-        let parameter_closure = mojito_ast::ast::is_parameter_closure(decorators);
         // Type parameters are in scope while checking the body (as bare
         // `T`), and value parameters as the typed references a dependent
         // parameter expression names (`Buf[n + 1]`).
@@ -3072,10 +3056,6 @@ impl Checker {
                 default: captures.as_ref().and_then(|list| list.default).or_else(|| {
                     (lambda && captures.is_none()).then_some(mojito_ast::ast::CaptureKind::Imm)
                 }),
-                // A `@__parameter` closure (which takes no capture list)
-                // captures each free variable by its binding's mutability, as
-                // upstream: `mut` for a mutable local, `imm` otherwise.
-                implicit_by_binding: parameter_closure && captures.is_none(),
                 lambda,
             })
         };
@@ -3406,8 +3386,7 @@ impl Checker {
             // its storage struct, as upstream's `emitClosure` returns the
             // storage, copyable when each moved capture's type is
             // (`allCopyable`).
-            let storage_backed =
-                !parameter_closure && (lambda || captures_list) && !captures.is_empty();
+            let storage_backed = (lambda || captures_list) && !captures.is_empty();
             let environment = if storage_backed {
                 mojito_types::origin::CallableEnvironment::Storage(Box::new(
                     mojito_types::origin::ClosureStorageEnvironment {
@@ -3430,7 +3409,7 @@ impl Checker {
                         }),
                     },
                 ))
-            } else if parameter_closure || lambda_forces_closure || !captures.is_empty() {
+            } else if lambda_forces_closure || !captures.is_empty() {
                 mojito_types::origin::CallableEnvironment::Capturing(concrete)
             } else {
                 mojito_types::origin::CallableEnvironment::Thin
@@ -3675,7 +3654,6 @@ impl Checker {
             ret: ret_anno,
             raises,
             raises_type,
-            decorators,
             where_clauses,
             ..
         } = &stmt.kind
@@ -3787,11 +3765,7 @@ impl Checker {
         let effect_raises = declared_error
             .as_ref()
             .is_some_and(|ty| *ty != TyKind::Never);
-        let initial_environment = if mojito_ast::ast::is_parameter_closure(decorators) {
-            mojito_types::origin::CallableEnvironment::Capturing(
-                mojito_types::origin::CaptureOriginSet::Infer,
-            )
-        } else if self.function_bases.is_empty() {
+        let initial_environment = if self.function_bases.is_empty() {
             mojito_types::origin::CallableEnvironment::Thin
         } else {
             mojito_types::origin::CallableEnvironment::Default
@@ -4022,10 +3996,6 @@ impl Checker {
                 );
                 self.resolving_parameter_annotation.set(false);
                 let resolved = resolved?;
-                super::type_resolution::reject_runtime_capturing_callable(
-                    &resolved,
-                    &format!("parameter '{}'", parameter.name),
-                )?;
                 let declared = match parameter.kind {
                     mojito_ast::ast::ParamKind::Variadic => {
                         mojito_types::types::variadic_collector_type(

@@ -26,7 +26,8 @@ mojito currently has:
   values, and fuel-bounded pure-function CTFE through the MIR/VM path
 - checked callable contracts and values: dependent `F: def(...)` bounds,
   generic anonymous `def[...]` contracts, symbolic defaults for
-  `thin`/`capturing[origins]` callable-value parameters, residual callable
+  `thin` callable-value parameters, closure-trait binders `F: def(...)`
+  taking a closure's storage, residual callable
   specialization, explicit-Origin overload/generic/pack selection, nominal
   callable structs, and read/write capture effects carried into loan analysis
 - arbitrary-precision `IntLiteral` and exact finite `FloatLiteral` evaluation,
@@ -96,8 +97,9 @@ Language deficiencies:
 - non-escaping nested functions use current `{imm ...}`/`{mut ...}`/`{ref ...}`/
   `{var ...}` capture lists and lift recursively through lexical scopes while
   preserving sibling calls, generics, callable environment origins, effects,
-  reference returns, and call conventions. Explicit `capturing[origins]`
-  contracts preserve the environment across non-escaping callable parameters;
+  reference returns, and call conventions. A closure-trait binder
+  `F: def(...)` carries a closure across a non-escaping call (the pin's
+  removed `capturing` effect and `@parameter` closures are parse errors);
   accepting a stateful closure through an unqualified `def(...)` and captured
   nested Origin specialization are pinned-nightly Mojito extensions. The removed
   `unified {...}` spelling is accepted only as an explicit compatibility

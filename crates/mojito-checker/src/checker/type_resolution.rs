@@ -23,29 +23,6 @@ pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(),
     Ok(())
 }
 
-/// A `capturing[...]` callable environment exists only on a compile-time
-/// callable parameter (`F: def(...) capturing[_]`): current Mojo has no
-/// run-time value of a capturing closure type, so a run-time parameter or a
-/// local whose annotation names one (directly or nested in a type argument)
-/// rejects. A closure's value is its storage struct, which an `F: def(...)`
-/// binder accepts.
-pub(super) fn reject_runtime_capturing_callable(ty: &Ty, position: &str) -> Result<(), TypeError> {
-    let capturing = |ty: &Ty| match ty.kind() {
-        TyKind::Func(func) => matches!(func.environment, CallableEnvironment::Capturing(_)),
-        TyKind::GenericFunc(generic) => {
-            matches!(generic.func.environment, CallableEnvironment::Capturing(_))
-        }
-        _ => false,
-    };
-    if mojito_types::types::mentions(ty, &capturing) {
-        return Err(TypeError::Unsupported(format!(
-            "capturing closures cannot be materialized as runtime values ({position}); take \
-             the closure through a compile-time callable binder such as 'F: def(...)'"
-        )));
-    }
-    Ok(())
-}
-
 /// What each bracket argument of one application bound to, in source
 /// order: `Some` for an argument with no run-time form (a type, an origin,
 /// or a compile-time value), as upstream's op carries each argument as the
@@ -433,7 +410,6 @@ impl Checker {
                 params,
                 ret,
                 thin,
-                capturing,
                 raises,
                 raises_type,
                 where_clauses,
@@ -450,8 +426,11 @@ impl Checker {
                             .to_string(),
                     ));
                 }
-                let environment =
-                    self.lower_callable_environment(type_params, *thin, capturing.as_ref())?;
+                let environment = if *thin {
+                    CallableEnvironment::Thin
+                } else {
+                    CallableEnvironment::Default
+                };
                 let function_params: Vec<FnParam> = params
                     .iter()
                     .enumerate()

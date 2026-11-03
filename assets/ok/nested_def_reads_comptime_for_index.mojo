@@ -4,7 +4,7 @@
 # index. So does one declared in an arm of a `comptime if`.
 
 
-def apply[func: def() capturing -> Int]() -> Int:
+def apply[func: def() thin -> Int]() -> Int:
     return func()
 
 
@@ -57,7 +57,6 @@ def capture_beside_index[n: Int]():
 def passed_as_parameter[n: Int]():
     comptime for i in range(n):
 
-        @parameter
         def inner() -> Int:
             return i + 100
 

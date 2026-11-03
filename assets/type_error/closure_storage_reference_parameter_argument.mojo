@@ -2,7 +2,7 @@
 # struct, a run-time value, so it cannot bind a compile-time callable
 # parameter.
 # expect: cannot use a dynamic value in a parameter list
-def apply[origins: OriginSet, //, f: def(Int) capturing[origins] -> Int](a: Int) -> Int:
+def apply[f: def(Int) thin -> Int](a: Int) -> Int:
     return f(a)
 
 

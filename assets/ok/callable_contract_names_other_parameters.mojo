@@ -19,33 +19,33 @@ struct C[dtype: DType]:
     def __init__(out self):
         pass
 
-    def run[h: def(Scalar[Self.dtype]) capturing -> None](self):
+    def run[h: def(Scalar[Self.dtype]) thin -> None](self):
         h(Scalar[Self.dtype](3))
 
-    def run_generic[h: def[k: Int](SIMD[Self.dtype, k]) capturing -> None](
+    def run_generic[h: def[k: Int](SIMD[Self.dtype, k]) thin -> None](
         self,
     ):
         h[2](SIMD[Self.dtype, 2](3, 4))
 
     @staticmethod
-    def run_static[h: def(Scalar[Self.dtype]) capturing -> None]():
+    def run_static[h: def(Scalar[Self.dtype]) thin -> None]():
         h(Scalar[Self.dtype](5))
 
-    def run_alias[h: def[k: Int](Self._T[k]) capturing -> None](self):
+    def run_alias[h: def[k: Int](Self._T[k]) thin -> None](self):
         h[2](SIMD[Self.dtype, 2](6, 7))
 
-    def run_shadow[h: def[dtype: DType](Scalar[dtype]) capturing -> None](
+    def run_shadow[h: def[dtype: DType](Scalar[dtype]) thin -> None](
         self,
     ):
         h[DType.float32](Scalar[DType.float32](1.5))
         h[Self.dtype](Scalar[Self.dtype](3))
 
 
-def run[d: DType, h: def(SIMD[d, 2]) capturing -> None]():
+def run[d: DType, h: def(SIMD[d, 2]) thin -> None]():
     h(SIMD[d, 2](1, 2))
 
 
-def run_generic[d: DType, h: def[k: Int](SIMD[d, k]) capturing -> None]():
+def run_generic[d: DType, h: def[k: Int](SIMD[d, k]) thin -> None]():
     h[2](SIMD[d, 2](8, 9))
 
 

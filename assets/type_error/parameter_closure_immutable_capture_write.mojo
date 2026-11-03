@@ -1,9 +1,8 @@
 # expect: must be mutable for in-place operator destination
-# A `@__parameter` closure captures an immutable enclosing parameter as
-# `imm`; writing it in place rejects with upstream's text.
+# A generic closure's `imm` capture of an enclosing argument cannot be
+# written in place; upstream reports the same text.
 def run(base: Int):
-    @__parameter
-    def bump[n: Int]():
+    def bump[n: Int]() {imm base}:
         base += n
     bump[5]()
     print(base)

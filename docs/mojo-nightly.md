@@ -30,7 +30,7 @@ The window's largest change removes legacy closures: the `capturing` effect
 and the `@parameter`, `@__parameter`, `@__copy_capture`, and
 `@__move_capture` decorators are errors, a nested function declares a
 capture list instead, and a function passed as a compile-time parameter must
-be `thin`. Mojito still runs both (R1823). The language otherwise gains a
+be `thin`. Mojito now rejects both with the pin's texts. The language otherwise gains a
 `with` that borrows a named manager, a consuming error-taking `__exit__`,
 `var` case bindings that take a payload out of an rvalue subject, `_` holes
 nested in parameterized types, a float result for an integer literal to a
@@ -93,9 +93,10 @@ result only when no `elif` condition region computes anything;
 
 ### 5. Legacy closures are removed
 
-R1823: reject the `capturing` effect and the `@parameter` family with the
-pin's texts and move the corpus onto capture lists. The bundled handler
-APIs (R1433) and the run-time capturing leniencies (R176) are withdrawn.
+Done: the `capturing` effect and the `@parameter` family reject with the
+pin's texts, and the corpus moved onto capture lists and closure-trait
+binders. The bundled handler APIs (R1433, R1124) and the run-time capturing
+leniencies (R176) are withdrawn.
 
 ### 6. Language changes still to follow
 
@@ -135,7 +136,7 @@ pin. Of the previous window's three regressions, the `for … else` over
 the exact audited build (`mojo --version` reports `Mojo 1.3.0.dev2026110105
 (ce3afc14)` from `~/src/mojo/envs/mojo-2026110105`) passed 546/561 before
 this pass. The fifteen failures were the window's own movement: nine
-callable cases on the removed closures (now `mojito-only`, R1823), two on
+callable cases on the removed closures (respelled, `run` again), two on
 the `FileHandle` change (`mojito-only`, R1824), two on the unordered `ne`
 (fixed), one on `Powable` (respelled), and `loop-completion`, back to `run`.
 One row was added (`match-cluster-nested-completion`, promoted from its

@@ -546,7 +546,6 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
             type_params,
             params,
             ret,
-            capturing,
             raises_type,
             where_clauses,
             ..
@@ -568,7 +567,6 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
                 walk_function_type_param(visitor, parameter);
             }
             walk_type(visitor, ret);
-            walk_exprs(visitor, capturing.as_deref().unwrap_or_default());
             walk_optional_type(visitor, raises_type.as_deref());
             walk_exprs(visitor, where_clauses);
         }
@@ -1367,7 +1365,6 @@ fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
             type_params,
             params,
             ret,
-            capturing,
             raises_type,
             where_clauses,
             ..
@@ -1384,11 +1381,6 @@ fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
             walk_type_mut(visitor, ret);
             for clause in where_clauses {
                 walk_expr_mut(visitor, clause);
-            }
-            if let Some(origins) = capturing {
-                for expression in origins {
-                    walk_expr_mut(visitor, expression);
-                }
             }
             if let Some(error) = raises_type {
                 walk_type_mut(visitor, error);

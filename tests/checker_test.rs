@@ -271,7 +271,7 @@ fn copied_capture_requires_implicit_copy_capability() {
 #[test]
 fn nominal_callable_rejects_a_value_result_for_a_reference_result_contract() {
     let error = err(
-        "struct Bad(def[origin: Origin[mut=True]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[origin: Origin[mut=True]](self, ref[origin] value: Int, /) capturing -> Int:\n        return value\n",
+        "struct Bad(def[origin: Origin[mut=True]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[origin: Origin[mut=True]](self, ref[origin] value: Int, /) -> Int:\n        return value\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 }
@@ -320,7 +320,7 @@ fn nominal_callable_struct_is_not_a_def_typed_value() {
 #[test]
 fn nominal_callable_rejects_a_reference_result_from_the_wrong_parameter() {
     let error = err(
-        "struct Bad(def[left: Origin[mut=True], right: Origin[mut=True]](ref[left] Int, ref[right] Int) -> ref[left] Int):\n    def __call__[left: Origin[mut=True], right: Origin[mut=True]](self, ref[left] first: Int, ref[right] second: Int, /) capturing -> ref[right] Int:\n        return second\n",
+        "struct Bad(def[left: Origin[mut=True], right: Origin[mut=True]](ref[left] Int, ref[right] Int) -> ref[left] Int):\n    def __call__[left: Origin[mut=True], right: Origin[mut=True]](self, ref[left] first: Int, ref[right] second: Int, /) -> ref[right] Int:\n        return second\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 }
@@ -328,14 +328,14 @@ fn nominal_callable_rejects_a_reference_result_from_the_wrong_parameter() {
 #[test]
 fn nominal_callable_accepts_alpha_equivalent_mutability_binders() {
     ok(
-        "struct Good(def[is_mutable: Bool, origin: Origin[mut=is_mutable]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[mutable: Bool, other: Origin[mut=mutable]](self, ref[other] value: Int, /) capturing -> ref[other] Int:\n        return value\n",
+        "struct Good(def[is_mutable: Bool, origin: Origin[mut=is_mutable]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[mutable: Bool, other: Origin[mut=mutable]](self, ref[other] value: Int, /) -> ref[other] Int:\n        return value\n",
     );
 }
 
 #[test]
 fn nominal_callable_rejects_a_reference_mutability_mismatch() {
     let error = err(
-        "struct Bad(def[origin: Origin[mut=True]](ref[origin] Int) -> None):\n    def __call__[origin: Origin[mut=False]](self, ref[origin] value: Int, /) capturing:\n        print(value)\n",
+        "struct Bad(def[origin: Origin[mut=True]](ref[origin] Int) -> None):\n    def __call__[origin: Origin[mut=False]](self, ref[origin] value: Int, /):\n        print(value)\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 }
@@ -343,7 +343,7 @@ fn nominal_callable_rejects_a_reference_mutability_mismatch() {
 #[test]
 fn nominal_callable_origin_unions_ignore_projected_member_order() {
     ok(
-        "@fieldwise_init\nstruct Pair:\n    var left: Int\n    var right: Int\n\nstruct Good(def(ref[origin_of(first.left)] first: Pair, ref[origin_of(second.left)] second: Pair) -> ref[origin_of(first.left), origin_of(second.left)] Int):\n    def __call__(self, ref[origin_of(a.left)] a: Pair, ref[origin_of(b.left)] b: Pair, /) capturing -> ref[origin_of(b.left), origin_of(a.left)] Int:\n        return a.left\n",
+        "@fieldwise_init\nstruct Pair:\n    var left: Int\n    var right: Int\n\nstruct Good(def(ref[origin_of(first.left)] first: Pair, ref[origin_of(second.left)] second: Pair) -> ref[origin_of(first.left), origin_of(second.left)] Int):\n    def __call__(self, ref[origin_of(a.left)] a: Pair, ref[origin_of(b.left)] b: Pair, /) -> ref[origin_of(b.left), origin_of(a.left)] Int:\n        return a.left\n",
     );
 }
 
@@ -435,23 +435,6 @@ fn rejects_escaping_closure() {
     let e =
         err("def make() -> Int:\n    def helper() -> Int:\n        return 1\n    return helper\n");
     assert_eq!(e, TypeError::ClosureEscape);
-}
-
-#[test]
-fn rejects_an_array_annotation_storing_a_capturing_closure() {
-    // A `capturing[...]` callable nested in a local's annotation has no
-    // run-time value, like the bare annotation.
-    let TypeError::Unsupported(message) = err_std(
-        "def make() -> Array[def(x: Int) capturing[_] -> Int, 1]:\n    var i = 2\n    var fns: Array[def(x: Int) capturing[_] -> Int, 1] = [lambda (x: Int) {var i} -> Int: x * i]\n    return fns^\n",
-    ) else {
-        panic!("expected an unsupported-feature error");
-    };
-    assert!(
-        message.contains(
-            "capturing closures cannot be materialized as runtime values (the annotation of variable 'fns')"
-        ),
-        "unexpected diagnostic: {message}"
-    );
 }
 
 #[test]
@@ -4634,7 +4617,7 @@ fn callable_contract_binders_belong_to_their_own_contract() {
     // `probe`'s contract, declared first, spells its binder `wq`; `run`'s
     // binder `k` keeps its own identity, so `h[4]` binds `k`.
     ok_std(
-        "def probe[func: def[wq: Int](SIMD[DType.int32, wq]) -> SIMD[DType.int32, wq]]() -> Int:\n    return 0\n\ndef run[h: def[k: Int](SIMD[DType.int32, k]) capturing -> None]():\n    h[4](SIMD[DType.int32, 4](1))\n\ndef show[n: Int](v: SIMD[DType.int32, n]) -> None:\n    print(v)\n\ndef main():\n    run[show]()\n",
+        "def probe[func: def[wq: Int](SIMD[DType.int32, wq]) -> SIMD[DType.int32, wq]]() -> Int:\n    return 0\n\ndef run[h: def[k: Int](SIMD[DType.int32, k]) thin -> None]():\n    h[4](SIMD[DType.int32, 4](1))\n\ndef show[n: Int](v: SIMD[DType.int32, n]) -> None:\n    print(v)\n\ndef main():\n    run[show]()\n",
     );
 }
 
@@ -4644,7 +4627,7 @@ fn callable_contract_closes_over_receiver_parameters() {
     // `def(Int32)`: `show` matches it, and an `Int64` handler does not.
     let source = |handler: &str| {
         format!(
-            "struct C[dtype: DType]:\n    def __init__(out self):\n        pass\n\n    def run[h: def(Scalar[Self.dtype]) capturing -> None](self):\n        h(Scalar[Self.dtype](3))\n\ndef show(v: Scalar[DType.{handler}]):\n    print(v)\n\ndef main():\n    C[DType.int32]().run[show]()\n"
+            "struct C[dtype: DType]:\n    def __init__(out self):\n        pass\n\n    def run[h: def(Scalar[Self.dtype]) thin -> None](self):\n        h(Scalar[Self.dtype](3))\n\ndef show(v: Scalar[DType.{handler}]):\n    print(v)\n\ndef main():\n    C[DType.int32]().run[show]()\n"
         )
     };
     ok_std(&source("int32"));
@@ -7213,40 +7196,6 @@ fn rejects_a_capturing_closure_bound_to_an_unqualified_def_parameter() {
         matches!(&error, TypeError::TypeMismatch { context, .. }
             if context == "argument 'callback' to 'apply_twice'"),
         "unexpected error: {error:?}"
-    );
-}
-
-#[test]
-fn rejects_a_runtime_capturing_callable_parameter() {
-    for src in [
-        "def call_rt(f: def(Int) capturing[_] -> Int, a: Int) -> Int:\n    return f(a)\n",
-        "struct S:\n    def call(self, f: def(Int) capturing[_] -> Int) -> Int:\n        return f(1)\n",
-        "comptime CB = def(Int) capturing[_] -> Int\n\ndef call_rt(f: CB) -> Int:\n    return f(1)\n",
-    ] {
-        let TypeError::Unsupported(message) = err_std(src) else {
-            panic!("expected an unsupported-feature error for {src}");
-        };
-        assert!(
-            message.contains(
-                "capturing closures cannot be materialized as runtime values (parameter 'f')"
-            ),
-            "unexpected diagnostic: {message}"
-        );
-    }
-}
-
-#[test]
-fn rejects_a_capturing_callable_local_annotation() {
-    let TypeError::Unsupported(message) = err_std(
-        "def main():\n    var k = 10\n    var f: def(Int) capturing[_] -> Int = lambda (x: Int) {k} -> Int: x + k\n    print(f(1))\n",
-    ) else {
-        panic!("expected an unsupported-feature error");
-    };
-    assert!(
-        message.contains(
-            "capturing closures cannot be materialized as runtime values (the annotation of variable 'f')"
-        ),
-        "unexpected diagnostic: {message}"
     );
 }
 

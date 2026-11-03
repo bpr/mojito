@@ -17,7 +17,6 @@ def outer[length: Int]():
     def via_helper() -> Int:
         return helper() * 2
 
-    @parameter
     def bumped() -> Int:
         return length + 1
 

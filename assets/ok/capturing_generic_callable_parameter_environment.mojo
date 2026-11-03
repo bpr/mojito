@@ -1,8 +1,7 @@
-# A callable parameter bound to a generic closure that captures. The instance
-# folds the bound body, takes the captured places as trailing reference
-# parameters, and calls the body's specialization directly with them: a write
-# after the closure's declaration, or through another specialization, is seen
-# by the next call, and the environment forwards through another binding.
+# A closure-trait binder bound to a generic capture-list closure, called
+# with explicit parameters (`callback[2](40)`): a write after the closure's
+# declaration, or through another closure, is seen by the next call, and the
+# closure forwards through another binding.
 struct Box(Copyable):
     var x: Int
 
@@ -10,37 +9,21 @@ struct Box(Copyable):
         self.x = x
 
 
-def invoke_captured[
-    origins: OriginSet,
-    //,
-    callback: def[n: Int](Int) capturing[origins] -> Int,
-]() -> Int:
+def invoke_captured[F: def[n: Int](Int) -> Int](callback: F) -> Int:
     return callback[2](40)
 
 
-def forward[
-    origins: OriginSet,
-    //,
-    callback: def[n: Int](Int) capturing[origins] -> Int,
-]() -> Int:
-    return invoke_captured[callback]() + callback[1](0)
+def forward[F: def[n: Int](Int) -> Int](callback: F) -> Int:
+    return invoke_captured(callback) + callback[1](0)
 
 
 def both[
-    o1: OriginSet,
-    o2: OriginSet,
-    //,
-    plain: def(Int) capturing[o1] -> Int,
-    callback: def[n: Int](Int) capturing[o2] -> Int,
-]() -> Int:
+    P: def(Int) -> Int, F: def[n: Int](Int) -> Int
+](plain: P, callback: F) -> Int:
     return plain(1) + callback[3](0)
 
 
-def bump[
-    origins: OriginSet,
-    //,
-    callback: def[n: Int]() capturing[origins] -> None,
-]():
+def bump[F: def[n: Int]() -> None](callback: F):
     callback[7]()
 
 
@@ -48,21 +31,18 @@ def main():
     var offset = 0
     var box = Box(100)
 
-    @parameter
-    def captured_add[n: Int](value: Int) -> Int:
+    def captured_add[n: Int](value: Int) {imm offset, imm box} -> Int:
         return value + n + offset + box.x
 
-    @parameter
-    def plain(value: Int) -> Int:
+    def plain(value: Int) {imm offset} -> Int:
         return value + offset
 
-    @parameter
-    def add_to[n: Int]():
+    def add_to[n: Int]() {mut offset}:
         offset += n
 
     offset = 5
-    print(invoke_captured[captured_add]())
-    print(forward[captured_add]())
-    print(both[plain, captured_add]())
-    bump[add_to]()
+    print(invoke_captured(captured_add))
+    print(forward(captured_add))
+    print(both(plain, captured_add))
+    bump(add_to)
     print(offset)

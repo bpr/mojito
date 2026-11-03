@@ -207,8 +207,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Parses a function type after its leading `def` has been consumed:
     /// `'(' [type (',' type)*] ')' effects ['->' type]`. Effects between `)` and
-    /// the optional return are `thin`, `capturing[origins]`, `raises`, and
-    /// `abi(...)` (the last parsed and discarded). An omitted return is `None`.
+    /// the optional return are `thin`, `raises`, and `abi(...)` (the last
+    /// parsed and discarded); the removed `capturing` is an error. An omitted
+    /// return is `None`.
     pub(super) fn parse_function_type_tail(&mut self) -> Result<Type, ParseError> {
         // Function signatures may themselves be parameterized, e.g.
         // `def[origin: Origin](ref[origin] Int) -> ref[origin] Int`.
@@ -310,7 +311,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         // Effects: `thin` / `raises` / `abi("…")` in any order, until `->`.
         let mut thin = false;
-        let mut capturing = None;
         let mut raises = false;
         let mut raises_type = None;
         loop {
@@ -357,8 +357,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.expect(&Token::RParen, "Expected ')' to close 'abi(...)'")?;
                 }
                 Some(Token::Identifier(id)) if id == "capturing" => {
-                    self.next_token()?;
-                    capturing = Some(self.parse_optional_origin_specifier()?.unwrap_or_default());
+                    return Err(ParseError::Message(
+                        super::REMOVED_CAPTURING_EFFECT.to_string(),
+                    ));
                 }
                 _ => break,
             }
@@ -382,7 +383,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             params,
             ret: Box::new(ret),
             thin,
-            capturing,
             raises,
             raises_type,
             where_clauses,

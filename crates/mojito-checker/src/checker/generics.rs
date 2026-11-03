@@ -1599,7 +1599,9 @@ impl Checker {
                     ..
                 } => {
                     for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
-                        let at_receiver = substitute_at(ty, info, targs);
+                        let rewritten = mojito_types::types::rewrite_ty(ty, &mut rewrite)
+                            .unwrap_or_else(|_| (*ty).clone());
+                        let at_receiver = substitute_at(&rewritten, info, targs);
                         let at_receiver = mojito_types::types::replace_parameters(
                             &mojito_types::param_expr::ParamContext::detached(),
                             &at_receiver,

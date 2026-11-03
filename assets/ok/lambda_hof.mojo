@@ -1,11 +1,10 @@
 # Lambdas as higher-order-function arguments: a thin lambda binds to a plain
-# `def(...) thin` contract. A capturing callable is taken only as a
-# compile-time parameter; a run-time `capturing[...]` parameter rejects (the
-# `capturing-lambda-argument` conformance case).
+# `def(...) thin` contract, and a capture-list closure to a closure-trait
+# binder `F: def(...)` taken as a run-time argument.
 def transform(f: def(x: Int) thin -> Int, value: Int) -> Int:
     return f(value)
 
-def observe[origins: OriginSet, //, f: def(x: Int) capturing[origins] -> Int](value: Int) -> Int:
+def observe[F: def(x: Int) -> Int](f: F, value: Int) -> Int:
     return f(value)
 
 def main():
@@ -13,10 +12,9 @@ def main():
     print(transform(lambda (x: Int) {} -> Int: x + 1, 4))
     var factor = 3
 
-    @parameter
-    def scale(x: Int) -> Int:
+    def scale(x: Int) {imm factor} -> Int:
         return x * factor
 
-    print(observe[scale](5))
+    print(observe(scale, 5))
     factor = 2
-    print(observe[scale](5))
+    print(observe(scale, 5))

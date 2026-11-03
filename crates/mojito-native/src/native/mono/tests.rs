@@ -1973,130 +1973,39 @@ def main():
 }
 
 #[test]
-fn capturing_generic_callable_parameter_passes_only_its_environment() {
-    let source = "def invoke[\n\
-                  \x20   origins: OriginSet,\n\
-                  \x20   //,\n\
-                  \x20   callback: def[n: Int](Int) capturing[origins] -> Int,\n\
-                  ]() -> Int:\n\
+fn generic_closure_through_binder_calls_its_storage_witness() {
+    // A generic capture-list closure called through a closure-trait binder
+    // with an explicit parameter devirtualizes to its storage's `__call__`
+    // witness, which takes the closure's own parameter and forwards it.
+    let source = "def invoke[F: def[n: Int](Int) -> Int](callback: F) -> Int:\n\
                   \x20   return callback[2](40)\n\
                   \n\
                   def main():\n\
-                  \x20   var offset = 0\n\
-                  \n\
-                  \x20   @parameter\n\
-                  \x20   def captured_add[n: Int](value: Int) -> Int:\n\
+                  \x20   var offset = 1\n\
+                  \x20   def captured_add[n: Int](value: Int) {imm offset} -> Int:\n\
                   \x20       return value + n + offset\n\
-                  \n\
-                  \x20   print(invoke[captured_add]())\n";
+                  \x20   print(invoke(captured_add))\n";
     let specialized = specialized_main(source);
-    let (name, instance) = specialized
+    let (_, instance) = specialized
         .program
         .functions
         .iter()
         .find(|(name, _)| name.starts_with("invoke$mono"))
         .expect("`invoke` was specialized");
-    // The instance folds the bound body and takes the captured `offset`
-    // alone, by reference.
-    assert_eq!(instance.ref_params, vec![true]);
-    assert_eq!(instance.param_types, vec![Ty::int()]);
-    let declaration = specialized
-        .program
-        .declarations
-        .functions
-        .iter()
-        .find(|declaration| &declaration.lowered_name == name)
-        .expect("the instance is declared");
-    assert_eq!(declaration.ref_params, vec![true]);
     let instrs = instructions(&instance.blocks);
     assert!(
         instrs.iter().any(|instruction| matches!(
             instruction,
-            MirInstr::Call { func, args, arg_places, .. }
-                if func.0.starts_with("main$captured_add$mono")
-                    && args.len() == 2
-                    && arg_places.first().is_some_and(Option::is_some)
+            MirInstr::MethodCall { resolved: Some(target), .. }
+                if target.contains("$__storage.__call__")
         )),
-        "the call through the parameter is a direct call passing the environment: {instrs:?}"
+        "the call through the binder is the witness's method call: {instrs:?}"
     );
     assert!(
         !instrs
             .iter()
             .any(|instruction| matches!(instruction, MirInstr::CallIndirect { .. })),
         "no indirect call survives: {instrs:?}"
-    );
-    let main = function(&specialized, "main");
-    assert!(
-        instructions(&main.blocks)
-            .iter()
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::Call { func, args, arg_places, .. }
-                    if &func.0 == name
-                        && args.len() == 1
-                        && arg_places.first().is_some_and(Option::is_some)
-            )),
-        "`main` passes `offset`'s place, not the closure"
-    );
-}
-
-#[test]
-fn capturing_callable_parameter_passes_only_its_environment() {
-    let source = "def invoke[\n\
-                  \x20   origins: OriginSet,\n\
-                  \x20   //,\n\
-                  \x20   callback: def(Int) capturing[origins] -> Int,\n\
-                  ](value: Int) -> Int:\n\
-                  \x20   return callback(value)\n\
-                  \n\
-                  def main():\n\
-                  \x20   var offset = 0\n\
-                  \n\
-                  \x20   @parameter\n\
-                  \x20   def captured_add(value: Int) -> Int:\n\
-                  \x20       return value + offset\n\
-                  \n\
-                  \x20   print(invoke[captured_add](40))\n";
-    let specialized = specialized_main(source);
-    let (name, instance) = specialized
-        .program
-        .functions
-        .iter()
-        .find(|(name, _)| name.starts_with("invoke$mono"))
-        .expect("`invoke` was specialized");
-    // The instance folds the bound body and takes `value` and, by
-    // reference, the captured `offset`: no closure parameter.
-    assert_eq!(instance.ref_params, vec![false, true]);
-    assert_eq!(instance.param_types, vec![Ty::int(), Ty::int()]);
-    let instrs = instructions(&instance.blocks);
-    assert!(
-        instrs.iter().any(|instruction| matches!(
-            instruction,
-            MirInstr::Call { func, args, arg_places, .. }
-                if func.0 == "main$captured_add"
-                    && args.len() == 2
-                    && arg_places.first().is_some_and(Option::is_some)
-        )),
-        "the call through the parameter is a direct call passing the environment: {instrs:?}"
-    );
-    assert!(
-        !instrs
-            .iter()
-            .any(|instruction| matches!(instruction, MirInstr::CallIndirect { .. })),
-        "no indirect call survives: {instrs:?}"
-    );
-    let main = function(&specialized, "main");
-    assert!(
-        instructions(&main.blocks)
-            .iter()
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::Call { func, args, arg_places, .. }
-                    if &func.0 == name
-                        && args.len() == 2
-                        && arg_places.get(1).is_some_and(Option::is_some)
-            )),
-        "`main` passes `offset`'s place, not the closure"
     );
 }
 

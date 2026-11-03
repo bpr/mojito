@@ -1,6 +1,6 @@
 @fieldwise_init
 struct RaisingCallable(def() raises -> Int):
-    def __call__(self) capturing raises -> Int:
+    def __call__(self) raises -> Int:
         raise Error("expected")
 
 

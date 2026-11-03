@@ -28,11 +28,7 @@ def add_with_different_default[width: Int = 3](value: Int) -> Int:
     return value + width
 
 
-def invoke_captured[
-    origins: OriginSet,
-    //,
-    callback: def[n: Int](Int) capturing[origins] -> Int,
-]() -> Int:
+def invoke_captured[F: def[n: Int](Int) -> Int](callback: F) -> Int:
     return callback[2](40)
 
 
@@ -117,11 +113,10 @@ def main():
 
     var offset = 0
 
-    @parameter
-    def captured_add[n: Int](value: Int) -> Int:
+    def captured_add[n: Int](value: Int) {imm offset} -> Int:
         return value + n + offset
 
-    print(invoke_captured[captured_add]())
+    print(invoke_captured(captured_add))
     print(invoke_partial[partial_actual]())
     print(invoke_named[named_actual]())
     print(invoke_symbol[symbol_actual]())

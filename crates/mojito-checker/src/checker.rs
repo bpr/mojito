@@ -1409,58 +1409,6 @@ impl Checker {
         }))
     }
 
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
-    fn lower_callable_environment(
-        &self,
-        type_params: &[mojito_ast::ast::TypeParam],
-        thin: bool,
-        capturing: Option<&mojito_ast::ast::OriginSpec>,
-    ) -> Result<mojito_types::origin::CallableEnvironment, TypeError> {
-        use mojito_types::origin::{CallableEnvironment, CaptureOriginSet, CaptureSetParamId};
-        if thin && capturing.is_some() {
-            return Err(TypeError::Unsupported(
-                "a callable type cannot be both 'thin' and 'capturing'".to_string(),
-            ));
-        }
-        if thin {
-            return Ok(CallableEnvironment::Thin);
-        }
-        let Some(origins) = capturing else {
-            return Ok(CallableEnvironment::Default);
-        };
-        match origins.as_slice() {
-            [] => Ok(CallableEnvironment::Capturing(CaptureOriginSet::empty())),
-            [
-                Expr {
-                    kind: ExprKind::Identifier(name),
-                    ..
-                },
-            ] if name == "_" => Ok(CallableEnvironment::Capturing(CaptureOriginSet::Infer)),
-            [
-                Expr {
-                    kind: ExprKind::Identifier(name),
-                    ..
-                },
-            ] => {
-                let index = type_params
-                    .iter()
-                    .position(|parameter| {
-                        parameter.name == *name && parameter.bounds.as_slice() == ["OriginSet"]
-                    })
-                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
-                Ok(CallableEnvironment::Capturing(CaptureOriginSet::Param(
-                    CaptureSetParamId(index as u32),
-                )))
-            }
-            _ => Err(TypeError::Unsupported(
-                "capturing[...] requires exactly one OriginSet parameter or '_'".to_string(),
-            )),
-        }
-    }
-
     /// Lower a callable annotation's origin contract. Declaration contracts
     /// normally refer to their own parameters and use `lower_ref_sig`; a
     /// contextual function-value type may additionally bind `origin_of(local)`
@@ -3307,12 +3255,17 @@ struct CapturePolicy {
     declaration: SourceSpan,
     entries: HashMap<String, mojito_ast::ast::CaptureKind>,
     default: Option<mojito_ast::ast::CaptureKind>,
-    /// `@__parameter` environment: an unlisted name captures `mut` when its
-    /// binding is mutable, `imm` otherwise.
-    implicit_by_binding: bool,
     /// Whether this policy belongs to a lambda expression's hidden definition
     /// (selects the lambda wording for capture-convention diagnostics).
     lambda: bool,
+}
+
+impl CapturePolicy {
+    /// How this policy captures `name`: its list entry, else the list's
+    /// default.
+    fn capture_kind(&self, name: &str) -> Option<mojito_ast::ast::CaptureKind> {
+        self.entries.get(name).copied().or(self.default)
+    }
 }
 
 /// How one source-level `Origin` parameter is represented by the callable's

@@ -45,10 +45,14 @@ Answers that moved:
   where it used to crash, and prints what Mojito prints.
 - `match_cluster_unspelled_members.mojo` now **differs**: the pin prints
   `cd`, keying a concatenated string pattern by its value (R1822).
-- `callable_parameter_thin_to_capturing.mojo`, `decorator_warnings.mojo`, and
-  `generic_closure_in_generic_body_callable_parameter.mojo` now **differ**:
-  the pin removed the `capturing` effect and `@parameter` closures, which
-  Mojito still runs (R1823). The last also panics Mojito's elaborator.
+- `callable_parameter_thin_to_capturing.mojo` is deleted: both compilers
+  reject the removed `capturing` effect with the pin's text
+  (`assets/parse_error/capturing_effect_*.mojo`).
+  `generic_closure_in_generic_body_callable_parameter.mojo`, respelled onto
+  a capture list and a closure-trait binder, agrees and became
+  `assets/ok/generic_closure_in_generic_body_closure_binder.mojo`.
+  `decorator_warnings.mojo` lost its `@parameter` closure and keeps only the
+  `@deprecated` warning (R1164).
 
 Two probes are new: `autoparam_nested_hole_single_caller.mojo` (R1817, a
 wrong value in Mojito) and `var_case_rvalue_tuple_literal_sibling.mojo` (an

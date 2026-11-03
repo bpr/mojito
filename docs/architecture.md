@@ -723,8 +723,7 @@ policy or data-model responsibilities to focused children:
   the per-file responsibility map.
 - `mir/mod.rs` lowers ordinary code; `mir/ir.rs` defines the MIR data model and
   `mir/nested.rs` owns capture analysis and nested-function lifting. A
-  lifted function without storage (a capture-free `def`, or a
-  `@parameter` closure) is a generator over its enclosing declarations'
+  lifted function without storage (a capture-free `def`) is a generator over its enclosing declarations'
   binders: its declaration names the declaration it is nested in
   (`MirFunctionDeclaration::enclosing`), whose binders the verifier's scope
   admits in its body, and `native::mono` instantiates it under each instance
@@ -786,10 +785,12 @@ policy or data-model responsibilities to focused children:
   call through one to the witness (`retarget_storage_calls`). A
   `F: def(...)` binder is therefore instantiated at the struct, and
   `native::mono` devirtualizes a call through `f` to the witness. The
-  storage is the closure's only value: no run-time parameter or local
-  has a `capturing[...]` callable type
-  (`type_resolution::reject_runtime_capturing_callable`), so no use
-  converts it to a closure of its body. A body naming an enclosing
+  storage is the closure's only value: the `capturing` effect is a parse
+  error, so no type names a capturing environment and no use converts the
+  storage to a closure of its body. A generic closure's `__call__` witness
+  takes the closure's own parameters and forwards them
+  (`lower_storage_call_witness`), so a call through a generic binder with
+  explicit parameters (`f[2](40)`) devirtualizes to it. A body naming an enclosing
   callable binder, which no struct instance carries as a parameter yet,
   stays a generator nested in its enclosing declaration, taking the
   storage as its leading `read` parameter (`ClosureStorage::method`).
@@ -807,12 +808,11 @@ policy or data-model responsibilities to focused children:
   `Flatten::lambda_storage_value`), and one the check converts to a run-time callable moves the storage
   into a one-capture `closure.make` (`Flatten::lambda_closure`). The storage's `__init__` takes a moved capture
   by forwarding its storage to the `var` parameter, as an owned argument
-  binds it, so the capture moves once, into the field. Only a
-  `@parameter` closure, upstream's legacy capturing closure, which
-  captures without a list, takes its captures as leading reference
-  parameters, and a call by name passes the captured places
-  (`Flatten::lower_nested_call`); one without storage a sibling captures
-  keeps its closure in a slot (`NestedInfo::slotted`).
+  binds it, so the capture moves once, into the field. The path that
+  passes a storage-less body its captures as leading reference
+  parameters (`Flatten::lower_nested_call`) served only the removed
+  `@parameter` closure and awaits deletion (R1889); one without storage a
+  sibling captures keeps its closure in a slot (`NestedInfo::slotted`).
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
   navigation and access; further `impl VmBackend` clusters live in
@@ -4358,8 +4358,8 @@ compile-time parameter list:
   satisfy either form. A nonraising/read-only implementation may satisfy a
   raising/mutable contract because it demands no more capability, while binder
   bounds, ownership-changing conventions, and reference origins remain exact.
-- `callback: def(...) thin` and `callback: def(...) capturing[...]` declare
-  callable **value** parameters. `Origin` and `OriginSet` binders are
+- `callback: def(...) thin` declares a callable **value** parameter (the
+  pin's removed `capturing` effect is a parse error). `Origin` binders are
   semantic-only, and `//` separates infer-only binders from explicitly supplied
   ones. The bracket argument is evaluated to a callable register, then reified
   under the parameter name as a hidden typed MIR local; it is not counted among
@@ -4418,10 +4418,10 @@ concrete nominal target against its declaration and argument types whenever the
 receiver is statically known.
 
 The environment is semantic callable-type data. `CallableEnvironment`
-distinguishes an unqualified contract, an explicitly `thin` function, and a
-`capturing` contract. A capture set is one of `Infer` (`capturing[_]`), a stable
-declaration-order `OriginSet` parameter, or a canonical concrete list of
-`CaptureOrigin { origin, access }` entries. The latter records read versus write
+distinguishes an unqualified contract, an explicitly `thin` function, a
+closure's storage, and a capturing closure, whose capture set is a canonical
+concrete list of `CaptureOrigin { origin, access }` entries; no source
+spelling names one since the pin removed the `capturing` effect. The latter records read versus write
 access, flattens origin unions, removes duplicates, and lets a write subsume a
 read of the same origin. An `OriginSet` is deliberately not a reference-origin
 union: it describes storage retained and accessed by a callable environment,
@@ -4507,11 +4507,10 @@ their source arguments remain on the rewritten call. A scalar-controlled branch
 can therefore select code that later invokes a captured callback without asking
 the compile-time universe to own that callback. `CtValue` intentionally has no
 function or closure variant: this residualization is not arbitrary callable
-CTFE, and it does not make closures escaping. A `capturing[...]` callable
-type exists only on a compile-time callable parameter: a run-time parameter or
-local that names one rejects, and a closure's storage does not convert to a
-run-time `def(...)` value (matching current Mojo), while comptime callable
-bounds still ground capturing values.
+CTFE, and it does not make closures escaping. A closure's storage does not
+convert to a run-time `def(...)` value or bind a compile-time callable value
+(matching current Mojo), while a closure-trait binder `F: def(...)` takes it
+as a run-time argument.
 
 Runtime `for`, tuple-unpack, and `except` targets likewise retain checked owner
 identity and storage type across HIR and structured-region lowering. Unpack uses
@@ -6363,7 +6362,7 @@ point where a slot declared in a loop is uninitialized again.
   prepends a `create_closure`'s captures: each captured place is a
   `place.load` before the call, passed at its `arg_places` entry with a
   `capture_accesses` entry its parameter's `param_writes` decides, as a
-  direct call of an `@parameter` nested `def` passes it; a closure over a
+  direct call of a storage-less nested body passes it; a closure over a
   capture-list `def`'s storage becomes the `call.method` of the storage's
   method on that storage, as a call of the `def` by name is
   (`indirect_closure_storage.mir`). Its `drop.reg`, when its last

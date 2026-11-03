@@ -1009,18 +1009,15 @@ impl Checker {
 
         // Callable constraints may depend on any type parameter in this list
         // (`F: def(T) -> T`), so lower them only after the complete preliminary
-        // parameter scope exists. An explicit `thin`/`capturing[...]` spelling is
-        // instead a compile-time callable-value parameter in current Mojo.
+        // parameter scope exists. An explicit `thin` spelling is instead a
+        // compile-time callable-value parameter in current Mojo.
         self.push_param_scope(&decls);
         let result = (|| {
             for source in tps {
                 let Some(callable) = &source.callable_bound else {
                     continue;
                 };
-                let SourceType::Func {
-                    thin, capturing, ..
-                } = callable
-                else {
+                let SourceType::Func { thin, .. } = callable else {
                     return Err(TypeError::InvariantViolation(
                         "retained callable parameter bound is not a function type".to_string(),
                     ));
@@ -1050,7 +1047,7 @@ impl Checker {
                 let constraints = constraints.clone();
                 let infer_only = *infer_only;
                 let variadic = *variadic;
-                if *thin || capturing.is_some() {
+                if *thin {
                     let callable_default = source
                         .default
                         .as_ref()

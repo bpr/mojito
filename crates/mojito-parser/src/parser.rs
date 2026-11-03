@@ -195,6 +195,42 @@ fn expression_name_starts_lowercase(expression: &Expr) -> bool {
     }
 }
 
+/// The pin's complaint at a `capturing` effect, which current Mojo removed:
+/// a closure lists its captures instead.
+const REMOVED_CAPTURING_EFFECT: &str = "the 'capturing' function effect is no longer \
+     supported; use a closure capture list like '{var}' or '{mut x}' instead";
+
+/// Reject the closure decorators current Mojo removed, with the pin's texts:
+/// `@parameter` and `@__parameter` closures, which captured implicitly, and
+/// `@__copy_capture` / `@__move_capture`, which a capture list replaces.
+fn reject_removed_closure_decorators(decorators: &[Decorator]) -> Result<(), ParseError> {
+    let Some(name) = decorators
+        .iter()
+        .filter_map(|decorator| match decorator.path.as_slice() {
+            [name] => Some(name.as_str()),
+            _ => None,
+        })
+        .find(|name| {
+            matches!(
+                *name,
+                "parameter" | "__parameter" | "__copy_capture" | "__move_capture"
+            )
+        })
+    else {
+        return Ok(());
+    };
+    Err(ParseError::Message(match name {
+        "parameter" | "__parameter" => format!(
+            "'@{name}' closures are no longer supported; remove the decorator and declare \
+             the captures in a capture list like '{{var}}' or '{{mut x}}'"
+        ),
+        _ => format!(
+            "'@{name}' is no longer supported; list the captures in a capture list like \
+             '{{var x}}' instead"
+        ),
+    }))
+}
+
 /// The infix operator an augmented-assignment token applies (`+=` → `Add`, …),
 /// or `None` if the token is not an augmented-assignment operator.
 const fn aug_assign_op(tok: &Token) -> Option<InfixOp> {

@@ -2,17 +2,12 @@ use mojito::mir::{MirInstr, lower_checked_program, nested_instructions};
 use mojito::{BackendKind, Compiler, LinkOptions, elaborate};
 
 const PARAMETRIC_CAPTURE: &str = r"
-def invoke[
-    origins: OriginSet, //, callback: def(Int) capturing[origins] -> Int
-](value: Int) -> Int:
+def invoke[callback: def(Int) thin -> Int](value: Int) -> Int:
     return callback(value)
 
 def main():
-    var base = 40
-
-    @parameter
     def add(value: Int) -> Int:
-        return base + value
+        return 40 + value
 
     print(invoke[add](2))
 ";
@@ -270,24 +265,21 @@ def main():
 
 #[test]
 fn callable_value_capture_write_beside_a_live_reference_runs_as_at_the_pin() {
-    // A `@parameter` closure's write through its captured place, while a
-    // reference to that place is live, runs as at the pin: the reference
-    // reads the written value.
+    // A closure's write through its `mut` capture, while a reference to
+    // that place is live, runs as at the pin: the reference reads the
+    // written value.
     let source = r"
-def invoke[
-    origins: OriginSet, //, callback: def() capturing[origins]
-]():
+def invoke[F: def() -> None](callback: F):
     callback()
 
 def main():
     var value = 1
     ref alias = value
 
-    @parameter
-    def replace():
+    def replace() {mut value}:
         value = 2
 
-    invoke[replace]()
+    invoke(replace)
     print(alias)
 ";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);

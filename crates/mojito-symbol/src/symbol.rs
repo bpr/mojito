@@ -1941,7 +1941,6 @@ fn func_annotation_raw(
         params,
         ret,
         thin,
-        capturing,
         raises,
         ..
     } = ty
@@ -1982,32 +1981,6 @@ fn func_annotation_raw(
     s.push(')');
     if *thin {
         s.push_str(" thin");
-    } else if let Some(spec) = capturing {
-        s.push_str(" capturing[");
-        match spec.as_slice() {
-            [] => {}
-            [
-                Expr {
-                    kind: ExprKind::Identifier(name),
-                    ..
-                },
-            ] if name == "_" => s.push('_'),
-            [
-                Expr {
-                    kind: ExprKind::Identifier(name),
-                    ..
-                },
-            ] => match type_params.iter().position(|parameter| {
-                parameter.name == *name && parameter.bounds.as_slice() == ["OriginSet"]
-            }) {
-                Some(index) => {
-                    let _ = write!(s, "origin_set#{index}");
-                }
-                None => s.push_str(name),
-            },
-            _ => s.push_str("..."),
-        }
-        s.push(']');
     }
     if *raises {
         s.push_str(" raises");

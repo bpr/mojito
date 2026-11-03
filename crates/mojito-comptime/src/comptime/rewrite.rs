@@ -753,7 +753,6 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
             type_params,
             params,
             ret,
-            capturing,
             raises_type,
             ..
         } => {
@@ -797,9 +796,6 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
                 }
             }
             rewrite_type(ret, subs);
-            for origin in capturing.iter_mut().flatten() {
-                rewrite_expr(origin, subs);
-            }
             if let Some(error) = raises_type {
                 rewrite_type(error, subs);
             }

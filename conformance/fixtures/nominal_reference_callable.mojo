@@ -1,6 +1,6 @@
 @fieldwise_init
 struct Mutator(def(mut Int) -> None):
-    def __call__(self, mut value: Int, /) capturing:
+    def __call__(self, mut value: Int, /):
         value += 1
 
 
@@ -12,7 +12,7 @@ struct Borrower(
 ):
     def __call__[origin: Origin[mut=True]](
         self, ref[origin] value: Int, /
-    ) capturing -> ref[origin] Int:
+    ) -> ref[origin] Int:
         return value
 
 

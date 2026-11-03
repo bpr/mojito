@@ -556,7 +556,7 @@ impl Checker {
             .iter()
             .filter(|policy| scope < policy.base && name != policy.function_name)
         {
-            let kind = self.policy_capture_kind(policy, name);
+            let kind = policy.capture_kind(name);
             if let Some(kind) = kind {
                 self.check_capture_capability(name, kind)?;
                 let binding = self.lookup_owner(name).ok_or_else(|| {
@@ -624,7 +624,7 @@ impl Checker {
         let contexts = self.capture_contexts.borrow();
         let policy = contexts.last()?;
         (scope < policy.base && name != policy.function_name)
-            .then(|| self.policy_capture_kind(policy, name))
+            .then(|| policy.capture_kind(name))
             .flatten()
     }
 
@@ -766,30 +766,6 @@ impl Checker {
         self.installed_binding(name)
             .filter(|(found, _)| *found == owner)
             .map(|(_, binding)| (name, binding))
-    }
-
-    /// How `policy` captures `name`: its list entry, the list's default, or
-    /// an `@__parameter` environment's implicit capture by the binding's
-    /// mutability.
-    fn policy_capture_kind(
-        &self,
-        policy: &CapturePolicy,
-        name: &str,
-    ) -> Option<mojito_ast::ast::CaptureKind> {
-        policy
-            .entries
-            .get(name)
-            .copied()
-            .or(policy.default)
-            .or_else(|| {
-                policy.implicit_by_binding.then(|| {
-                    if self.is_binding_mutable(name) {
-                        mojito_ast::ast::CaptureKind::Mut
-                    } else {
-                        mojito_ast::ast::CaptureKind::Imm
-                    }
-                })
-            })
     }
 }
 

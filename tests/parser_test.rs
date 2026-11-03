@@ -1992,51 +1992,89 @@ fn parses_raises_effect_on_def() {
 }
 
 #[test]
-fn parses_capturing_and_raises_in_either_effect_order() {
+fn parses_thin_and_raises_in_either_effect_order() {
     for source in [
-        "def first() capturing raises -> Int:\n    raise Error(\"boom\")\n",
-        "def second() raises capturing -> Int:\n    raise Error(\"boom\")\n",
+        "def first() thin raises -> Int:\n    raise Error(\"boom\")\n",
+        "def second() raises thin -> Int:\n    raise Error(\"boom\")\n",
     ] {
         assert!(matches!(
             &parse(source)[0].kind,
             StmtKind::Def { raises: true, .. }
         ));
     }
-
-    let structure = parse(
-        "struct Callable:\n    def __call__(self) capturing raises -> Int:\n        raise Error(\"boom\")\n",
-    );
     assert!(matches!(
-        &structure[0].kind,
-        StmtKind::Struct { methods, .. } if methods[0].raises
-    ));
-
-    let requirement =
-        parse("trait Callable:\n    def __call__(self) capturing raises -> Int: ...\n");
-    assert!(matches!(
-        &requirement[0].kind,
-        StmtKind::Trait { methods, .. } if methods[0].raises
-    ));
-
-    assert!(matches!(
-        var_anno_type("var callback: def() capturing raises -> Int = first\n"),
-        Type::Func { raises: true, .. }
+        var_anno_type("var callback: def() raises thin -> Int = first\n"),
+        Type::Func {
+            raises: true,
+            thin: true,
+            ..
+        }
     ));
 }
 
-/// A `@__parameter` def takes no capture list: the `{` reads as a missing
-/// body, with upstream's bare sentence (no token prefix).
+/// The pin removed the `capturing` effect: every place that spelled it
+/// rejects with the pin's text.
 #[test]
-fn parameter_closure_capture_list_reports_the_missing_colon_verbatim() {
-    let error = mojito::parse(
-        "def main():\n    var n = 1\n\n    @__parameter\n    def f[i: Int]() {n}:\n        print(n)\n",
-    )
-    .expect_err("a parametric closure capture list must reject");
-    let rendered = error.to_string();
-    assert!(
-        rendered.starts_with("expected ':' in function definition"),
-        "{rendered}"
-    );
+fn rejects_the_removed_capturing_effect() {
+    for source in [
+        "def first() capturing raises -> Int:\n    raise Error(\"boom\")\n",
+        "def second() raises capturing -> Int:\n    raise Error(\"boom\")\n",
+        "struct Callable:\n    def __call__(self) capturing -> Int:\n        return 1\n",
+        "trait Callable:\n    def __call__(self) capturing -> Int: ...\n",
+        "var callback: def() capturing raises -> Int = first\n",
+        "comptime Callback = def[width: Int](Int) capturing[_] -> None\n",
+        "def invoke[callback: def(Int) capturing[origins]]():\n    pass\n",
+        "var f = lambda (x: Int) capturing -> Int: x\n",
+    ] {
+        let error = mojito::parse(source).expect_err("`capturing` must reject");
+        assert!(
+            error.to_string().starts_with(
+                "the 'capturing' function effect is no longer supported; use a closure \
+                 capture list like '{var}' or '{mut x}' instead"
+            ),
+            "{source}: {error}"
+        );
+    }
+}
+
+/// The pin removed the `@parameter` closure decorators, and
+/// `@__copy_capture` / `@__move_capture` with their own text, on a nested
+/// `def`, a module `def`, and a method alike.
+#[test]
+fn rejects_the_removed_closure_decorators() {
+    for (source, expected) in [
+        (
+            "def main():\n    @parameter\n    def f() -> Int:\n        return 1\n",
+            "'@parameter' closures are no longer supported; remove the decorator and declare \
+             the captures in a capture list like '{var}' or '{mut x}'",
+        ),
+        (
+            "def main():\n    var n = 1\n\n    @__parameter\n    def f[i: Int]() {n}:\n        print(n)\n",
+            "'@__parameter' closures are no longer supported; remove the decorator and declare \
+             the captures in a capture list like '{var}' or '{mut x}'",
+        ),
+        (
+            "@parameter\ndef f() -> Int:\n    return 1\n",
+            "'@parameter' closures are no longer supported",
+        ),
+        (
+            "struct S:\n    @parameter\n    @staticmethod\n    def f() -> Int:\n        return 1\n",
+            "'@parameter' closures are no longer supported",
+        ),
+        (
+            "def main():\n    var k = 1\n    @__copy_capture(k)\n    def f() -> Int:\n        return k\n",
+            "'@__copy_capture' is no longer supported; list the captures in a capture list like \
+             '{var x}' instead",
+        ),
+        (
+            "def main():\n    var k = 1\n    @__move_capture(k)\n    def f() -> Int:\n        return k\n",
+            "'@__move_capture' is no longer supported; list the captures in a capture list like \
+             '{var x}' instead",
+        ),
+    ] {
+        let error = mojito::parse(source).expect_err("the decorator must reject");
+        assert!(error.to_string().starts_with(expected), "{source}: {error}");
+    }
 }
 
 /// An origin-bearing reference is never a type argument: upstream reads
@@ -4223,7 +4261,6 @@ fn parses_function_type_annotations() {
             params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
             ret: Box::new(Type::Named("Int".into(), vec![])),
             thin: false,
-            capturing: None,
             raises: false,
             raises_type: None,
             where_clauses: vec![],
@@ -4240,7 +4277,6 @@ fn parses_function_type_annotations() {
             ],
             ret: Box::new(Type::Named("String".into(), vec![])),
             thin: true,
-            capturing: None,
             raises: false,
             raises_type: None,
             where_clauses: vec![],
@@ -4254,7 +4290,6 @@ fn parses_function_type_annotations() {
             params: vec![],
             ret: Box::new(Type::None),
             thin: false,
-            capturing: None,
             raises: true,
             raises_type: None,
             where_clauses: vec![],
@@ -4268,7 +4303,6 @@ fn parses_function_type_annotations() {
             params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
             ret: Box::new(Type::None),
             thin: true,
-            capturing: None,
             raises: false,
             raises_type: None,
             where_clauses: vec![],
@@ -4299,53 +4333,19 @@ fn function_types_retain_the_var_keyword_variadic_role() {
 }
 
 #[test]
-fn parses_parameterized_capturing_function_type_values() {
-    let stmt = parse("comptime Callback = def[width: Int](Int) capturing[_] -> None\n")
-        .into_iter()
-        .next()
-        .unwrap();
-    let StmtKind::Comptime {
-        value:
-            Expr {
-                kind:
-                    ExprKind::TypeValue(Type::Func {
-                        type_params,
-                        capturing,
-                        ..
-                    }),
-                ..
-            },
-        ..
-    } = stmt.kind
-    else {
-        panic!("expected a parameterized function type value");
-    };
-    assert_eq!(type_params.len(), 1);
-    assert!(matches!(
-        capturing.as_deref(),
-        Some([Expr {
-            kind: ExprKind::Identifier(origin),
-            ..
-        }]) if origin == "_"
-    ));
-}
-
-#[test]
-fn retains_callable_parameter_bounds_and_capture_effects() {
-    let statements = parse(
-        "def invoke[F: def(Int) -> Int, callback: def(Int) capturing[origins], bare: def(Int) capturing, sink: def(Int) thin](value: Int):\n    pass\n",
-    );
+fn retains_callable_parameter_bounds_and_thin_effects() {
+    let statements =
+        parse("def invoke[F: def(Int) -> Int, sink: def(Int) thin](value: Int):\n    pass\n");
     let StmtKind::Def { type_params, .. } = &statements[0].kind else {
         panic!("expected a def");
     };
-    assert_eq!(type_params.len(), 4);
+    assert_eq!(type_params.len(), 2);
     assert_eq!(type_params[0].bounds, vec!["<function type>"]);
     assert!(matches!(
         &type_params[0].callable_bound,
         Some(Type::Func {
             ret,
             thin: false,
-            capturing: None,
             ..
         }) if **ret == Type::Named("Int".into(), vec![])
     ));
@@ -4353,27 +4353,7 @@ fn retains_callable_parameter_bounds_and_capture_effects() {
         &type_params[1].callable_bound,
         Some(Type::Func {
             ret,
-            capturing: Some(origins),
-            ..
-        }) if **ret == Type::None
-            && matches!(origins.as_slice(), [Expr {
-                kind: ExprKind::Identifier(origin),
-                ..
-            }] if origin == "origins")
-    ));
-    assert!(matches!(
-        &type_params[2].callable_bound,
-        Some(Type::Func {
-            capturing: Some(origins),
-            ..
-        }) if origins.is_empty()
-    ));
-    assert!(matches!(
-        &type_params[3].callable_bound,
-        Some(Type::Func {
-            ret,
             thin: true,
-            capturing: None,
             ..
         }) if **ret == Type::None
     ));
@@ -4506,13 +4486,11 @@ fn function_type_return_nests() {
                 params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
                 ret: Box::new(Type::Named("Int".into(), vec![])),
                 thin: false,
-                capturing: None,
                 raises: false,
                 raises_type: None,
                 where_clauses: vec![],
             }),
             thin: false,
-            capturing: None,
             raises: false,
             raises_type: None,
             where_clauses: vec![],
@@ -4534,7 +4512,6 @@ fn parses_function_typed_parameter() {
             params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
             ret: Box::new(Type::Named("Int".into(), vec![])),
             thin: true,
-            capturing: None,
             raises: false,
             raises_type: None,
             where_clauses: vec![],

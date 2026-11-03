@@ -3633,6 +3633,7 @@ fn instantiated<'c>(
     let closures = instantiation.read_binders(&mut function)?;
     let mut blocks = std::mem::take(&mut function.blocks);
     fold_witnesses(&mut blocks, &function, declarations);
+    adopt_callee_binders(&mut blocks, &function);
     function.blocks = blocks;
     Some(Instantiated {
         body: Cow::Owned(function),
@@ -3740,6 +3741,29 @@ fn fold_witnesses(blocks: &mut [MirBlock], function: &MirFunction, declarations:
                     }
                 }
             }
+        }
+    }
+}
+
+/// Give each indirect call of `blocks` whose callee the substitution made a
+/// generic callable the callee's own compile-time parameter declarations:
+/// a call through a callable binder named the contract's, which the
+/// call's arguments bind by position as they bind the callee's.
+fn adopt_callee_binders(blocks: &mut [MirBlock], function: &MirFunction) {
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        for region in instruction_regions_mut(instruction) {
+            adopt_callee_binders(region, function);
+        }
+        if let MirInstr::CallIndirect {
+            callee,
+            param_decls,
+            ..
+        } = instruction
+            && let Some(TyKind::GenericFunc(generic)) =
+                function.reg_types.get(&callee.0).map(Ty::kind)
+            && generic.decls.len() == param_decls.len()
+        {
+            param_decls.clone_from(&generic.decls);
         }
     }
 }

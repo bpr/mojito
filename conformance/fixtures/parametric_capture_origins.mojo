@@ -1,14 +1,11 @@
-def once[
-    origins: OriginSet, //, callback: def() capturing[origins] -> Int
-]() -> Int:
+def once[F: def() -> Int](callback: F) -> Int:
     return callback()
 
 
 def main():
     var value = 42
 
-    @parameter
-    def get() -> Int:
+    def get() {imm value} -> Int:
         return value
 
-    print(once[get]())
+    print(once(get))

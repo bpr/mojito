@@ -49,19 +49,6 @@ pub const PACK_READ_RAW_LIST_ORDINAL: u32 = u32::MAX - 1;
 /// The derivation ordinal of the pack operand of that `values.values`.
 pub const PACK_READ_OPERAND_ORDINAL: u32 = u32::MAX - 2;
 
-/// Whether a definition's decorators mark it as a parametric closure
-/// (`@__parameter`; the pre-rename `@parameter` still warns-and-runs upstream,
-/// so it stays accepted as a deprecation bridge).
-///
-/// The parser and the checker share this predicate: such a def takes no
-/// capture list and captures its free variables implicitly.
-pub fn is_parameter_closure(decorators: &[Decorator]) -> bool {
-    decorators.iter().any(|decorator| {
-        decorator.path.len() == 1
-            && matches!(decorator.path[0].as_str(), "__parameter" | "parameter")
-    })
-}
-
 /// Whether a declaration carries `@__unsafe_nested_origins_read_only`: the
 /// callee promises to only read the origins its argument types carry, so a
 /// call's exclusivity check counts them as immutable paths.
@@ -209,21 +196,18 @@ pub enum Type {
     /// Bare `Self` — the enclosing struct type (in a struct method) or the
     /// conforming type (in a trait method requirement).
     SelfType,
-    /// A **function type** annotation: `def(T1, mut T2, …) [thin | capturing[...]]
-    /// [raises] [-> R]`.
+    /// A **function type** annotation: `def(T1, mut T2, …) [thin] [raises]
+    /// [-> R]`.
     /// Parameters retain optional conventions, origins, and diagnostic names
     /// because those facts affect indirect-call ownership and reference results.
-    /// `thin` marks a non-capturing function pointer (default is capturing).
+    /// `thin` marks a non-capturing function pointer; without it the type is
+    /// a closure trait.
     Func {
         /// Compile-time parameters declared by the callable contract.
         type_params: Vec<TypeParam>,
         params: Vec<FunctionTypeParam>,
         ret: Box<Self>,
         thin: bool,
-        /// `None` when no explicit `capturing` effect was written,
-        /// `Some([])` for bare `capturing`, and `Some(origins)` for
-        /// `capturing[origins]`.
-        capturing: Option<OriginSpec>,
         raises: bool,
         raises_type: Option<Box<Self>>,
         /// Trailing `where` clauses constraining the contract's own `def[...]`
@@ -3149,7 +3133,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     type_params,
                     params,
                     ret,
-                    capturing,
                     raises_type,
                     where_clauses,
                     ..
@@ -3164,11 +3147,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         }
                     }
                     self.ty(ret);
-                    if let Some(origins) = capturing {
-                        for expression in origins {
-                            self.expr(expression);
-                        }
-                    }
                     if let Some(error) = raises_type {
                         self.ty(error);
                     }

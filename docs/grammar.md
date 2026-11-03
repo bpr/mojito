@@ -286,7 +286,7 @@ artifacts and imports from stdin remain unsupported.
 ### function_def
 
 ```
-function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] where_clause* ':' block   # a `@__parameter`/`@parameter` def takes no capture_list
+function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] where_clause* ':' block
 decorators: decorator*
 decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name; the checker validates each site (see Decorators below)
 dotted_name: NAME ('.' NAME)*
@@ -298,7 +298,7 @@ param_item:
     | 'var' '**' NAME ':' type             # keyword variadic collector
     | [convention] NAME ':' type ['=' expression]   # regular, optional default
 convention: 'imm' | 'mut' | 'var' | 'out' | 'ref' [origin_spec] | 'deinit'
-function_effect: 'raises' [type] | 'capturing' ['[' ... ']'] | 'thin' | 'abi' '(' ... ')'
+function_effect: 'raises' [type] | 'thin' | 'abi' '(' ... ')'
 function_type_where: where_clause*   # after the optional '->' result; binds to the
                                      # INNERMOST function type (a nested function-type
                                      # result consumes a following 'where' itself)
@@ -387,8 +387,12 @@ raises where conforms_to(T, Deinitable):`), so an error type literally named
 function with the same concrete error contract. Effects survive free/method
 overload selection, callable values, trait requirements, and bounded dispatch;
 `raises Never` is nonraising. Methods and trait requirements take the same
-optional effect. `capturing` and `raises` may appear in either current Mojo
-order; the parser normalizes the sequence while retaining the raising contract.
+optional effect. `thin` and `raises` may appear in either order; the parser
+normalizes the sequence while retaining the raising contract. The removed
+`capturing` effect is a parse error with the pin's text ("the 'capturing'
+function effect is no longer supported; use a closure capture list like
+'{var}' or '{mut x}' instead") wherever it is spelled: a declaration, a
+method, a lambda, or a function type.
 
 A current Mojo closure writes its capture list directly after declaration effects:
 `def inner() raises {imm x, mut y}:`. A bare captured name means `imm`; bare
@@ -402,10 +406,13 @@ not hold a persistent loan from declaration until invocation: intervening outer
 access remains legal, and an `imm` closure observes the then-current value when
 called. The call is still checked under the capture's access convention. The removed
 `unified {capture-list}` spelling is rejected with a contextual parse error
-pointing at the current post-effects `{...}` position. A `@__parameter` (or
-deprecated `@parameter`) parametric closure takes no capture list at all — a
-`{` there is `expected ':' in function definition`, as upstream — and
-captures implicitly, mutable where the enclosing binding is mutable.
+pointing at the current post-effects `{...}` position. The removed legacy
+closure decorators are parse errors on any `def` or method, with the pin's
+texts: `@parameter` and `@__parameter` ("'@parameter' closures are no longer
+supported; remove the decorator and declare the captures in a capture list
+like '{var}' or '{mut x}'", naming the spelling used), and `@__copy_capture`
+and `@__move_capture` ("'@__copy_capture' is no longer supported; list the
+captures in a capture list like '{var x}' instead").
 
 ### Parameterization (generics)
 
@@ -490,10 +497,10 @@ function type. Subset limits: the clause requires the contract's own
 `def[...]` parameter list (upstream also accepts binder-less clauses), plain
 function-type annotations reject clauses, and the `comptime Kernel = def[...]
 ... where (...)` alias spelling stays behind the function-type comptime-alias
-gap. An explicit `thin` or
-`capturing[...]` qualifier instead declares a compile-time callable-value
-parameter; an `OriginSet` binder before `//` is inferred from that value and erased
-from the runtime ABI. Such a parameter may default to a selected function, an
+gap. An explicit `thin` qualifier instead declares a compile-time
+callable-value parameter, which takes a function or a capture-free nested
+`def`; a closure is a run-time value and goes through a closure-trait binder
+`F: def(...)` taken as an argument (`f: F`). Such a parameter may default to a selected function, an
 earlier callable parameter, or a compile-time conditional of those values. The
 default is a symbolic runtime-reification plan, not a function/closure `CtValue`.
 
@@ -692,8 +699,9 @@ method's are; the checker accepts the inline-level ones (`@always_inline`,
 `@no_inline`, `@inline(level)`), validated as a function's are, and a default's
 member function takes the level they name, and the documentation ones
 (`@doc_hidden`, `@stable`, `@deprecated`). `@staticmethod`, `@export`,
-`@__parameter`/`@parameter`, and `@__unsafe_nested_origins_read_only`, which the
-pin accepts there, are unsupported; any other name is rejected as at the pin.
+and `@__unsafe_nested_origins_read_only`, which the pin accepts there, are
+unsupported; `@parameter`, `@__parameter`, `@__copy_capture`, and
+`@__move_capture` are parse errors as on any `def`; any other name is rejected as at the pin.
 
 Two further valid-Mojo trait forms are parsed but rejected by the checker:
 **trait inheritance / refinement** (`trait Bird(Animal, Named):` — a
@@ -739,7 +747,7 @@ least one member; fields and methods may interleave.
   pin's argument checks. A struct also accepts `@fieldwise_init`,
   `@explicit_destroy("message")`, which needs a conditional `Deinitable` conformance,
   and `@__nonmaterializable(T)`, whose one argument is a type.
-  A `def` or method also accepts the inline levels, `@__parameter`/`@parameter`, and
+  A `def` or method also accepts the inline levels and
   `@__unsafe_nested_origins_read_only` (argument exclusivity, `docs/features.md`); a
   method also `@staticmethod`, and an `__init__` `@implicit`. `@align(n)`,
   `@unavailable`, `@export`, and `@fieldwise_init("implicit")` are unsupported. A
@@ -1219,7 +1227,7 @@ function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect*
 function_type_param:
     | 'var' '**' NAME ':' type
     | [convention] [NAME ':'] type
-fn_effect: 'capturing' ['[' ... ']'] | 'thin' | 'raises' [type] | 'abi' '(' ... ')'
+fn_effect: 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
 `None` is a reserved keyword; `Bool` is an ordinary `NAME` recognized here by spelling (it
@@ -1242,10 +1250,10 @@ or the conforming type (in a trait method). Inside a value-parameterized struct,
 `Self` as a *type* is not supported (a value parameter can't appear in a type).
 A **function/closure type** can retain its own compile-time parameters, parameter
 conventions, origins, result-reference origin, and `thin`/`raises` effects. The
-current `capturing` spelling (including an optional origin list) is accepted;
-checked callable environments distinguish default, thin, inferred/parametric
-capturing, and canonical concrete capture-origin sets with read/write access. For example,
-`def[o: Origin[mut=True]](ref[o] Int) capturing -> ref[o] Int` is the nominal
+removed `capturing` effect is a parse error; checked callable environments
+distinguish default, thin, closure storage, and canonical concrete
+capture-origin sets with read/write access. For example,
+`def[o: Origin[mut=True]](ref[o] Int) -> ref[o] Int` is the nominal
 contract implemented by a matching `__call__`. `thin` marks a non-capturing
 function pointer; the default function type can carry an environment. These facts
 parse into `Type::Func`, participate in callable conformance, escape and

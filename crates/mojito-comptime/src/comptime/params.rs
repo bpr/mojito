@@ -11,8 +11,8 @@ use mojito_types::types::TyKind;
 /// rewritten call site.
 ///
 /// An unqualified `F: def(...)` is a callable *type constraint* and therefore is
-/// still an ordinary type parameter.  Mojo's explicit `thin`/`capturing[...]`
-/// forms declare a compile-time callable value; evaluating that value as a
+/// still an ordinary type parameter.  Mojo's explicit `thin` form declares a
+/// compile-time callable value; evaluating that value as a
 /// [`CtValue`] would incorrectly require the compile-time universe to own VM
 /// closures and captured storage.
 pub(super) fn retained_specialization_param(tp: &TypeParam, siblings: &[TypeParam]) -> bool {
@@ -21,13 +21,7 @@ pub(super) fn retained_specialization_param(tp: &TypeParam, siblings: &[TypePara
     }
     matches!(
         tp.callable_bound.as_ref(),
-        Some(
-            Type::Func { thin: true, .. }
-                | Type::Func {
-                    capturing: Some(_),
-                    ..
-                }
-        )
+        Some(Type::Func { thin: true, .. })
     )
 }
 

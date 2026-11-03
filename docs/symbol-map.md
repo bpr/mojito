@@ -1540,7 +1540,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and synthesized `__init__`, `__deinit__`, `__moveinit__`, and
   `__copyinit__` (`lower_closure_storage`, over `mir.rs`'s
   `lower_fieldwise_members` and `lower_synthesized_member`), and the
-  storage's always-inline `__call__` witness forwarding to the method
+  storage's always-inline `__call__` witness forwarding to the method,
+  a generic closure's taking the method's parameters as its own
   (`lower_storage_call_witness`, recorded in the struct's member table),
   and the declaration statement calls the `__init__` with the captures
   (`Flatten::lower_closure_storage_value` over
@@ -1554,10 +1555,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mir/call_results.rs`, and `Flatten::lambda_storage_value`,
   `mir/lower_expr/calls.rs`), and the check rejects an owning use whose
   storage is not `ImplicitlyCopyable` (`Checker::check_consuming_as`),
-  as upstream copies the storage there; a run-time parameter or local
-  typed `def(...) capturing[...]` rejects at the check
-  (`type_resolution::reject_runtime_capturing_callable`), so the storage
-  is the value's only form. A capture-list `def`'s
+  as upstream copies the storage there; the parser rejects the removed
+  `capturing` effect (`REMOVED_CAPTURING_EFFECT`) and the removed closure
+  decorators (`reject_removed_closure_decorators`, called by `parse_def`,
+  `parse_method`, and `parse_trait_method`), both in
+  `mojito-parser/src/parser.rs`, so the storage is the value's only
+  form. A capture-list `def`'s
   name read as a value is its declaration's slot
   (`Flatten::closure_storage_read`). The check types such a value as a
   `def(...)` whose environment is
@@ -1578,8 +1581,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   captures are frame locals (`capture_slots`, `mir.rs`'s `CaptureSlots` and
   `CaptureStorage`) that `lower_cfg_nested` binds to references to their
   fields at the head of the body (`Flatten::capture_storage_prologue`); a
-  `@parameter` closure's are leading reference parameters, whose closure
-  `Flatten::emit_nested_closure` makes of reference captures.
+  storage-less body's are leading reference parameters, whose closure
+  `Flatten::emit_nested_closure` makes of reference captures (a path only
+  the removed `@parameter` closure took, R1889).
   `Flatten::lower_nested_call` (`mir/lower_expr/calls.rs`) lowers a call by
   name to a `method_call` of the storage's method on the storage
   (`storage_place`, by address when it is memory-only), a direct `call` of

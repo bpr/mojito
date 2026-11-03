@@ -502,7 +502,6 @@ fn rewrite_type(
             type_params,
             params,
             ret,
-            capturing,
             raises_type,
             where_clauses,
             ..
@@ -519,11 +518,6 @@ fn rewrite_type(
                 }
             }
             rewrite_type(ret, names, namespaces);
-            if let Some(origins) = capturing {
-                for origin in origins {
-                    rewrite_expr(origin, names, namespaces);
-                }
-            }
             if let Some(error) = raises_type {
                 rewrite_type(error, names, namespaces);
             }

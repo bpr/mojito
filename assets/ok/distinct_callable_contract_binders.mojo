@@ -4,7 +4,7 @@
 # parameters of module functions, of struct methods (on a plain and on a
 # parameterized struct), or are the bodies of comptime aliases.
 comptime First = def[wq: Int](SIMD[DType.int32, wq]) -> SIMD[DType.int32, wq]
-comptime Second = def[k: Int](SIMD[DType.int32, k]) capturing -> None
+comptime Second = def[k: Int](SIMD[DType.int32, k]) thin -> None
 
 
 def probe[
@@ -13,7 +13,7 @@ def probe[
     return 0
 
 
-def run[h: def[k: Int](SIMD[DType.int32, k]) capturing -> None]():
+def run[h: def[k: Int](SIMD[DType.int32, k]) thin -> None]():
     h[4](SIMD[DType.int32, 4](1))
 
 
@@ -35,7 +35,7 @@ struct B:
     def __init__(out self):
         pass
 
-    def run[h: def[k: Int](SIMD[DType.int32, k]) capturing -> None](self):
+    def run[h: def[k: Int](SIMD[DType.int32, k]) thin -> None](self):
         h[4](SIMD[DType.int32, 4](2))
 
 
@@ -48,7 +48,7 @@ struct C[dtype: DType]:
     ](self) -> Int:
         return 0
 
-    def run[h: def[k: Int](SIMD[DType.int32, k]) capturing -> None](self):
+    def run[h: def[k: Int](SIMD[DType.int32, k]) thin -> None](self):
         h[2](SIMD[DType.int32, 2](5))
 
 

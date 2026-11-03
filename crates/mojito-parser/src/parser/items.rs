@@ -506,6 +506,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         &mut self,
         decorators: Vec<Decorator>,
     ) -> Result<mojito_ast::ast::TraitMethod, ParseError> {
+        super::reject_removed_closure_decorators(&decorators)?;
         self.expect(&Token::Def, "Expected 'def'")?;
         let name = {
             let spelled = self.expect_member_name("Expected a method name after 'def'")?;
@@ -611,6 +612,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         &mut self,
         decorators: Vec<Decorator>,
     ) -> Result<Method, ParseError> {
+        super::reject_removed_closure_decorators(&decorators)?;
         self.expect(&Token::Def, "Expected 'def'")?;
         let name = {
             let spelled = self.expect_member_name("Expected a method name after 'def'")?;
@@ -742,20 +744,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Parse callable ABI effects whose execution meaning is already represented
     /// by the selected callable type/environment. `raises` is retained separately;
-    /// `capturing`, `thin`, and `abi(...)` need no additional declaration field.
+    /// `thin` and `abi(...)` need no additional declaration field, and the
+    /// removed `capturing` is an error.
     pub(super) fn parse_erased_callable_effects(&mut self) -> Result<(), ParseError> {
         while let Some(Token::Identifier(effect)) = self.peek_token()?.cloned() {
             match effect.as_str() {
-                "capturing" | "thin" => {
+                "capturing" => {
+                    return Err(ParseError::Message(
+                        super::REMOVED_CAPTURING_EFFECT.to_string(),
+                    ));
+                }
+                "thin" => {
                     self.next_token()?;
-                    if effect == "capturing" && matches!(self.peek_token()?, Some(Token::LBracket))
-                    {
-                        self.next_token()?;
-                        while !matches!(self.peek_token()?, Some(Token::RBracket) | None) {
-                            self.next_token()?;
-                        }
-                        self.expect(&Token::RBracket, "Expected ']' after capturing origins")?;
-                    }
                 }
                 "abi" => {
                     self.next_token()?;

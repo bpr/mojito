@@ -193,8 +193,8 @@ pub enum TypeError {
     /// A `^` transfer whose source reaches no tracked root through field
     /// projections: a subscript element, a `ref` binding, or a loop binder.
     UntrackedTransfer,
-    /// A `^` transfer out of a capture a closure holds by reference (`mut`,
-    /// `ref`, or an `@__parameter` environment's implicit capture).
+    /// A `^` transfer out of a capture a closure holds by reference (`mut`
+    /// or `ref`).
     IndirectTransfer,
     /// A `^` transfer out of a compile-time binding (a value parameter, a
     /// `comptime for` variable): a parameter is a value, not storage.

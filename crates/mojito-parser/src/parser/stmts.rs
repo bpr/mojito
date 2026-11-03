@@ -462,6 +462,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     pub(super) fn parse_def(&mut self, decorators: Vec<Decorator>) -> Result<StmtKind, ParseError> {
+        super::reject_removed_closure_decorators(&decorators)?;
         self.expect(&Token::Def, "Expected 'def'")?;
         let name = self.expect_member_name("Expected function name after 'def'")?;
         let type_params = self.parse_type_params()?;
@@ -485,14 +486,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             ));
         }
         let (raises, raises_type) = self.parse_callable_effects()?;
-        // A `@__parameter` def captures implicitly and takes no capture list:
-        // upstream reads its `{` as the start of a missing body.
-        let parameter_closure = mojito_ast::ast::is_parameter_closure(&decorators);
-        if parameter_closure && matches!(self.peek_token()?, Some(Token::LBrace)) {
-            return Err(ParseError::Message(
-                "expected ':' in function definition".to_string(),
-            ));
-        }
         let captures = self.parse_capture_list()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?; // consume '->'
@@ -502,11 +495,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         };
 
         if matches!(self.peek_token()?, Some(Token::LBrace)) {
-            if parameter_closure {
-                return Err(ParseError::Message(
-                    "expected ':' in function definition".to_string(),
-                ));
-            }
             self.next_token()?;
             while !matches!(self.peek_token()?, Some(Token::RBrace) | None) {
                 self.next_token()?;
@@ -662,8 +650,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Parse declaration effects in their source order. Current Mojo permits
-    /// `capturing raises`, `raises capturing`, and the other ABI-only effects in
-    /// one sequence; only the raising contract survives in the checked AST.
+    /// `thin raises`, `raises thin`, and the other ABI-only effects in one
+    /// sequence; only the raising contract survives in the checked AST. A
+    /// removed `capturing` is reported where it is spelled.
     pub(super) fn parse_callable_effects(&mut self) -> Result<(bool, Option<Type>), ParseError> {
         let mut raises = false;
         let mut raises_type = None;
