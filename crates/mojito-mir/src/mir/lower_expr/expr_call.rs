@@ -379,7 +379,7 @@ impl<'a> Flatten<'a> {
                 .expect("checked Variant(init_with=) has one factory")
                 .1;
             let callee_place = self.callable_receiver_place(factory_node);
-            let factory = self.expr(factory_node);
+            let factory = self.callable_operand(factory_node);
             let payload = self.fresh_typed(call.location(), None, payload);
             self.emit(MirInstr::CallIndirect {
                 dest: payload,
@@ -729,7 +729,7 @@ impl<'a> Flatten<'a> {
                 let place = self
                     .try_place(object)
                     .expect("checked Variant.set receiver is a writable place");
-                let factory = self.expr(
+                let factory = self.callable_operand(
                     kwargs
                         .first()
                         .expect("checked Variant.set(init_with=) has one factory")
@@ -756,7 +756,7 @@ impl<'a> Flatten<'a> {
                     dest: variant,
                     place,
                 });
-                let handler = self.expr(
+                let handler = self.callable_operand(
                     *args
                         .first()
                         .expect("checked Variant.deinit_with has one handler"),

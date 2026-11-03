@@ -364,7 +364,7 @@ impl<'a> Flatten<'a> {
             let place = self
                 .try_place(object)
                 .expect("checked Variant.set receiver is a writable place");
-            let factory = self.expr(
+            let factory = self.callable_operand(
                 kwargs
                     .first()
                     .expect("checked Variant.set(init_with=) has one factory")
@@ -416,7 +416,7 @@ impl<'a> Flatten<'a> {
                 dest: variant,
                 place,
             });
-            let handler = self.expr(
+            let handler = self.callable_operand(
                 *args
                     .first()
                     .expect("checked Variant.deinit_with has one handler"),

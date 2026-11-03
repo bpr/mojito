@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1868**.
+Next free ID: **R1869**.
 
 ## Ordered Work
 
@@ -9841,23 +9841,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1444 A callable binder's value is copied into a register to be
-  called or handed to a `Variant` handler**
+- [ ] **R1868 `Variant.set(init_with=)` and `Variant.deinit_with` hand
+  their callable to a storage operation that calls it**
 
-  `Variant.__init__(init_with=f)` and `Variant.deinit_with(f)` copy their
-  `F` parameter (`var.use copy`) into the `call.indirect` or the
-  storage's handler operand (`variant.deinit_with`), then destroy the
-  copy by a `drop.reg`.
-  - `F` is a type parameter, so memory-only, as upstream's default is.
-  - Upstream calls a callable binder through its `__call__`, which borrows
-    it, and passes the handler by reference.
-  - Probe: `assets/ok/variant_init_with_constructor.mojo` and
-    `variant_deinit_with_linear_payload.mojo`.
+  `variant.set_init_with` and `variant.deinit_with` invoke their factory
+  or handler operand inside the instruction, where upstream's `Variant`
+  bodies call the callable themselves, an ordinary call over the storage's
+  payload.
   - Probe (from R1109): the handler operand runs a struct handler's
     `__call__` from its type (`mir::TYPE_REACHED_MEMBERS`), so a
     `__call__` ignoring an argument keeps it; upstream's is a call
     `RemoveUnusedParams` rewrites.
-  - Found while landing R1356 (2026-10-26).
+  - The Pliron push of `__call__` (`lib.rs`) and the specializer's
+    `enqueue_struct_call` for these two instructions go with it.
+  - `Variant.__init__(init_with=)` already lowers to a `call.indirect`
+    and a `variant.make`.
+  - Found while landing R1444 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

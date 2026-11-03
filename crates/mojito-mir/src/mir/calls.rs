@@ -2035,6 +2035,28 @@ impl<'a> Flatten<'a> {
         place.is_typed().then_some(place)
     }
 
+    /// The callable a `Variant` placement constructor or consuming teardown
+    /// invokes: a local slot is borrowed where it lies, as a call borrows
+    /// its callee and upstream passes the handler by reference, and any
+    /// other expression is its value.
+    pub(super) fn callable_operand(&mut self, expression: Node<'a>) -> Reg {
+        if let CheckedOp::Identifier(name) = &expression.checked.op
+            && let Some(variable) = self.local_callee(expression, name)
+            && !self.runtime_aliases.contains(&variable)
+            && !self.aliases.contains_key(&variable)
+        {
+            let dest = self.fresh(expression.location(), Some(variable));
+            self.emit(MirInstr::UseVar {
+                dest,
+                var: variable,
+                mode: UseMode::BorrowShared,
+                constructor: None,
+            });
+            return dest;
+        }
+        self.expr(expression)
+    }
+
     pub(super) fn mir_interior_origin(
         &mut self,
         origin: &mojito_types::origin::OriginPlace,

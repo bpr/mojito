@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Variant.__init__(init_with=f)`, `Variant.set(init_with=f)`, and
+  `Variant.deinit_with(f)` now borrow their callable parameter where it
+  lies, as a call borrows its callee, instead of copying it into a register
+  and destroying the copy after the call (R1444).
 - A consuming method call over an implicitly copied receiver now copies it
   into a call-result slot whose place the call consumes, as upstream passes
   the copy's temporary as the owned operand (R1443): `v.unwrap[Int]()`
