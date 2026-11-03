@@ -120,9 +120,7 @@ point, as upstream's toolchain does.
   `StringLiteral["ab"]`) and of an explicit application, with the members
   that read its `!kgen.string` through `pop.string.size`,
   `pop.string.address`, and `#kgen.param.identical`. The compiler holds an
-  application as its literal type (roadmap R1660), and a bare run-time
-  `StringLiteral` argument is still a value-less compiler type (R1658).
-  The prelude exports it.
+  application as its literal type (roadmap R1660). The prelude exports it.
 - `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
   `pop.bitcast`, re-exported by `std.memory`; `std/builtin/dtype.mojo`
   bundles `_uint_type_of_width`, `_integral_type_of`, and

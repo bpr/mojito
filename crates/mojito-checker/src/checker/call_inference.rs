@@ -743,19 +743,22 @@ impl Checker {
         }
     }
 
-    /// The nominal-`String` wrap of a compile-time string that materializes
-    /// as a runtime value (an inferred binding, a collection element):
-    /// record the literal-constructor wrap at `span` and report the nominal
-    /// `String`, falling back to the compile-time string when the stdlib
-    /// constructor is unavailable (an unlinked seam).
-    pub(super) fn nominal_string_wrap(&self, span: SourceSpan) -> Result<Ty, TypeError> {
+    /// The nominal-`String` wrap of the compile-time string `literal` that
+    /// materializes as a runtime value (an inferred binding, a collection
+    /// element): record the literal-constructor wrap at `span` and report the
+    /// nominal `String`, falling back to the compile-time string when the
+    /// stdlib constructor is unavailable (an unlinked seam).
+    pub(super) fn nominal_string_wrap(
+        &self,
+        literal: &Ty,
+        span: SourceSpan,
+    ) -> Result<Ty, TypeError> {
         let nominal = Ty::new(TyKind::Struct(
             mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
             Vec::new(),
         ));
-        let Some((target, _)) = self.implicit_conversion_target(&Ty::string_literal(), &nominal)?
-        else {
-            return Ok(Ty::string_literal());
+        let Some((target, _)) = self.implicit_conversion_target(literal, &nominal)? else {
+            return Ok(literal.clone());
         };
         // A view conversion already recorded at this span supersedes the
         // wrap; re-inferring the expression must not revert it.

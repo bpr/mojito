@@ -447,12 +447,11 @@ pub(super) fn raw_list_runtime_read(meta: &mojito_types::param_expr::MetaTy) -> 
     ))
 }
 
-/// The rejection of `s.value` over a value-less `StringLiteral` (a bare
-/// run-time `s: StringLiteral` argument), whose text no type carries, where
-/// the pin's argument is a `StringLiteral[_]` whose parameter it reads.
+/// The rejection of `s.value` over a value-less `StringLiteral` (the
+/// elaborator's placeholder, R1659), whose text no type carries.
 pub(super) fn value_less_literal_value() -> TypeError {
     TypeError::Unsupported(
-        "the 'value' of a bare 'StringLiteral' argument is not supported".to_string(),
+        "the 'value' of a value-less 'StringLiteral' is not supported".to_string(),
     )
 }
 
@@ -3087,7 +3086,7 @@ impl Checker {
                 .materialize_as(ty)
                 .and_then(|closed| self.param_context.constant(closed).ok()),
         };
-        // A string constant's value type is the value-less `StringLiteral`,
+        // A numeric constant's value type is the value-less literal type,
         // which the literal type carrying its value names (R1659).
         if let Some(argument) = argument.filter(|argument| {
             argument.meta().as_value().is_some_and(|found| {
@@ -5798,7 +5797,6 @@ impl ApplicableShape<'_> {
         let slot = |ty: &SourceType| match ty {
             SourceType::Bool => Some(SlotType::Scalar(Ty::bool())),
             SourceType::SelfType => Some(SlotType::Owner),
-            SourceType::StringLiteral => Some(SlotType::Scalar(Ty::string_literal())),
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
             SourceType::Named(..) | SourceType::SelfParam(_) | SourceType::Assoc { .. } => {

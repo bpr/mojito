@@ -152,7 +152,7 @@ pub fn subscript_param_arg(index: &Expr) -> ParamArg {
 
 /// A type annotation.
 ///
-/// Covers `Bool`, the string literal types, and `None` plus nominal (`struct`)
+/// Covers `Bool`, the closed string literal type, and `None` plus nominal (`struct`)
 /// types, which may carry type arguments (`Pair[Int]`), and references to a
 /// type parameter. `Int`, `UInt`, and `Float64` are nominal: the prelude's
 /// `comptime` aliases.
@@ -161,15 +161,12 @@ pub fn subscript_param_arg(index: &Expr) -> ParamArg {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Type {
     Bool,
-    /// The compile-time string literal type, spelled `StringLiteral` in
-    /// source. A bare `String` annotation parses as `Named("String")` and
-    /// resolves to the prelude's nominal self-hosted struct.
-    StringLiteral,
     /// The closed type of one string literal, `StringLiteral[value]` at the
     /// pin, whose value Mojito does not track. The elaborator spells a binder
     /// bound to an inferred literal's type with it (a pack element
     /// `"two"` binds), so the annotation it substitutes stays concrete where
-    /// the open bare spelling would not. The parser never constructs it.
+    /// the bare struct name `StringLiteral` would not. The parser never
+    /// constructs it.
     ClosedStringLiteral,
     None,
     /// A name that resolves to a `struct` type, optionally applied to parameter
@@ -272,7 +269,6 @@ impl Type {
     pub fn expression_spelling(&self, span: Span) -> Option<Expr> {
         let kind = match self {
             Self::Bool => ExprKind::Identifier("Bool".to_string()),
-            Self::StringLiteral => ExprKind::Identifier("StringLiteral".to_string()),
             Self::SelfType => ExprKind::Identifier("Self".to_string()),
             Self::Named(name, args) if args.is_empty() => ExprKind::Identifier(name.clone()),
             Self::Named(name, args) => ExprKind::TypeApply {
@@ -2041,7 +2037,6 @@ impl Expr {
             ExprKind::Identifier(name) if !name.chars().next()?.is_lowercase() => {
                 Some(match name.as_str() {
                     "Bool" => Type::Bool,
-                    "StringLiteral" => Type::StringLiteral,
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
             }
@@ -3182,7 +3177,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     }
                 }
                 Type::Bool
-                | Type::StringLiteral
                 | Type::ClosedStringLiteral
                 | Type::None
                 | Type::SelfParam(_)

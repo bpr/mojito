@@ -3670,7 +3670,7 @@ impl MetaTy {
             CtValue::FloatLiteral(value) => Self::value(Ty::float_literal_of(value)),
             CtValue::Bool(_) => Self::bool(),
             CtValue::None => Self::value(Ty::none()),
-            CtValue::Str(_) => Self::value(Ty::string_literal()),
+            CtValue::Str(text) => Self::value(Ty::string_literal_of(text)),
             CtValue::Tuple(values) => Self::Tuple(all(values)),
             CtValue::List(values) => Self::List(all(values)),
             CtValue::Dict { entries, .. } => Self::Dict(

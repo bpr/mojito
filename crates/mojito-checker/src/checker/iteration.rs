@@ -290,7 +290,7 @@ impl Checker {
             mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
             Vec::new(),
         ));
-        match self.implicit_conversion_target(&Ty::string_literal(), &nominal) {
+        match self.implicit_conversion_target(&iter_ty, &nominal) {
             Ok(Some((target, _))) => {
                 self.record_at(iter.source_span()).implicit_conversion = Some(target);
                 nominal

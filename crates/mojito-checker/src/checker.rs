@@ -793,10 +793,6 @@ pub struct Checker {
     /// alias; upstream infers the origin per call there and rejects the
     /// placeholder elsewhere as not concrete).
     resolving_parameter_annotation: std::cell::Cell<bool>,
-    /// Set while resolving a parameter annotation that is exactly
-    /// `StringLiteral`: upstream's value-parameterized literal type infers
-    /// its parameter there and is not concrete anywhere else (R1658).
-    bare_literal_parameter: std::cell::Cell<bool>,
     /// Set while a subscript's getter is resolved only to learn its element
     /// type (upstream's `filterOverloadSet` in `emitGetterSetterAccess`):
     /// nothing is emitted, so its `raises` is no effect of the body.
@@ -1151,7 +1147,6 @@ impl Checker {
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects.into()),
             resolving_parameter_annotation: std::cell::Cell::new(false),
-            bare_literal_parameter: std::cell::Cell::new(false),
             resolving_accessor_only: std::cell::Cell::new(false),
             effect_observations: RefCell::new(HashMap::new()),
             call_through_effects: RefCell::new(call_through_seed.into()),

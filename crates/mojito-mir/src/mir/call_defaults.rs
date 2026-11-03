@@ -244,7 +244,12 @@ fn fill_blocks(
                     invariant_errors,
                 );
             } else {
-                collect_through_contract(&mut instruction, function, &mut filled);
+                collect_through_contract(
+                    &mut instruction,
+                    function,
+                    caller.declarations,
+                    &mut filled,
+                );
             }
             let result = result_register(&instruction);
             filled.push(instruction);
@@ -301,7 +306,7 @@ fn fill_call(
     }
     let Some(mut site) = Site::of(&instruction, record, function, caller) else {
         collect_through_requirement(&mut instruction, function, caller, (prelude, postlude));
-        collect_through_contract(&mut instruction, function, prelude);
+        collect_through_contract(&mut instruction, function, caller.declarations, prelude);
         return instruction;
     };
     let declarations = caller.declarations;
@@ -364,6 +369,7 @@ fn fill_call(
             &mut site,
             &CallShape::from(callee),
             function,
+            declarations,
             location.as_ref(),
             prelude,
         )
@@ -594,9 +600,15 @@ fn collect_through_requirement(
         spread: None,
     };
     let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
-    let collected =
-        build_keyword_collector(&mut site, &shape, function, location.as_ref(), prelude)
-            .is_ok_and(|built| built);
+    let collected = build_keyword_collector(
+        &mut site,
+        &shape,
+        function,
+        caller.declarations,
+        location.as_ref(),
+        prelude,
+    )
+    .is_ok_and(|built| built);
     build_collector(
         &mut site,
         &shape,
@@ -617,6 +629,7 @@ fn collect_through_requirement(
 fn collect_through_contract(
     instruction: &mut MirInstr,
     function: &mut MirFunction,
+    declarations: &MirDeclarations,
     prelude: &mut Vec<MirInstr>,
 ) {
     let MirInstr::CallIndirect {
@@ -667,8 +680,15 @@ fn collect_through_contract(
         spread: None,
     };
     let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
-    if build_keyword_collector(&mut site, &shape, function, location.as_ref(), prelude)
-        .is_ok_and(|built| built)
+    if build_keyword_collector(
+        &mut site,
+        &shape,
+        function,
+        declarations,
+        location.as_ref(),
+        prelude,
+    )
+    .is_ok_and(|built| built)
     {
         site.store(instruction, &[]);
     }
@@ -688,6 +708,7 @@ fn build_keyword_collector(
     site: &mut Site,
     shape: &CallShape<'_>,
     function: &mut MirFunction,
+    declarations: &MirDeclarations,
     location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
 ) -> Result<bool, String> {
@@ -756,6 +777,13 @@ fn build_keyword_collector(
         binding_ty: Some(ty.clone()),
         in_place: true,
     });
+    // The insert's key is auto-parameterized by its text, which the key
+    // register's literal type solves.
+    let insert = mojito_symbol::symbol::keyword_collector_insert_symbol();
+    let insert_decls = declarations
+        .function(&insert)
+        .map(|declaration| declaration.param_decls.clone())
+        .unwrap_or_default();
     for &index in &collected {
         let (keyword, value) = site.kwargs[index].clone();
         let key = fresh_register(function, Ty::string_literal_of(&keyword), location);
@@ -772,7 +800,7 @@ fn build_keyword_collector(
             dest: fresh_register(function, Ty::none(), location),
             recv: receiver,
             method: "_insert".to_string(),
-            resolved: Some(mojito_symbol::symbol::keyword_collector_insert_symbol()),
+            resolved: Some(insert.clone()),
             raises: None,
             reference_result: None,
             result_adapter: None,
@@ -785,7 +813,7 @@ fn build_keyword_collector(
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
-            param_decls: Vec::new(),
+            param_decls: insert_decls.clone(),
             instantiated_args: Vec::new(),
             spread: None,
             refined_bound: None,

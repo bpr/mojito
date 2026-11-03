@@ -337,21 +337,6 @@ pub(super) fn definitely_initializes_self_field(
     flow.valid && flow.normal.is_none_or(|initialized| initialized)
 }
 
-/// Whether a parameter annotation is exactly the bare `StringLiteral`, or a
-/// specialized `*args: *Ts` pack (`$pack[...]`, or the `__RuntimeTuple[...]`
-/// a forwarded nested pack is stamped with) whose elements may be that
-/// per-call inferred literal type.
-pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
-    match annotation {
-        SourceType::StringLiteral | SourceType::ClosedStringLiteral => true,
-        SourceType::Named(name, args) => {
-            matches!(name.as_str(), "$pack" | "__RuntimeTuple")
-                || (name == "StringLiteral" && args.is_empty())
-        }
-        _ => false,
-    }
-}
-
 /// The names a method's arguments bind in its signature: its receiver
 /// (`self`) and each parameter, which a `where` clause may read.
 pub(super) fn method_arguments(method: &Method) -> Vec<&str> {
@@ -1839,15 +1824,12 @@ impl Checker {
             // placeholder marks the slot explicitly inferred (a bare
             // `Pointer[T, _]` is concrete here only).
             self.resolving_parameter_annotation.set(true);
-            self.bare_literal_parameter
-                .set(is_string_literal_annotation(&p.ty));
             let generated = self.generated_declaration.get();
             self.generated_declaration
                 .set(generated || m.name.contains('$'));
             let resolved =
                 self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare);
             self.generated_declaration.set(generated);
-            self.bare_literal_parameter.set(false);
             self.resolving_parameter_annotation.set(false);
             let mut pty = resolved?;
             pty = match p.kind {

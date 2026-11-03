@@ -1596,7 +1596,7 @@ impl Checker {
                     // falls back to the compile-time string on seams without
                     // the linked stdlib struct.
                     None if found.is_string_literal() => {
-                        self.nominal_string_wrap(value.source_span())?
+                        self.nominal_string_wrap(&found, value.source_span())?
                     }
                     None => self.inferred_binding_ty(&found, name)?,
                 };
@@ -2196,15 +2196,6 @@ impl Checker {
                 for condition in where_clauses {
                     let constraint = self.compile_where_clause(condition)?;
                     self.validate_declaration_constraint(name, &constraint)?;
-                }
-                if ty
-                    .as_ref()
-                    .is_some_and(super::declarations::is_string_literal_annotation)
-                {
-                    return Err(TypeError::Unsupported(
-                        "cannot construct a value with parametric type: 'StringLiteral[_]'"
-                            .to_string(),
-                    ));
                 }
                 // A comptime `Int` is recorded (for value-parameter use) and bound as
                 // `Int`. A richer comptime value (tuple/list/string) the `Int` folder
@@ -4011,13 +4002,10 @@ impl Checker {
                 // omitting an origin slot rejects, a placeholder is inferred
                 // (a bare `Pointer[T, _]` is concrete here only).
                 self.resolving_parameter_annotation.set(true);
-                self.bare_literal_parameter
-                    .set(super::declarations::is_string_literal_annotation(&parameter.ty));
                 let resolved = self.resolve_storage_annotation(
                     &parameter.ty,
                     super::StorageStrictness::AllowBare,
                 );
-                self.bare_literal_parameter.set(false);
                 self.resolving_parameter_annotation.set(false);
                 let resolved = resolved?;
                 let declared = match parameter.kind {

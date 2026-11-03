@@ -1960,13 +1960,7 @@ impl Checker {
             CtValue::FloatLiteral(value) => Some(Ty::float_literal_of(value)),
             CtValue::Bool(_) => Some(Ty::bool()),
             CtValue::None => Some(Ty::none()),
-            // Against a `StringLiteral[v]` slot the value is the literal of
-            // its text, which solves `v`; elsewhere it is still the
-            // value-less compile-time string (R1659).
-            CtValue::Str(text) if matches!(self_ty.kind(), TyKind::StringLiteral(Some(_))) => {
-                Some(Ty::string_literal_of(text))
-            }
-            CtValue::Str(_) => Some(Ty::string_literal()),
+            CtValue::Str(text) => Some(Ty::string_literal_of(text)),
             CtValue::Dtype(_) => Some(Ty::dtype()),
             CtValue::Trait(traits) => Some(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Some(TyKind::KgenString.into()),

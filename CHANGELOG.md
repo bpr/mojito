@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A bare `StringLiteral` is now the declared struct, as upstream's is
+  (R1658): a `def f(s: StringLiteral)` argument auto-parameterizes as
+  `StringLiteral[_]`, so each call instantiates per text and
+  `s._is_identical("abc")` and `s.value` work, and
+  `StringLiteral._from["xyz"]()` prints `xyz`. The checker's
+  bare-literal parameter rule is gone, the bundled `_is_identical`,
+  `__add__`, and `std.sys.info` bodies take upstream's spelling, and a
+  bare `StringLiteral` local or result now reports "cannot infer type
+  parameter" (R1787, R1857).
 - A compile-time string that is no literal now has upstream's type
   (R1657): a `[s: String]` value parameter is a `String`, the join of two
   different literals (`"a" if c else "bb"`) the `String` both materialize

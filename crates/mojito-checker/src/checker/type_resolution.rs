@@ -364,21 +364,6 @@ impl Checker {
         Ok(Ty::generator(decls, result))
     }
 
-    /// The bare source spelling `name` of the literal type `ty`
-    /// (`StringLiteral`): upstream
-    /// parameterizes the type by the literal's value, so the bare spelling is
-    /// concrete only as a whole parameter annotation, where the value infers
-    /// per call.
-    pub(super) fn bare_literal(&self, ty: Ty, name: &str) -> Result<Ty, TypeError> {
-        if self.bare_literal_parameter.get() {
-            Ok(ty)
-        } else {
-            Err(TypeError::Unsupported(format!(
-                "'{name}[_]' is not concrete, use '[]' to bind missing parameters"
-            )))
-        }
-    }
-
     pub(super) fn resolve_ty_from_anno(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         // Nesting depth: the outermost application of an annotation may leave
         // its origin slots to inference where its position allows; an
@@ -416,9 +401,6 @@ impl Checker {
         }
         Ok(match ty {
             SourceType::Bool => Ty::bool(),
-            SourceType::StringLiteral => {
-                self.bare_literal(Ty::string_literal(), "StringLiteral")?
-            }
             SourceType::ClosedStringLiteral => Ty::string_literal(),
             SourceType::TypeOf(operand) => self.type_of_operand(operand)?,
             SourceType::None => Ty::none(),
@@ -1460,11 +1442,6 @@ impl Checker {
         if name == "NoneType" && args.is_empty() {
             return Ok(Some((Ty::none(), Vec::new())));
         }
-        if name == "StringLiteral" && args.is_empty() {
-            return self
-                .bare_literal(Ty::string_literal(), name)
-                .map(|ty| Some((ty, Vec::new())));
-        }
         if args.is_empty()
             && let Some(parameter) = self.lookup_tparam(name)
         {
@@ -2371,8 +2348,15 @@ impl Checker {
                 }
                 .into())
             }
-            // A member alias `SIMD` declares, over the vector's parameters.
-            kind if kind.is_simd()
+            // A member alias `SIMD` declares, over the vector's parameters,
+            // or one a literal's struct declares (`StringLiteral._from`).
+            kind if (kind.is_simd()
+                || matches!(
+                    kind,
+                    TyKind::StringLiteral(Some(_))
+                        | TyKind::IntLiteral(Some(_))
+                        | TyKind::FloatLiteral(Some(_))
+                ))
                 && let Some((sname, targs)) = self.nominal_struct(base)
                 && self.structs.get(sname).is_some_and(|info| {
                     info.associated.contains_key(name)

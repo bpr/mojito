@@ -4994,10 +4994,11 @@ compiler's descriptor representation and the struct's library members serve
 one type, and `nominal_parts` answers it
 as the struct's instance. Literal-only operations stay on it. The value-less
 `TyKind::StringLiteral(None)`, which upstream has no type for, still types
-an untyped compile-time string (`CtValue::Str`'s meta), a bare run-time
-`StringLiteral` argument, and Writer payloads inside the stdlib (R1658,
-R1659); a `[text: String]` value parameter is a `String`, and a reflected
-name a `StaticString`. A source
+the elaborator's placeholder writer and a `[s: StringLiteral]` binder's
+declared type (R1659); a compile-time string's meta is the literal type of
+its text, a bare run-time `s: StringLiteral` argument auto-parameterizes as
+`StringLiteral[_]` like any parametric struct, a `[text: String]` value
+parameter is a `String`, and a reflected name a `StaticString`. A source
 `String` annotation is not a builtin type keyword: it parses as an ordinary
 name, the prelude rewrite qualifies it, and ordinary struct lookup resolves
 the nominal struct — no dedicated checker path. A literal converts wherever

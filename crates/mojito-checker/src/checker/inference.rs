@@ -2637,7 +2637,7 @@ impl Checker {
     pub(super) fn materialized_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
         let ty = self.infer(element)?;
         match ty.kind() {
-            TyKind::StringLiteral(_) => self.nominal_string_wrap(element.source_span()),
+            TyKind::StringLiteral(_) => self.nominal_string_wrap(&ty, element.source_span()),
             _ => Ok(default_literal(&ty)),
         }
     }
@@ -2714,8 +2714,9 @@ impl Checker {
         // infers `[name(n), "z"]`.
         if is_nominal_string(&element) {
             for value in elems {
-                if self.infer(value)?.is_string_literal() {
-                    self.nominal_string_wrap(value.source_span())?;
+                let ty = self.infer(value)?;
+                if ty.is_string_literal() {
+                    self.nominal_string_wrap(&ty, value.source_span())?;
                 }
             }
             return Ok(element);
@@ -2725,7 +2726,8 @@ impl Checker {
         if element.is_string_literal() {
             let mut materialized = element;
             for value in elems {
-                materialized = self.nominal_string_wrap(value.source_span())?;
+                materialized =
+                    self.nominal_string_wrap(&self.infer(value)?, value.source_span())?;
             }
             return Ok(materialized);
         }

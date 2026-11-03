@@ -32,11 +32,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::None => Ok(Type::None),
             Token::Identifier(id) => match id.as_str() {
                 "Bool" => Ok(Type::Bool),
-                // An application (`StringLiteral[v]`) names the declared
-                // struct; the bare name is the literal type.
-                "StringLiteral" if !matches!(self.peek_token()?, Some(Token::LBracket)) => {
-                    Ok(Type::StringLiteral)
-                }
                 // `Self.T` references one of the enclosing struct's type
                 // parameters; bare `Self` is the enclosing struct/trait type.
                 "Self" if matches!(self.peek_token()?, Some(Token::Dot)) => {
@@ -509,7 +504,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             if matches!(self.peek_token()?, Some(Token::LParen)) {
                 let name = match &ty {
                     Type::Bool => Some("Bool"),
-                    Type::StringLiteral => Some("StringLiteral"),
                     Type::SelfType => Some("Self"),
                     _ => None,
                 };

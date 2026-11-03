@@ -1791,6 +1791,15 @@ fn compile_time_parameters_of_a_struct_type_are_automatically_parameterized() {
 }
 
 #[test]
+fn a_bare_string_literal_argument_is_automatically_parameterized() {
+    // `s: StringLiteral` leaves the struct's `value` to an infer-only
+    // binder, as upstream's `addImplicitTypeParams` does, so each call
+    // instantiates per text and the declared members read it.
+    let source = "def same(s: StringLiteral) -> Bool:\n    return s._is_identical(\"abc\")\n\ndef size(s: StringLiteral) -> Int:\n    var x = s.value\n    return Int(mlir_value=__mlir_op.`pop.string.size`(x))\n\ndef main():\n    print(same(\"abc\"), same(\"x\"), size(\"abc\"))\n    print(StringLiteral._from[\"xyz\"]())\n";
+    assert_eq!(run(source).unwrap(), "True False 3\nxyz\n");
+}
+
+#[test]
 fn a_type_member_is_read_through_a_module_alias_and_a_construction() {
     // `CompilationTarget.current().stdlib_plugin`'s shapes: a module alias
     // of a type member, and a type member read through a compile-time

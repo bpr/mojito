@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1857**.
+Next free ID: **R1858**.
 
 ## Ordered Work
 
@@ -3707,7 +3707,32 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`assets/type_error/int_literal_local_not_concrete.mojo`,
     `float_literal_local_not_concrete.mojo`). Once the rule infers, those
     two fixtures take the pin's text.
+  - Probe: `var t: StringLiteral = s` over a `String` reports the same,
+    where the pin says "cannot implicitly convert 'String' value to
+    'StringLiteral[_]'" (`assets/type_error/nominal_string_default_rebind.mojo`),
+    and `var b: StringLiteral = "q"` is "cannot implicitly convert
+    'StringLiteral["q"]' value to 'StringLiteral[_]'" at the pin.
   - Found while landing R1780 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1857 A bare parametric struct as a result or `comptime`
+  annotation reports a failed inference, where upstream rejects the
+  annotation itself**
+
+  Problem: `def g() -> W` over `struct W[v: Int]` reports "cannot infer
+  type parameter 'v' of 'W' from the arguments", where the pin says
+  "'W[_]' is not concrete, use '[]' to bind missing parameters".
+  - Cause: outside a run-time parameter, a bare parametric struct
+    annotation resolves as the struct with its parameters unbound, and the
+    rejection comes later from inference, not from the annotation's
+    position as upstream's does.
+  - Probe: `comptime x: W = W[1]()` reports the same, where the pin says
+    "cannot construct a value with parametric type: 'W[_]'".
+  - Probe: `def g() -> StringLiteral` and `comptime x: StringLiteral =
+    "a"` report "cannot infer type parameter 'value' of 'StringLiteral'",
+    where the pin reports the two texts above for `'StringLiteral[_]'`.
+  - Found while landing R1658 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11241,43 +11266,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1658 A bare `StringLiteral` argument is a checker rule, where
-  upstream auto-parameterizes it**
-
-  `def f(s: StringLiteral) -> Bool: return s._is_identical("abc")` reports
-  "type 'StringLiteral' has no method '_is_identical'", where the pin
-  prints `True False` for `f("abc"), f("x")`.
-  - The parser makes the bare name `Type::StringLiteral`, not a
-    `Type::Named`, so R1606's `auto_parameterize.rs` never sees it.
-  - The checker types it as the value-less `StringLiteral`, which no
-    declared member answers, under the `bare_literal_parameter` flag
-    (`declarations.rs`, `statements.rs`) that `Checker::bare_literal`
-    (`type_resolution.rs`) reads.
-  - Lever: parse it as `Type::Named`, delete that flag and
-    `is_string_literal_annotation`, and let the argument instantiate per
-    text as `StringLiteral[_]`.
-  - `String.__init__(data: StringLiteral)`, `StringSpan.__init__(literal:
-    StringLiteral)`, `Path.__init__`, and `StringDict._insert` then
-    instantiate per text. Their conversions are reached through
-    `implicit_conversion_target(&Ty::string_literal(), ...)`
-    (`call_inference.rs`, `iteration.rs`), whose value-less source must
-    carry the literal's type first.
-  - Respell the bundled `_is_identical`'s `rhs: StringLiteral[_]` as the
-    bare `StringLiteral`.
-  - Probe: `var x = s.value` over `def f(s: StringLiteral) -> Int`, then
-    `pop.string.size` of `x`, is "the 'value' of a bare 'StringLiteral'
-    argument is not supported" (`value_less_literal_value`), where the pin
-    prints `3` for `f("abc")`.
-  - Probe: `print(StringLiteral.__init__)` and every other bare
-    `StringLiteral` in an expression is "Undefined variable", because
-    `Type::StringLiteral` respells as an identifier no scope binds
-    (`ast.rs`).
-  - Probe: `print(StringLiteral._from["xyz"]())`, upstream's bundled
-    factory, is "Undefined variable 'StringLiteral'" the same way; the pin
-    prints `xyz`.
-  - Depends on R1657 (the value-less conversion source).
-  - Model: Fable, Not Planned.
-
 - [ ] **R1659 The value-less `StringLiteral`'s byte primitives are
   compiler rules**
 
@@ -11292,12 +11280,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Delete the rules and `TyKind::StringLiteral(None)` itself.
   - The elaborator also defaults an unsolved type binder and the writer
     slot of a type-reached member to the value-less type
-    (`mono/instances.rs`), and `MetaTy::of_value` types an untyped
-    `CtValue::Str` by it (`param_expr.rs`); each needs its upstream type
-    before the variant can go.
+    (`mono/instances.rs`), and a `[s: StringLiteral]` binder's declared
+    type is it (`ct_param_source_type`, `comptime.rs`); each needs its
+    upstream type before the variant can go.
   - Probe: `def f(s: StringLiteral) -> Int: return s.byte_length()`
-    prints `3` for `f("abc")`. Done when `rg string_literal_primitive
-    crates` is empty.
+    already prints `3` for `f("abc")`, since the bare argument
+    auto-parameterizes. Done when `rg string_literal_primitive crates` is
+    empty.
   - Depends on R1658.
   - Model: Opus, Not Planned.
 

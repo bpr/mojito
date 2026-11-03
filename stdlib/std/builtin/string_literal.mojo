@@ -5,10 +5,7 @@
 # `write_repr_to`. A literal `"ab"` is a `StringLiteral["ab"]`, whose
 # members are these bodies. The compiler holds an application as its
 # literal type (R1660), and builds one by rule, so the default
-# initializer's empty body constructs nothing. A bare run-time
-# `StringLiteral` argument is still a value-less compiler type rather than
-# upstream's `StringLiteral[_]` (R1658), which is why `_is_identical` and
-# `__add__` spell their `rhs` as `StringLiteral[_]`. `__hash__` (R1654)
+# initializer's empty body constructs nothing. `__hash__` (R1654)
 # and the members whose bodies read `StringSlice(self)` (R1655) are not
 # ported, and for that reason the comparisons, `write_to`, and
 # `write_repr_to` read `as_string_slice()`.
@@ -73,7 +70,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         return self.byte_length() != 0
 
     def __add__(
-        self, rhs: StringLiteral[_]
+        self, rhs: StringLiteral
     ) -> StringLiteral[
         __mlir_attr[
             `#pop.string_concat<`,
@@ -239,7 +236,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         )
 
     @always_inline("builtin")
-    def _is_identical(self, rhs: StringLiteral[_]) -> Bool:
+    def _is_identical(self, rhs: StringLiteral) -> Bool:
         """Returns whether two string literals have identical KGEN parameters.
         """
         return __mlir_attr[

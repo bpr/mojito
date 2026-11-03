@@ -202,6 +202,14 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::KgenPointer(v)
         | TyKind::LitRef { element: v, .. } => is_symbolic(v),
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
+        // A literal type whose value is a parameter (`StringLiteral[v]`
+        // under its binder) unifies against the argument's text.
+        TyKind::StringLiteral(Some(value))
+        | TyKind::IntLiteral(Some(value))
+        | TyKind::FloatLiteral(Some(value)) => matches!(
+            value.as_ref(),
+            CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+        ),
         TyKind::Ref(v) => is_symbolic(&v.referent),
         kind if let Some((dtype, width)) = kind
             .as_simd()

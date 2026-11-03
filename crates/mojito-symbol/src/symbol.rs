@@ -673,9 +673,10 @@ pub fn keyword_collector_constructor_symbol() -> String {
 /// The `_insert` a call building a keyword collector names per keyword.
 ///
 /// It is the overload taking the keyword's literal key, as upstream's call
-/// inserts each keyword under its `StringLiteral`.
+/// inserts each keyword under its `StringLiteral`; the bare annotation
+/// auto-parameterizes as `StringLiteral[$value_key]`.
 pub fn keyword_collector_insert_symbol() -> String {
-    format!("{KEYWORD_COLLECTOR_STRUCT}._insert$ov$StringLiteral$V$Movable")
+    format!("{KEYWORD_COLLECTOR_STRUCT}._insert$ov$StringLiteral$V$value$key$V$Movable")
 }
 
 /// Whether a constructor declaration is its struct's list-literal
@@ -1716,7 +1717,7 @@ fn ast_raw(
             );
         }
         Type::Bool => "Bool".to_string(),
-        Type::StringLiteral | Type::ClosedStringLiteral => "StringLiteral".to_string(),
+        Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             // Mirror `ty_raw`: the nominal String annotation mangles as the
@@ -2032,7 +2033,7 @@ fn annotation_display(
 ) -> String {
     match ty {
         Type::Bool => "Bool".to_string(),
-        Type::StringLiteral | Type::ClosedStringLiteral => "StringLiteral".to_string(),
+        Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args)
             if args.is_empty()

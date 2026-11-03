@@ -353,11 +353,7 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         // binder.
         Type::TypeOf(_) => {}
         Type::Value(value) => rewrite::substitute_type_bindings_in_expr(value, subs),
-        Type::Bool
-        | Type::StringLiteral
-        | Type::ClosedStringLiteral
-        | Type::None
-        | Type::SelfType => {}
+        Type::Bool | Type::ClosedStringLiteral | Type::None | Type::SelfType => {}
     }
 }
 
@@ -429,7 +425,10 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
 fn ct_param_source_type(source: &Type) -> Option<Ty> {
     match source {
         Type::Bool => Some(Ty::bool()),
-        Type::StringLiteral | Type::ClosedStringLiteral => Some(Ty::string_literal()),
+        Type::ClosedStringLiteral => Some(Ty::string_literal()),
+        Type::Named(name, args) if name == "StringLiteral" && args.is_empty() => {
+            Some(Ty::string_literal())
+        }
         Type::None => Some(Ty::none()),
         // A trait-valued parameter (`Tr: type_of(AnyType)`).
         Type::TypeOf(operand) => any_trait_source_type(operand),

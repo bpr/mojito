@@ -538,7 +538,7 @@ parses it, whatever the capitalization of the name it starts with:
 the checker decides whether each denotes a type or a value. An operand is a
 `type` only where the type grammar alone spells it: a function type
 `def(...)`, a `ref` type, and a `*` pack. The scalar names (`Int`, `UInt`,
-`Bool`, `StringLiteral`, `Float64`, and the sized aliases such as `UInt8`),
+`Bool`, `Float64`, and the sized aliases such as `UInt8`),
 `Self` and its members, and `None` still parse as a `type` there (a scalar
 alias as a `NAME` type), a divergence (roadmap R1511, R1512). Followed by `(`, `Int`, `UInt`, `Bool`,
 `StringLiteral`, `Float64`, and `Self` open the construction expression they
@@ -1225,9 +1225,10 @@ fn_effect: 'capturing' ['[' ... ']'] | 'thin' | 'raises' [type] | 'abi' '(' ... 
 is **not** reserved). `Int`, `UInt`, and `Float64` are plain `NAME`s: the prelude's `comptime`
 aliases of `std.simd` (`Scalar[DType.int]`, `Scalar[DType.uint]`, `Scalar[DType.float64]`),
 which a program's own declaration of the name shadows, as it does `Int8` or `Scalar`. `String` is an ordinary `NAME` resolving to
-the prelude's nominal self-hosted `String` struct; a bare `StringLiteral` names the compile-time
-string literal type, and `StringLiteral[value]` with arguments is a parameterized struct
-type (the bundled `std.builtin.string_literal` declaration). A string literal implicitly converts wherever the nominal `String`
+the prelude's nominal self-hosted `String` struct; `StringLiteral` is an ordinary `NAME` too,
+the bundled `std.builtin.string_literal` struct, bare or applied (`StringLiteral[value]`). As a
+run-time parameter annotation the bare name auto-parameterizes (`StringLiteral[_]`, inferred per
+call); elsewhere it is not concrete. A string literal implicitly converts wherever the nominal `String`
 is expected (the struct's `@implicit` literal constructor). Any other `NAME` is a **struct type**
 (`Point`), a **type parameter** in scope (a bare `T` inside a generic `def`), or a
 **parameterized struct type** with arguments (`Pair[Int]`, `Pair[T]`, or the value form

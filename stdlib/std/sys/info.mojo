@@ -10,9 +10,6 @@
 # `is_32bit`, `is_64bit`, `simd_bit_width`, `simd_byte_width`,
 # `stdlib_plugin`, `size_of`, `align_of`, `bit_width_of`, and
 # `simd_width_of`, verbatim.
-# A bare `StringLiteral._from[name]()` does not resolve yet (R1658), so
-# the bodies spell the alias's definition,
-# `StringLiteral[_get_kgen_string[name]()]()`.
 # Omitted: `current_accelerator` (R1757), `_eq_triple_and_arch`
 # (R1755), the Nvidia architecture methods and the free `_SM_*X_ARCHS`
 # and `_is_sm_*` (R1756, R1754), `platform_map` and `platform_type_map`
@@ -219,7 +216,7 @@ struct CompilationTarget[_mlir_value: _TargetType = _current_target(), //](
             otherwise.
         """
         return StringLiteral[Self.__arch()]()._is_identical(
-            StringLiteral[_get_kgen_string[name]()]()
+            StringLiteral._from[name]()
         )
 
     @inline(.nodebug)
@@ -266,7 +263,7 @@ struct CompilationTarget[_mlir_value: _TargetType = _current_target(), //](
             False otherwise.
         """
         return StringLiteral[Self.__triple_arch()]()._is_identical(
-            StringLiteral[_get_kgen_string[name]()]()
+            StringLiteral._from[name]()
         )
 
     @staticmethod
@@ -650,9 +647,7 @@ struct CompilationTarget[_mlir_value: _TargetType = _current_target(), //](
         """
         comptime is_nvidia = Self.is_triple["nvptx64-nvidia-cuda"]()
 
-        comptime if not StringLiteral[
-            _get_kgen_string[subarch]()
-        ]()._is_identical(_ANY):
+        comptime if not StringLiteral._from[subarch]()._is_identical(_ANY):
             return is_nvidia and Self._is_arch[subarch]()
         else:
             return is_nvidia
@@ -678,9 +673,7 @@ struct CompilationTarget[_mlir_value: _TargetType = _current_target(), //](
         # legacy `amdgcn` -- to `amdgpu`.
         comptime is_amd = Self._is_triple_arch["amdgpu"]()
 
-        comptime if not StringLiteral[
-            _get_kgen_string[subarch]()
-        ]()._is_identical(_ANY):
+        comptime if not StringLiteral._from[subarch]()._is_identical(_ANY):
             return is_amd and Self._is_arch[subarch]()
         else:
             return is_amd
@@ -700,9 +693,7 @@ struct CompilationTarget[_mlir_value: _TargetType = _current_target(), //](
         """
         comptime is_apple = Self.is_triple["air64-apple-macosx"]()
 
-        comptime if not StringLiteral[
-            _get_kgen_string[subarch]()
-        ]()._is_identical(_ANY):
+        comptime if not StringLiteral._from[subarch]()._is_identical(_ANY):
             return is_apple and Self._is_arch[subarch]()
         else:
             return is_apple

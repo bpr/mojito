@@ -826,14 +826,17 @@ fn parses_parameterized_type_annotation() {
 
 #[test]
 fn string_literal_application_is_a_named_type() {
-    // A bare `StringLiteral` is the literal type; with arguments it is the
-    // declared struct's application.
+    // A bare `StringLiteral` names the declared struct, as with arguments
+    // it names the struct's application.
     let stmts = parse("var a: StringLiteral = q\nvar b: StringLiteral[v] = q\n");
     let annotation = |stmt: &Stmt| match &stmt.kind {
         StmtKind::VarDecl { ty: Some(ty), .. } => Some(ty.clone()),
         _ => None,
     };
-    assert_eq!(annotation(&stmts[0]), Some(Type::StringLiteral));
+    assert_eq!(
+        annotation(&stmts[0]),
+        Some(Type::Named("StringLiteral".to_string(), Vec::new()))
+    );
     assert!(matches!(
         annotation(&stmts[1]),
         Some(Type::Named(name, args)) if name == "StringLiteral" && args.len() == 1
