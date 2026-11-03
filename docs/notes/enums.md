@@ -61,9 +61,9 @@ Mojito generates the same names and lists, written as Mojo and parsed
   upstream's `__enum_discriminant_dtype` picks `u8`, `u16`, or `u32` by case
   count; nothing but `size_of` observes it.
 - **The default `Writable` text** is generated per enum (`write_to`,
-  `write_repr_to`), with upstream's `_enum_reflection_write_to` shape, since
-  Mojito's reflective defaults are synthesized per conformer, not the
-  trait's own bodies (R1461).
+  `write_repr_to`), with upstream's `_enum_reflection_write_to` shape, where
+  upstream's enum inherits `Writable`'s own bodies, which reach
+  `_enum_reflection_write_to` (R1409).
 
 A case without a payload is a `comptime` member whose value the check
 freezes as the enum over a frozen variant (`CtValue::Variant`), which both

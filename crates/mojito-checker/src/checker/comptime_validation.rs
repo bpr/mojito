@@ -3200,9 +3200,9 @@ impl Checker {
     }
 
     /// The binders `expr` reads through the `names` it spells: each binder
-    /// it names, those a local display binding or a local `comptime`
-    /// parameter expression it names is over, and the enclosing struct's
-    /// for `Self`. A type alias or type parameter it calls as a
+    /// it names, those a local display binding, a local `comptime`
+    /// parameter expression, or a local reflection handle it names is over,
+    /// and the enclosing struct's for `Self`. A type alias or type parameter it calls as a
     /// constructor (`TInt(…)`) counts as one it names. `None` when the binders are not known (a type-shaped
     /// argument, a local value that denotes no parameter expression), where
     /// every binder in scope stands in, as for a call of a nested `def`.
@@ -3258,13 +3258,14 @@ impl Checker {
             match denoted {
                 Some(denoted) => {
                     // A type it embeds over a binder (the instance an
-                    // `__init__` application constructs) is type-shaped.
+                    // `__init__` application constructs) is type-shaped,
+                    // but a bare type binder (a `reflect[T]` query's
+                    // subject) is the binder it reads.
                     let mut typed = false;
                     denoted.visit(&mut |node| {
-                        typed |= node
-                            .embedded_types()
-                            .into_iter()
-                            .any(mojito_types::types::has_free_parameters);
+                        for embedded in node.embedded_types() {
+                            typed |= !read_type_binder(embedded, &mut read);
+                        }
                         if let mojito_types::param_expr::ParamKind::DeclRef(reference)
                         | mojito_types::param_expr::ParamKind::PackQuery {
                             pack: reference,
@@ -3275,6 +3276,16 @@ impl Checker {
                         }
                     });
                     if typed {
+                        return None;
+                    }
+                }
+                // A local reflection handle (`comptime r = reflect[T]`)
+                // reads the binders its subject names.
+                None if let Some(subject) = self
+                    .local_comptime_value(name)
+                    .and_then(|bound| self.reflection_handle(bound).ok().flatten()) =>
+                {
+                    if !read_type_binder(&subject, &mut read) {
                         return None;
                     }
                 }
@@ -6129,6 +6140,19 @@ fn meta_names_binder(
         MetaTy::Dict(entries) => entries
             .iter()
             .any(|(key, value)| meta_names_binder(key, binder) || meta_names_binder(value, binder)),
+    }
+}
+
+/// Add to `read` the binder of `ty` when it is a bare type parameter.
+/// Whether the binders `ty` reads are known: it is such a parameter, or
+/// closed.
+fn read_type_binder(ty: &Ty, read: &mut HashSet<mojito_types::param_expr::ParamId>) -> bool {
+    match ty.kind() {
+        TyKind::Param { binder, .. } => {
+            read.insert(binder.id.clone());
+            true
+        }
+        _ => !mojito_types::types::has_free_parameters(ty),
     }
 }
 

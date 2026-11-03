@@ -12,7 +12,6 @@
 # simplified to "never break after ZWJ" and GB9b (Prepend) omitted.
 
 from std.memory.alloc import unsafe_alloc
-from std.format import _reflection_write_field_to
 
 from std.collections.list import List
 from std.collections.optional import Optional

@@ -177,6 +177,7 @@ assets/ok/comptime_for_named_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_nested_inlined_constructor_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_nested_unread_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_nested_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_over_chained_reflect_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_string_aggregates.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_struct_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_template_served.mojo	-	ineligible	no-scalar-entry-shape
@@ -982,6 +983,7 @@ assets/ok/reference_result_view_conversion.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/reference_return_forwarded_accessor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/refined_out_self_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflect_self_generic_struct_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflected_names_static_string.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_name_materialize.mojo	-	ineligible	no-scalar-entry-shape
@@ -1375,6 +1377,7 @@ assets/ok/trait_default_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_parameter_defaults.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_refinement.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_default_some_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_wrapper_conventions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_inheritance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_method_binder_spelling.mojo	-	ineligible	no-scalar-entry-shape
@@ -1551,6 +1554,7 @@ assets/ok/with_multiple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_multiple_dependent.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/witness_default_differs_from_requirement.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/writable_default_trait_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/writable_extra_write_to_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/writable_trait_library.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/writer_write_override.mojo	-	ineligible	no-scalar-entry-shape

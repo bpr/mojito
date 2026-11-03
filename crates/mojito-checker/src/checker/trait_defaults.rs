@@ -213,7 +213,13 @@ pub(super) fn default_shapes(
         .map(|method| DefaultShape {
             method: method.name.clone(),
             member: member_symbol(trait_name, method, sets, constants),
-            key: overload_key(&method.name, &method.params, method.keyword_only, None),
+            key: overload_key(
+                &method.name,
+                (&method.type_params, method.ret.as_ref()),
+                &method.params,
+                method.keyword_only,
+                None,
+            ),
             overload: 0,
             arity: method.params.len(),
             binders: method
@@ -278,6 +284,7 @@ pub(super) fn inherited_defaults(
         .map(|method| {
             overload_key(
                 &method.name,
+                (&method.type_params, method.ret.as_ref()),
                 &method.params,
                 method.keyword_only,
                 Some(name),
@@ -905,12 +912,16 @@ fn param_name(param: &TypeParam) -> &str {
 
 /// A default method's identity among its same-name overloads: its name and
 /// its parameters' overload signature, with the conformer's own name read as
-/// `Self` so a method spelling either suppresses the default.
+/// `Self` so a method spelling either suppresses the default, and a
+/// parameter typed by an own binder nothing else names read as the
+/// `Some[Bound]` automatic parameterization makes the same signature
+/// (`[W: Writer](mut writer: W)` and `(mut writer: Some[Writer])`).
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct OverloadKey(String, SignatureKey);
 
 fn overload_key(
     name: &str,
+    (type_params, ret): (&[TypeParam], Option<&Type>),
     params: &[FnParam],
     keyword_only: Option<usize>,
     conformer: Option<&str>,
@@ -924,6 +935,9 @@ fn overload_key(
                 || (matches!(&param.ty, Type::Bool) && conformer == Some("Bool"))
             {
                 param.ty = Type::SelfType;
+            }
+            if let Some(existential) = existential_spelling(&param.ty, type_params, params, ret) {
+                param.ty = existential;
             }
             param
         })
@@ -947,6 +961,73 @@ fn overload_key(
         name.to_string(),
         SignatureKey::from_ast_params(&params).with_keyword_names(keyword_names),
     )
+}
+
+/// The `Some[Bound]` a parameter type `ty` is, as automatic
+/// parameterization reads it: `Some[Bound]` itself, spelled as a type, or
+/// a single-bound binder of `type_params` that no other spelling among
+/// `params` and `ret` names. `None` for any other type.
+fn existential_spelling(
+    ty: &Type,
+    type_params: &[TypeParam],
+    params: &[FnParam],
+    ret: Option<&Type>,
+) -> Option<Type> {
+    let existential = |bound: &str| {
+        Type::Named(
+            "Some".to_string(),
+            vec![ParamArg::Type(Type::Named(bound.to_string(), Vec::new()))],
+        )
+    };
+    let Type::Named(named, args) = ty else {
+        return None;
+    };
+    if named == "Some" {
+        return match args.as_slice() {
+            [
+                ParamArg::Value(Expr {
+                    kind: ExprKind::Identifier(bound),
+                    ..
+                }),
+            ] => Some(existential(bound)),
+            _ => None,
+        };
+    }
+    if !args.is_empty() {
+        return None;
+    }
+    let binder = type_params.iter().find(|param| {
+        param.name == *named
+            && param.value_type.is_none()
+            && param.callable_bound.is_none()
+            && param.default.is_none()
+            && param.constraints.is_empty()
+    })?;
+    let [bound] = binder.bounds.as_slice() else {
+        return None;
+    };
+    let mut names = NamesType {
+        name: named,
+        count: 0,
+    };
+    for ty in params.iter().map(|param| &param.ty).chain(ret) {
+        mojito_ast::visit::walk_type(&mut names, ty);
+    }
+    (names.count == 1).then(|| existential(bound))
+}
+
+/// Count the type spellings that name `name`.
+struct NamesType<'a> {
+    name: &'a str,
+    count: usize,
+}
+
+impl mojito_ast::visit::Visitor for NamesType<'_> {
+    fn visit_type(&mut self, ty: &Type) {
+        if matches!(ty, Type::Named(named, _) if named == self.name) {
+            self.count += 1;
+        }
+    }
 }
 
 /// Add to `reached` every default trait `name` gives a conformer, its

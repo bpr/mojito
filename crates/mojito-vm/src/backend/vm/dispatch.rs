@@ -662,7 +662,7 @@ impl VmBackend {
     /// nominal value writes itself through the `write_to`/`write_repr_to`
     /// instance bound to the builtin string writer that the member table
     /// of its type names ([`mojito_symbol::symbol::member_table_name`]): a
-    /// struct's own or synthesized `Writable` member, by its runtime name,
+    /// struct's own or inherited `Writable` member, by its runtime name,
     /// a `Bool`'s declared member, and a `SIMD` value's, by its runtime
     /// dtype and width, which are its type. Only the literals, `DType`,
     /// strings, and the VM's internal values keep host text.

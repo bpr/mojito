@@ -8,7 +8,6 @@
 # Writable machinery.
 
 from std.range import range
-from std.format import _reflection_write_field_to
 
 
 struct TString[*Ts: Movable & Writable](Deinitable, Movable, Writable):

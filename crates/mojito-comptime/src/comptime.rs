@@ -108,7 +108,6 @@ pub fn prepare_importing(
     synthesize_copyable_copy(&mut own, installed);
     synthesize_hashable_hash(&mut own);
     synthesize_equatable_eq(&mut own);
-    synthesize_writable_defaults(&mut own, installed);
     auto_parameterize::parameterize_unbound_arguments(&mut own, installed);
     fold_simd_alias_bounds(&mut own, installed);
     fold_kgen_type_parameters(&mut own, installed)?;

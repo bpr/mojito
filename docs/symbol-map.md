@@ -1830,12 +1830,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `pack_element_construction`.
 - `comptime/synth.rs` owns the synthesized conformance members, run by
   `prepare_importing`: `synthesize_copyable_copy`,
-  `synthesize_hashable_hash`, `synthesize_equatable_eq`, and
-  `synthesize_writable_defaults` (`Writable`'s reflective `write_to` and
-  `write_repr_to` for a conformer, direct or through a refinement, without
-  a `Writer`-fed member: each field through the bundled
-  `std.format._reflection_write_field_to`, which the compiler names by
-  `mojito_checker::checker::writable_field_writer`). Neither backend
+  `synthesize_hashable_hash`, and `synthesize_equatable_eq`. `Writable`'s
+  reflective `write_to` and `write_repr_to` are the bundled trait's own
+  default bodies (`std/format/__init__.mojo`), over `_reflection_write_to`
+  and `std.builtin.constrained._field_conforms_to_error`. Neither backend
   formats a struct's fields itself: the VM's `format_value`
   (`backend/vm/dispatch.rs`), which reaches a struct's or a `SIMD`'s
   instance through `symbol::member_table_name`, and Pliron's

@@ -1938,15 +1938,29 @@ impl Checker {
             }
             // An element of a reflected list (`NAMES[1]` over `comptime
             // NAMES = reflect[P].field_names()`): `param_list.get` over the
-            // query's answer.
+            // query's answer, a field name the `StaticString` upstream's
+            // list of `StaticString`s holds.
             ExprKind::Index { object, index }
-                if let Ok(Some((_, list))) = self.reflection_list(object) =>
+                if let Ok(Some((query, list))) = self.reflection_list(object) =>
             {
                 let list = match list {
                     CtValue::Expr(symbolic) => symbolic,
                     closed => context.constant(closed).map_err(param_error)?,
                 };
-                context.list_get(&list, &build(index)?).map_err(param_error)
+                let element = context
+                    .list_get(&list, &build(index)?)
+                    .map_err(param_error)?;
+                if query != mojito_types::param_expr::ReflectQuery::FieldNames {
+                    return Ok(element);
+                }
+                let name = context
+                    .field(
+                        &element,
+                        mojito_types::ct::LITERAL_VALUE_MEMBER,
+                        MetaTy::value(TyKind::KgenString.into()),
+                    )
+                    .map_err(param_error)?;
+                self.static_string_of(name)
             }
             // An element of a list a constant or a member denotes (`XS[0]`
             // of a module display constant, `l[i]` of a requested local,

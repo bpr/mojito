@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Writable`'s `write_to` and `write_repr_to` are now the bundled trait's
+  own default bodies over `_reflection_write_to` and
+  `_enum_reflection_write_to`, upstream's text verbatim, instead of a
+  member synthesized per conformer (R1461). A non-`Writable` field reports
+  upstream's message, which names the struct and the field, through the
+  newly bundled `std/builtin/constrained.mojo`'s `_field_conforms_to_error`.
+  On the way: a `comptime` binding over a local `reflect[T]` handle reads
+  `T` as its binder; a conformer's wrapper of a trait default taking
+  `Some[Writer]` deduces its writer when inlined; a `[W: Writer]` method
+  and a `Some[Writer]` one are the same signature for default
+  suppression; and `_unqualified_type_name[T]()` and a `field_names()`
+  element are compile-time `StaticString`s in a parameter list. A
+  hand-written `EnumLike` conformer's default still fails to elaborate
+  (R1879, R1880), and `_constrained_conforms_to` is not bundled (R1881).
 - A call on a struct value is now checked and lowered as its `__call__`
   method call, as upstream's `CallNode` resolves a callee that is no
   function, rather than through its `def(...)` conformance as a

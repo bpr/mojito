@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1879**.
+Next free ID: **R1882**.
 
 ## Ordered Work
 
@@ -4785,6 +4785,65 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The checker already answers both conformances for the thin argument
     (R1584), so the gap is the elaborator's alone.
   - Found while landing R1584 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1880 A lifted compile-time application over every binder in
+  scope has no MIR declaration when one of them is a callable binder**
+
+  `h[T: EnumLike, //, f: def(Int) thin -> Int](this: T)` holding `comptime
+  names = ParameterList[T._enum_case_names]()` and `comptime for i in
+  range(names.length)` fails, "unsupported compile-time application of
+  `$comptime$h$c0`, which has no MIR declaration", where the pin runs it.
+  - Cause: `binders_read` (`checker/comptime_validation.rs`) does not know
+    the binders of a type-shaped value (`T._enum_case_names`), so the
+    application is over every binder in scope, `f` included, and
+    `request_applications` (`mir.rs`) finds no scope declaring `f`:
+    `EnclosingBinders::with` keeps a callable binder out of
+    `declarations`.
+  - Upstream has no lifted function; the binding is a parameter
+    expression, and a callable binder is a parameter reference (R1449).
+  - Probe: `print` of a hand-written `EnumLike & Writable` conformer
+    without `write_to`, through `Writable`'s default, once R1879 lands.
+  - Probe: `_int_tuple_binary_apply`, `_int_tuple_compare`, and
+    `_bool_tuple_reduce` (`std/utils/index.mojo`) request such an
+    application.
+  - Found while landing R1461 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1879 An instance substitutes the register types of the tail after
+  a taken `comptime if` arm that returns**
+
+  `def g[T: AnyType](this: T)` holding `comptime if conforms_to(T,
+  EnumLike): print("enum"); return`, then a `comptime for` over
+  `reflect[T].field_types()` that binds `ref field = r.field_ref[i](this)`,
+  fails for an `EnumLike` struct, "unsupported dependent type
+  `reflect[T].field_types()[…($iter)]` has no concrete MIR declaration
+  fact", where the pin prints `enum`.
+  - Lead: `splice_comptime_arm` (`native/mono/select.rs`) discards the
+    tail's blocks, but its registers keep their dependent types over the
+    unrolled loop's `$iter`, which substitution then cannot close.
+  - Probe: `print` of a hand-written `EnumLike & Writable` conformer
+    without `write_to` fails the same way inside `_reflection_write_to`,
+    where the pin prints `Flag.On(3)`.
+  - Found while landing R1461 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1881 A `comptime assert` message built as a `StaticString` of a
+  `_get_kgen_string` concatenation does not check**
+
+  `comptime assert True, StaticString(_get_kgen_string["a", "b"]())` is
+  rejected, "not a compile-time Int constant: not an associated comptime
+  expression", where the pin runs it.
+  - Cause: `check_assert_message` (`checker/comptime_validation.rs`)
+    neither folds the construction through `compile_dependent_ct_expr`
+    nor lifts it; the same expression checks as a runtime `print`
+    argument.
+  - Probe: upstream's `_constrained_conforms_to`, omitted from the bundled
+    `std/builtin/constrained.mojo` for this reason.
+  - Found while landing R1461 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11785,11 +11844,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   defaults call `_enum_reflection_write_to` for every `EnumLike` conformer,
   `Optional` included.
   - The generated bodies have upstream's shape (`Name.case(payload)`), so
-    the text matches; a hand-written `EnumLike` conformer without its own
-    `write_to` still prints the reflective field form.
-  - Delete the generation once `Writable`'s defaults are library code.
+    the text matches.
+  - `Writable`'s defaults are now the trait's own bodies, so deleting the
+    generation leaves an enum to `_enum_reflection_write_to`, which a
+    hand-written `EnumLike` conformer reaches today and fails (R1879,
+    R1880).
   - Found while landing `enum` (2026-10-25).
-  - Depends on R1461 (`Writable`'s defaults as the trait's bodies).
+  - Depends on R1879 and R1880.
   - Model: Opus, Not Planned.
 
 - [ ] **R324 `reflect[T]` is a compiler builtin where upstream's is a
@@ -12015,36 +12076,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1461 `Writable`'s reflective defaults are synthesized per
-  conformer, where upstream's are the trait's own bodies**
-
-  `synthesize_writable_defaults` (`comptime/synth.rs`) gives each conformer
-  without a `Writer`-fed member a `write_to` and `write_repr_to` that write
-  each field through the bundled `_reflection_write_field_to`, where
-  upstream's `Writable` declares both as default bodies over
-  `_reflection_write_to` (and `_enum_reflection_write_to` for an
-  `EnumLike`).
-  - The bundled trait's requirements stay `...` until upstream's body
-    checks. Its `r.field_ref[i](this)` now checks in a trait default.
-  - Each bundled module hosting a defaulted conformer imports
-    `_reflection_write_field_to` (`std/span.mojo`, `std/string.mojo`, and
-    five more), since the synthesized call names it by its linked name.
-  - Probe: printing a conformer whose field is not `Writable` fails with
-    "Could not derive Writable - a member field does not implement
-    Writable", where the pin's `_field_conforms_to_error` names both
-    ("Could not derive Writable for Holder - member field `o: Opaque` does
-    not implement Writable"). The helper, whose `StaticString` result is
-    the assert message, is not bundled.
-  - Probe: a user trait whose default is upstream's body text; its
-    `r.field_ref[i](this)` and `comptime WriterType = type_of(writer)`
-    check, so re-probe what stops it now.
-  - Done when the trait declares upstream's bodies and the synthesis, the
-    helper, and its imports are gone; R1409's generated enum members go
-    next.
-  - Found while landing R424 (2026-10-26).
-  - Depends on R134, R77, and R1210.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1481 `Equatable`'s and `Hashable`'s reflective defaults are
   synthesized per conformer, where upstream's are the traits' own bodies**
 
@@ -12056,8 +12087,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `std/hash/hash.mojo`).
   - `reflect[Self]` in a plain struct's method already reads the fields.
   - The bodies read each field through `r.field_ref[i](self)`, which now
-    checks in a trait default, and assert its conformance with the message `_field_conforms_to_error`
-    builds, which is not bundled.
+    checks in a trait default, and assert its conformance with the message
+    the bundled `_field_conforms_to_error` builds, as `Writable`'s do.
   - The bundled traits' requirements stay `...` until both check.
   - Done when both traits declare upstream's bodies and the two synthesis
     passes are gone.

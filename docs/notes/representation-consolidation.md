@@ -117,8 +117,6 @@ command cannot use both.
    - A struct callee's `def(...)` contract still composes its `__call__`
      (R1466).
    - R1280: the iteration step cannot inline.
-   - R1461: `Writable`'s synthesized reflective defaults become the
-     trait's own bodies.
 
    The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
    filed. The checker's copy and move synthesis is tied to them, and

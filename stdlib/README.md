@@ -175,10 +175,11 @@ point, as upstream's toolchain does.
   `Writer`'s `write_string` requirement and the default `write[*Ts:
   Writable]` that writes each argument through its `write_to`, which a
   conformer may override, and `Writable`'s `write_to`/`write_repr_to`
-  requirements. The prelude exports both. Upstream's reflective defaults are
-  synthesized per conformer (R1461), writing each field through
-  `_reflection_write_field_to`, which every module hosting a defaulted
-  conformer imports.
+  requirements with upstream's reflective default bodies over
+  `_reflection_write_to` and `_enum_reflection_write_to`. The prelude exports
+  both.
+- `std/builtin/constrained.mojo` — upstream's `_field_conforms_to_error`,
+  the `StaticString` a reflective default's field assert reports.
 - `std/collections/set.mojo` — a generic, list-backed `Set[T, H: Hasher = default_hasher]` for `Hashable & Equatable &
   Copyable & Movable` elements (upstream's KeyElement bound and hasher
   parameter; the dense list preserves insertion order and never hashes). It supports `add`, membership through `in`/`__contains__`, `len`, and

@@ -2764,10 +2764,11 @@ each heterogeneous Writable argument through its `write_to`, and a builtin's
 `write_to` feeds its host-formatted UTF-8 text to `write_string`
 (`$write_formatted`). The VM's buffer writer uses `String` as the `StringSlice`
 representation. A conformer without a `Writer`-fed `write_to` or
-`write_repr_to` gains upstream's reflective default as a synthesized member at
-preparation (`synthesize_writable_defaults`), writing `Name[params](` and each
-field through the bundled `_reflection_write_field_to`, whose `comptime
-assert` checks the field's conformance where the default is instantiated. So
+`write_repr_to` inherits `Writable`'s own default bodies, as upstream: each a
+trait member forwarded to by the conformer's wrapper, over
+`_reflection_write_to`, which writes `Name(` and each field through
+`reflect[T].field_ref`, its `comptime assert` checking the field's
+conformance where the default is instantiated. So
 every `Writable` struct has both members, and neither backend formats a
 struct's fields itself: a struct reaching display without its instance is an
 invariant violation. The VM displays a `SIMD` value (`Int`, `Float32`, a

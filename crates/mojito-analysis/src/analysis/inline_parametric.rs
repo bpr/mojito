@@ -1299,12 +1299,20 @@ impl<'c> Inliner<'_, 'c> {
             Some(Some(Owner::Unbound)) | None => None,
             Some(None) => return None,
         };
+        let existentials = existential_arguments(
+            declaration,
+            captures.len(),
+            &matched,
+            &call,
+            &self.function.reg_types,
+        )?;
         let Instantiated {
             body: callee,
             closures,
         } = self.instantiated_callee(
             (block, index),
             (param_arg_regs, &compile_time, capture_accesses),
+            &existentials,
             (full, reduced.as_ref(), declaration),
             owner.as_ref(),
         )?;
@@ -1340,7 +1348,8 @@ impl<'c> Inliner<'_, 'c> {
 
     /// The callee of the call at `index` of `block`, its full body or the
     /// `reduced` generator, instantiated at the call's compile-time
-    /// arguments, each callable one bound to what its register in
+    /// arguments and its `Some[Trait]` binders' `existentials`, each
+    /// callable one bound to what its register in
     /// `param_arg_regs` holds; `None` when they do not bind, or when the
     /// call's `capture_accesses` are to places neither a nested callee's
     /// captures nor a bound closure's.
@@ -1352,6 +1361,7 @@ impl<'c> Inliner<'_, 'c> {
             &[TyArg],
             &[MirCaptureAccess],
         ),
+        existentials: &[(ParamRef, Ty)],
         (full, reduced, declaration): (
             &'c MirFunction,
             Option<&MirFunction>,
@@ -1364,8 +1374,9 @@ impl<'c> Inliner<'_, 'c> {
             .map(|argument| self.callable_argument(block, index, argument.value?))
             .collect();
         let arguments = Arguments {
-            arguments: compile_time,
+            compile_time,
             callables: &callables,
+            existentials,
         };
         let instantiated = match reduced {
             Some(body) => {
@@ -3051,6 +3062,73 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
     receiver_closed && closed_blocks(&callee.blocks)
 }
 
+/// The binding of each `Some[Trait]` binder `declaration`'s parameters
+/// are spelled at, which its own binders do not declare, to the type of
+/// the argument the call passes there, as upstream's call deduces the
+/// infer-only parameter automatic parameterization opens for it. A
+/// declaration's slots past its first `captured` are `matched`'s. `None`
+/// keeps the call: a binder spelled inside a parameter's type rather than
+/// as the whole of it, one with no argument, or one deduced at two types.
+fn existential_arguments(
+    declaration: &MirFunctionDeclaration,
+    captured: usize,
+    matched: &CallSlots,
+    call: &CallArguments<'_>,
+    reg_types: &HashMap<u32, Ty>,
+) -> Option<Vec<(ParamRef, Ty)>> {
+    let existential = |ty: &Ty| match ty.kind() {
+        TyKind::Param { binder, .. }
+            if binder.name.starts_with("Some[")
+                && !declaration
+                    .param_decls
+                    .iter()
+                    .any(|decl| *decl.id() == binder.id) =>
+        {
+            Some(binder.clone())
+        }
+        _ => None,
+    };
+    let mut existentials: Vec<(ParamRef, Ty)> = Vec::new();
+    for (position, ty) in declaration.param_types.iter().enumerate() {
+        let ty = peel_refs(ty);
+        let Some(binder) = existential(ty) else {
+            let nested =
+                mojito_types::types::mentions_open(ty, &|inner| existential(inner).is_some());
+            if nested {
+                return None;
+            }
+            continue;
+        };
+        let argument = match matched.slots.get(position.checked_sub(captured)?)? {
+            ArgSlot::Positional(source) => call.args[*source],
+            ArgSlot::Keyword(source) => call.kwargs[*source].1,
+            ArgSlot::Default => return None,
+        };
+        let actual = peel_refs(reg_types.get(&argument.0)?).clone();
+        match existentials.iter().find(|(known, _)| known.id == binder.id) {
+            Some((_, known)) if *known != actual => return None,
+            Some(_) => {}
+            None => existentials.push((binder, actual)),
+        }
+    }
+    let collectors = declaration.variadic.iter().chain(&declaration.kw_variadic);
+    for ty in collectors {
+        if mojito_types::types::mentions_open(ty, &|inner| existential(inner).is_some()) {
+            return None;
+        }
+    }
+    Some(existentials)
+}
+
+/// The referent behind any number of reference layers.
+fn peel_refs(ty: &Ty) -> &Ty {
+    let mut ty = ty;
+    while let TyKind::Ref(reference) = ty.kind() {
+        ty = &reference.referent;
+    }
+    ty
+}
+
 /// Whether `blocks` and their regions hold no closure.
 fn closed_blocks(blocks: &[MirBlock]) -> bool {
     blocks.iter().all(|block| {
@@ -3545,7 +3623,7 @@ fn instantiated<'c>(
     arguments: &Arguments<'_>,
     declarations: &MirDeclarations,
 ) -> Option<Instantiated<'c>> {
-    if owner.is_none() && declaration.param_decls.is_empty() {
+    if owner.is_none() && declaration.param_decls.is_empty() && arguments.existentials.is_empty() {
         return arguments.binding().is_empty().then_some(Instantiated {
             body: Cow::Borrowed(callee),
             closures: Vec::new(),
@@ -3898,16 +3976,19 @@ enum CallableArgument {
 /// its runtime register names when it has one: what a callable value
 /// binder (`f: def(Int) -> Int`) is bound to.
 struct Arguments<'a> {
-    arguments: &'a [TyArg],
-    /// Aligned with `arguments`; shorter when the call passes no registers.
+    compile_time: &'a [TyArg],
+    /// Aligned with `compile_time`; shorter when the call passes no registers.
     callables: &'a [Option<CallableArgument>],
+    /// Each `Some[Trait]` binder of the callee's parameters, which no
+    /// declaration declares, with the type the call deduces it at.
+    existentials: &'a [(ParamRef, Ty)],
 }
 
 impl Arguments<'_> {
     /// The arguments that bind a binder, origins left out, each with its
     /// function.
     fn binding(&self) -> Vec<(&TyArg, Option<&CallableArgument>)> {
-        self.arguments
+        self.compile_time
             .iter()
             .enumerate()
             .filter(|(_, argument)| !matches!(argument, TyArg::Origin(_)))
@@ -3971,6 +4052,7 @@ impl<'d> Instantiation<'d> {
         let decls = &declaration.param_decls;
         let covered = owner.map_or(0, |owner| restated_owner_binders(owner.decls, decls));
         let own = &decls[covered..];
+        let existentials = arguments.existentials;
         let arguments = arguments.binding();
         let own_arguments = if arguments.len() == decls.len() {
             &arguments[covered..]
@@ -4008,6 +4090,16 @@ impl<'d> Instantiation<'d> {
                 let ty = decl.value_element_ty()?.clone();
                 instantiation.closures.push((decl.binder(), ty, closure));
             }
+        }
+        for (binder, ty) in existentials {
+            instantiation.bindings.bind(
+                binder.id.clone(),
+                instantiation.context.type_shape(ty.clone()),
+            );
+            instantiation
+                .bindings
+                .bind_type(binder.id.clone(), ty.clone());
+            instantiation.types.push(binder.clone());
         }
         Some(instantiation)
     }

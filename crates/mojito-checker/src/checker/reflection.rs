@@ -349,7 +349,7 @@ impl Checker {
     /// `StaticString(_kgen=name)`, the application of `StringSpan`'s
     /// `!kgen.string` initializer the elaborator applies once `name` is
     /// closed, as upstream's `name()` and `base_name()` construct one.
-    fn static_string_of(&self, name: ParamExpr) -> Result<ParamExpr, TypeError> {
+    pub(super) fn static_string_of(&self, name: ParamExpr) -> Result<ParamExpr, TypeError> {
         let owner = mojito_types::types::STDLIB_STRING_SPAN_STRUCT;
         let initializer = self
             .structs
@@ -495,13 +495,29 @@ impl Checker {
 
     /// The handle and query an expression reads: `r.field_count()`,
     /// `r.is_struct()`, `r.field_names()`, `r.field_types()`,
-    /// `r.field_index["x"]()`, with `r` a handle expression or a bound name.
+    /// `r.field_index["x"]()`, with `r` a handle expression or a bound name,
+    /// or the type-name intrinsic `_unqualified_type_name[T]()`.
     fn reflection_query_of(&self, expr: &Expr) -> Result<Option<(Ty, ReflectQuery)>, TypeError> {
         match &expr.kind {
             ExprKind::Identifier(name) => match self.local_comptime_value(name) {
                 Some(bound) => self.reflection_query_of(bound),
                 None => Ok(None),
             },
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "_unqualified_type_name" && args.is_empty() && kwargs.is_empty() => {
+                let [argument] = param_args.as_slice() else {
+                    return Ok(None);
+                };
+                let subject = self.type_param_argument(argument, "_unqualified_type_name")?;
+                Ok(Some((
+                    subject,
+                    ReflectQuery::TypeName(TypeNameForm::Unqualified),
+                )))
+            }
             ExprKind::MethodCall {
                 object,
                 method,

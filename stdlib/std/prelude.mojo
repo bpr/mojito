@@ -68,7 +68,6 @@ from std.hash import Hashable, hash
 from std.io import RawFileDescriptor, FileHandle, open
 
 # Linked for its bodies, not for a name: the compiler calls these by symbol.
-from std.format import _reflection_write_field_to
 from std.builtin._stubs import (
     paramfor_has_next,
     paramfor_next_iter,

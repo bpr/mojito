@@ -177,6 +177,7 @@ assets/ok/comptime_for_named_collection.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_nested_inlined_constructor_instances.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_nested_unread_instances.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_nested_unused_argument_instances.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_over_chained_reflect_binding.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_string_aggregates.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_struct_elements.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_template_served.mojo	main	exe-differential	sanitized
@@ -982,6 +983,7 @@ assets/ok/reference_result_view_conversion.mojo	main	exe-differential	sanitized
 assets/ok/reference_return_forwarded_accessor.mojo	main	exe-differential	sanitized
 assets/ok/refined_out_self_initializer.mojo	main	exe-differential	sanitized
 assets/ok/reflect_self_generic_struct_method.mojo	main	exe-differential	sanitized
+assets/ok/reflected_names_static_string.mojo	main	exe-differential	sanitized
 assets/ok/reflected_operators.mojo	main	exe-differential	sanitized
 assets/ok/reflection_comptime_for_served.mojo	main	exe-differential	sanitized
 assets/ok/reflection_field_name_materialize.mojo	main	exe-differential	sanitized
@@ -1375,6 +1377,7 @@ assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_overloads.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_parameter_defaults.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_refinement.mojo	main	exe-differential	sanitized
+assets/ok/trait_default_some_parameter.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_wrapper_conventions.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
@@ -1551,6 +1554,7 @@ assets/ok/with_multiple.mojo	main	exe-differential	sanitized
 assets/ok/with_multiple_dependent.mojo	main	exe-differential	sanitized
 assets/ok/with_statement.mojo	main	exe-differential	sanitized
 assets/ok/witness_default_differs_from_requirement.mojo	main	exe-differential	sanitized
+assets/ok/writable_default_trait_bodies.mojo	main	exe-differential	sanitized
 assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
 assets/ok/writable_trait_library.mojo	main	exe-differential	sanitized
 assets/ok/writer_write_override.mojo	main	exe-differential	sanitized
