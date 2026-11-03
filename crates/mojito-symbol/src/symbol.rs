@@ -221,17 +221,13 @@ impl CallableLookup for MemberCandidates<'_> {
 
 /// A type or value argument as a specialization clone spells it.
 ///
-/// Literal types materialize (a string literal bound to a method's `T:
-/// Movable` instantiates the `String` clone, which the call reaches through
-/// the ordinary literal conversion), so two applications differing only in
-/// literal-ness share one clone instead of minting two symbol-equivalent
-/// overloads.
+/// Numeric literal types materialize, so two applications differing only
+/// in literal-ness share one clone instead of minting two symbol-equivalent
+/// overloads. A string literal, whose target its struct's
+/// `@__nonmaterializable(String)` declares, arrives materialized.
 pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
     use mojito_types::types::erase_origin_arguments;
     match argument {
-        TyArg::Ty(ty) if ty.is_string_literal() => {
-            TyArg::Ty(TyKind::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()).into())
-        }
         TyArg::Ty(ty) => TyArg::Ty(erase_origin_arguments(&erase_capture_environment(
             &default_literal(ty),
         ))),

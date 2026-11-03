@@ -113,11 +113,11 @@ pub(super) fn unify_through_callable_bounds(
         ) = (bound.as_func(), actual.as_func())
         {
             for (pattern, actual) in bound_params.iter().zip(actual_params) {
-                unify(pattern, actual, subst)?;
+                unify(pattern, actual, subst, &default_literal)?;
             }
-            unify(bound_ret, actual_ret, subst)?;
+            unify(bound_ret, actual_ret, subst, &default_literal)?;
             if let (Some(pattern), Some(actual)) = (bound_error, actual_error) {
-                unify(pattern, actual, subst)?;
+                unify(pattern, actual, subst, &default_literal)?;
             }
         }
     }
@@ -3871,7 +3871,7 @@ impl Checker {
                 {
                     continue;
                 }
-                unify(pattern, actual, &mut subst)?;
+                unify(pattern, actual, &mut subst, &|ty: &Ty| self.deduced_ty(ty))?;
             }
             // A value binder no bracket argument spells is solved from the
             // argument types as in an inferred call (`bitcast[DType.uint8,
@@ -4100,13 +4100,20 @@ impl Checker {
             if let TyKind::Param { binder, bounds, .. } = pat.kind()
                 && binder.name.starts_with('*')
             {
+                // An element binds, and meets the bounds as, the type it
+                // materializes to.
+                let element = if self.materializes_by_construction(act) {
+                    self.deduced_ty(act)
+                } else {
+                    act.clone()
+                };
                 for bound in bounds {
-                    if !self.conforms_to(act, bound) {
+                    if !self.conforms_to(&element, bound) {
                         return Err(TypeError::TraitNotSatisfied {
                             param: binder.name.to_string(),
-                            ty: act.to_string(),
+                            ty: element.to_string(),
                             trait_name: bound.clone(),
-                            reason: self.trait_failure_reason(act, bound),
+                            reason: self.trait_failure_reason(&element, bound),
                         });
                     }
                 }
@@ -4131,7 +4138,7 @@ impl Checker {
                 // converts to that type, as the pin binds a parameter at its
                 // first argument (`select(c, 0, length)` is over `Int`).
             } else {
-                unify(pat, act, &mut subst)?;
+                unify(pat, act, &mut subst, &|ty: &Ty| self.deduced_ty(ty))?;
             }
         }
         self.solve_binders_from_values(decls, &mut subst, |index, declared| {
@@ -4140,7 +4147,7 @@ impl Checker {
                 .and_then(|value| self.ct_value_ty(value, declared))
         })?;
         unify_through_callable_bounds(decls, &mut subst)?;
-        let materialize_pack_element = |ty: Ty| self.materialize_pack_element(ty);
+        let materialize_pack_element = |ty: &Ty| self.materialize_pack_element(ty);
         let inferred_packs: HashMap<String, Vec<CtValue>> = patterns
             .iter()
             .zip(actuals)
@@ -4159,7 +4166,7 @@ impl Checker {
                 packs
                     .entry(name)
                     .or_insert_with(Vec::new)
-                    .push(CtValue::Type(materialize_pack_element(ty)));
+                    .push(CtValue::Type(materialize_pack_element(&ty)));
                 packs
             });
         let mut tyargs = Vec::with_capacity(decls.len());
@@ -4231,9 +4238,9 @@ impl Checker {
                                     elements
                                         .iter()
                                         .map(|element| match element {
-                                            CtValue::Type(ty) => CtValue::Type(
-                                                materialize_pack_element((*ty).clone()),
-                                            ),
+                                            CtValue::Type(ty) => {
+                                                CtValue::Type(materialize_pack_element(ty))
+                                            }
                                             other => other.clone(),
                                         })
                                         .collect(),
@@ -4407,7 +4414,7 @@ impl Checker {
             }) else {
                 continue;
             };
-            unify(ty, &actual, subst)?;
+            unify(ty, &actual, subst, &|ty: &Ty| self.deduced_ty(ty))?;
             for binder in open {
                 let (ParamDecl::Type { bounds, .. }, Some(solved)) =
                     (binder, subst.get(binder.id()))
@@ -5069,19 +5076,12 @@ impl Checker {
         Ok((bound_parameters, own))
     }
 
-    /// A pack element materializes like any other inferred instantiation
-    /// argument (a literal binds `Int`/`String`). A seam without the linked
-    /// String struct keeps the literal: materializing to an absent struct
-    /// would fail every conformance the literal itself satisfies.
-    fn materialize_pack_element(&self, ty: Ty) -> Ty {
-        if ty.is_string_literal()
-            && !self
-                .structs
-                .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
-        {
-            return ty;
-        }
-        match materialized_instantiation_argument(&TyArg::Ty(ty)) {
+    /// A pack element materializes like any other deduced instantiation
+    /// argument (a literal binds `Int`, a string literal its declared
+    /// `String`). A seam linking no `StringLiteral` declaration keeps the
+    /// literal.
+    fn materialize_pack_element(&self, ty: &Ty) -> Ty {
+        match materialized_instantiation_argument(&TyArg::Ty(self.deduced_ty(ty))) {
             TyArg::Ty(ty) => ty,
             _ => unreachable!("a type argument materializes to a type"),
         }
@@ -5105,7 +5105,7 @@ impl Checker {
             if forwards_pack(actual) && !binds_pack_itself(actual, id) {
                 return TyArg::Ty(actual.clone());
             }
-            elements.push(CtValue::Type(self.materialize_pack_element(actual.clone())));
+            elements.push(CtValue::Type(self.materialize_pack_element(actual)));
         }
         TyArg::Val(CtValue::Tuple(elements))
     }

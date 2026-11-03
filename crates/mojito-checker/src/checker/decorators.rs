@@ -67,6 +67,22 @@ impl Unavailable {
     }
 }
 
+/// The type a struct's `@__nonmaterializable(T)` names, the one argument
+/// a value of the struct materializes to where it becomes a run-time value.
+pub(super) fn nonmaterializable_target(decorators: &[Decorator]) -> Option<&Expr> {
+    decorators.iter().find_map(|decorator| match decorator {
+        Decorator { path, args, kwargs }
+            if path.len() == 1 && path[0] == "__nonmaterializable" && kwargs.is_empty() =>
+        {
+            match args.as_slice() {
+                [target] => Some(target),
+                _ => None,
+            }
+        }
+        _ => None,
+    })
+}
+
 impl Checker {
     /// Validate `decorators` at `site`, returning the facts they state.
     pub(super) fn check_decorators(
@@ -108,6 +124,8 @@ impl Checker {
                     facts.explicit_destroy =
                         Some(explicit_destroy_message(decorator, conditional_deinitable)?);
                 }
+                ("__nonmaterializable", DecoratorSite::Struct { .. })
+                    if nonmaterializable_target(std::slice::from_ref(decorator)).is_some() => {}
                 ("align", DecoratorSite::Struct { .. }) => {
                     if argument_count(decorator) != 1 {
                         return Err(invalid("@align requires exactly one argument"));
@@ -193,7 +211,7 @@ impl Checker {
     /// The pin's rejection of a decorator `name` that is no decorator of the
     /// site: an unsupported compiler decorator when `name` is a declaration
     /// in scope, an unknown declaration otherwise.
-    fn unknown_decorator(&self, name: &str) -> TypeError {
+    pub(super) fn unknown_decorator(&self, name: &str) -> TypeError {
         let declared = self.lookup(name).is_some()
             || self.overload_sets.is_function(name)
             || self.structs.contains_key(name)

@@ -11,7 +11,6 @@
 # compiler's exact rational cannot hold (R1783); `__neg__` and
 # `__ceildiv__`, which negate an `IntLiteral` (R1853); and the reflected
 # dunders, whose `type_of(rhs OP self)` captures their own `rhs` (R1854).
-# `@__nonmaterializable(Float64)` is not read (R1651).
 """Implements the FloatLiteral class.
 
 These are Mojo built-ins, so you don't need to import them.
@@ -22,6 +21,7 @@ These are Mojo built-ins, so you don't need to import them.
 # ===-----------------------------------------------------------------------===#
 
 
+@__nonmaterializable(Float64)
 struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
     Boolable,
     Defaultable,

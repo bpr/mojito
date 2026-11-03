@@ -695,6 +695,7 @@ assets/ok/nominal_string_split_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_strip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_unicode_case.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_writer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/nonmaterializable_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/number_and_string_literals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/numeric_operation_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/numeric_truthiness_condition.mojo	-	ineligible	no-scalar-entry-shape

@@ -736,8 +736,9 @@ least one member; fields and methods may interleave.
   it decorates, as the pin resolves a decorator by name for each declaration kind
   (`checker/decorators.rs`). Every site accepts `@doc_hidden`, `@stable(since=…)` or
   `@stable(recursive=…)`, and `@deprecated(message | reason=… | use=…)`, with the
-  pin's argument checks. A struct also accepts `@fieldwise_init` and
-  `@explicit_destroy("message")`, which needs a conditional `Deinitable` conformance.
+  pin's argument checks. A struct also accepts `@fieldwise_init`,
+  `@explicit_destroy("message")`, which needs a conditional `Deinitable` conformance,
+  and `@__nonmaterializable(T)`, whose one argument is a type.
   A `def` or method also accepts the inline levels, `@__parameter`/`@parameter`, and
   `@__unsafe_nested_origins_read_only` (argument exclusivity, `docs/features.md`); a
   method also `@staticmethod`, and an `__init__` `@implicit`. `@align(n)`,

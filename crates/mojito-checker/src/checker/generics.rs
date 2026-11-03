@@ -8,19 +8,17 @@ use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 pub use mojito_types::types::{map_tyargs, substitute};
 
-pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<(), TypeError> {
+pub(super) fn unify(
+    pattern: &Ty,
+    actual: &Ty,
+    subst: &mut TySubst,
+    deduce: &dyn Fn(&Ty) -> Ty,
+) -> Result<(), TypeError> {
     match pattern.kind() {
         TyKind::Param { binder, .. } => {
-            // A string literal binds the type it materializes to, as the
-            // pin's nonmaterializable `StringLiteral` does.
-            let solved = match actual.kind() {
-                kind if kind.is_string_literal() => TyKind::Struct(
-                    mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                    Vec::new(),
-                )
-                .into(),
-                _ => default_literal(actual),
-            };
+            // An argument binds the type it materializes to, as the pin's
+            // deduction materializes a `@__nonmaterializable` struct.
+            let solved = deduce(actual);
             match subst.get(&binder.id) {
                 None => {
                     subst.insert(binder.id.clone(), solved);
@@ -69,7 +67,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             {
                 for (p, a) in pargs.iter().zip(aargs) {
                     if let (TyArg::Ty(p), TyArg::Ty(a)) = (p, a) {
-                        unify(p, a, subst)?;
+                        unify(p, a, subst, deduce)?;
                     }
                 }
             } else if is_span_struct_name(pn)
@@ -81,7 +79,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
                 // parameter's element (`join[T](elems: Span[T, _])` called with
                 // a `List[String]`); the argument then converts as a call
                 // argument does.
-                unify(element_pattern, element, subst)?;
+                unify(element_pattern, element, subst, deduce)?;
             }
             Ok(())
         }
@@ -90,7 +88,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
                 && pattern_alternatives.len() == actual_alternatives.len()
             {
                 for (pattern, actual) in pattern_alternatives.iter().zip(actual_alternatives) {
-                    unify(pattern, actual, subst)?;
+                    unify(pattern, actual, subst, deduce)?;
                 }
             }
             Ok(())
@@ -116,13 +114,13 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
                     return Ok(());
                 }
                 for (pattern, actual) in pattern_params.iter().zip(actual_params) {
-                    unify(pattern, actual, subst)?;
+                    unify(pattern, actual, subst, deduce)?;
                 }
-                unify(pattern_ret, actual_ret, subst)?;
+                unify(pattern_ret, actual_ret, subst, deduce)?;
                 if let (Some(pattern), Some(actual)) = (pattern_error, actual_error) {
-                    unify(pattern, actual, subst)?;
+                    unify(pattern, actual, subst, deduce)?;
                 } else if let Some(pattern) = pattern_error {
-                    unify(pattern, &Ty::never(), subst)?;
+                    unify(pattern, &Ty::never(), subst, deduce)?;
                 }
             }
             Ok(())
@@ -130,7 +128,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
         // A raw parameter list solves through its element
         // (`KGENParamList[type]` against `KGENParamList[Int]`).
         TyKind::ParamList(pattern_element) => match actual.kind() {
-            TyKind::ParamList(element) => unify(pattern_element, element, subst),
+            TyKind::ParamList(element) => unify(pattern_element, element, subst, deduce),
             _ => Ok(()),
         },
         // A reference pattern solves through its referent; the actual may be
@@ -140,8 +138,9 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
                 &pattern_reference.referent,
                 &actual_reference.referent,
                 subst,
+                deduce,
             ),
-            _ => unify(&pattern_reference.referent, actual, subst),
+            _ => unify(&pattern_reference.referent, actual, subst, deduce),
         },
         // A pointer pattern solves through its pointee (`Pointer[Self.T,
         // Self.origin]` against `Pointer[Int, …]` solves `T = Int`); the
@@ -151,20 +150,20 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             ..
         } => {
             if let TyKind::Pointer { element, .. } = actual.kind() {
-                unify(pattern_element, element, subst)?;
+                unify(pattern_element, element, subst, deduce)?;
             }
             Ok(())
         }
         // So do its raw `!kgen.pointer` and `!lit.ref`.
         TyKind::KgenPointer(pattern_element) => match actual.kind() {
-            TyKind::KgenPointer(element) => unify(pattern_element, element, subst),
+            TyKind::KgenPointer(element) => unify(pattern_element, element, subst, deduce),
             _ => Ok(()),
         },
         TyKind::LitRef {
             element: pattern_element,
             ..
         } => match actual.kind() {
-            TyKind::LitRef { element, .. } => unify(pattern_element, element, subst),
+            TyKind::LitRef { element, .. } => unify(pattern_element, element, subst, deduce),
             _ => Ok(()),
         },
         // A non-parameter pattern contributes no solution; coercion is checked

@@ -2620,6 +2620,9 @@ struct StructInfo {
     explicit_destroy_message: Option<String>,
     #[serde(serialize_with = "interface::sorted")]
     explicit_destructors: HashMap<String, bool>,
+    /// The type its `@__nonmaterializable(T)` names: a value of the struct
+    /// becomes one of these where it materializes as a run-time value.
+    materializes_to: Option<Ty>,
 }
 
 impl StructInfo {

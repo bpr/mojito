@@ -2526,9 +2526,15 @@ fn rewrite_stmt(
             associated,
             methods,
             enum_cases,
+            decorators,
             ..
         } => {
             rename(name, names);
+            for d in decorators {
+                for a in &mut d.args {
+                    rewrite_expr(a, names, namespaces);
+                }
+            }
             for c in conforms {
                 rename(c, names);
             }

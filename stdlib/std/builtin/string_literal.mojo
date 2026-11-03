@@ -9,9 +9,8 @@
 # constructs nothing. `__hash__` (R1654)
 # and the members whose bodies read `StringSlice(self)` (R1655) are not
 # ported, and for that reason the comparisons, `write_to`, and
-# `write_repr_to` read `as_string_slice()`.
-# `@__nonmaterializable(String)` is not read (R1651). The struct declares
-# only the traits whose requirements are ported here. `ptr` takes
+# `write_repr_to` read `as_string_slice()`. The struct declares only the
+# traits whose requirements are ported here. `ptr` takes
 # `pop.string.address` as the `Pointer` itself, where upstream's wraps the
 # `!kgen.pointer` it gives with `unsafe_bitcast[Byte]()` (R221).
 """Implements the StringLiteral struct.
@@ -21,9 +20,10 @@ These are Mojo built-ins, so you don't need to import them.
 
 from std.collections.string.string_span import _get_kgen_string
 from std.span import Span
-from std.string import StaticString, StringSlice
+from std.string import StaticString, String, StringSlice
 
 
+@__nonmaterializable(String)
 struct StringLiteral[value: __mlir_type.`!kgen.string`](
     Boolable,
     Defaultable,

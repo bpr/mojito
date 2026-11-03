@@ -568,7 +568,7 @@ impl<'a> Flatten<'a> {
     }
 
     /// A compile-time string value the checker wraps into the nominal
-    /// `String` at its own span (`Checker::nominal_string_wrap`) loses that
+    /// `String` at its own span (`Checker::materialize_at`) loses that
     /// wrap to a view conversion sharing the span, which supersedes it in
     /// the recorded conversions. The view constructor borrows a nominal
     /// `String`, so the wrap is re-emitted here: the materialized slot must

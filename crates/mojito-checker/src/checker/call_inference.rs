@@ -745,29 +745,61 @@ impl Checker {
         }
     }
 
-    /// The nominal-`String` wrap of the compile-time string `literal` that
-    /// materializes as a runtime value (an inferred binding, a collection
-    /// element): record the literal-constructor wrap at `span` and report the
-    /// nominal `String`, falling back to the compile-time string when the
-    /// stdlib constructor is unavailable (an unlinked seam).
-    pub(super) fn nominal_string_wrap(
-        &self,
-        literal: &Ty,
-        span: SourceSpan,
-    ) -> Result<Ty, TypeError> {
-        let nominal = Ty::new(TyKind::Struct(
-            mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-            Vec::new(),
-        ));
-        let Some((target, _)) = self.implicit_conversion_target(literal, &nominal)? else {
-            return Ok(literal.clone());
+    /// The type a value of `ty` materializes to where it becomes a run-time
+    /// value: the target its register-passable struct's
+    /// `@__nonmaterializable(T)` names, as upstream's materialization reads
+    /// the attribute. `None` for a materializable type, and on a seam that
+    /// links no declaration of the literal's struct.
+    pub(super) fn materialization_target(&self, ty: &Ty) -> Option<Ty> {
+        let name = match ty.kind() {
+            TyKind::Struct(name, _) => name.as_str(),
+            TyKind::StringLiteral => mojito_types::types::STRING_LITERAL_TYPE_NAME,
+            TyKind::IntLiteral(_) => mojito_types::types::INT_LITERAL_TYPE_NAME,
+            TyKind::FloatLiteral(_) => mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
+            _ => return None,
+        };
+        let target = self.structs.get(name)?.materializes_to.clone()?;
+        (self.register_passability(ty) == super::traits::RegisterPassability::Proven)
+            .then_some(target)
+    }
+
+    /// The type a type parameter deduced from an argument of type `actual`
+    /// binds: the materialization target, else `actual` with its literal
+    /// arguments defaulted.
+    pub(super) fn deduced_ty(&self, actual: &Ty) -> Ty {
+        self.materialization_target(actual)
+            .filter(|_| self.materializes_by_construction(actual))
+            .unwrap_or_else(|| default_literal(actual))
+    }
+
+    /// Whether a value of `ty` materializes through its target's implicit
+    /// constructor (a `StringLiteral`, a user struct), rather than by the
+    /// compiler's literal folding (`IntLiteral`, `FloatLiteral`).
+    pub(super) fn materializes_by_construction(&self, ty: &Ty) -> bool {
+        !matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+            && self.materialization_target(ty).is_some()
+    }
+
+    /// Materialize the value of type `ty` at `span` as a run-time value (an
+    /// inferred binding, a display element): record its target's implicit
+    /// constructor at `span` and report the target, or keep `ty` when it
+    /// does not materialize or the target declares no such constructor.
+    pub(super) fn materialize_at(&self, ty: &Ty, span: SourceSpan) -> Result<Ty, TypeError> {
+        let Some(target) = self
+            .materialization_target(ty)
+            .filter(|_| self.materializes_by_construction(ty))
+        else {
+            return Ok(ty.clone());
+        };
+        let Some((constructor, _)) = self.implicit_conversion_target(ty, &target)? else {
+            return Ok(ty.clone());
         };
         // A view conversion already recorded at this span supersedes the
-        // wrap; re-inferring the expression must not revert it.
+        // materialization; re-inferring the expression must not revert it.
         self.record_at(span)
             .implicit_conversion
-            .get_or_insert(target);
-        Ok(nominal)
+            .get_or_insert(constructor);
+        Ok(target)
     }
 
     /// `T(copy=x)` on a type parameter: construction through the bound's

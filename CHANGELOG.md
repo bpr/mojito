@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's `@__nonmaterializable(T)` is now read, as upstream's is
+  (R1651): a register-passable struct declaring it materializes to `T`
+  through `T`'s implicit constructor at an inferred binding, a display
+  element, a deduced type parameter, and a pack element. The bundled
+  `StringLiteral`, `IntLiteral`, and `FloatLiteral` declare it, and the
+  rules that turned a string literal into `String` by name are gone. A
+  value does not yet materialize before an implicit constructor of the
+  parameter type (R1864).
 - A `StringLiteral[value]` application is now the declared struct's type,
   as `SIMD`'s is, rather than a compiler type the `Ty::new` bridge mapped
   it onto (R1660). Every rule reads the literal through one accessor, and

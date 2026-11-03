@@ -2632,15 +2632,14 @@ impl Checker {
     /// elements unify (widening literals), non-numeric elements must match; the
     /// result is materialized (a literal → its concrete default).
     /// The stored type of one collection or tuple element or key: a literal
-    /// default, with a string literal wrapped into the nominal `String`, as
-    /// upstream's deduction materializes a `@__nonmaterializable` literal.
+    /// default, or the target a `@__nonmaterializable` struct names, as
+    /// upstream's deduction materializes one.
     pub(super) fn materialized_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
         let ty = self.infer(element)?;
-        match ty.kind() {
-            kind if kind.is_string_literal() => {
-                self.nominal_string_wrap(&ty, element.source_span())
-            }
-            _ => Ok(default_literal(&ty)),
+        if self.materializes_by_construction(&ty) {
+            self.materialize_at(&ty, element.source_span())
+        } else {
+            Ok(default_literal(&ty))
         }
     }
 
@@ -2712,24 +2711,29 @@ impl Checker {
         let element = acc.ok_or_else(|| {
             TypeError::InvariantViolation("empty list reached non-empty inference".to_string())
         })?;
-        // A string literal beside a `String` converts to it, as the pin
-        // infers `[name(n), "z"]`.
-        if is_nominal_string(&element) {
-            for value in elems {
-                let ty = self.infer(value)?;
-                if ty.is_string_literal() {
-                    self.nominal_string_wrap(&ty, value.source_span())?;
+        // An element beside the type it materializes to converts to it, as
+        // the pin infers `[name(n), "z"]`.
+        let element_tys = elems
+            .iter()
+            .map(|value| self.infer(value))
+            .collect::<Result<Vec<_>, _>>()?;
+        if element_tys.iter().any(|ty| {
+            self.materializes_by_construction(ty)
+                && self.materialization_target(ty).as_ref() == Some(&element)
+        }) {
+            for (value, ty) in elems.iter().zip(&element_tys) {
+                if self.materialization_target(ty).as_ref() == Some(&element) {
+                    self.materialize_at(ty, value.source_span())?;
                 }
             }
             return Ok(element);
         }
-        // A string element materializes the nominal `String`, as upstream's
-        // non-materializable `StringLiteral` does in every runtime display.
-        if element.is_string_literal() {
+        // A `@__nonmaterializable` element materializes in every runtime
+        // display, as upstream's `StringLiteral` does to `String`.
+        if self.materializes_by_construction(&element) {
             let mut materialized = element;
-            for value in elems {
-                materialized =
-                    self.nominal_string_wrap(&self.infer(value)?, value.source_span())?;
+            for (value, ty) in elems.iter().zip(&element_tys) {
+                materialized = self.materialize_at(ty, value.source_span())?;
             }
             return Ok(materialized);
         }

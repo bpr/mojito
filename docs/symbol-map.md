@@ -646,7 +646,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its `DecoratorSite` (struct, `def`, method, trait method), as the pin
   resolves a decorator by name for each declaration kind, and returns the
   `DecoratorFacts` a declaration's state (a struct's `@explicit_destroy`
-  message, a `def`'s `@unavailable` mark). The inline level itself stays
+  message, a `def`'s `@unavailable` mark). `nonmaterializable_target`
+  reads a struct's `@__nonmaterializable(T)` argument, which
+  `Checker::resolve_materialization_targets` (`traits.rs`) resolves into
+  `StructInfo::materializes_to` once the shells and module aliases have
+  registered. `call_inference.rs` reads it: `materialization_target`,
+  `deduced_ty` (what `generics::unify` binds a type parameter to), and
+  `materialize_at` (an inferred binding's or display element's implicit
+  constructor). The inline level itself stays
   `mojito_checked::declaration::InlineLevel::of`. An unavailable `def`'s
   message rides on its `CallableOriginSignature` (`unavailable`), which
   `call_inference.rs` rejects when overload selection picks it or a value

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1864**.
+Next free ID: **R1865**.
 
 ## Ordered Work
 
@@ -11376,34 +11376,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1651 `@__nonmaterializable(String)` is not read, so a literal
-  materializes by a compiler rule**
+- [ ] **R1864 A `@__nonmaterializable` value does not materialize
+  before an implicit constructor of the parameter type**
 
-  A bound `StringLiteral` becomes a `String` by rule
-  (`generics::unify`'s `TyKind::StringLiteral` arm and the binding rules
-  that default a literal), where upstream reads the struct's
-  `@__nonmaterializable(String)`.
-  - The parser rejects the decorator, so the bundled struct omits it.
-  - Since R1652 the rule also covers an explicit application, so `var s =
-    StringLiteral["ab".value](); print(s.as_string_slice())` fails as at
-    the pin ("no method 'as_string_slice'" on `String`).
-  - Lever: parse the decorator onto the declaration and read it where a
-    binding materializes, so the literal's rule is that one instance.
-  - Probe: the bundled struct declares `@__nonmaterializable(String)` and
-    `rg 'is_string_literal' crates/mojito-checker/src/checker/generics.rs`
-    finds no materialization arm.
-  - Probe: a literal does not materialize before an implicit constructor
-    of the parameter type, so `g("a")` over `def g(x: Optional[String])`
-    and `f["a"]()` over `def f[x: Optional[String] = None]()` are rejected
-    ("expected Optional[String], found StringLiteral"), where the pin
-    accepts both. `CompilationTarget.unsupported_target_error[operation="EBOGUS"]()`
-    is rejected for the same reason.
-  - Probe: `IntLiteral` and `FloatLiteral` declare `@__nonmaterializable(Int)`
-    and `(Float64)` upstream, so `var f = FloatLiteral[(2.5).value]()`
-    then `f.__int_literal__()` is "'Float64' value has no attribute
-    '__int_literal__'" at the pin. Mojito keeps the struct and prints `2`.
-  - Depends on R1652 (`String`'s constructor from the literal takes the
-    struct).
+  An argument's implicit conversion records one constructor per span
+  (`NodeFacts::implicit_conversion`), so a value whose struct
+  declares `@__nonmaterializable(T)` cannot first become a `T` and then
+  convert through the parameter type's `@implicit` constructor from `T`,
+  as upstream's conversion does.
+  - Lever: when no constructor takes the value itself, try the parameter
+    type's from the materialization target
+    (`Checker::materialization_target`), and record both steps so MIR
+    lowering constructs the target first.
+  - Probe: `g("a")` over `def g(x: Optional[String])` and `f["a"]()`
+    over `def f[x: Optional[String] = None]()` are rejected ("expected
+    Optional[String], found StringLiteral"), where the pin prints `a`.
+  - Probe: `CompilationTarget.unsupported_target_error[operation="EBOGUS"]()`
+    finds no overload, where the pin reaches its constraint failure.
+  - Probe: `g(Lit(4))` over `def g(x: Optional[Big])`, with `Lit` a
+    register-passable `@__nonmaterializable(Big)` struct and `Big` an
+    `@implicit` constructor from it, is rejected; the pin accepts it.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1654 `StringLiteral`'s hash is a compiler leaf, where upstream's
@@ -13518,11 +13511,11 @@ residue found inside a task moves to the task that owns its fix.
     which Mojito reports as "does not return a value on every path"
     (R50).
   - Its string-literal `operation` argument binds an `Optional[String]`
-    parameter, which needs R1651.
+    parameter, which needs R1864.
   - Probe `platform_type_map` (`downcast`, a type-level conditional,
     `_UnsupportedTarget`) in the same session, and split it off if it
     needs more.
-  - Depends on R50 and R1651.
+  - Depends on R50, R1651, and R1864.
   - Model: Opus, Not Planned.
 
 - [ ] **R1759 `std.sys.info`'s `Endian`, `is_little_endian`, and

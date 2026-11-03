@@ -464,6 +464,7 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         self.check_struct_shell(declaration)?;
+        self.resolve_materialization_target(declaration, true)?;
         self.check_struct_types(declaration)?;
         self.check_struct_method_signatures(declaration)?;
         self.check_struct_completion(declaration)
@@ -560,6 +561,7 @@ impl Checker {
                 fieldwise_init: declaration.fieldwise_init,
                 explicit_destroy_message,
                 explicit_destructors,
+                materializes_to: None,
             },
         );
         Ok(())
@@ -653,6 +655,22 @@ impl Checker {
         self.enum_declaration = saved.enum_declaration;
     }
 
+    /// Resolve the type each registered struct's `@__nonmaterializable(T)`
+    /// names, once the shells and the module aliases it may spell have
+    /// registered and before any value of the struct materializes. A target
+    /// that does not resolve yet waits for the next pass unless `report`
+    /// holds.
+    pub(super) fn resolve_materialization_targets(
+        &mut self,
+        stmts: &[Stmt],
+        report: bool,
+    ) -> Result<(), TypeError> {
+        stmts
+            .iter()
+            .filter_map(struct_declaration)
+            .try_for_each(|declaration| self.resolve_materialization_target(&declaration, report))
+    }
+
     /// Resolve field, associated-member, and callable-conformance types into
     /// the registered shell.
     pub(super) fn check_struct_types(
@@ -735,6 +753,34 @@ impl Checker {
         info.parameterized_associated = parameterized_associated;
         info.callable_conformance = callable_conformance;
         Ok(())
+    }
+
+    fn resolve_materialization_target(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        report: bool,
+    ) -> Result<(), TypeError> {
+        let Some(target) = super::decorators::nonmaterializable_target(declaration.decorators)
+        else {
+            return Ok(());
+        };
+        if self
+            .structs
+            .get(declaration.name)
+            .is_none_or(|info| info.materializes_to.is_some())
+        {
+            return Ok(());
+        }
+        match self.denoted_type(target, "@__nonmaterializable") {
+            Ok(target) => {
+                if let Some(info) = self.structs.get_mut(declaration.name) {
+                    info.materializes_to = Some(target);
+                }
+                Ok(())
+            }
+            Err(_) if report => Err(self.unknown_decorator("__nonmaterializable")),
+            Err(_) => Ok(()),
+        }
     }
 
     fn resolve_struct_member_types(

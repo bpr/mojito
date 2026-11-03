@@ -157,6 +157,7 @@ impl Checker {
                 waiting_aliases.retain(|waiting| *waiting != index);
             }
         }
+        self.resolve_materialization_targets(stmts, false)?;
         drop(phase);
         // A builtin body folds before any signature or field type calls it,
         // and over the callable's classified parameters.
@@ -240,6 +241,7 @@ impl Checker {
         // StaticString`).
         self.classify_applicable_signatures(stmts);
         self.settle_deferred_traits(stmts, &mut deferred_traits);
+        self.resolve_materialization_targets(stmts, true)?;
         drop(phase);
         let phase = timing::span("declarations.types");
         let mut waiting_conformers = Vec::new();
@@ -273,6 +275,8 @@ impl Checker {
             self.retry_deferred_shells(stmts, &mut deferred_shells);
         }
         self.settle_struct_type_dependents(stmts, waiting_aliases)?;
+        // A shell deferred until the member types registers its target now.
+        self.resolve_materialization_targets(stmts, true)?;
         drop(phase);
         let phase = timing::span("declarations.signatures");
         let parked_conformers = waiting_conformers.clone();
@@ -1591,12 +1595,11 @@ impl Checker {
                         // inferred function/closure values remain non-escaping.
                         found.clone()
                     }
-                    // An un-annotated string binding materializes the nominal
-                    // `String`, like the other literal defaults; the wrap
-                    // falls back to the compile-time string on seams without
-                    // the linked stdlib struct.
-                    None if found.is_string_literal() => {
-                        self.nominal_string_wrap(&found, value.source_span())?
+                    // An un-annotated binding of a `@__nonmaterializable`
+                    // struct's value (a string literal's) materializes its
+                    // target, like the numeric literal defaults.
+                    None if self.materializes_by_construction(&found) => {
+                        self.materialize_at(&found, value.source_span())?
                     }
                     None => self.inferred_binding_ty(&found, name)?,
                 };

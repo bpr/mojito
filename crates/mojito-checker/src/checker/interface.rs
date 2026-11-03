@@ -2104,6 +2104,7 @@ mod tests {
             fieldwise_init: false,
             explicit_destroy_message: None,
             explicit_destructors: HashMap::new(),
+            materializes_to: None,
         };
         let declaration = StructDeclaration {
             name: "S".to_string(),

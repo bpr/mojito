@@ -10,13 +10,13 @@
 # a dunder declared below them (R1853); the `FloatLiteral`-taking `__add__`,
 # `__sub__`, and `__mul__` and `__truediv__`, which construct a
 # `FloatLiteral` from `self` (R1784); and `__pow__`, whose `where` clause
-# constructs a literal (R1855, R1821). `@__nonmaterializable(Int)` is not
-# read (R1651).
+# constructs a literal (R1855, R1821).
 """Implements the IntLiteral class."""
 
 from std.math import Ceilable, Floorable, Truncable
 
 
+@__nonmaterializable(Int)
 struct IntLiteral[value: __mlir_type.`!pop.int_literal`](
     Boolable,
     Ceilable,
