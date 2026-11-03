@@ -32,8 +32,8 @@
 //! is read whole (of a method call's place, only the type it designates,
 //! the root and projections addressing it reading their layout).
 //!
-//! Two further reads are not identities: a value parameter's runtime reads
-//! go through the slot its name binds, and a body nested in the function
+//! Two further reads are not identities: a callable value parameter's or
+//! a pack's runtime reads go through the slot its name binds, and a body nested in the function
 //! (named `f$…`) reads the binders of its enclosing scope its own analysis
 //! kept, as upstream's `RemoveUnusedParams` reads a lifted closure's
 //! generator after removing its unused parameters. A body lifted from the
@@ -1123,10 +1123,18 @@ fn erase_unread(
 /// reads: any instruction naming the slot, but a drop or a declaration of a
 /// slot whose type has no destructor to run or that a callable parameter
 /// binds.
+///
+/// Only a binder whose read takes a slot
+/// ([`mojito_types::types::binder_read_takes_slot`]) or a pack has one;
+/// every other value binder's read is its parameter constant, which the
+/// structural walk sees, so a slot that only shares its name is no read.
 fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<String> {
     let names: HashSet<&str> = candidates
         .iter()
-        .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
+        .filter(|decl| {
+            matches!(decl, ParamDecl::Value { ty, variadic, .. }
+                if *variadic || mojito_types::types::binder_read_takes_slot(ty.kind()))
+        })
         .map(|decl| decl.name().trim_start_matches('*'))
         .collect();
     let slots: HashMap<VarId, &str> = function

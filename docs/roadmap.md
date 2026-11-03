@@ -10306,26 +10306,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     R221 (its `unsafe_bitcast` of the element pointer).
   - Model: Fable, Not Planned.
 
-- [ ] **R1451 `remove-unused-params` still counts a read of a slot named
-  after any value binder**
-
-  Its parameter-use analysis (`slot_reads`, `mir/param_uses.rs`) counts
-  any instruction naming a slot spelled like a value binder as a read of
-  the binder, though since R662 only a callable binder or a pack takes a
-  slot (`types::binder_read_takes_slot`); upstream's `RemoveUnusedParams`
-  sees a read only as a use of the parameter attribute.
-  - The pass cases under `tests/mir_passes/remove-unused-params/` still
-    spell an `Int` binder's read as `var.use` of a slot named after it
-    (`lifted.mir`, `forwarded.mir`, `default_kept.mir`,
-    `forwarded_argument.mir`, `lifecycle_member.mir`), a shape MIR no
-    longer lowers; narrowing `slot_reads` removes those binders.
-  - Done when the cases read a binder as `const { value:
-    param(param_decl_ref …) }`, as MIR lowers it today, and `slot_reads`
-    keeps only the binders `binder_read_takes_slot` names and packs.
-  - Found while landing R663 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1449 A callable value binder's read is a frame slot, not a
   parameter reference**
 

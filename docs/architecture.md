@@ -6888,10 +6888,13 @@ point where a slot declared in a loop is uninitialized again.
   `callee_removed_params` snapshot, empty removals included, which the
   verifier reads the call through (`mir::UnreadParameters::member_callees`).
   A value argument, a dependent type, and a
-  projection read their binders whole as well; a
-  value parameter's slot (matched by name, as the elaborator fills it)
-  addressed by anything but a drop or declaration of a scalar or of a
-  callable parameter, whose value is a compile-time one; a name of
+  projection read their binders whole as well; the slot of a callable
+  value parameter or a pack, the only binders whose read takes one
+  (`types::binder_read_takes_slot`, matched by name, as the elaborator
+  fills it), addressed by anything but a drop or declaration of a scalar
+  or of a callable parameter, whose value is a compile-time one (every
+  other value binder's read is its `param(param_decl_ref …)` constant,
+  read by its identity); a name of
   a body lifted from the function (`$comptime$f$…`, `$default$f$…`), which
   reads the binders it declares that its own run kept (R982); and a name
   of a body nested in it (`f$…`), which reads the parameters that body's

@@ -2,26 +2,25 @@
       fn {
         name: dleaf,
         registers: 1,
-        vars: 1,
-        var_names: [b],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 409, end: 410, origin: present($v0) }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 409, end: 410, origin: absent }) }],
         removed_params: [param_id { owner: "dleaf", slot: 0 }],
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
-              drop.var { var: $v0 }
+              const { dest: %r0, value: param(param_decl_ref { owner: "dleaf", slot: 1, name: b, type: meta_value(Int) }) }
             ],
             terminator: return { value: present(%r0) }
           }
@@ -30,25 +29,24 @@
       fn {
         name: domit,
         registers: 2,
-        vars: 1,
-        var_names: [x],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 456, end: 457, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 450, end: 463, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 456, end: 457, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 450, end: 463, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
-              drop.var { var: $v0 },
+              const { dest: %r0, value: param(param_decl_ref { owner: "domit", slot: 0, name: x, type: meta_value(Int) }) },
               call { dest: %r1, func: dleaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "domit", slot: 0, name: x, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "domit", slot: 0, name: x, type: meta_value(Int) }))], spread: absent }
             ],
             terminator: return { value: present(%r1) }

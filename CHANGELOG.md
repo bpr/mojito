@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `remove-unused-params` now counts a read of a slot named after a value
+  binder only for a callable binder or a pack, the binders whose read
+  still takes a slot; every other value binder is read as its parameter
+  reference, as upstream's `RemoveUnusedParams` sees it (R1451). Its pass
+  cases now spell a binder's read as MIR lowers it.
 - MIR register passability now answers yes for an MLIR type
   (`!kgen.string`) and for a type parameter bound by `RegisterPassable`
   or a refinement of it, as upstream's `getRegisterPassability` does;

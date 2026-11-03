@@ -47,27 +47,26 @@ artifact {
       fn {
         name: "$default$scaled$x",
         registers: 4,
-        vars: 1,
-        var_names: [m],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 84, end: 85, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 88, end: 89, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 88, end: 89, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 84, end: 89, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 84, end: 85, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 88, end: 89, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 88, end: 89, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 84, end: 89, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r1, value: int_literal(2) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
-              var.use { dest: %r0, var: $v0, mode: copy },
-              drop.var { var: $v0 },
+              const { dest: %r0, value: param(param_decl_ref { owner: "scaled", slot: 1, name: m, type: meta_value(Int) }) },
               binary { op: mul, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r3) }
@@ -77,26 +76,25 @@ artifact {
       fn {
         name: scaled,
         registers: 3,
-        vars: 2,
-        var_names: [x, n],
+        vars: 1,
+        var_names: [x],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 110, end: 111, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 114, end: 115, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 110, end: 115, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 110, end: 111, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 114, end: 115, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 110, end: 115, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              var.use { dest: %r1, var: $v1, mode: copy },
-              drop.var { var: $v1 },
+              const { dest: %r1, value: param(param_decl_ref { owner: "scaled", slot: 0, name: n, type: meta_value(Int) }) },
               binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r2) }
@@ -106,25 +104,24 @@ artifact {
       fn {
         name: "$comptime$pick$0",
         registers: 2,
-        vars: 1,
-        var_names: [m],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Bool),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Bool }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 176, end: 177, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 169, end: 178, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 176, end: 177, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 169, end: 178, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
-              drop.var { var: $v0 },
+              const { dest: %r0, value: param(param_decl_ref { owner: "pick", slot: 1, name: m, type: meta_value(Int) }) },
               call { dest: %r1, func: is_big, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -134,28 +131,27 @@ artifact {
       fn {
         name: pick,
         registers: 5,
-        vars: 1,
-        var_names: [n],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 195, end: 196, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 208, end: 209, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 212, end: 213, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 212, end: 213, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 208, end: 213, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 195, end: 196, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 208, end: 209, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 212, end: 213, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 212, end: 213, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 208, end: 213, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              comptime.if { results: [], conditions: [eq { left: operand_expr(param_apply { function: "$comptime$pick$0", type: meta_value(Bool), args: [param_decl_ref { owner: "pick", slot: 0, name: n, type: meta_value(Int) }, param_decl_ref { owner: "pick", slot: 1, name: m, type: meta_value(Int) }] }), right: operand_value(ct_bool(true)) }], arms: [[bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, drop.var { var: $v0 }], terminator: return { value: present(%r0) } }]], else: [bb0 { instructions: [], terminator: comptime.yield { values: [] } }] },
+              comptime.if { results: [], conditions: [eq { left: operand_expr(param_apply { function: "$comptime$pick$0", type: meta_value(Bool), args: [param_decl_ref { owner: "pick", slot: 0, name: n, type: meta_value(Int) }, param_decl_ref { owner: "pick", slot: 1, name: m, type: meta_value(Int) }] }), right: operand_value(ct_bool(true)) }], arms: [[bb0 { instructions: [const { dest: %r0, value: param(param_decl_ref { owner: "pick", slot: 0, name: n, type: meta_value(Int) }) }], terminator: return { value: present(%r0) } }]], else: [bb0 { instructions: [], terminator: comptime.yield { values: [] } }] },
               const { dest: %r2, value: int_literal(1) },
               literal.materialize { dest: %r3, value: %r2, target: Int },
-              var.use { dest: %r1, var: $v0, mode: copy },
-              drop.var { var: $v0 },
+              const { dest: %r1, value: param(param_decl_ref { owner: "pick", slot: 0, name: n, type: meta_value(Int) }) },
               binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r4) }

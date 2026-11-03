@@ -96,11 +96,12 @@ command cannot use both.
    ```
 
 5. **Gap E: compile-time values are slots** (size, small). R662 and R663
-   landed. A callable binder's read is still a frame slot (R1449), and
-   `remove-unused-params` still counts slot reads (R1451).
+   landed, and R1451 narrowed `remove-unused-params`'s slot reads to the
+   binders that still take a slot. A callable binder's read is still a
+   frame slot (R1449).
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1449 --task R1451 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1449 -n 0
    ```
 
 6. **Gap F: members reached by name, not called** (size, the largest
@@ -229,7 +230,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 | gap | upstream's shape | open core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1441–R1444, then R1445 | about 15 (below) | yes |
-| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1449, R1451 | R788, R378, R472, R508, R602 | yes |
+| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1449 | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1280, R1466, R1287, R1461, and the hash and `__int__` leaves (steps 1–3) | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1436; R1433 → R176 → R1434 | R176, R1349 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1474, R1475, R1480, R1482 | about 25 (below) | partial |

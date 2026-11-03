@@ -14,20 +14,20 @@ artifact {
       fn {
         name: dead_if,
         registers: 4,
-        vars: 1,
-        var_names: [n],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r1, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 59, end: 60, origin: present($v0) }) }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 72, end: 73, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 59, end: 60, origin: absent }) }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 72, end: 73, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [

@@ -28,15 +28,15 @@
       fn {
         name: "h$inner",
         registers: 1,
-        vars: 1,
-        var_names: [n],
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -45,8 +45,7 @@
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
-              drop.var { var: $v0 }
+              const { dest: %r0, value: param(param_decl_ref { owner: "h", slot: 0, name: n, type: meta_value(Int) }) }
             ],
             terminator: return { value: present(%r0) }
           }
