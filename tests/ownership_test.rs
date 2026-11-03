@@ -634,7 +634,7 @@ fn callable_capture_effects_conflict_with_live_view_loans() {
     // The same concrete environment access must cross an indirect downward
     // funarg boundary. Merely checking the ordinary `invoke` argument place
     // would miss the write performed later through `callback()`.
-    let indirect = "def invoke(callback: def() capturing[_]):\n    callback()\n\ndef main():\n    var xs: List[Int] = [1, 2]\n    def grow() {mut xs}:\n        xs.append(3)\n    var view = Span(xs)\n    invoke(grow)\n    print(view[0])\n";
+    let indirect = "def invoke[F: def() -> None](callback: F):\n    callback()\n\ndef main():\n    var xs: List[Int] = [1, 2]\n    def grow() {mut xs}:\n        xs.append(3)\n    var view = Span(xs)\n    invoke(grow)\n    print(view[0])\n";
     assert!(matches!(
         own_linked(indirect),
         Err(OwnershipError::LoanConflict { place, loan, .. })

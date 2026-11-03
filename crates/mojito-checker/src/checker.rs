@@ -2094,19 +2094,12 @@ impl Checker {
     /// Retain every exact-literal boundary selected by contextual typing.  The
     /// recursion matters for aggregates: `(1, 2.0)` materialized as
     /// `Tuple[Int, Float64]` has two scalar boundaries, not one tuple cast.
-    /// A closure's storage accepted as a run-time callable is converted to
-    /// its closure the same way
-    /// ([`mojito_checked::checked::SemanticAdjustment::ClosureCallable`]).
     fn record_literal_materializations(
         &self,
         expression: &Expr,
         from: &Ty,
         to: &Ty,
     ) -> Result<(), TypeError> {
-        if closure_converts_to_callable(from, to) {
-            self.record_at(expression.source_span()).closure_callable = true;
-            return Ok(());
-        }
         // Upstream's implicit `Bool` to `SIMD[DType.bool, n]` constructor,
         // which asserts one lane.
         if from.is_bool()

@@ -2,13 +2,9 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::FuncTy;
 use mojito_types::types::TyKind;
 pub(super) use mojito_types::types::is_nominal_string;
-pub use mojito_types::types::{
-    builtin_copy_is_value_read, callable_environment_coerces, callable_environment_value_coerces,
-    coerces,
-};
+pub use mojito_types::types::{builtin_copy_is_value_read, callable_environment_coerces, coerces};
 
 pub(super) use mojito_types::conformance::{
     builtin_hashable_ty, is_numeric, is_scalar, simd_valued_ty,
@@ -120,50 +116,6 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         TyKind::Tuple(elems) => elems.iter().all(is_printable),
         _ => false,
     }
-}
-
-/// Whether a value of `from`, a closure's storage, binds `to` as the
-/// closure of its body: `to` is a callable value of another environment
-/// (a run-time `def(...) capturing[...]` contract).
-pub(super) fn closure_converts_to_callable(from: &Ty, to: &Ty) -> bool {
-    let storage = |ty: &Ty| {
-        matches!(
-            ty.as_func().map(|func| &func.environment),
-            Some(mojito_types::origin::CallableEnvironment::Storage(_))
-        )
-    };
-    storage(from) && to.as_func().is_some() && !storage(to)
-}
-
-/// True when `from` fails to bind to `to` solely because a capturing
-/// environment meets an unqualified `def(...)` value contract — the shape that
-/// deserves the "spell `capturing[...]`" migration hint.
-pub(super) fn callable_mismatch_is_environment_only(from: &Ty, to: &Ty) -> bool {
-    let (
-        Some(FuncTy {
-            environment: from_environment,
-            ..
-        }),
-        Some(FuncTy {
-            environment: to_environment,
-            ..
-        }),
-    ) = (from.as_func(), to.as_func())
-    else {
-        return false;
-    };
-    if callable_environment_value_coerces(from_environment, to_environment)
-        || !callable_environment_coerces(from_environment, to_environment)
-    {
-        return false;
-    }
-    let mut aligned = from.clone();
-    aligned.update(|kind| {
-        if let Some(FuncTy { environment, .. }) = kind.as_func_mut() {
-            *environment = to_environment.clone();
-        }
-    });
-    coerces(&aligned, to)
 }
 
 /// The common type of two list elements: numeric elements unify like operands

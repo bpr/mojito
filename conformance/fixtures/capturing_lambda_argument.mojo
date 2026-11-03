@@ -1,6 +1,6 @@
-# A capturing lambda passed as a runtime argument to a `capturing[_]`
-# contract: Mojito binds it, while the pin can only take a capturing callable
-# as a compile-time parameter and rejects a lambda even there.
+# A run-time parameter typed `def(...) capturing[_]`: both compilers reject
+# it, since a capturing callable has no run-time value of that type (the pin
+# has also removed the `capturing` spelling).
 def observe(f: def(x: Int) capturing[_] -> Int, value: Int) -> Int:
     return f(value)
 

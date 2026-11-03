@@ -219,12 +219,12 @@ impl<'a> Flatten<'a> {
         self.call_result(e, value, views)
     }
 
-    /// The storage variable of capturing lambda `e` where it is not
-    /// converted to a closure: its storage struct built in a slot, the
+    /// The storage variable of capturing lambda `e`: its storage struct
+    /// built in a slot, the
     /// lvalue upstream's `emitClosure` returns, which a reading consumer
     /// lends and an owning one takes.
     fn lambda_storage_variable(&mut self, e: Node<'a>) -> Option<VarId> {
-        if !matches!(e.op(), CheckedOp::Lambda { .. }) || e.closure_callable() {
+        if !matches!(e.op(), CheckedOp::Lambda { .. }) {
             return None;
         }
         let info = self.nested_info(e)?;

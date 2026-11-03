@@ -277,12 +277,12 @@ fn closure_captures_enclosing_local_downward() {
 }
 
 #[test]
-fn closure_value_carries_its_mutable_environment_through_a_capturing_contract() {
-    // The parameter must spell `capturing[...]`: a capturing closure no longer
-    // binds to an unqualified `def(...)` value (see `checker_test`).
+fn closure_value_carries_its_mutable_environment_through_a_callable_binder() {
+    // The closure's storage passes through an `F: def(...)` binder; a
+    // run-time `def(...)` parameter rejects it (see `checker_test`).
     assert_eq!(
         output(
-            "def apply_twice(callback: def(Int) capturing[_] -> None):\n    callback(2)\n    callback(3)\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n\ndef main():\n    print(total())\n"
+            "def apply_twice[F: def(Int) -> None](callback: F):\n    callback(2)\n    callback(3)\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n\ndef main():\n    print(total())\n"
         ),
         "5\n"
     );

@@ -1209,8 +1209,18 @@ impl Checker {
                     method: "__call__".to_string(),
                 });
             };
+            // The contract's method type is `def(Self, ...) thin` with a
+            // read receiver, so a `mut`, `ref`, or `var self` `__call__`
+            // never matches it.
             let matching = call_methods
                 .iter()
+                .filter(|method| {
+                    method.has_self
+                        && matches!(
+                            method.self_convention,
+                            None | Some(mojito_ast::ast::ArgConvention::Imm)
+                        )
+                })
                 .filter(|method| {
                     let actual = method_callable_ty(method);
                     coerces(&actual, &expected) && coerces(&expected, &actual)

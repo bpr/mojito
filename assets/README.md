@@ -38,7 +38,7 @@ struct fields (`var f: ref[o] T`), which upstream rejects and may adopt later,
 listed in `docs/non-goals.md`. A **ledgered divergence** is one Mojito means to withdraw:
 its program uses an acceptance the pin refuses outright — origin-parameter
 erasure, a cross-origin field store, a parametric-mut pointer write, a partial
-field move, a capturing-lambda local, a `mut self` `__call__`, an owned-interior
+field move, an owned-interior
 generation, a Mojito-only stdlib module, a move in an untaken `comptime if`
 arm or an unrolled `comptime for` body — and it carries a header comment
 naming the divergence, which `docs/roadmap.md`'s divergence ledger tracks. When

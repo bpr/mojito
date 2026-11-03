@@ -4,8 +4,9 @@
 # 'def show(element: Int) thin -> None' to 'def(element: Int) capturing thin
 # -> None'" — and rejects a capturing closure there too ("capturing closures
 # cannot be materialized as runtime values"), so such a parameter has no
-# valid argument in the pin. Mojito converts the thin def and runs it.
-# Roadmap section 3 carries the entry.
+# valid argument in the pin. Mojito rejects the run-time `capturing`
+# parameter as well; the pin now rejects the `capturing` spelling itself
+# (R1823).
 def apply(handler: def(element: Int) capturing[_], /):
     handler(1)
 

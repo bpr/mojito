@@ -1,8 +1,7 @@
 # Lambdas as higher-order-function arguments: a thin lambda binds to a plain
-# `def(...) thin` contract. Passing a *capturing* lambda as a runtime
-# argument is Mojito-only — upstream takes a capturing callable only as a
-# compile-time parameter, and refuses a lambda in that position — so that
-# half is the `capturing-lambda-argument` conformance case.
+# `def(...) thin` contract. A capturing callable is taken only as a
+# compile-time parameter; a run-time `capturing[...]` parameter rejects (the
+# `capturing-lambda-argument` conformance case).
 def transform(f: def(x: Int) thin -> Int, value: Int) -> Int:
     return f(value)
 

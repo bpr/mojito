@@ -785,14 +785,11 @@ policy or data-model responsibilities to focused children:
   lowers by the storage struct its site maps to, retargeting an indirect
   call through one to the witness (`retarget_storage_calls`). A
   `F: def(...)` binder is therefore instantiated at the struct, and
-  `native::mono` devirtualizes a call through `f` to the witness. Where
-  the check converts the value to a run-time `def(...) capturing[...]`
-  callable (`SemanticAdjustment::ClosureCallable`), the use instead makes
-  a closure over the method capturing the storage by reference, kept
-  live to the end of its statement (`Flatten::load_nested_closure`); the
-  verifier binds the first capture to the method's receiver, and
-  `native::mono` instantiates the method at the storage instance it
-  captures (`Specializer::instantiate_nested_bodies`). A body naming an enclosing
+  `native::mono` devirtualizes a call through `f` to the witness. The
+  storage is the closure's only value: no run-time parameter or local
+  has a `capturing[...]` callable type
+  (`type_resolution::reject_runtime_capturing_callable`), so no use
+  converts it to a closure of its body. A body naming an enclosing
   callable binder, which no struct instance carries as a parameter yet,
   stays a generator nested in its enclosing declaration, taking the
   storage as its leading `read` parameter (`ClosureStorage::method`).
@@ -4510,10 +4507,11 @@ their source arguments remain on the rewritten call. A scalar-controlled branch
 can therefore select code that later invokes a captured callback without asking
 the compile-time universe to own that callback. `CtValue` intentionally has no
 function or closure variant: this residualization is not arbitrary callable
-CTFE, and it does not make closures escaping. A capturing closure binds only
-to a contract that states `capturing[...]`: unqualified `def(...)` value
-positions reject it (matching current Mojo), while comptime callable bounds
-still ground capturing values.
+CTFE, and it does not make closures escaping. A `capturing[...]` callable
+type exists only on a compile-time callable parameter: a run-time parameter or
+local that names one rejects, and a closure's storage does not convert to a
+run-time `def(...)` value (matching current Mojo), while comptime callable
+bounds still ground capturing values.
 
 Runtime `for`, tuple-unpack, and `except` targets likewise retain checked owner
 identity and storage type across HIR and structured-region lowering. Unpack uses

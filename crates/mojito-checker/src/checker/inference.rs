@@ -1496,7 +1496,7 @@ impl Checker {
             // (notably `List[T]`) still controls contextual materialization.
             ExprKind::ListLit(elems) => {
                 let element = self.infer_list_elem(elems)?;
-                Self::check_callable_display_element(elems, &element)?;
+                Self::check_callable_display_element(&element)?;
                 if !self.is_movable(&element) {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
@@ -3508,45 +3508,21 @@ impl Checker {
     /// type. Thin function values store as a fixed-size array of that thin
     /// type, as current Mojo does, and a closure's storage stores as any
     /// struct value does: each closure is its own type, so two closures'
-    /// elements never unify. A capturing closure value of another
-    /// environment stores only as the display's single lambda expression,
-    /// and a named closure of one (an annotated local) is not a storable
-    /// value there.
-    fn check_callable_display_element(elems: &[Expr], element: &Ty) -> Result<(), TypeError> {
-        let Some(FuncTy { environment, .. }) = element.as_func() else {
-            return super::type_resolution::reject_stored_callable_type(
-                element,
-                "a collection display element",
-            );
-        };
-        match environment {
-            mojito_types::origin::CallableEnvironment::Capturing(_) => match elems {
-                [
-                    Expr {
-                        kind: ExprKind::Lambda { .. },
-                        ..
-                    },
-                ] => Ok(()),
-                [_, _, ..]
-                    if elems
-                        .iter()
-                        .all(|value| matches!(value.kind, ExprKind::Lambda { .. })) =>
-                {
-                    Err(TypeError::TypeMismatch {
-                        expected: "the first element's lambda type".to_string(),
-                        found: "another capturing lambda".to_string(),
-                        context: "list element (each capturing lambda has its own type)"
-                            .to_string(),
-                    })
-                }
-                _ => super::type_resolution::reject_stored_callable_type(
+    /// elements never unify. A `capturing[...]` callable has no run-time
+    /// value, so it is not a storable element.
+    fn check_callable_display_element(element: &Ty) -> Result<(), TypeError> {
+        match element.as_func().map(|func| &func.environment) {
+            Some(
+                mojito_types::origin::CallableEnvironment::Storage(_)
+                | mojito_types::origin::CallableEnvironment::Default
+                | mojito_types::origin::CallableEnvironment::Thin,
+            ) => Ok(()),
+            Some(mojito_types::origin::CallableEnvironment::Capturing(_)) | None => {
+                super::type_resolution::reject_stored_callable_type(
                     element,
                     "a collection display element",
-                ),
-            },
-            mojito_types::origin::CallableEnvironment::Storage(_)
-            | mojito_types::origin::CallableEnvironment::Default
-            | mojito_types::origin::CallableEnvironment::Thin => Ok(()),
+                )
+            }
         }
     }
 

@@ -1,6 +1,6 @@
-# A capturing closure cannot bind to an unqualified `def(...)` parameter in
-# current Mojo; the contract must spell `capturing[...]`.
-# expect: must spell 'capturing[...]'
+# A capturing closure's value is its storage struct, which does not convert
+# to a run-time `def(...)` parameter; it binds an `F: def(...)` binder.
+# expect: type mismatch for argument 'callback' to 'apply_twice'
 def apply_twice(callback: def(Int) -> None):
     callback(2)
     callback(3)

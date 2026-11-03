@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A run-time parameter or local typed `def(...) capturing[...]`, directly
+  or nested in a type argument, is now rejected ("capturing closures cannot
+  be materialized as runtime values"), and a `def(...)` conformer's
+  `__call__` must take a read receiver, as at the pin (R176). A closure's
+  value is only its storage struct, passed through an `F: def(...)` binder:
+  the checker's conversion to a closure of its body
+  (`SemanticAdjustment::ClosureCallable`) and the "contract must spell
+  `capturing[...]`" hint are gone, so a closure handed to a run-time
+  `def(...)` parameter reports a plain type mismatch. This also closes
+  R33. `lambda_captures.mojo` and `pliron_closure_drop_order.mojo` leave
+  `assets/extensions/` respelled in the pin's shape; a call through a
+  storage value with a `mut` capture still conflicts with the storage's
+  own loan (R1888).
+
 - The bundled collections' handler APIs take their closure through a
   closure-trait binder with upstream's argument names, as upstream's do:
   `List`, `Array`, `Set`, `Dict`, and `StringDict` `deinit_with(deinit_func)`,

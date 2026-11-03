@@ -94,8 +94,8 @@ result only when no `elif` condition region computes anything;
 ### 5. Legacy closures are removed
 
 R1823: reject the `capturing` effect and the `@parameter` family with the
-pin's texts and move the corpus onto capture lists, after the bundled
-handler APIs (R1433) and the run-time capturing leniencies (R176).
+pin's texts and move the corpus onto capture lists. The bundled handler
+APIs (R1433) and the run-time capturing leniencies (R176) are withdrawn.
 
 ### 6. Language changes still to follow
 

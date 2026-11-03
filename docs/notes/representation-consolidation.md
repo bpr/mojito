@@ -130,8 +130,8 @@ command cannot use both.
    conformance since the 11-01 re-pin). Its cores landed (R1376–R1378,
    R1427, R1428, R533, R1344, R1345). What is left:
    - R1436 moves the closure's storage struct into the check.
-   - R1433 → R176 → R1434 withdraw run-time `capturing[...]` values,
-     which still convert the struct to a closure of its body.
+   - R1433 and R176 withdrew run-time `capturing[...]` values (done);
+     R1434 deletes the closure-of-body machinery they left unreachable.
    - R1823 then rejects the `capturing` effect and `@parameter` closures,
      which `1.3.0.dev2026110105` removed. Eleven `assets/ok` fixtures and
      nine `cases.tsv` claims wait on it.
@@ -231,7 +231,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1441–R1444, then R1445 | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1874 | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1280, R1466, R1287, R1461, and the hash and `__int__` leaves (steps 1–3) | about 20 (below) | yes, the largest |
-| G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1436; R1433 → R176 → R1434 | R176, R1349 | yes |
+| G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1436; R1434 (R1433, R176 done) | R1349 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1474, R1475, R1480, R1482 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1491, R1492, R1485, R1486 | about 20 (below) | slight |
 
@@ -274,13 +274,13 @@ R1411 and R1413 under *Entries outside the gaps*.
 - **Mojito**: every capture-list closure builds the pin's `__storage`
   struct, its body a method of it, and its value is the struct, a runtime
   value only. The check still names the struct by its site, MIR resolves
-  it (R1436), and run-time `capturing[...]` values convert it to a
-  closure of its body (R1433, R176, R1434).
+  it (R1436). Run-time `capturing[...]` values are withdrawn (R1433,
+  R176); R1434 deletes the unreachable closure-of-body machinery.
 - **Upstream**: a `F: def(...)` binder is instantiated at the struct
   type, so every call is direct. `kgen.create_closure` is made only for
   capture-free values.
 - **Size**: an indirect call becomes direct, inlinable, and promotable.
-- **Members**: R176 closes or shrinks. R303 is the inliner's.
+- **Members**: R303 is the inliner's.
   R1349 is independent. The generic-closure entries (R71, R83, R452) are
   about naming parametric functions, not closure representation.
 

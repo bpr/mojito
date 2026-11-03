@@ -677,9 +677,8 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// The value of the capture-list `def` `info`, read by name at `node`
-    /// where it is not converted to a closure
-    /// ([`Node::closure_callable`]): its storage struct, read from the
+    /// The value of the capture-list `def` `info`, read by name at `node`:
+    /// its storage struct, read from the
     /// declaration's slot as any local is, as upstream's `emitClosure`
     /// returns the storage. A body that is no method of its storage (one
     /// naming an enclosing callable binder) has no value (R92).

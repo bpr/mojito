@@ -1,6 +1,7 @@
-# A lambda that captures is a closure and cannot bind to an unqualified
-# `def(...)` contract; `{imm}` makes it a closure even with nothing captured.
-# expect: must spell 'capturing[...]'
+# A lambda with a capture list is a closure, which does not convert to a
+# run-time `def(...)` parameter; `{imm}` makes it a closure even with nothing
+# captured.
+# expect: type mismatch for argument 'f' to 'transform'
 def transform(f: def(x: Int) -> Int, value: Int) -> Int:
     return f(value)
 

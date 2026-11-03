@@ -2204,11 +2204,10 @@ impl<'a> Flatten<'a> {
         }
         let name = self.name_spelled(expression)?;
         // A closure's storage value is the declaration's slot, lent as any
-        // local is; its conversion to a closure, and a body without
-        // storage, are values with no slot to lend.
+        // local is; a body without storage is a value with no slot to lend.
         let closure_storage = self
             .nested_info(expression)
-            .map(|info| info.storage.is_some() && !expression.closure_callable());
+            .map(|info| info.storage.is_some());
         // A module constant read is a value with no slot of its own.
         if expression.resolved_callable().is_some()
             || closure_storage == Some(false)

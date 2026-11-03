@@ -3995,9 +3995,9 @@ pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
 
 /// The value-coercion policy for callable environments.
 ///
-/// Current Mojo rejects binding a capturing closure to an unqualified
-/// `def(...)` value position — the contract must spell `capturing[...]` —
-/// while a thin function value still binds.
+/// A closure's value is its storage struct, which value-coerces only to
+/// itself, and a capturing callable does not bind to an unqualified
+/// `def(...)` value position, while a thin function value still binds.
 ///
 /// Comptime callable *bounds* stay on the permissive
 /// `callable_environment_coerces` below.
@@ -4006,16 +4006,11 @@ pub fn callable_environment_value_coerces(
     to: &crate::origin::CallableEnvironment,
 ) -> bool {
     use crate::origin::CallableEnvironment;
-    if matches!(
-        (from, to),
-        (
-            CallableEnvironment::Capturing(_) | CallableEnvironment::Storage(_),
-            CallableEnvironment::Default
-        )
-    ) {
-        return false;
+    match (from, to) {
+        (CallableEnvironment::Storage(_), _) => from == to,
+        (CallableEnvironment::Capturing(_), CallableEnvironment::Default) => false,
+        _ => callable_environment_coerces(from, to),
     }
-    callable_environment_coerces(from, to)
 }
 
 pub fn callable_environment_coerces(
@@ -4026,8 +4021,8 @@ pub fn callable_environment_coerces(
     if from == to {
         return true;
     }
-    // A closure's storage converts to the closure of its body, whose
-    // environment is the storage's captures.
+    // A closure's storage satisfies a contract its body's signature does,
+    // with the storage's captures as the body's environment.
     if let CallableEnvironment::Storage(storage) = from {
         return !matches!(to, CallableEnvironment::Storage(_))
             && callable_environment_coerces(

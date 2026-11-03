@@ -2,7 +2,7 @@
 # the documented `objs[0](args)` gap: a generic lambda cannot be partially
 # applied into a stored function value.
 # expect: cannot be indexed here
-def apply(f: def(x: Int) capturing[_] -> Int, v: Int) -> Int:
+def apply[F: def(x: Int) -> Int](f: F, v: Int) -> Int:
     return f(v)
 
 def main():

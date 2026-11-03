@@ -1,10 +1,9 @@
 # A call on a nominal callable struct is its `__call__` method call, as
 # upstream resolves it: a read-`self` `__call__` reads its own fields, a
 # raising `__call__` reports through the tagged outcome and is caught, and an
-# owned argument transfers through the invocation. A `mut self` `__call__`
-# writing back through its receiver place is Mojito-only — upstream's
-# `def(...)` conformance wants a read receiver — see the
-# `mut-self-callable-struct` conformance case.
+# owned argument transfers through the invocation. A `def(...)` conformance
+# requires a read receiver, so a `mut self` `__call__` conformer rejects (the
+# `mut-self-callable-struct` conformance case).
 @fieldwise_init
 struct Counter(def(Int) -> Int):
     var total: Int

@@ -830,11 +830,9 @@ impl<'a> Flatten<'a> {
             CheckedOp::Transfer(inner) => self.transfer(node, operand(inner)?),
             // A lambda expression builds its closure's storage at the
             // expression's evaluation point, once per evaluation: its value
-            // is that storage variable, or a closure the storage moves into.
+            // is that storage variable.
             CheckedOp::Lambda { .. } => match self.nested_info(node) {
-                Some(info) if info.storage.is_some() && !node.closure_callable() => {
-                    self.lambda_storage_value(node, &info)
-                }
+                Some(info) if info.storage.is_some() => self.lambda_storage_value(node, &info),
                 Some(info) => self.lambda_closure(&info, node.location()),
                 None => self.unsupported_value(
                     node.location(),
@@ -946,7 +944,7 @@ impl<'a> Flatten<'a> {
             .and_then(|binding| self.nested.get(&binding))
             .cloned()
         {
-            if info.storage.is_some() && !node.closure_callable() {
+            if info.storage.is_some() {
                 return self.closure_storage_read(node, &name, &info);
             }
             return self.load_nested_closure(&name, &info, checked.location());

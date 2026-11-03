@@ -1821,14 +1821,6 @@ impl Checker {
             let arg_ty = self.infer_with_expected(arg, &params[i], true)?;
             reject_generic_function_value(name, &names[i], arg, &arg_ty, &params[i])?;
             if !self.record_implicit_conversion(arg, &arg_ty, &params[i])? {
-                if super::builtins::callable_mismatch_is_environment_only(&arg_ty, &params[i]) {
-                    return Err(TypeError::Unsupported(format!(
-                        "a capturing closure cannot bind to the unqualified 'def(...)' \
-                         parameter '{}' of '{}' in current Mojo; the contract must spell \
-                         'capturing[...]'",
-                        names[i], name
-                    )));
-                }
                 return Err(TypeError::TypeMismatch {
                     expected: params[i].to_string(),
                     found: arg_ty.to_string(),

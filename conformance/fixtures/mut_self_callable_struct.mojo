@@ -1,6 +1,6 @@
-# A callable struct whose `__call__` takes `mut self` and writes back through
-# the receiver place: Mojito accepts it as a `def(...)` conformer, while the
-# pin's conformance wants a read receiver (`def(Self, …) capturing thin`).
+# A callable struct declaring a `def(...)` conformance with a `mut self`
+# `__call__`: both compilers reject it, since the contract's method type
+# takes a read receiver (`def(Self, ...) thin`).
 @fieldwise_init
 struct Counter(def(Int) -> Int):
     var total: Int

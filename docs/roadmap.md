@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1888**.
+Next free ID: **R1889**.
 
 ## Ordered Work
 
@@ -422,11 +422,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Lever: keep the callable type argument's `capturing` environment in
     the erased instance's types (`mono/substitute.rs`), so the splice
     types the slot as its caller does.
-  - Probe: `var fns: Array[def(x: Int) capturing[_] -> Int, 1] =
-    [lambda (x: Int) {var i} -> Int: x * i]`, an annotated display only
-    R176's leniency accepts (the pin reports "no matching function in
-    initialization"). An unannotated display holds the lambda's storage
-    struct, which no erasure respells (R1378).
   - Probe: `assets/ok/function_value_array_display.mojo`,
     `function_value_array_element_binding.mojo`, and
     `shadowed_local_callable_call.mojo` stop at the same verifier, an erased
@@ -1482,6 +1477,29 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: the `own(h)` call above, over an `ImplicitlyCopyable`
     `Tracked` printing its copy initializer.
   - Found while landing R1435 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1888 A call through a closure's storage value conflicts with the
+  loan that storage holds on its `mut` capture**
+
+  The call replays the body's write to the captured place, and the
+  ownership check reads that write as an access conflicting with the
+  storage value's own loan of the place, where the pin runs both probes.
+  - The declaration's own name calls the lifted body directly and runs
+    (`def extend(x: Int) {mut pieces}`, then `extend(2)`); only a call
+    through the storage *value* (a lambda's local, or `var g = extend`)
+    conflicts.
+  - Probe: `var pieces: List[Int] = [1]`, `var extend = lambda (x: Int)
+    {mut pieces}: pieces.append(x)`, `extend(2)`, `print(len(pieces))`
+    reports "access to 'pieces' conflicts with live reference 'extend'"
+    even with the `print` removed; the pin prints `2`.
+  - Probe: the nested-def form with `var g = extend`, `g(3)`,
+    `print(len(pieces))` reports the conflict on `'g'`; the pin prints
+    `2 3`.
+  - Once fixed, restore the `{mut pieces}` paragraph R176 dropped from
+    `assets/ok/lambda_capture_storage_values.mojo`.
+  - Found while landing R176 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3564,27 +3582,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `hasher.update(...)` call site).
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R33 A module-level `def` converts to a `def(...) capturing[_]` runtime
-  parameter**
-
-  Problem: `apply(handler: def(element: Int) capturing[_], /)` called as
-  `apply(show)` with a module-level `def show(element: Int)` runs in Mojito;
-  the pin rejects the call ("cannot be converted from `def show(element:
-  Int) thin -> None` to `def(element: Int) capturing thin -> None`") and
-  rejects a capturing closure there too ("capturing closures cannot be
-  materialized as runtime values"), so such a parameter has no valid
-  argument in the pin.
-  - Probe: `conformance/probes/callable_parameter_thin_to_capturing.mojo`.
-  - The pin does accept the same conversion into a generic struct's method
-    for an `Int` instantiation (`Cell[Int].visit(show_int)`) and rejects it
-    for `String`; the fixture that needed a callable parameter spells it
-    `thin` (`assets/ok/template_method_callable_parameter.mojo`).
-  - The bundled `List.deinit_with`, `Optional.deinit_with`, `Set.clear_with`,
-    `Dict.clear_with`, and `DictEntry.reap_with` declare such parameters and
-    are callable only through this conversion.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R37 A trivial value handed to a `var` parameter beside a pack is always
   ambiguous**
@@ -8020,9 +8017,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   `@parameter`, `@__parameter`, `@__copy_capture`, and `@__move_capture`
   on a nested function ("'@parameter' closures are no longer supported;
   remove the decorator and declare the captures in a capture list").
-  - Mojito still parses and runs both, and the bundled
-    `Tuple.consume_elements` and `deinit_with` take a `capturing`
-    parameter (R1124).
+  - Mojito still parses and runs both at compile-time callable
+    parameters, and the bundled `Tuple.consume_elements` and
+    `deinit_with` take a `capturing` parameter (R1124). A run-time
+    parameter or local of a `capturing` type already rejects.
   - A function passed as a compile-time parameter must now be `thin`.
   - Reject both with the pin's texts, move the fixtures that use them to
     capture lists, and delete the `capturing` surface from the parser,
@@ -8041,7 +8039,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `parameter-closure-reads-immutable-capture`, `lambda-higher-order`,
     `capturing-callable-parameter-with-locals`.
   - Found at the 2026-11-01 re-pin.
-  - Depends on R1433 and R176.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1830 Two initializers that differ only in their refined `out self`
@@ -8925,30 +8923,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R176 Capturing callables are accepted as runtime arguments, typed
-  locals and `mut self` conformers, where the pin takes them only as
-  compile-time parameters**
-
-  Problem: three callable-shape leniencies. Mojito passes a capturing
-  closure as a runtime argument, binds one to a local under an explicit
-  `capturing[...]` annotation, and accepts a `mut self` `__call__` as a
-  `def(...)` conformer.
-  - A capture-list closure's or capturing lambda's value is its storage
-    struct (R1378), which runs where the pin runs it: an untyped local,
-    a generic container, a `F: def(...)` binder. Only these three
-    leniencies convert it to the closure of its body
-    (`SemanticAdjustment::ClosureCallable`).
-  - The pin rejects the conversion: `call_rt(inner, 1)` over `def
-    call_rt(f: def(Int) capturing[_] -> Int, a: Int)` reports "depends on
-    an unresolved parameter '__origins__'", where Mojito prints `11`.
-  - The pin wants a read receiver on `__call__`.
-  - Three corpus fixtures moved to `assets/extensions/`.
-  - Three more were respelled onto `thin` contracts and `@parameter def`
-    arguments.
-  - Ledger name: `capturing-lambda-argument`, `capturing-lambda-locals`,
-    `owned-capture-closure-locals`, `mut-self-callable-struct`.
-  - Depends on R1433.
-  - Model: Opus, Planned.
 - [ ] **R177 A struct field pointing into an owned interior of a generic
   origin parameter type-checks, though the pin calls that interior
   never-initialized**
@@ -9478,9 +9452,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     check and fails MIR verification ("argument 0 of 'run' has type
     def(Int32) thin -> None, declared def(Scalar[d]) -> None"), as does a
     method's `h: def(Scalar[Self.dtype]) -> None` on `C[DType.int32]`.
-  - The `capturing` spelling of the method probe is R176's leniency: the
-    pin reports "capturing closures cannot be materialized as runtime
-    values".
+  - The `capturing` spelling of the method probe rejects at the
+    parameter ("capturing closures cannot be materialized as runtime
+    values"), as at the pin.
   - Reject the annotation at the parameter, as fields and elements are
     rejected; do not close `verify_direct_call`'s declared types under
     the call's arguments, which would make the binder shapes run.
@@ -12339,8 +12313,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`closure_capture_arguments`, `backend/vm/references.rs`), and
     Pliron's value capture slots and `mjdrop_<n>` thunks
     (`lower/closures.rs`).
-  - Delete them once no run-time `capturing[...]` value holds a moved
-    storage.
+  - No checked program reaches them any more: a run-time
+    `capturing[...]` value no longer type-checks, so nothing converts a
+    storage to a closure of its body. Delete them, and the MIR verifier's
+    rule binding a storage method closure's first capture to its receiver
+    (`closure environment for`), whose checked-program test went with
+    the conversion.
   - Once deleted, `mem-2-reg`'s call-through rule (`Facts::candidate`,
     `analysis/mem2reg.rs`) can admit every function-typed slot, not only
     a thin one or a local holding a closure of reference captures: a
@@ -12355,7 +12333,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     reference captures keeps its `drop.reg` until `canonicalize` erases
     it once its calls are folded.
   - Found while landing R1378 (2026-10-25).
-  - Depends on R1433, R176.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R538 Storage paths for reference-valued elements outlive the last spelling of one**

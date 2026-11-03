@@ -1447,10 +1447,7 @@ impl Checker {
             StmtKind::VarDecl { name, ty, value } => {
                 // Current Mojo reads a bare `def(...)` local annotation as
                 // trait-typed storage, like fields and collection elements;
-                // a stored callable spells `def(...) thin`. The explicit
-                // `capturing[...]` local annotation stays accepted as
-                // Mojito's spelling for closure-storing locals (upstream
-                // stores those un-annotated) — a recorded divergence.
+                // a stored callable spells `def(...) thin`.
                 if let Some(mojito_ast::ast::Type::Func {
                     thin: false,
                     capturing: None,
@@ -1460,10 +1457,11 @@ impl Checker {
                     return Err(TypeError::Unsupported(format!(
                         "a 'def(...)' type names a trait in the annotation of variable \
                          '{name}' in current Mojo, not a storable callable value; spell \
-                         a stored callable 'def(...) thin' or a stored closure \
-                         'def(...) capturing[...]'"
+                         a stored callable 'def(...) thin' or leave a closure's local \
+                         unannotated"
                     )));
                 }
+                let annotation_position = format!("the annotation of variable '{name}'");
                 if matches!(value.kind, ExprKind::Uninitialized) {
                     let Some(annotation) = ty else {
                         return Err(TypeError::Unsupported(
@@ -1472,6 +1470,10 @@ impl Checker {
                     };
                     let declared = self
                         .resolve_storage_annotation(annotation, super::StorageStrictness::Full)?;
+                    super::type_resolution::reject_runtime_capturing_callable(
+                        &declared,
+                        &annotation_position,
+                    )?;
                     self.record_at(stmt.source_span()).binding_ty = Some(declared.clone());
                     self.declare(name, declared)?;
                     self.record_statement_binding(stmt, name);
@@ -1503,6 +1505,10 @@ impl Checker {
                         let (contextual, demands) = self.resolve_storage_annotation_with_origins(
                             annotation,
                             super::StorageStrictness::AllowBare,
+                        )?;
+                        super::type_resolution::reject_runtime_capturing_callable(
+                            &contextual,
+                            &annotation_position,
                         )?;
                         (Some(contextual), demands)
                     }
@@ -4016,6 +4022,10 @@ impl Checker {
                 );
                 self.resolving_parameter_annotation.set(false);
                 let resolved = resolved?;
+                super::type_resolution::reject_runtime_capturing_callable(
+                    &resolved,
+                    &format!("parameter '{}'", parameter.name),
+                )?;
                 let declared = match parameter.kind {
                     mojito_ast::ast::ParamKind::Variadic => {
                         mojito_types::types::variadic_collector_type(

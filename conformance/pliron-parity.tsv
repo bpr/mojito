@@ -113,6 +113,7 @@ assets/ok/chained_comparison.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_converted_middle.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_link_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_operand_copy.mojo	main	exe-differential	sanitized
+assets/ok/closure_storage_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/closure_storage_method_binders.mojo	main	exe-differential	sanitized
 assets/ok/closure_storage_values.mojo	main	exe-differential	sanitized
 assets/ok/closures.mojo	main	exe-differential	sanitized
@@ -505,6 +506,7 @@ assets/ok/kgen_type_type_parameter.mojo	main	exe-differential	sanitized
 assets/ok/kwargs.mojo	main	exe-differential	sanitized
 assets/ok/kwargs_keyed_read.mojo	main	exe-differential	sanitized
 assets/ok/lambda_basic.mojo	main	exe-differential	sanitized
+assets/ok/lambda_capture_storage_values.mojo	main	exe-differential	sanitized
 assets/ok/lambda_generic_comptime.mojo	main	exe-differential	sanitized
 assets/ok/lambda_hof.mojo	main	exe-differential	sanitized
 assets/ok/lambda_in_control_flow.mojo	main	exe-differential	sanitized
@@ -1594,7 +1596,6 @@ assets/extensions/ok/forward_struct_reference_iterator.mojo	main	exe-differentia
 assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	exe-differential	sanitized
 assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/extensions/ok/iterable_associated_element.mojo	-	ineligible	no-main-entry
-assets/extensions/ok/lambda_captures.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_delegated_call_arguments_run.mojo	main	exe-differential	sanitized
@@ -1605,7 +1606,6 @@ assets/extensions/ok/origin_delegated_parameter_receiver.mojo	main	exe-different
 assets/extensions/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	sanitized
 assets/extensions/ok/parametric_mut_iterator_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pliron_a1_gate.mojo	main	exe-differential	sanitized
-assets/extensions/ok/pliron_closure_drop_order.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_parametric_mut_iterator_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_reference_yielding_iteration.mojo	main	exe-differential	sanitized

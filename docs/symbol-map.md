@@ -1554,10 +1554,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mir/call_results.rs`, and `Flatten::lambda_storage_value`,
   `mir/lower_expr/calls.rs`), and the check rejects an owning use whose
   storage is not `ImplicitlyCopyable` (`Checker::check_consuming_as`),
-  as upstream copies the storage there; one the
-  check converts to a run-time callable
-  (`SemanticAdjustment::ClosureCallable`, `Node::closure_callable`) moves
-  it into its closure (`Flatten::lambda_closure`). A capture-list `def`'s
+  as upstream copies the storage there; a run-time parameter or local
+  typed `def(...) capturing[...]` rejects at the check
+  (`type_resolution::reject_runtime_capturing_callable`), so the storage
+  is the value's only form. A capture-list `def`'s
   name read as a value is its declaration's slot
   (`Flatten::closure_storage_read`). The check types such a value as a
   `def(...)` whose environment is

@@ -565,3 +565,5 @@ contiguous-slice-result	reject	conformance/fixtures/contiguous_slice_result.mojo
 for-destructuring-tuple-not-copied	run	assets/ok/for_destructuring_tuple_not_copied.mojo
 int-is-floatable	reject	conformance/fixtures/int_is_floatable.mojo
 match-cluster-nested-completion	run	conformance/fixtures/match_cluster_nested_completion.mojo
+capturing-lambda-argument	reject	conformance/fixtures/capturing_lambda_argument.mojo
+mut-self-callable-struct	reject	conformance/fixtures/mut_self_callable_struct.mojo

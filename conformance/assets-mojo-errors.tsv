@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1045
+# swept-count	1049
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -543,7 +543,7 @@ assets/type_error/lambda_capturing_thin_contract.mojo	compile-reject	agree	error
 assets/type_error/lambda_empty_capture_list.mojo	compile-reject	agree	error: Could not infer capture convention of the captured value z
 assets/type_error/lambda_fixed_none.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[2]' value to 'None' in return value
 assets/type_error/lambda_mut_immutable_capture.mojo	compile-reject	agree	error: register passible value 'seed' can not be captured by 'mut'. Do you mean 'imm'?
-assets/type_error/lambda_partial_parameter_application.mojo	compile-reject	ledgered	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
+assets/type_error/lambda_partial_parameter_application.mojo	compile-reject	agree	error: invalid call to 'apply': value passed to 'f' cannot be converted from unknown overload to 'F'
 assets/type_error/lane_gather_template_shuffle_count.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/lane_gather_template_slice_bounds.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/legacy_implicitly_deletable.mojo	compile-reject	agree	error: use of unknown declaration 'ImplicitlyDestructible'
@@ -682,6 +682,7 @@ assets/type_error/mut_capture_transfer.mojo	compile-reject	agree	error: cannot c
 assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
 assets/type_error/mut_origin_constructor_rejects_immutable_pointer.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/mut_receiver_aliases_method_variadic_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'rest' argument in 'm' call
+assets/type_error/mut_self_callable_conformance.mojo	compile-reject	agree	error: 'Counter' does not implement all requirements for 'def(Int) -> Int'
 assets/type_error/mut_untracked_origin_local.mojo	compile-reject	agree	error: invalid call to 'mutate_untracked': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/nested_def_calls_later_nested_def.mojo	compile-reject	agree	error: use of unknown declaration 'q'
 assets/type_error/nested_def_recursive_reference.mojo	compile-reject	agree	error: recursive references to nested functions are not supported; define 'walk' at file scope
@@ -848,6 +849,9 @@ assets/type_error/return_origin_widening_owner_field.mojo	compile-reject	agree	e
 assets/type_error/return_origin_widening_wrapper_adapter.mojo	compile-reject	agree	error: cannot implicitly convert 'KeyIter[origin_of(self.entries)]' value to 'KeyIter[origin_of(self)]'
 assets/type_error/round_undeclared_roundable.mojo	compile-reject	agree	error: no matching function in call to 'round'
 assets/type_error/roundable_missing_ndigits_overload.mojo	compile-reject	agree	error: 'R' does not implement all requirements for 'Roundable'
+assets/type_error/runtime_capturing_callable_element.mojo	compile-reject	ledgered	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
+assets/type_error/runtime_capturing_callable_local.mojo	compile-reject	ledgered	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
+assets/type_error/runtime_capturing_callable_parameter.mojo	compile-reject	ledgered	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/type_error/scalar_range_float_needs_step.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/scalar_range_mixed_dtypes.mojo	compile-reject	agree	error: no matching function in call to 'range'
 assets/type_error/self_annotation_not_self.mojo	compile-reject	agree	error: 'self' argument must have type 'Self'; use a 'where' clause to constrain the 'Self' type instead

@@ -438,13 +438,20 @@ fn rejects_escaping_closure() {
 }
 
 #[test]
-fn rejects_returning_an_array_storing_a_closure() {
-    // The escape is judged through the aggregate: the returned array's
-    // element would outlive the frame holding its environment.
-    let e = err_std(
+fn rejects_an_array_annotation_storing_a_capturing_closure() {
+    // A `capturing[...]` callable nested in a local's annotation has no
+    // run-time value, like the bare annotation.
+    let TypeError::Unsupported(message) = err_std(
         "def make() -> Array[def(x: Int) capturing[_] -> Int, 1]:\n    var i = 2\n    var fns: Array[def(x: Int) capturing[_] -> Int, 1] = [lambda (x: Int) {var i} -> Int: x * i]\n    return fns^\n",
+    ) else {
+        panic!("expected an unsupported-feature error");
+    };
+    assert!(
+        message.contains(
+            "capturing closures cannot be materialized as runtime values (the annotation of variable 'fns')"
+        ),
+        "unexpected diagnostic: {message}"
     );
-    assert_eq!(e, TypeError::ClosureEscape);
 }
 
 #[test]
@@ -7197,14 +7204,68 @@ fn rejects_bare_move_initializer_parameter() {
 
 #[test]
 fn rejects_a_capturing_closure_bound_to_an_unqualified_def_parameter() {
-    let TypeError::Unsupported(message) = err_std(
+    // The closure's storage does not convert to a run-time `def(...)`
+    // value, as the pin's "cannot be converted" verdict.
+    let error = err_std(
         "def apply_twice(callback: def(Int) -> None):\n    callback(2)\n    callback(3)\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n",
+    );
+    assert!(
+        matches!(&error, TypeError::TypeMismatch { context, .. }
+            if context == "argument 'callback' to 'apply_twice'"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn rejects_a_runtime_capturing_callable_parameter() {
+    for src in [
+        "def call_rt(f: def(Int) capturing[_] -> Int, a: Int) -> Int:\n    return f(a)\n",
+        "struct S:\n    def call(self, f: def(Int) capturing[_] -> Int) -> Int:\n        return f(1)\n",
+        "comptime CB = def(Int) capturing[_] -> Int\n\ndef call_rt(f: CB) -> Int:\n    return f(1)\n",
+    ] {
+        let TypeError::Unsupported(message) = err_std(src) else {
+            panic!("expected an unsupported-feature error for {src}");
+        };
+        assert!(
+            message.contains(
+                "capturing closures cannot be materialized as runtime values (parameter 'f')"
+            ),
+            "unexpected diagnostic: {message}"
+        );
+    }
+}
+
+#[test]
+fn rejects_a_capturing_callable_local_annotation() {
+    let TypeError::Unsupported(message) = err_std(
+        "def main():\n    var k = 10\n    var f: def(Int) capturing[_] -> Int = lambda (x: Int) {k} -> Int: x + k\n    print(f(1))\n",
     ) else {
         panic!("expected an unsupported-feature error");
     };
     assert!(
-        message.contains("must spell 'capturing[...]'"),
+        message.contains(
+            "capturing closures cannot be materialized as runtime values (the annotation of variable 'f')"
+        ),
         "unexpected diagnostic: {message}"
+    );
+}
+
+#[test]
+fn callable_conformance_requires_a_read_receiver() {
+    for receiver in ["mut self", "ref self", "var self"] {
+        let src = format!(
+            "@fieldwise_init\nstruct Counter(def(Int) -> Int):\n    var total: Int\n    def __call__({receiver}, amount: Int) -> Int:\n        return self.total + amount\n"
+        );
+        let error = err_std(&src);
+        assert!(
+            matches!(&error, TypeError::TraitMethodMismatch { method, .. } if method == "__call__"),
+            "{receiver}: unexpected error: {error:?}"
+        );
+    }
+    // Without a `def(...)` conformance, a `mut self` `__call__` is a method
+    // the struct's value calls directly.
+    ok_std(
+        "@fieldwise_init\nstruct Counter:\n    var total: Int\n    def __call__(mut self, amount: Int) -> Int:\n        self.total += amount\n        return self.total\n\ndef main():\n    var c = Counter(10)\n    print(c(5), c(2))\n",
     );
 }
 
@@ -7740,9 +7801,9 @@ fn lambda_with_explicit_capture_all_is_a_closure_even_without_captures() {
 #[test]
 fn lambda_omitted_capture_list_imm_captures_free_variables() {
     // The free variable makes the lambda capturing; the imm capture is
-    // implicit, so a `capturing[...]` contract accepts it...
+    // implicit, so an `F: def(...)` binder accepts its storage...
     ok_std(
-        "def apply(f: def(x: Int) capturing[_] -> Int, v: Int) -> Int:\n    return f(v)\n\ndef main():\n    var z = 10\n    var r: Int = apply(lambda (x: Int) -> Int: x + z, 5)\n",
+        "def apply[F: def(x: Int) -> Int](f: F, v: Int) -> Int:\n    return f(v)\n\ndef main():\n    var z = 10\n    var r: Int = apply(lambda (x: Int) -> Int: x + z, 5)\n",
     );
     // ...and a thin contract rejects it, naming the closure's type as the
     // pin does (`def(x: Int) -> Int`).

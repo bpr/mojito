@@ -718,15 +718,16 @@ fn owned_closure_captures_materialize_at_the_declaration() {
 
 #[test]
 fn first_class_owned_closure_uses_its_stored_snapshot() {
-    // A capture-bearing nested def binds only to a `capturing[...]` contract;
-    // the unqualified `def(...)` binding is rejected (see `checker_test`).
-    let src = "def invoke(callback: def() capturing[_] -> Int) -> Int:\n    return callback()\n\ndef main():\n    var x = 40\n    def snapshot() {var x} -> Int:\n        return x\n    x = 42\n    print(snapshot(), invoke(snapshot), x)\n";
+    // A capture-bearing nested def's value is its storage, which an
+    // `F: def(...)` binder takes; a run-time `def(...)` parameter rejects it
+    // (see `checker_test`).
+    let src = "def invoke[F: def() -> Int](callback: F) -> Int:\n    return callback()\n\ndef main():\n    var x = 40\n    def snapshot() {var x} -> Int:\n        return x\n    x = 42\n    print(snapshot(), invoke(snapshot), x)\n";
     assert_eq!(parity(src), "40 40 42\n");
 
     // A non-escaping reference closure keeps its outer frame slot alive
     // through the indirect consumer call; the handle must not observe an
     // ASAP-dropped `None` slot.
-    let reference = "def invoke(callback: def() capturing[_] -> Int) -> Int:\n    return callback()\n\ndef main():\n    var x = 42\n    def get() {ref x} -> Int:\n        return x\n    print(invoke(get))\n";
+    let reference = "def invoke[F: def() -> Int](callback: F) -> Int:\n    return callback()\n\ndef main():\n    var x = 42\n    def get() {ref x} -> Int:\n        return x\n    print(invoke(get))\n";
     assert_eq!(parity(reference), "42\n");
 }
 
@@ -735,7 +736,7 @@ fn stored_lambda_reference_capture_keeps_its_owner_alive() {
     // A lambda bound straight into storage loans its reference captures'
     // owners, so the captured slot is not ASAP-dropped after its last
     // direct use.
-    let src = "def main():\n    var k = 3\n    var f: def(x: Int) capturing[_] -> Int = lambda (x: Int) {k} -> Int: x * k\n    print(f(2))\n";
+    let src = "def main():\n    var k = 3\n    var f = lambda (x: Int) {k} -> Int: x * k\n    print(f(2))\n";
     assert_eq!(vm(src), "6\n");
 }
 
@@ -955,7 +956,7 @@ fn nested_origin_specialized_function_values_load_their_closure() {
 
 #[test]
 fn structured_nominal_callable_mut_self_uses_its_callee_place() {
-    let src = "@fieldwise_init\nstruct Counter(def() raises -> Int):\n    var value: Int\n\n    def __call__(mut self) raises -> Int:\n        self.value += 1\n        if self.value == 2:\n            raise Error(\"two\")\n        return self.value\n\ndef main():\n    var counter = Counter(0)\n    try:\n        print(counter())\n        print(counter())\n    except:\n        print(\"caught\")\n    print(counter.value)\n";
+    let src = "@fieldwise_init\nstruct Counter:\n    var value: Int\n\n    def __call__(mut self) raises -> Int:\n        self.value += 1\n        if self.value == 2:\n            raise Error(\"two\")\n        return self.value\n\ndef main():\n    var counter = Counter(0)\n    try:\n        print(counter())\n        print(counter())\n    except:\n        print(\"caught\")\n    print(counter.value)\n";
     assert_eq!(vm(src), "1\ncaught\n2\n");
 }
 
@@ -1926,14 +1927,6 @@ fn maybe_uninit_writes_and_assumes_init() {
         run_compiled(src).expect("uninit storage runs"),
         "first 7\nsecond 9\n"
     );
-}
-
-#[test]
-fn thin_callable_binds_to_a_capturing_contract() {
-    // A non-capturing callable satisfies a `capturing[_]` funarg contract:
-    // its capture set is empty, a subset of any allowed origin set.
-    let src = "def call0(f: def() capturing[_] -> Int) -> Int:\n    return f()\n\ndef main():\n    def make() -> Int:\n        return 7\n    print(call0(make))\n    print(call0(lambda () -> Int: 8))\n";
-    assert_eq!(run_compiled(src).expect("thin-to-capturing runs"), "7\n8\n");
 }
 
 #[test]

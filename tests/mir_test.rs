@@ -5098,48 +5098,6 @@ fn closure_storage_carries_the_binders_its_body_names() {
 }
 
 #[test]
-fn closure_over_a_method_binds_its_receiver_to_a_storage_capture() {
-    // A lambda used as a value moves its storage into a closure of the
-    // storage's method, whose first capture is the method's receiver: a
-    // capture of any other type binds no receiver.
-    // A generic binder takes the storage struct itself; a run-time
-    // `capturing` callable is the closure.
-    let src = "def twice(f: def() capturing[_] -> Int) -> Int:\n    return f() + f()\n\ndef main():\n    var x = 1\n    print(twice(lambda {var x} -> Int: x))\n";
-    let mut mir = lower_program(&linked(src)).expect("checked lowering");
-    assert!(
-        mir.invariant_errors.is_empty(),
-        "{:?}",
-        mir.invariant_errors
-    );
-    assert!(mojito::mir::verify::verify(&mir).is_empty());
-    let main = &mut mir
-        .functions
-        .iter_mut()
-        .find(|(name, _)| name == "main")
-        .expect("main lowered")
-        .1;
-    let capture = main
-        .blocks
-        .iter_mut()
-        .flat_map(|block| &mut block.instrs)
-        .find_map(|instruction| match instruction {
-            MirInstr::MakeClosure {
-                function, captures, ..
-            } if function.contains("$__storage.") => captures.first_mut(),
-            _ => None,
-        })
-        .expect("the lambda's closure captures its storage");
-    capture.place.ty = Some(Ty::int());
-    let errors = mojito::mir::verify::verify(&mir);
-    assert!(
-        errors
-            .iter()
-            .any(|error| error.contains("closure environment for")),
-        "{errors:?}"
-    );
-}
-
-#[test]
 fn nested_def_closure_is_made_at_its_first_class_use() {
     // A nested `def` with reference captures only has no closure slot: a
     // function value of it is made where it is used, and a call by name
