@@ -609,11 +609,9 @@ impl Checker {
                 vec![],
             ))));
         }
-        // A `Bool`, `DType`, or `StringLiteral` leaf hashes into the
-        // caller-provided hasher: the first two through its
-        // `_update_with_simd` at `hash_leaf_ty`'s type, a string literal
-        // through the nominal `String`'s `__hash__`. A `SIMD`'s `__hash__`
-        // is its declared member. The `mut` argument is a place so its
+        // A `DType` leaf hashes into the caller-provided hasher through its
+        // `_update_with_simd` at `hash_leaf_ty`'s type. A `SIMD`'s and a
+        // `Bool`'s `__hash__` are their declared members. The `mut` argument is a place so its
         // updated state is committed by ordinary call lowering.
         if method == "__hash__"
             && args.len() == 1

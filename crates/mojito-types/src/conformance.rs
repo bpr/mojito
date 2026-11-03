@@ -415,7 +415,7 @@ pub fn is_signed_numeric_like(ty: &Ty) -> bool {
 }
 
 pub fn builtin_hashable_ty(ty: &Ty) -> bool {
-    ty.is_string_literal() || matches!(ty.kind(), TyKind::Dtype)
+    matches!(ty.kind(), TyKind::Dtype)
 }
 
 /// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a

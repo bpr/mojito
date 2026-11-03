@@ -1062,7 +1062,7 @@ impl<'p> CallEdges<'p, '_> {
                 for arg in args {
                     match self.function.reg_types.get(&arg.0).map(Ty::kind) {
                         Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                            self.push_members(name, "write_repr_to")
+                            self.push_members(name, "write_repr_to");
                         }
                         // A literal's repr writes through the nominal
                         // `String`'s member.
@@ -1141,9 +1141,8 @@ impl<'p> CallEdges<'p, '_> {
                     }
                 }
             }
-            // A `Bool`/`DType` Hashable leaf lowers to the hasher's
-            // compiled `_update_with_simd` (a string literal through the
-            // nominal String's `__hash__` instance bound to that hasher).
+            // A `DType` Hashable leaf lowers to the hasher's compiled
+            // `_update_with_simd`.
             MirInstr::MethodCall {
                 recv,
                 method,
@@ -1173,7 +1172,7 @@ impl<'p> CallEdges<'p, '_> {
                     // `__hash__` under a tag switch: every nominal
                     // alternative's instances are edges.
                     let mut nominal_alternatives: Vec<&str> = Vec::new();
-                    let mut string_leaf = receiver.is_some_and(Ty::is_string_literal);
+                    let mut string_leaf = false;
                     if let Some(TyKind::Variant(alternatives)) = receiver.map(Ty::kind) {
                         for alternative in alternatives {
                             if let Some((name, _)) = alternative.kind().as_non_simd_struct() {

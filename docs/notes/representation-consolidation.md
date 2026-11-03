@@ -75,13 +75,13 @@ command cannot use both.
      `Int`-annotated `comptime`) are its neighbours.
    - `StringLiteral` is the same port, after R1657: R1658
      → R1659 → R1660 (landed), then R1861 → R1862 (its run-time
-     descriptor), R1863, R1654 (its hash leaf), and R1655; R1651 (landed)
+     descriptor), R1863, and R1655; R1651 (landed)
      left R1864 (materializing before an implicit constructor).
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1785 --task R1753 \
      --task R1789 --task R1788 --task R1738 -n 0
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1861 --task R1862 --task R1863 --task R1864 --task R1654 --task R1655 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1861 --task R1862 --task R1863 --task R1864 --task R1655 -n 0
    ```
 
 4. **Finish gap D** (size). R1356 landed in part on 10-26. Its census
@@ -109,7 +109,7 @@ command cannot use both.
    requirement, and the elaborator reads the witness table. What is left:
    - The members a backend still reaches from a value's type
      (`mir::TYPE_REACHED_MEMBERS`): display (R1287, R422); the `DType`
-     and `StringLiteral` hash leaves (R160, R1654); a
+     hash leaf (R160); a
      `SIMD[dt, _](x)` construction's `__int__` (R1544); and a `Variant`
      handler's `__call__` (R1444, R1466).
    - A struct callee's `def(...)` contract still composes its `__call__`

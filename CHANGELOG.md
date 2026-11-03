@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `StringLiteral` is no longer `Hashable`, matching the pin, whose
+  `StringLiteral` declares no `__hash__` (R1654): `hash("abc")` hashes the
+  `String` the literal materializes to, and `"abc".__hash__(h)` is
+  rejected. The checker, VM, elaborator, and Pliron string-literal hash
+  arms are gone. An existential `Some[Hashable]` parameter does not yet
+  materialize a literal argument (R1865).
 - A struct's `@__nonmaterializable(T)` is now read, as upstream's is
   (R1651): a register-passable struct declaring it materializes to `T`
   through `T`'s implicit constructor at an inferred binding, a display

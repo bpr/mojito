@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1865**.
+Next free ID: **R1866**.
 
 ## Ordered Work
 
@@ -11216,7 +11216,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `DType.__eq__(self, rhs: Self)` replaces.
   - Port `DType.__hash__` with the struct and retire its hash-leaf arms
     (`builtin_hashable_ty`, `hash_leaf_ty`, the VM's `__hash__` arm,
-    `lower_hash_leaf`, `enqueue_hash_leaf_instances`); R1654 retires the last leaf.
+    `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
+  - It is the last hash leaf, so `__hash__` and `_update_with_simd` then
+    leave `mir::TYPE_REACHED_MEMBERS`, and Pliron's type-reached member
+    push (`lib.rs`) goes with them.
   - Probe: `SIMD[DType.uint16, 2](1, 2).write_repr_to(b)`, into the
     marking writer R159's probe describes, writes `|DType.uint16` for
     `Self.dtype.write_repr_to(writer)`, where the pin's declared `DType`
@@ -11399,18 +11402,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1654 `StringLiteral`'s hash is a compiler leaf, where upstream's
-  is its `__hash__`**
+- [ ] **R1865 An existential `Some[Trait]` parameter is not a deduced
+  type parameter at the call**
 
-  `hash("abc")` runs through the hash-leaf arms (`builtin_hashable_ty`,
-  the VM's `__hash__` arm, `lower_hash_leaf`, `enqueue_hash_leaf_instances`),
-  where upstream's `StringLiteral` declares `__hash__` and `Hashable`.
-  - Port the member and delete the literal's arms.
-  - Once R160 and R1608 have retired the `DType` and `Bool` leaves too,
-    `__hash__` and `_update_with_simd` leave `mir::TYPE_REACHED_MEMBERS`,
-    and Pliron's type-reached member push (`lib.rs`) goes with them.
-  - Probe: `print(hash("abc"))` stays `1671071436193132867`.
-  - Depends on R1652 (a literal receiver is the struct).
+  The checker resolves `x: Some[Trait]` to a bounded `TyKind::Param`
+  under a synthetic binder and accepts an argument only if its own type
+  conforms, where upstream desugars it to an anonymous `[T: Trait]`
+  binder that the argument deduces through `Checker::deduced_ty`.
+  - So a literal neither materializes (`@__nonmaterializable`) nor
+    defaults to its `Int`/`Float64` type there, as it does for a named
+    `[T: Trait](x: T)` binder.
+  - Lever: bind an existential parameter as a call-local deduced binder,
+    as `with_existential_binders` (`checker/traits_support.rs`) already
+    does for trait witnesses, so the call records the materialization.
+  - Probe: `g("abc")` over `def g(x: Some[Hashable]) -> UInt64: return
+    hash(x)` is rejected ("expected Some[Hashable], found
+    StringLiteral["abc"]"), where the pin prints `1671071436193132867`.
+  - Probe: `g(3)` over the same `g` is rejected ("found IntLiteral[3]"),
+    where the pin hashes the `Int`.
+  - Found while landing R1654 (2026-11-03).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1655 `StringLiteral`'s members over `StringSlice(self)` are

@@ -128,13 +128,10 @@ impl<'a> FnLowering<'a> {
         self.append_struct_display(ctx, receiver, name, writer, dest)
     }
 
-    /// Contribute one `DType` or string-literal Hashable leaf to a
-    /// caller-owned hasher — the VM's non-struct `__hash__` intrinsic. A
-    /// `DType` passes the value `hash_leaf_ty` names to the hasher's
-    /// `_update_with_simd` instance at that type; a string literal
-    /// materializes as a nominal `String` and dispatches to that struct's
-    /// `__hash__` instance bound to the hasher. A `Bool` or a `SIMD` hashes
-    /// through its declared `__hash__`.
+    /// Contribute one `DType` Hashable leaf to a caller-owned hasher — the
+    /// VM's non-struct `__hash__` intrinsic: the value `hash_leaf_ty` names
+    /// passes to the hasher's `_update_with_simd` instance at that type. A
+    /// `Bool` or a `SIMD` hashes through its declared `__hash__`.
     pub(super) fn lower_hash_leaf(
         &mut self,
         ctx: &mut Context,
@@ -159,16 +156,6 @@ impl<'a> FnLowering<'a> {
         };
         let place = place.clone();
         let hasher_ptr = self.place_address(ctx, &place, dest)?.0;
-        if receiver.is_string_literal() {
-            // Materialize the literal as an owned nominal String, hash it
-            // through the struct's own `__hash__`, and release the copy.
-            let target = self.string_hash_instance(dest, hasher_name)?;
-            let storage = self.owned_string_of_literal(ctx, recv, dest)?;
-            self.emit_bound_call(ctx, dest, &target, vec![storage, hasher_ptr])?;
-            let (data, _) = self.string_parts(ctx, storage, dest);
-            self.emit_free(ctx, data);
-            return Ok(());
-        }
         if !matches!(receiver.kind(), TyKind::Dtype) {
             return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
         }
@@ -252,41 +239,6 @@ impl<'a> FnLowering<'a> {
                 dest,
             )),
         }
-    }
-
-    /// The nominal `String`'s `__hash__` instance bound to `hasher_name`:
-    /// the one in its member table whose hasher parameter is that struct.
-    fn string_hash_instance(&self, dest: Reg, hasher_name: &str) -> Result<String, PlironError> {
-        let mut candidates = self
-            .struct_decls
-            .keys()
-            .filter(|name| {
-                name.rsplit('$')
-                    .next()
-                    .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct)
-            })
-            .flat_map(|name| self.struct_member_symbols(name, "__hash__"))
-            .map(|(_, symbol)| symbol)
-            .filter(|symbol| {
-                matches!(
-                    self.signatures.get(*symbol).and_then(|signature| signature.params.get(1)),
-                    Some(LowerTy::Aggregate { ty, .. })
-                        if matches!(ty.kind(), TyKind::Struct(name, _) if *name == hasher_name)
-                )
-            });
-        let Some(symbol) = candidates.next() else {
-            return Err(self.unsupported_reg(
-                "hashing without a compiled `String.__hash__` instance".into(),
-                dest,
-            ));
-        };
-        if candidates.next().is_some() {
-            return Err(self.unsupported_reg(
-                "hashing with ambiguous `String.__hash__` instances".into(),
-                dest,
-            ));
-        }
-        Ok(symbol.to_string())
     }
 
     /// The builtin-string writer's `write`: grow-and-append each argument's

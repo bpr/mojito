@@ -1084,32 +1084,6 @@ impl Prog {
             .map(|(index, _)| index)
     }
 
-    /// The instance of `receiver_type.method` in its member table whose
-    /// hasher parameter is `hasher`'s struct (`String.__hash__$mono$T…AHasher…`),
-    /// when exactly one is. `None` keeps by-name dispatch.
-    fn hasher_method_instance(
-        &self,
-        receiver_type: &str,
-        method: &str,
-        hasher: &Value,
-    ) -> Option<String> {
-        let Value::Struct { name: hasher, .. } = hasher else {
-            return None;
-        };
-        let mut instances = self
-            .struct_member_instances(receiver_type, method)
-            .filter(|&(index, _)| {
-                matches!(
-                    (self.mir.functions[index].1.param_types.get(1).map(peel_references)).map(Ty::kind),
-                    Some(mojito_types::types::TyKind::Struct(name, _)) if name == hasher
-                )
-            });
-        match (instances.next(), instances.next()) {
-            (Some((_, symbol)), None) => Some(symbol.to_string()),
-            _ => None,
-        }
-    }
-
     /// The function index of the member `method` the struct `name` runs for
     /// a dispatch with `argc` arguments besides the receiver, from its
     /// declaration's member table: the one instance under the key callable

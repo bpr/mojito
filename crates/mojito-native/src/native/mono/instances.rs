@@ -52,11 +52,9 @@ impl Specializer<'_> {
     /// for a `DType` receiver, the hasher's `_update_with_simd`
     /// instantiated at the type the leaf hashes as (`hash_leaf_ty`), its
     /// dtype and width binders solved from that type as a call's argument
-    /// solves them. A string-literal
-    /// receiver reaches the hasher through the nominal String's `__hash__`
-    /// bound to it (the VM materializes the literal and dispatches the same
-    /// way), and a Variant receiver through the `__hash__` of every nominal
-    /// alternative (the lowered tag switch dispatches whichever is active).
+    /// solves them; and for a Variant receiver, the `__hash__` of every
+    /// nominal alternative (the lowered tag switch dispatches whichever is
+    /// active).
     pub(super) fn enqueue_hash_leaf_instances(
         &mut self,
         owner: &str,
@@ -82,19 +80,6 @@ impl Specializer<'_> {
                 std::slice::from_ref(&leaf),
             )?;
             return Ok(());
-        }
-        if receiver.is_string_literal() {
-            let string = Ty::new(TyKind::Struct(
-                mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                Vec::new(),
-            ));
-            self.enqueue_nominal_method_instance(
-                owner,
-                &string,
-                "__hash__",
-                1,
-                std::slice::from_ref(&hasher_ty),
-            )?;
         }
         if let TyKind::Variant(alternatives) = receiver.kind() {
             for alternative in alternatives {

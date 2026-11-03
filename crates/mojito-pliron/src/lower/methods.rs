@@ -59,9 +59,9 @@ impl FnLowering<'_> {
         kwarg_places: &[Option<MirPlace>],
         recv_place: Option<&MirPlace>,
     ) -> Result<(), PlironError> {
-        // A `Bool`/`DType`/string-literal Hashable leaf: contribute it to
-        // the caller-owned hasher through the hasher's compiled
-        // `_update_with_simd` (the VM's non-struct `__hash__` intrinsic).
+        // A `DType` Hashable leaf: contribute it to the caller-owned hasher
+        // through the hasher's compiled `_update_with_simd` (the VM's
+        // non-struct `__hash__` intrinsic).
         if resolved.is_none()
             && method == "__hash__"
             && args.len() == 1

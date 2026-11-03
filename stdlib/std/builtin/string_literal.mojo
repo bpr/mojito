@@ -6,10 +6,9 @@
 # members are these bodies. An application is this struct, but its
 # run-time value is still the compiler's descriptor, which the compiler
 # builds by rule (R1862), so the default initializer's empty body
-# constructs nothing. `__hash__` (R1654)
-# and the members whose bodies read `StringSlice(self)` (R1655) are not
-# ported, and for that reason the comparisons, `write_to`, and
-# `write_repr_to` read `as_string_slice()`. The struct declares only the
+# constructs nothing. The members whose bodies read `StringSlice(self)`
+# (R1655) are not ported, and for that reason the comparisons,
+# `write_to`, and `write_repr_to` read `as_string_slice()`. The struct declares only the
 # traits whose requirements are ported here. `ptr` takes
 # `pop.string.address` as the `Pointer` itself, where upstream's wraps the
 # `!kgen.pointer` it gives with `unsafe_bitcast[Byte]()` (R221).

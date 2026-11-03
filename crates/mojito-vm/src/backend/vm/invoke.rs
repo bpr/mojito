@@ -286,36 +286,6 @@ impl VmBackend {
                 // its `_update_with_simd` instance at `hash_leaf_ty`'s type.
                 // A `Bool` or a `SIMD` runs its declared `__hash__` instead.
                 ("__hash__", 1) => {
-                    // A string literal hashes as the nominal `String` it
-                    // materializes to, so literal and nominal keys agree.
-                    if let Value::Str(text) = &recv {
-                        let text = text.clone();
-                        let materialized = self.nominal_string_value(prog, &text)?;
-                        if let Value::Struct { name, .. } = &materialized {
-                            let instance = prog.hasher_method_instance(name, method, &args[0]);
-                            return self.method_call(
-                                prog,
-                                MethodInvocation {
-                                    receiver: materialized,
-                                    receiver_ty: None,
-                                    method,
-                                    resolved_name: instance.as_deref(),
-                                    result_adapter,
-                                    arguments: args,
-                                    keyword_arguments: kwargs,
-                                    receiver_place: recv_place,
-                                    argument_places: arg_places,
-                                    keyword_argument_places: kwarg_places,
-                                },
-                                CallerFrame {
-                                    id: frame_id,
-                                    function: caller_function,
-                                    registers: regs,
-                                    variables: vars,
-                                },
-                            );
-                        }
-                    }
                     let place = arg_places.first().and_then(Option::as_ref).ok_or_else(|| {
                         RuntimeError::Unsupported(
                             "vm: Hashable.__hash__ needs a mutable hasher place".into(),

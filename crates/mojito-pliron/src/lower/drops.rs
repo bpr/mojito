@@ -160,7 +160,7 @@ impl<'a> FnLowering<'a> {
         if let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)?
             && self.trace_lifecycle
             && !self.synthesized_body()
-            && let Some((name, _)) = (&ty.kind()).as_non_simd_struct()
+            && let Some((name, _)) = ty.kind().as_non_simd_struct()
         {
             let name = name.clone();
             self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
