@@ -231,7 +231,7 @@ fn default_construction(
         kind if kind.is_int() || kind.is_uint() || matches!(kind, TyKind::IntLiteral(_)) => {
             Some(Const::Int(0))
         }
-        TyKind::Bool => Some(Const::Bool(false)),
+        kind if kind.is_bool() => Some(Const::Bool(false)),
         kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
             Some(Const::Float(0.0))
         }

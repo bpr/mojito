@@ -366,11 +366,7 @@ impl FnLowering<'_> {
             return Ok(None);
         };
         match reference.referent.kind() {
-            kind if kind.is_int()
-                || kind.is_uint()
-                || kind.is_float64()
-                || matches!(kind, TyKind::Bool) =>
-            {
+            kind if kind.is_int() || kind.is_uint() || kind.is_float64() || kind.is_bool() => {
                 scalar_type(self.name, &reference.referent, self.reg_span(reg)).map(Some)
             }
             referent if scalar_simd_dtype(referent).is_some() => {

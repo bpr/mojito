@@ -299,7 +299,7 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
 /// reads for a value of type `ty`.
 ///
 /// Upstream's witness tables hang off the struct instance a type names: a
-/// struct names its own, `Bool` its declaration's, and a closed `SIMD` type
+/// struct names its own, and a closed `SIMD` type
 /// the `SIMD` instance its dtype and width apply, so a scalar alias and its
 /// `SIMD[dt, 1]` spelling name one table. `None` for any other type, a
 /// symbolic `SIMD` included.
@@ -309,7 +309,6 @@ pub fn member_table_name(ty: &Ty) -> Option<Cow<'_, str>> {
         struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
             Some(Cow::Borrowed(name))
         }
-        TyKind::Bool => Some(Cow::Borrowed(mojito_types::types::BOOL_TYPE_NAME)),
         kind if let Some((dtype, width)) = kind.known_simd() => {
             let canonical = canonical_simd_ty(dtype, width);
             let (_, arguments) = mojito_types::types::nominal_parts(&canonical)?;
@@ -1462,7 +1461,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // A `SIMD` application spells as its display (`Int32`,
         // `SIMD[DType.int32, 4]`), not as a struct's arguments.
         kind if kind.is_simd() => kind.to_string(),
-        TyKind::Bool => "Bool".to_string(),
+        kind if kind.is_bool() => "Bool".to_string(),
         TyKind::StringLiteral(None) => "StringLiteral".to_string(),
         // A literal whose type carries its value spells as the application
         // `StringLiteral[value]` it bridges.
@@ -3365,7 +3364,7 @@ impl TypeNameSpeller<'_> {
         match ty.kind() {
             TyKind::IntLiteral(_) => self.simd(&"DType.int", &1),
             TyKind::FloatLiteral(_) => self.simd(&"DType.float64", &1),
-            TyKind::Bool => self.qualify("std.builtin.bool", "Bool"),
+            kind if kind.is_bool() => self.qualify("std.builtin.bool", "Bool"),
             TyKind::None => self.qualify("std.builtin.none", "NoneType"),
             TyKind::Dtype => self.qualify("std.builtin.dtype", "DType"),
             TyKind::Error => self.qualify("std.builtin.error", "Error"),
@@ -3496,7 +3495,7 @@ fn reflected_base_name(ty: &Ty) -> String {
             "SIMD"
         }
 
-        TyKind::Bool => "Bool",
+        kind if kind.is_bool() => "Bool",
         TyKind::None => "NoneType",
         TyKind::Dtype => "DType",
         TyKind::Error => "Error",

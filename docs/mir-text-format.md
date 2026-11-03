@@ -1038,6 +1038,13 @@ zero, so a NaN is `True`. Every other float comparison stays ordered. A
 1.153 artifact's float `binary ne` is read with the 1.154 meaning. The
 package format moves to `mojito-package 175`.
 
+The MIR schema is unchanged now that `Bool` is the declared struct, which
+the text still spells `Bool`: `b._mlir_value` is a `field.get` of it and an
+initializer's store to it a `field(_mlir_value)` store, which the checked
+`BoolStorage` adjustment no longer makes a `scalar.cast` (R1612). A packaged
+body's `Bool` reads and stores change shape, so the package format moves to
+`mojito-package 176`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

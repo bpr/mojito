@@ -562,7 +562,7 @@ pub enum RetKind {
     U64,
     /// `Float64` — f64.
     F64,
-    /// `TyKind::Bool` — i1 (read as u8, low bit significant).
+    /// `Bool` — i1 (read as u8, low bit significant).
     Bool,
     /// `TyKind::Pointer` — an opaque pointer. Compiles; the value-comparing JIT
     /// harness refuses to read it (a raw address has no VM display analog).
@@ -1029,7 +1029,7 @@ impl<'p> CallEdges<'p, '_> {
             _ => ty,
         };
         let ty = mojito_types::types::default_literal(ty);
-        if (ty.kind().is_simd() || matches!(ty.kind(), TyKind::Bool))
+        if (ty.kind().is_simd() || ty.kind().is_bool())
             && let Some(table) = mojito_symbol::symbol::member_table_name(&ty)
         {
             self.push_members(&table, method);

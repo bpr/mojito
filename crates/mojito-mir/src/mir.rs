@@ -4406,7 +4406,7 @@ impl<'a> Flatten<'a> {
             return None;
         }
         if !expression.ty().is_some_and(|ty| {
-            ty.is_int() || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::Bool)
+            ty.is_int() || ty.is_bool() || matches!(ty.kind(), TyKind::IntLiteral(_))
         }) {
             for display in &displays {
                 self.build_display(display);

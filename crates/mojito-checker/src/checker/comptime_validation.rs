@@ -880,7 +880,7 @@ impl Checker {
             ExprKind::Prefix(PrefixOp::Not, inner) => self.parameter_valued_condition(inner),
             ExprKind::Identifier(_) | ExprKind::Member { .. } => self
                 .parameter_value_ty(cond)
-                .is_some_and(|ty| matches!(ty.kind(), TyKind::Bool)),
+                .is_some_and(|ty| ty.kind().is_bool()),
             ExprKind::Call { name, args, .. } => {
                 (name == "comptime" || name == "conforms_to") && !args.is_empty()
             }
@@ -971,7 +971,8 @@ impl Checker {
                 self.parameter_value_ty(operand).is_some_and(|ty| {
                     ty.is_int()
                         || ty.is_uint()
-                        || matches!(ty.kind(), TyKind::Bool | TyKind::IntLiteral(_))
+                        || ty.is_bool()
+                        || matches!(ty.kind(), TyKind::IntLiteral(_))
                 })
             }
             ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Invert | PrefixOp::Pos, inner) => {
@@ -1161,34 +1162,33 @@ impl Checker {
             ),
         };
         let integer = ty.is_int() || ty.is_uint() || matches!(ty.kind(), TyKind::IntLiteral(_));
-        let constraint = match ty.kind() {
-            TyKind::Bool => {
-                structural()
+        let constraint =
+            match ty.kind() {
+                kind if kind.is_bool() => structural()
                     .or_else(|| self.lifted_application(cond))
                     .map(|expression| {
                         GenericConstraint::Eq(
                             operand(expression),
                             ConstraintOperand::Value(CtValue::Bool(true)),
                         )
-                    })
-            }
-            _ if integer && let Some(expression) = structural() => Some(GenericConstraint::Ne(
-                operand(expression),
-                ConstraintOperand::Value(CtValue::Int(0)),
-            )),
-            _ => self.converted_condition(cond).map(|expression| {
-                GenericConstraint::Eq(
+                    }),
+                _ if integer && let Some(expression) = structural() => Some(GenericConstraint::Ne(
                     operand(expression),
-                    ConstraintOperand::Value(CtValue::Bool(true)),
-                )
-            }),
-        }
-        .ok_or_else(|| {
-            TypeError::Unsupported(format!(
-                "a {} that compiles to no parameter expression",
-                test.context()
-            ))
-        })?;
+                    ConstraintOperand::Value(CtValue::Int(0)),
+                )),
+                _ => self.converted_condition(cond).map(|expression| {
+                    GenericConstraint::Eq(
+                        operand(expression),
+                        ConstraintOperand::Value(CtValue::Bool(true)),
+                    )
+                }),
+            }
+            .ok_or_else(|| {
+                TypeError::Unsupported(format!(
+                    "a {} that compiles to no parameter expression",
+                    test.context()
+                ))
+            })?;
         let constraint = self.fold_closed_constraint(constraint);
         self.record_comptime_condition(cond, &constraint);
         Ok(constraint)
@@ -1476,7 +1476,7 @@ impl Checker {
         let ty = match ty.kind() {
             kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => Ty::int(),
             kind if kind.is_uint() => Ty::uint(),
-            TyKind::Bool => Ty::bool(),
+            kind if kind.is_bool() => Ty::bool(),
             kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => Ty::float64(),
             // A struct-, sized-scalar-, or attribute-valued call is an
             // application the elaborator below MIR runs and materializes
@@ -1547,7 +1547,7 @@ impl Checker {
         let scalar = expression
             .meta()
             .as_value()
-            .is_some_and(|ty| ty.is_int() || matches!(ty.kind(), TyKind::Bool));
+            .is_some_and(|ty| ty.is_int() || ty.kind().is_bool());
 
         if self.outside_bodies() || !applies || !scalar || expression.as_constant().is_some() {
             return;
@@ -2590,7 +2590,6 @@ impl Checker {
                     ty.kind(),
                     TyKind::Index
                         | TyKind::I1
-                        | TyKind::Bool
                         | TyKind::None
                         | TyKind::Dtype
                         | TyKind::Struct(..)
@@ -3318,12 +3317,10 @@ impl Checker {
         let leaf = |ty: &Ty| {
             (ty.is_int()
                 || ty.is_float64()
+                || ty.is_bool()
                 || matches!(
                     ty.kind(),
-                    TyKind::Bool
-                        | TyKind::IntLiteral(_)
-                        | TyKind::FloatLiteral(_)
-                        | TyKind::StringLiteral(_)
+                    TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::StringLiteral(_)
                 ))
                 || ty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
                     args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
@@ -3555,9 +3552,7 @@ impl Checker {
                     .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
                 // Any other annotation converts the value, as a runtime
                 // binding's does (`comptime x: Float64 = i`).
-                if &expected != found
-                    && !(expected.is_int() || matches!(expected.kind(), TyKind::Bool))
-                {
+                if &expected != found && !(expected.is_int() || expected.kind().is_bool()) {
                     return Ok(false);
                 }
                 if &expected != found {
@@ -5759,8 +5754,7 @@ fn parameter_value_type(ty: &Ty) -> bool {
     ty.is_simd()
         || matches!(
             ty.kind(),
-            TyKind::Bool
-                | TyKind::None
+            TyKind::None
                 | TyKind::Index
                 | TyKind::I1
                 | TyKind::IntLiteral(_)
@@ -6124,7 +6118,7 @@ fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
     display
         && (element.is_int()
             || element.is_float64()
-            || matches!(element.kind(), TyKind::Bool)
+            || element.kind().is_bool()
             || element
                 .kind()
                 .as_non_simd_struct()

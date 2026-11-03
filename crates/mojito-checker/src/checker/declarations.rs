@@ -917,10 +917,8 @@ impl Checker {
                 if !(vty.is_int()
                     || vty.is_uint()
                     || vty.is_float64()
-                    || matches!(
-                        vty.kind(),
-                        TyKind::Bool | TyKind::StringLiteral(_) | TyKind::Dtype
-                    ))
+                    || vty.is_bool()
+                    || matches!(vty.kind(), TyKind::StringLiteral(_) | TyKind::Dtype))
                 {
                     return Err(TypeError::BadValueParamType {
                         name: tp.name.clone(),
@@ -1347,11 +1345,11 @@ impl Checker {
                 let is_bool_parameter = earlier.iter().any(|declaration| {
                     matches!(declaration,
                         ParamDecl::Value { name: parameter, ty, .. }
-                            if parameter == name && ty == &TyKind::Bool)
+                            if parameter == name && ty.is_bool())
                 });
                 if !is_bool_parameter && !self.comptimes.contains_key(name) {
                     return Err(TypeError::TypeMismatch {
-                        expected: TyKind::Bool.to_string(),
+                        expected: Ty::bool().to_string(),
                         found: format!("compile-time parameter '{name}'"),
                         context: "callable default condition".to_string(),
                     });

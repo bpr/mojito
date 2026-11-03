@@ -128,7 +128,7 @@ impl Checker {
             sig.has_self
                 && sig.params.len() == 1
                 && sig.params[0] == TyKind::Error
-                && sig.ret == TyKind::Bool
+                && sig.ret.is_bool()
         });
         if enter_consumes && (plain_exit || error_exit) {
             return Err(TypeError::ContextManager(format!(

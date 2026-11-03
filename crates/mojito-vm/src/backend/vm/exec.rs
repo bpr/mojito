@@ -352,22 +352,10 @@ impl VmBackend {
             MirInstr::PointerConvert { dest, value } => {
                 regs[dest.0 as usize] = regs[value.0 as usize].clone();
             }
-            // An `index` and its `Int` storage are one value; an `i1` is
-            // held as a `Bool`, and its `!kgen.scalar<bool>` storage as the
-            // one-lane `bool` vector.
+            // An `index` and its `Int` storage are one value, as an `i1` and
+            // a `!kgen.scalar<bool>` are, as LLVM's one `i1`.
             MirInstr::BuiltinCast { dest, value } => {
-                regs[dest.0 as usize] = match &regs[value.0 as usize] {
-                    bit @ Value::Bool(_) => simd_from_values(
-                        mojito_ast::ast::Dtype::Bool,
-                        1,
-                        std::slice::from_ref(bit),
-                    )?,
-                    lane @ Value::Simd {
-                        dtype: mojito_ast::ast::Dtype::Bool,
-                        ..
-                    } => crate::runtime::builtin_convert(ScalarConversion::Bool, lane.clone())?,
-                    value => value.clone(),
-                };
+                regs[dest.0 as usize] = regs[value.0 as usize].clone();
             }
             MirInstr::IsRunInComptimeInterpreter { dest } => {
                 regs[dest.0 as usize] = Value::Bool(self.ctfe_fuel.is_some());
@@ -1690,9 +1678,14 @@ impl VmBackend {
                 elems,
             } => {
                 let reg_types = &prog.mir.functions[function].1.reg_types;
+                // A `Bool` element is its held `!kgen.scalar<bool>` lane, as
+                // upstream's `SIMD.__init__(value: Bool)` reads it.
                 let mut vals: Vec<Value> = elems
                     .iter()
-                    .map(|r| prog.boxed(regs[r.0 as usize].clone(), reg_types.get(&r.0)))
+                    .map(|r| match reg_types.get(&r.0) {
+                        Some(ty) if ty.is_bool() => regs[r.0 as usize].clone(),
+                        ty => prog.boxed(regs[r.0 as usize].clone(), ty),
+                    })
                     .collect();
                 // An `Intable` element of a `SIMD[dt, _](x)` construction
                 // (R1544) arrives as its concrete struct; normalize it

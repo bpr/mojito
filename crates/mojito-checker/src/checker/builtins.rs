@@ -53,7 +53,7 @@ pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)>
                 }),
             "String",
         )),
-        "flush" => Some((*ty == TyKind::Bool, "Bool")),
+        "flush" => Some((ty.is_bool(), "Bool")),
         "file" => Some((
             ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
                 mojito_types::types::is_stdlib_file_descriptor_struct(name)
@@ -144,8 +144,7 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 pub(super) fn is_printable(ty: &Ty) -> bool {
     match ty.kind() {
         kind if kind.is_simd() => true,
-        TyKind::Bool
-        | TyKind::StringLiteral(_)
+        TyKind::StringLiteral(_)
         | TyKind::None
         | TyKind::IntLiteral(_)
         | TyKind::FloatLiteral(_)
@@ -319,9 +318,10 @@ impl Checker {
     /// `==`/`!=` accept.
     pub(super) fn is_list_equatable(&self, ty: &Ty) -> bool {
         is_numeric(ty)
+            || ty.is_bool()
             || matches!(
                 ty.kind(),
-                TyKind::Bool | TyKind::StringLiteral(_) | TyKind::None | TyKind::Dtype
+                TyKind::StringLiteral(_) | TyKind::None | TyKind::Dtype
             )
             || self.equatable_bound(ty)
     }
@@ -554,7 +554,7 @@ impl Checker {
     /// Type `String(x)`: stringify a numeric, `Bool`, or `String` value.
     pub(super) fn infer_stringify(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("String", 1, args)?;
-        if is_numeric(&tys[0]) || tys[0] == TyKind::Bool || tys[0].is_string_literal() {
+        if is_numeric(&tys[0]) || tys[0].is_bool() || tys[0].is_string_literal() {
             let runtime_ty = default_literal(&tys[0]);
             if runtime_ty != tys[0] {
                 self.record_literal_materializations(&args[0], &tys[0], &runtime_ty)?;

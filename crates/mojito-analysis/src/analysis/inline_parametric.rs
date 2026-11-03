@@ -711,7 +711,7 @@ impl Literal {
                     Some(Ty::float_literal_of(value)),
                 )
             }
-            (CheckedConst::Bool(value), TyKind::Bool) => (Const::Bool(*value), None),
+            (CheckedConst::Bool(value), kind) if kind.is_bool() => (Const::Bool(*value), None),
             (CheckedConst::String(value), TyKind::StringLiteral(_)) => {
                 (Const::Str(value.clone()), None)
             }

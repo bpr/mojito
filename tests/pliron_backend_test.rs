@@ -1287,7 +1287,7 @@ mod native_abi_cross_checks {
             unsafe {
                 match ty.kind() {
                     kind if kind.is_int() || kind.is_uint() => LLVMInt64TypeInContext(self.ctx),
-                    TyKind::Bool => LLVMInt1TypeInContext(self.ctx),
+                    kind if kind.is_bool() => LLVMInt1TypeInContext(self.ctx),
                     kind if kind.is_float64() => LLVMDoubleTypeInContext(self.ctx),
                     TyKind::None => self.strukt(&[]),
                     TyKind::Pointer { .. } | TyKind::Ref(_) => {

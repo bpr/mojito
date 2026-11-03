@@ -299,10 +299,10 @@ pub fn method_owner_params<'a>(
 /// A compiler-known scalar, whose drop runs no code.
 pub fn has_no_destructor(ty: &Ty) -> bool {
     ty.is_simd()
+        || ty.is_bool()
         || matches!(
             ty.kind(),
-            TyKind::Bool
-                | TyKind::StringLiteral(_)
+            TyKind::StringLiteral(_)
                 | TyKind::None
                 | TyKind::IntLiteral(_)
                 | TyKind::FloatLiteral(_)

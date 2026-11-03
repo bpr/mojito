@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1840**.
+Next free ID: **R1842**.
 
 ## Ordered Work
 
@@ -11064,43 +11064,47 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1612 `Bool` is `TyKind::Bool` in the checker, where upstream's is
-  the declared struct**
+- [ ] **R1840 MIR holds the builtin `i1` as a `Bool` register, where
+  upstream's `i1` is a type of its own**
 
-  Problem: once R1608–R1611 land, the `Ty::new` bridge, the `@implicit`
-  stand-ins, and the initializer bridges below are all that keep `Bool` a
-  compiler type.
-  - Delete the bridge (`bridged_bool`), so `Bool` resolves to
-    `Struct("Bool", [])`, and `nominal_parts`'s `Bool` arm.
-  - Delete the `TyKind::Bool` guards R1608 added beside `is_simd()` in
-    `Checker::conformance` (`traits.rs`), `declared_receiver_member`
-    (`resolution.rs`), and `decide_type_conforms` (`availability.rs`).
-  - Delete the `i1` and `Scalar[DType.bool]` to `Bool` conversions in
-    `Checker::record_implicit_conversion` for the declared `@implicit`
-    overloads, and `ScalarConversion::casts_from`'s `i1` arm.
-  - Decide whether MIR keeps holding the struct as an `i1` (R1396's
-    one-field register-passable hold), and with it `types::i1_as_bool`, `require_bool`'s `i1` arm, and the VM's
-    `builtin.cast` conversion between `Value::Bool` and a one-lane mask.
-  - Like R1557 for `SIMD`.
-  - Delete the `Bool` arms of the VM's `field_is_whole` and Pliron's
-    `field_offset` and `lower_get_field`, which read `val._mlir_value` of a
-    generic `Scalar[DType.bool]` elaborated to `Bool` as the `Bool`.
-    Probe: `assets/ok/simd_bool_masks.mojo`'s `f.mask[1] = True`.
-  - Delete the `Type::Bool` arms R1610 added beside a conformer's own
-    name in `synthesize_equatable_eq`'s `takes_self` and the trait
-    defaults' `overload_key`, which read a `rhs: Bool` parameter as `Self`.
-  - Delete `implicit_conversion_constructor`'s `TyKind::Bool` filter, which
-    reads `Bool`'s `@implicit` initializers off the declaration for the
-    compiler type.
-  - Delete the bridges R1609 left for the declared initializers:
-    `infer_unbound_call`'s `Bool(copy=b)` builtin copy arm, the
-    `BoolStorage` store an initializer's `self._mlir_value = …` records
-    (`check_bool_storage_store`, `lower_set_place`'s `scalar.cast` into
-    `self`), the VM's `Value::Bool(false)` skeleton in
-    `Prog::constructed`, and `scalar_storage_expression`'s
-    `Bool(value=b)` arm, which reads a folded `i1` as the `Bool`.
-  - Depends on R1608, R1609, R1610, R1611, and R1189.
-  - Model: Fable, Not Planned.
+  `types::i1_as_bool` makes an `i1` register and a `Bool` register
+  compatible, where upstream converts between them only through `Bool`'s
+  declared `__init__(value: __mlir_type.i1)` (`pop.cast_from_builtin`
+  into `_mlir_value`, then the struct) and `__mlir_i1__`.
+  - Uses: the verifier's `types_compatible` (`verify/types.rs`),
+    `verify_builtin_cast` (`verify/instr.rs`), and
+    `LlvmIntrinsic::signature_error` (`llvm_intrinsic.rs`).
+  - `Checker::scalar_storage_expression`'s `Bool(value=b)` arm
+    (`checker/constraints.rs`) reads a folded `i1` as the `Bool`. Replace
+    it with a parameter-domain `cast_from_builtin` from `i1` to
+    `!kgen.scalar<bool>` plus the struct value, as the `__mlir_index__` /
+    `Int(mlir_value=…)` pair does.
+  - `require_bool`'s `i1` arm stays: upstream branches on an `i1`.
+  - Probe: `assets/ok/bool_storage_primitives.mojo` and
+    `bool_declared_members.mojo`'s `Bool.__mlir_i1__(t)`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1841 `Bool` is an AST keyword type, where upstream's is a prelude
+  name**
+
+  The parser turns the identifier `Bool` into `ast::Type::Bool`
+  (`parser/types.rs`), so a program-local `struct Bool` cannot shadow the
+  prelude's, as it can at the pin.
+  - Delete `ast::Type::Bool`: the parser yields `Type::Named("Bool", [])`
+    and resolution goes through the prelude. Update `docs/grammar.md`
+    first.
+  - Port its arms in comptime (`comptime.rs`, `rewrite.rs`), symbol's two
+    spellings, `visit.rs`, `ast.rs`, `initializer_list.rs`,
+    `type_resolution.rs`, `comptime_validation.rs`, and `ct.rs`'s
+    `source_type`.
+  - Delete the `Type::Bool` arms beside a conformer's own name in
+    `synthesize_equatable_eq`'s `takes_self` (`comptime/synth.rs`) and
+    the trait defaults' `overload_key` (`trait_defaults.rs`), which read
+    a `rhs: Bool` parameter as `Self`.
+  - Probe: a program-local `struct Bool` used as `var b: Bool`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1657 A compile-time string that is no literal is typed by the
   value-less `StringLiteral`**

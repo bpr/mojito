@@ -581,7 +581,6 @@ impl fmt::Display for LaneMask {
 /// lowered from a function-type annotation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TyKind {
-    Bool,
     /// A string literal's type, upstream's `StringLiteral[value]`: the
     /// application of the struct `std.builtin.string_literal` declares,
     /// which the [`Ty::new`] bridge holds as this variant.
@@ -888,6 +887,16 @@ shared_scalar_types! {
 }
 
 impl Ty {
+    /// `Bool`, the struct `std.builtin.bool` declares.
+    pub fn bool() -> Self {
+        static TY: LazyLock<Ty> = LazyLock::new(|| {
+            Ty(Arc::new(TyNode::new(TyKind::Struct(
+                BOOL_TYPE_NAME.to_string(),
+                Vec::new(),
+            ))))
+        });
+        TY.clone()
+    }
     /// `Int`, `Scalar[DType.int]`.
     pub fn int() -> Self {
         static TY: LazyLock<Ty> =
@@ -909,8 +918,6 @@ impl Ty {
 }
 
 dataless_types! {
-    /// `Bool`.
-    bool => Bool,
     /// `None`.
     none => None,
     /// `Never`.
@@ -998,15 +1005,14 @@ impl Ty {
     /// ([`bridged_string_literal`]) until R1660 deletes that bridge, and an
     /// `IntLiteral[value]` or `FloatLiteral[value]` one a
     /// [`TyKind::IntLiteral(_)`] or [`TyKind::FloatLiteral(_)`]
-    /// ([`bridged_numeric_literal`]) until R1785 deletes that one. The
-    /// declared `Bool` struct is [`TyKind::Bool`] ([`bridged_bool`]) until
-    /// R1612 deletes that bridge.
+    /// ([`bridged_numeric_literal`]) until R1785 deletes that one. `Bool`
+    /// shares one node ([`Ty::bool`]).
     pub fn new(kind: TyKind) -> Self {
         Self::dataless(&kind)
             .or_else(|| canonical_simd_application(&kind))
             .or_else(|| bridged_string_literal(&kind))
             .or_else(|| bridged_numeric_literal(&kind))
-            .or_else(|| bridged_bool(&kind))
+            .or_else(|| shared_bool(&kind))
             .unwrap_or_else(|| Self(Arc::new(TyNode::new(kind))))
     }
 
@@ -1107,6 +1113,11 @@ impl TyKind {
     pub const INT_LITERAL: &'static Self = &Self::IntLiteral(None);
     /// The value-less `FloatLiteral` ([`TyKind::FloatLiteral(_)`]).
     pub const FLOAT_LITERAL: &'static Self = &Self::FloatLiteral(None);
+
+    /// Whether this is `Bool`, the struct `std.builtin.bool` declares.
+    pub fn is_bool(&self) -> bool {
+        matches!(self, Self::Struct(name, args) if name == BOOL_TYPE_NAME && args.is_empty())
+    }
 
     /// Whether this is `Int`.
     pub fn is_int(&self) -> bool {
@@ -1471,8 +1482,8 @@ pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
 /// The name of upstream's `SIMD`, declared in `std.simd`.
 pub const SIMD_TYPE_NAME: &str = "SIMD";
 
-/// The name of upstream's `Bool`, declared in `std.builtin.bool`; the struct
-/// is [`TyKind::Bool`].
+/// The name of upstream's `Bool`, declared in `std.builtin.bool`
+/// ([`Ty::is_bool`]).
 pub const BOOL_TYPE_NAME: &str = "Bool";
 
 /// The name `std.builtin.string_literal` declares a string literal's struct
@@ -1628,7 +1639,7 @@ pub fn storage_ty(ty: &Ty) -> Ty {
 }
 
 /// A `Bool` for the MLIR builtin `i1`, and any other type itself: the
-/// builtin `i1` and `Bool` are still one register type (R1612).
+/// builtin `i1` and `Bool` are still one register type (R1840).
 pub fn i1_as_bool(ty: &Ty) -> Ty {
     match ty.kind() {
         TyKind::I1 => Ty::bool(),
@@ -1987,7 +1998,6 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
     match ty.kind() {
         TyKind::IntLiteral(_) => "SIMD[DType.int, 1]".to_string(),
         TyKind::FloatLiteral(_) => "SIMD[DType.float64, 1]".to_string(),
-        TyKind::Bool => "Bool".to_string(),
         kind if let Some((dtype, width)) = kind.as_simd() => format!("SIMD[{dtype}, {width}]"),
         TyKind::StringLiteral(_) => "StringLiteral".to_string(),
         TyKind::None => "NoneType".to_string(),
@@ -2968,7 +2978,6 @@ impl fmt::Display for TyKind {
         match self {
             Self::IntLiteral(None) => write!(f, "Int"),
             Self::IntLiteral(Some(value)) => write!(f, "IntLiteral[{value}]"),
-            Self::Bool => write!(f, "Bool"),
             Self::StringLiteral(None) => write!(f, "StringLiteral"),
             Self::StringLiteral(Some(value)) => write!(f, "StringLiteral[{value}]"),
             Self::FloatLiteral(None) => write!(f, "Float64"),
@@ -3617,17 +3626,16 @@ pub fn simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 ///
 /// A struct answers its own, and a string literal whose value the type
 /// carries answers `StringLiteral[value]`, as a numeric literal's answers
-/// `IntLiteral[value]` or `FloatLiteral[value]` and `Bool` answers `Bool`.
+/// `IntLiteral[value]` or `FloatLiteral[value]`.
 /// A value-less literal type
 /// is no instance: it materializes only where a conversion asks for it.
 ///
 /// Nominal identity is read through this, never by matching
-/// `TyKind::Struct`, while the [`Ty::new`] bridges hold `Bool`,
-/// `StringLiteral`, and the numeric literals as the compiler's types.
+/// `TyKind::Struct`, while the [`Ty::new`] bridges hold `StringLiteral`
+/// and the numeric literals as the compiler's types.
 pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
     match ty.kind() {
         TyKind::Struct(name, args) => Some((name, std::borrow::Cow::Borrowed(args))),
-        TyKind::Bool => Some((BOOL_TYPE_NAME, std::borrow::Cow::Borrowed(&[]))),
         TyKind::StringLiteral(Some(value)) => Some((
             STRING_LITERAL_TYPE_NAME,
             std::borrow::Cow::Owned(vec![TyArg::Val(value.as_ref().clone())]),
@@ -3920,7 +3928,9 @@ fn coerces_to_simd(from: &TyKind, to_dtype: &SimdDtype, to_width: &SimdWidth) ->
         // Upstream's `@implicit SIMD.__init__(out self: SIMD[.bool,
         // Self.length], value: Bool)`, whose `comptime assert` of one lane
         // each reached instance judges.
-        (TyKind::Bool, _) => *to_dtype == SimdDtype::Known(Dtype::Bool) && !to_width.is_inferred(),
+        (kind, _) if kind.is_bool() => {
+            *to_dtype == SimdDtype::Known(Dtype::Bool) && !to_width.is_inferred()
+        }
         // Upstream's `@implicit SIMD.__init__(IntLiteral)` and
         // `(FloatLiteral)` splat an exact literal across every lane, a
         // symbolic lane count included.
@@ -3948,7 +3958,7 @@ pub fn splats_to(ty: &TyKind, dtype: &SimdDtype) -> bool {
         (TyKind::IntLiteral(_), SimdDtype::Known(dtype)) => *dtype != Dtype::Bool,
         (TyKind::FloatLiteral(_), SimdDtype::Known(dtype)) => dtype.is_float(),
         (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), SimdDtype::Expr(_)) => true,
-        (TyKind::Bool, SimdDtype::Known(dtype)) => *dtype == Dtype::Bool,
+        (kind, SimdDtype::Known(dtype)) if kind.is_bool() => *dtype == Dtype::Bool,
         (kind, dtype) => {
             matches!(kind.as_simd(), Some((d, SimdWidth::Known(1))) if d == *dtype)
         }
@@ -3967,10 +3977,8 @@ pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
         to.kind().as_simd(),
         Some((dtype, width))
             if width.known().is_none_or(|width| width > 1)
-                && !matches!(
-                    from.kind(),
-                    TyKind::Bool | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-                )
+                && !from.is_bool()
+                && !matches!(from.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
                 && splats_to(from, &dtype)
     )
 }
@@ -4093,8 +4101,7 @@ pub const fn binder_read_takes_slot(ty: &TyKind) -> bool {
 pub fn copy_is_identity(ty: &TyKind) -> bool {
     matches!(
         ty,
-        TyKind::Bool
-            | TyKind::Dtype
+        TyKind::Dtype
             | TyKind::Index
             | TyKind::I1
             | TyKind::IntLiteral(_)
@@ -5118,8 +5125,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             FLOAT_LITERAL_TYPE_NAME.to_string(),
             vec![TyArg::Val(rewrite_value(value, rewrite)?)],
         )),
-        TyKind::Bool
-        | TyKind::StringLiteral(None)
+        TyKind::StringLiteral(None)
         | TyKind::None
         | TyKind::Never
         | TyKind::IntLiteral(None)
@@ -5741,7 +5747,6 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1
-        | TyKind::Bool
         | TyKind::StringLiteral(None)
         | TyKind::None
         | TyKind::Never
@@ -6137,8 +6142,7 @@ fn closed_argument(argument: &TyArg) -> bool {
 /// Whether a variant is closed, from its children's cached closedness.
 fn closed_kind(kind: &TyKind) -> bool {
     match kind {
-        TyKind::Bool
-        | TyKind::None
+        TyKind::None
         | TyKind::Never
         | TyKind::Dtype
         | TyKind::Index
@@ -6546,10 +6550,9 @@ fn struct_pack_arguments(decls: &[ParamDecl], arguments: &[TyArg]) -> HashMap<Pa
         .collect()
 }
 
-/// The [`TyKind::Bool`] the declared `Bool` struct is.
-fn bridged_bool(kind: &TyKind) -> Option<Ty> {
-    matches!(kind, TyKind::Struct(name, args) if name == BOOL_TYPE_NAME && args.is_empty())
-        .then(Ty::bool)
+/// The shared node of the declared `Bool` struct.
+fn shared_bool(kind: &TyKind) -> Option<Ty> {
+    kind.is_bool().then(Ty::bool)
 }
 
 /// The [`TyKind::StringLiteral(_)`] a `StringLiteral[value]` application is:

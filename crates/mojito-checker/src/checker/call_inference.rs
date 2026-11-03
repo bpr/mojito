@@ -115,16 +115,6 @@ impl Checker {
             {
                 constructed
             }
-            // `Bool(copy=b)`: the synthesized `Copyable` initializer, the
-            // builtin copy while the checker holds `Bool` as its compiler
-            // type (R1612).
-            _ if name == mojito_types::types::BOOL_TYPE_NAME
-                && args.is_empty()
-                && param_args.is_empty()
-                && matches!(kwargs, [keyword] if keyword.name == "copy") =>
-            {
-                self.infer_builtin_copy_construction(span, name, &Ty::bool(), &kwargs[0])
-            }
             _ if self.structs.contains_key(name) && name != mojito_types::types::SIMD_TYPE_NAME => {
                 // `String(x)` on a non-literal argument stringifies through
                 // the builtin conversion, which builds the nominal struct

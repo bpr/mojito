@@ -3915,7 +3915,9 @@ fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
     match (constant, ty.kind()) {
         (Const::Int(value), kind) if kind.is_int() => Some(CtValue::Int(*value)),
         (Const::Float(value), kind) if kind.is_float64() => Some(CtValue::Float(value.to_bits())),
-        (Const::Bool(value), TyKind::Bool | TyKind::I1) => Some(CtValue::Bool(*value)),
+        (Const::Bool(value), kind) if kind.is_bool() || matches!(kind, TyKind::I1) => {
+            Some(CtValue::Bool(*value))
+        }
         (Const::IntLiteral(value), TyKind::IntLiteral(_)) => {
             Some(CtValue::IntLiteral(value.clone()))
         }
@@ -3951,7 +3953,8 @@ fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
         InfixOp::Ne | InfixOp::Lt | InfixOp::Gt => false,
         _ => return None,
     };
-    let int_like = matches!(operand.kind(), TyKind::Bool | TyKind::IntLiteral(_))
+    let int_like = operand.is_bool()
+        || matches!(operand.kind(), TyKind::IntLiteral(_))
         || operand
             .as_simd()
             .and_then(|(dtype, _)| dtype.known())
@@ -3960,7 +3963,7 @@ fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
         return None;
     }
     match dest.kind() {
-        TyKind::Bool => Some(CtValue::Bool(holds)),
+        kind if kind.is_bool() => Some(CtValue::Bool(holds)),
         kind if let Some((Dtype::Bool, width)) = kind.known_simd() => Some(CtValue::Simd {
             dtype: Dtype::Bool,
             lanes: vec![mojito_types::ct::CtLane::Bool(holds); usize::try_from(width).ok()?],
@@ -3990,7 +3993,9 @@ fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
         (CtValue::Float(bits), kind) if kind.is_float64() => {
             Some(Const::Float(f64::from_bits(bits)))
         }
-        (CtValue::Bool(value), TyKind::Bool | TyKind::I1) => Some(Const::Bool(value)),
+        (CtValue::Bool(value), kind) if kind.is_bool() || matches!(kind, TyKind::I1) => {
+            Some(Const::Bool(value))
+        }
         (CtValue::IntLiteral(value), TyKind::IntLiteral(_)) => Some(Const::IntLiteral(value)),
         (CtValue::FloatLiteral(value), TyKind::FloatLiteral(_)) => Some(Const::FloatLiteral(value)),
         (value @ (CtValue::UInt(_) | CtValue::Index(_) | CtValue::Simd { .. }), _) => {
@@ -4636,9 +4641,7 @@ mod tests {
         assert!(declarations.register_passable(&applied("Opt", vec![Ty::int()])));
         assert!(!declarations.register_passable(&applied("Opt", vec![string()])));
         assert!(!declarations.register_passable(&applied("Opt", Vec::new())));
-        assert!(
-            declarations.register_passable(&applied("Tup", vec![Ty::int(), Ty::new(TyKind::Bool)]))
-        );
+        assert!(declarations.register_passable(&applied("Tup", vec![Ty::int(), Ty::float64()])));
         assert!(!declarations.register_passable(&applied("Tup", vec![Ty::int(), string()])));
         assert!(
             declarations.register_passable(&applied("Opt", vec![applied("Tup", vec![Ty::int()])]))
@@ -4695,7 +4698,7 @@ mod tests {
                 literal(1),
                 literal(2),
                 TyKind::IntLiteral(None),
-                TyKind::Bool
+                Ty::bool().kind().clone()
             ),
             Some(Const::Bool(true))
         ));
@@ -4741,8 +4744,8 @@ mod tests {
                 InfixOp::BitAnd,
                 Const::Bool(true),
                 Const::Bool(false),
-                TyKind::Bool,
-                TyKind::Bool
+                Ty::bool().kind().clone(),
+                Ty::bool().kind().clone()
             )
             .is_none()
         );
@@ -4755,7 +4758,7 @@ mod tests {
                 nan.clone(),
                 nan,
                 Ty::float64().kind().clone(),
-                TyKind::Bool
+                Ty::bool().kind().clone()
             ),
             Some(Const::Bool(false))
         ));
@@ -5041,7 +5044,7 @@ mod tests {
                 byte(3),
                 byte(4),
                 lane(Dtype::UInt8),
-                ty(TyKind::Bool)
+                ty(Ty::bool().kind().clone())
             )
             .is_none()
         );
@@ -5207,7 +5210,7 @@ mod tests {
             Some(vec![CtLane::Int(7); 4])
         );
         assert!(splat(byte(7), uint8, Dtype::Int8, 4).is_none());
-        let bool_ty = Ty::new(TyKind::Bool);
+        let bool_ty = Ty::bool();
         assert_eq!(
             lanes_of(splat(Const::Bool(true), bool_ty.clone(), Dtype::Bool, 4)),
             Some(vec![CtLane::Bool(true); 4])
@@ -5319,8 +5322,8 @@ mod tests {
         assert_eq!(
             make(
                 vec![
-                    some(Const::Bool(true), TyKind::Bool),
-                    some(Const::Bool(false), TyKind::Bool)
+                    some(Const::Bool(true), Ty::bool().kind().clone()),
+                    some(Const::Bool(false), Ty::bool().kind().clone())
                 ],
                 Dtype::Bool,
                 2

@@ -26,7 +26,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if found == expected {
         return true;
     }
-    // The MLIR builtin `i1` is held as the `Bool` it casts from (R1612).
+    // The MLIR builtin `i1` is held as the `Bool` it casts from (R1840).
     let (found_bool, expected_bool) = (
         mojito_types::types::i1_as_bool(found),
         mojito_types::types::i1_as_bool(expected),
@@ -292,7 +292,7 @@ fn symbolic_simd_compatible(pattern: &Ty, actual: &Ty) -> Option<bool> {
         return None;
     }
     let (actual_dtype, actual_width) = match actual.kind() {
-        TyKind::Bool if !storage => (
+        kind if kind.is_bool() && !storage => (
             mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Bool),
             mojito_types::types::SimdWidth::Known(1),
         ),

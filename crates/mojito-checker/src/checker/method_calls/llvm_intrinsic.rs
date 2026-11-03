@@ -189,7 +189,7 @@ impl Checker {
             return Err(rejected());
         }
         let built = self.compile_dependent_ct_expr(object)?;
-        if !matches!(built.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::Bool)) {
+        if !matches!(built.meta(), MetaTy::Value(ty) if ty.kind().is_bool()) {
             return Err(rejected());
         }
         Ok(built)

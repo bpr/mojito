@@ -938,7 +938,7 @@ impl<'a> FnLowering<'a> {
             _ => ty,
         };
         let ty = mojito_types::types::default_literal(ty);
-        (ty.kind().is_simd() || matches!(ty.kind(), TyKind::Bool)).then_some(ty)
+        (ty.kind().is_simd() || ty.kind().is_bool()).then_some(ty)
     }
 }
 

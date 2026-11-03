@@ -310,9 +310,6 @@ impl Specializer<'_> {
         if self.functions.contains_key(exact.as_str()) {
             if self.writes_protocol(&exact) {
                 self.enqueue_nominal_method_instance(owner, ty, method, 1, &[])?;
-                if matches!(ty.kind(), TyKind::Bool) {
-                    self.declare_bool_declaration();
-                }
             }
             return Ok(());
         }
@@ -489,9 +486,7 @@ impl Specializer<'_> {
 }
 
 /// The struct and arguments whose member table a receiver of type `ty`
-/// reads: a non-`SIMD` struct's own, and `Bool`'s declaration, which the
-/// checker holds as its compiler type until R1612.
+/// reads: a non-`SIMD` struct's own.
 fn struct_receiver(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [mojito_types::types::TyArg]>)> {
-    mojito_types::types::nominal_parts(ty)
-        .filter(|_| ty.kind().is_non_simd_struct() || matches!(ty.kind(), TyKind::Bool))
+    mojito_types::types::nominal_parts(ty).filter(|_| ty.kind().is_non_simd_struct())
 }

@@ -1950,17 +1950,6 @@ impl Checker {
             );
             return Ok(TyKind::KgenPointer(element.clone()).into());
         }
-        // `b._mlir_value` is upstream's `!kgen.scalar<bool>` storage field of
-        // a `Bool`.
-        if field == mojito_types::ct::MLIR_VALUE_FIELD && *obj_ty == TyKind::Bool {
-            self.record_at(span).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::BoolStorage,
-            ));
-            return Ok(mojito_types::types::kgen_simd_ty(
-                mojito_ast::ast::Dtype::Bool,
-                1,
-            ));
-        }
         // `v.dtype` is upstream's lane-dtype parameter, the slot itself.
         if field == "dtype"
             && let Some(dtype) = simd_dtype(&obj_ty)

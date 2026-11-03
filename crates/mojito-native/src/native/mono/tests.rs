@@ -334,7 +334,7 @@ fn same_spelled_binders_of_two_declarations_bind_apart() {
     );
     assert_eq!(
         substitute_ty(&parameter("contract"), &bindings).unwrap(),
-        TyKind::Bool
+        Ty::bool().kind().clone()
     );
     assert!(substitute_ty(&parameter("unbound"), &bindings).is_err());
 }

@@ -351,7 +351,7 @@ impl LlvmIntrinsic {
     /// translates as its `!kgen.simd` storage, as upstream's
     /// `LowerKGENToLLVM` lowers the `SIMD` struct to its field, the builtin
     /// `index` as the `Int` it casts from, and the builtin `i1` as the
-    /// `Bool` (R1612). A literal struct's elements translate each, as
+    /// `Bool` (R1840). A literal struct's elements translate each, as
     /// `LowerKGENToLLVM` lowers a `!kgen.struct` element-wise.
     pub fn signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
         fn translated(ty: &Ty) -> Ty {
@@ -495,7 +495,7 @@ impl LlvmIntrinsic {
         }
         let elementwise = operands.iter().enumerate().all(|(position, operand)| {
             if self.is_flag(position) {
-                matches!(operand.kind(), TyKind::Bool) || lanes(operand) == Some((Dtype::Bool, 1))
+                operand.is_bool() || lanes(operand) == Some((Dtype::Bool, 1))
             } else {
                 operand == &operands[0]
             }

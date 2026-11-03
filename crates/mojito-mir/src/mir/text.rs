@@ -504,7 +504,7 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
     match ty.kind() {
         kind if kind.is_int() => "Int",
         kind if kind.is_uint() => "UInt",
-        TyKind::Bool => "Bool",
+        kind if kind.is_bool() => "Bool",
         TyKind::StringLiteral(_) => "StringLiteral",
         kind if kind.is_float64() => "Float64",
         TyKind::None => "None",

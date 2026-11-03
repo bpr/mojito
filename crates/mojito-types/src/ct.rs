@@ -406,7 +406,7 @@ impl ScalarConversion {
             kind if kind.is_int() => Self::Int,
             kind if kind.is_uint() => Self::UInt,
             kind if kind.is_float64() => Self::Float64,
-            TyKind::Bool => Self::Bool,
+            kind if kind.is_bool() => Self::Bool,
             _ => return None,
         })
     }
@@ -432,15 +432,11 @@ impl ScalarConversion {
     }
 
     /// Whether a value of type `ty` converts by this conversion as a cast:
-    /// a numeric scalar or literal, a `Bool`, a width-one SIMD value, and
-    /// to `Bool` the MLIR builtin `i1` (upstream's `@implicit
-    /// Bool.__init__(value: __mlir_type.i1)`).
+    /// a numeric scalar or literal, a `Bool`, or a width-one SIMD value.
     pub fn casts_from(self, ty: &Ty) -> bool {
-        matches!(
-            ty.kind(),
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Bool
-        ) || crate::types::is_scalar_simd(ty.kind())
-            || (self == Self::Bool && *ty.kind() == TyKind::I1)
+        matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+            || ty.is_bool()
+            || crate::types::is_scalar_simd(ty.kind())
     }
 }
 
@@ -1298,12 +1294,13 @@ impl CtValue {
     pub fn materialize_as(self, ty: &Ty) -> Option<Self> {
         match (self, ty.kind()) {
             (value @ Self::Int(_), kind) if kind.is_int() => Some(value),
+            (value @ Self::Bool(_), kind) if kind.is_bool() => Some(value),
             (value @ Self::UInt(_), kind) if kind.is_uint() => Some(value),
             (value @ Self::Float(_), kind) if kind.is_float64() => Some(value),
             (value @ Self::Index(_), TyKind::Index)
             | (value @ Self::IntLiteral(_), TyKind::IntLiteral(_))
             | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral(_))
-            | (value @ Self::Bool(_), TyKind::Bool | TyKind::I1)
+            | (value @ Self::Bool(_), TyKind::I1)
             | (value @ Self::None, TyKind::None)
             | (value @ Self::Str(_), TyKind::StringLiteral(_)) => Some(value),
             // A string literal is the nominal `String`'s compile-time form
@@ -1739,7 +1736,7 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         kind if kind.is_int() => Type::Named("Int".to_string(), Vec::new()),
         TyKind::IntLiteral(None) => Type::Named("Int".to_string(), Vec::new()),
         kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
-        TyKind::Bool => Type::Bool,
+        kind if kind.is_bool() => Type::Bool,
         TyKind::StringLiteral(_) => Type::StringLiteral,
         kind if kind.is_float64() => Type::Named("Float64".to_string(), Vec::new()),
         TyKind::FloatLiteral(None) => Type::Named("Float64".to_string(), Vec::new()),

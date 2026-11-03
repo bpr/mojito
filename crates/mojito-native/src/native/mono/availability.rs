@@ -266,7 +266,7 @@ impl Specializer<'_> {
         // such a trait refines, as the struct it is.
         let bridged = if ty.is_simd() {
             Some(mojito_types::types::SIMD_TYPE_NAME)
-        } else if matches!(ty.kind(), mojito_types::types::TyKind::Bool) {
+        } else if ty.kind().is_bool() {
             Some(mojito_types::types::BOOL_TYPE_NAME)
         } else {
             None

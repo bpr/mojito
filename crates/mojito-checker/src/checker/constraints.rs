@@ -1825,7 +1825,7 @@ impl Checker {
                 && param_args.is_empty()
                 && args.len() == 1
                 && scalar_type_name(name).is_some_and(|ty| {
-                    ty.is_int() || ty.is_uint() || ty.is_float64() || *ty == TyKind::Bool
+                    ty.is_int() || ty.is_uint() || ty.is_float64() || ty.is_bool()
                 }) =>
             {
                 let target = scalar_type_name(name).expect("guard established a scalar type");
@@ -2305,7 +2305,7 @@ impl Checker {
         };
         let (left, right) = (operand(left)?, operand(right)?);
         let condition = match common.map(Ty::kind) {
-            Some(TyKind::Bool) => left.clone(),
+            Some(kind) if kind.is_bool() => left.clone(),
             Some(kind) if kind.is_int() || kind.is_uint() || matches!(kind, TyKind::Index) => {
                 let zero = CtValue::IntLiteral(0.into())
                     .materialize_as(common.ok_or_else(unsupported)?)
@@ -5754,9 +5754,10 @@ fn is_simd_length_value(value: &ParamExpr) -> bool {
 }
 
 fn is_scalar_value(value: &ParamExpr) -> bool {
-    value.meta().as_value().is_some_and(|ty| {
-        ty.is_int() || ty.is_uint() || ty.is_float64() || matches!(ty.kind(), TyKind::Bool)
-    })
+    value
+        .meta()
+        .as_value()
+        .is_some_and(|ty| ty.is_int() || ty.is_uint() || ty.is_float64() || ty.kind().is_bool())
 }
 
 fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {

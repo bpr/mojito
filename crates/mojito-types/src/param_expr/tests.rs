@@ -562,7 +562,7 @@ fn finite_selection_folds_to_its_type() {
     bindings.bind_name("i", literal(&context, 1));
     let resolved =
         crate::types::replace_parameters(&context, &dependent, &bindings, 0).expect("replacement");
-    assert_eq!(resolved, TyKind::Bool);
+    assert!(resolved.is_bool());
     // Holes never prove each other equal.
     assert_ne!(
         context.hole(HoleKind::Unknown, MetaTy::int()),
@@ -1210,7 +1210,7 @@ fn type_comparison_is_a_bool_decided_by_type_identity() {
     };
     let minted = CtValue::Type(boxed("Box$mono$TInt", Ty::int().kind().clone()));
     let spelled = CtValue::Type(boxed("Box", Ty::int().kind().clone()));
-    let other = CtValue::Type(boxed("Box", TyKind::Bool));
+    let other = CtValue::Type(boxed("Box", Ty::bool().kind().clone()));
     let fold = |left, right| fold::fold_infix(InfixOp::Eq, left, right).expect("folds");
     assert_eq!(fold(&minted, &spelled), CtValue::Bool(true));
     assert_eq!(fold(&minted, &other), CtValue::Bool(false));

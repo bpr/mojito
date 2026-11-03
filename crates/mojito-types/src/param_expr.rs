@@ -4662,11 +4662,11 @@ fn is_scalar_domain(ty: &Ty) -> bool {
         TyKind::Index
             | TyKind::IntLiteral(_)
             | TyKind::FloatLiteral(_)
-            | TyKind::Bool
             | TyKind::I1
             | TyKind::StringLiteral(_)
             | TyKind::Dtype
     ) || ty.kind().is_simd()
+        || ty.is_bool()
 }
 
 fn carries_transfers(ty: &Ty) -> bool {

@@ -123,7 +123,8 @@ impl FnLowering<'_> {
 
     /// Invoke a concrete nominal `__int__` selected by the checker for a
     /// `SIMD[dt, _](x)` constructor operand (R1544). Returns `None` for
-    /// non-struct operands.
+    /// non-struct operands and for a `Bool`, whose held `!kgen.scalar<bool>`
+    /// is the lane, as upstream's `SIMD.__init__(value: Bool)` reads it.
     pub(super) fn intable_struct_value(
         &mut self,
         ctx: &mut Context,
@@ -133,6 +134,7 @@ impl FnLowering<'_> {
         let register_ty = self.func.reg_types.get(&source.0).cloned();
         let Some((name, _)) = register_ty
             .as_ref()
+            .filter(|ty| !ty.is_bool())
             .and_then(|ty| ty.kind().as_non_simd_struct())
         else {
             return Ok(None);

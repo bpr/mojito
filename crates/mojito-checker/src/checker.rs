@@ -1825,9 +1825,8 @@ impl Checker {
                 own_arguments: Vec::new(),
             }));
         }
-        // `Bool`'s `@implicit` initializers are its declared ones.
-        let Some((name, args)) = mojito_types::types::nominal_parts(to)
-            .filter(|_| to.kind().is_non_simd_struct() || *to == TyKind::Bool)
+        let Some((name, args)) =
+            mojito_types::types::nominal_parts(to).filter(|_| to.kind().is_non_simd_struct())
         else {
             return Ok(None);
         };
@@ -2056,24 +2055,6 @@ impl Checker {
             self.record_literal_materializations(expression, from, to)?;
             return Ok(true);
         }
-        // Upstream's `@implicit Bool.__init__(value: Scalar[DType.bool])`:
-        // a scalar comparison stands where a `Bool` is wanted.
-        if *to == TyKind::Bool && scalar_simd_dtype(from) == Some(Dtype::Bool) {
-            let selected = SelectedConversion {
-                target: "Bool".to_string(),
-                source_borrow: None,
-                consumes_source: false,
-                error: None,
-                own_arguments: Vec::new(),
-            };
-            self.record_selected_conversion(expression, selected, to)?;
-            return Ok(true);
-        }
-        // Upstream's `@implicit Bool.__init__(value: __mlir_type.i1)`, which
-        // both backends hold as the `Bool` it constructs.
-        if *to == TyKind::Bool && *from == TyKind::I1 {
-            return Ok(true);
-        }
         let Some(selected) = self.implicit_conversion_constructor(from, to)? else {
             return Ok(false);
         };
@@ -2099,7 +2080,7 @@ impl Checker {
         }
         // Upstream's implicit `Bool` to `SIMD[DType.bool, n]` constructor,
         // which asserts one lane.
-        if *from == TyKind::Bool
+        if from.is_bool()
             && let Some((_, width)) = to.as_simd()
         {
             return self.record_instance_assertion(
@@ -2387,7 +2368,7 @@ impl Checker {
     /// for anything else, an MLIR type (`i1`) among them.
     fn condition_truthiness(&self, ty: &Ty, context: &str) -> Result<bool, TypeError> {
         let bounded = self.opaque_element(ty).unwrap_or_else(|| ty.clone());
-        if *ty == TyKind::Bool {
+        if ty.is_bool() {
             Ok(false)
         } else if is_numeric(ty) || is_scalar_simd(ty) || self.param_has_bound(&bounded, "Boolable")
         {

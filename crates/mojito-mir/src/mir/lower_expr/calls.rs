@@ -887,7 +887,7 @@ impl<'a> Flatten<'a> {
             }
             ("Float64", kind) if kind.is_float64() => Const::Float(0.0),
 
-            ("Bool", TyKind::Bool) => Const::Bool(false),
+            ("Bool", kind) if kind.is_bool() => Const::Bool(false),
             _ => return None,
         };
         Some(self.literal(node, zero))

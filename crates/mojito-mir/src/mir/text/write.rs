@@ -2149,7 +2149,7 @@ fn ty_value(ty: &Ty) -> String {
     match ty.kind() {
         kind if kind.is_int() => "Int".into(),
         kind if kind.is_uint() => "UInt".into(),
-        TyKind::Bool => "Bool".into(),
+        kind if kind.is_bool() => "Bool".into(),
         TyKind::StringLiteral(None) => "StringLiteral".into(),
         // A literal whose type carries its value is spelled as the struct
         // application the decoder's `Ty::new` bridges back.

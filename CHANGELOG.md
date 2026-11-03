@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Bool` is upstream's declared struct throughout the compiler instead of a
+  compiler type the checker held it as (R1612): its `@implicit` `i1` and
+  `Scalar[.bool]` conversions and `Bool(copy=b)` bind its declared
+  initializers, `b._mlir_value` is an ordinary field, and both backends
+  hold it as that one `!kgen.scalar<bool>` field. A store to a `Bool`'s
+  `_mlir_value` outside its initializers, which was rejected as outside the
+  subset, now runs as at the pin, and `assets/ok/bool_storage_primitives.mojo`
+  now runs under `run --backend pliron`. The package format moves to
+  `mojito-package 176`.
+
 - `Bool` conforms to `EnumLike` with upstream's members in
   `std.builtin.bool` (R1189): `count[Bool]()` over `T: EnumLike` and
   `True._get_enum_discriminant()` run as at the pin, where they were

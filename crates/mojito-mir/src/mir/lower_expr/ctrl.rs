@@ -126,7 +126,7 @@ impl<'a> Flatten<'a> {
             .adjustments()
             .iter()
             .any(|adjustment| matches!(adjustment, SemanticAdjustment::Truthiness))
-            && !node.ty().is_some_and(|ty| ty == TyKind::Bool);
+            && !node.ty().is_some_and(|ty| ty.is_bool());
         if value_result && !node.register_passable_result() {
             return self.short_circuit_into_slot(node, op, a, b);
         }

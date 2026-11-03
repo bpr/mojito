@@ -3807,29 +3807,6 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
-    /// Declare `Bool`'s struct, unless it is declared: the checker holds
-    /// `Bool` as its compiler type until R1612, so no discovered body names
-    /// the struct whose member table a backend reads a `Bool` value's
-    /// witnesses from. It is declared for a member demanded from the type;
-    /// the member instances already filed under its name join its table
-    /// then.
-    pub(super) fn declare_bool_declaration(&mut self) {
-        let name = mojito_types::types::BOOL_TYPE_NAME;
-        if self.output_struct_positions.contains_key(name) {
-            return;
-        }
-        let Some(template) = self.structs.get(name) else {
-            return;
-        };
-        let declaration = self.instance_declaration(
-            template,
-            name,
-            template.fields.clone(),
-            &self.base_bindings(),
-        );
-        self.declare_output_struct(declaration);
-    }
-
     /// The concrete declaration `name` of the struct instance `template`
     /// under `bindings` lays out as `fields`: the template's, with its
     /// parameters, associated members, and tables cleared and its

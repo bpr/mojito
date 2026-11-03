@@ -7598,11 +7598,16 @@ representation, each decided in `build_structs`, and are the VM's alone:
 Where the VM still dispatches by runtime shape, a held operand is reboxed
 from its static type (`Prog::boxed`): a builtin call's operands (`print`,
 `String`, `repr`), a method receiver and its arguments, a subscript base
-and index, a `simd.make` element, and a variant handler. A frame's entry
+and index, a `simd.make` element other than a `Bool` (whose held
+`!kgen.scalar<bool>` is the lane), and a variant handler. A frame's entry
 and a call's result unbox it again at the declared type (`Prog::unboxed`).
 `VmBackend::freeze` takes the result's static type, so a held result
 freezes as the nominal struct `CtValue` it is, and typed `thaw` makes it
-its field again.
+its field again. `Bool` is such a held struct, `Ty::is_bool()` of the
+declared `Struct("Bool", [])`: its field, a `!kgen.scalar<bool>`, an `i1`,
+and a one-lane `bool` vector are one `Value::Bool`, as LLVM's one `i1`, so
+`builtin.cast` between them is the identity, and a `Bool` freezes as the
+compile-time `CtValue::Bool`.
 
 Frames are owned by an explicit VM stack and have monotonic identities. Direct
 user-function calls push a frame plus a return/write-back continuation; returns

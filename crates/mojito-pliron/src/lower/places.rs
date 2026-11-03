@@ -335,15 +335,6 @@ impl FnLowering<'_> {
         field: &str,
         dest: Reg,
     ) -> Result<(u64, Ty), PlironError> {
-        // A `Scalar[DType.bool]`'s `_mlir_value` is its `!kgen.simd`
-        // storage, the whole value, and is the compiler's `Bool` once
-        // elaborated (R1612).
-        if field == mojito_types::ct::MLIR_VALUE_FIELD && *ty.kind() == TyKind::Bool {
-            return Ok((
-                0,
-                mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1),
-            ));
-        }
         let TyKind::Struct(name, _) = ty.kind() else {
             return Err(self.unsupported_reg(format!("field access on `{ty}`"), dest));
         };
@@ -388,12 +379,10 @@ impl FnLowering<'_> {
         // A held struct is its one field, so reading that field from a value
         // is the identity, as upstream's `LowerKGENToLLVM` lowers
         // `kgen.struct.extract` of a one-element register-passable struct.
-        // A `Bool` is held as its storage ([`Self::field_offset`]).
-        if *base_ty.kind() == TyKind::Bool
-            || self
-                .mir_declarations
-                .struct_instance(&base_ty)
-                .is_some_and(|(decl, _)| self.mir_declarations.register_field(&decl.name).is_some())
+        if self
+            .mir_declarations
+            .struct_instance(&base_ty)
+            .is_some_and(|(decl, _)| self.mir_declarations.register_field(&decl.name).is_some())
         {
             match lower_ty(
                 self.name,

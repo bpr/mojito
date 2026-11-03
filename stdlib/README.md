@@ -94,8 +94,7 @@ point, as upstream's toolchain does.
   requirement through its builtin conversion. `bool.mojo` also declares
   upstream's `struct Bool` (storage, `MIN`/`MAX`, the default initializer,
   and the `__bool__`, `__mlir_bool__`, `__mlir_i1__`, `__int__`,
-  `__float__`, and `__hash__` bodies; the checker holds it as its compiler
-  `Bool` type until R1612) and upstream's `SIMD` overloads of `any` and
+  `__float__`, and `__hash__` bodies) and upstream's `SIMD` overloads of `any` and
   `all`; the prelude exports `Bool`, `any`, and `all`. The `Iterable`
   overloads wait on R1605.
 - `std/builtin/simd_length.mojo` — upstream's `SIMDLength`, verbatim, the

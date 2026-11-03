@@ -1472,23 +1472,6 @@ impl<'a> Flatten<'a> {
     /// nominal subscript through its getter's reference or its setter, a
     /// pointer through its address, any other place by a store.
     pub(in crate::mir) fn lower_set_place(&mut self, place: Node<'a>, value: Node<'a>) {
-        // An initializer's store to its `Bool`'s storage builds the `Bool`
-        // from the storage into `self`.
-        if place.is_bool_storage()
-            && let Some(object) = place.object()
-        {
-            let storage = self.expr(value);
-            let target = mojito_types::ct::ScalarConversion::Bool;
-            let src = self.fresh_typed(place.location(), None, target.ty());
-            self.emit(MirInstr::ScalarCast {
-                dest: src,
-                value: storage,
-                target,
-            });
-            let p = self.place(object);
-            self.emit(MirInstr::Store { place: p, src });
-            return;
-        }
         if self.lower_subscript_reference_set(place, value) {
             return;
         }
@@ -1998,12 +1981,10 @@ impl<'a> Flatten<'a> {
                 Some(p)
             }
             (CheckedOp::Member { field, .. }, Some(object)) => {
-                // A compile-time member read (`T.K`, `A.K`) is a value, and
-                // so is a `Bool`'s storage.
+                // A compile-time member read (`T.K`, `A.K`) is a value.
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
-                    || e.is_bool_storage()
                     || e.is_pointer_convert()
                 {
                     return None;
@@ -2044,12 +2025,10 @@ impl<'a> Flatten<'a> {
         }
         match (e.op(), e.object()) {
             (CheckedOp::Member { field, .. }, Some(object)) => {
-                // A compile-time member read (`T.K`, `A.K`) is a value, and
-                // so is a `Bool`'s storage.
+                // A compile-time member read (`T.K`, `A.K`) is a value.
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
-                    || e.is_bool_storage()
                     || e.is_pointer_convert()
                 {
                     return None;
@@ -2088,12 +2067,10 @@ impl<'a> Flatten<'a> {
                 Some(p)
             }
             (CheckedOp::Member { field, .. }, Some(object)) => {
-                // A compile-time member read (`T.K`, `A.K`) is a value, and
-                // so is a `Bool`'s storage.
+                // A compile-time member read (`T.K`, `A.K`) is a value.
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
-                    || e.is_bool_storage()
                     || e.is_pointer_convert()
                 {
                     return None;

@@ -31,7 +31,7 @@ impl Checker {
             (PrefixOp::Neg | PrefixOp::Pos, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) => {
                 return Ok(mojito_types::types::value_less_literal(&t));
             }
-            (PrefixOp::Not, TyKind::Bool) => return Ok(Ty::bool()),
+            (PrefixOp::Not, kind) if kind.is_bool() => return Ok(Ty::bool()),
             // A numeric scalar is `Boolable`: `not n` over an `Int`, or
             // `not (a == b)` over `UInt64`s.
             (PrefixOp::Not, _) if is_numeric(&t) || is_scalar_simd(&t) => {
@@ -201,7 +201,7 @@ impl Checker {
         // `emitBinOpCall` resolves it. In a compile-time position its value
         // is the shared folder's (`infix_value`).
         let declares = |ty: &Ty, dunder: Option<&str>| {
-            *ty == TyKind::Bool
+            ty.is_bool()
                 && dunder.is_some_and(|dunder| self.declared_receiver_member(ty, dunder).is_some())
         };
         if let Some(span) = &span
@@ -448,7 +448,7 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         let lt = self.infer(left)?;
         let rt = self.infer(right)?;
-        if lt == TyKind::Bool && rt == TyKind::Bool {
+        if lt.is_bool() && rt.is_bool() {
             return Ok(Ty::bool());
         }
         let Some(span) = span else {
@@ -564,7 +564,7 @@ impl Checker {
         for (index, (op, right)) in rest.iter().enumerate() {
             let membership = matches!(op, InfixOp::In | InfixOp::NotIn);
             let site = (!membership).then(|| span.clone());
-            if self.infer_infix(site, *op, left, right)? != TyKind::Bool {
+            if !self.infer_infix(site, *op, left, right)?.is_bool() {
                 return Err(TypeError::BadOperator {
                     op: op.symbol().to_string(),
                     operands: "a chained comparison must compare to Bool".to_string(),
@@ -1221,10 +1221,10 @@ impl Checker {
                 Ok(width)
             }
 
-            TyKind::Bool | TyKind::Param { .. } | TyKind::Struct(..)
+            TyKind::Param { .. } | TyKind::Struct(..)
                 if !aty.is_simd()
                     && !mojito_types::types::is_simd_length(&aty)
-                    && (*aty == TyKind::Bool || self.conforms_to(&aty, "Intable")) =>
+                    && (aty.is_bool() || self.conforms_to(&aty, "Intable")) =>
             {
                 if !dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) {
                     return Err(TypeError::BadCall {

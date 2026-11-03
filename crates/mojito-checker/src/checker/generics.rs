@@ -436,7 +436,9 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
         }
         (kind, _) if let Some((dtype, width)) = kind.as_simd() => {
             let actual_slots = match actual.kind() {
-                TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
+                kind if kind.is_bool() => {
+                    Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1)))
+                }
                 _ => simd_slots(actual),
             };
             if let Some((actual_dtype, actual_width)) = actual_slots {

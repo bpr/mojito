@@ -4748,8 +4748,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         }
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        TyKind::Bool
-        | TyKind::StringLiteral(_)
+        TyKind::StringLiteral(_)
         | TyKind::None
         | TyKind::Never
         | TyKind::IntLiteral(_)

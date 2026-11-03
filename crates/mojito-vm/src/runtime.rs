@@ -1739,6 +1739,12 @@ fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
     {
         return Value::UInt(v[0] as u64);
     }
+    if dtype == Dtype::Bool
+        && let SimdLanes::Bool(v) = &lanes
+        && v.len() == 1
+    {
+        return Value::Bool(v[0]);
+    }
     Value::Simd { dtype, lanes }
 }
 

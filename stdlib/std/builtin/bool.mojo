@@ -6,8 +6,7 @@
 # initializers but the Python one, `Comparable` with the comparison and
 # bitwise operators, `Writable` with `write_to` and `write_repr_to`, and
 # the `__bool__`, `__mlir_bool__`, `__mlir_i1__`, `__int__`, `__float__`,
-# and `__hash__` bodies, and `EnumLike` with cases `False` and `True`. The
-# checker holds the struct as its compiler `Bool` type until R1612.
+# and `__hash__` bodies, and `EnumLike` with cases `False` and `True`.
 # Python interop and `@lldb_formatter_wrapping_type` are absent.
 #
 # Upstream's `Iterable` overloads of `any` and `all` are absent: their

@@ -396,7 +396,7 @@ fn require_bool(
     errors: &mut Vec<String>,
 ) {
     if let Some(found) = function.reg_types.get(&cond.0)
-        && !matches!(found.kind(), TyKind::Bool | TyKind::I1)
+        && !(found.is_bool() || matches!(found.kind(), TyKind::I1))
     {
         errors.push(format!("{prefix}: `{what}` condition has type {found}"));
     }

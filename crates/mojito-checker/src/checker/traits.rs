@@ -2068,10 +2068,9 @@ impl Checker {
             struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                 self.struct_trait_conformance(ty, name, args, tr)
             }
-            // A `SIMD` or a `Bool` answers a trait its declaration lists as
-            // the struct it is; the traits its module does not declare yet
-            // keep the model.
-            simd if (simd.is_simd() || matches!(simd, TyKind::Bool))
+            // A `SIMD` answers a trait its declaration lists as the struct it
+            // is; the traits its module does not declare yet keep the model.
+            simd if simd.is_simd()
                 && let Some((name, args)) = self.nominal_struct(ty)
                 && matches!(
                     struct_trait_rule(tr, self.traits.contains_key(tr)),
@@ -2821,10 +2820,7 @@ impl Checker {
             return self.is_trivial_register_passable(&element);
         }
         super::builtins::is_numeric(ty)
-            || matches!(
-                ty.kind(),
-                TyKind::Bool | TyKind::Dtype | TyKind::StringLiteral(_)
-            )
+            || matches!(ty.kind(), TyKind::Dtype | TyKind::StringLiteral(_))
             || super::builtins::simd_valued_ty(ty)
             || match ty.kind() {
                 struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {

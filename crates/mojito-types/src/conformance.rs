@@ -389,10 +389,11 @@ pub fn modelled_declares(
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases are out of the way.
 pub fn is_scalar(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::Bool | TyKind::StringLiteral(_) | TyKind::None | TyKind::Dtype
-    )
+    ty.is_bool()
+        || matches!(
+            ty.kind(),
+            TyKind::StringLiteral(_) | TyKind::None | TyKind::Dtype
+        )
 }
 
 /// Whether `ty` is a numeric type (concrete or literal).
@@ -452,10 +453,10 @@ fn modelled_trivial_register_passable(ty: &Ty) -> bool {
                     if storage.trivially_register_passable
             )
         })
+        || ty.is_bool()
         || matches!(
             ty.kind(),
-            TyKind::Bool
-                | TyKind::None
+            TyKind::None
                 | TyKind::Dtype
                 | TyKind::Index
                 | TyKind::I1

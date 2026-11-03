@@ -1180,7 +1180,7 @@ fn verify_simd_lane_instruction(
         } => {
             let lane = expect_vector(value, "vector").and_then(|(dtype, _)| lane_of(&dtype));
             // A `Bool` is a `bool` lane while the two are one register
-            // type (R1612).
+            // type (R1840).
             let bool_lane = lane.as_ref().and_then(|lane| {
                 mojito_types::types::kgen_simd_slots(lane.kind())
                     .and_then(|(dtype, _)| dtype.known())

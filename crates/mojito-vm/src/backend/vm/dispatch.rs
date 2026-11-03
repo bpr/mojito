@@ -835,15 +835,17 @@ fn scalar_repr(value: &Value) -> String {
 }
 
 /// The member table that displays `value` ([`VmBackend::format_value`]): a
-/// struct's, by its runtime name, `Bool`'s declaration's, and a `SIMD`
-/// value's, by its dtype and width. `None` for a value with host text.
+/// struct's, by its runtime name, a held one's by the box its operand's
+/// type gives it ([`Prog::boxed`]), and a `SIMD` value's, by its dtype and
+/// width. `None` for a value with host text.
 fn display_table(value: &Value) -> Option<std::borrow::Cow<'_, str>> {
     match value {
         Value::Struct { name, .. } => Some(std::borrow::Cow::Borrowed(name)),
-        Value::Bool(_) => Some(std::borrow::Cow::Borrowed(
-            mojito_types::types::BOOL_TYPE_NAME,
-        )),
-        Value::Int(_) | Value::UInt(_) | Value::Float64(_) | Value::Simd { .. } => {
+        Value::Int(_)
+        | Value::UInt(_)
+        | Value::Float64(_)
+        | Value::Bool(_)
+        | Value::Simd { .. } => {
             let (dtype, lanes) = crate::runtime::simd_parts(value)?;
             let ty = mojito_types::types::canonical_simd_ty(dtype, lanes.width() as i64);
             mojito_symbol::symbol::member_table_name(&ty)
