@@ -8,9 +8,13 @@ use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
 use mojito_ast::ast::{ArgConvention, CONTEXTUAL_SENTINEL, Decorator, ExprKind};
 use mojito_common::error::TypeError;
 use mojito_symbol::symbol::{OverloadFamily, OverloadSets, overload_family, split_method_symbol};
-use mojito_types::origin::OriginParamId;
-use mojito_types::param_expr::{ParamExpr, ParamRef};
-use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
+use mojito_types::ct::CtValue;
+use mojito_types::origin::{Origin, OriginParamId};
+use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr, ParamRef};
+use mojito_types::types::{
+    GenericConstraint, ParamDecl, Ty, TyArg, TyKind, mentions, replace_parameters,
+    substitute_origin_params,
+};
 use std::collections::{HashMap, HashSet};
 
 /// A package stores each one as a bytecode record, its sets and maps
@@ -216,6 +220,85 @@ impl StructDeclaration {
             .flat_map(|table| &table.witnesses)
             .find(|witness| witness.requirement == requirement)
             .map(|witness| witness.member.as_str())
+    }
+
+    /// The type the associated member `name` of the struct at `arguments`
+    /// names, applied to `args` (`IteratorType[o]` of `List[Int]` is
+    /// `_ListIter[Int, o]`), as upstream's substitution resolves an
+    /// associated alias from the conformance's witness.
+    ///
+    /// `None` when the struct does not declare the member closed at these
+    /// arguments: an argument only the elaborator binds (a pack, a deferred
+    /// value, an omitted default), a type or value member parameter, or a
+    /// member over one of the struct's own origin parameters, which its
+    /// argument list does not key by id.
+    pub fn associated_type(&self, arguments: &[TyArg], name: &str, args: &[TyArg]) -> Option<Ty> {
+        let context = ParamContext::detached();
+        let mut bindings = ParamBindings::new();
+        let arguments: Vec<_> = arguments
+            .iter()
+            .filter(|argument| !matches!(argument, TyArg::Origin(_)))
+            .collect();
+        if arguments.len() != self.param_decls.len() {
+            return None;
+        }
+        for (decl, argument) in self.param_decls.iter().zip(arguments) {
+            match (decl, argument) {
+                (
+                    ParamDecl::Type {
+                        id,
+                        variadic: false,
+                        ..
+                    },
+                    TyArg::Ty(ty),
+                ) => {
+                    bindings.bind(id.clone(), context.type_shape(ty.clone()));
+                    bindings.bind_type(id.clone(), ty.clone());
+                }
+                (
+                    ParamDecl::Value {
+                        id,
+                        variadic: false,
+                        callable_default: None,
+                        ..
+                    },
+                    TyArg::Val(value),
+                ) if !decl.binds_callables()
+                    && !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) =>
+                {
+                    bindings.bind(id.clone(), context.constant(value.clone()).ok()?);
+                }
+                _ => return None,
+            }
+        }
+        let template = if args.is_empty()
+            && let Some((_, member)) = self
+                .associated_types
+                .iter()
+                .find(|(member, _)| member == name)
+        {
+            member.clone()
+        } else {
+            let member = self
+                .parameterized_associated_types
+                .iter()
+                .find(|member| member.name == name)
+                .filter(|member| member.params.len() == args.len())?;
+            let origins = member
+                .params
+                .iter()
+                .zip(args)
+                .map(|(param, arg)| match (param, arg) {
+                    (AssociatedParameter::Origin(id), TyArg::Origin(origin)) => {
+                        Some((id.0, origin.clone()))
+                    }
+                    _ => None,
+                })
+                .collect::<Option<HashMap<_, _>>>()?;
+            substitute_origin_params(&member.template, &origins)
+        };
+        let ty = replace_parameters(&context, &template, &bindings, 0).ok()?;
+        (!mentions(&ty, &names_origin_param)).then_some(ty)
     }
 }
 
@@ -713,4 +796,26 @@ fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializ
         &map.iter().collect::<std::collections::BTreeMap<_, _>>(),
         serializer,
     )
+}
+
+/// Whether `ty` itself names an origin parameter, in its arguments or its
+/// reference's origin.
+fn names_origin_param(ty: &Ty) -> bool {
+    fn names(origin: &Origin) -> bool {
+        match origin {
+            Origin::Param(_) => true,
+            Origin::Union(members) => members.iter().any(names),
+            _ => false,
+        }
+    }
+    match ty.kind() {
+        TyKind::Struct(_, arguments)
+        | TyKind::Assoc {
+            args: arguments, ..
+        } => arguments
+            .iter()
+            .any(|argument| matches!(argument, TyArg::Origin(origin) if names(origin))),
+        TyKind::Ref(reference) => names(&reference.origin),
+        _ => false,
+    }
 }

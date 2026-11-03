@@ -329,6 +329,16 @@ impl MirDeclarations {
         }
     }
 
+    /// The type the associated projection `base.name[args]` names: the
+    /// member the struct `base` names (an instance's template's) declares,
+    /// at `base`'s arguments; `None` for any other base, or a member the
+    /// struct does not declare closed there.
+    pub fn associated_type(&self, base: &Ty, name: &str, args: &[TyArg]) -> Option<Ty> {
+        let (struct_name, arguments) = base.kind().as_non_simd_struct()?;
+        self.structure(mojito_types::types::struct_template(struct_name))?
+            .associated_type(arguments, name, args)
+    }
+
     /// The initializer a default construction (`T()`) of `ty` runs.
     ///
     /// It is the member the struct `ty` names (an instance's template's)

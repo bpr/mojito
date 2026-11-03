@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` now closes an associated projection its
+  substitution makes concrete (`T.IteratorType[o]` at `T = List[Int]`)
+  from the struct's associated-type rows, and folds the inlined iteration
+  step's `__next__` to the iterator's own member, keeping the element
+  copy only for a reference-returning one, as upstream's substitution
+  folds the witness (R1280). A projection over a struct-level origin
+  parameter stays for the elaborator (R1875).
 - A callable compile-time parameter (`f` in `def apply[f: def(Int) thin
   -> Int]`) is now read as its parameter reference, as upstream's
   `kgen.param.constant`, rather than from a frame slot nothing stores:

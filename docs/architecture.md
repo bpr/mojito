@@ -1944,7 +1944,9 @@ parameter no runtime parameter or result spells (`bytes[Int]()`); an
 associated type the signature does not spell (`C.Element` as a loop
 variable's type) is solved from `MirStructDeclaration.associated_types` once
 `C` is bound, and a parameterized one (`C.IteratorType[origin_of(xs)]`, a
-split loop iterator's type) from `parameterized_associated_types`. `native::mono` finds the closed instances a template body
+split loop iterator's type) from `parameterized_associated_types`;
+`inline-parametric` reads the same rows to close a projection its
+substitution made concrete. `native::mono` finds the closed instances a template body
 reaches (`Box[List[Self.T]]`) from its MIR, transitively, and resolves a
 call or subscript through a bound at a struct instance to the member its
 template's witness table records for the requirement
@@ -6496,8 +6498,16 @@ point where a slot declared in a loop is uninitialized again.
   as upstream's `InlineParametric` substitutes through MLIR's
   `AttrTypeReplacer`. An argument over the caller's own binders stays
   symbolic, for the elaborator to fold in each instance of the caller.
-  The substitution then folds each witness lookup it closed (the private
-  `fold_witnesses`): a method call, a resolved operator, or a subscript
+  The substitution closes each associated projection it made concrete
+  (the private `ClosedProjections`): `T.IteratorType[o]` at `T =
+  List[Int]` becomes the type `List`'s associated-type rows declare
+  (`MirDeclarations::associated_type`, from
+  `StructDeclaration::associated_type`), as upstream's substitution
+  resolves the alias from the conformance's witness. A projection over a
+  struct-level origin parameter (`Span`'s `IteratorType`), an argument
+  only the elaborator binds, or a type or value member parameter stays
+  open for the elaborator. The substitution then folds each witness
+  lookup it closed (the private `fold_witnesses`): a method call, a resolved operator, or a subscript
   through a bound (`symbol::is_trait_dispatch_symbol`) whose receiver
   (`mir::member_receiver_ty`) is now a struct names the member that
   struct's witness table records for the requirement
@@ -6506,9 +6516,12 @@ point where a slot declared in a loop is uninitialized again.
   conformance), a method call taking the member's own `param_decls` and an
   operator becoming the member's `MethodCall`, as a struct operator is, as
   upstream's substitution folds the witness. `remove-unused-params` then
-  reads only the struct arguments that member kept. A call with a result
-  adapter, a differing result ABI or parameter count, an iteration step
-  (R1280), and a builtin receiver keep the dispatch. A
+  reads only the struct arguments that member kept. An iteration step,
+  which the checker adapts to copy its element out of a reference
+  (`CopyIteratorReference`), folds too, keeping the adapter only when the
+  member returns a reference, as the elaborator's `Specializer` does. A
+  call with any other result adapter, a differing result ABI or parameter
+  count, and a builtin receiver keep the dispatch. A
   value binder's read is already its parameter constant, which the
   substitution closes (`Const::of_parameter_value`, or `Const::Param` while
   symbolic). A callable value binder

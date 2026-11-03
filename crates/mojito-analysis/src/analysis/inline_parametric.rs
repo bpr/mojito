@@ -171,7 +171,7 @@ use super::region_walk::region_op;
 use mojito_ast::ast::{ArgConvention, Dtype, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallSlots, CallVariadics, bind_spread, match_call_slots};
 use mojito_checked::checked::ComptimeSequence;
-use mojito_checked::checked::{CheckedCallArgumentSource, CheckedConst};
+use mojito_checked::checked::{CheckedCallArgumentSource, CheckedConst, CheckedResultAdapter};
 use mojito_checked::declaration::{InlineLevel, SlotParameter};
 use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
@@ -3547,7 +3547,7 @@ fn instantiated<'c>(
             closures: Vec::new(),
         });
     }
-    let mut instantiation = Instantiation::new(declaration, owner, arguments)?;
+    let mut instantiation = Instantiation::new(declaration, owner, arguments, declarations)?;
     let mut function = callee.clone();
     walk_function_mut(&mut instantiation, &mut function).ok()?;
     construct_type_parameters(&mut function.blocks, &instantiation, declarations).ok()?;
@@ -3587,6 +3587,30 @@ fn fold_witnesses(blocks: &mut [MirBlock], function: &MirFunction, declarations:
                 continue;
             };
             match instruction {
+                // An iteration step copies its element out of a reference
+                // the member returns: one that returns the element itself
+                // needs no adapter. The destination keeps the element's
+                // value type either way.
+                MirInstr::MethodCall {
+                    resolved,
+                    reference_result: None,
+                    result_adapter: result_adapter @ Some(_),
+                    receiver_convention,
+                    param_decls,
+                    ..
+                } if result_adapter.as_ref().is_some_and(|adapter| {
+                    adapter.kind == CheckedResultAdapter::CopyIteratorReference
+                }) && declaration.param_decls.len() == param_decls.len() =>
+                {
+                    *resolved = Some(member);
+                    param_decls.clone_from(&declaration.param_decls);
+                    if !declaration.returns_reference {
+                        *result_adapter = None;
+                    }
+                    if receiver_convention.is_none() {
+                        *receiver_convention = declaration.receiver_convention;
+                    }
+                }
                 MirInstr::MethodCall {
                     resolved,
                     reference_result,
@@ -3903,8 +3927,11 @@ enum Bound {
 
 /// A callee's compile-time parameters bound to a call's arguments, as an
 /// environment of [`replace_parameters`].
-struct Instantiation {
+struct Instantiation<'d> {
     context: ParamContext,
+    /// What closes an associated projection the substitution made
+    /// concrete.
+    declarations: &'d MirDeclarations,
     bindings: ParamBindings,
     /// The owner's name and the type the body's bare spelling of it
     /// denotes.
@@ -3920,7 +3947,7 @@ struct Instantiation {
     types: Vec<ParamRef>,
 }
 
-impl Instantiation {
+impl<'d> Instantiation<'d> {
     /// The binding of `owner`'s binders to its type's arguments, and of
     /// `declaration`'s own to `arguments`, one per binder in declaration
     /// order, which may restate the owner's first; `None` for a binder or
@@ -3935,6 +3962,7 @@ impl Instantiation {
         declaration: &MirFunctionDeclaration,
         owner: Option<&OwnerInstance<'_>>,
         arguments: &Arguments<'_>,
+        declarations: &'d MirDeclarations,
     ) -> Option<Self> {
         let decls = &declaration.param_decls;
         let covered = owner.map_or(0, |owner| restated_owner_binders(owner.decls, decls));
@@ -3954,6 +3982,7 @@ impl Instantiation {
             closures: Vec::new(),
             types: Vec::new(),
             context: ParamContext::detached(),
+            declarations,
         };
         if let Some(owner) = owner {
             let (_, owner_arguments) = nominal_parts(&owner.ty)?;
@@ -4118,6 +4147,7 @@ impl Instantiation {
             None => ty,
         };
         let ty = rewrite_ty(&ty, &mut SelectedShapes)?;
+        let ty = rewrite_ty(&ty, &mut ClosedProjections(self.declarations))?;
         if let Some(binder) = self.types.iter().find(|binder| names_binder(&ty, binder)) {
             return Err(ParamError::Unsupported(format!(
                 "`{ty}` still names the bound binder `{}`",
@@ -4153,7 +4183,7 @@ impl Instantiation {
     }
 }
 
-impl MutTypeVisitor for Instantiation {
+impl MutTypeVisitor for Instantiation<'_> {
     type Error = ParamError;
 
     fn visit_ty(&mut self, ty: &mut Ty, _: TySite) -> Result<(), ParamError> {
@@ -4263,7 +4293,7 @@ impl MutTypeVisitor for Instantiation {
 /// A construction of one of the callee's binders is the bound type's: the
 /// binding is already in the caller's terms, so a selected pack element
 /// closes as it is.
-impl ConstructionTypes for Instantiation {
+impl ConstructionTypes for Instantiation<'_> {
     type Error = TypeConstructionError;
 
     fn bound(&self, param: &ParamRef) -> Option<&Ty> {
@@ -4521,6 +4551,46 @@ impl TyRewrite for SelectedShapes {
             return None;
         };
         rewrite_ty(shape, self).ok()
+    }
+
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        Ok(expr.clone())
+    }
+}
+
+/// The rewrite of an associated projection the substitution made concrete
+/// (`T.IteratorType[o]` at `T = List[Int]`) to the type its struct declares
+/// for it, inside out, as upstream's substitution resolves the alias from
+/// the conformance's witness: one the struct does not declare closed keeps
+/// its rewritten base, for the elaborator to solve.
+struct ClosedProjections<'d>(&'d MirDeclarations);
+
+impl TyRewrite for ClosedProjections<'_> {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        let TyKind::Assoc { base, name, args } = ty.kind() else {
+            return None;
+        };
+        let base = rewrite_ty(base, self).ok()?;
+        let args = args
+            .iter()
+            .map(|arg| match arg {
+                TyArg::Ty(ty) => rewrite_ty(ty, self).map(TyArg::Ty),
+                arg => Ok(arg.clone()),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        Some(
+            self.0
+                .associated_type(&base, name, &args)
+                .unwrap_or_else(|| {
+                    TyKind::Assoc {
+                        base,
+                        name: name.clone(),
+                        args,
+                    }
+                    .into()
+                }),
+        )
     }
 
     fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {

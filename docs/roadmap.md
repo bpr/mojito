@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1875**.
+Next free ID: **R1877**.
 
 ## Ordered Work
 
@@ -813,31 +813,53 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1280 An iteration step through a bound keeps its abstract
-  protocol after inlining**
+- [ ] **R1875 A struct declaration does not key its own origin parameters
+  to its arguments**
 
-  When `inline-parametric` substitutes `List[Int]` for a callee's `T:
-  Iterable`, the inlined `for x in a` keeps its `call.method`s naming
-  `__trait_dispatch.__iter__$ov$SelfRef` and
-  `__trait_dispatch.__next__$ov$`, where upstream's substitution folds both
-  witnesses.
-  - The inliner's witness fold (`inline_parametric::fold_witnesses`) skips
-    both calls: the iterator slot is typed by an associated
-    projection (`T.IteratorType[o]`) only the elaborator solves.
-  - Both calls already name the requirements the witness tables record.
-  - Fold both at once, through `StructDeclaration::witness_tables`, once
-    the substitution closes `T.IteratorType[o]` at a concrete struct; the
-    `abstract_value_next` rules in `mir/verify/calls.rs` then meet only
-    an unfolded step.
-  - Probe: `fc(xs: List[Int])` returning `count(xs)`, for
-    `@always_inline("nodebug") def count[T: Iterable](a: T) -> Int`
-    counting `for _ in a`; done when `fc`'s inlined body names
-    `List.__iter__` and the iterator's `__next__`.
-  - Since R1288 lifted the inliner's `try` veto, `count` inlines into
-    `fc`, so the probe shows the two unfolded calls.
-  - Found while landing R1052 (2026-10-22).
-  - Depends on R1288.
-  - Model: Fable, Not Planned.
+  `inline-parametric` cannot close an associated projection whose member
+  names the struct's own origin parameter, so an inlined `for` over such
+  a struct keeps `__trait_dispatch.__next__`.
+  - `Span`'s `IteratorType[o]` is `_SpanIter[Self.T, Self.origin]`, which
+    names `Span`'s origin as `origin_param(2)`.
+  - `StructDeclaration::param_decls` holds no origin parameter, and an
+    instance's argument list omits inferred ones (`Span[Int, o]` has no
+    `mut`), so no origin argument can be matched to that id.
+  - `StructDeclaration::associated_type` answers `None` for such a
+    member; upstream's struct parameters include its origins, which
+    substitution binds like any other.
+  - Lever: record each origin parameter's id beside its argument position
+    in the declaration, then bind it in `associated_type` through
+    `substitute_origin_params`.
+  - Probe: `count(sp)` for `sp = Span(xs)` over `xs: List[Int]`, with the
+    `count[T: Iterable]` of `tests/mir_passes/inline-parametric/bound_iteration.mir`;
+    done when the caller's inlined step names `_SpanIter.__next__`.
+  - Probe: an iterator struct whose `IteratorType` is `Self` over its own
+    origin (`_ListIter`), iterated through a bound.
+  - Found while landing R1280 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1876 The elaborator solves an associated projection from its own
+  copy of the struct's associated-type rows**
+
+  Upstream has one witness lookup for an associated alias, but Mojito
+  has two below the checker.
+  - `inline-parametric` closes a projection through
+    `StructDeclaration::associated_type`.
+  - The elaborator's `declared_associated_type` (`mono/substitute.rs`)
+    reads `StructShape::{members, parameterized}`, built from the same
+    rows in `mono/catalog.rs`.
+  - Only the elaborator's handles a type member parameter, an omitted
+    defaulted struct argument (`apply_defaults`), or an erased one
+    (`RemovedArg`).
+  - Lever: extend `StructDeclaration::associated_type` with those cases,
+    route `declared_associated_type` through it, and drop the two
+    `StructShape` fields.
+  - Probe: `tests/mir_passes/inline-parametric/bound_iteration.mir` and
+    every `for` over a bound still elaborate with no output change.
+  - Found while landing R1280 (2026-11-03).
+  - Depends on R1875.
+  - Model: Opus, Planned.
 
 - [ ] **R1350 `mem-2-reg` keeps a slot whose stored register another
   instruction also reads**
@@ -7402,6 +7424,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     binding to give `AssociatedParameter::Value`, which names its
     parameter by spelling.
   - The checker binds it by spelling too (`resolve_parameterized_member`).
+  - `inline-parametric`'s `StructDeclaration::associated_type` leaves such
+    a projection open for the same reason.
   - No executing fixture reaches it.
   - Done when the member's value parameter keys by a binder identity and
     the elaborator binds it from the application's `TyArg::Val`.
