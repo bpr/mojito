@@ -419,7 +419,11 @@ impl Checker {
     ) -> Result<Option<Ty>, TypeError> {
         if let Some(ty) = common_branch_ty(lt, rt) {
             for (value, value_ty) in [(left, lt), (right, rt)] {
-                if *value_ty != ty {
+                // A string literal materializes through `String`'s
+                // `@implicit` constructor.
+                if value_ty.is_string_literal() && is_nominal_string(&ty) {
+                    self.record_implicit_conversion(value, value_ty, &ty)?;
+                } else if *value_ty != ty {
                     self.record_literal_materializations(value, value_ty, &ty)?;
                 }
             }

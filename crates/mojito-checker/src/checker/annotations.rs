@@ -251,13 +251,7 @@ pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
         "DType" => Some(Ty::dtype()),
         "UInt" => Some(Ty::uint()),
         "Bool" => Some(Ty::bool()),
-        "String" => Some(Ty::string_literal()),
-        "StringLiteral" => Some(Ty::string_literal()),
         "Float64" => Some(Ty::float64()),
-        // The prelude rewrite qualifies `String` bounds like any other name;
-        // a `[text: String]` value parameter keeps the compile-time string
-        // type regardless of the nominal stdlib struct.
-        _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => Some(Ty::string_literal()),
         _ => None,
     }
 }

@@ -1045,6 +1045,12 @@ initializer's store to it a `field(_mlir_value)` store, which the checked
 body's `Bool` reads and stores change shape, so the package format moves to
 `mojito-package 176`.
 
+Schema 1.155 removes the instruction `type.name`: `_unqualified_type_name[T]()`
+is the `StaticString` application `reflect[T].name()` builds, over the
+reflection query `unqualified_name()`, which the elaborator answers per
+instance. The checked `TypeName` adjustment goes with it, so the package
+format moves to `mojito-package 177`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1530,7 +1536,8 @@ that is still a parameter (schema 1.27), `param_reflect` a reflection query over
 (`is_struct()`, `field_count()`, `field_names()`, `field_types()`,
 `field_index["name"]()`, `field["name"].T`, and, schema 1.138, the
 `!kgen.string` type names `name()`, `name[qualified_builtins=True]()`, and
-`base_name()`), `param_type_member` a
+`base_name()`, and, schema 1.155, `_unqualified_type_name`'s
+`unqualified_name()`), `param_type_member` a
 compile-time value member of a symbolic subject type (`T.K`, schema 1.36),
 applied to `args` when the member is parameterized (`T.get[0]`; schema
 1.80, written only when non-empty), and `param_apply` a compile-time
@@ -1838,7 +1845,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` — a `value.copy` carries `constructor: "<symbol>"` after its operands when it names the `__copyinit__` it runs, as `var.use` does (schema 1.68) |
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`: a capture is a `reference` or a lambda's storage moved in) |
-| `Const` / `MaterializeLiteral` / `TypeName` | `const` / `literal.materialize` / `type.name` (schema 1.148 removes `layout.size_of`) |
+| `Const` / `MaterializeLiteral` | `const` / `literal.materialize` (schema 1.148 removes `layout.size_of`, schema 1.155 `type.name`) |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage |
 | `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |

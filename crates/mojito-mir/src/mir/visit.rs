@@ -40,8 +40,6 @@ pub enum TySite {
     /// materialization's target, a storage element, an exhaustion type, a
     /// binding type.
     Instruction,
-    /// A type whose unqualified spelling the instruction reads.
-    TypeName,
     /// The type a `ConstructType` constructs.
     ConstructedType,
     /// A call's error type or instantiated contract.
@@ -343,7 +341,6 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         } => types
             .iter_mut()
             .try_for_each(|ty| visitor.visit_ty(ty, TySite::TupleElement)),
-        I::TypeName { ty, .. } => visitor.visit_ty(ty, TySite::TypeName),
         I::ConstructType { ty, .. } => visitor.visit_ty(ty, TySite::ConstructedType),
         I::ConstructTypeParam {
             param,

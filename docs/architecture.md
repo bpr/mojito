@@ -1256,7 +1256,7 @@ applies a `def` to the index (`comptime w = twice(i)`), the application
 `native::mono` demands per copy. A served loop may construct a reflected
 field type (`types[i]()`, `FT()` over `comptime FT = types[i]`): the check
 records the construction of that type expression, MIR carries it as
-`MirInstr::ConstructType`, a template-only form beside `TypeName`, and the elaborator writes the closed type's default
+`MirInstr::ConstructType`, a template-only form, and the elaborator writes the closed type's default
 construction in each unrolled copy. A type pack crosses the waist the same way: every
 pack-keyed `def` keeps its body, as upstream's does
 (`is_specializable_declaration` never names one, so no type-pack `def` is
@@ -1928,9 +1928,9 @@ struct's type packs as `Self.`-qualified names (`comptime/elab.rs:def_body`), so
 `native::mono` decides the branch and
 unrolls the loop per instance; a `rebind`, a nested `def`, and a lambda stay
 too. No method mints a per-instantiation clone, whatever its body holds or
-reaches. A type name over the struct's parameters is carried in
-`MirInstr::TypeName`, and the elaborator writes the name from the
-substituted type. A plain trait-bound
+reaches. A type name over the struct's parameters
+(`_unqualified_type_name[Self.T]()`) is a reflection query, which the
+elaborator answers from the substituted type. A plain trait-bound
 generic `def` keeps its template at every closed call, inferred or explicit
 (`Elab::template_serves_def`): it mints a clone only where it carries a
 value parameter its template does not serve, and a
@@ -4031,7 +4031,6 @@ Representative instructions:
 ```rust
 Const
 ParamListAddress
-TypeName
 Rebind
 UseVar
 MovePlace
@@ -4995,9 +4994,10 @@ compiler's descriptor representation and the struct's library members serve
 one type, and `nominal_parts` answers it
 as the struct's instance. Literal-only operations stay on it. The value-less
 `TyKind::StringLiteral(None)`, which upstream has no type for, still types
-comptime strings, `[text: String]` value parameters, a bare run-time
-`StringLiteral` argument, kwargs keys, and Writer payloads inside the stdlib
-(R1657, R1658). A source
+an untyped compile-time string (`CtValue::Str`'s meta), a bare run-time
+`StringLiteral` argument, and Writer payloads inside the stdlib (R1658,
+R1659); a `[text: String]` value parameter is a `String`, and a reflected
+name a `StaticString`. A source
 `String` annotation is not a builtin type keyword: it parses as an ordinary
 name, the prelude rewrite qualifies it, and ordinary struct lookup resolves
 the nominal struct — no dedicated checker path. A literal converts wherever
@@ -6945,8 +6945,9 @@ point where a slot declared in a loop is uninitialized again.
   (`Specializer::table_owner`). `symbol::member_table_name` is the one
   mapping from a type to the declaration whose table a backend reads, a
   struct's own name or that `SIMD` instance's, and
-  `SymbolTable::type_uses` reads it too, so a register of a `SIMD` type
-  keeps its instance's declaration live as a struct type keeps its own.
+  `SymbolTable::type_uses` reads it too, so a register of a `SIMD` type,
+  and a live struct's field of one (`SymbolTable::struct_uses`), keeps its
+  instance's declaration live as a struct type keeps its own.
   A VM dispatch
   runs a selected instance of the receiver's own struct as named, one
   spelled off its template too, since such a generator names no owner

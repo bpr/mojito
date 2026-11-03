@@ -637,7 +637,6 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         "DType" => Some(Ty::dtype()),
         "UInt" => Some(Ty::uint()),
         "Bool" => Some(Ty::bool()),
-        "StringLiteral" => Some(Ty::string_literal()),
         "Float64" => Some(Ty::float64()),
         "None" | "NoneType" => Some(Ty::none()),
         // The (qualified) `String` spelling deliberately falls through to

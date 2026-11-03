@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 154;
+pub const VERSION_MINOR: u16 = 155;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -186,7 +186,6 @@ pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "const",
     "param_list.address",
     "store_to_mem",
-    "type.name",
     "type.construct",
     "type.construct_expr",
     "literal.materialize",
@@ -357,7 +356,6 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::Const { .. } => "const",
         MirInstr::ParamListAddress { .. } => "param_list.address",
         MirInstr::StoreToMem { .. } => "store_to_mem",
-        MirInstr::TypeName { .. } => "type.name",
         MirInstr::ConstructTypeParam { .. } => "type.construct",
         MirInstr::ConstructType { .. } => "type.construct_expr",
         MirInstr::MaterializeLiteral { .. } => "literal.materialize",

@@ -758,7 +758,7 @@ fn build_keyword_collector(
     });
     for &index in &collected {
         let (keyword, value) = site.kwargs[index].clone();
-        let key = fresh_register(function, Ty::string_literal(), location);
+        let key = fresh_register(function, Ty::string_literal_of(&keyword), location);
         prelude.push(MirInstr::Const {
             dest: key,
             k: Const::Str(keyword),

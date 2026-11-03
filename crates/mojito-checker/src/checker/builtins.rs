@@ -215,10 +215,12 @@ pub(super) fn common_elem(a: &Ty, b: &Ty) -> Option<Ty> {
 }
 
 /// The common type of two string literals of different texts: the
-/// value-less `StringLiteral`, which materializes where it is bound, as
-/// the pin's join of two `StringLiteral` instances is a `String`.
+/// `String` both materialize to, as upstream's join of two `StringLiteral`
+/// instances is.
 fn common_string_literal(a: &Ty, b: &Ty) -> Option<Ty> {
-    (a.is_string_literal() && b.is_string_literal()).then(Ty::string_literal)
+    (a.is_string_literal() && b.is_string_literal()).then(|| {
+        mojito_types::types::nominal_type(mojito_symbol::symbol::STDLIB_STRING_STRUCT, Vec::new())
+    })
 }
 
 /// The common element of a display's two elements ([`common_elem`]), where a
@@ -559,14 +561,14 @@ impl Checker {
             if runtime_ty != tys[0] {
                 self.record_literal_materializations(&args[0], &tys[0], &runtime_ty)?;
             }
-            return Ok(Ty::string_literal());
+            return Ok(self.builtin_string_result());
         }
         if self.conforms_to(&tys[0], "Writable") {
             // Like `print`, nominal String conversion formats through a
             // borrowed `Writable` receiver and must retain its caller storage
             // until that synchronous formatter returns.
             self.record_at(args[0].source_span()).call_place_use = true;
-            return Ok(Ty::string_literal());
+            return Ok(self.builtin_string_result());
         }
         Err(TypeError::TypeMismatch {
             expected: "Writable".to_string(),

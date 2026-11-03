@@ -1962,7 +1962,7 @@ impl Checker {
             CtValue::None => Some(Ty::none()),
             // Against a `StringLiteral[v]` slot the value is the literal of
             // its text, which solves `v`; elsewhere it is still the
-            // value-less compile-time string (R1657).
+            // value-less compile-time string (R1659).
             CtValue::Str(text) if matches!(self_ty.kind(), TyKind::StringLiteral(Some(_))) => {
                 Some(Ty::string_literal_of(text))
             }

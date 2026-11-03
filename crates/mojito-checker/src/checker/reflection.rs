@@ -50,12 +50,19 @@ impl Checker {
                 Some((ReflectQuery::FieldNames, list)) => {
                     self.reject_bound_list_crossing(object, &list)?;
                     let index = self.reflection_index(index)?;
-                    if let Ok(list) = self.param_context.constant(list)
-                        && let Ok(element) = self.param_context.list_get(&list, &index)
-                    {
-                        self.record_reflection_value(expr, CtValue::Expr(element));
-                    }
-                    Ok(Some(Ty::string_literal()))
+                    // An element is the `StaticString` of the field's
+                    // name, as upstream's list of `StaticString`s holds.
+                    let name = self.param_context.constant(list).and_then(|list| {
+                        let element = self.param_context.list_get(&list, &index)?;
+                        self.param_context.field(
+                            &element,
+                            mojito_types::ct::LITERAL_VALUE_MEMBER,
+                            mojito_types::param_expr::MetaTy::value(TyKind::KgenString.into()),
+                        )
+                    });
+                    let name = self.static_string_of(name.map_err(param_error)?)?;
+                    self.record_reflection_value(expr, CtValue::Expr(name));
+                    Ok(Some(static_string_ty()))
                 }
                 Some(_) => Err(TypeError::NotComptime(
                     "a reflected field type is not a runtime value; construct it, or use it in \
@@ -108,6 +115,23 @@ impl Checker {
             }
             _ => Ok(None),
         }
+    }
+
+    /// A type-name intrinsic's call at `span` over `subject`
+    /// (`_unqualified_type_name[T]()`): the `StaticString` upstream's
+    /// constructs from `#kgen.get_type_name`, recorded as the parameter
+    /// value the elaborator answers per instance over a symbolic subject.
+    pub(super) fn reflected_static_name(
+        &self,
+        span: SourceSpan,
+        subject: &Ty,
+        form: TypeNameForm,
+    ) -> Result<Ty, TypeError> {
+        let query = ReflectQuery::TypeName(form);
+        let value = self.eval_reflection(subject, query.clone())?;
+        let ty = reflection_value_ty(subject, &query, &value)?;
+        self.record_param_value(span, value);
+        Ok(ty)
     }
 
     /// `materialize[names]()` of a field-name list in the executable check:
@@ -329,12 +353,7 @@ impl Checker {
                     "reflect[T].name() needs StringSpan's '_kgen' initializer".to_string(),
                 )
             })?;
-        let static_string = Ty::new(TyKind::Struct(
-            owner.to_string(),
-            vec![mojito_types::types::TyArg::Origin(
-                mojito_types::origin::Origin::Static,
-            )],
-        ));
+        let static_string = static_string_ty();
         Ok(self.param_context.apply(
             &mojito_symbol::symbol::qualified_method_symbol(
                 owner,
@@ -786,6 +805,16 @@ fn reflection_value_ty(
              index it"
         ))),
     }
+}
+
+/// `StaticString`, `StringSpan[ImmStaticOrigin]`.
+fn static_string_ty() -> Ty {
+    Ty::new(TyKind::Struct(
+        mojito_types::types::STDLIB_STRING_SPAN_STRUCT.to_string(),
+        vec![mojito_types::types::TyArg::Origin(
+            mojito_types::origin::Origin::Static,
+        )],
+    ))
 }
 
 fn no_such_reflection_method(subject: &Ty, method: &str) -> TypeError {

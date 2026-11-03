@@ -286,26 +286,6 @@ impl<'a> Flatten<'a> {
         {
             return Some(self.param_list_address(call.location(), values));
         }
-        if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text, ty }) = node
-            .adjustments
-            .iter()
-            .find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::TypeName { .. }
-                )
-            })
-            .cloned()
-        {
-            // A type naming a compile-time parameter is spelled per
-            // instance, so the template carries the type to the elaborator.
-            if mojito_types::types::is_symbolic(&ty) {
-                let dest = self.fresh_typed(call.location(), None, Ty::string_literal());
-                self.emit(MirInstr::TypeName { dest, ty });
-                return Some(dest);
-            }
-            return Some(self.constant(call, Const::Str(text)));
-        }
         // A checked pointer construction materializes the frame/slot
         // handle for its source place; the checked pointer type keeps
         // the origin while the runtime value erases it.

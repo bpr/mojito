@@ -128,14 +128,16 @@ pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
         // A `DType` value, and the type of a `[dtype: DType]` value parameter.
         "DType" => Ty::dtype(),
         "Bool" => Ty::bool(),
-        "String" => Ty::string_literal(),
-        "StringLiteral" => Ty::string_literal(),
         "UInt" => Ty::uint(),
         "Float64" => Ty::float64(),
-        // The prelude rewrite qualifies `String` bounds like any other name;
-        // a `[text: String]` value parameter keeps the compile-time string
-        // type regardless of the nominal stdlib struct.
-        _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => Ty::string_literal(),
+        // A `[text: String]` value parameter is a value of the nominal
+        // `String`, however the prelude rewrite spelled its bound.
+        _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+            mojito_types::types::nominal_type(
+                mojito_symbol::symbol::STDLIB_STRING_STRUCT,
+                Vec::new(),
+            )
+        }
         _ => return None,
     })
 }

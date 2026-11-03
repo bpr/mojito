@@ -7096,19 +7096,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R272 A reflected field name materializes as `String`, not
-  `StringSpan[ImmStaticOrigin]`**
+- [ ] **R272 A reflected field-name list is an `Array` of `String`, not
+  of `StaticString`**
 
-  Problem: `materialize[names[i]]()` over `comptime names =
-  reflect[T].field_names()` is a `String` in Mojito and a
-  `StringSpan[ImmStaticOrigin]` at the pin, so the crossing diagnostic
-  spells `Array[String, Int(2)]` where the pin spells
-  `Array[StringSpan[ImmStaticOrigin], Int(2)]`.
-  - The check answers `field_names()` with a list of plain compile-time
-    strings (`ReflectQuery::answer`), which materialize as `String`
-    literals.
-  - A program that annotates the element as a `StringSpan` is rejected where
-    the pin runs it.
+  `materialize[names]()` over `comptime names = reflect[T].field_names()`
+  is an `Array[String, 2]` in Mojito and an `Array[StaticString, 2]` at
+  the pin, so the crossing diagnostic spells `Array[String, Int(2)]` where
+  the pin spells `Array[StringSpan[ImmStaticOrigin], Int(2)]`.
+  - Since R1657 an element read (`names[i]`, `field_names()[i]`) is a
+    `StaticString`, the `_kgen` application over the element's
+    `!kgen.string`.
+  - The list itself is still `CtValue::Str` elements typed
+    `ParamList(value(StringLiteral))` (`ReflectQuery::meta`,
+    `ReflectQuery::answer`), where upstream's elements are `!kgen.string`.
+  - The whole list's type is `reflected_names_array_ty`'s `Array[String,
+    N]`, and `reject_bound_list_crossing` spells it (`reflection.rs`).
+  - Probe: `var a = materialize[names]()` then
+    `_unqualified_type_name[type_of(a)]()` prints `Array[String, …]`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7471,6 +7475,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The pin's second `{}` beside an origin is not located. A variadic type
     pack already spells as the pin's `<unprintable>, {}` (`Tuple`,
     `Variant`).
+  - Probe: `_unqualified_type_name[StaticString]()` prints
+    `StringSpan[ImmStaticOrigin]`, where the pin prints `StringSpan[{}, {}]`
+    (`unqualified_instance_name`, `mojito-symbol`).
   - Probe: `reflect[T].name()` in `def f[T: AnyType](x: T)` over
     `f(Span(xs))` prints `std.span.Span[SIMD[DType.int, 1], {}]`, where the
     pin prints `std.collections.span.Span[True, {}, SIMD[DType.int, 1], {},
@@ -11234,29 +11241,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1657 A compile-time string that is no literal is typed by the
-  value-less `StringLiteral`**
-
-  `type_of(s)` over a `[s: String]` parameter is rejected ("'type_of' of a
-  literal value"), where the pin prints `String`.
-  - Since R1652 a literal's type carries its text, `StringLiteral["ab"]`.
-    `TyKind::StringLiteral(None)` remains for strings upstream gives another
-    type, and upstream has no such type.
-  - Producers: a compile-time `String` or `StringLiteral` value parameter
-    (`annotations.rs` `scalar_type_name`, `comptime/params.rs`), a reflected
-    name (`reflection.rs`, `call_inference.rs`'s `_unqualified_type_name`
-    arm), `infer_stringify` (`builtins.rs`), `call_defaults.rs`'s key
-    register, and `CtValue::Str`'s `MetaTy` (`param_expr.rs`).
-  - The join of two literals of different texts (`common_string_literal`,
-    `checker/builtins.rs`) is one too, where upstream's is a `String`.
-  - Each should get upstream's type: `String`, `StaticString`, or a
-    `StringLiteral[expr]`.
-  - Probe: `comptime m = "a" if True else "bb"` then
-    `print(_unqualified_type_name[type_of(m)]())` prints `String` at the
-    pin, and is rejected here.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1658 A bare `StringLiteral` argument is a checker rule, where
   upstream auto-parameterizes it**
 
@@ -11306,6 +11290,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A literal whose type carries its text already runs the declared
     members (R1652).
   - Delete the rules and `TyKind::StringLiteral(None)` itself.
+  - The elaborator also defaults an unsolved type binder and the writer
+    slot of a type-reached member to the value-less type
+    (`mono/instances.rs`), and `MetaTy::of_value` types an untyped
+    `CtValue::Str` by it (`param_expr.rs`); each needs its upstream type
+    before the variant can go.
   - Probe: `def f(s: StringLiteral) -> Int: return s.byte_length()`
     prints `3` for `f("abc")`. Done when `rg string_literal_primitive
     crates` is empty.

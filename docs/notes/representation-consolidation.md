@@ -73,7 +73,7 @@ command cannot use both.
      register. R1753 (literal members), R1789 (implicit conversion through the `@implicit`
      initializer), R1788 (module alias order), and R1738 (an
      `Int`-annotated `comptime`) are its neighbours.
-   - `StringLiteral` is the same port, still at its start: R1657 → R1658
+   - `StringLiteral` is the same port, after R1657: R1658
      → R1659 → R1660, then R1651, R1654 (its hash leaf), and R1655.
 
    ```sh

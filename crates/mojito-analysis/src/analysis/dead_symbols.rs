@@ -270,7 +270,7 @@ impl<'p> Symbols<'p> {
             if let Some(declaration) = self.structs.get(name)
                 && live_structs.insert(name)
             {
-                pending.extend(self.table.uses(*declaration));
+                pending.extend(self.table.struct_uses(declaration));
                 pending.extend(self.methods.get(name).into_iter().flatten());
                 if every_member {
                     pending.extend(self.members(name));

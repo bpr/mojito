@@ -338,10 +338,6 @@ impl Decoder {
             "is_run_in_comptime_interpreter" => Some(MirInstr::IsRunInComptimeInterpreter {
                 dest: self.req(value, fields, "dest", Self::reg)?,
             }),
-            "type.name" => Some(MirInstr::TypeName {
-                dest: self.req(value, fields, "dest", Self::reg)?,
-                ty: self.req(value, fields, "type", Self::ty)?,
-            }),
             "type.construct_expr" => Some(MirInstr::ConstructType {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 ty: self.req(value, fields, "type", Self::ty)?,

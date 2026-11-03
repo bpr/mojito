@@ -114,7 +114,6 @@ pub(super) fn verify_instruction(
         | MirInstr::ConstructType { .. }
         | MirInstr::ParamListAddress { .. }
         | MirInstr::StoreToMem { .. }
-        | MirInstr::TypeName { .. }
         | MirInstr::CopyValue { .. }
         | MirInstr::Rebind { .. }
         | MirInstr::DefVar { .. }
@@ -700,20 +699,6 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             ) {
                 errors.push(format!(
                     "{prefix}: a parameter list's address names no parameter list"
-                ));
-            }
-        }
-        MirInstr::TypeName { dest, ty } => {
-            if let Some(found) = cx.reg_ty(*dest)
-                && !found.is_string_literal()
-            {
-                errors.push(format!(
-                    "{prefix}: type name result register has type {found}, expected StringLiteral"
-                ));
-            }
-            if !mojito_types::types::is_symbolic(ty) {
-                errors.push(format!(
-                    "{prefix}: type name of the concrete type {ty} is not a constant"
                 ));
             }
         }

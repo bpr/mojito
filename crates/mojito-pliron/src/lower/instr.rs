@@ -234,10 +234,6 @@ impl FnLowering<'_> {
                 ),
                 *dest,
             )),
-            MirInstr::TypeName { dest, ty } => {
-                Err(self
-                    .unsupported_reg(format!("type name of `{ty}` after monomorphization"), *dest))
-            }
             MirInstr::ConstructType { dest, ty } => Err(self.unsupported_reg(
                 format!("constructing the type `{ty}` after monomorphization"),
                 *dest,

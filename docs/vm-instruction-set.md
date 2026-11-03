@@ -390,19 +390,6 @@ analysis this is a definition: storing into a moved variable reinitializes it.
 
 ## Scalar Computation
 
-### `type.name` — Unqualified spelling of a parametric type
-
-```text
-type.name { dest: %r0, type: Box[T] }
-```
-
-Produces a `StringLiteral`: the unqualified spelling of a type that names a
-compile-time parameter (`_unqualified_type_name[Self]()` in a generic
-struct's method). Only a template holds one, and verification rejects a
-concrete type, whose name lowers to a `const`. The elaborator substitutes the
-type and replaces the instruction with that constant, so concrete MIR and
-the native backend never see it; it is a verifier finding on concrete MIR.
-
 ### Unary instructions
 
 ```text

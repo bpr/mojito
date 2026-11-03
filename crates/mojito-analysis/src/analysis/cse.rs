@@ -287,7 +287,6 @@ impl Table<'_> {
             | MirInstr::BuiltinCast { .. }
             | MirInstr::PointerConvert { .. }
             | MirInstr::Pop { .. }
-            | MirInstr::TypeName { .. }
             | MirInstr::IsRunInComptimeInterpreter { .. }
             | MirInstr::ParamListAddress { .. }
             | MirInstr::VariantIs { .. }

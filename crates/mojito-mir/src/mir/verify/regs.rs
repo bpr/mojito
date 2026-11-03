@@ -14,7 +14,6 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::Rebind { dest, .. }
         | MirInstr::Const { dest, .. }
         | MirInstr::ParamListAddress { dest, .. }
-        | MirInstr::TypeName { dest, .. }
         | MirInstr::IsRunInComptimeInterpreter { dest }
         | MirInstr::ConstructTypeParam { dest, .. }
         | MirInstr::ConstructType { dest, .. }
@@ -402,7 +401,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::InvalidateInteriors { .. }
         | MirInstr::Const { .. }
         | MirInstr::ParamListAddress { .. }
-        | MirInstr::TypeName { .. }
         | MirInstr::IsRunInComptimeInterpreter { .. }
         | MirInstr::ConstructType { .. }
         | MirInstr::UseVar { .. }

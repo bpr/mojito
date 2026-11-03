@@ -221,10 +221,8 @@ impl Checker {
                 self.infer_param_list_address(span, param_args, args)
             }
             // `_unqualified_type_name[T]()` (upstream `std.reflection`):
-            // the unqualified spelling of one checked type, a compile-time
-            // string. Recorded for every resolution — a still-generic
-            // spelling names the parameter, which only the specialized
-            // re-check's constant ever reaches a backend.
+            // the `StaticString` of one checked type's unqualified
+            // spelling, answered per instance over a symbolic type.
             "_unqualified_type_name" => {
                 if param_args.len() != 1 {
                     return Err(TypeError::WrongTypeArgCount {
@@ -245,13 +243,11 @@ impl Checker {
                     span.clone(),
                     types_attributes(param_args, std::slice::from_ref(&ty)),
                 );
-                self.record_at(span).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::TypeName {
-                        text: mojito_symbol::symbol::unqualified_instance_name(&ty),
-                        ty,
-                    },
-                ));
-                Ok(Ty::string_literal())
+                self.reflected_static_name(
+                    span,
+                    &ty,
+                    mojito_types::param_expr::TypeNameForm::Unqualified,
+                )
             }
             // Compiler-private crossing for `std.os.abort`: an uncatchable
             // VM trap carrying a nominal String message. Typed as returning

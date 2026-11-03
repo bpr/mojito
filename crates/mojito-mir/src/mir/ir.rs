@@ -810,7 +810,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         MirInstr::Const { dest, .. }
         | MirInstr::ConstructType { dest, .. }
         | MirInstr::ParamListAddress { dest, .. }
-        | MirInstr::TypeName { dest, .. }
         | MirInstr::IsRunInComptimeInterpreter { dest }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(dest),
@@ -2093,13 +2092,6 @@ pub enum MirInstr {
         dest: Reg,
         src: Reg,
     },
-    /// The unqualified spelling of one checker-resolved type that names a
-    /// compile-time parameter. Only a template holds one: the elaborator
-    /// writes the name from the substituted type as a string constant.
-    TypeName {
-        dest: Reg,
-        ty: Ty,
-    },
     /// Cross the compile-time literal boundary selected by the checker.  The
     /// operand is an exact `IntLiteral`/`FloatLiteral`; `target` is a concrete
     /// scalar (or width-one scalar alias).  Backends must implement this
@@ -3128,7 +3120,6 @@ impl MirInstr {
             | Self::ScalarCast { .. }
             | Self::BuiltinCast { .. }
             | Self::PointerConvert { .. }
-            | Self::TypeName { .. }
             | Self::IsRunInComptimeInterpreter { .. }
             | Self::ParamListAddress { .. }
             | Self::GetField { .. }

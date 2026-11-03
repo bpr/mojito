@@ -14,7 +14,9 @@
 //! whose encoding needs a compilation's context (a check-local binding
 //! owner, a source location) names no symbol and is skipped.
 
-use crate::mir::{Const, MirBlock, MirFunction, MirInstr, instruction_regions_mut};
+use crate::mir::{
+    Const, MirBlock, MirFunction, MirInstr, MirStructDeclaration, instruction_regions_mut,
+};
 use mojito_symbol::symbol::member_table_name;
 use mojito_types::symbol_ref::SYMBOL_REF;
 use mojito_types::types::{Ty, mentions};
@@ -100,6 +102,17 @@ impl<'t> SymbolTable<'t> {
             .chain(error_ty)
             .chain(reg_types.values());
         for ty in types {
+            uses.extend(self.type_uses(ty));
+        }
+        uses
+    }
+
+    /// The symbols the struct `declaration` names: in its declaration, and
+    /// in the types of its fields, as a body's register types name theirs,
+    /// so a field's closed `SIMD` keeps its member table.
+    pub fn struct_uses(&mut self, declaration: &MirStructDeclaration) -> Vec<&'t str> {
+        let mut uses = self.uses(declaration);
+        for (_, ty) in &declaration.fields {
             uses.extend(self.type_uses(ty));
         }
         uses

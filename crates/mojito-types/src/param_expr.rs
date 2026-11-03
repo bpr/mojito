@@ -138,7 +138,9 @@ impl ParamContext {
         // (named by its monomorphized instance) is a value of the declared
         // closed struct type it materialized at. A trait bound to a
         // trait-valued parameter is a value of the metatype it upcast to.
+        // A string at the nominal `String` is a `String`.
         if (crate::types::tuple_elements(ty).is_some()
+            || crate::types::is_nominal_string(ty)
             || matches!(value, CtValue::Struct { .. } | CtValue::Trait(_)))
             && !crate::types::ct_value_is_symbolic(&value)
         {
@@ -2415,7 +2417,7 @@ impl ParamContext {
         let value = match (&declared, value.as_constant()) {
             // A compile-time string bound to a `StringLiteral[v]` parameter
             // is its literal, whose value-less type the binding of `v`
-            // keys (R1657).
+            // keys (R1659).
             (MetaTy::Value(ty), Some(CtValue::Str(_)))
                 if ty.is_string_literal()
                     && value.meta().as_value().is_some_and(Ty::is_string_literal) =>
@@ -3878,6 +3880,9 @@ pub enum TypeNameForm {
     Name { qualified_builtins: bool },
     /// `base_name()`: the unqualified name of the type's base type.
     Base,
+    /// `_unqualified_type_name[T]()`: the name with its parameters, each
+    /// struct unqualified by its module.
+    Unqualified,
 }
 
 /// How a type-name query's answerer spells a closed type: the caller's,
@@ -3907,6 +3912,7 @@ impl ReflectQuery {
                 qualified_builtins: true,
             })),
             "base_name()" => Some(Self::TypeName(TypeNameForm::Base)),
+            "unqualified_name()" => Some(Self::TypeName(TypeNameForm::Unqualified)),
             _ => bracketed("field_index[", "]()")
                 .map(Self::FieldIndex)
                 .or_else(|| bracketed("field[", "].T").map(Self::FieldNamed)),
@@ -3992,6 +3998,7 @@ impl fmt::Display for ReflectQuery {
                 qualified_builtins: true,
             }) => write!(f, "name[qualified_builtins=True]()"),
             Self::TypeName(TypeNameForm::Base) => write!(f, "base_name()"),
+            Self::TypeName(TypeNameForm::Unqualified) => write!(f, "unqualified_name()"),
         }
     }
 }

@@ -589,8 +589,8 @@ pub enum TyKind {
     /// [`CtValue::KgenString`] once the text is known or a
     /// [`CtValue::Expr`] of type `!kgen.string` while it is symbolic.
     /// `None` is a value-less compiler string that upstream has no type
-    /// for: a compile-time `String` value, a reflected name, or a bare
-    /// run-time `StringLiteral` argument. R1657 and R1659 retire it.
+    /// for: an untyped compile-time string, or a bare run-time
+    /// `StringLiteral` argument. R1658 and R1659 retire it.
     StringLiteral(Option<Box<CtValue>>),
     None,
     /// Bottom type: no runtime value can inhabit it.
@@ -3798,7 +3798,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 })
         }
         // A literal whose type carries its text is still the compiler's
-        // value-less string (R1657).
+        // value-less string (R1659).
         (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(None)) => true,
         // A numeric literal of a known value is one of the value-less
         // literals the join of different values still is (R1849). Two

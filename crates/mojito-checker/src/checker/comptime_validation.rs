@@ -3088,7 +3088,7 @@ impl Checker {
                 .and_then(|closed| self.param_context.constant(closed).ok()),
         };
         // A string constant's value type is the value-less `StringLiteral`,
-        // which the literal type carrying its value names (R1657).
+        // which the literal type carrying its value names (R1659).
         if let Some(argument) = argument.filter(|argument| {
             argument.meta().as_value().is_some_and(|found| {
                 found == ty || *found == mojito_types::types::value_less_literal(ty)
@@ -3917,7 +3917,7 @@ impl Checker {
                     || application.meta().clone(),
                     |element| {
                         mojito_types::param_expr::MetaTy::ParamList(Box::new(
-                            mojito_types::param_expr::MetaTy::value(string_element_binder(element)),
+                            mojito_types::param_expr::MetaTy::value(element),
                         ))
                     },
                 )
@@ -4034,7 +4034,7 @@ impl Checker {
         }
         let ty = self.infer(value).ok()?;
         let construction = self.fact(&value.source_span(), |facts| facts.adjustment.as_deref())?;
-        Some((string_element_binder(element), ty, construction))
+        Some((element, ty, construction))
     }
 
     /// Record the display the declared local `comptime` binding `name` holds
@@ -5798,14 +5798,7 @@ impl ApplicableShape<'_> {
         let slot = |ty: &SourceType| match ty {
             SourceType::Bool => Some(SlotType::Scalar(Ty::bool())),
             SourceType::SelfType => Some(SlotType::Owner),
-            // A string is the parameter domain's string, as a `[s:
-            // String]` binder is.
             SourceType::StringLiteral => Some(SlotType::Scalar(Ty::string_literal())),
-            SourceType::Named(name, args)
-                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
-            {
-                Some(SlotType::Scalar(Ty::string_literal()))
-            }
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
             SourceType::Named(..) | SourceType::SelfParam(_) | SourceType::Assoc { .. } => {
@@ -6121,21 +6114,6 @@ fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
                 .is_some_and(|(name, args)| {
                     args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
                 }))
-}
-
-/// The element a display of `element`s binds: a string element binds as a
-/// `String` value parameter does.
-pub(super) fn string_element_binder(element: Ty) -> Ty {
-    match element.kind() {
-        struct_ty
-            if let Some((name, args)) = struct_ty.as_non_simd_struct()
-                && args.is_empty()
-                && mojito_types::types::is_stdlib_string_struct(name) =>
-        {
-            Ty::string_literal()
-        }
-        _ => element,
-    }
 }
 
 /// Whether a type `meta` holds names the declared parameter `binder` (a

@@ -2686,8 +2686,6 @@ impl Checker {
                     literal_target: None,
                 },
             ));
-            // A string element reads as a loop over the display binds it.
-            let element = super::comptime_validation::string_element_binder(element);
             self.record_at(expr.source_span()).ty = Some(element.clone());
             element
         }))

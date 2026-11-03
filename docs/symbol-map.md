@@ -930,7 +930,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `StructDeclaration::module` through `CheckedProgram::struct_modules`, which
   mono's `StructShape::module` reads), and `static_string_of` wraps it in the
   application of `StringSpan`'s `_kgen` initializer the elaborator applies,
-  as upstream's method constructs its `StaticString`; `eval_reflection_expr` serves
+  as upstream's method constructs its `StaticString`. `reflected_static_name`
+  answers `_unqualified_type_name[T]()` (`call_inference.rs`) the same way,
+  over `TypeNameForm::Unqualified`, and a `field_names()` element read is the
+  same application over the element's `!kgen.string`; `eval_reflection_expr` serves
   `constraints.rs:eval_associated_ct` and `compile_dependent_ct_expr`, and
   `reflected_type_operand` / `reflected_type_annotation` resolve `types[i]`,
   `r.field_at[i].T`, and `r.field["x"].T` behind `comptime_type_operand`,
@@ -1854,7 +1857,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the lane shape of its value parameter.
 - `crates/mojito-symbol/src/symbol.rs` owns the value-specialization demangler
   (`demangle_specialization`, which rebuilds every key but a type or
-  reflected one, and `unqualified_instance_name`) behind
+  reflected one, and `unqualified_instance_name`, which
+  `reflected_type_name` answers `TypeNameForm::Unqualified` with) behind
   `_unqualified_type_name`'s spelling of a minted clone.
 - `crates/mojito-symbol/src/symbol.rs` also owns the string identities
   (`is_stdlib_string_struct`/`is_stdlib_string_span_struct`, re-exported from

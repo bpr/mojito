@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time string that is no literal now has upstream's type
+  (R1657): a `[s: String]` value parameter is a `String`, the join of two
+  different literals (`"a" if c else "bb"`) the `String` both materialize
+  to, and a reflected name (`_unqualified_type_name[T]()`,
+  `reflect[T].field_names()[i]`) a `StaticString`, so `type_of` over each
+  prints the pin's type where it was rejected. `_unqualified_type_name` is
+  now a reflection query the elaborator answers, and MIR text schema 1.155
+  removes `type.name`. A closed `StaticString` constant (`print(reflect[P].name())`)
+  now runs on the native backend, where its byte type's `SIMD` instance was
+  dropped as dead.
+
 - `IntLiteral` and `FloatLiteral` declare upstream's comparison and
   arithmetic dunders, typed by the `#pop<int_literal_bin>`,
   `#pop<float_literal_bin>`, and `…_cmp` attributes the parameter builder

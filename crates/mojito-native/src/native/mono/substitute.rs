@@ -943,20 +943,7 @@ impl MutTypeVisitor for Substitution<'_> {
 
     fn visit_instruction(&mut self, instruction: &mut MirInstr) -> Result<(), MonoError> {
         reject_unconstructed(instruction)?;
-        walk_instruction_mut(self, instruction)?;
-        // A type name is spelled from the instance's type; a type the
-        // bindings leave symbolic stays for the verifier's concrete mode.
-        if let MirInstr::TypeName { dest, ty } = instruction
-            && !mojito_types::types::is_symbolic(ty)
-        {
-            *instruction = MirInstr::Const {
-                dest: *dest,
-                k: mojito_mir::mir::Const::Str(mojito_symbol::symbol::unqualified_instance_name(
-                    ty,
-                )),
-            };
-        }
-        Ok(())
+        walk_instruction_mut(self, instruction)
     }
 }
 

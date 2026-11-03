@@ -309,11 +309,6 @@ impl VmBackend {
                     param.name
                 )));
             }
-            MirInstr::TypeName { ty, .. } => {
-                return Err(parametric_instruction(&format!(
-                    "the name of the type `{ty}`"
-                )));
-            }
             MirInstr::ConstructType { ty, .. } => {
                 return Err(parametric_instruction(&format!(
                     "a construction of the type `{ty}`"

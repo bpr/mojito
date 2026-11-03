@@ -140,11 +140,6 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "compile-time memory has no run-time form; only a lifted compile-time evaluation holds one",
     ),
     (
-        "type.name",
-        CapabilityStatus::Unsupported,
-        "the elaborator spells every type name as a constant; one that survives rejects",
-    ),
-    (
         "type.construct",
         CapabilityStatus::Unsupported,
         "monomorphization leaves no type parameter to construct; one that survives rejects",

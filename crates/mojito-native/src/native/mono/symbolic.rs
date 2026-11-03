@@ -328,7 +328,7 @@ pub(super) fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
     for block in blocks {
         for instruction in &block.instrs {
             match instruction {
-                MirInstr::TypeName { ty, .. } | MirInstr::ConstructType { ty, .. } => {
+                MirInstr::ConstructType { ty, .. } => {
                     out.push(ty.clone());
                 }
                 MirInstr::PointerStorageTake { element, .. }

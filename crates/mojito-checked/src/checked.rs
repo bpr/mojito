@@ -993,15 +993,6 @@ pub enum SemanticAdjustment {
     ParamListAddress {
         values: mojito_types::param_expr::ParamExpr,
     },
-    /// `_unqualified_type_name[T]()` resolved to upstream's unqualified
-    /// spelling of the checked type (`SIMD[DType.int, 1]`, `Optional[String]`);
-    /// MIR lowers `text` to a string constant. The type itself is kept beside
-    /// the spelling so an instance of a checked template re-renders it from
-    /// the substituted type rather than inheriting the template's wording.
-    TypeName {
-        text: String,
-        ty: Ty,
-    },
     /// `v.length` on a SIMD value — its `length` parameter, the
     /// `SIMDLength` `length`, lowered as that parameter value after a value
     /// receiver runs.

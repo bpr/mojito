@@ -312,7 +312,6 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::Const { .. } => "Const",
         MirInstr::ParamListAddress { .. } => "ParamListAddress",
         MirInstr::StoreToMem { .. } => "StoreToMem",
-        MirInstr::TypeName { .. } => "TypeName",
         MirInstr::ConstructTypeParam { .. } => "ConstructTypeParam",
         MirInstr::ConstructType { .. } => "ConstructType",
         MirInstr::MaterializeLiteral { .. } => "MaterializeLiteral",

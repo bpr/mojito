@@ -2811,7 +2811,7 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
 /// brackets: a type in the same form, a scalar value `value : Type` (`3 :
 /// SIMD[DType.int, 1]`), a `Bool` or `DType` bare, an origin `{}`. A
 /// base name is the base type's declared name alone (`List` for
-/// `List[Int]`).
+/// `List[Int]`), and an unqualified name is [`unqualified_instance_name`].
 pub fn reflected_type_name(
     ty: &Ty,
     form: mojito_types::param_expr::TypeNameForm,
@@ -2824,6 +2824,7 @@ pub fn reflected_type_name(
         }
         .name(ty),
         mojito_types::param_expr::TypeNameForm::Base => reflected_base_name(ty),
+        mojito_types::param_expr::TypeNameForm::Unqualified => unqualified_instance_name(ty),
     }
 }
 
