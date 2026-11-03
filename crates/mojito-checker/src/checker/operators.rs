@@ -211,6 +211,18 @@ impl Checker {
                 .infer_operator_call(span, op, left, right, &lt, Some(&rt))?
                 .ok_or_else(|| bad_infix_operator(op, &lt, &rt));
         }
+        // An operator over two literals is the left literal's declared
+        // dunder, `a.__add__(b)` else the reflected `b.__radd__(a)`, as
+        // upstream's `emitBinOpCall` resolves it, so its type carries the
+        // value the dunder's attribute folds (`2 + 3` is `IntLiteral[5]`).
+        // An operator neither literal declares (`2 / 3`, `2 ** 3`) falls
+        // through to the literal rule below. In a compile-time position its
+        // value is the shared folder's (`infix_value`).
+        if let Some(span) = &span
+            && let Some(ty) = self.infer_literal_operator(span, op, left, right, &lt, &rt)?
+        {
+            return Ok(ty);
+        }
         // Arithmetic and identity comparison reason about allocation layout,
         // which an origin-bearing pointer to a single checked value does not
         // have; Mojo leaves such use undefined, so Mojito rejects it early.
@@ -697,6 +709,59 @@ impl Checker {
         };
         if !self.has_operator_methods(rt) && self.declared_receiver_member(rt, reflected).is_none()
         {
+            return Ok(None);
+        }
+        let ty = self.infer_operator_method_call(
+            span,
+            right,
+            rt,
+            reflected,
+            std::slice::from_ref(left),
+        )?;
+        if ty.is_some() {
+            self.record_at(span.clone()).reflected_operator = true;
+        }
+        Ok(ty)
+    }
+
+    /// `left op right` over two value-carrying literals as the declared
+    /// dunder of the left one, else the reflected dunder of the right one,
+    /// with no materialization; `None` when neither declares a dunder that
+    /// takes the other operand.
+    fn infer_literal_operator(
+        &self,
+        span: &SourceSpan,
+        op: InfixOp,
+        left: &Expr,
+        right: &Expr,
+        lt: &Ty,
+        rt: &Ty,
+    ) -> Result<Option<Ty>, TypeError> {
+        let carries_value = |ty: &Ty| {
+            matches!(
+                ty.kind(),
+                TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
+            )
+        };
+        if !carries_value(lt) || !carries_value(rt) {
+            return Ok(None);
+        }
+        if let Some(dunder) = op.dunder()
+            && self.declared_receiver_member(lt, dunder).is_some()
+            && let Some(ty) = self.infer_operator_method_call(
+                span,
+                left,
+                lt,
+                dunder,
+                std::slice::from_ref(right),
+            )?
+        {
+            return Ok(Some(ty));
+        }
+        let Some(reflected) = op.reflected_dunder() else {
+            return Ok(None);
+        };
+        if self.declared_receiver_member(rt, reflected).is_none() {
             return Ok(None);
         }
         let ty = self.infer_operator_method_call(

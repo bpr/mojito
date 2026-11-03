@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `IntLiteral` and `FloatLiteral` declare upstream's comparison and
+  arithmetic dunders, typed by the `#pop<int_literal_bin>`,
+  `#pop<float_literal_bin>`, and `…_cmp` attributes the parameter builder
+  now folds, with `__pos__`, `__bool__`, and `FloatLiteral.__mod__`
+  (R1753). `(2).__add__(3)`, `(2).__lt__(3)`, and `(2.5).__add__(1.0)` now
+  run where they were "no method" errors, and an operator over two
+  literals is the declared dunder, so `type_of(2 + 3)` is `IntLiteral[5]`
+  by its attribute. An integer literal's `//` and `%` by zero now fold to
+  `0` as at the pin (R1624), where `10 // 0` trapped. The remaining
+  dunders are R1784, R1853, R1854, and R1855.
+
 - A tuple display's numeric literal elements are their materialized types,
   as upstream's `Tuple.__init__(var *args: *Ts)` deduces `Ts`, so `(1, 2.5)`
   is `Tuple[Int, Float64]` (R1786). `var x: Optional[Tuple[Int8, Int8]] =

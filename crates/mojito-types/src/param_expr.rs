@@ -248,6 +248,9 @@ impl ParamContext {
             .iter()
             .map(|operand| self.intern(operand))
             .collect::<Vec<_>>();
+        if is_pop_literal_operation(op, &operands) {
+            return self.build_pop_literal(op, operands);
+        }
         match op {
             ParamOp::Add | ParamOp::Mul => self.build_ring(op, operands),
             ParamOp::Shl => self.build_shift(operands),
@@ -306,6 +309,9 @@ impl ParamContext {
             .iter()
             .map(|operand| self.intern(operand))
             .collect::<Vec<_>>();
+        if is_pop_literal_operation(op, &operands) {
+            return self.build_pop_literal(op, operands);
+        }
         match op {
             ParamOp::Add | ParamOp::Mul => self.build_ring_with(op, operands, ZeroTerms::Keep),
             _ if op.is_unfolded_call() => {
@@ -1903,6 +1909,69 @@ impl ParamContext {
             return self.typed_constant(fold_primitive(op, &[result, value])?, &ty);
         }
         Ok(self.make(MetaTy::value(ty), ParamKind::Op { op, operands }))
+    }
+
+    /// A `#pop<int_literal_bin>`, `#pop<float_literal_bin>`, or `…_cmp`
+    /// attribute: an arithmetic operator or a comparison over two
+    /// `!pop.int_literal` or two `!pop.float_literal` operands, folded
+    /// exactly once both are constant, and otherwise the node, of the
+    /// operands' type or a `Bool`. A closed operator whose fold fails (a
+    /// zero divisor) stays a node, as [`Self::build_opaque`] keeps one.
+    /// The operators are upstream's: `int_literal_bin` takes `add sub mul
+    /// floordiv mod pow lshift rshift and xor or`, and `float_literal_bin`
+    /// `add sub mul truediv floordiv`; a fold leaving the operands' kind
+    /// (an integer power with a negative exponent) is no fold.
+    fn build_pop_literal(
+        &self,
+        op: ParamOp,
+        operands: Vec<ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        let literal = operands[0].meta().clone();
+        if let Some(other) = operands.iter().find(|operand| *operand.meta() != literal) {
+            return Err(ParamError::TypeMismatch {
+                operation: op.name().to_string(),
+                expected: literal.to_string(),
+                found: other.meta().to_string(),
+            });
+        }
+        let float = literal == MetaTy::value(TyKind::PopFloatLiteral.into());
+        let accepted = match op {
+            ParamOp::Add
+            | ParamOp::Sub
+            | ParamOp::Mul
+            | ParamOp::FloorDiv
+            | ParamOp::Eq
+            | ParamOp::Lt
+            | ParamOp::Le => true,
+            ParamOp::Div => float,
+            ParamOp::Mod
+            | ParamOp::Pow
+            | ParamOp::Shl
+            | ParamOp::Shr
+            | ParamOp::BitAnd
+            | ParamOp::BitXor
+            | ParamOp::BitOr => !float,
+            _ => false,
+        };
+        if !accepted || operands.len() != 2 {
+            return Err(ParamError::Unsupported(format!(
+                "'{}' is not an operator of '{literal}'",
+                op.name()
+            )));
+        }
+        let result = if matches!(op, ParamOp::Eq | ParamOp::Lt | ParamOp::Le) {
+            MetaTy::bool()
+        } else {
+            literal
+        };
+        if let [Some(left), Some(right)] = [operands[0].as_constant(), operands[1].as_constant()]
+            && let Ok(value) = fold_primitive(op, &[left, right])
+            && MetaTy::of_value(&value) == result
+        {
+            self.count_fold();
+            return self.constant(value);
+        }
+        Ok(self.make(result, ParamKind::Op { op, operands }))
     }
 
     /// `#pop.int_literal_convert` or `#pop<float_literal_convert>` of a
@@ -4665,6 +4734,17 @@ fn require_bool(op: ParamOp, operand: &ParamExpr) -> Result<(), ParamError> {
             found: operand.meta().to_string(),
         })
     }
+}
+
+/// Whether `op` applies to `!pop.int_literal` or `!pop.float_literal`
+/// operands, a `#pop<…_literal_bin>` or `…_cmp` attribute
+/// ([`ParamContext::build_pop_literal`]).
+fn is_pop_literal_operation(op: ParamOp, operands: &[ParamExpr]) -> bool {
+    op.infix().is_some()
+        && operands.first().is_some_and(|operand| {
+            matches!(operand.meta(), MetaTy::Value(ty)
+                if matches!(ty.kind(), TyKind::PopIntLiteral | TyKind::PopFloatLiteral))
+        })
 }
 
 fn is_scalar_domain(ty: &Ty) -> bool {

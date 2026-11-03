@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1033
+# swept-count	1034
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -139,7 +139,6 @@ assets/parse_error/reserved_word_binding_name.mojo	compile-reject	agree	error: u
 assets/parse_error/ref_type_argument_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises' or 'thin'
 assets/runtime_error/allocation_use_after_dealloc.mojo	runs	subset	the pin runs it; Mojito rejects: use after Pointer deallocation
-assets/runtime_error/div_by_zero.mojo	runs	subset	the pin runs it; Mojito traps on integer division or modulo by zero
 assets/runtime_error/file_open_invalid_mode.mojo	trap	agree	invalid mode: "z". Can only be one of: {"r", "w", "rw", "a"}
 assets/runtime_error/file_open_missing.mojo	trap	agree	Failed to open file 'mojito_missing_dir/nothing.txt': No such file or directory
 assets/runtime_error/file_read_closed_handle.mojo	compile-reject	ledgered	error: no matching function in initialization
@@ -558,6 +557,7 @@ assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	e
 assets/type_error/list_slice_assigned_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebuild' call
 assets/type_error/literal_left_comparison_uint.mojo	compile-reject	agree	error: no matching method in call to '__lt__'
 assets/type_error/literal_pow_simd_exponent.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/literal_undeclared_dunder.mojo	compile-reject	agree	error: 'IntLiteral[2]' value has no attribute '__abs__'
 assets/type_error/llvm_intrinsic_bswap_odd_bytes.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
 assets/type_error/llvm_intrinsic_deinterleave_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/llvm_intrinsic_deinterleave_vector_result.mojo	compile-reject	agree	error: call intrinsic signature <4 x i32> (<8 x i32>) to overloaded intrinsic "llvm.vector.deinterleave2" : !kgen.string does not match any of the overloads: intrinsic return type expected literal non-packed struct with 2 elements, but got <4 x i32>

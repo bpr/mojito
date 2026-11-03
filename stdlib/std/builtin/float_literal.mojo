@@ -1,15 +1,17 @@
 # Upstream's `std/builtin/float_literal.mojo`, in part: the
 # `FloatLiteral[value]` struct with its default initializer, `is_nan`,
 # `is_neg_zero`, `_is_normal`, `__int_literal__`, `__int__`, `__float__`,
-# `write_to`, and `write_repr_to`. A
-# literal `2.5` is its application `FloatLiteral[2.5]`, as is an explicit
-# one (`FloatLiteral[(2.5).value]()`).
+# `write_to`, `write_repr_to`, `__bool__`, the arithmetic dunders but
+# `__ceildiv__`, and the comparison dunders. A literal `2.5` is its
+# application `FloatLiteral[2.5]`, as is an explicit one
+# (`FloatLiteral[(2.5).value]()`).
 # Not ported: the implicit initializer from `IntLiteral[_]`, whose
 # declaration has no `out self` (R1784); the `nan`, `infinity`,
 # `negative_infinity`, and `negative_zero` members, whose attributes the
-# compiler's exact rational cannot hold (R1783); and `__bool__` and the
-# operator dunders (R1753). `@__nonmaterializable(Float64)` is not read (R1651). The struct
-# declares only the traits whose requirements are ported here.
+# compiler's exact rational cannot hold (R1783); `__neg__` and
+# `__ceildiv__`, which negate an `IntLiteral` (R1853); and the reflected
+# dunders, whose `type_of(rhs OP self)` captures their own `rhs` (R1854).
+# `@__nonmaterializable(Float64)` is not read (R1651).
 """Implements the FloatLiteral class.
 
 These are Mojo built-ins, so you don't need to import them.
@@ -21,6 +23,7 @@ These are Mojo built-ins, so you don't need to import them.
 
 
 struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
+    Boolable,
     Defaultable,
     Floatable,
     Intable,
@@ -141,3 +144,270 @@ struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
             writer: The Writer to write the value to.
         """
         Float64(self).write_repr_to(writer)
+
+    # ===------------------------------------------------------------------===#
+    # Unary Operators
+    # ===------------------------------------------------------------------===#
+
+    @always_inline("builtin")
+    def __bool__(self) -> Bool:
+        """A FloatLiteral value is true if it is non-zero.
+
+        Returns:
+            True if non-zero.
+        """
+        return self != 0.0
+
+    # ===------------------------------------------------------------------===#
+    # Arithmetic Operators
+    # ===------------------------------------------------------------------===#
+
+    @always_inline("builtin")
+    def __add__(
+        self, rhs: FloatLiteral
+    ) -> FloatLiteral[
+        __mlir_attr[
+            `#pop<float_literal_bin<add `,
+            Self.value,
+            `,`,
+            rhs.value,
+            `>> : !pop.float_literal`,
+        ]
+    ]:
+        """Add two FloatLiterals.
+
+        Args:
+            rhs: The value to add.
+
+        Returns:
+            The sum of the two values.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __sub__(
+        self, rhs: FloatLiteral
+    ) -> FloatLiteral[
+        __mlir_attr[
+            `#pop<float_literal_bin<sub `,
+            Self.value,
+            `,`,
+            rhs.value,
+            `>> : !pop.float_literal`,
+        ]
+    ]:
+        """Subtract two FloatLiterals.
+
+        Args:
+            rhs: The value to subtract.
+
+        Returns:
+            The difference of the two values.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __mul__(
+        self, rhs: FloatLiteral
+    ) -> FloatLiteral[
+        __mlir_attr[
+            `#pop<float_literal_bin<mul `,
+            Self.value,
+            `,`,
+            rhs.value,
+            `>> : !pop.float_literal`,
+        ]
+    ]:
+        """Multiply two FloatLiterals.
+
+        Args:
+            rhs: The value to multiply.
+
+        Returns:
+            The product of the two values.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __truediv__(
+        self, rhs: FloatLiteral
+    ) -> FloatLiteral[
+        __mlir_attr[
+            `#pop<float_literal_bin<truediv `,
+            Self.value,
+            `,`,
+            rhs.value,
+            `>> : !pop.float_literal`,
+        ]
+    ]:
+        """Divide two FloatLiterals.
+
+        Args:
+            rhs: The value to divide.
+
+        Returns:
+            The quotient of the two values.
+        """
+        # TODO - Python raises an error on divide by 0.0 or -0.0
+        return {}
+
+    @always_inline("builtin")
+    def __floordiv__(
+        self, rhs: FloatLiteral
+    ) -> FloatLiteral[
+        __mlir_attr[
+            `#pop<float_literal_bin<floordiv `,
+            Self.value,
+            `,`,
+            rhs.value,
+            `>> : !pop.float_literal`,
+        ]
+    ]:
+        """Returns self divided by rhs, rounded down to the nearest integer.
+
+        Args:
+            rhs: The divisor value.
+
+        Returns:
+            `floor(self / rhs)` value.
+        """
+        # TODO - Python raises an error on divide by 0.0 or -0.0
+        return {}
+
+    @always_inline("builtin")
+    def __mod__(
+        self, rhs: FloatLiteral
+    ) -> type_of(self - (self.__floordiv__(rhs) * rhs)):
+        """Return the remainder of self divided by rhs.
+
+        Args:
+            rhs: The value to divide on.
+
+        Returns:
+            The remainder of dividing self by rhs.
+        """
+        return {}
+
+    # ===------------------------------------------------------------------===#
+    # Comparison Operators
+    # ===------------------------------------------------------------------===#
+
+    @always_inline("builtin")
+    def __eq__(self, rhs: FloatLiteral) -> Bool:
+        """Compare for equality.
+
+        Args:
+            rhs: The value to compare.
+
+        Returns:
+            True if they are equal.
+        """
+        return Bool(
+            __mlir_attr[
+                `#pop<float_literal_cmp<eq `,
+                self.value,
+                `,`,
+                rhs.value,
+                `>> : i1`,
+            ]
+        )
+
+    @always_inline("builtin")
+    def __ne__(self, rhs: FloatLiteral) -> Bool:
+        """Compare for inequality.
+
+        Args:
+            rhs: The value to compare.
+
+        Returns:
+            True if they are not equal.
+        """
+        return Bool(
+            __mlir_attr[
+                `#pop<float_literal_cmp<ne `,
+                self.value,
+                `,`,
+                rhs.value,
+                `>> : i1`,
+            ]
+        )
+
+    @always_inline("builtin")
+    def __lt__(self, rhs: FloatLiteral) -> Bool:
+        """Less than comparison.
+
+        Args:
+            rhs: The value to compare.
+
+        Returns:
+            True if this value is less than `rhs`.
+        """
+        return Bool(
+            __mlir_attr[
+                `#pop<float_literal_cmp<lt `,
+                self.value,
+                `,`,
+                rhs.value,
+                `>> : i1`,
+            ]
+        )
+
+    @always_inline("builtin")
+    def __le__(self, rhs: FloatLiteral) -> Bool:
+        """Less than or equal to comparison.
+
+        Args:
+            rhs: The value to compare.
+
+        Returns:
+            True if this value is less than or equal to `rhs`.
+        """
+        return Bool(
+            __mlir_attr[
+                `#pop<float_literal_cmp<le `,
+                self.value,
+                `,`,
+                rhs.value,
+                `>> : i1`,
+            ]
+        )
+
+    @always_inline("builtin")
+    def __gt__(self, rhs: FloatLiteral) -> Bool:
+        """Greater than comparison.
+
+        Args:
+            rhs: The value to compare.
+
+        Returns:
+            True if this value is greater than `rhs`.
+        """
+        return Bool(
+            __mlir_attr[
+                `#pop<float_literal_cmp<gt `,
+                self.value,
+                `,`,
+                rhs.value,
+                `>> : i1`,
+            ]
+        )
+
+    @always_inline("builtin")
+    def __ge__(self, rhs: FloatLiteral) -> Bool:
+        """Greater than or equal to comparison.
+
+        Args:
+            rhs: The value to compare.
+
+        Returns:
+            True if this value is greater than or equal to `rhs`.
+        """
+        return Bool(
+            __mlir_attr[
+                `#pop<float_literal_cmp<ge `,
+                self.value,
+                `,`,
+                rhs.value,
+                `>> : i1`,
+            ]
+        )

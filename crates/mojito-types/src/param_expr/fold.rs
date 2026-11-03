@@ -81,6 +81,29 @@ pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValu
         (CtValue::Simd { .. }, _) | (_, CtValue::Simd { .. }) => {
             return fold_lanes(op, left, right);
         }
+        // A `#pop<int_literal_bin>`/`#pop<float_literal_bin>` attribute or
+        // its `…_cmp` predicate: the exact literal arithmetic, a literal
+        // attribute again, or a `Bool`. `int_literal_bin`'s `floordiv` and
+        // `mod` by zero are `0`, as the pin folds them.
+        (CtValue::PopIntLiteral(_), CtValue::PopIntLiteral(b))
+            if matches!(op, InfixOp::FloorDiv | InfixOp::Mod) && b.is_zero() =>
+        {
+            return Ok(CtValue::PopIntLiteral(IntLiteral::from(0_i64)));
+        }
+        (CtValue::PopIntLiteral(a), CtValue::PopIntLiteral(b)) => {
+            let (a, b) = (
+                CtValue::IntLiteral(a.clone()),
+                CtValue::IntLiteral(b.clone()),
+            );
+            return fold_infix(op, &a, &b).map(|value| value.literal_value().unwrap_or(value));
+        }
+        (CtValue::PopFloatLiteral(a), CtValue::PopFloatLiteral(b)) => {
+            let (a, b) = (
+                CtValue::FloatLiteral(a.clone()),
+                CtValue::FloatLiteral(b.clone()),
+            );
+            return fold_infix(op, &a, &b).map(|value| value.literal_value().unwrap_or(value));
+        }
         _ => {}
     }
     if matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
@@ -1120,5 +1143,44 @@ mod tests {
             Some(CtValue::Bool(false))
         );
         assert!(convert(ParamOp::IntLiteralConvert, float32(1), &float("2.5", false)).is_none());
+    }
+
+    #[test]
+    fn literal_binary_attributes_fold_exactly() {
+        let int = |text: &str| CtValue::PopIntLiteral(IntLiteral::parse_radix(text, 10).unwrap());
+        let float =
+            |text: &str| CtValue::PopFloatLiteral(FloatLiteral::parse_decimal(text).unwrap());
+        let fold = |op, left: &CtValue, right: &CtValue| fold_comparison(op, left, right).ok();
+        assert_eq!(
+            fold(InfixOp::Add, &int("9223372036854775807"), &int("1")),
+            Some(int("9223372036854775808"))
+        );
+        assert_eq!(fold(InfixOp::Pow, &int("2"), &int("10")), Some(int("1024")));
+        assert_eq!(
+            fold(InfixOp::FloorDiv, &int("-7"), &int("2")),
+            Some(int("-4"))
+        );
+        assert_eq!(
+            fold(InfixOp::FloorDiv, &int("10"), &int("0")),
+            Some(int("0"))
+        );
+        assert_eq!(fold(InfixOp::Mod, &int("10"), &int("0")), Some(int("0")));
+        assert_eq!(fold(InfixOp::Shl, &int("1"), &int("3")), Some(int("8")));
+        assert_eq!(
+            fold(InfixOp::Lt, &int("2"), &int("3")),
+            Some(CtValue::Bool(true))
+        );
+        assert_eq!(
+            fold(InfixOp::Ne, &int("2"), &int("2")),
+            Some(CtValue::Bool(false))
+        );
+        assert_eq!(
+            fold(InfixOp::Div, &float("7"), &float("2")),
+            Some(float("3.5"))
+        );
+        assert_eq!(
+            fold(InfixOp::Ge, &float("2.5"), &float("2.5")),
+            Some(CtValue::Bool(true))
+        );
     }
 }

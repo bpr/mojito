@@ -108,7 +108,10 @@ point, as upstream's toolchain does.
   attribute (`__mlir_index__`, `__int__`, `__int_literal__`, `is_nan`,
   `is_neg_zero`) run as at the pin, and `FloatLiteral`'s `__float__`,
   `write_to`, and `write_repr_to` read `Float64(self)`, `SIMD`'s declared
-  `FloatLiteral` initializer. A literal `4` is the application
+  `FloatLiteral` initializer. The operator and comparison dunders that a
+  `#pop<int_literal_bin>`, `#pop<float_literal_bin>`, or `…_cmp` attribute
+  types run too, with `__pos__`, `__bool__`, and `FloatLiteral.__mod__`,
+  and an operator over two literals is the declared dunder. A literal `4` is the application
   `IntLiteral[4]`, which the compiler holds as its literal type, and a bare
   `IntLiteral` parameter is upstream's per-call `IntLiteral[x.value]`. The
   prelude exports both.

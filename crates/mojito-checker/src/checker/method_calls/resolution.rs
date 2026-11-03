@@ -49,8 +49,8 @@ impl Checker {
     /// of that type whose struct declares it, and `StringLiteral`'s,
     /// `IntLiteral`'s, or `FloatLiteral`'s, for a literal whose type
     /// carries its value. A value-less literal is no instance. A member the
-    /// literal's struct does not declare yet falls through to the
-    /// compiler's rule (R1753).
+    /// literal's struct does not declare falls through to the compiler's
+    /// rule.
     pub(in crate::checker) fn declared_receiver_member<'t>(
         &self,
         ty: &'t Ty,

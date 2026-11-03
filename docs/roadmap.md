@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1853**.
+Next free ID: **R1857**.
 
 ## Ordered Work
 
@@ -2825,7 +2825,62 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     first returning `w.v` and the second `n + 100`: `f[W(3)]()` and
     `f[n=4]()` fail MIR verification on the shared `f$ov$`. The pin prints
     `6 104`. `f[3]()` is ambiguous at both.
+  - Overloads that differ only in their `where` clause share the cause.
+    Probe: `def p[n: Int]() -> Int where n >= 0` returning `1` beside
+    `... where n < 0` returning `2`: `print(p[3](), p[-3]())` prints `2 2`,
+    where the pin prints `1 2`.
+  - Probe: the same pair as methods of one struct is rejected ("'p' is
+    already declared in this scope"), since `same_method_shape`
+    (`checker/traits.rs`) compares run-time signatures only.
+  - Upstream's `IntLiteral.__pow__` is such a pair (R1821).
   - Found while planning R1166 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1853 A method's signature cannot call a method its struct declares
+  later**
+
+  `def neg(self) -> type_of(self.sub(self))` declared before `sub` is
+  "type 'W[n]' has no method 'sub'", where the pin resolves it.
+  - `register_struct_method_signatures` (`checker/traits.rs`) types each
+    signature in declaration order and registers it after, so a signature
+    sees only the methods above it.
+  - Upstream resolves a signature's calls against the whole struct.
+  - Probe: `struct W[n: Int]` with `neg` as above before `def sub(self, o:
+    W[_]) -> W[Self.n - o.n + 7]`: `print(W[3]().neg().n)` prints `7` at
+    the pin.
+  - Landing it ports upstream's `IntLiteral.__neg__` (`type_of(0 -
+    self)`), `__invert__`, and `__ceildiv__`, and `FloatLiteral.__neg__`
+    and `__ceildiv__`, which read `__sub__`, `__xor__`, `__floordiv__`, and
+    `__mul__` declared below them. Each fails the bundled library's
+    packaging today.
+  - It then deletes the prefix literal arms of `Checker::infer_prefix`
+    (`checker/operators.rs`): `-N` and `~N` become the declared dunders.
+  - Probe: `print(-4, ~4, (7).__ceildiv__(2), (2.5).__neg__())` prints `-4
+    -5 4 -2.5` at the pin.
+  - Found while landing R1753 (2026-11-02).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1854 A signature's call to a method whose `_` binder shares a
+  caller binder's spelling captures it**
+
+  `def radd(self, rhs: W[_]) -> type_of(rhs.add(self))` over `def add(self,
+  rhs: W[_]) -> W[Self.n * 10 + rhs.n]` gives `W[1]().radd(W[2]()).n ==
+  11`, where the pin prints `21`.
+  - The same signature with the caller's parameter renamed (`other:
+    W[_]`) prints `21`, so the callee's auto-parameterized binder
+    (`auto_binder_name`, `comptime/auto_parameterize.rs`) and the
+    caller's are substituted as one.
+  - Instantiating the callee's return type must bind its own binders
+    simultaneously, never through a caller binder of the same spelling.
+  - Landing it ports upstream's reflected `FloatLiteral` dunders
+    (`__radd__`, `__rsub__`, `__rmul__`, `__rmod__`, `__rfloordiv__`,
+    `__rtruediv__`, each `type_of(rhs OP self)`), which give `2 + 2.5 ==
+    5.0` today, so `2 + 2.5` becomes `FloatLiteral.__radd__`.
+  - Probe: `print(2 + 2.5, 1 / 2.0, 3 - 0.5, (2.5).__radd__(1.0))` prints
+    `4.5 0.5 2.5 3.5` at the pin.
+  - Found while landing R1753 (2026-11-02).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -3629,6 +3684,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     register unconverted. Probe: `var f: type_of(4.0) = 4; print(f)` prints
     `4.0` at the pin and on the VM, and fails Pliron's IR verification
     ("expected builtin.fp64 , got builtin.integer i64").
+  - Landing it also ports `IntLiteral`'s `__add__`, `__sub__`, and
+    `__mul__` over `rhs: FloatLiteral` and its `__truediv__`, each typed
+    `type_of(FloatLiteral(self) OP rhs)`. That deletes the `Div` arm of the
+    literal rule in `Checker::infer_infix` for an `IntLiteral` pair.
   - Found while landing R1507 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6950,7 +7009,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   values the pin types `IntLiteral[v]` or `Int`, so a literal type can
   lose its value.
   - Its remaining producers: the run-time merge (R1848), a literal's
-    unary and `/` operators (`checker/operators.rs`, R1753), the
+    unary operators (R1853), `/` (R1784), `**` (R1855), and an `IntLiteral`
+    beside a `FloatLiteral` (R1854) in `checker/operators.rs`, the
     symbolic literal polynomial (`IntDomain::Literal::ty`,
     `param_expr.rs`, upstream's `IntLiteral[#pop.int_literal_bin<…>]`),
     and MIR text's bare `IntLiteral` decode.
@@ -7614,6 +7674,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1856 `type_of(x)()` over a local `comptime` literal binding
+  reaches MIR as a call to a function named `type_of`**
+
+  `comptime y = 2 + 3; print(type_of(y)())` fails MIR verification
+  ("register r4 has no checked type", a `Call` of `FuncRef("type_of")`),
+  where the pin prints `5`.
+  - The checker types the construction, but MIR lowering reads the callee
+    `type_of(y)` as a function name rather than the type the checker
+    recorded, so the call's register has no checked type.
+  - Probe: `comptime x = (2.5).__int_literal__(); print(type_of(x)())`
+    fails the same way ("register r0 has no checked type"), where the pin
+    prints `2`.
+  - Found while landing R1753 (2026-11-02).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -7694,11 +7770,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Upstream's `IntLiteral.__pow__` is two overloads selected by a
     `where` on the exponent's sign. The negative one returns the type of
     `1.0 / IntLiteral[base ** -exp]`, a `FloatLiteral`.
-  - Port both overloads to `stdlib/std/builtin/int_literal.mojo` once a
-    literal's power is the declared dunder, not the checker's rule.
+  - Port the negative overload to `stdlib/std/builtin/int_literal.mojo`
+    beside the non-negative one R1855 ports. The pair differs only in its
+    `where` clause, which R1172 owns.
   - Zero to a negative power is `nan`.
   - Found at the 2026-11-01 re-pin.
-  - Depends on nothing.
+  - Depends on R1855, R1172.
   - Model: Opus, Not Planned.
 
 - [ ] **R1822 A `match` cluster keys an unspelled `Equal` member under the
@@ -7768,29 +7845,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found at the 2026-11-01 re-pin.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R1624 An integer literal's `//` or `%` by zero is an error, where
-  the pin folds it to `0`**
-
-  `print(10 // 0, 10 % 0, -7 // 0)` traps, and `comptime c = 10 // 0` fails
-  its compile-time evaluation, where the pin prints `0 0 0` and `0`.
-  - Upstream's `IntLiteral.__floordiv__`/`__mod__` fold through
-    `int_literal_bin`, which yields `0` for a zero divisor, as `SIMD`'s
-    `__floordiv__` masks one.
-  - Mojito's `IntLiteral::floor_div`/`floor_mod` (`mojito-common`) return
-    `None` there, so `param_expr::fold`'s `fold_int_literal` reports an
-    arithmetic error and the VM's literal division traps.
-  - Ledger name: `assets/runtime_error/div_by_zero.mojo`, which moves to
-    `assets/ok` when this lands, with its errors-ledger and manifest rows.
-  - Probe: `W[5 % 0].n` over `struct W[n: Int]` fails its compile-time
-    run ("integer division or modulo by zero"), where the pin prints `0`;
-    `W[n % 0]` over an `Int` `n` already folds through `SIMD.__mod__`.
-  - `docs/non-goals.md` no longer keeps a compile-time zero divisor an
-    error: `SIMD.__floordiv__`'s mask makes the `Int` form `0`, and this
-    entry makes the literal form follow `int_literal_bin`.
-  - Found while landing R1566 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1797 An import alias of a library name the entry module also
   declares names the entry's own declaration**
@@ -9951,30 +10005,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1753 `IntLiteral` and `FloatLiteral` declare no members, so a
-  literal receiver's explicit dunder call is rejected**
+- [ ] **R1855 `IntLiteral.__pow__`'s `where (type_of(exp)() >= 0)` is an
+  unsupported constraint operand, so a literal power is the checker's rule**
 
-  `(2).__add__(3)` reports "type 'Int' has no method '__add__'", where
-  upstream's `std/builtin/int_literal.mojo` and `float_literal.mojo`
-  declare the operator dunders and the pin prints `5`.
-  - The literal types are compiler-modelled (`TyKind::IntLiteral`,
-    `TyKind::FloatLiteral`); an operator over two literals is a checker
-    rule and a fold, not the declared dunder.
-  - The fix ports the two structs' operator and comparison dunders and
-    bridges the declarations onto the literal kinds, as R1652 did for
-    `StringLiteral`.
-  - Probe: `print((2).__pow__(10), (2).__floordiv__(3), (2).__lt__(3))`
-    prints `1024 0 True` at the pin.
-  - Probe: `(2).__abs__()` is rejected at the pin with "'IntLiteral[2]'
-    value has no attribute '__abs__'", not resolved as `Int`'s, and
-    `(2.5).__pow__(2.0)` likewise, since `FloatLiteral` declares no
-    `__pow__`.
-  - Found while landing R1567 (2026-10-31).
-  - The ported dunders also retire `Checker::carry_literal_value`
-    (`checker/inference.rs`), which types a literal-only expression's
-    result by the value the checker's evaluator folds it to.
-  - Depends on R1779 (a literal's type is the declared `IntLiteral[value]`).
-  - Model: Fable, Not Planned.
+  `(2).__pow__(10)` is "type 'IntLiteral[2]' has no method '__pow__'",
+  where the pin prints `1024`.
+  - Porting upstream's non-negative overload fails "unsupported generic
+    constraint operand" (`Checker::constraint_operand`,
+    `checker/constraints.rs`): `type_of(exp)()` constructs a literal, and
+    `called_application` excludes a struct construction.
+  - The fix reads that construction as the literal it is, so the
+    comparison is `IntLiteral.__ge__`'s `#pop<int_literal_cmp>` attribute,
+    which the parameter builder already folds.
+  - Then port the overload and drop the `Pow` arm of the literal rule in
+    `Checker::infer_infix` for an `IntLiteral` pair, so `2 ** 10` is the
+    declared dunder (`Checker::infer_literal_operator`).
+  - Probe: `print((2).__pow__(10), 2 ** 10)` prints `1024 1024` at the pin.
+  - Probe: `(2.5).__pow__(2.0)` stays rejected, since `FloatLiteral`
+    declares no `__pow__`.
+  - Found while landing R1753 (2026-11-02).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1458 `divmod` is a compiler builtin, and `pow` is missing, where
   upstream's `std/math` declares library functions**

@@ -328,6 +328,7 @@ assets/ok/display_argument_built_at_call_setup.mojo	-	ineligible	no-scalar-entry
 assets/ok/display_element_read_at_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/display_read_temporary_slot.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/distinct_callable_contract_binders.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/div_by_zero.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/docstrings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_compile_time_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_default_param.mojo	-	ineligible	no-scalar-entry-shape
@@ -536,6 +537,7 @@ assets/ok/list_subscript_field_store_shapes.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/list_to_span_conversion_borrows.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_ptr_multi_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/literal_operator_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic_deinterleave.mojo	-	ineligible	no-scalar-entry-shape
@@ -1611,7 +1613,6 @@ assets/extensions/ok/subtree_pointer_read.mojo	-	ineligible	no-scalar-entry-shap
 assets/extensions/ok/template_served_iterable_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/allocation_use_after_dealloc.mojo	-	ineligible	no-scalar-entry-shape
-assets/runtime_error/div_by_zero.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/file_open_invalid_mode.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/file_open_missing.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/file_read_closed_handle.mojo	-	ineligible	no-scalar-entry-shape

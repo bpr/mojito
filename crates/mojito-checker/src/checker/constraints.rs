@@ -3237,6 +3237,14 @@ impl Checker {
                 let literal = self.bracket_operand(literal, recording)?;
                 context.op(op, &[literal]).map_err(param_error)
             }
+            // Upstream's literal operator dunders (`IntLiteral.__add__`,
+            // `FloatLiteral.__lt__`): an arithmetic operator or a
+            // comparison over two literal attributes of one kind.
+            (shape, [left, right]) if let Some(op) = literal_binary_attribute_op(shape) => {
+                let left = self.bracket_operand(left, recording)?;
+                let right = self.bracket_operand(right, recording)?;
+                context.infix(op, &left, &right).map_err(param_error)
+            }
             _ => Err(TypeError::Unsupported(format!(
                 "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
                  attribute, '#kgen.param_list.size', '#kgen.param_list.get', \
@@ -3246,8 +3254,10 @@ impl Checker {
                  '#kgen.param.expr<get_alignof>', '#kgen.param.identical', \
                  '#pop.string_concat', '#pop.int_literal_convert' and \
                  '#pop<float_literal_convert>' at a '!kgen.simd' type, \
-                 '#pop<int_to_float_literal>', '#pop<float_to_int_literal>', and \
-                 '#pop<float_literal_isa>' are read"
+                 '#pop<int_to_float_literal>', '#pop<float_to_int_literal>', \
+                 '#pop<float_literal_isa>', '#pop<int_literal_bin>', \
+                 '#pop<int_literal_cmp>', '#pop<float_literal_bin>', and \
+                 '#pop<float_literal_cmp>' are read"
             ))),
         }
     }
@@ -6468,6 +6478,58 @@ fn literal_attribute_op(shape: &str) -> Option<ParamOp> {
         "#pop<float_literal_isa<nan{}>>:i1" => ParamOp::FloatLiteralIsNan,
         "#pop<float_literal_isa<neg_zero{}>>:i1" => ParamOp::FloatLiteralIsNegZero,
         "#pop<float_literal_isa<normal{}>>:i1" => ParamOp::FloatLiteralIsNormal,
+        _ => return None,
+    })
+}
+
+/// The operator a whitespace-free `#pop<…_literal_bin<op{},{}>>` or
+/// `#pop<…_literal_cmp<pred{},{}>>` shape applies to its two literal
+/// operands. `int_literal_cmp` is spelled at `!pop.int_literal` upstream
+/// (`IntLiteral.__lt__`) yet returned as a `Bool`, which the pin runs, so
+/// both comparison attributes are read as `i1`.
+fn literal_binary_attribute_op(shape: &str) -> Option<InfixOp> {
+    let (body, int) = if let Some(body) = shape
+        .strip_prefix("#pop<int_literal_bin<")
+        .and_then(|body| body.strip_suffix("{},{}>>:!pop.int_literal"))
+    {
+        (body, true)
+    } else if let Some(body) = shape
+        .strip_prefix("#pop<float_literal_bin<")
+        .and_then(|body| body.strip_suffix("{},{}>>:!pop.float_literal"))
+    {
+        (body, false)
+    } else {
+        let predicate = shape
+            .strip_prefix("#pop<int_literal_cmp<")
+            .and_then(|body| body.strip_suffix("{},{}>>:!pop.int_literal"))
+            .or_else(|| {
+                shape
+                    .strip_prefix("#pop<float_literal_cmp<")
+                    .and_then(|body| body.strip_suffix("{},{}>>:i1"))
+            })?;
+        return Some(match predicate {
+            "lt" => InfixOp::Lt,
+            "le" => InfixOp::Le,
+            "eq" => InfixOp::Eq,
+            "ne" => InfixOp::Ne,
+            "gt" => InfixOp::Gt,
+            "ge" => InfixOp::Ge,
+            _ => return None,
+        });
+    };
+    Some(match (body, int) {
+        ("add", _) => InfixOp::Add,
+        ("sub", _) => InfixOp::Sub,
+        ("mul", _) => InfixOp::Mul,
+        ("floordiv", _) => InfixOp::FloorDiv,
+        ("truediv", false) => InfixOp::Div,
+        ("mod", true) => InfixOp::Mod,
+        ("pow", true) => InfixOp::Pow,
+        ("lshift", true) => InfixOp::Shl,
+        ("rshift", true) => InfixOp::Shr,
+        ("and", true) => InfixOp::BitAnd,
+        ("xor", true) => InfixOp::BitXor,
+        ("or", true) => InfixOp::BitOr,
         _ => return None,
     })
 }

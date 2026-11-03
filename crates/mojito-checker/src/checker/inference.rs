@@ -2031,7 +2031,9 @@ impl Checker {
     /// carries the value the expression folds to (`N + 2.5` over
     /// `comptime N = 4` is `FloatLiteral[6.5]`), as upstream's operator
     /// dunders over `#pop<int_literal_bin<…>>` type it. The checker's
-    /// evaluator stands in for those dunders until R1753 ports them.
+    /// evaluator stands in for the dunders the literal rule still types:
+    /// `/` and `**` over two integer literals, a literal's unary `-` and
+    /// `~`, and an `IntLiteral` beside a `FloatLiteral`.
     fn carry_literal_value(&self, expr: &Expr, ty: Ty) -> Ty {
         if !matches!(
             ty.kind(),
