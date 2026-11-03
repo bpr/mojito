@@ -54,11 +54,14 @@ fn compiler_driver_reports_the_failing_stage() {
 #[test]
 fn float_literal_into_an_integer_lane_fails_its_assert() {
     // Upstream's `@implicit SIMD.__init__(FloatLiteral)` outranks the
-    // `Intable` overload, and its instance asserts a float dtype.
+    // `Intable` overload and converts a literal implicitly, and its
+    // instance asserts a float dtype.
     for source in [
         "def main():\n    var i = Int(3.9)\n    print(i)\n",
         "def main():\n    var u = UInt(3.0)\n    print(u)\n",
         "def main():\n    var b = Byte(1.5)\n    print(b)\n",
+        "def main():\n    var x: Int = 2.5\n    print(x)\n",
+        "def main():\n    var v = SIMD[DType.int32, 2](1.5, 2.5)\n    print(v)\n",
     ] {
         let compiler = Compiler::default();
         let program = compiler

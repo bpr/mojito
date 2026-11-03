@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An implicit literal conversion into a `SIMD` (`Int`, `Float64`, and the
+  sized aliases included) is admitted by `SIMD`'s declared `@implicit`
+  `IntLiteral` and `FloatLiteral` initializers instead of a checker rule,
+  and a float literal's conversion is that initializer's call (R1789):
+  `var x: Int = 2.5`, `f(2.5)` over `x: Int32`, `Int8(3) + 2.5`,
+  `min(3, 2.5)`, and `SIMD[DType.int32, 2](1.5, 2.5)` fail its "the SIMD
+  type must be floating point" assert as at the pin, where they were type
+  mismatches, and `a + 1.5` or `return 2.5` at a `Scalar[dt]` instantiated
+  at an integer dtype fail it too, where they failed MIR verification.
+  `var b: Scalar[DType.bool] = 1` now prints `True`, and `g(2.5)` over
+  `Float32` and `Int8` overloads is ambiguous, as at the pin.
+
 - An `Int`-annotated module `comptime` constant is the `Int` its annotation
   converts the literal to, as a local one already was (R1738): `print(N / 2)`
   over `comptime N: Int = 3`, `comptime y = x / 2`, and `comptime g = x // 0`

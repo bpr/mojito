@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1843**.
+Next free ID: **R1846**.
 
 ## Ordered Work
 
@@ -6798,44 +6798,51 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1789 An implicit literal conversion into `SIMD` is a checker rule,
-  not the declared `@implicit` initializer**
+- [ ] **R1843 `SIMD`'s scalar splat and `SIMDLength` conversions are
+  reserved targets, not the declared `@implicit` initializers**
 
-  Problem: `min(3, 2.5)` is rejected at overload resolution ("no overload
-  matches"), where the pin binds `std.math`'s `SIMD` overload at `Int` and
-  fails `SIMD.__init__(FloatLiteral)`'s assert at instantiation ("the SIMD
-  type must be floating point").
-  - Cause: `Checker::record_implicit_conversion` (`checker.rs`) decides a
-    literal's implicit conversion by `types::splats_to`, whose
-    `FloatLiteral` arm admits only a float dtype. The declared `@implicit`
-    initializer's signature admits every dtype, and its body's
-    `comptime assert` rejects the instance.
-  - `Checker::implicit_conversion_constructor` matches only a
-    `TyKind::Struct` target, so it never reaches `SIMD`'s declared
-    `IntLiteral` and `FloatLiteral` initializers. Only a compile-time
-    parameter argument takes them (`implicit_parameter_application`).
-  - Probe: `var x: Int = 2.5`, `Int8(3) + 2.5`, and `f(2.5)` over `def
-    f(x: Int32)` are a type mismatch or "operator not defined", where the
-    pin fails the same assert.
-  - Lever: accept the conversion by the declared signature and select the
-    declared initializer, as an explicit construction does, so
-    the assert fails at instantiation. `mir/calls.rs` and `operators.rs`
-    read `splats_to` too.
-  - Probe: `sroa`'s `splittable_slots` keeps a `SIMD` slot whole when an
-    unmaterialized literal register is stored to it (`typed_wholes`).
-    Without that, `4.0 ** 0.5` (`assets/ok/pliron_float_pow.mojo`) fails
-    natively with "unsupported field access on `IntLiteral[8]`".
-  - Probe: the same function answers a scalar splat and a `SIMDLength`
-    conversion with the reserved `symbol::SCALAR_SPLAT_CONVERSION` and
-    `SIMD_LENGTH_CONVERSION` ahead of the declared `@implicit
-    __init__(Scalar[Self.dtype])` and `__init__(SIMDLength)`; MIR lowers
+  Problem: a scalar splatted into a vector and a `SIMDLength` converted to
+  one are selected by reserved symbols and lowered as MIR's own copy of
+  each initializer's body, where the pin calls `SIMD`'s declared
+  `@implicit __init__(Scalar[Self.dtype])` and `__init__(SIMDLength)`.
+  - Cause: `Checker::implicit_conversion_constructor` (`checker.rs`)
+    answers both with `symbol::SCALAR_SPLAT_CONVERSION` and
+    `SIMD_LENGTH_CONVERSION` ahead of the declared overloads; MIR lowers
     each as that initializer's storage body (`Flatten::splat_scalar`,
-    `simd_from_length`). Pointing them at the declared overloads fails to
-    package std ("not a compile-time Int constant: not an associated
-    comptime expression"): the parameter domain folds only the reserved
-    splat (R1835). On landing, delete
-    `SemanticAdjustment::{SplatScalar, SimdFromLength}`, their
-    `CheckedCallValueAdjustment` twins, and both symbols.
+    `simd_from_length`).
+  - Probe: pointing them at the declared overloads fails to package std
+    ("not a compile-time Int constant: not an associated comptime
+    expression"): the parameter domain folds only the reserved splat
+    (R1835).
+  - On landing, delete `SemanticAdjustment::{SplatScalar,
+    SimdFromLength}`, their `CheckedCallValueAdjustment` twins, and both
+    symbols.
+  - Depends on R1835.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1845 A conditional expression joins two float literals to a
+  value-less literal, where upstream converts each arm to the expected
+  type**
+
+  Problem: `var x: Int32 = A if c else 0.25` over `comptime A = 0.5` is a
+  type mismatch ("expected Int32, found Float64"), where the pin converts
+  each arm through `SIMD`'s `@implicit __init__(FloatLiteral)` and fails
+  its "the SIMD type must be floating point" assert.
+  - Cause: `ExprKind::IfExpr` inference (`checker/inference.rs`) types the
+    arms without the expected type and `coerce_to_each_other` joins two
+    distinct literals to the value-less `FloatLiteral`
+    (`builtins::common_literal`), which is `Float64` below the checker,
+    so the declared conversion never sees a literal.
+  - `Checker::record_literal_materializations` therefore keeps
+    `MaterializeLiteral` for a value-less literal and for a scalar-typed
+    expression that folds to a literal (`Checker::infer`), and MIR's
+    `literal_materializes_to` (`mir/calls.rs`) still reads `FloatLiteral`
+    arms for them. std's `Scalar[dtype](_LN2_HI_F64 if is_f64 else
+    6.93e-01)` in `_log_combine` takes that path.
+  - Lever: check each arm against the expected type when one flows, as
+    upstream does, and drop the value-less join's materialization.
+  - Probe: `conformance/probes/ternary_float_literal_arms_int_lane.mojo`.
+  - Found while landing R1789 (2026-11-02).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

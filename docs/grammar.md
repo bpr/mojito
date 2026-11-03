@@ -1506,7 +1506,9 @@ argument, never as a value).
   `SIMDLength` converts to any vector through `SIMD`'s `@implicit
   __init__(SIMDLength)` (`Int(w)`, `n * w`, `var x: Int = v.length`).
 - **Operators** (elementwise, both operands the same SIMD type; a numeric *literal*
-  splats to the other operand's type): `+ - *` on any numeric element type, `/` on
+  converts to the other operand's type through `SIMD`'s declared `@implicit`
+  literal initializer, so `Int8(x) + 2.5` fails that instance's float-dtype
+  assert): `+ - *` on any numeric element type, `/` on
   `float32`, and unary `-v` on numeric lanes (integer lanes wrap). Comparisons
   `== != < > <= >=` return a `SIMD[DType.bool, <width>]` mask.
   (`// % **` on SIMD and mixed-width broadcast are deferred.)

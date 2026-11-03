@@ -2073,7 +2073,7 @@ nullary `UInt()`, binds the other declared `__init__` overloads (the
 
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, which the checker
-does not yet select by name (R1789). `types::scalar_splats_into` owns the rule, and the checker's
+does not yet select by name (R1843). `types::scalar_splats_into` owns the rule, and the checker's
 `implicit_conversion_constructor` selects it as an ordinary implicit
 conversion under the reserved target `symbol::SCALAR_SPLAT_CONVERSION`, so
 overload filtering, template realization, and argument contracts see one

@@ -2580,9 +2580,10 @@ fn float_sources_for_integer_lanes_type_check() {
 }
 
 #[test]
-fn rejects_float_literal_for_integer_dtype() {
-    let e = err_std("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1.5, 2.5)\n");
-    assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
+fn accepts_float_literal_element_for_integer_dtype() {
+    // Each element converts through the declared `@implicit
+    // SIMD.__init__(FloatLiteral)`, whose instance asserts a float dtype.
+    ok_std("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1.5, 2.5)\n");
 }
 
 #[test]

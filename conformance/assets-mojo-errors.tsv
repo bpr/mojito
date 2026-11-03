@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1024
+# swept-count	1032
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -415,7 +415,15 @@ assets/type_error/external_call_unknown_callee.mojo	runs	subset	the pin runs it;
 assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field 'a' has non-'Deinitable' type 'T'
 assets/type_error/fieldwise_unknown_keyword.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/float32_from_intable.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_argument_to_int32.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_element_list_int.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_generic_lane.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_generic_return.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_implicit_to_int.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/float_literal_local_not_concrete.mojo	compile-reject	agree	error: cannot implicitly convert 'FloatLiteral[0.5]' value to 'FloatLiteral[_]'
+assets/type_error/float_literal_min_int.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_operand_int8.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/float_literal_overload_ambiguous.mojo	compile-reject	agree	error: ambiguous call to 'g', each candidate requires 1 implicit conversion, disambiguate with an explicit cast
 assets/type_error/float_literal_parameter_float_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Float64' to 'FloatLiteral[x.value]', it depends on an unresolved parameter 'x.value'
 assets/type_error/float_literal_parameter_int_attribute.mojo	compile-reject	agree	error: 'FloatLiteral' parameter 'value' has '__mlir_type.`!pop.float_literal`' type, but value has type '__mlir_type.`!pop.int_literal`'
 assets/type_error/float_literal_pow_is_float64.mojo	compile-reject	agree	error: cannot implicitly convert 'Float64' value to 'Float32'

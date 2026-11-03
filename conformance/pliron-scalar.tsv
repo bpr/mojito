@@ -476,6 +476,7 @@ assets/ok/input.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/instance_constructor_symbols.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_float64_alias_shadowed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_floordiv_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/int_literal_bool_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_index_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_parameter_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_parameter_value.mojo	-	ineligible	no-scalar-entry-shape

@@ -1825,8 +1825,10 @@ impl Checker {
                 own_arguments: Vec::new(),
             }));
         }
-        let Some((name, args)) =
-            mojito_types::types::nominal_parts(to).filter(|_| to.kind().is_non_simd_struct())
+        // `SIMD`'s declared `@implicit` initializers take every dtype; an
+        // instance their body rejects fails its own assert.
+        let Some((name, args)) = mojito_types::types::nominal_parts(to)
+            .filter(|_| matches!(to.kind(), TyKind::Struct(..)))
         else {
             return Ok(None);
         };
@@ -1842,6 +1844,10 @@ impl Checker {
             return Ok(None);
         }
         let subst = struct_subst(&info.decls, args);
+        // The value binders (`SIMD`'s `dtype` and `length`) bind too, so a
+        // parameter spelled over them (`Scalar[Self.dtype]`) is the target's.
+        let bindings =
+            mojito_types::types::struct_argument_bindings(&self.param_context, &info.decls, args);
         let Some(constructors) = info.methods.get("__init__") else {
             return Ok(None);
         };
@@ -1862,6 +1868,13 @@ impl Checker {
             .filter_map(|sig| {
                 let (parameter, own_arguments) =
                     self.conversion_constructor_parameter(name, sig, &subst, from)?;
+                let parameter = mojito_types::types::replace_parameters(
+                    &self.param_context,
+                    &parameter,
+                    &bindings,
+                    0,
+                )
+                .ok()?;
                 coerces(from, &parameter).then_some((sig, parameter, own_arguments))
             })
             .collect::<Vec<_>>();
@@ -1996,7 +2009,7 @@ impl Checker {
         // A constructor restates its struct's parameters, so the conversion
         // passes the converted-to type's binder prefix, then the
         // constructor's own arguments, as any construction does.
-        if let Some((name, arguments)) = to.kind().as_non_simd_struct()
+        if let TyKind::Struct(name, arguments) = to.kind()
             && mojito_symbol::symbol::lifecycle_constructor(&target)
                 .is_some_and(|(_, method)| method == "__init__")
             && let Some(info) = self.structs.get(name)
@@ -2117,7 +2130,28 @@ impl Checker {
                 *literal_target = Some(to.clone());
                 return Ok(());
             }
-            record.adjustment = Some(Box::new(
+            // Upstream's `@implicit SIMD.__init__(FloatLiteral)` is no
+            // builtin body: the conversion is its call, whose instance
+            // asserts a float dtype. A value-less literal (`a if c else
+            // 0.5`) is still the `Float64` it materializes as, and a
+            // scalar-typed expression that folds to a literal is no
+            // conversion (R1845).
+            let literal_typed = matches!(
+                record.ty.as_ref().map(Ty::kind),
+                Some(TyKind::FloatLiteral(Some(_)))
+            );
+            drop(record);
+            if literal_typed
+                && matches!(from.kind(), TyKind::FloatLiteral(Some(_)))
+                && self
+                    .structs
+                    .get(mojito_types::types::SIMD_TYPE_NAME)
+                    .is_some_and(|info| info.methods.contains_key("__init__"))
+                && let Some(selected) = self.implicit_conversion_constructor(from, to)?
+            {
+                return self.record_selected_conversion(expression, selected, to);
+            }
+            self.record_at(expression.source_span()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(to.clone()),
             ));
             return Ok(());

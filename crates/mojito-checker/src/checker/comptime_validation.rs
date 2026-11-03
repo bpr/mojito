@@ -1639,15 +1639,11 @@ impl Checker {
                 conversion.own_arguments,
             ),
             // A builtin body folds before the struct's initializers
-            // register, and the `SIMD` bridge's run-time conversions do not
-            // select its declared ones (R1789): its `@implicit` one taking
-            // `source` converts (`2.0` at `Scalar[dtype]` is
-            // `SIMD.__init__(FloatLiteral)`).
-            None if ty.is_simd()
-                || self
-                    .structs
-                    .get(owner)
-                    .is_none_or(|info| !info.methods.contains_key("__init__")) =>
+            // register: its `@implicit` one taking `source` converts.
+            None if self
+                .structs
+                .get(owner)
+                .is_none_or(|info| !info.methods.contains_key("__init__")) =>
             {
                 // Its own parameters solve from `source` (`IntLiteral[4]`
                 // binds `value: IntLiteral`'s `$value_value`).
