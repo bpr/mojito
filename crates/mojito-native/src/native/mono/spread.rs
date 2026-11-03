@@ -63,20 +63,6 @@ pub(super) fn retire_forwarded_packs(function: &mut MirFunction) {
         .retain(|register, _| !retired.contains(register));
 }
 
-/// Pass the elements of the collector a method call builds as its
-/// arguments when the builtin its receiver is answers the call (`write`
-/// on the builtin-string writer, not a `StringLiteral[v]` receiver, whose
-/// declared struct does), which takes its values one by one, as
-/// the builtin `print` does. The collector's drop, once the call returns,
-/// becomes its elements', first to last, as a `Tuple`'s destroys them.
-pub(super) fn unpack_builtin_collectors(blocks: &mut [MirBlock], reg_types: &mut HashMap<u32, Ty>) {
-    let mut retired = Vec::new();
-    unpack_in_blocks(blocks, reg_types, &mut retired);
-    for register in retired {
-        reg_types.remove(&register);
-    }
-}
-
 struct SpreadTables<'a> {
     template: &'a str,
     n_regs: &'a mut u32,
@@ -337,67 +323,5 @@ fn retire_in_blocks(blocks: &mut [MirBlock], forwarded: &HashSet<u32>, retired: 
                 true
             }
         });
-    }
-}
-
-fn unpack_in_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>, retired: &mut Vec<u32>) {
-    for block in blocks {
-        let mut index = 0;
-        while index < block.instrs.len() {
-            for region in mojito_mir::mir::instruction_regions_mut(&mut block.instrs[index]) {
-                unpack_in_blocks(region, reg_types, retired);
-            }
-            let collector = match &block.instrs[index] {
-                MirInstr::MethodCall {
-                    recv,
-                    spread: Some(position),
-                    args,
-                    ..
-                } if !reg_types.get(&recv.0).is_some_and(|ty| {
-                    let receiver = peel_refs(ty);
-                    receiver.is_non_simd_struct()
-                        || receiver.kind().string_literal_value().is_some()
-                }) =>
-                {
-                    args.get(*position).map(|register| (*position, *register))
-                }
-                _ => None,
-            };
-            let built = collector.and_then(|(position, register)| {
-                block.instrs[..index]
-                    .iter()
-                    .rposition(|instruction| {
-                        matches!(instruction, MirInstr::MakeTuple { dest, .. } if *dest == register)
-                    })
-                    .map(|at| (position, register, at))
-            });
-            let Some((position, register, at)) = built else {
-                index += 1;
-                continue;
-            };
-            let MirInstr::MakeTuple { elems, .. } = block.instrs.remove(at) else {
-                unreachable!("the collector's tuple.make was matched above");
-            };
-            if let Some(drop) = block.instrs[index..].iter().position(
-                |instruction| matches!(instruction, MirInstr::Drop { reg, .. } if *reg == register),
-            ) {
-                block.instrs.splice(
-                    index + drop..=index + drop,
-                    elems.iter().map(|element| MirInstr::Drop {
-                        reg: *element,
-                        destructor: None,
-                    }),
-                );
-            }
-            if let Some(call) = spread_operands(&mut block.instrs[index - 1]) {
-                let count = elems.len();
-                call.args.splice(position..=position, elems);
-                if let Some(arg_places) = call.arg_places {
-                    arg_places.splice(position..=position, std::iter::repeat_n(None, count));
-                }
-                *call.spread = None;
-            }
-            retired.push(register.0);
-        }
     }
 }

@@ -1882,8 +1882,7 @@ gives every loan-carrying element (`CheckedTupleUnpackElement::carries_loans`)
 the unpacked value's loans, as binding the whole value would. A discarded
 reference result (an expression statement, `_ = e`) is
 recorded in `discarded_reference_results` and is not a value read. On the
-VM, the host string accumulator's `write` and the `$write_formatted`
-primitive format their arguments with the caller frame mirrored so a nested
+VM, the `$write_formatted` primitive formats its arguments with the caller frame mirrored so a nested
 `write_to` can read a pointer into the caller. The empty-subscript
 store `p[] = v` types the pointer as a value read and gates on the pointer
 origin's mutability alone, so a plain `self` method writes through a
@@ -2203,9 +2202,8 @@ arithmetic moves along that array (`offset_place_handle`). A spread
 (`show(*args)`, `take(*args^)`) passes the caller's pack itself: Pliron
 binds a `read` collector to the caller's storage in place and an owning one
 to the moved pack (`place_backed_arg_value`). The elaborator passes the
-elements of a collector as the arguments of a call the builtin `print` or
-the builtin-string writer answers (`expand_pack_spreads`,
-`unpack_builtin_collectors`, R1287, R422).
+elements of a collector as the arguments of a call to the builtin `print`
+(`expand_pack_spreads`, R1287).
 
 Current Mojo reflection enters through the zero-sized `reflect[T]` compile-time
 handle. Mojito implements `is_struct`, `field_count`, `field_names`,
@@ -2772,8 +2770,8 @@ conformance where the default is instantiated. So
 every `Writable` struct has both members, and neither backend formats a
 struct's fields itself: a struct reaching display without its instance is an
 invariant violation. The VM displays a `SIMD` value (`Int`, `Float32`, a
-vector) the same way, through `SIMD.write_to`/`write_repr_to` bound to its
-builtin string writer and found from the value's dtype and width through
+vector) the same way, through `SIMD.write_to`/`write_repr_to` instantiated at the
+`String` writer and found from the value's dtype and width through
 its instance's member table (`symbol::member_table_name`), so it formats no
 lane itself, and so does the native backend: its `print`, `String`, `repr`,
 and `Writer.write` expansions call those instances, and its reachable set
@@ -4988,8 +4986,8 @@ runtime descriptor's bytes. `String(literal)` allocates and `memcpy`s from
 `ptr()` through `unsafe_mut_cast[True]()` and `unsafe_origin_cast`. Writing
 goes the other way through upstream's `Writer.write_string(mut self, string:
 StringSlice)`: `String.write_to` hands the writer `StringSpan(self)` and
-`StringSpan.write_to` hands itself. The VM's builtin text accumulator and the
-native print path read the view's bytes; a user writer's `write(...)` gets
+`StringSpan.write_to` hands itself. The native print path reads the view's
+bytes; a user writer's `write(...)` gets
 each formatted argument as a view over a buffer freed after the call.
 Everything else (comparison, concatenation, membership, hashing, decoding,
 slicing, and the result APIs, which live on the view with `String`

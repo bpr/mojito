@@ -343,41 +343,6 @@ impl VmBackend {
             }
         }
         match &recv {
-            // The builtin text writer's `Writer.write_string`: append the
-            // view's bytes.
-            Value::Str(current) if method == "write_string" && args.len() == 1 => {
-                let place = recv_place.as_ref().ok_or_else(|| {
-                    RuntimeError::Unsupported(
-                        "vm: Writer.write_string needs a mutable place".into(),
-                    )
-                })?;
-                let text = format!("{current}{}", self.string_span_text(&args[0])?);
-                self.store_at_call_place(frame_id, place, Value::Str(text), regs, vars)?;
-                Ok(Value::None)
-            }
-            Value::Str(current)
-                if matches!(method, "write" | mojito_symbol::symbol::WRITE_FORMATTED) =>
-            {
-                let place = recv_place.as_ref().ok_or_else(|| {
-                    RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
-                })?;
-                let mut text = current.clone();
-                // A formatted argument's `write_to` runs in a nested frame
-                // that may read references into this caller (a temporary
-                // holding `Pointer(to=local)`): keep the caller reachable as
-                // a synchronous call does.
-                let stack_base = self.push_caller_mirror(frame_id, regs, vars);
-                let formatted = (|| {
-                    for argument in args {
-                        text.push_str(&self.format_value(prog, argument, false)?);
-                    }
-                    Ok::<_, RuntimeError>(())
-                })();
-                self.restore_caller_mirror(stack_base, vars)?;
-                formatted?;
-                self.store_at_call_place(frame_id, place, Value::Str(text), regs, vars)?;
-                Ok(Value::None)
-            }
             // A specialized pack's storage answers `Sized` where it stands:
             // `b.__len__()` is the element count `len(b)` reads, and the
             // clone has no nominal Tuple to lower the spelling onto.
@@ -418,8 +383,10 @@ impl VmBackend {
                     RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
                 })?;
                 let mut writer = recv.clone();
-                // The formatted arguments' `write_to` frames may read
-                // references into this caller (see the builtin-string arm).
+                // A formatted argument's `write_to` runs in a nested frame
+                // that may read references into this caller (a temporary
+                // holding `Pointer(to=local)`): keep the caller reachable as
+                // a synchronous call does.
                 let stack_base = self.push_caller_mirror(frame_id, regs, vars);
                 let written = (|| {
                     for argument in args {

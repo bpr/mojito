@@ -112,22 +112,6 @@ impl FnLowering<'_> {
         {
             return self.lower_dtype_predicate(ctx, dest, recv, method);
         }
-        // The builtin-string writer receiver (`write_to`'s `Value::Str`
-        // accumulator) appends each argument's display text in place; its
-        // `write_string` appends the view's bytes the same way.
-        if resolved.is_none()
-            && matches!(
-                method,
-                "write" | "write_string" | mojito_symbol::symbol::WRITE_FORMATTED
-            )
-            && self
-                .func
-                .reg_types
-                .get(&recv.0)
-                .is_some_and(Ty::is_string_literal)
-        {
-            return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
-        }
         // The struct-to-literal bridge (the VM's `string_struct_literal`):
         // the declared stub body must never execute, and the bridged bytes
         // would need an owner the literal value model cannot record — the
@@ -337,8 +321,7 @@ impl FnLowering<'_> {
                 ));
             };
             let storage = self.owned_string_of_literal(ctx, arg, dest)?;
-            let writer = self.entry_alloca(ctx, 16, 8);
-            self.mem_zero(ctx, writer, 16);
+            let writer = self.display_writer(ctx);
             let signature = &self.signatures[symbol];
             let callee: Identifier = signature
                 .mangled
@@ -453,8 +436,7 @@ impl FnLowering<'_> {
         {
             if let Some(symbol) = self.display_member(name, "write_repr_to", dest)? {
                 let signature = &self.signatures[symbol];
-                let writer = self.entry_alloca(ctx, 16, 8);
-                self.mem_zero(ctx, writer, 16);
+                let writer = self.display_writer(ctx);
                 let receiver = self.reg_ptr(ctx, arg)?;
                 let callee: Identifier = signature
                     .mangled
@@ -659,10 +641,9 @@ impl FnLowering<'_> {
                     let span = self.reg_ptr(ctx, *arg)?;
                     self.string_parts(ctx, span, dest)
                 } else {
-                    let descriptor = self.entry_alloca(ctx, 16, 8);
-                    self.mem_zero(ctx, descriptor, 16);
-                    self.append_struct_via_write_to(ctx, *arg, name, descriptor, dest)?;
-                    let parts = self.string_parts(ctx, descriptor, dest);
+                    let writer = self.display_writer(ctx);
+                    self.append_struct_via_write_to(ctx, *arg, name, writer, dest)?;
+                    let parts = self.string_parts(ctx, writer, dest);
                     temporary = Some(parts.0);
                     parts
                 }

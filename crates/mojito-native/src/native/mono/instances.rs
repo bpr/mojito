@@ -101,8 +101,7 @@ impl Specializer<'_> {
     /// rather than an explicit MIR call: the receiver binds the owner's
     /// parameters, `method_bindings` bind the method's own type parameters in
     /// declaration order, and any remaining type parameter (a `Some[..]`
-    /// sugar spelling) instantiates at the builtin string, as
-    /// `enqueue_display_instance`.
+    /// sugar spelling) instantiates at the builtin string.
     pub(super) fn enqueue_nominal_method_instance(
         &mut self,
         owner: &str,
@@ -253,11 +252,7 @@ impl Specializer<'_> {
             .get(&arg.0)
             .is_some_and(|ty| peel_refs(ty).is_string_literal())
         {
-            let string = Ty::new(TyKind::Struct(
-                mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                Vec::new(),
-            ));
-            return self.enqueue_format_ty_instance(owner, &string, "write_repr_to");
+            return self.enqueue_format_ty_instance(owner, &nominal_string(), "write_repr_to");
         }
         self.enqueue_format_instance(owner, function, arg, "write_repr_to")
     }
@@ -294,7 +289,7 @@ impl Specializer<'_> {
         let exact = format!("{name}.{method}");
         if self.functions.contains_key(exact.as_str()) {
             if self.writes_protocol(&exact) {
-                self.enqueue_nominal_method_instance(owner, ty, method, 1, &[])?;
+                self.nominal_method_instance(owner, ty, method, 1, &[], &[nominal_string()])?;
             }
             return Ok(());
         }
@@ -336,24 +331,15 @@ impl Specializer<'_> {
                     owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
             }
         }
-        for decl in &declaration.param_decls {
-            if let ParamDecl::Type { .. } = decl
-                && !bindings.types.contains_key(&decl.binder())
-            {
-                bindings.types.insert(decl.binder(), Ty::string_literal());
-            }
+        // The writer is the `String` upstream's `String(x)` and `repr(x)`
+        // write into, solving the `Some[Writer]` binder as a call's argument.
+        if let Some(writer) = declaration.param_types.first() {
+            unify(writer, &nominal_string(), &mut bindings)
+                .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
         }
-        // The `Some[Writer]` sugar parameter is infer-only (absent from
-        // `param_decls`); bind its spelling from the declared type.
-        for ty in &declaration.param_types {
-            if let TyKind::Param { binder, .. } = ty.kind()
-                && !bindings.types.contains_key(binder)
-            {
-                bindings.types.insert(binder.clone(), Ty::string_literal());
-            }
-        }
-        let arguments =
+        let mut arguments =
             self.own_arguments(&declaration.param_decls, &bindings, &target, owner_covered)?;
+        push_sugar_arguments(declaration, &bindings, &mut arguments);
         self.enqueue(&target, bindings, arguments)?;
         Ok(())
     }
@@ -391,7 +377,7 @@ impl Specializer<'_> {
     }
 
     /// Enqueue the display member `method` of the closed `SIMD` type `ty`,
-    /// bound to the builtin string writer, and declare the `SIMD` instance
+    /// instantiated at the `String` writer, and declare the `SIMD` instance
     /// whose member table a backend finds it in from the value's type.
     fn enqueue_simd_format_instance(
         &mut self,
@@ -415,7 +401,7 @@ impl Specializer<'_> {
         if !self.functions.contains_key(target.as_str()) || !self.writes_protocol(&target) {
             return Ok(());
         }
-        let writer = Ty::string_literal();
+        let writer = nominal_string();
         let (mut bindings, mut arguments, _) = self.infer_receiver_call(
             owner,
             &target,
@@ -460,7 +446,7 @@ impl Specializer<'_> {
         overloads.next().is_none().then(|| overload.to_string())
     }
 
-    fn writes_protocol(&self, target: &str) -> bool {
+    pub(super) fn writes_protocol(&self, target: &str) -> bool {
         self.declarations.get(target).is_none_or(|declaration| {
             declaration
                 .param_types
@@ -468,6 +454,15 @@ impl Specializer<'_> {
                 .is_some_and(mojito_types::types::is_writer_parameter)
         })
     }
+}
+
+/// The bundled `String`, the writer a displayed value's `write_to` and
+/// `write_repr_to` are instantiated at.
+fn nominal_string() -> Ty {
+    Ty::new(TyKind::Struct(
+        mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
+        Vec::new(),
+    ))
 }
 
 /// The struct and arguments whose member table a receiver of type `ty`

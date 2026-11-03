@@ -2413,9 +2413,7 @@ pub enum MirInstr {
         instantiated_args: Vec<TyArg>,
         /// Like `Call::spread`: the position in `args` of the operand the
         /// method's positional collector takes whole, the pack the call
-        /// builds or the caller's spread (`Sink().take(*args)`). A call the
-        /// builtin its receiver is answers (`write` on the builtin-string
-        /// writer) takes the pack's elements as its arguments instead.
+        /// builds or the caller's spread (`Sink().take(*args)`).
         spread: Option<usize>,
         /// The bound the checker selected `resolved` through when it
         /// differs from what the receiver's type spells.

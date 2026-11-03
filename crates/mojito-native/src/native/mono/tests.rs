@@ -2761,8 +2761,8 @@ fn a_displayed_simd_value_tables_its_display_members_in_its_instance() {
             .find(|(name, _)| name == instance)
             .unwrap_or_else(|| panic!("`{instance}` is materialized"));
         assert!(
-            function.param_types[1].is_string_literal(),
-            "`{instance}` writes to the builtin string writer"
+            mojito_types::types::is_nominal_string(&function.param_types[1]),
+            "`{instance}` writes to the `String` writer"
         );
     }
 }

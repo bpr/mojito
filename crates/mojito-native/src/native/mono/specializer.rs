@@ -719,6 +719,11 @@ impl<'a> Specializer<'a> {
                 if mojito_mir::mir::LIFECYCLE_MEMBERS.contains(&base) {
                     return Some(base.to_string());
                 }
+                // Only the `Writable` witness is reached from the type; a
+                // `write_to` over any other writer is an ordinary overload.
+                if matches!(base, "write_to" | "write_repr_to") && !self.writes_protocol(template) {
+                    return None;
+                }
                 (mojito_mir::mir::table_member(method).is_some()
                     || self.source.declarations.reached_from_type(owner, method))
                 .then(|| method.to_string())
@@ -1182,7 +1187,6 @@ impl<'a> Specializer<'a> {
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.blocks);
-        unpack_builtin_collectors(&mut blocks, &mut function.reg_types);
         let arguments = parameter_argument_regs(&mut blocks);
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
         function.blocks = blocks;
@@ -2917,8 +2921,8 @@ impl<'a> Specializer<'a> {
                         }
                         if !self.functions.contains_key(func.0.as_str()) {
                             // `print` of a nominal struct displays through
-                            // `write_to` over the builtin-string writer (the
-                            // VM's `format_value` dispatch); enqueue the
+                            // `write_to` over the `String` writer (the VM's
+                            // `format_value` dispatch); enqueue the
                             // instances the lowered expansion calls, its
                             // `sep` and `end` keywords' too.
                             if matches!(func.0.as_str(), "print" | "String") {
@@ -3060,23 +3064,6 @@ impl<'a> Specializer<'a> {
                             param_decls.clear();
                             instantiated_args.clear();
                             param_arg_regs.clear();
-                            if !peel_refs(receiver).is_string_literal() {
-                                continue;
-                            }
-                        }
-                        // `write` on the builtin-string accumulator (the
-                        // `Value::Str` writer inside a `write_to` expansion)
-                        // formats nominal arguments through their own
-                        // `write_to` conformance — enqueue those instances
-                        // for the lowered recursion.
-                        if matches!(
-                            method.as_str(),
-                            "write" | mojito_symbol::symbol::WRITE_FORMATTED
-                        ) && peel_refs(receiver).is_string_literal()
-                        {
-                            for arg in args.clone() {
-                                self.enqueue_display_instance(owner, function, arg)?;
-                            }
                             continue;
                         }
                         // A borrowed receiver dispatches on its referent, as

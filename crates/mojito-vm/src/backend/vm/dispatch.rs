@@ -659,9 +659,10 @@ impl VmBackend {
     }
 
     /// Format one value as `print`/`String`/`repr`/`Writer.write` do. A
-    /// nominal value writes itself through the `write_to`/`write_repr_to`
-    /// instance bound to the builtin string writer that the member table
-    /// of its type names ([`mojito_symbol::symbol::member_table_name`]): a
+    /// nominal value writes itself, through the `write_to`/`write_repr_to`
+    /// instance at the `String` writer that the member table of its type
+    /// names, into an empty `String`, as upstream's `repr` and `String(x)`
+    /// do ([`mojito_symbol::symbol::member_table_name`]): a
     /// struct's own or inherited `Writable` member, by its runtime name,
     /// a `Bool`'s declared member, and a `SIMD` value's, by its runtime
     /// dtype and width, which are its type. Only the literals, `DType`,
@@ -679,16 +680,15 @@ impl VmBackend {
             return Ok(value.to_string());
         };
         let method = if repr { "write_repr_to" } else { "write_to" };
-        // The display member is the member-table instance whose writer
-        // monomorphization bound to the builtin string writer.
+        // The display member is the member-table instance of the `Writable`
+        // witness at the `String` writer; one at another writer is a call's.
         let mut witnesses = prog
             .struct_member_instances(&name, method)
             .filter(|(_, symbol)| {
                 prog.sigs.get(*symbol).is_none_or(|sig| {
-                    sig.param_types.first().is_some_and(|parameter| {
-                        parameter.is_string_literal()
-                            || mojito_types::types::is_writer_parameter(parameter)
-                    })
+                    sig.param_types
+                        .first()
+                        .is_some_and(mojito_types::types::is_nominal_string)
                 })
             });
         let witness = witnesses.next();
@@ -698,10 +698,22 @@ impl VmBackend {
             )));
         }
         if let Some((index, symbol)) = witness {
-            let (_, variables) =
-                self.call_frame(prog, index, vec![value, Value::Str(String::new())])?;
+            // The builtin display calls no `String()` the dead-symbol pass
+            // keeps, so the empty writer is built as that constructor's.
+            let writer = self.nominal_string_value(prog, "")?;
+            let (_, variables) = self.call_frame(prog, index, vec![value, writer])?;
             return match variables.get(1) {
-                Some(Value::Str(text)) => Ok(text.clone()),
+                Some(writer @ Value::Struct { fields, .. }) => {
+                    let Value::Str(text) = self.string_struct_literal(writer)? else {
+                        unreachable!("a nominal String's text is a string");
+                    };
+                    if let Some((_, Value::Pointer { allocation, offset })) =
+                        fields.iter().find(|(field, _)| field == "data")
+                    {
+                        self.heap_free(*allocation, *offset)?;
+                    }
+                    Ok(text)
+                }
                 other => Err(RuntimeError::TypeError(format!(
                     "{symbol} did not leave a Writer value, got {}",
                     other.map_or_else(|| "missing".to_string(), crate::runtime::type_name)

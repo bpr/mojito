@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `print`, `String(x)`, `repr(x)`, and `String.write` now hand a struct's or
+  a `SIMD` value's `write_to` a `String` writer, as upstream's `String(x)`
+  and `repr(x)` do, instead of a compiler-private string accumulator, on
+  both backends (R422). A body naming its writer's type sees `String`
+  where it saw `StringLiteral`. The accumulator's `write` (the VM's
+  `Value::Str` arms, Pliron's `lower_str_writer_write`) and the
+  elaborator's `unpack_builtin_collectors` are gone, and display picks the
+  `Writable` witness alone, so a `write_to(self, mut writer: String)`
+  overload is never displayed. Under `print` the pin's writer is the
+  stdout buffer, which the builtin `print` lacks (R1287).
 - `Writable`'s `write_to` and `write_repr_to` are now the bundled trait's
   own default bodies over `_reflection_write_to` and
   `_enum_reflection_write_to`, upstream's text verbatim, instead of a

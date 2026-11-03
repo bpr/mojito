@@ -529,32 +529,6 @@ impl VmBackend {
         Ok((view, allocation))
     }
 
-    /// Read a `StringSpan` view's bytes back as text (lossy, like the
-    /// nominal String read-back).
-    pub(super) fn string_span_text(&self, view: &Value) -> Result<String, RuntimeError> {
-        let Value::Struct { fields, .. } = view else {
-            return Err(RuntimeError::TypeError(format!(
-                "vm: Writer.write_string expects a StringSpan, got {}",
-                crate::runtime::type_name(view)
-            )));
-        };
-        let field = |name: &str| {
-            fields
-                .iter()
-                .find(|(field, _)| field == name)
-                .map(|(_, value)| value)
-        };
-        let (Some(pointer @ Value::Pointer { .. }), Some(Value::Int(size))) =
-            (field("_data"), field("_size"))
-        else {
-            return Err(RuntimeError::TypeError(
-                "vm: StringSpan value is missing its byte view".to_string(),
-            ));
-        };
-        let bytes = self.heap_bytes(pointer, *size)?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
-    }
-
     /// Fill a nominal `String` skeleton from a literal's UTF-8 bytes: one
     /// heap allocation holding width-1 `UInt8` scalars, sized exactly.
     pub(super) fn materialize_string_struct(

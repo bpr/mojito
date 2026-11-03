@@ -95,8 +95,8 @@ impl<'a> FnLowering<'a> {
         self.print_value(ctx, reg, dest)
     }
 
-    /// Display one nominal struct into a fresh builtin-string accumulator,
-    /// then write the accumulated bytes to stdout and free them.
+    /// Display one nominal struct into a fresh `String` writer, then write
+    /// its bytes to stdout and free them.
     pub(super) fn print_struct_via_write_to(
         &mut self,
         ctx: &mut Context,
@@ -104,8 +104,7 @@ impl<'a> FnLowering<'a> {
         name: &str,
         dest: Reg,
     ) -> Result<(), PlironError> {
-        let writer = self.entry_alloca(ctx, 16, 8);
-        self.mem_zero(ctx, writer, 16);
+        let writer = self.display_writer(ctx);
         self.append_struct_via_write_to(ctx, arg, name, writer, dest)?;
         let (data, len) = self.string_parts(ctx, writer, dest);
         self.write_stdout(ctx, data, len, dest);
@@ -113,8 +112,8 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// Append one nominal struct's display text into an existing
-    /// builtin-string writer — the VM's `format_value` recursion when a
+    /// Append one nominal struct's display text into the `String` writer
+    /// stored at `writer`, the VM's `format_value` recursion when a
     /// `Writer.write` argument is itself a struct.
     pub(super) fn append_struct_via_write_to(
         &mut self,
@@ -126,6 +125,16 @@ impl<'a> FnLowering<'a> {
     ) -> Result<(), PlironError> {
         let receiver = self.reg_ptr(ctx, arg)?;
         self.append_struct_display(ctx, receiver, name, writer, dest)
+    }
+
+    /// A fresh empty `String`, the writer a displayed value's `write_to`
+    /// writes into, as upstream's `repr` and `String(x)` construct one: its
+    /// `{data, size, cap}` zeroed, which its first write grows.
+    pub(super) fn display_writer(&mut self, ctx: &mut Context) -> Value {
+        let layout = self.layout.mj_string();
+        let writer = self.entry_alloca(ctx, layout.size, layout.align);
+        self.mem_zero(ctx, writer, layout.size);
+        writer
     }
 
     /// Contribute one `DType` Hashable leaf to a caller-owned hasher — the
@@ -241,72 +250,6 @@ impl<'a> FnLowering<'a> {
         }
     }
 
-    /// The builtin-string writer's `write`: grow-and-append each argument's
-    /// display text into the `mut`-aliased `{data, len}` descriptor — the
-    /// VM's `Value::Str` writer.
-    pub(super) fn lower_str_writer_write(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        recv: Reg,
-        args: &[Reg],
-        recv_place: Option<&MirPlace>,
-    ) -> Result<(), PlironError> {
-        let descriptor = match recv_place {
-            Some(place) => {
-                let place = place.clone();
-                self.place_address(ctx, &place, dest)?.0
-            }
-            None => self.reg_ptr(ctx, recv)?,
-        };
-        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
-        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-        for arg in args {
-            if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
-                .and_then(|ty| ty.kind().as_non_simd_struct())
-                && !mojito_symbol::symbol::is_stdlib_string_struct(name)
-                && !mojito_symbol::symbol::is_stdlib_string_span_struct(name)
-            {
-                self.append_struct_via_write_to(ctx, *arg, name, descriptor, dest)?;
-                continue;
-            }
-            if self.append_declared_display(ctx, *arg, "write_to", descriptor, dest)? {
-                continue;
-            }
-            let (chunk, chunk_len) = self.writer_argument_text(ctx, *arg, dest)?;
-            let data = LoadOp::new(ctx, descriptor, ptr_handle);
-            self.append(ctx, data.get_operation(), Some(dest));
-            let len_address = self.offset_address(ctx, descriptor, 8);
-            let len = LoadOp::new(ctx, len_address, i64_handle);
-            self.append(ctx, len.get_operation(), Some(dest));
-            let total = AddOp::new_with_overflow_flag(
-                ctx,
-                len.get_result(ctx),
-                chunk_len,
-                no_overflow_flags(),
-            );
-            self.append(ctx, total.get_operation(), Some(dest));
-            let merged = self.emit_alloc(ctx, total.get_result(ctx), 1, dest);
-            self.mem_copy_dynamic(ctx, merged, data.get_result(ctx), len.get_result(ctx), dest);
-            let tail = GetElementPtrOp::new(
-                ctx,
-                merged,
-                vec![GepIndex::Value(len.get_result(ctx))],
-                i8_ty,
-            );
-            self.append(ctx, tail.get_operation(), Some(dest));
-            self.mem_copy_dynamic(ctx, tail.get_result(ctx), chunk, chunk_len, dest);
-            self.emit_free(ctx, data.get_result(ctx));
-            let store = StoreOp::new(ctx, merged, descriptor);
-            self.append(ctx, store.get_operation(), Some(dest));
-            let store = StoreOp::new(ctx, total.get_result(ctx), len_address);
-            self.append(ctx, store.get_operation(), Some(dest));
-        }
-        self.erased.insert(dest.0);
-        Ok(())
-    }
-
     /// Write the UTF-8 bytes of a string-valued register to stdout when the
     /// register holds one of the supported string shapes — an interned
     /// constant, a runtime `StringLiteral` (descriptor or typed storage), or a
@@ -377,7 +320,7 @@ impl<'a> FnLowering<'a> {
             return Ok(());
         }
         // A nominal struct displays through its `write_to` conformance over
-        // the builtin-string accumulator — the VM's `format_value` dispatch.
+        // a `String` writer, the VM's `format_value` dispatch.
         if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
             .and_then(|ty| ty.kind().as_non_simd_struct())
             && !mojito_symbol::symbol::is_stdlib_string_struct(name)
@@ -754,10 +697,9 @@ impl<'a> FnLowering<'a> {
     }
 
     /// The display member `method` (`write_to`, `write_repr_to`) of the
-    /// struct `name`: its member table's one compiled instance whose writer
-    /// monomorphization bound to the builtin string writer. A `write_to`
-    /// whose parameter is not the protocol's writer is an ordinary
-    /// overload, not the display implementation. `None` when it has none.
+    /// struct `name`: its member table's one compiled instance of the
+    /// `Writable` witness at the `String` writer; one at another writer is
+    /// a call's. `None` when it has none.
     pub(super) fn display_member(
         &self,
         name: &str,
@@ -770,10 +712,10 @@ impl<'a> FnLowering<'a> {
             .filter(|symbol| {
                 self.signatures.contains_key(*symbol)
                     && self.declarations.get(*symbol).is_none_or(|declaration| {
-                        declaration.param_types.first().is_some_and(|parameter| {
-                            parameter.is_string_literal()
-                                || mojito_types::types::is_writer_parameter(parameter)
-                        })
+                        declaration
+                            .param_types
+                            .first()
+                            .is_some_and(mojito_types::types::is_nominal_string)
                     })
             })
             .collect();
@@ -788,8 +730,8 @@ impl<'a> FnLowering<'a> {
     }
 
     /// The display text of a `SIMD` or `Bool` value through its declared
-    /// member `method` (`write_to`, `write_repr_to`), accumulated into a
-    /// fresh builtin-string writer: the writer and its owned `(data, len)`
+    /// member `method` (`write_to`, `write_repr_to`), written into a fresh
+    /// `String` writer: the writer and its owned `(data, len)`
     /// bytes. `None` when `arg` is neither ([`Self::append_declared_display`]).
     pub(super) fn declared_display_text(
         &mut self,
@@ -801,15 +743,14 @@ impl<'a> FnLowering<'a> {
         if self.declared_display_ty(arg).is_none() {
             return Ok(None);
         }
-        let writer = self.entry_alloca(ctx, 16, 8);
-        self.mem_zero(ctx, writer, 16);
+        let writer = self.display_writer(ctx);
         self.append_declared_display(ctx, arg, method, writer, dest)?;
         let (data, len) = self.string_parts(ctx, writer, dest);
         Ok(Some((writer, data, len)))
     }
 
     /// Append the display text of a `SIMD` or `Bool` value into the
-    /// builtin-string `writer` through its declared member `method`: the instance the
+    /// `String` `writer` through its declared member `method`: the instance the
     /// member table of its type names, which the elaborator declares and
     /// fills. A reference displays its referent, and an `IntLiteral` or
     /// `FloatLiteral` displays as the `Int` or `Float64` it materializes

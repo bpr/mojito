@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1882**.
+Next free ID: **R1883**.
 
 ## Ordered Work
 
@@ -11284,7 +11284,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: the checker records each binder's solution or default on the
     call, so the elaborator reads it instead of filling one.
   - Probe: `rg -n "Ty::string_literal\(\)" crates/mojito-native/src/native/mono/instances.rs`
-    finds only the writer slot R422 owns.
+    finds only `nominal_method_instance`'s generic fill.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11338,7 +11338,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `ast::Type::ClosedStringLiteral`.
   - This is the string half of R1849.
   - Done when `TyKind::StringLiteral` is deleted.
-  - Depends on R1858, R1859, R1860, R422.
+  - Depends on R1858, R1859, R1860.
   - Model: Opus, Not Planned.
 
 - [ ] **R1862 A `StringLiteral[v]` register holds a 16-byte descriptor,
@@ -12053,29 +12053,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1674, R1703.
   - Model: Opus, Not Planned.
 
-- [ ] **R422 `print` and `String(x)` write a struct through a host string
-  accumulator where upstream writes through a `Writer` struct**
-
-  Problem: a struct's `write_to` reached from `print` or `String(x)` gets a
-  compiler-private string accumulator as its writer, where upstream passes a
-  real `Writer` (the stdout buffer, or the `String` itself).
-  - A `writer.write(...)` call inside such a body dispatches through the
-    bound to `__trait_dispatch.write`, which the specializer clears on the
-    accumulator's non-struct receiver (`native/mono/specializer.rs`).
-  - The VM answers it in the `Value::Str` arm of `method_call`
-    (`backend/vm/invoke.rs`) and Pliron in `lower_str_writer_write`
-    (`lower/methods.rs`).
-  - A writer that overrides `write` is never the accumulator, so the texts
-    match the pin; the shape does not.
-  - Probe: the accumulator's `write` takes its values one by one, so the
-    elaborator passes it the elements of the collector the call builds
-    (`unpack_builtin_collectors`, `native/mono/spread.rs`).
-  - Found while landing R414 (2026-10-06).
-  - Probe: the accumulator is a value-less `StringLiteral`, the writer
-    slot `mono/instances.rs` passes a type-reached `write_to`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1481 `Equatable`'s and `Hashable`'s reflective defaults are
   synthesized per conformer, where upstream's are the traits' own bodies**
 
@@ -12113,6 +12090,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1481 (the reflective `__eq__` default).
   - Model: Opus, Not Planned.
 
+- [ ] **R1882 `String(x)` and `repr(x)` are compiler builtins where
+  upstream's are library code**
+
+  `String(x)` of one `Writable` and `repr(x)` are checked, run, and lowered
+  as builtin calls (the VM's `format_value`, Pliron's `lower_stringify`
+  and `lower/methods.rs` repr arms), where upstream's `String.__init__[*Ts:
+  Writable]` and `format/repr.mojo`'s `repr` construct a `String()` and
+  call the value's `write_to` or `write_repr_to` into it.
+  - The bundled `String.__init__[*Ts: Writable]` (`stdlib/std/string.mojo`)
+    already has upstream's shape, but a single positional argument is
+    routed to the builtin conversion.
+  - Probe: the display writer is built by rule, not by a `String()` call:
+    the VM's `format_value` takes `nominal_string_value(prog, "")`, and
+    Pliron's `display_writer` zeroes a `String` slot, since the builtin
+    calls no `String()` instance the dead-symbol pass keeps.
+  - Probe: Pliron's `String(x)` moves the writer's buffer into a fresh
+    result slot (`own_string_result`), where upstream's writer is the
+    result.
+  - Found while landing R422 (2026-11-03).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1287 `print` is a compiler builtin where upstream's is an
   `@inline(.never)` library function**
 
@@ -12146,6 +12145,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     one field (`Prog::boxed`) from the operand's static type at the
     builtin call. The bridge goes with the builtin.
   - Found while landing R1075 (2026-10-22).
+  - Probe: under `print` a `write_to` naming its writer's type
+    (`_unqualified_type_name[type_of(writer)]()`) sees `String`, where the
+    pin's is `_FlushingWriteBuffer[…, RawFileDescriptor, 4096]`, which the
+    library `print` brings.
   - Depends on R424 and R422.
   - Model: Fable, Not Planned.
 

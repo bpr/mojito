@@ -180,14 +180,13 @@ impl FnLowering<'_> {
             return Ok(());
         }
         // A nominal struct converts through its `write_to` conformance over
-        // a fresh accumulator — the VM's `format_value` struct arm. The
-        // accumulated buffer transfers into the resulting owned string.
+        // a fresh `String` writer, the VM's `format_value` struct arm. The
+        // written buffer transfers into the resulting owned string.
         if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
             .and_then(|ty| ty.kind().as_non_simd_struct())
             && !mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
-            let writer = self.entry_alloca(ctx, 16, 8);
-            self.mem_zero(ctx, writer, 16);
+            let writer = self.display_writer(ctx);
             self.append_struct_via_write_to(ctx, arg, name, writer, dest)?;
             let (data, len) = self.string_parts(ctx, writer, dest);
             self.str_runtime.insert(
@@ -198,7 +197,7 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            // The accumulator alloca is exactly the 16-byte `MjStrDesc`
+            // The writer's leading `{data, size}` are the `MjStrDesc`
             // StringLiteral storage; aggregate consumers read it directly.
             self.reg_values.insert(dest.0, writer);
             return Ok(());
