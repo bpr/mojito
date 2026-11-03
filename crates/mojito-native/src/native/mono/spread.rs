@@ -65,7 +65,8 @@ pub(super) fn retire_forwarded_packs(function: &mut MirFunction) {
 
 /// Pass the elements of the collector a method call builds as its
 /// arguments when the builtin its receiver is answers the call (`write`
-/// on the builtin-string writer), which takes its values one by one, as
+/// on the builtin-string writer, not a `StringLiteral[v]` receiver, whose
+/// declared struct does), which takes its values one by one, as
 /// the builtin `print` does. The collector's drop, once the call returns,
 /// becomes its elements', first to last, as a `Tuple`'s destroys them.
 pub(super) fn unpack_builtin_collectors(blocks: &mut [MirBlock], reg_types: &mut HashMap<u32, Ty>) {
@@ -352,9 +353,11 @@ fn unpack_in_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>, retir
                     spread: Some(position),
                     args,
                     ..
-                } if !reg_types
-                    .get(&recv.0)
-                    .is_some_and(|ty| peel_refs(ty).is_non_simd_struct()) =>
+                } if !reg_types.get(&recv.0).is_some_and(|ty| {
+                    let receiver = peel_refs(ty);
+                    receiver.is_non_simd_struct()
+                        || receiver.kind().string_literal_value().is_some()
+                }) =>
                 {
                     args.get(*position).map(|register| (*position, *register))
                 }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1866**.
+Next free ID: **R1867**.
 
 ## Ordered Work
 
@@ -4819,6 +4819,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `name[StaticString("lit")]()`, over `def name[s: StaticString]() ->
     String`, which print `lit` at the pin. The second fails with "not an
     associated comptime expression".
+  - Probe: upstream's `StringLiteral.format` body passes
+    `_FormatUtils.format_to_comptime[StaticString(Self())]`; the bundled
+    one binds the template to a local `comptime template` first (found
+    while landing R1655).
   - Probe: `f[Int32(n)]()` and `f[Int32(from_int=n)]()` in `def g[n:
     Int]()`, over `def f[v: Int32]()`, print `7` for `g[7]()` at the pin.
     Mojito fails with "a SIMD[DType.int32, 1] lane needs a compile-time
@@ -8966,6 +8970,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   ")` then `s = String(parts[0])` runs in Mojito and hits upstream's
   call-result aliasing rejection.
   - Pinned by `conformance/probes/split_returns_owned_strings.mojo`.
+  - `StringLiteral.split` forwards to `StringSpan.split`, so it returns
+    `List[String]` too, where upstream's returns `List[StaticString]`.
   - An API shape change with display and iteration fallout across every
     `split` caller.
   - Ledger name: `split-returns-owned-strings`.
@@ -9163,13 +9169,15 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Upstream's `StringLiteral.format` parses its template at compile time
     (`_FormatUtils.format_to_comptime[StaticString(Self())]`) and fails a
     `comptime assert` with the parse error.
-  - Mojito's stand-in, `_FormatUtils.format_literal` in
-    `stdlib/std/string.mojo`, parses at run time and aborts with the same
-    message; a path the run never takes is accepted.
+  - `StringLiteral.format` is upstream's body, but the bundled
+    `_FormatUtils.format_to_comptime` in `stdlib/std/string.mojo` parses
+    at run time and aborts with the same message; a path the run never
+    takes is accepted.
   - Ledger: `format-literal-template-runtime`
     (`conformance/fixtures/format_literal_template_runtime.mojo`).
-  - The stand-in and the checker's `LiteralFormat` adjustment go away when
-    `StringLiteral` declares upstream's `format`.
+  - Lever: port upstream's `format_to_comptime`, whose `comptime result =
+    compile_entries_runtime_no_raises[*Ts](format)` and `comptime assert`
+    reject a bad template while the program compiles.
   - Found while landing R421 (2026-10-06).
   - Depends on R213.
   - Model: Fable, Not Planned.
@@ -11347,7 +11355,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - So the application, though the declared struct, is kept out of the
     struct rules: `TyKind::as_non_simd_struct`, `MirDeclarations::field_types`,
     `builtin_copy_is_value_read`, and the elaborator's
-    `declared_operator_receiver` (`mono/specializer.rs`) each exclude it.
+    `declared_operator_receiver` (`mono/specializer.rs`) each exclude it,
+    and `unpack_in_blocks` (`mono/spread.rs`) names it beside the structs
+    it keeps whole.
   - So the declared `__init__`'s empty body builds nothing: the checker
     constructs `StringLiteral[v]()` by rule (`literal_construction` and
     `infer_instance_construction`, `call_inference.rs`), and MIR's
@@ -11355,7 +11365,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: `Const::Str` of a literal application writes an empty struct,
     and a conversion to the value-less type, `String`, or `StringSpan`
     reads the text from the operand's closed type.
-  - Done when those four exclusions and the construction rule are gone.
+  - Probe: `comptime template = StaticString(Self())` in
+    `StringLiteral.format` fails to package the bundled library ("Undefined
+    variable '__module$std$string$_FormatUtils'"), so the bundled body
+    spells `StringLiteral[Self.value]()`; `comptime w = Self()` in a user
+    struct's method runs (found while landing R1655).
+  - Done when those five exclusions and the construction rule are gone.
   - This is the string twin of R1850.
   - Depends on R1861.
   - Model: Fable, Not Planned.
@@ -11424,26 +11439,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1655 `StringLiteral`'s members over `StringSlice(self)` are
-  unported**
+- [ ] **R1866 The bundled string iterators are not upstream's
+  `CodepointSliceIter`, `CodepointsIter`, and `GraphemeSliceIter`**
 
-  `StringLiteral["12".value]().__int__()` in a `raises` function reports
-  "type 'StringLiteral["12"]' has no method '__int__'", where the pin
-  prints `12`.
-  - Upstream's bodies of `__mul__`, `__int__`, `__float__`, `__fspath__`,
-    `__iter__`, `__reversed__`, `count_codepoints`, `as_c_string_span`,
-    the search, case, padding, strip, and split families, the codepoint
-    and grapheme iterators, `format`, and `join` each read
-    `StringSlice(self)`.
-  - That is upstream's `StringSpan.__init__(out self: StaticString, lit:
-    StringLiteral)`, whose body is `StaticString(lit.value)`: a run-time
-    `!kgen.string` (R1190).
-  - The bundled `write_to` and `write_repr_to` read `as_string_slice()`
-    for that reason, and so do `__ne__` and `__lt__`. Respell them as
-    upstream's when this lands, and add `FloatableRaising`,
-    `IntableRaising`, and `PathLike`.
-  - Depends on R1190 (a run-time `!kgen.string`) and R1658 (the bare
-    `lit: StringLiteral` parameter).
+  Upstream's `std/collections/string/iterators.mojo` declares
+  `CodepointSliceIter[origin, forward]`, `CodepointsIter[origin]`, and
+  `GraphemeSliceIter[origin, forward]`, where `stdlib/std/string.mojo`
+  declares the private `_CodepointSliceIter`, `_CodepointSliceReversedIter`,
+  `_CodepointIter`, `_GraphemeIter`, and `_GraphemeReversedIter`, one
+  struct per direction.
+  - So `StringLiteral`'s `__iter__`, `__reversed__`, codepoint, and
+    grapheme members, and `StringSpan`'s and `String`'s, name the private
+    structs in their result types, and a user cannot spell
+    `GraphemeSliceIter[ImmStaticOrigin, False]`.
+  - Lever: port upstream's module at its own path, with `forward` as a
+    `Bool` parameter, and re-export it where upstream does.
+  - Found while landing R1655 (2026-11-03).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1520 `!kgen.simd<n, address>` has no pointer lane**
@@ -12194,9 +12206,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `_PrecompiledEntriesRuntime` holds no `format` view and no origin
     parameter: a struct field over a `def`'s auto-parameterized
     `StringSpan` origin does not bind, so `format_precompiled` takes the
-    template beside the entries. The span-backed `_PrecompiledEntries`,
-    `format_to_comptime`, and `compile_entries_runtime_no_raises` are
-    omitted until R425.
+    template beside the entries. The span-backed `_PrecompiledEntries`
+    and `compile_entries_runtime_no_raises` are omitted, and
+    `format_to_comptime` parses at run time, until R425.
   - Found while landing R421 (2026-10-06).
   - Depends on R427, R428, R429, R430, R431, R435, R436, R437, R438, R288,
     R135, R97, R243.
@@ -13144,6 +13156,12 @@ residue found inside a task moves to the task that owns its fix.
 
   Problem: upstream's `CStringSlice` views `c_char` elements, Mojito's views
   `Byte`.
+  - Upstream's type is now `CStringSpan`, built `CStringSpan(unsafe_from_ptr=
+    ptr.unsafe_bitcast[c_char]())`; the bundled `CStringSlice` has only the
+    `String` initializer.
+  - Probe: `"ab".as_c_string_span()` and its deprecated
+    `as_c_string_slice()` are unported for that reason, where the pin's
+    `len(…)` prints `2` (found while landing R1655).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13458,6 +13476,9 @@ residue found inside a task moves to the task that owns its fix.
   `std.python` trait, which the bundled `String` cannot name.
   - The trait converts from a `PythonObject`, and Mojito has no Python
     interop.
+  - For the same reason the bundled `StringLiteral` omits upstream's
+    `ConvertibleToPython` conformance, `ConversionToPythonErrorType`, and
+    `to_python_object` (found while landing R1655).
   - If Python interop is out of scope, this moves to `docs/non-goals.md`.
   - Found while landing R578 (2026-10-26).
   - Depends on nothing.

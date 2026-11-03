@@ -1299,9 +1299,8 @@ pin. Every such call names a
 declared callee: `write` resolves to the bundled `Writer` trait's default or
 a conformer's own `write` (`stdlib/std/format/__init__.mojo`), and `format`
 to `String.format`/`StringSpan.format` over the bundled `_FormatUtils`
-(`stdlib/std/string.mojo`), as upstream's do; a string literal's `format`
-is the static call of the stand-in `_FormatUtils.format_literal`
-(`SemanticAdjustment::LiteralFormat`) until the literal declares methods.
+(`stdlib/std/string.mojo`), and a string literal's to the declared
+`StringLiteral.format`, as upstream's do.
 A static call carries the spread too, after leading arguments or alone. A clone that spreads its bound pack into a served
 `def` spells the elements itself (`PackRewriter::served_callees`). A pack query
 read as a runtime value — `Ts.length`, `len(Ts)`, `Ts.contains[X]()`,

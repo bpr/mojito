@@ -5609,12 +5609,6 @@ pub fn is_nominal_string(ty: &Ty) -> bool {
         if args.is_empty() && is_stdlib_string_struct(name))
 }
 
-/// The bundled formatter behind `format` (upstream's `_FormatUtils`), and
-/// its stand-in for `StringLiteral.format`, which a string literal's call
-/// lowers to while the literal declares no methods.
-pub const STDLIB_FORMAT_UTILS_STRUCT: &str = "__module$std$string$_FormatUtils";
-pub const FORMAT_LITERAL_METHOD: &str = "format_literal";
-
 /// The bundled borrowed string view.
 ///
 /// Unlike `String`, `StringSpan` is prelude-bare in MIR (no module-qualified

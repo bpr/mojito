@@ -84,14 +84,6 @@ impl Checker {
         {
             return self.infer_inverted_write(site).map(Some);
         }
-        if method == STRING_FORMAT
-            && obj_ty.is_string_literal()
-            && self
-                .structs
-                .contains_key(mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT)
-        {
-            return self.infer_literal_format(site).map(Some);
-        }
         // A heterogeneous pack that is still a parameter answers its length;
         // any other member waits for the specialization's concrete storage.
         if let TyKind::VariadicPack(element) = obj_ty.kind()
@@ -262,34 +254,4 @@ impl Checker {
         }));
         Ok(Ty::none())
     }
-
-    /// `"…".format(args)`: a string literal declares no methods yet, so the
-    /// call types as the static call of the bundled stand-in for upstream's
-    /// `StringLiteral.format`, `_FormatUtils.format_literal(literal, args…)`,
-    /// and records the adjustment MIR lowers it by.
-    fn infer_literal_format(&self, site: MethodCallSite<'_>) -> Result<Ty, TypeError> {
-        let MethodCallSite {
-            span, object, call, ..
-        } = site;
-        let arguments: Vec<Expr> = std::iter::once(object.clone())
-            .chain(call.args.iter().cloned())
-            .collect();
-        let ty = self.infer_struct_static_method(
-            span.clone(),
-            mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT,
-            (&[], None),
-            mojito_symbol::symbol::FORMAT_LITERAL_METHOD,
-            MethodCallArguments {
-                args: &arguments,
-                parameterized_syntax: false,
-                ..call
-            },
-        )?;
-        self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::LiteralFormat,
-        ));
-        Ok(ty)
-    }
 }
-
-const STRING_FORMAT: &str = "format";

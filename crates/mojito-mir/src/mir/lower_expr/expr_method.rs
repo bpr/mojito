@@ -30,23 +30,6 @@ impl<'a> Flatten<'a> {
         } else {
             (object, args.as_slice())
         };
-        // A string literal's `format`: the checker typed the static call of
-        // the bundled stand-in with the literal as its first argument.
-        if node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::LiteralFormat
-            )
-        }) {
-            let target = callable_target(&node.adjustments).unwrap_or_else(|| {
-                format!(
-                    "{}.{}",
-                    mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT,
-                    mojito_symbol::symbol::FORMAT_LITERAL_METHOD
-                )
-            });
-            return self.static_method_call(call, &target, None, Some(object), args, kwargs);
-        }
         if let Some(op) = Self::checked_mlir_op(call) {
             return self.lower_mlir_op(call, op, args);
         }

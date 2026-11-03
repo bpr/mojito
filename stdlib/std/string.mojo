@@ -896,14 +896,8 @@ struct String(
     def __bool__(self) -> Bool:
         return self.size > 0
 
-    # Concatenates the string `n` times; a non-positive count is empty.
     def __mul__(self, n: Int) -> String:
-        var result = String()
-        var i = 0
-        while i < n:
-            result._append_bytes_of(self, 0, self.size)
-            i += 1
-        return result^
+        return StringSpan(self) * n
 
     # `Writer` conformance: `s.write(a, b, ...)` appends each argument's
     # written text to this buffer (amortized doubling growth).
@@ -1534,16 +1528,22 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         ]()
         self._size = length
 
-    # Upstream's `StaticString` initializer (the origin is erased here): a
-    # view over the literal's UTF-8 bytes, which live for the whole program.
-    # `@implicit` lets a literal convert wherever a view is expected.
     @inline(.always)
     @implicit
-    def __init__(out self, literal: StringLiteral):
-        self._data = literal.ptr().unsafe_mut_cast[True]().unsafe_origin_cast[
-            origin._get_owned_interior["bytes"]
-        ]()
-        self._size = literal.byte_length()
+    def __init__(out self: StaticString, lit: StringLiteral):
+        """Construct a new `StringSpan` from a `StringLiteral`.
+
+        Args:
+            lit: The literal to construct this `StringSpan` from.
+        """
+        # Since a StaticString has static origin, it will outlive
+        # whatever arbitrary `origin` the user has specified they need this
+        # slice to live for.
+        # SAFETY:
+        #   StaticString is guaranteed to use UTF-8 encoding.
+        # FIXME(MSTDL-160):
+        #   Ensure StringLiteral _actually_ always uses UTF-8 encoding.
+        self = StaticString(lit.value)
 
     # Ordinary StringSpan iteration also yields grapheme-cluster sub-views.
     def __iter__(self) -> _GraphemeIter[Self.origin]:
@@ -1630,6 +1630,15 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     @inline(.always)
     def __ge__(self, rhs: String) -> Bool:
         return StringSpan(rhs) <= self
+
+    # Concatenates the viewed text `n` times; a non-positive count is empty.
+    def __mul__(self, n: Int) -> String:
+        var result = String()
+        var i = 0
+        while i < n:
+            result._append_bytes_of(self, 0, self._size)
+            i += 1
+        return result^
 
     def __add__(self, rhs: StringSpan) -> String:
         return String._add(self.as_bytes(), rhs.as_bytes())
@@ -2565,17 +2574,18 @@ struct _FormatUtils:
         Self.format_to_runtime(buffer, format, *args)
         return buffer^
 
-    # The body of `StringLiteral.format` until a literal declares methods:
-    # the pin parses a literal template at compile time and rejects a bad
-    # one there, where this aborts with the same message.
+    # Upstream's signature, but the template is parsed when the call runs:
+    # the pin parses it at compile time and rejects a bad one there, where
+    # this aborts with the same message.
     @staticmethod
-    def format_literal[*Ts: Writable](format: StringSpan, *args: *Ts) -> String:
-        var buffer = String()
+    def format_to_comptime[
+        format: StaticString,
+        *Ts: Writable,
+    ](mut writer: Some[Writer], *args: *Ts):
         try:
-            Self.format_to_runtime(buffer, format, *args)
+            Self.format_to_runtime(writer, format, *args)
         except e:
             _mojito_abort(String(e))
-        return buffer^
 
     @staticmethod
     def format_to_runtime[

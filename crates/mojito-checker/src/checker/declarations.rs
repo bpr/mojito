@@ -4747,8 +4747,8 @@ impl Checker {
 
     /// Bind a hand-written constructor's struct origin binders named by its
     /// `Pointer[T, Self.o]` parameters from the call's arguments, as the
-    /// fieldwise and generic paths do, and substitute the bound provenance
-    /// into `params` before scoring. The inner `Err` skips the candidate:
+    /// fieldwise and generic paths do, and those its `out self` refines,
+    /// and substitute the bound provenance into `params` before scoring. The inner `Err` skips the candidate:
     /// `None` when the call's slots do not fit it, `Some` with the origin
     /// failure to report when no candidate matches.
     fn bind_constructor_pointer_params(
@@ -4790,7 +4790,11 @@ impl Checker {
         if !params.iter().any(names_origin_binder)
             && sig.origin_binders.iter().flatten().count() == 0
         {
-            return Ok(Ok((params, ConstructorOriginBindings::default())));
+            let mut bindings = ConstructorOriginBindings::default();
+            return Ok(self
+                .bind_refined_origins(name, sig, explicit, &mut bindings)
+                .map(|()| (params, bindings))
+                .map_err(Some));
         }
         let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
         let Ok(matched) = mojito_ast::call::match_call_slots(
@@ -5150,9 +5154,10 @@ fn collector_takes_bound_pack(
 /// parameter of its own is left to the call's arguments).
 /// Whether an initializer whose `out self` refines its result to `refined`
 /// can construct `target`, an instance of the struct at its own binders
-/// `instance`: every position the refinement defines is `target`'s, or
-/// names one of the initializer's own parameters (`own`), which a call
-/// solves.
+/// `instance`: every position the refinement defines is `target`'s, is an
+/// origin slot `target` leaves unbound (`write_string(string: StringSpan)`
+/// infers it from the refinement), or names one of the initializer's own
+/// parameters (`own`), which a call solves.
 pub(super) fn refinement_admits(
     refined: &Ty,
     instance: &Ty,
@@ -5171,7 +5176,13 @@ pub(super) fn refinement_admits(
         .zip(&binders)
         .zip(&target)
         .all(|((defined, binder), argument)| {
-            defined == binder || defined == argument || mentioned_binder(defined, own).is_some()
+            defined == binder
+                || defined == argument
+                || matches!(
+                    argument,
+                    TyArg::Origin(mojito_types::origin::Origin::Unbound)
+                )
+                || mentioned_binder(defined, own).is_some()
         })
 }
 

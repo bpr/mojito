@@ -183,7 +183,53 @@ impl Checker {
                 })?;
             }
         }
+        self.bind_refined_origins(struct_name, sig, explicit, &mut bindings)?;
         Ok(bindings)
+    }
+
+    /// Bind the struct origin slots an initializer's `out self` refines to
+    /// a concrete origin (`out self: StaticString` on `StringSpan[origin]`
+    /// binds `origin` to the static origin). An explicitly applied origin
+    /// naming different storage conflicts.
+    pub(in crate::checker) fn bind_refined_origins(
+        &self,
+        struct_name: &str,
+        sig: &MethodSig,
+        explicit: &[super::super::type_resolution::ExplicitStructOrigin],
+        bindings: &mut ConstructorOriginBindings,
+    ) -> Result<(), TypeError> {
+        let (Some(refined), Some(instance)) =
+            (&sig.refined_self, self.self_instance_ty(struct_name))
+        else {
+            return Ok(());
+        };
+        let arguments = |ty: &Ty| {
+            mojito_types::types::nominal_parts(ty)
+                .map(|(_, arguments)| arguments.into_owned())
+                .unwrap_or_default()
+        };
+        for (defined, binder) in arguments(refined).iter().zip(&arguments(&instance)) {
+            if let (TyArg::Origin(origin), TyArg::Origin(Origin::Param(id))) = (defined, binder)
+                && !matches!(origin, Origin::Param(_) | Origin::SelfParam)
+            {
+                let conflict = || {
+                    let slot = self
+                        .structs
+                        .get(struct_name)
+                        .and_then(|info| info.source_params.get(id.0 as usize))
+                        .map_or("?", |slot| slot.name.as_str());
+                    conflicting_binding(struct_name, slot)
+                };
+                if explicit
+                    .iter()
+                    .any(|applied| applied.id == *id && !origin.coerces_to(&applied.origin))
+                {
+                    return Err(conflict());
+                }
+                bindings.bind_origin(*id, origin, conflict)?;
+            }
+        }
+        Ok(())
     }
 
     /// Bind the struct origin binders a `@fieldwise_init` construction's

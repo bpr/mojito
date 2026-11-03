@@ -499,14 +499,33 @@ impl Checker {
                             }
                         }
                     } else if let Some(signatures) = info.methods.get("__init__") {
-                        // Slot the call against the first constructor whose
-                        // parameter shape accepts it (positional and keyword
-                        // arguments alike — `Span(unsafe_ptr=…, length=…)`),
-                        // so a `ref` slot contributes its reference origin and
-                        // every other slot its value's aggregate origins.
+                        // Slot the call against the constructor the check
+                        // selected (`StaticString(lit)` takes its
+                        // `StringLiteral` by value, not `String`'s `ref`
+                        // slot), else the first whose parameter shape
+                        // accepts it (positional and keyword arguments alike
+                        // — `Span(unsafe_ptr=…, length=…)`), so a `ref` slot
+                        // contributes its reference origin and every other
+                        // slot its value's aggregate origins.
                         let keyword_names: Vec<&str> =
                             kwargs.iter().map(|kw| kw.name.as_str()).collect();
-                        for signature in signatures {
+                        let selected = self
+                            .fact(&expression.source_span(), |facts| {
+                                facts.overload_target.as_ref()
+                            })
+                            .and_then(|target| {
+                                let instance = self.self_instance_ty(name);
+                                signatures.iter().find(|signature| {
+                                    super::super::overload_support::constructor_symbol(
+                                        name,
+                                        "__init__",
+                                        signatures.len() > 1,
+                                        signature,
+                                        instance.as_ref(),
+                                    ) == target
+                                })
+                            });
+                        for signature in selected.into_iter().chain(signatures) {
                             let Ok(matched) = mojito_ast::call::match_call_slots(
                                 &signature.names,
                                 &signature.required,

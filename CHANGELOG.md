@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `StringLiteral` now declares upstream's members over `StringSlice(self)`
+  (R1655): `"12".__int__()`, `"a,b".split(",")`, `" x ".strip()`,
+  `"ab" * 3`, the search, case, padding, and iterator members, `join`,
+  and `format` run the struct's bodies on both backends, and it conforms
+  to `FloatableRaising`, `IntableRaising`, and `PathLike`.
+  `StringSlice(lit)` is upstream's `out self: StaticString` initializer,
+  whose refinement now binds the view's origin. `format`'s body reaches
+  `_FormatUtils.format_to_comptime`, so the checker's `LiteralFormat`
+  rule and the `format_literal` stand-in are gone; the template is still
+  parsed at run time (R425). The string iterators keep their bundled
+  names (R1866), and `as_c_string_span` is unported (R222).
 - `StringLiteral` is no longer `Hashable`, matching the pin, whose
   `StringLiteral` declares no `__hash__` (R1654): `hash("abc")` hashes the
   `String` the literal materializes to, and `"abc".__hash__(h)` is
