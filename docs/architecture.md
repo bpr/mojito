@@ -5587,7 +5587,9 @@ current Mojo:
   register-passable type and not proven `RegisterPassable`, so a generic
   `-> T` qualifies at every instance — is `IndirectResult` on the call,
   dispatched operator, by-value subscript, or display, and
-  `ConversionIndirectResult` on an implicit conversion; a conditional
+  `ConversionIndirectResult` on an implicit conversion, whose
+  constructor's memory-only `read` source is `ConversionReadsSource`, read
+  where it lies or in its own slot; a conditional
   expression not proven register-passable is one too
   (`Node::indirect_result`). A consumer with a destination (a declaration,
   a `return`, an aggregate element) lowers through `Flatten::expr` and

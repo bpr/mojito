@@ -43,29 +43,36 @@ impl<'a> Flatten<'a> {
     /// stays in its register, whose provenance keeps the storage it views
     /// live through the call that reads it.
     pub(super) fn call_result(&mut self, e: Node<'a>, value: Reg, views: bool) -> CValue {
-        if let Some(&slot) = self.call_result_slots.get(&value.0) {
-            return CValue::Slot(slot);
+        self.result_storage(e, value, views, e.indirect_result())
+    }
+
+    /// The source of an implicit conversion whose constructor reads it
+    /// (`ConversionReadsSource`), as upstream passes a memory-only `read`
+    /// argument by address, with the place the read binds: a named place
+    /// read where it lies, so no copy of it runs, and a temporary its
+    /// producer returned through memory read in its call-result slot.
+    pub(super) fn read_conversion_source(&mut self, e: Node<'a>) -> (Reg, Option<MirPlace>) {
+        if let Some((value, place)) = self.read_in_place(e) {
+            return (value, Some(place));
         }
-        let forwarded = matches!(
-            self.f.blocks[self.cur].instrs.last(),
-            Some(MirInstr::UseVar { dest, mode: UseMode::Forward, .. }) if *dest == value
-        );
-        let ty = self.f.reg_types.get(&value.0).cloned().or_else(|| e.ty());
-        let Some(ty) = ty.filter(|ty| {
-            (owns_droppable_storage(ty)
-                || mojito_types::types::trivially_register_passable_leaf(ty.kind()))
-                && (views || mojito_types::types::erase_origin_arguments(ty) == *ty)
-        }) else {
-            return CValue::Value(value);
-        };
-        if forwarded
-            || !e.indirect_result()
-            || mojito_checked::checked::materialized_borrow_owner(e.adjustments()).is_some()
-            || !self.aggregate_borrows(e).is_empty()
-        {
-            return CValue::Value(value);
+        let value = self.expr_unconverted(e);
+        if let Some(ty) = e.ty() {
+            self.f.reg_types.entry(value.0).or_insert(ty);
         }
-        CValue::Slot(self.call_result_slot(value, ty, e.raises().is_none()))
+        let value = self.result_storage(e, value, true, e.unconverted_indirect_result());
+        self.read_c(e, value)
+    }
+
+    /// Named place `e` read where it lies, with its place, as a `read`
+    /// parameter binds a memory-only argument's address: `None` for a
+    /// temporary or a value with no slot to lend.
+    pub(super) fn read_in_place(&mut self, e: Node<'a>) -> Option<(Reg, MirPlace)> {
+        if e.is_fresh_temporary() {
+            return None;
+        }
+        let place = self.simple_place(e)?;
+        let value = self.lower_borrowed_read_argument(e)?;
+        Some((value, place))
     }
 
     /// Bind `value`, of type `ty`, which its producer returned through
@@ -171,6 +178,34 @@ impl<'a> Flatten<'a> {
                 let value = self.expr_c(e);
                 self.read_c(e, value).0
             })
+    }
+
+    /// `value`, the lowered `e`, as [`Self::call_result`] holds it, its
+    /// producer returning it through memory when `indirect`.
+    fn result_storage(&mut self, e: Node<'a>, value: Reg, views: bool, indirect: bool) -> CValue {
+        if let Some(&slot) = self.call_result_slots.get(&value.0) {
+            return CValue::Slot(slot);
+        }
+        let forwarded = matches!(
+            self.f.blocks[self.cur].instrs.last(),
+            Some(MirInstr::UseVar { dest, mode: UseMode::Forward, .. }) if *dest == value
+        );
+        let ty = self.f.reg_types.get(&value.0).cloned().or_else(|| e.ty());
+        let Some(ty) = ty.filter(|ty| {
+            (owns_droppable_storage(ty)
+                || mojito_types::types::trivially_register_passable_leaf(ty.kind()))
+                && (views || mojito_types::types::erase_origin_arguments(ty) == *ty)
+        }) else {
+            return CValue::Value(value);
+        };
+        if forwarded
+            || !indirect
+            || mojito_checked::checked::materialized_borrow_owner(e.adjustments()).is_some()
+            || !self.aggregate_borrows(e).is_empty()
+        {
+            return CValue::Value(value);
+        }
+        CValue::Slot(self.call_result_slot(value, ty, e.raises().is_none()))
     }
 
     fn expr_c_holding(&mut self, e: Node<'a>, views: bool) -> CValue {

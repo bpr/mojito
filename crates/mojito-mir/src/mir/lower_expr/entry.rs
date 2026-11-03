@@ -191,6 +191,7 @@ impl<'a> Flatten<'a> {
             // and the unconverted value is stored in that owner's hidden
             // `$mat_r` slot whose place the constructor borrows.
             let adjustments = e.adjustments();
+            let mut read_place = None;
             let (argument, source_place) = if let Some(owner) =
                 mojito_checked::checked::materialized_borrow_owner(adjustments)
             {
@@ -211,6 +212,10 @@ impl<'a> Flatten<'a> {
                 });
                 if borrows_source {
                     self.borrowed_conversion_source(e)
+                } else if e.conversion_reads_source() && e.reference_result().is_none() {
+                    let (value, place) = self.read_conversion_source(e);
+                    read_place = place;
+                    (value, None)
                 } else {
                     let value = self
                         .reference_result_value(e)
@@ -276,7 +281,7 @@ impl<'a> Flatten<'a> {
                 raises,
                 args: vec![argument],
                 kwargs: Vec::new(),
-                arg_places: vec![source_place.clone()],
+                arg_places: vec![source_place.clone().or(read_place)],
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
@@ -339,8 +344,16 @@ impl<'a> Flatten<'a> {
             // may be concrete or an abstract trait-dispatch symbol; MethodCall
             // already retargets the latter from the runtime receiver while
             // preserving the selected signature. The `index` it returns
-            // casts to `Int`, as upstream's `index(idx)` does.
-            let recv = self.expr_unconverted(e);
+            // casts to `Int`, as upstream's `index(idx)` does. Its `read`
+            // receiver binds a named memory-only Indexer where it lies.
+            let (recv, recv_place) = e
+                .ty()
+                .filter(super::super::calls::owns_droppable_storage)
+                .and_then(|_| self.read_in_place(e))
+                .map_or_else(
+                    || (self.expr_unconverted(e), None),
+                    |(value, place)| (value, Some(place)),
+                );
             if let Some(source) = e.ty() {
                 self.f.reg_types.entry(recv.0).or_insert(source);
             }
@@ -355,7 +368,7 @@ impl<'a> Flatten<'a> {
                 result_adapter: None,
                 args: Vec::new(),
                 kwargs: Vec::new(),
-                recv_place: None,
+                recv_place: recv_place.map(Box::new),
                 recv_writes: false,
                 receiver_convention: None,
                 arg_places: Vec::new(),

@@ -778,9 +778,33 @@ impl<'a> Node<'a> {
         if matches!(self.op(), CheckedOp::IfExpr { .. }) {
             return !self.register_passable_result();
         }
+        self.unconverted_indirect_result()
+    }
+
+    /// Whether this node's value before any implicit conversion is a fresh
+    /// temporary its selected callee returns through memory
+    /// (`IndirectResult`).
+    pub(super) fn unconverted_indirect_result(self) -> bool {
         self.is_fresh_temporary()
             && self.reference_result().is_none()
-            && recorded(|adjustment| matches!(adjustment, SemanticAdjustment::IndirectResult))
+            && self.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::IndirectResult
+                )
+            })
+    }
+
+    /// Whether this node's implicit conversion binds its memory-only
+    /// source to a `read` parameter
+    /// ([`mojito_checked::checked::SemanticAdjustment::ConversionReadsSource`]).
+    pub(super) fn conversion_reads_source(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ConversionReadsSource
+            )
+        })
     }
 
     /// Whether this conditional expression's condition is a parameter

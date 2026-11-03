@@ -1985,11 +1985,14 @@ impl Checker {
         let SelectedConversion {
             target,
             source_borrow,
+            consumes_source,
             error,
             own_arguments,
-            ..
         } = selected;
         let span = expression.source_span();
+        if !consumes_source && source_borrow.is_none() {
+            self.record_at(span.clone()).conversion_reads_source = true;
+        }
         if let Some(error) = error {
             self.record_at(span.clone()).conversion_raises = Some(error.clone());
             self.require_error(
@@ -2213,7 +2216,10 @@ impl Checker {
     /// initializer's struct at its own parameters, else the node's own) is
     /// memory-only is returned through memory
     /// ([`mojito_checked::checked::SemanticAdjustment::IndirectResult`]);
-    /// so is an implicit conversion's when its type is. A read argument
+    /// so is an implicit conversion's when its type is. A conversion's
+    /// `read` source stays passed by address only when it is memory-only
+    /// ([`mojito_checked::checked::SemanticAdjustment::ConversionReadsSource`]).
+    /// A read argument
     /// whose type is not memory-only is passed by value
     /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableRead`]).
     fn record_result_conventions(&self) {
@@ -2227,11 +2233,11 @@ impl Checker {
                 .filter(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
                 .and_then(|(name, _)| self.self_instance_ty(name))
         };
-        let judged: Vec<(SourceSpan, bool, bool, bool)> = {
+        let judged: Vec<(SourceSpan, bool, bool, bool, bool)> = {
             let records = self.node_facts.borrow();
             records
                 .iter()
-                .map(|(span, facts)| {
+                .filter_map(|(span, facts)| {
                     let by_value = facts.borrowed_read_call_place
                         && facts.ty.as_ref().is_some_and(|ty| !memory_only(ty));
                     let indirect = facts
@@ -2246,17 +2252,20 @@ impl Checker {
                         .and_then(constructed)
                         .or_else(|| facts.implicit_conversion_type.clone())
                         .is_some_and(|ty| memory_only(&ty));
-                    (span.clone(), indirect, converted, by_value)
+                    let reads_source =
+                        facts.conversion_reads_source && facts.ty.as_ref().is_some_and(memory_only);
+                    (indirect || converted || by_value || facts.conversion_reads_source)
+                        .then(|| (span.clone(), indirect, converted, by_value, reads_source))
                 })
-                .filter(|(_, indirect, converted, by_value)| *indirect || *converted || *by_value)
                 .collect()
         };
         let mut records = self.node_facts.borrow_mut();
-        for (span, indirect, converted, by_value) in judged {
+        for (span, indirect, converted, by_value, reads_source) in judged {
             if let Some(facts) = records.get_mut(&span) {
                 facts.indirect_result = indirect;
                 facts.conversion_indirect_result = converted;
                 facts.register_passable_read = by_value;
+                facts.conversion_reads_source = reads_source;
             }
         }
     }

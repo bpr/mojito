@@ -923,6 +923,13 @@ pub enum SemanticAdjustment {
     /// An implicit conversion whose constructor returns the converted value
     /// through memory, as [`Self::IndirectResult`] answers for a call.
     ConversionIndirectResult,
+    /// An implicit conversion whose constructor binds its memory-only
+    /// source to a `read` parameter, neither consuming it nor borrowing it
+    /// through a `ref [origin]` parameter, so upstream passes the source's
+    /// address: a place source is read where it lies and
+    /// a memory-only temporary in its call-result slot, which the caller
+    /// destroys once the constructor returns.
+    ConversionReadsSource,
     /// A conditional expression whose condition is a parameter value:
     /// lowering builds upstream's `hlcf.comptime.if`, its condition the
     /// recorded `ComptimeCondition` or a thunk, so the elaborator keeps the
@@ -6599,6 +6606,9 @@ fn conversion_adjustments(facts: &NodeFacts) -> Vec<SemanticAdjustment> {
         if facts.conversion_indirect_result {
             adjustments.push(SemanticAdjustment::ConversionIndirectResult);
         }
+        if facts.conversion_reads_source {
+            adjustments.push(SemanticAdjustment::ConversionReadsSource);
+        }
         if let Some(arguments) = &facts.conversion_instantiation {
             adjustments.push(SemanticAdjustment::ConversionInstantiatedArguments(
                 arguments.clone(),
@@ -7037,6 +7047,8 @@ node_facts! {
         indirect_result,
         /// See [`SemanticAdjustment::ConversionIndirectResult`].
         conversion_indirect_result,
+        /// See [`SemanticAdjustment::ConversionReadsSource`].
+        conversion_reads_source,
         comptime_conditional,
         /// A `comptime assert` condition that folds to the constant
         /// `False`: no instance reaching the assertion completes past it,

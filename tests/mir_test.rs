@@ -1813,6 +1813,109 @@ fn builtin_reads_a_string_parameter_in_place() {
 }
 
 #[test]
+fn converted_memory_only_subscript_key_reads_its_source_in_place() {
+    // `StridedSlice.__init__(other: Slice)` reads its source, so `s` is
+    // read where it lies, and the converted key lives in a call-result slot
+    // the subscript reads; no register of either type is destroyed whole.
+    let source = "def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4]\n    var s = Slice(None, None, -1)\n    print(xs[s])\n";
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    let instructions = nested_instructions(&main.blocks);
+    let (key, source_place) = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                dest,
+                func,
+                arg_places,
+                ..
+            } if func.0.contains("StridedSlice.__init__") => Some((*dest, arg_places[0].clone())),
+            _ => None,
+        })
+        .expect("the conversion");
+    let source_place = source_place.expect("the conversion reads its source's place");
+    assert!(
+        source_place.is_whole_root() && main.var_names[source_place.root as usize] == "s",
+        "{main:#?}"
+    );
+    assert!(
+        instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::DefVar { var, src, .. }
+                if *src == key
+                    && main.var_names[*var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
+        )),
+        "{main:#?}"
+    );
+    assert!(
+        !instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::UseVar {
+                mode: UseMode::Copy,
+                ..
+            } | MirInstr::Drop { .. }
+        )),
+        "{main:#?}"
+    );
+}
+
+#[test]
+fn repr_text_and_transferred_temporary_receiver_use_call_result_slots() {
+    // The `repr(x)` text a bounded `write_repr_to` writes is read in its
+    // call-result slot, and `^` over a temporary owned receiver hands the
+    // `deinit` method that temporary's slot.
+    let source = "trait Rel:\n    def release(deinit self): ...\n\nstruct H(Movable, Rel):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def release(deinit self):\n        print(self.id)\n\ndef pk[T: Rel & Movable](var x: T) -> T:\n    return x^\n\ndef through[T: Rel & Movable](var x: T):\n    pk(x^)^.release()\n\ndef first[T: Writable & Copyable](items: List[T]) -> String:\n    var text = String()\n    items[0].write_repr_to(text)\n    return text\n\ndef main():\n    through(H(4))\n    var items: List[String] = [\"a\"]\n    print(first(items))\n";
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let slot_backed = |function: &MirFunction, reg: Reg| {
+        nested_instructions(&function.blocks)
+            .into_iter()
+            .any(|instruction| match instruction {
+                MirInstr::UseVar { dest, var, .. }
+                | MirInstr::LoadPlace {
+                    dest,
+                    place: MirPlace { root: var, .. },
+                } => {
+                    *dest == reg
+                        && function.var_names[*var as usize]
+                            .starts_with(mojito::mir::CALL_RESULT_SLOT)
+                }
+                _ => false,
+            })
+    };
+    let through = mir_function(compiled.elaborated_mir(), "through");
+    let receiver = nested_instructions(&through.blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall { recv, method, .. } if method == "release" => Some(*recv),
+            _ => None,
+        })
+        .expect("the release call");
+    assert!(slot_backed(through, receiver), "{through:#?}");
+    let first = mir_function(compiled.elaborated_mir(), "first");
+    let (text, place) = nested_instructions(&first.blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                args,
+                arg_places,
+                ..
+            } if method == mojito::symbol::WRITE_FORMATTED => {
+                Some((args[0], arg_places[0].clone()))
+            }
+            _ => None,
+        })
+        .expect("the repr write");
+    assert!(slot_backed(first, text) && place.is_some(), "{first:#?}");
+}
+
+#[test]
 fn memory_only_slice_subscript_result_is_read_from_its_call_result_slot() {
     // `xs[::2]` returns a `List` through memory, so `print` reads it in its
     // call-result slot, which drop elaboration destroys after the call.

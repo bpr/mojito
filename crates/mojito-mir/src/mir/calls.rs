@@ -553,7 +553,10 @@ impl<'a> Flatten<'a> {
                 }
                 return (register, None);
             }
+            // A conversion its constructor returns through memory is a
+            // temporary, not the place it reads.
             if let Some(source) = setup
+                && !(converted && expression.indirect_result())
                 && self.setup_read(expression)
             {
                 return (
@@ -1490,16 +1493,24 @@ impl<'a> Flatten<'a> {
         call: Node<'a>,
         receiver: Node<'a>,
     ) -> (Reg, Option<MirPlace>) {
-        let (value, place) = self.lower_call_receiver(receiver);
-        if place.is_some() {
-            return (value, place);
-        }
         let owned = call.call_contract().is_some_and(|contract| {
             matches!(
                 contract.receiver_convention,
                 Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit)
             )
         });
+        // `^` over a temporary transfers nothing: the owned receiver is the
+        // temporary itself (`pk(x^)^.release()`).
+        if owned
+            && let Some(inner) = receiver.transfer_operand()
+            && inner.is_fresh_temporary()
+        {
+            return self.lower_method_receiver(call, inner);
+        }
+        let (value, place) = self.lower_call_receiver(receiver);
+        if place.is_some() {
+            return (value, place);
+        }
         let read = receiver.adjustments().iter().any(|adjustment| {
             matches!(
                 adjustment,

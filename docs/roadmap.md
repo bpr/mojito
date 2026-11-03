@@ -9823,34 +9823,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1442 A t-string, conversion, subscript-index, or trait-dispatched
-  receiver operand keeps a memory-only call result in its register**
-
-  These consumers lower their operand with `Flatten::expr`, not the
-  call-result path (`expr_c`, `operand_c`, `take_c` in
-  `mir/call_results.rs`), so a result the checker marked `IndirectResult`
-  never reaches its `$call_result_tmp_r` slot.
-  - Upstream's call emission writes every memory-only result to its
-    destination or a `__call_result_tmp__`, whatever consumes it.
-  - Probe: `repr(x)` as a t-string or `format` operand, a
-    `$write_formatted` argument (`assets/ok/generic_reads_copy_nothing.mojo`,
-    `parameter_list_of_alias.mojo`, `parameter_list_raw_values.mojo`,
-    `path_operations.mojo`, `string_format_declared.mojo`,
-    `value_pack_parameter_list_writable.mojo`).
-  - Probe: a `Slice` call result or moved `Slice` converted to
-    `StridedSlice` (`slice_kind_construction.mojo`,
-    `slice_library_struct.mojo`, `slice_descriptor_protocols.mojo`), and a
-    `StridedSlice(...)` subscript index (`slice_descriptor_protocols.mojo`).
-  - Probe: an implicitly converted argument in a generic method,
-    `self.keep(x)` building a `Wrapper[T]`
-    (`template_method_converting_call_argument.mojo`).
-  - Probe: `pk(x).release()` over a generic `-> T`, an owned receiver
-    through a trait bound (`comptime_if_arm_destroy_joins.mojo`,
-    `through`).
-  - Found while landing R1356 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1443 An implicitly copied consuming receiver is copied into a
   register, where upstream copies it into a temporary the call consumes**
 
@@ -9868,6 +9840,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `t.reverse()` and `t.concat(u)` over a `Tuple[Int, String]`
     (`tuple_template_served.mojo`), and `self.x.or_else(d)` over an
     `Optional[T]` (`template_method_copied_consuming_receiver.mojo`).
+  - Probe: `note.or_else("")` over the `Optional[String]` parameter of
+    `CompilationTarget.unsupported_target_error`, copied in its
+    compile-time application (`std/sys/info.mojo`; any `print` program).
   - Found while landing R1356 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.

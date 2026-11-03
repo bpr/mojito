@@ -1392,7 +1392,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   consumer readers `read_c`, `take_c`, `operand_c` (by the checker's
   `ReadTemporaryArgument`/`ForwardedArgument` marker), and
   `read_operand` (a `BorrowReadArgument` place where it lies, as
-  `condition_value` and a `copy=` pointer write read their operand); a taken slot's `UseVar Forward` moves to its call's
+  `condition_value` and a `copy=` pointer write read their operand), and
+  `read_conversion_source`, the source of an implicit conversion the
+  checker marked `ConversionReadsSource` (`read_in_place` for a named
+  place, which an index normalization's `__mlir_index__` receiver uses
+  too, else the source's own slot); a taken slot's `UseVar Forward` moves to its call's
   setup (`defer_to_setup`). `calls.rs`'s `temporary_operand`,
   `lower_method_receiver` (with `materialize_receiver` for a `ref self`
   over a register result), `load_temporary_field`, and `discard_result`

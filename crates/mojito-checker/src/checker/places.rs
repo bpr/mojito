@@ -46,7 +46,14 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
         receiver: Option<(&Expr, Option<ArgConvention>)>,
     ) {
-        let designates_place = |arg: &Expr| self.designates_place(arg);
+        // A converted place's argument is the conversion's result, a
+        // temporary of its own.
+        let designates_place = |arg: &Expr| {
+            self.designates_place(arg)
+                && !self.has_fact(&arg.source_span(), |facts| {
+                    facts.implicit_conversion.is_some()
+                })
+        };
         let read_place = |arg: &Expr| {
             if self.infer_reference_value(arg).is_some() {
                 ReadPlace::ReferenceResult

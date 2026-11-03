@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- More memory-only temporaries now live in their call-result slot instead of
+  a register destroyed whole (R1442). An `@implicit` conversion whose
+  constructor reads its source reads a named place where it lies, so
+  `xs[s]` over a `Slice` no longer copies `s` into a register, and reads
+  a temporary source in its slot, and `values[i]` over a memory-only
+  `Indexer` `i` normalizes it in place. A converted subscript key, the `repr(x)`
+  text a bounded `write_repr_to` writes, and `^` over a temporary owned
+  receiver (`pk(x^)^.release()`) also use their slots.
 - `input`, `abort`, and `Error(...)` now bind their `String` argument as
   upstream's `read` parameter does (R1441): `raise Error(message)` and
   `input(prompt)` over a `read` parameter read it in place rather than

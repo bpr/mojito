@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::call_results::CValue;
 use mojito_checked::checked::{CheckedExpr, CheckedOp};
 
 impl<'a> Flatten<'a> {
@@ -300,7 +301,7 @@ impl<'a> Flatten<'a> {
         {
             let writer = *args.first().expect("checked write_repr_to has one writer");
             let value = self.read_operand(object);
-            let repr = self.fresh_typed(object.location(), None, repr_ty);
+            let repr = self.fresh_typed(object.location(), None, repr_ty.clone());
             let value_place = self.simple_place(object);
             self.emit(MirInstr::Call {
                 dest: repr,
@@ -316,6 +317,10 @@ impl<'a> Flatten<'a> {
                 instantiated_args: Vec::new(),
                 spread: None,
             });
+            // `repr` returns its `String` through memory, so the write
+            // reads it in its call-result slot.
+            let slot = self.call_result_slot(repr, repr_ty, true);
+            let (text, text_place) = self.read_c(object, CValue::Slot(slot));
             let (recv, recv_place) = self.lower_call_receiver(writer);
             let d = self.fresh_typed(call.location(), None, Ty::none());
             self.emit_interior_invalidations(writer, None);
@@ -327,12 +332,12 @@ impl<'a> Flatten<'a> {
                 raises: None,
                 reference_result: None,
                 result_adapter: None,
-                args: vec![repr],
+                args: vec![text],
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),
                 recv_writes: true,
                 receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
-                arg_places: vec![None],
+                arg_places: vec![text_place],
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
