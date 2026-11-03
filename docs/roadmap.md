@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1877**.
+Next free ID: **R1878**.
 
 ## Ordered Work
 
@@ -3814,36 +3814,35 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1466 A call on a struct value is checked through its `def(...)`
-  conformance, not as its `__call__` method call**
+- [ ] **R1877 A call through a `def(...)` bound is a `call.indirect`, not
+  the bound's `__call__` requirement call**
 
-  `a(x)` over a struct value is checked against the contract
-  `declared_callable_contract` (`checker/call_inference.rs`) finds and
-  lowered as a `call.indirect` the elaborator devirtualizes, where
-  upstream resolves it as the method call `a.__call__(x)`.
-  - Probe: `print(a(1))` over `var a = Add(3)`, with `struct
-    Add(Copyable)` declaring `def __call__(self, x: Int) -> Int`, prints
-    `4` at the pin; Mojito reports "'a' has type Add and is not callable".
-  - Probe: `return f(x)` in `def apply[F: Caller](f: F, x: Int) -> Int`,
-    with `trait Caller` declaring `__call__`, prints `7` at the pin over
-    `apply(Add(3), 4)`; Mojito reports "'f' has type F and is not
-    callable".
-  - Lever: check a call on a non-function value as R1357 checks an
-    operator, as its `__call__` method call, and lower it as a
-    `call.method`; the specializer's `CallIndirect`-over-struct
-    devirtualization (`native/mono/specializer.rs`) then goes.
+  `f(x)` in `def apply[F: def(Int) -> Int](f: F, x: Int)` lowers as a
+  `call.indirect` whose target is the contract's
+  `__trait_dispatch.__call__…`, where upstream reads a `def(...)` bound as
+  a trait whose requirement is `__call__` and checks the call as
+  `f.__call__(x)`.
+  - The gap: a Mojito function or closure value declares no `__call__`,
+    so the call cannot be a `call.method` while `F` may still be bound to
+    one.
+  - Probe: `apply(Counter(10), 5)`, with `struct Counter(def(Int) ->
+    Int)` declaring `__call__`, prints `15` at the pin and in Mojito; after
+    elaboration it should hold a `call.method` on `Counter.__call__`, where
+    the specializer devirtualizes the `call.indirect` over the struct
+    (`native/mono/specializer.rs`).
   - That devirtualization is the last place `native::mono` composes a
     callee's name (`symbol::retarget_method_symbol` on the contract's
-    `__trait_dispatch.__call__…`), as is its `call.indirect` check in
-    `mir/verify/calls.rs`; both go with it.
+    target), as is the struct-callee check of `call.indirect` in
+    `mir/verify/calls.rs`; both go once the call is a method call.
   - The devirtualization names a reduced `__call__` without dropping its
     operands ("'Add$mono$V1.__call__$REMOVED$ARG' expects 0 argument(s),
     got 1" once `__call__` leaves `mir::TYPE_REACHED_MEMBERS`); a
     `call.method` reduces through `Specializer::reduce_method_call`.
-  - Upstream's `SubscriptNode` also binds a bracket over such a value to
-    `__call__`'s parameters when the struct declares no `__getitem__`,
-    `__setitem__`, or `__getattr__`; Mojito has no such path.
-  - Found while landing R1031 (2026-10-26).
+  - Lever: give a function value the `__call__` witness the bound's
+    witness table answers, check the call through the bound as that
+    requirement's method call, and let the elaborator fold it per instance
+    as any requirement call.
+  - Found while landing R1466 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

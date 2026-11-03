@@ -783,7 +783,7 @@ pub fn is_trait_dispatch_symbol(symbol: &str) -> bool {
 ///
 /// It spells an instance's member names (`List.grow` as
 /// `List$mono$TInt.grow`), and a `def(...)` contract's `__call__` on a
-/// struct callee (R1466).
+/// struct callee (R1877).
 ///
 /// Keeping this parsing here preserves this module's ownership of the overload
 /// encoding.

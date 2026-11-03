@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call on a struct value is now checked and lowered as its `__call__`
+  method call, as upstream's `CallNode` resolves a callee that is no
+  function, rather than through its `def(...)` conformance as a
+  `call.indirect` (R1466). A struct declaring `__call__` without such a
+  conformance, and a value whose bound trait declares `__call__`, are
+  callable, as at the pin, which they were not: by name, through a
+  field, on an element, and on an expression. A bracket over a struct
+  declaring no `__getitem__`, `__setitem__`, or `__getattr__` binds
+  `__call__`'s parameters (`s[1](3)`), as upstream's `SubscriptNode`
+  does. A call through a `def(...)` constraint is still devirtualized by
+  the elaborator (R1877).
 - `inline-parametric` now closes an associated projection its
   substitution makes concrete (`T.IteratorType[o]` at `T = List[Int]`)
   from the struct's associated-type rows, and folds the inlined iteration

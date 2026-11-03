@@ -910,6 +910,212 @@ impl Checker {
         Ok(found)
     }
 
+    /// Type the call `call` of the value `name` as its method call
+    /// `name.__call__(args)` ([`Self::infer_call_method`]). `None` for a
+    /// callee no binding names, which the call by name types.
+    pub(super) fn infer_value_method_call(
+        &self,
+        call: &Expr,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        self.binding_scope(name)?;
+        let ty = self.lookup(name)?;
+        let receiver = super::initializer_list::spelled_node(
+            call,
+            1,
+            ExprKind::Identifier(name.to_string()),
+            call.span,
+        );
+        if param_args.is_empty() {
+            return self.infer_call_method(call, receiver, ty, args, kwargs);
+        }
+        self.infer_element_call_method(call, receiver.clone(), ty, param_args, args, kwargs)
+            .or_else(|| {
+                self.infer_bracketed_call_method(call, receiver, ty, param_args, args, kwargs)
+            })
+    }
+
+    /// Type the call `value[params](args)` of a struct value declaring
+    /// `__call__` and none of `__getitem__`, `__setitem__`, and
+    /// `__getattr__` as the parameterized method call
+    /// `value.__call__[params](args)`, as upstream's `SubscriptNode` binds
+    /// such a bracket to `__call__`'s parameters. `None` for any other
+    /// value.
+    pub(super) fn infer_bracketed_call_method(
+        &self,
+        call: &Expr,
+        receiver: Expr,
+        ty: &Ty,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let (struct_name, _) = ty.kind().as_non_simd_struct()?;
+        let info = self.structs.get(struct_name)?;
+        if !info.methods.contains_key("__call__")
+            || ["__getitem__", "__setitem__", "__getattr__"]
+                .iter()
+                .any(|method| info.methods.contains_key(*method))
+        {
+            return None;
+        }
+        let callee = super::initializer_list::spelled_node(
+            call,
+            3,
+            ExprKind::Member {
+                object: Box::new(receiver),
+                field: "__call__".to_string(),
+            },
+            call.span,
+        );
+        let spelled = super::initializer_list::spelled_node(
+            call,
+            0,
+            ExprKind::Invoke {
+                callee: Box::new(callee),
+                param_args: param_args.to_vec(),
+                args: args.to_vec(),
+                kwargs: kwargs.to_vec(),
+            },
+            call.span,
+        );
+        Some(self.infer_spelled(call, spelled))
+    }
+
+    /// Type the call `base[i, …](args)` of a subscripted struct value as
+    /// the element's method call `base[i, …].__call__(args)`
+    /// ([`Self::infer_call_method`]): `None` unless the bracket holds
+    /// run-time indices over a struct declaring `__getitem__` and no
+    /// callable contract, and its element declares `__call__`.
+    pub(super) fn infer_element_call_method(
+        &self,
+        call: &Expr,
+        base: Expr,
+        base_ty: &Ty,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let indices = param_args
+            .iter()
+            .map(|argument| match argument {
+                mojito_ast::ast::ParamArg::Value(value) => Some(value.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let (struct_name, _) = base_ty.kind().as_non_simd_struct()?;
+        if self.declared_callable_contract(base_ty).is_some()
+            || !self
+                .structs
+                .get(struct_name)
+                .is_some_and(|info| info.methods.contains_key("__getitem__"))
+        {
+            return None;
+        }
+        let subscript = match <[Expr; 1]>::try_from(indices) {
+            Ok([index]) => ExprKind::Index {
+                object: Box::new(base),
+                index: Box::new(index),
+            },
+            Err(indices) => ExprKind::MultiIndex {
+                object: Box::new(base),
+                args: indices
+                    .into_iter()
+                    .map(mojito_ast::ast::SubscriptArg::Index)
+                    .collect(),
+            },
+        };
+        let element = super::initializer_list::spelled_node(call, 2, subscript, call.span);
+        let element_ty = match self.infer(&element).ok()?.into_kind() {
+            TyKind::Ref(reference) => reference.referent,
+            kind => Ty::new(kind),
+        };
+        self.infer_call_method(call, element, &element_ty, args, kwargs)
+    }
+
+    /// Type the call `object.field(args)` of a struct field no method
+    /// answers as the field's method call `object.field.__call__(args)`
+    /// ([`Self::infer_call_method`]). `None` when `object` has no such field.
+    pub(super) fn infer_field_call_method(
+        &self,
+        call: &Expr,
+        object: &Expr,
+        field: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let object_ty = self.infer(object).ok()?;
+        let (struct_name, arguments) = object_ty.kind().as_non_simd_struct()?;
+        let info = self.structs.get(struct_name)?;
+        let (_, field_ty) = info.fields.iter().find(|(name, _)| name == field)?;
+        let field_ty = substitute_at(field_ty, info, arguments);
+        let receiver = super::initializer_list::spelled_node(
+            call,
+            1,
+            ExprKind::Member {
+                object: Box::new(object.clone()),
+                field: field.to_string(),
+            },
+            call.span,
+        );
+        self.infer_call_method(call, receiver, &field_ty, args, kwargs)
+    }
+
+    /// Type the call `call` of `receiver`, a value of type `ty`, as its
+    /// method call `receiver.__call__(args)`, as upstream's `CallNode`
+    /// resolves a callee that is no function: a struct value declaring
+    /// `__call__`, or a value of a type parameter whose bounds declare it.
+    /// The checked arena hands HIR the spelled method call in the call's
+    /// place. `None` for any other callee.
+    pub(super) fn infer_call_method(
+        &self,
+        call: &Expr,
+        receiver: Expr,
+        ty: &Ty,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let bound = matches!(
+            ty.kind(),
+            TyKind::Param {
+                callable_bound: None,
+                ..
+            }
+        );
+        let declared = ty
+            .kind()
+            .as_non_simd_struct()
+            .is_some_and(|(struct_name, _)| {
+                self.structs
+                    .get(struct_name)
+                    .is_some_and(|info| info.methods.contains_key("__call__"))
+            });
+        if !bound && !declared {
+            return None;
+        }
+        let spelled = super::initializer_list::spelled_node(
+            call,
+            0,
+            ExprKind::MethodCall {
+                object: Box::new(receiver),
+                method: "__call__".to_string(),
+                args: args.to_vec(),
+                kwargs: kwargs.to_vec(),
+            },
+            call.span,
+        );
+        match self.infer(&spelled) {
+            // A type parameter whose bounds declare no `__call__`.
+            Err(TypeError::NoSuchMethod { .. }) if bound => None,
+            result => Some(result.inspect(|ty| {
+                self.record_spelled_construction(call, spelled, ty);
+            })),
+        }
+    }
+
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_call(
         &self,

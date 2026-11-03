@@ -579,7 +579,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `__UninitStorage[T]` write/take/destroy crossings behind
   `MaybeUninit`).
 - `checker/call_inference.rs` owns free-function and callable-value call
-  inference (`infer_call`, generic-call instantiation).
+  inference (`infer_call`, generic-call instantiation). A call whose callee
+  is a struct value declaring `__call__`, or a value of a type parameter
+  whose bounds declare it, is spelled as its `__call__` method call and
+  recorded as a `SpelledConstruction` (`infer_call_method`, reached by
+  name through `infer_value_method_call`, through a field by
+  `infer_field_call_method`, on an element by `infer_element_call_method`,
+  and with a bracket binding `__call__`'s parameters by
+  `infer_bracketed_call_method`), as upstream's `CallNode` and
+  `SubscriptNode` resolve it.
 - `checker/type_resolution.rs` resolves source annotations into checked `Ty`
   (builtin type-argument forms, dependent/associated projection, and generic
   comptime alias expansion via `resolve_comptime_alias`), partitions a struct

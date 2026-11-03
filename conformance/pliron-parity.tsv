@@ -1196,6 +1196,7 @@ assets/ok/struct_parameter_comptime_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_parameter_instance_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_slot_fields_split.mojo	main	exe-differential	sanitized
 assets/ok/struct_type_param_construction_clone.mojo	main	exe-differential	sanitized
+assets/ok/struct_value_call_is_call_method.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_field_bracket.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_member_runtime_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_pack_method_read.mojo	main	exe-differential	sanitized

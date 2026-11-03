@@ -3364,9 +3364,9 @@ impl<'a> Specializer<'a> {
                             continue;
                         };
                         // A `def(...)` contract is no trait, so no witness
-                        // table answers it: the struct's `__call__` is
-                        // composed until R1466 checks the call as that
-                        // method's call.
+                        // table answers it: a call through the bound over a
+                        // struct composes its `__call__` until R1877 checks
+                        // that call as the requirement's method call.
                         let selected = resolved.as_deref().and_then(|contract| {
                             mojito_symbol::symbol::retarget_method_symbol(
                                 contract,

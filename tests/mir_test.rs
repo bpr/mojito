@@ -5802,7 +5802,7 @@ fn subtree_loan_shapes_verify_terminal_only() {
 }
 
 #[test]
-fn bare_element_call_lowers_subscript_then_indirect_call() {
+fn bare_element_call_lowers_subscript_then_call_method() {
     fn collect_instructions<'mir>(
         blocks: &'mir [mojito::mir::MirBlock],
         out: &mut Vec<&'mir MirInstr>,
@@ -5830,8 +5830,9 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
     }
 
     // One source Call node yields the getter-contract subscript read feeding
-    // the element's CallIndirect; a raising getter keeps its raise on the
-    // subscript instruction while the non-raising __call__ stays clean.
+    // the element's `__call__` method call, as upstream resolves
+    // `c[0](3)` as `c[0].__call__(3)`; a raising getter keeps its raise on
+    // the subscript instruction while the non-raising __call__ stays clean.
     let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) raises -> Doubler:\n        if index != 0:\n            raise Error(\"index out of range\")\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    try:\n        print(c[0](3))\n    except e:\n        print(\"caught\")\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -5845,14 +5846,12 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
         .expect("main lowered");
     let mut instructions = Vec::new();
     collect_instructions(&main.blocks, &mut instructions);
-    let (element, getter) = instructions
+    let getter = instructions
         .iter()
         .find_map(|instruction| match instruction {
             MirInstr::Index {
-                dest,
-                call: Some(call),
-                ..
-            } if call.target == "Container.__getitem__" => Some((*dest, call)),
+                call: Some(call), ..
+            } if call.target == "Container.__getitem__" => Some(call),
             _ => None,
         })
         .expect("subscript read carries the getter contract");
@@ -5860,20 +5859,21 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
         getter.raises.is_some(),
         "getter raise stays on the subscript"
     );
-    let indirect = instructions
+    let call = instructions
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::CallIndirect {
-                callee,
+            MirInstr::MethodCall {
+                method,
                 resolved,
                 raises,
                 ..
-            } if resolved.as_deref() == Some("Doubler.__call__") => Some((*callee, raises.clone())),
+            } if method == "__call__" && resolved.as_deref() == Some("Doubler.__call__") => {
+                Some(raises.clone())
+            }
             _ => None,
         })
-        .expect("element dispatch is an indirect call on the __call__ target");
-    assert_eq!(indirect.0, element, "the subscript result is the callee");
-    assert!(indirect.1.is_none(), "__call__ carries no raise of its own");
+        .expect("the element's call is its __call__ method call");
+    assert!(call.is_none(), "__call__ carries no raise of its own");
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -5882,7 +5882,7 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
 }
 
 #[test]
-fn multi_index_element_call_lowers_variadic_subscript_then_indirect_call() {
+fn multi_index_element_call_lowers_variadic_subscript_then_call_method() {
     let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Grid(Copyable):\n    var first: Doubler\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var g: Grid = Grid(Doubler(3))\n    print(g[1, 1](4))\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -5899,29 +5899,26 @@ fn multi_index_element_call_lowers_variadic_subscript_then_indirect_call() {
         .iter()
         .flat_map(|block| &block.instrs)
         .collect::<Vec<_>>();
-    let element = instructions
+    let args = instructions
         .iter()
         .find_map(|instruction| match instruction {
             MirInstr::MultiIndex {
-                dest,
                 args,
                 call: Some(call),
                 ..
-            } if call.target == "Grid.__getitem__" => {
-                assert_eq!(args.len(), 2);
-                assert!(
-                    args.iter()
-                        .all(|argument| matches!(argument, MirSubscriptArg::Index(_)))
-                );
-                Some(*dest)
-            }
+            } if call.target == "Grid.__getitem__" => Some(args),
             _ => None,
         })
         .expect("variadic subscript read carries the getter contract");
+    assert_eq!(args.len(), 2);
+    assert!(
+        args.iter()
+            .all(|argument| matches!(argument, MirSubscriptArg::Index(_)))
+    );
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::CallIndirect { callee, resolved, .. }
-            if *callee == element && resolved.as_deref() == Some("Doubler.__call__")
+        MirInstr::MethodCall { method, resolved, .. }
+            if method == "__call__" && resolved.as_deref() == Some("Doubler.__call__")
     )));
     assert!(
         mir.invariant_errors.is_empty(),

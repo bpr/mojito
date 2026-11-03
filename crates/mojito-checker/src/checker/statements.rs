@@ -1397,7 +1397,12 @@ impl Checker {
     ) -> Result<(), TypeError> {
         match &stmt.kind {
             StmtKind::RefDecl { name, value } => {
-                let reference = match self.infer(value)?.into_kind() {
+                let ty = self.infer(value)?;
+                // A sugar the check spelled binds the construction it spells
+                // (`f(x)` over a callable struct, its `f.__call__(x)`).
+                let spelled = self.spelled_construction(value);
+                let value = spelled.as_ref().unwrap_or(value);
+                let reference = match ty.into_kind() {
                     TyKind::Ref(reference) => reference,
                     _ => {
                         // Ordinary expression inference reads through a

@@ -1,4 +1,4 @@
-# The bare element-call spelling dispatches as subscript-then-indirect-call,
+# The bare element-call spelling is the element's `__call__` method call,
 # matching current Mojo: identifier bases (`objs[0](3)`), member bases
 # (`h.items[0](5)`), and multi-index brackets (`g[1, 1](10)`) all read the
 # element through the selected `__getitem__` contract and call it, with output

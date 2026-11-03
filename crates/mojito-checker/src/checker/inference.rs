@@ -591,6 +591,9 @@ impl Checker {
     /// Type of a reference *handle* in a context that stores or forwards one.
     /// Ordinary expression inference intentionally reads through references.
     pub(super) fn infer_reference_value(&self, expr: &Expr) -> Option<mojito_types::origin::RefTy> {
+        if let Some(construction) = self.spelled_construction(expr) {
+            return self.infer_reference_value(&construction);
+        }
         if let Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }) =
             self.node_facts
                 .borrow()
@@ -1052,6 +1055,34 @@ impl Checker {
                     }
                 }
                 let callable = self.infer(callee)?;
+                if param_args.is_empty()
+                    && let Some(typed) =
+                        self.infer_call_method(expr, (**callee).clone(), &callable, args, kwargs)
+                {
+                    return typed;
+                }
+                if let Some(typed) = self
+                    .infer_element_call_method(
+                        expr,
+                        (**callee).clone(),
+                        &callable,
+                        param_args,
+                        args,
+                        kwargs,
+                    )
+                    .or_else(|| {
+                        self.infer_bracketed_call_method(
+                            expr,
+                            (**callee).clone(),
+                            &callable,
+                            param_args,
+                            args,
+                            kwargs,
+                        )
+                    })
+                {
+                    return typed;
+                }
                 // Invoking a callable reached through a reference result
                 // (`(objs[0])(3)`) borrows the referent for its `__call__`
                 // receiver; it never reads the callable out as an owned value.
@@ -1307,8 +1338,11 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-            } => match self.infer_unbound_pack_construction(name, param_args, args, kwargs) {
-                Some(constructed) => constructed,
+            } => match self
+                .infer_unbound_pack_construction(name, param_args, args, kwargs)
+                .or_else(|| self.infer_value_method_call(expr, name, param_args, args, kwargs))
+            {
+                Some(typed) => typed,
                 None => self.infer_call(expr.source_span(), name, param_args, args, kwargs),
             },
             ExprKind::Member { object, field } => {
@@ -1341,12 +1375,17 @@ impl Checker {
                 .infer_initializer_call(expr, (object, method), &[], args, kwargs)
                 .unwrap_or_else(|| {
                     self.reject_direct_trait_member(object).and_then(|()| {
-                        self.infer_method_call(
+                        match self.infer_method_call(
                             &expr.source_span(),
                             object,
                             method,
                             MethodCallArguments::ordinary(args, kwargs),
-                        )
+                        ) {
+                            Err(error @ TypeError::NoSuchMethod { .. }) => self
+                                .infer_field_call_method(expr, object, method, args, kwargs)
+                                .unwrap_or(Err(error)),
+                            result => result,
+                        }
                     })
                 }),
             ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::TypeApply { .. }

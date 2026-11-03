@@ -1,5 +1,5 @@
-# Nominal callable structs devirtualize to direct `__call__` calls during
-# backend monomorphization: a read-`self` `__call__` reads its own fields, a
+# A call on a nominal callable struct is its `__call__` method call, as
+# upstream resolves it: a read-`self` `__call__` reads its own fields, a
 # raising `__call__` reports through the tagged outcome and is caught, and an
 # owned argument transfers through the invocation. A `mut self` `__call__`
 # writing back through its receiver place is Mojito-only — upstream's

@@ -7846,70 +7846,66 @@ fn generic_lambda_is_a_closure() {
     );
 }
 
-#[test]
-fn bare_element_calls_record_the_element_invocation_plan() {
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[0](3))\n";
-    let checked = checked_with_std(source).expect("check");
-    let plans = checked
+/// The receivers of every `__call__` method call `checked` holds, as the
+/// operation each receiver node performs, beside whether any call left an
+/// element-invocation plan.
+fn call_method_receivers(
+    checked: &mojito::checked::CheckedProgram,
+) -> (Vec<&mojito::checked::CheckedOp>, bool) {
+    let receivers = checked
         .expressions()
         .iter()
-        .filter_map(|expression| {
-            expression
-                .adjustments
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    SemanticAdjustment::ElementInvocation(plan) => Some((expression, plan)),
-                    _ => None,
-                })
+        .filter_map(|expression| match &expression.op {
+            mojito::checked::CheckedOp::MethodCall { object, method, .. }
+                if method == "__call__" =>
+            {
+                checked.expression(*object).map(|object| &object.op)
+            }
+            _ => None,
         })
-        .collect::<Vec<_>>();
-    let [(expression, plan)] = plans.as_slice() else {
-        panic!("expected exactly one element-invocation plan: {plans:#?}");
-    };
-    assert!(matches!(
-        expression.op,
-        mojito::checked::CheckedOp::Call { .. }
-    ));
-    assert_eq!(plan.getter.target, "Container.__getitem__");
-    assert_eq!(plan.target.as_deref(), Some("Doubler.__call__"));
-    assert!(plan.raises.is_none());
-    // The getter contract moved out of the node's selected-call slot: the
-    // node-level contract must describe the element call, not the subscript.
-    assert!(
-        !expression
+        .collect();
+    let planned = checked.expressions().iter().any(|expression| {
+        expression
             .adjustments
             .iter()
-            .any(|adjustment| matches!(adjustment, SemanticAdjustment::SelectedCall(_))),
-        "{expression:#?}"
+            .any(|adjustment| matches!(adjustment, SemanticAdjustment::ElementInvocation(_)))
+    });
+    (receivers, planned)
+}
+
+#[test]
+fn bare_element_call_on_a_struct_element_is_its_call_method() {
+    // `c[0](3)` over a struct element is upstream's `c[0].__call__(3)`.
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[0](3))\n";
+    let checked = checked_with_std(source).expect("check");
+    let (receivers, planned) = call_method_receivers(&checked);
+    assert!(!planned, "a struct element's call records no element plan");
+    assert!(
+        matches!(
+            receivers.as_slice(),
+            [mojito::checked::CheckedOp::Index { .. }]
+        ),
+        "{receivers:#?}"
     );
 }
 
 #[test]
-fn member_base_and_multi_index_element_calls_record_plans() {
+fn member_base_and_multi_index_element_calls_are_call_methods() {
     let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var inner: Container\n\n@fieldwise_init\nstruct Grid(Copyable):\n    var first: Doubler\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var h: Holder = Holder(Container(Doubler(2)))\n    print(h.inner[0](3))\n    var g: Grid = Grid(Doubler(3))\n    print(g[1, 1](4))\n";
     let checked = checked_with_std(source).expect("check");
-    let plans = checked
-        .expressions()
-        .iter()
-        .filter_map(|expression| {
-            expression
-                .adjustments
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    SemanticAdjustment::ElementInvocation(plan) => Some((expression, plan)),
-                    _ => None,
-                })
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(plans.len(), 2, "{plans:#?}");
-    assert!(plans.iter().any(|(expression, plan)| {
-        matches!(expression.op, mojito::checked::CheckedOp::Invoke { .. })
-            && plan.getter.target == "Container.__getitem__"
-    }));
-    assert!(plans.iter().any(|(expression, plan)| {
-        matches!(expression.op, mojito::checked::CheckedOp::Call { .. })
-            && plan.getter.target == "Grid.__getitem__"
-    }));
+    let (receivers, planned) = call_method_receivers(&checked);
+    assert!(!planned, "a struct element's call records no element plan");
+    assert_eq!(receivers.len(), 2, "{receivers:#?}");
+    assert!(
+        receivers
+            .iter()
+            .any(|op| matches!(op, mojito::checked::CheckedOp::Index { .. }))
+    );
+    assert!(
+        receivers
+            .iter()
+            .any(|op| matches!(op, mojito::checked::CheckedOp::MultiIndex { .. }))
+    );
 }
 
 #[test]
