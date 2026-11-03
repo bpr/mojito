@@ -427,7 +427,9 @@ pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
         .collect()
 }
 
-/// The value-parameter scope a declaration's own binders open.
+/// The value-parameter scope a declaration's own binders open: a callable
+/// binder's included, which a body reads as its parameter reference too. A
+/// pack of callables is a frame slot of its own.
 pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
@@ -441,6 +443,12 @@ pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
                 name.trim_start_matches('*').to_string(),
                 value_parameter_expr(decl, ty),
             )),
+            ParamDecl::Value {
+                name,
+                ty,
+                variadic: false,
+                ..
+            } if decl.binds_callables() => Some((name.clone(), value_parameter_expr(decl, ty))),
             _ => None,
         })
         .collect()

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1874**.
+Next free ID: **R1875**.
 
 ## Ordered Work
 
@@ -10306,40 +10306,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     R221 (its `unsafe_bitcast` of the element pointer).
   - Model: Fable, Not Planned.
 
-- [ ] **R1449 A callable value binder's read is a frame slot, not a
-  parameter reference**
+- [ ] **R1874 A pack of callables is a frame slot, not a parameter list**
 
-  A body reads a callable binder (`f` in `def apply[f: def(Int) thin ->
-  Int]`) from a slot nothing stores, which the elaborator and
-  `inline-parametric` rewrite by name into the bound function, where
-  upstream reads it as `kgen.param.constant` of the binder like any other
-  parameter.
-  - The check keeps callable binders out of `Checker::value_binder_read`,
-    though no instance now takes a bound closure as a runtime parameter
-    (R533).
-  - The by-name rewrites: `substitute_callable_binder_reads`
-    (`mono/substitute.rs`) and `inline-parametric`'s `read_binder`.
-  - `mem-2-reg` skips a slot nothing stores or declares for this reason
+  A body reads `*fs: def() thin -> None` from a `VariadicPack` slot
+  nothing stores, which the elaborator substitutes by name, where upstream
+  reads the pack as its `ParameterList` of the bound functions, as for
+  any other value pack.
+  - The check keeps a callable pack out of the value scope
+    (`annotations::value_scope`) and out of `Checker::value_binder_read`
+    (`types::binder_read_takes_slot`), so no `ParameterList` member or
+    subscript reaches it.
+  - MIR still declares its slot (`callable_parameter_locals`), and
+    `mem-2-reg` keeps a slot nothing stores or declares for it
     (`variance`).
-  - Probe: `f(x)` in `assets/ok/nested_def_reads_enclosing_parameter.mojo`
-    and `assets/ok/thin_nested_def_reads_value_parameter.mojo`.
-  - Probe: `F[4](x)` in `assets/ok/function_type_where_bound.mojo`.
-  - Probe: the `f` slot `mem-2-reg` keeps in
-    `assets/ok/unread_callable_parameter_instances.mojo`.
-  - Probe: `callback` in
-    `assets/ok/capturing_generic_callable_parameter_environment.mojo`.
-  - A pack of callables (`*fs: def() thin -> None`) is the same slot, a
-    `VariadicPack` nothing stores, kept out of the value scope, so it is
-    no `ParameterList` the check reads.
+  - A single callable binder's read became its parameter constant with
+    R1449, so the pack is the last callable binder with storage.
   - Probe: `fs[i]()` in a `comptime for i in range(len(fs))` of `def
     run[*fs: def() thin -> None]` reports "'fs' has type
     $variadic[def() thin -> None] and is not callable"; the pin prints
     `a` and `b` over `run[a, b]()`.
   - Probe: `print(len(fs))` there reports "vm backend does not support
     methods on None yet"; the pin prints `2`.
-  - Found while landing R662 (2026-10-26).
-  - Depends on R533: a capturing closure must leave the runtime-parameter
-    path first.
+  - Found while landing R1449 (2026-11-03).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where

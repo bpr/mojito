@@ -2312,8 +2312,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   built from it (`g[i]()`) resolves. A loop binder's owner starts
   `mojito_types::param_expr::COMPTIME_FOR_OWNER`
   (`ParamId::is_comptime_for_binder`), which the checker mints
-  (`comptime_iterator_binder`) and `mono/substitute.rs::bound_parameter_locals`
-  skips. `verify/scope.rs` (`Scope::declare_loop_binders`)
+  (`comptime_iterator_binder`). `verify/scope.rs` (`Scope::declare_loop_binders`)
   brings the binders into scope and checks the sequence; `verify/concrete.rs`
   rejects a survivor; the text form is `comptime_for.iterator` (schema
   1.57). The op's body opens with a `ComptimeIf` on
@@ -2375,7 +2374,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mir::LoopLabel::PARAM_FOR_OUTER`; then a fresh slot from `fresh_slots`
   for each slot whose type names the index
   (`mojito_types::types::names_binder`), nested `elaborate_in`,
-  `substitute_callable_binder_reads`,
+  `substitute_callable_parameter_reads`,
   `substitute_blocks_metadata`, and
   `instantiate_region_references`. `simplify_param_for_loop` folds each
   iteration loop and then the outer one (`Simplified`), `FrameTables::forget`
@@ -2393,7 +2392,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   addressed_slots, retire_slots, retire_parameters}`, shared by the
   environment parameters (`mono/environment.rs`), unrolling, and `mem-2-reg`. A type parameter
   has no frame slot (`callable_parameter_locals`, `mir.rs`), as Mojo gives
-  it no storage, and neither has a non-callable value binder, whose read is
+  it no storage, and neither has a value binder, a callable one included
+  (`EnclosingBinders::callable` for a call by name), whose read is
   the `Const::Param` of its declaration reference
   (`Checker::value_binder_read`, `checker/constraints.rs`;
   `Flatten::enclosing_value_binder_read` and `Flatten::param_arg_reg`,
@@ -2507,11 +2507,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`parameter_field_objects`); a borrowed one materializes through
   `ParamValue.materialized`, as `ConstructCollection.materialized` does,
   and an alias substitution folds one off a substituted binder
-  (`substituted_field`, `comptime/rewrite.rs`). Only a callable binder's
-  read takes a slot (`types::binder_read_takes_slot`, shared with
-  `Checker::value_binder_read`), which is no drop root
-  (`parameter_slots`, `mojito-mir/src/mir.rs`, over the declarations
-  `binder_scope` walks), excluded by `elaborate_drops`.
+  (`substituted_field`, `comptime/rewrite.rs`). Only a pack's or a raw
+  list's read takes a slot (`types::binder_read_takes_slot`, shared with
+  `Checker::value_binder_read`).
 - A type's compile-time value member (`T.K`, `Self.T.K`, `A.K`, `B[4].K`,
   `Self.K`) is `Checker::type_member_value` (`checker/constraints.rs`, over
   `member_subject` and `struct_member_at`): a `ParamKind::TypeMember`

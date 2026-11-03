@@ -38,7 +38,6 @@ use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 /// entry or before it.
 pub(super) fn elaborate_drops(
     mut function: MirFunction,
-    parameter_slots: &HashSet<VarId>,
     receiver: Option<VarId>,
     values: &DropValues,
     declarations: &MirDeclarations,
@@ -83,7 +82,6 @@ pub(super) fn elaborate_drops(
     let mut blocks = std::mem::take(&mut function.blocks);
     let splice = Splice {
         f: &function,
-        parameter_slots,
         receiver,
         demands: &demands,
         loan_roots: &loan_roots,
@@ -501,9 +499,6 @@ impl Effects {
 /// before the blocks holding them.
 struct Splice<'a> {
     f: &'a MirFunction,
-    /// The function's callable binder slots
-    /// (`mojito_mir::mir::parameter_slots`), which it never drops.
-    parameter_slots: &'a HashSet<VarId>,
     /// An initializer's `out self`, which a path leaving without returning
     /// drops.
     receiver: Option<VarId>,
@@ -517,11 +512,9 @@ struct Splice<'a> {
 impl Splice<'_> {
     /// Whether the function drops the value in `v` whole: an owned
     /// register, a droppable variable ([`is_droppable_root`]), or an
-    /// initializer's receiver; a callable binder's slot never.
+    /// initializer's receiver.
     fn droppable(&self, v: VarId) -> bool {
-        self.values.is_register_root(v)
-            || self.receiver == Some(v)
-            || (is_droppable_root(self.f, v) && !self.parameter_slots.contains(&v))
+        self.values.is_register_root(v) || self.receiver == Some(v) || is_droppable_root(self.f, v)
     }
 
     /// The deaths of `root` whose bits in `dying` die with `live` live

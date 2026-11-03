@@ -67,7 +67,16 @@ impl<'a> Flatten<'a> {
         // read in place: a call borrows its callee, as upstream passes a
         // closure's storage to its `__call__` by address, rather than
         // calling a copy of it.
-        if let Some(variable) = self.local_callee(call, name) {
+        let local = self.local_callee(call, name);
+        // A callable binder's read is its parameter constant, which the
+        // elaborator closes to the function or closure it is bound to.
+        if local.is_none()
+            && let Some((value, ty)) = self.enclosing_binders.callable(name)
+        {
+            let callee = self.constant_at(call.location(), Some(ty), Const::Param(value));
+            return self.call_through_value(call, callee, None, args, kwargs);
+        }
+        if let Some(variable) = local {
             let callee = if self.runtime_aliases.contains(&variable)
                 || self.aliases.contains_key(&variable)
             {
@@ -82,60 +91,7 @@ impl<'a> Flatten<'a> {
                 });
                 dest
             };
-            let callable_ty = self
-                .var_types
-                .get(&variable)
-                .cloned()
-                .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-            let param_decls = callable_ty
-                .as_ref()
-                .map(generic_callable_param_decls)
-                .unwrap_or_default();
-            let param_arg_regs = self.indirect_param_arg_regs(call, &param_decls);
-            let saved_anchor_permission = self.allow_argument_anchors;
-            self.allow_argument_anchors = call.call_anchors_arguments();
-            let lends_reads = call.lends_read_arguments();
-            self.open_call_setup();
-            let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
-            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
-            self.close_call_setup(Some(call));
-            self.allow_argument_anchors = saved_anchor_permission;
-            let place = self.var_place(variable);
-            let callee_place = place.is_typed().then_some(place);
-            let dest = self.fresh(call.location(), None);
-            self.emit_call_invalidations(call, args, kwargs);
-            let capture_accesses = self.call_capture_accesses(call);
-            let (instantiated_contract, instantiated_args) = call
-                .instantiated_callable_contract()
-                .map_or((None, Vec::new()), |(contract, arguments)| {
-                    (Some(contract), arguments)
-                });
-            let transfer_arg_places = arg_places.clone();
-            // A callable-struct value is the receiver of its own
-            // `__call__` transfer effects; its place is the callee's.
-            let transfer_recv_place = callee_place.clone();
-            self.record_call(dest, callable_target(&node.adjustments), 0);
-            let raises = self.raises(call.raises(), call.location());
-            self.emit_call(MirInstr::CallIndirect {
-                dest,
-                callee,
-                resolved: callable_target(&node.adjustments),
-                raises: raises.clone(),
-                args: regs,
-                kwargs: kw,
-                callee_place: callee_place.map(Box::new),
-                arg_places,
-                kwarg_places,
-                capture_accesses,
-                param_arg_regs,
-                param_decls,
-                instantiated_contract,
-                instantiated_args,
-                spread: Self::spread_position(args),
-            });
-            self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
-            self.error_region(raises);
-            return dest;
+            return self.call_through_value(call, callee, Some(variable), args, kwargs);
         }
         // `__RuntimeTuple` is the compiler-private heterogeneous pack
         // storage primitive. Public `Tuple` is an ordinary nominal
@@ -567,6 +523,73 @@ impl<'a> Flatten<'a> {
             kwargs,
             true,
         )
+    }
+
+    /// A call of the callable value `callee`, read from the slot `variable`
+    /// when it is a local's: the slot is the callee's place, which the
+    /// call borrows.
+    fn call_through_value(
+        &mut self,
+        call: Node<'a>,
+        callee: Reg,
+        variable: Option<VarId>,
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
+    ) -> Reg {
+        let node = call.checked;
+        let callable_ty = variable
+            .and_then(|variable| self.var_types.get(&variable).cloned())
+            .or_else(|| self.f.reg_types.get(&callee.0).cloned());
+        let param_decls = callable_ty
+            .as_ref()
+            .map(generic_callable_param_decls)
+            .unwrap_or_default();
+        let param_arg_regs = self.indirect_param_arg_regs(call, &param_decls);
+        let saved_anchor_permission = self.allow_argument_anchors;
+        self.allow_argument_anchors = call.call_anchors_arguments();
+        let lends_reads = call.lends_read_arguments();
+        self.open_call_setup();
+        let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        self.close_call_setup(Some(call));
+        self.allow_argument_anchors = saved_anchor_permission;
+        let callee_place = variable
+            .map(|variable| self.var_place(variable))
+            .filter(MirPlace::is_typed);
+        let dest = self.fresh(call.location(), None);
+        self.emit_call_invalidations(call, args, kwargs);
+        let capture_accesses = self.call_capture_accesses(call);
+        let (instantiated_contract, instantiated_args) = call
+            .instantiated_callable_contract()
+            .map_or((None, Vec::new()), |(contract, arguments)| {
+                (Some(contract), arguments)
+            });
+        let transfer_arg_places = arg_places.clone();
+        // A callable-struct value is the receiver of its own
+        // `__call__` transfer effects; its place is the callee's.
+        let transfer_recv_place = callee_place.clone();
+        self.record_call(dest, callable_target(&node.adjustments), 0);
+        let raises = self.raises(call.raises(), call.location());
+        self.emit_call(MirInstr::CallIndirect {
+            dest,
+            callee,
+            resolved: callable_target(&node.adjustments),
+            raises: raises.clone(),
+            args: regs,
+            kwargs: kw,
+            callee_place: callee_place.map(Box::new),
+            arg_places,
+            kwarg_places,
+            capture_accesses,
+            param_arg_regs,
+            param_decls,
+            instantiated_contract,
+            instantiated_args,
+            spread: Self::spread_position(args),
+        });
+        self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
+        self.error_region(raises);
+        dest
     }
 
     /// The ordinary direct call: compile-time arguments, runtime arguments

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A callable compile-time parameter (`f` in `def apply[f: def(Int) thin
+  -> Int]`) is now read as its parameter reference, as upstream's
+  `kgen.param.constant`, rather than from a frame slot nothing stores:
+  the elaborator closes it to the bound function like any other value
+  parameter, and `inline-parametric` binds it the same way (R1449). A
+  pack of callables still has a slot (R1874).
+- The MIR text reader accepts schema 1.155, which the writer has emitted
+  since the `type.name` removal, so `emit-mir` output loads again in
+  `exec` and `opt`.
 - `remove-unused-params` now counts a read of a slot named after a value
   binder only for a callable binder or a pack, the binders whose read
   still takes a slot; every other value binder is read as its parameter

@@ -50,7 +50,7 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
     MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj,
-    Reg, binder_scope, lower_copies_and_moves, parameter_slots,
+    Reg, lower_copies_and_moves,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
@@ -256,12 +256,6 @@ pub fn elaborate_drops_function(
     mut function: MirFunction,
     declarations: &MirDeclarations,
 ) -> MirFunction {
-    let scope = binder_scope(
-        name,
-        |name| declarations.function(name),
-        |name| declarations.structure(name),
-    );
-    let slots = parameter_slots(&function, &scope);
     let receiver = initializer_receiver_entry(&function, name, declarations).map(|_| 0);
     let pack = declarations
         .function(name)
@@ -277,7 +271,6 @@ pub fn elaborate_drops_function(
         |v| {
             Some(v) != receiver
                 && Some(v) != pack
-                && !slots.contains(&v)
                 && (is_droppable_root(&function, v) || flag(v, &function.ref_params))
         },
         |v| flag(v, &function.deinit_params),
@@ -285,7 +278,7 @@ pub fn elaborate_drops_function(
     elaborate_store_drops(&mut function, name, declarations, &|place| {
         values.defines_part(place)
     });
-    let mut elaborated = elaborate_drops(function, &slots, receiver, &values, declarations);
+    let mut elaborated = elaborate_drops(function, receiver, &values, declarations);
     refine_receiver_drops(&mut elaborated, name, declarations);
     elide_dying_copies(&mut elaborated, declarations);
     mojito_mir::mir::refine_pack_drops(&mut elaborated, pack, &|ty| {

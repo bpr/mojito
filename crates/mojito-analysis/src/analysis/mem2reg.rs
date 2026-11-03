@@ -452,7 +452,7 @@ fn variance(
     let mut slots = BTreeSet::new();
     let mut variants: HashMap<usize, Vec<VarId>> = HashMap::new();
     for (var, entry) in candidates {
-        // A slot nothing stores or declares is a callable binder's, which
+        // A slot nothing stores or declares is a pack of callables', which
         // the elaborator substitutes by name: upstream reads one as a
         // `kgen.param.constant` and allocates nothing.
         let stored_at_entry = entry_stored.contains(&var);

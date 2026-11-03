@@ -1330,6 +1330,9 @@ impl CtValue {
             // A generator binds a generator-typed parameter whose
             // conversion the checker proved.
             (value @ Self::Generator(_), TyKind::Generator(_)) => Some(value),
+            // A callable binder's value is the symbol of the function it is
+            // bound to, which a read materializes as that function.
+            (value @ Self::Str(_), TyKind::Func(_) | TyKind::GenericFunc(_)) => Some(value),
             // `Int`, `UInt`, and `Float64` hold their one lane as the host
             // scalar.
             (Self::Simd { dtype, lanes }, kind)

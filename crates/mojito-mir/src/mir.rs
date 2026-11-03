@@ -969,32 +969,6 @@ pub fn binder_scope<'a>(
     chain.into_iter().rev().flatten().collect()
 }
 
-/// The slots of `function` that name a non-variadic value binder of `scope`
-/// whose read takes a slot ([`mojito_types::types::binder_read_takes_slot`]):
-/// a callable binder.
-///
-/// Upstream has no variable for a compile-time parameter, so no such slot is
-/// a drop root: the elaborator rewrites its reads into the bound function,
-/// or promotes a capturing closure to a borrowed run-time parameter. Any
-/// other value binder's read is its parameter constant and has no slot.
-#[must_use]
-pub fn parameter_slots(function: &MirFunction, scope: &[&ParamDecl]) -> HashSet<VarId> {
-    function
-        .var_names
-        .iter()
-        .enumerate()
-        .skip(function.n_params)
-        .filter(|(_, name)| {
-            scope.iter().any(|decl| {
-                matches!(decl, ParamDecl::Value { name: declared, ty, variadic: false, .. }
-                    if declared == *name
-                        && mojito_types::types::binder_read_takes_slot(ty.kind()))
-            })
-        })
-        .filter_map(|(var, _)| VarId::try_from(var).ok())
-        .collect()
-}
-
 /// Lower `checked` to typed, verified MIR in upstream's structured `hlcf`
 /// form.
 ///
@@ -3114,21 +3088,21 @@ fn effect_or_record(
     })
 }
 
-/// A callable value parameter has storage in the callee frame although it is
-/// not part of the ordinary argument ABI: the slot the body calls through. A
-/// type parameter, as at Mojo, has none.
+/// A pack of callables has storage in the callee frame although it is not
+/// part of the ordinary argument ABI: the slot the body indexes. A callable
+/// binder's read is its parameter constant, and a type parameter, as at
+/// Mojo, has no storage.
 fn callable_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
     decls
         .iter()
         .filter_map(|decl| match decl {
             ParamDecl::Value {
-                name, ty, variadic, ..
+                name,
+                variadic: true,
+                ..
             } if decl.binds_callables() => Some((
                 name.trim_start_matches('*').to_string(),
-                match decl.value_element_ty() {
-                    Some(element) if *variadic => TyKind::VariadicPack(element.clone()).into(),
-                    _ => ty.clone(),
-                },
+                TyKind::VariadicPack(decl.value_element_ty()?.clone()).into(),
             )),
             ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
         })
@@ -5711,8 +5685,9 @@ struct EnclosingBinders {
     values: Vec<(mojito_types::param_expr::ParamRef, Ty)>,
     /// The declarations of `types` and `values`, in scope order.
     declarations: Vec<ParamDecl>,
-    /// The declarations of the callable value binders, which a body reads
-    /// as frame locals of their own.
+    /// The declarations of the callable value binders: a call by name
+    /// reads one as its parameter constant ([`Self::callable`]), and a pack
+    /// of them as a frame local of its own.
     callables: Vec<ParamDecl>,
     /// The enclosing `comptime for` loops' variables, each checked binding
     /// with the index binder it denotes.
@@ -5928,6 +5903,25 @@ impl EnclosingBinders {
             name,
             mojito_types::param_expr::MetaTy::value(ty.clone()),
         ))
+    }
+
+    /// The parameter reference a read of the callable binder `name` is,
+    /// the innermost in scope, beside its declared type; `None` for a name
+    /// no callable binder declares, or a pack of callables, which is a
+    /// frame slot of its own.
+    fn callable(&self, name: &str) -> Option<(ParamExpr, Ty)> {
+        self.callables.iter().rev().find_map(|decl| match decl {
+            ParamDecl::Value {
+                name: declared,
+                ty,
+                variadic: false,
+                ..
+            } if declared == name => Some((
+                ParamContext::detached().decl_ref(decl.id().clone(), name, decl.binder_meta()),
+                ty.clone(),
+            )),
+            _ => None,
+        })
     }
 }
 

@@ -1081,9 +1081,9 @@ fields into fresh storage, and no initializer runs again. An element of a
 nested list display is a frozen `Array` like any other struct. A tuple, struct, or vector value
 parameter follows the same rule: its read is the parameter constant of its
 declaration (`Checker::value_binder_read`), with no slot, so each read is
-the value's typed constant, with nothing built at entry. Only a callable
-binder still has a slot (`types::binder_read_takes_slot`), which is no drop
-root (`mir::parameter_slots`). A field chain off
+the value's typed constant, with nothing built at entry. A callable
+binder's read is its parameter constant too; only a pack of callables keeps
+a slot (`types::binder_read_takes_slot`). A field chain off
 either (`q.a`, `q.i.v`) is upstream's struct extract on the parameter
 attribute: the checker records it as a `SemanticAdjustment::ParamValue`
 (`Checker::infer_member` over `struct_value_field`), its root never read,
@@ -1337,16 +1337,18 @@ element type. `inline-parametric` runs the same rewrite on an inlined
 callee's body under the call's binding, so a construction of a bound
 binder is the bound type's own there too. A
 type parameter has no frame slot (`callable_parameter_locals`), as Mojo
-gives a type parameter no storage, and neither has a non-callable value
-binder: the check records each read of one as its parameter value
+gives a type parameter no storage, and neither has a value binder, a
+callable one included: the check records each read of one as its parameter value
 (`SemanticAdjustment::ParamValue` of the binder's declaration reference,
 `Checker::value_binder_read`), which MIR lowers as `Const::Param`, upstream's
 `kgen.param.constant`, and the elaborator answers per instance. A bracket
 argument over the binders (`f[n + 1]()`), which the check compiles without
 inferring its names, lowers the same way (`Flatten::param_arg_reg`). A
-callable value binder is still a slot the elaborator rewrites by name at
-each read, a use or a whole-slot load such as a `read` parameter passed on
-to another call (`substitute_callable_binder_reads`).
+call of a callable binder by name calls through its parameter constant
+(`EnclosingBinders::callable`), which the elaborator closes to the bound
+function's symbol (`CtValue::Str` at the function type, read as
+`Const::Function`); the constant owns nothing, so no drop ends it
+(`mir::owned_result_regs`). Only a pack of callables keeps a frame slot.
 
 **One check.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
@@ -6511,16 +6513,17 @@ point where a slot declared in a loop is uninitialized again.
   substitution closes (`Const::of_parameter_value`, or `Const::Param` while
   symbolic). A callable value binder
   (`f: def(Int) thin -> Int`, a `value_param` of function type bound to a
-  deferred value) is a runtime slot of the body the VM reifies from the
-  call's `param_arg_regs` entry, aligned with `instantiated_args`; the
-  pass resolves that register through `mir::callable_targets` over the
-  caller, or the `const function` the block defines, and binds the slot to
-  the function as a constant (`read_binder`), deleting
-  its drops and clearing a `call.indirect`'s `callee_place` rooted at it.
+  deferred value) is read as its parameter constant too; the call's
+  `param_arg_regs` entry, aligned with `instantiated_args`, names its
+  argument, which the pass resolves through `mir::callable_targets` over
+  the caller, or the `const function` the block defines, and binds the
+  binder to the function's symbol, which `fold_parameter_constants` reads
+  as `const function`.
   A register naming a closure of reference captures the caller makes binds
-  the slot to that closure (`CallableArgument::Closure`): the inlined entry
-  stores it there at the closure's type, so the body's call through the
-  slot inlines as a call through a caller's closure, and the call's
+  the binder to that closure (`CallableArgument::Closure`): its reads
+  become reads of a fresh slot (`read_binder`), which the inlined entry
+  stores the closure into at the closure's type, so the body's call through
+  the slot inlines as a call through a caller's closure, and the call's
   `capture_accesses` are that closure's (`accessed_through`); one naming a
   closure with a copied or moved capture, or nothing, keeps the call. A
   body declared in a `comptime for` inlines where the binders of its
@@ -6761,7 +6764,7 @@ point where a slot declared in a loop is uninitialized again.
   needs no carrying, so one inside a `try` part or a `comptime for` body
   of a value stored outside it is promoted (the elaborator renumbers only
   the registers each clone of a body defines). A slot nothing stores or
-  declares is a callable binder's, which the elaborator substitutes by
+  declares is a pack of callables', which the elaborator substitutes by
   name, and keeps its slot. The other mentions go and the slot leaves
   the function (`mir::retire_slots`).
   Its `--timings` counters are `promoted_slots` and

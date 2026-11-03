@@ -1075,7 +1075,6 @@ impl<'a> Specializer<'a> {
             &|callee| Some(self.removed_params(callee, true)),
         );
         let template = forwarded.as_ref().unwrap_or(template);
-        let scope = &self.binder_scope(&key.template);
         let mut removed = bindings.removed.clone();
         removed.extend(
             self.removed_binders(&key.template, key.reduced)
@@ -1101,7 +1100,7 @@ impl<'a> Specializer<'a> {
         let mut function = loop {
             self.applications.pending.borrow_mut().clear();
             self.unreached_failures.clear();
-            let substituted = self.substituted(&key.template, template, scope, bindings);
+            let substituted = self.substituted(&key.template, template, bindings);
             if !self.answer_pending(&key.template, bindings)? {
                 break substituted?;
             }
@@ -1241,20 +1240,18 @@ impl<'a> Specializer<'a> {
     }
 
     /// A copy of `template` with its compile-time ops elaborated and
-    /// `bindings` substituted through it, beside the slots its parameter
-    /// reads reified.
+    /// `bindings` substituted through it.
     fn substituted(
         &mut self,
         name: &str,
         template: &MirFunction,
-        scope: &[ParamDecl],
         bindings: &Bindings,
     ) -> Result<MirFunction, MonoError> {
         let mut function = template.clone();
         default_construct_parameters(&mut function.blocks, bindings, &self.source.declarations)?;
-        self.elaborate_comptime_ops(name, &mut function, scope, bindings)?;
+        self.elaborate_comptime_ops(name, &mut function, bindings)?;
         self.erase_valueless_removed_arguments(&mut function.blocks, bindings);
-        substitute_function(&mut function, bindings, scope).map_err(|mut e| {
+        substitute_function(&mut function, bindings).map_err(|mut e| {
             e.function.get_or_insert_with(|| name.to_string());
             e
         })?;

@@ -43,7 +43,6 @@ impl Specializer<'_> {
         &mut self,
         template: &str,
         function: &mut MirFunction,
-        scope: &[ParamDecl],
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
         if !mojito_mir::mir::nested_instructions(&function.blocks)
@@ -81,7 +80,7 @@ impl Specializer<'_> {
             retired: &mut retired,
             dangling,
         };
-        let frame = LoopFrame { template, scope };
+        let frame = LoopFrame { template };
         self.elaborate_in(blocks, &frame, bindings, &mut tables)?;
         if retired.is_empty() {
             return Ok(());
@@ -371,14 +370,7 @@ impl Specializer<'_> {
         // bodies are over this iteration's binding and their own, which
         // nothing else of the clone may be substituted without.
         self.elaborate_in(blocks, frame, iteration, tables)?;
-        let locals = bound_parameter_locals(frame.scope, bindings);
-        substitute_callable_binder_reads(
-            blocks,
-            tables.var_names,
-            tables.var_tys,
-            &locals,
-            &bindings.callables,
-        )?;
+        substitute_callable_parameter_reads(blocks, tables.var_names, &bindings.callables);
         default_construct_parameters(blocks, iteration, &self.source.declarations)?;
         substitute_blocks_metadata(blocks, iteration)?;
         self.answer_param_constants(
@@ -685,7 +677,6 @@ struct LoopBody<'b> {
 /// What one clone needs of the function it is cloned into.
 struct LoopFrame<'a> {
     template: &'a str,
-    scope: &'a [ParamDecl],
 }
 
 /// The function-wide register and slot tables a clone extends.

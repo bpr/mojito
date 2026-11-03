@@ -3893,8 +3893,9 @@ enum Bound {
     Type,
     /// A value binder's argument.
     Value(ParamExpr),
-    /// A callable value binder's argument: the function it names.
-    Callable(String),
+    /// A callable value binder's argument: a function, which binds the
+    /// binder's parameter constant.
+    Callable,
     /// A callable value binder's argument: the register of the closure of
     /// reference captures the caller makes.
     Closure(Reg),
@@ -3911,13 +3912,10 @@ struct Instantiation {
     /// Each owner value binder's spelling, which names the receiver's
     /// member a read of it loads, and its argument.
     members: Vec<(String, ParamExpr)>,
-    /// Each callable value binder's spelling, which names the slot the
-    /// body reads it from, and the function it is bound to.
-    callables: Vec<(String, String)>,
-    /// Each callable value binder's spelling, which names the slot the
-    /// body reads it from, and the caller's register of the closure it is
-    /// bound to.
-    closures: Vec<(String, Reg)>,
+    /// Each callable value binder bound to a closure, with its declared
+    /// type and the caller's register of the closure of reference captures
+    /// it is bound to.
+    closures: Vec<(ParamRef, Ty, Reg)>,
     /// The callee's type binders, which a site may name only to rename.
     types: Vec<ParamRef>,
 }
@@ -3953,7 +3951,6 @@ impl Instantiation {
             bindings: ParamBindings::new(),
             owner: owner.map(|owner| (owner.template.clone(), owner.ty.clone())),
             members: Vec::new(),
-            callables: Vec::new(),
             closures: Vec::new(),
             types: Vec::new(),
             context: ParamContext::detached(),
@@ -3968,17 +3965,15 @@ impl Instantiation {
                     {
                         instantiation.members.push((decl.name().to_string(), value));
                     }
-                    Bound::Callable(_) | Bound::Closure(_) => return None,
+                    Bound::Callable | Bound::Closure(_) => return None,
                     Bound::Value(_) | Bound::Type => {}
                 }
             }
         }
         for (decl, (argument, callable)) in own.iter().zip(own_arguments) {
-            let name = decl.name().trim_start_matches('*').to_string();
-            match instantiation.bind(decl, argument, *callable)? {
-                Bound::Callable(function) => instantiation.callables.push((name, function)),
-                Bound::Closure(closure) => instantiation.closures.push((name, closure)),
-                Bound::Value(_) | Bound::Type => {}
+            if let Bound::Closure(closure) = instantiation.bind(decl, argument, *callable)? {
+                let ty = decl.value_element_ty()?.clone();
+                instantiation.closures.push((decl.binder(), ty, closure));
             }
         }
         Some(instantiation)
@@ -4067,19 +4062,29 @@ impl Instantiation {
                 });
                 Some(Bound::Type)
             }
-            // A callable value binder is a runtime slot of the body the VM
-            // reifies from the call's register; bound to the function that
-            // register names, as upstream substitutes the parameter value.
+            // A callable value binder is bound to the function the call's
+            // register names, as upstream substitutes the parameter value,
+            // or to the closure the caller makes there.
             (
                 ParamDecl::Value {
+                    id,
+                    ty,
+                    variadic: false,
                     callable_default: None,
                     ..
                 },
                 TyArg::Val(CtValue::Deferred(_)),
-            ) if decl.binds_callables() => callable.map(|callable| match callable {
-                CallableArgument::Function(function) => Bound::Callable(function.clone()),
-                CallableArgument::Closure(closure) => Bound::Closure(*closure),
-            }),
+            ) if decl.binds_callables() => match callable? {
+                CallableArgument::Function(function) => {
+                    let value = self
+                        .context
+                        .constant_as(CtValue::Str(function.clone()), ty)
+                        .ok()?;
+                    self.bindings.bind(id.clone(), value);
+                    Some(Bound::Callable)
+                }
+                CallableArgument::Closure(closure) => Some(Bound::Closure(*closure)),
+            },
             (
                 ParamDecl::Value {
                     id,
@@ -4122,38 +4127,27 @@ impl Instantiation {
         Ok(ty)
     }
 
-    /// Rewrite each read of a callable binder's slot in `function` into the
-    /// function it names, and delete the slot's drops: the slot holds
-    /// nothing. A value binder's read is already its parameter constant,
-    /// which the substitution closes. A callable
-    /// bound to a caller's closure keeps its slot, which the inlined entry
-    /// stores the closure into, as upstream substitutes the closure value
-    /// for the parameter: returns each such slot with the closure's
-    /// register. `None` when a binder's slot is used otherwise.
+    /// Fold the parameter constants the substitution closed in `function`,
+    /// a callable binder's bound function among them, and read each owner
+    /// value binder through the receiver. A callable bound to a caller's
+    /// closure is read from a fresh slot, which the inlined entry stores the
+    /// closure into, as upstream substitutes the closure value for the
+    /// parameter: returns each such slot with the closure's register.
+    /// `None` when such a binder is read otherwise than whole.
     fn read_binders(&self, function: &mut MirFunction) -> Option<Vec<(VarId, Reg)>> {
-        for (name, callable) in &self.callables {
-            let slot = function
-                .var_names
-                .iter()
-                .skip(function.n_params)
-                .position(|var| var == name)?
-                + function.n_params;
-            read_binder(&mut function.blocks, slot as VarId, callable)?;
-        }
         if !self.members.is_empty() {
             read_members(&mut function.blocks, &self.members, &function.reg_types);
         }
         fold_parameter_constants(&mut function.blocks, &function.reg_types);
         self.closures
             .iter()
-            .map(|(name, closure)| {
-                let slot = function
-                    .var_names
-                    .iter()
-                    .skip(function.n_params)
-                    .position(|var| var == name)?
-                    + function.n_params;
-                Some((slot as VarId, *closure))
+            .map(|(binder, ty, closure)| {
+                let slot = VarId::try_from(function.n_vars).ok()?;
+                function.n_vars += 1;
+                function.var_names.push(binder.name.to_string());
+                function.var_tys.insert(slot, ty.clone());
+                read_binder(&mut function.blocks, binder, slot)?;
+                Some((slot, *closure))
             })
             .collect()
     }
@@ -4297,57 +4291,143 @@ impl ConstructionTypes for Instantiation {
     }
 }
 
-/// Rewrite each read of the callable binder slot `slot` in `blocks`, its
-/// regions included, into the function `function` its argument names, as
-/// the constant upstream's substitution leaves, a call through the slot
-/// into a call through that constant, and delete the slot's drops; `None`
-/// when the slot is used otherwise.
-fn read_binder(blocks: &mut [MirBlock], slot: VarId, function: &str) -> Option<()> {
+/// Rewrite each read of the callable binder `binder` in `blocks`, its
+/// parameter constant, into a read of the slot `slot` the inlined entry
+/// stores its closure into, and a call through such a read into a call
+/// through the slot; `None` when a parameter site names the binder
+/// otherwise.
+fn read_binder(blocks: &mut [MirBlock], binder: &ParamRef, slot: VarId) -> Option<()> {
+    read_binder_constants(blocks, binder, slot, &mut HashSet::new());
+    let mut names = NamesBinder {
+        binder,
+        named: false,
+    };
+    walk_blocks_mut(&mut names, blocks).ok()?;
+    (!names.named).then_some(())
+}
+
+/// [`read_binder`]'s rewrite of `blocks`, its regions included, where
+/// `reads` collects the registers read so far.
+fn read_binder_constants(
+    blocks: &mut [MirBlock],
+    binder: &ParamRef,
+    slot: VarId,
+    reads: &mut HashSet<u32>,
+) {
     for block in blocks {
-        let mut kept = Vec::with_capacity(block.instrs.len());
-        for mut instruction in std::mem::take(&mut block.instrs) {
-            for region in instruction_regions_mut(&mut instruction) {
-                read_binder(region, slot, function)?;
-            }
-            let read = match &instruction {
-                MirInstr::UseVar { dest, var, .. } if *var == slot => Some((*dest, None)),
-                MirInstr::LoadPlace { dest, place } if place.root == slot => {
-                    Some((*dest, Some(place)))
-                }
-                MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } if *var == slot => {
-                    continue;
-                }
-                _ => None,
-            };
-            if let Some((dest, place)) = read {
-                if place.is_some_and(|place| !place.is_whole_root()) {
-                    return None;
-                }
-                kept.push(MirInstr::Const {
+        for instruction in &mut block.instrs {
+            match instruction {
+                MirInstr::Const {
                     dest,
-                    k: Const::Function(function.to_string()),
-                });
-                continue;
+                    k: Const::Param(value),
+                } if value.as_decl_ref().is_some_and(|read| read.id == binder.id) => {
+                    reads.insert(dest.0);
+                    *instruction = MirInstr::UseVar {
+                        dest: *dest,
+                        var: slot,
+                        mode: UseMode::Copy,
+                        constructor: None,
+                    };
+                }
+                MirInstr::CallIndirect {
+                    callee,
+                    callee_place,
+                    ..
+                } if callee_place.is_none() && reads.contains(&callee.0) => {
+                    *callee_place = Some(Box::new(MirPlace::root(slot, None)));
+                }
+                _ => {}
             }
-            if let MirInstr::CallIndirect { callee_place, .. } = &mut instruction
-                && callee_place
-                    .as_deref()
-                    .is_some_and(|place| place.root == slot && place.is_whole_root())
-            {
-                *callee_place = None;
+            for region in instruction_regions_mut(instruction) {
+                read_binder_constants(region, binder, slot, reads);
             }
-            if instruction_slots(&instruction).contains(&slot)
-                || instruction_places(&instruction)
-                    .iter()
-                    .any(|place| place.root == slot || place.through == Some(slot))
-            {
-                return None;
-            }
-            kept.push(instruction);
         }
-        block.instrs = kept;
     }
-    Some(())
+}
+
+/// Whether a parameter site of a body names the callable binder `binder`,
+/// which [`read_binder`] reads only as a whole constant.
+struct NamesBinder<'a> {
+    binder: &'a ParamRef,
+    named: bool,
+}
+
+impl NamesBinder<'_> {
+    fn note(&mut self, value: &ParamExpr) {
+        self.named |= value
+            .free_parameters()
+            .iter()
+            .any(|free| free.id == self.binder.id);
+    }
+}
+
+impl MutTypeVisitor for NamesBinder<'_> {
+    type Error = std::convert::Infallible;
+
+    fn visit_ty(&mut self, ty: &mut Ty, _: TySite) -> Result<(), Self::Error> {
+        self.named |= names_binder(ty, self.binder);
+        Ok(())
+    }
+
+    fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), Self::Error> {
+        match arg {
+            TyArg::Ty(ty) => self.named |= names_binder(ty, self.binder),
+            TyArg::Val(CtValue::Expr(value)) => self.note(value),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn visit_variant_alternatives(&mut self, _: &mut Vec<Ty>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_variant_index(&mut self, _: &mut VariantIndex) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_lane_mask(&mut self, _: &mut LaneMask) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_arg(
+        &mut self,
+        arg: &mut MirParamArg,
+        _: ParamArgSite,
+    ) -> Result<(), Self::Error> {
+        if let Some(value) = &arg.expr {
+            self.note(value);
+        }
+        Ok(())
+    }
+
+    fn visit_param_decls(
+        &mut self,
+        _: &mut [ParamDecl],
+        _: ParamDeclSite,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_constant(&mut self, constant: &mut Const) -> Result<(), Self::Error> {
+        if let Const::Param(value) = constant {
+            self.note(value);
+        }
+        Ok(())
+    }
+
+    fn visit_param_ref(&mut self, param: &mut ParamRef) -> Result<(), Self::Error> {
+        self.named |= param.id == self.binder.id;
+        Ok(())
+    }
+
+    fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_sequence(&mut self, _: &mut ComptimeSequence) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 /// Rewrite each read of an owner value binder through the receiver, slot

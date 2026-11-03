@@ -1400,8 +1400,8 @@ impl Checker {
 
     /// The reference a read of the value binder `name` is, upstream's
     /// `kgen.param.constant` of the binder's declaration: the read takes
-    /// no storage. A callable binder, a pack, and a raw parameter list keep
-    /// their own readings. `None` for any other binding, and for a name an
+    /// no storage, a callable binder's included. A pack and a raw parameter
+    /// list keep their own readings. `None` for any other binding, and for a name an
     /// inner binding shadows.
     pub(super) fn value_binder_read(&self, name: &str) -> Option<ParamExpr> {
         if !self.is_value_parameter(name)

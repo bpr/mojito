@@ -2,15 +2,15 @@
       fn {
         name: apply,
         registers: 3,
-        vars: 2,
-        var_names: [x, f],
+        vars: 1,
+        var_names: [x],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }],
+        var_types: [var_type { var: $v0, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -19,10 +19,9 @@
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v1, mode: copy },
+              const { dest: %r0, value: param(param_decl_ref { owner: "apply", slot: 0, name: f, type: meta_value(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }) }) },
               var.use { dest: %r1, var: $v0, mode: copy },
-              call.indirect { dest: %r2, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r1], kwargs: [], callee_place: present(place { root: $v1, root_type: present(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), through: absent }), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
-              drop.var { var: $v1 }
+              call.indirect { dest: %r2, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r1], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r2) }
           }
@@ -60,15 +59,15 @@
       fn {
         name: generic_kept,
         registers: 6,
-        vars: 3,
-        var_names: [x, "x$inline1", "f$inline1"],
+        vars: 2,
+        var_names: [x, "x$inline1"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,

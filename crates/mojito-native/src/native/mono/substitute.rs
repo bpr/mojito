@@ -77,21 +77,17 @@ pub(super) fn default_construct_parameters(
     mojito_mir::mir::construct_type_parameters(blocks, bindings, declarations)
 }
 
-/// Substitute `bindings` through `function`, whose declaration declares the
-/// compile-time parameters in `scope`. Each read of a callable binder's slot
-/// is the function it is bound to.
+/// Substitute `bindings` through `function`. Each read of a retained
+/// callable runtime parameter is the function its argument names.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
-    scope: &[ParamDecl],
 ) -> Result<(), MonoError> {
-    substitute_callable_binder_reads(
+    substitute_callable_parameter_reads(
         &mut function.blocks,
         &function.var_names,
-        &function.var_tys,
-        &bound_parameter_locals(scope, bindings),
         &bindings.callables,
-    )?;
+    );
     walk_function_mut(&mut Substitution { bindings }, function)?;
     copy_builtin_receivers(&mut function.blocks, &function.reg_types);
     Ok(())
@@ -146,20 +142,17 @@ pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMa
     }
 }
 
-/// Rewrite each read of a callable binder's slot in `blocks`, its regions
-/// included, into the function the binder is bound to. A read is a `UseVar`
-/// of the slot or a whole-slot `LoadPlace` (a `read` parameter passed on to
-/// another call); a projected or `through` load is not a read of the
-/// binder's value. A callable binder is the one value binder a body still
-/// reads from a frame slot; any other value binder's read is its parameter
-/// constant, which the substitution closes.
-pub(super) fn substitute_callable_binder_reads(
+/// Rewrite each read of a retained callable runtime parameter's slot in
+/// `blocks`, its regions included, into the function its argument names. A
+/// read is a `UseVar` of the slot or a whole-slot `LoadPlace` (a `read`
+/// parameter passed on to another call); a projected or `through` load is
+/// not a read of the parameter's value. A callable binder's read is its
+/// parameter constant, which the instance closes like any other.
+pub(super) fn substitute_callable_parameter_reads(
     blocks: &mut [MirBlock],
     var_names: &[String],
-    var_tys: &HashMap<u32, Ty>,
-    locals: &HashMap<String, &CtValue>,
     callables: &HashMap<String, String>,
-) -> Result<(), MonoError> {
+) {
     for block in blocks {
         for instruction in &mut block.instrs {
             let read = match instruction {
@@ -172,35 +165,21 @@ pub(super) fn substitute_callable_binder_reads(
                 _ => None,
             };
             if let Some((dest, var)) = read
-                && let Some(name) = var_names.get(var as usize)
-                && let Some(constant) = callables
-                    .get(name)
-                    .map(|callable| Ok(Const::Function(callable.clone())))
-                    .or_else(|| {
-                        let ty = var_tys.get(&var).filter(|ty| {
-                            matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
-                        })?;
-                        let value = locals.get(name.as_str())?;
-                        Some(
-                            Const::of_parameter_value(value, Some(ty)).ok_or_else(|| MonoError {
-                                kind: MonoErrorKind::Unsupported,
-                                function: None,
-                                construct: format!("unsupported runtime value parameter `{value}`"),
-                            }),
-                        )
-                    })
+                && let Some(callable) = var_names
+                    .get(var as usize)
+                    .and_then(|name| callables.get(name))
             {
-                *instruction = MirInstr::Const { dest, k: constant? };
+                *instruction = MirInstr::Const {
+                    dest,
+                    k: Const::Function(callable.clone()),
+                };
             } else {
                 for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                    substitute_callable_binder_reads(
-                        region, var_names, var_tys, locals, callables,
-                    )?;
+                    substitute_callable_parameter_reads(region, var_names, callables);
                 }
             }
         }
     }
-    Ok(())
 }
 
 pub(super) fn substitute_declaration(
@@ -821,27 +800,6 @@ pub(super) fn array_display_construction(
             Ok(vec![MirInstr::Const { dest, k }])
         }
     }
-}
-
-/// The constant each compile-time parameter's local reads. MIR names a
-/// value binder's local by its spelling, which the declaration's `scope`
-/// resolves to the binder: a signature declares a spelling once. A
-/// `comptime for` index, which a thunk reads as a parameter reference, has no
-/// local.
-pub(super) fn bound_parameter_locals<'a>(
-    scope: &[ParamDecl],
-    bindings: &'a Bindings,
-) -> HashMap<String, &'a CtValue> {
-    scope
-        .iter()
-        .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
-        .map(ParamDecl::binder)
-        .filter(|binder| !binder.id.is_comptime_for_binder())
-        .filter_map(|binder| {
-            let value = bindings.values.get(&binder)?;
-            Some((binder.name.trim_start_matches('*').to_string(), value))
-        })
-        .collect()
 }
 
 /// `bindings` substituted through every type and parameter site of a body,

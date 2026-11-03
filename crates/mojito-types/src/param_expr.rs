@@ -138,9 +138,11 @@ impl ParamContext {
         // (named by its monomorphized instance) is a value of the declared
         // closed struct type it materialized at. A trait bound to a
         // trait-valued parameter is a value of the metatype it upcast to.
-        // A string at the nominal `String` is a `String`.
+        // A string at the nominal `String` is a `String`, and a function's
+        // symbol at a function type that function.
         if (crate::types::tuple_elements(ty).is_some()
             || crate::types::is_nominal_string(ty)
+            || matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
             || matches!(value, CtValue::Struct { .. } | CtValue::Trait(_)))
             && !crate::types::ct_value_is_symbolic(&value)
         {

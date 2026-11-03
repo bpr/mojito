@@ -14,7 +14,7 @@
 //! analysis reads too.
 
 use super::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
+    Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
     MirSubscriptArg, MirSubscriptCall, MirTerm, Reg, TraitRequirement, instruction_regions,
 };
 use mojito_ast::ast::ArgConvention;
@@ -655,10 +655,19 @@ pub enum ArgumentBinding {
 /// a variant's replacement, an iterator's element, a subscript call's
 /// value result, a constant, a region op's result, and a rebind of an
 /// owned value. A shallow read (`place.load`, `field.get`, `ref.read`) and a
-/// reference are not owned; nor is anything of a type whose drop runs no
+/// reference are not owned, nor is a callable binder's parameter constant,
+/// which names the function it is bound to, as upstream destroys no
+/// `kgen.param.constant`; nor is anything of a type whose drop runs no
 /// code, which [`owned_register`] leaves out.
 pub fn owned_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
     match instruction {
+        MirInstr::Const {
+            k: Const::Param(value),
+            ..
+        } if value
+            .meta()
+            .as_value()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))) => {}
         MirInstr::Call { dest, .. }
         | MirInstr::CallIndirect { dest, .. }
         | MirInstr::CopyValue { dest, .. }
