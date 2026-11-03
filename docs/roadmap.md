@@ -11280,9 +11280,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Delete the rules and `TyKind::StringLiteral(None)` itself.
   - The elaborator also defaults an unsolved type binder and the writer
     slot of a type-reached member to the value-less type
-    (`mono/instances.rs`), and a `[s: StringLiteral]` binder's declared
-    type is it (`ct_param_source_type`, `comptime.rs`); each needs its
-    upstream type before the variant can go.
+    (`mono/instances.rs`), a `[s: StringLiteral]` binder's declared
+    type is it (`ct_param_source_type`, `comptime.rs`), and
+    `MetaTy::of_value` types an untyped `CtValue::Str` by it
+    (`param_expr.rs`); each needs its upstream type before the variant can
+    go.
+  - Probe: typing that `CtValue::Str` as `Ty::string_literal_of(text)`
+    makes a `subarch: StaticString = _ANY` default a `StringSpan`
+    construction the elaborator cannot read, so `comptime if
+    is_nvidia_gpu():` fails with "compile-time application
+    `is_nvidia_gpu` reads an unresolved value `StringSpan("<any>",
+    "<any>")`" (`Specializer`'s `argument_value`, `mono/specializer.rs`).
   - Probe: `def f(s: StringLiteral) -> Int: return s.byte_length()`
     already prints `3` for `f("abc")`, since the bare argument
     auto-parameterizes. Done when `rg string_literal_primitive crates` is
