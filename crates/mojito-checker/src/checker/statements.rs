@@ -47,6 +47,13 @@ impl Checker {
                 StmtKind::Struct { name, .. } => Some(name.clone()),
                 _ => None,
             }));
+        self.declared_aliases
+            .extend(stmts.iter().filter_map(|statement| match &statement.kind {
+                StmtKind::Comptime {
+                    name, type_params, ..
+                } if type_params.is_empty() => Some(name.clone()),
+                _ => None,
+            }));
         self.nested_origins_read_only_functions
             .extend(stmts.iter().filter_map(|statement| match &statement.kind {
                 StmtKind::Def {
@@ -93,6 +100,7 @@ impl Checker {
         // member types, and registers as soon as they resolve.
         let mut deferred_shells = Vec::new();
         let mut waiting_aliases = Vec::new();
+        let mut constructing_aliases = Vec::new();
         let module_constants: HashSet<&str> = stmts
             .iter()
             .filter_map(|statement| match &statement.kind {
@@ -118,8 +126,10 @@ impl Checker {
             // (`H: Hasher = default_hasher`): registering module-level
             // aliases in source order beside the shells lets a shell resolve
             // an earlier alias and an alias body an earlier shell.
-            if self.register_module_alias_when_declared(statement)? {
-                waiting_aliases.push(index);
+            match self.register_module_alias_when_declared(statement)? {
+                AliasRegistration::Registered => {}
+                AliasRegistration::AwaitsTypes => waiting_aliases.push(index),
+                AliasRegistration::AwaitsSignatures => constructing_aliases.push(index),
             }
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
@@ -154,7 +164,7 @@ impl Checker {
         self.classify_applicable_signatures(stmts);
         self.fold_builtin_bodies(stmts)?;
         self.compile_application_constraints(stmts);
-        self.complete_shell_defaults(stmts)?;
+        self.complete_shell_defaults(stmts, false)?;
         drop(phase);
         let phase = timing::span("declarations.traits");
         // A trait requirement's default folds against the module's constants,
@@ -216,11 +226,12 @@ impl Checker {
         drop(phase);
         let phase = timing::span("declarations.aliases");
         for index in alias_dependency_order(stmts) {
-            let statement = &stmts[index];
-            if self.register_module_alias_when_declared(statement)?
-                && !waiting_aliases.contains(&index)
-            {
-                waiting_aliases.push(index);
+            waiting_aliases.retain(|waiting| *waiting != index);
+            constructing_aliases.retain(|waiting| *waiting != index);
+            match self.register_module_alias_when_declared(&stmts[index])? {
+                AliasRegistration::Registered => {}
+                AliasRegistration::AwaitsTypes => waiting_aliases.push(index),
+                AliasRegistration::AwaitsSignatures => constructing_aliases.push(index),
             }
         }
         // A callable bounded by a trait or typed by an alias this module
@@ -286,6 +297,10 @@ impl Checker {
                 &mut constructing_structs,
             )?;
         }
+        // An alias constructing a struct of this program
+        // (`AHasher[SIMD[DType.uint64, 4](0)]`) registers once that struct's
+        // initializers have, and so do the shell defaults naming it.
+        self.settle_constructing_aliases(stmts, &mut constructing_aliases, false)?;
         // A struct whose member type constructs another of this program's
         // registers once the others' signatures have.
         while !constructing_structs.is_empty() {
@@ -302,6 +317,7 @@ impl Checker {
                 &mut constructing_structs,
             )?;
         }
+        self.settle_constructing_aliases(stmts, &mut constructing_aliases, true)?;
         // A trait still waiting reports its own rejection.
         for index in deferred_traits {
             if let StmtKind::Trait {
@@ -519,6 +535,28 @@ impl Checker {
             })
     }
 
+    /// Whether `value` constructs a struct this program declares whose
+    /// initializers have yet to register (`SIMD[DType.uint64, 4](0)` in
+    /// `AHasher[...]`).
+    fn constructs_unsigned_struct(&self, value: &Expr) -> bool {
+        struct Constructions<'a>(&'a Checker, bool);
+        impl mojito_ast::visit::Visitor for Constructions<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::Call { name, .. } = &expr.kind {
+                    self.1 |= self.0.declared_structs.contains(name)
+                        && !self
+                            .0
+                            .structs
+                            .get(name)
+                            .is_some_and(|info| info.methods.contains_key("__init__"));
+                }
+            }
+        }
+        let mut constructions = Constructions(self, false);
+        mojito_ast::visit::walk_expr(&mut constructions, value);
+        constructions.1
+    }
+
     /// Whether a struct shell over `params` that failed waits for other
     /// declarations: a parameter typed by another struct's member, or by a
     /// struct this program declares that has yet to register its shell
@@ -552,9 +590,11 @@ impl Checker {
 
     /// Whether the member types of `declaration`, which failed with
     /// `error`, wait for another struct's: a construction of one
-    /// ([`Self::awaits_construction`]), or a member reading a struct whose
+    /// ([`Self::awaits_construction`]), a member reading a struct whose
     /// member types are not among `typed` (`comptime plugin =
-    /// P.HookFor[3]` above `P`).
+    /// P.HookFor[3]` above `P`), or a member reading a module alias that
+    /// waits for the method signatures (`_DictKeyIter[String, Self.V,
+    /// default_hasher, ...]`).
     fn types_await_declarations(
         &self,
         error: &TypeError,
@@ -564,7 +604,9 @@ impl Checker {
         self.awaits_construction(error)
             || declaration.associated.iter().any(|member| {
                 names_read(&member.value).iter().any(|name| {
-                    self.declared_structs.contains(name) && !typed.contains(name.as_str())
+                    (self.declared_structs.contains(name) && !typed.contains(name.as_str()))
+                        || (self.declared_aliases.contains(name)
+                            && !self.comptime_aliases.contains_key(name))
                 })
             })
     }
@@ -740,29 +782,66 @@ impl Checker {
                 && self.declared_structs.contains(func))
     }
 
-    /// [`Self::register_module_alias`], or `true` when the alias waits for
-    /// the pass after the struct types: it applies a member a struct of
+    /// [`Self::register_module_alias`], or the pass the alias waits for.
+    /// It waits for the struct types when it applies a member a struct of
     /// this program has yet to register (`TypeList.of[...]` over the
-    /// bundled library linked from source), or it fails while some struct
+    /// bundled library linked from source), or fails while some struct
     /// shell of this program has yet to register (one waiting on another
-    /// struct's member types), whose declarations the body may need.
-    fn register_module_alias_when_declared(&mut self, statement: &Stmt) -> Result<bool, TypeError> {
-        if let StmtKind::Comptime { value, .. } = &statement.kind
-            && self.applies_unregistered_member(value)
-        {
-            return Ok(true);
+    /// struct's member types), whose declarations the body may need. It
+    /// waits for the method signatures when it fails constructing a struct
+    /// of this program whose initializers have yet to register
+    /// (`AHasher[SIMD[DType.uint64, 4](0)]`), as the pin resolves the
+    /// initializer on demand.
+    fn register_module_alias_when_declared(
+        &mut self,
+        statement: &Stmt,
+    ) -> Result<AliasRegistration, TypeError> {
+        let StmtKind::Comptime { value, .. } = &statement.kind else {
+            return Ok(AliasRegistration::Registered);
+        };
+        if self.applies_unregistered_member(value) {
+            return Ok(AliasRegistration::AwaitsTypes);
         }
         match self.register_module_alias(statement) {
+            Err(_) if self.constructs_unsigned_struct(value) => {
+                Ok(AliasRegistration::AwaitsSignatures)
+            }
             Err(_)
                 if self
                     .declared_structs
                     .iter()
                     .any(|name| !self.predeclared_structs.contains(name)) =>
             {
-                Ok(true)
+                Ok(AliasRegistration::AwaitsTypes)
             }
-            registered => registered.map(|()| false),
+            registered => registered.map(|()| AliasRegistration::Registered),
         }
+    }
+
+    /// Register each alias of `waiting` that waited for the method
+    /// signatures, in dependency order, then complete the shell defaults
+    /// and classify the callables that name it (`HasherType: Hasher =
+    /// default_hasher`). An alias still failing stays in `waiting`, or
+    /// reports its rejection when `report` holds.
+    fn settle_constructing_aliases(
+        &mut self,
+        stmts: &[Stmt],
+        waiting: &mut Vec<usize>,
+        report: bool,
+    ) -> Result<(), TypeError> {
+        for index in alias_dependency_order(stmts) {
+            if !waiting.contains(&index) {
+                continue;
+            }
+            match self.register_module_alias(&stmts[index]) {
+                Ok(()) => waiting.retain(|alias| *alias != index),
+                Err(error) if report => return Err(error),
+                Err(_) => {}
+            }
+        }
+        self.complete_shell_defaults(stmts, report)?;
+        self.classify_applicable_signatures(stmts);
+        Ok(())
     }
 
     /// Register each alias that waited for the struct types, and classify
@@ -4314,6 +4393,16 @@ fn def_shape(params: &[FnParam]) -> DefShape<'_> {
         out_results: regular.iter().filter(|p| is_out(p)).count(),
         regular,
     }
+}
+
+/// The pass a module alias registers in
+/// ([`Checker::register_module_alias_when_declared`]).
+enum AliasRegistration {
+    Registered,
+    /// After the struct types.
+    AwaitsTypes,
+    /// After the method signatures.
+    AwaitsSignatures,
 }
 
 /// The indices of `stmts`' `comptime` declarations, each after the ones

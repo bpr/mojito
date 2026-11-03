@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module `comptime` alias that constructs a struct of the same program
+  waits for that struct's initializers, and a struct parameter's default
+  naming it waits for the alias, as the pin resolves declarations on demand
+  (R1788): `struct Box[H: Defaultable = DefaultHolder]` over `comptime
+  DefaultHolder = Holder[Key(7)]` now runs, where it failed with "unknown
+  type 'DefaultHolder'", and `std.hash`'s `default_hasher` applies `SIMD`'s
+  declared `IntLiteral` initializer instead of the checker's literal fold.
+
 - An implicit literal conversion into a `SIMD` (`Int`, `Float64`, and the
   sized aliases included) is admitted by `SIMD`'s declared `@implicit`
   `IntLiteral` and `FloatLiteral` initializers instead of a checker rule,

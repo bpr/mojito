@@ -4396,7 +4396,7 @@ impl Checker {
 
     /// Whether `SIMD[args]` resolves through the declared struct. It does
     /// not before the bundled `SIMD` registers (a module alias registered
-    /// ahead of the structs, R1788), nor over a `_` width a binding's
+    /// ahead of the structs, R1846), nor over a `_` width a binding's
     /// initializer solves (R1790), which only the positional reader holds.
     fn simd_declared_application(&self, args: &[mojito_ast::ast::ParamArg]) -> bool {
         self.structs

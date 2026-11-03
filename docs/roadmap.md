@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1846**.
+Next free ID: **R1848**.
 
 ## Ordered Work
 
@@ -6846,24 +6846,44 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1788 A module `comptime` alias registers before the structs'
-  initializers, so its constructions fold by checker rules**
+- [ ] **R1847 A compile-time construction whose initializer overload
+  fails reports a generic error, not the pin's overload failure**
 
-  Problem: `comptime default_hasher = AHasher[SIMD[DType.uint64, 4](0)]`
-  in `std.hash.hasher` cannot apply `SIMD.__init__(IntLiteral)`: module
-  aliases register before any struct's `__init__` signatures do, and a
-  struct field or default naming the alias needs it at once.
-  - `Checker::staged_simd_construction` (`checker/constraints.rs`) folds
-    such a literal construction to its declared body's attribute
-    (`literal_initializer_body`) while `SIMD`'s initializers are not
-    registered.
-  - The pin resolves declarations lazily, in dependency order, so an
-    alias reads the initializer whenever it is needed.
-  - Lever: register a module alias lazily, at its first read, once the
-    initializers it applies are classified, and delete the unregistered
-    arm of `staged_simd_construction`.
+  `Holder[Key("x")]()` over `@fieldwise_init struct Key` (`var v: Int`)
+  and `struct Holder[k: Key]` fails with "not a compile-time Int
+  constant: not an associated comptime expression", where the pin reports
+  "no matching function in initialization" at `Key("x")`.
+  - Cause: `Checker::selected_application`
+    (`checker/comptime_validation.rs`) answers `Option`, so a call in a
+    parameter position whose overload set has no viable candidate is
+    `None`, and `eval_associated_ct`'s fallback (`checker/constraints.rs`)
+    reports the generic error instead of the overload resolution's.
+  - Lever: report the run-time overload resolution's rejection when no
+    candidate applies, as a body's call of the same initializer does.
+  - Probe: `assets/type_error/shell_default_alias_bad_construction.mojo`
+    (the same construction in a module alias a struct parameter's default
+    names) can then pin the wording with `# expect:`.
+  - Found while landing R1788 (2026-11-02).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1846 A `SIMD[…]` type application before `SIMD`'s shell
+  registers reads its brackets positionally**
+
+  An alias or struct shell linked above `struct SIMD` (`comptime U256 =
+  SIMD[DType.uint64, 4]`, a shell parameter typed `key: U256`) resolves
+  `SIMD[…]` through `Checker::positional_simd_dims`
+  (`checker/type_resolution.rs`), not the declared struct's parameters.
+  - The pin resolves the declaration on demand, so the application binds
+    `SIMD`'s declared parameters wherever it is spelled.
+  - `simd_declared_application` keeps the registration test for this case
+    alone, beside R1790's `_` width.
+  - Lever: let such an alias or shell wait for `SIMD`'s shell
+    (`shell_awaits_declarations` and the shell-loop alias retry in
+    `check_program`), then drop the registration test.
+  - Found while landing R1788 (2026-11-02).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1782 A float literal narrowed past its format's range is `inf`,
   where the pin's `float_literal_convert` gives `nan`**

@@ -1291,9 +1291,8 @@ impl Checker {
     ///
     /// - One literal is the application of its declared `IntLiteral` or
     ///   `FloatLiteral` initializer. Through a vector alias (`U256(0)`),
-    ///   which no compile-time call resolves yet (R1646), or in a module
-    ///   alias registered before `SIMD`'s initializers are (R1788), it is
-    ///   the attribute that body folds to
+    ///   which no compile-time call resolves yet (R1646), it is the
+    ///   attribute that body folds to
     ///   ([`Self::literal_initializer_body`]).
     /// - `width > 1` elements are the `*elems` initializer, whose collector
     ///   is no compile-time application yet: one lane per element.
@@ -1314,11 +1313,7 @@ impl Checker {
         match args {
             [argument] => match self.ct_value(argument, recording) {
                 Ok(literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))) => {
-                    let registered = self
-                        .structs
-                        .get(mojito_types::types::SIMD_TYPE_NAME)
-                        .is_some_and(|info| info.methods.contains_key("__init__"));
-                    (!registered || name != "SIMD").then(|| {
+                    (name != "SIMD").then(|| {
                         self.literal_initializer_body(
                             &mojito_types::types::canonical_simd_ty(dtype, width),
                             literal,

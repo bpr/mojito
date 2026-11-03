@@ -1021,6 +1021,7 @@ assets/ok/set_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/set_variadic_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/shadowed_local_callable_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/shadowing_constants.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/shell_default_alias_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/signature_application_same_module_struct_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/signature_builtin_select_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/signature_generic_application.mojo	-	ineligible	no-scalar-entry-shape

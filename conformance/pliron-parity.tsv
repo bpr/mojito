@@ -1021,6 +1021,7 @@ assets/ok/set_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/set_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/shadowed_local_callable_call.mojo	main	exe-differential	sanitized
 assets/ok/shadowing_constants.mojo	main	exe-differential	sanitized
+assets/ok/shell_default_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/signature_application_same_module_struct_default.mojo	main	exe-differential	sanitized
 assets/ok/signature_builtin_select_application.mojo	main	exe-differential	sanitized
 assets/ok/signature_generic_application.mojo	main	exe-differential	sanitized
