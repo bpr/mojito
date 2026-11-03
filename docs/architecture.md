@@ -804,8 +804,10 @@ policy or data-model responsibilities to focused children:
   (`Flatten::build_closure_storage`, into a hidden slot,
   `Flatten::lambda_storage_slot`): an immediately invoked lambda calls
   its method on the storage (`lower_direct_nested_call`), a lambda used
-  as a value is the storage it builds (`Flatten::lambda_storage_value`),
-  and one the check converts to a run-time callable moves the storage
+  as a value is that storage variable, which a `read` parameter borrows
+  and an owning use copies, so the check asks its storage for
+  `ImplicitlyCopyable` there (`Flatten::lambda_storage_variable`,
+  `Flatten::lambda_storage_value`), and one the check converts to a run-time callable moves the storage
   into a one-capture `closure.make` (`Flatten::lambda_closure`). The storage's `__init__` takes a moved capture
   by forwarding its storage to the `var` parameter, as an owned argument
   binds it, so the capture moves once, into the field. Only a

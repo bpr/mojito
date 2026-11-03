@@ -1529,8 +1529,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it where it stands into a hidden slot (`Flatten::lambda_storage_slot`),
   which an immediately invoked lambda passes to a direct call
   (`lower_direct_nested_call`, from `mir/lower_expr/expr_call.rs`); a
-  lambda used as a value is the storage it builds
-  (`Flatten::lambda_storage_value`, `mir/lower_expr/calls.rs`), and one the
+  lambda used as a value is that storage variable, as upstream's
+  `emitClosure` returns it: a reading consumer lends the slot and an
+  owning one takes it (`Flatten::lambda_storage_variable`,
+  `mir/call_results.rs`, and `Flatten::lambda_storage_value`,
+  `mir/lower_expr/calls.rs`), and the check rejects an owning use whose
+  storage is not `ImplicitlyCopyable` (`Checker::check_consuming_as`),
+  as upstream copies the storage there; one the
   check converts to a run-time callable
   (`SemanticAdjustment::ClosureCallable`, `Node::closure_callable`) moves
   it into its closure (`Flatten::lambda_closure`). A capture-list `def`'s

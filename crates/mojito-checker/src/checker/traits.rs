@@ -3330,6 +3330,24 @@ impl Checker {
                     .or_else(|| Some(reason.to_string())),
             });
         }
+        // A lambda's value is its storage variable, as upstream's
+        // `emitClosure` returns it, so taking it copies the storage.
+        if matches!(source.kind, ExprKind::Lambda { .. })
+            && ty.as_func().is_some_and(|func| {
+                matches!(
+                    func.environment,
+                    mojito_types::origin::CallableEnvironment::Storage(_)
+                )
+            })
+            && !self.is_implicitly_copyable(ty)
+        {
+            return Err(TypeError::ImplicitCopy {
+                ty: ty.to_string(),
+                context: context.to_string(),
+                transferable: true,
+                copyable: false,
+            });
+        }
         // A transfer of a Movable value and a fresh temporary (a call result,
         // a literal, an operator) move freely; a *place* must be Copyable.
         if self.designates_place(expr) {

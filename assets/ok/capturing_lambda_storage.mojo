@@ -1,10 +1,10 @@
 # Capturing lambdas build their closure's storage struct where they stand
 # and call its method: an immediately invoked lambda is a direct call
 # passing the storage, by value when it is register-passable and by address
-# otherwise, and a lambda used as a value moves its storage into the
-# closure, so a loop still snapshots per evaluation and each call through
-# the value reads a register-passable storage's own copy. A moved capture
-# moves once, into the storage.
+# otherwise, and a lambda used as a value is that storage variable, which
+# a `read` parameter borrows, so a loop still snapshots per evaluation and a
+# storage owning a non-copyable capture is passed without a copy. A moved
+# capture moves once, into the storage.
 struct Counter(ImplicitlyCopyable, Movable, TrivialRegisterPassable):
     var n: Int
 
@@ -88,3 +88,5 @@ def main():
     def holder() {var u^} -> Int:
         return u.n
     print(holder())
+    var w = Tracked(6)
+    print(transform(lambda (x: Int) {var w^} -> Int: x + w.n, 1))

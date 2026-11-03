@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A capturing lambda used as a value is now its storage variable, as the
+  pin's lambda is an lvalue of it (R1435): a `read` parameter borrows the
+  storage instead of receiving a register copy it destroys, and a binding,
+  owned parameter, or display element copies it, so `var peek = lambda
+  {var token^} -> Int: token.id` over a `Movable` `Token` is rejected as
+  at the pin ("cannot be implicitly copied").
 - `Variant.__init__(init_with=f)`, `Variant.set(init_with=f)`, and
   `Variant.deinit_with(f)` now borrow their callable parameter where it
   lies, as a call borrows its callee, instead of copying it into a register

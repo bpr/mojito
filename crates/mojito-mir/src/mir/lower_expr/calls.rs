@@ -708,14 +708,14 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// The value of the capturing lambda `info` at `at` where it is not
-    /// converted to a closure: its storage struct, built here, once per
+    /// The value of the capturing lambda `node` where it is not converted
+    /// to a closure: its storage variable, built here, once per
     /// evaluation, as upstream's `resolveAnonymousClosure` emits it where
-    /// the lambda stands.
+    /// the lambda stands, and taken by the consumer.
     pub(in crate::mir) fn lambda_storage_value(
         &mut self,
+        node: Node<'a>,
         info: &NestedInfo,
-        at: SourceSpan,
     ) -> Reg {
         let storage = info
             .storage
@@ -723,11 +723,12 @@ impl<'a> Flatten<'a> {
             .expect("a lambda's storage value has a storage");
         if storage.method.is_none() {
             return self.unsupported_value(
-                at,
+                node.location(),
                 "a closure naming an enclosing callable parameter is not a value (R92)",
             );
         }
-        self.build_closure_storage(info, storage, &at)
+        let slot = self.lambda_storage_slot(info, storage, &node.location());
+        self.take_c(node, crate::mir::call_results::CValue::Slot(slot))
     }
 
     /// The closure value of the lambda `info` at `at`: a capturing

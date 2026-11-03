@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1869**.
+Next free ID: **R1871**.
 
 ## Ordered Work
 
@@ -1444,6 +1444,22 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The fix is that rule's slot form: a `var.store` of a moved value whose
     slot's next use is its drop becomes the source's own drop.
   - Found while triaging R473 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1870 A named closure passed to an owned parameter at its last
+  use is copied, where the pin moves its storage**
+
+  `own(h)`, over `def own[F: def() -> Int](var f: F)` and `def h() {var
+  u} -> Int` with `h` dead after the call, prints `copy 4` where the pin
+  prints nothing, and `u` is destroyed once more.
+  - The read of `h` is `closure_storage_read` (`mir/lower_expr/calls.rs`),
+    a slot read the owned parameter copies; copy elision
+    (`analysis/copy_elision.rs`) does not turn that copy into the dying
+    slot's move, as it does for `take(v)` over a plain local.
+  - Probe: the `own(h)` call above, over an `ImplicitlyCopyable`
+    `Tracked` printing its copy initializer.
+  - Found while landing R1435 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9285,27 +9301,19 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1435 A lambda expression is a temporary of its closure's storage,
-  where the pin's is an lvalue of its storage variable**
+- [ ] **R1869 A postfix `^` after a closing parenthesis does not parse**
 
-  `var peek = lambda {var token^} -> Int: token.id` over a `Movable`
-  `Token` runs in Mojito; the pin rejects it ("value of type 'def() -> Int'
-  cannot be implicitly copied, it does not conform to
-  'ImplicitlyCopyable'"), because upstream's `emitClosure` returns its
-  storage variable, which a binding or an owned argument copies.
-  - Mojito builds the storage as a call result (`lambda_storage_value`,
-    `mir/lower_expr/calls.rs`), which a binding moves.
-  - `check_callable_display_element` (`checker/inference.rs`) stands in
-    for the copy in a display, rejecting a lambda element whose moved
-    capture is not `ImplicitlyCopyable`
-    (`assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo`);
-    drop that rule once the lambda is an lvalue.
-  - Probe: the `var peek = lambda {var token^} ...` binding above.
-  - Probe: `transform(lambda (x: Int) {k} -> Int: x * k, 3)` passes the
-    storage, a call result in a register, to a `read` parameter and
-    destroys it there, which R1445's rule rejects
-    (`assets/ok/capturing_lambda_storage.mojo`).
-  - Found while landing R1378 (2026-10-25).
+  `var t = (s)^` over a `String` local, and `var q = (lambda {var u} ->
+  Int: u.n)^`, which the pin's own diagnostic suggests for a lambda whose
+  storage cannot be implicitly copied, both stop with "Expected an
+  expression"; the pin runs both.
+  - `parse_infix` (`parser/exprs.rs`) reads `^` as the transfer sigil only
+    when it abuts `left`'s span, and a parenthesized expression's node
+    keeps its inner span, so the sigil after `)` reads as `^` xor.
+  - A transfer of a lambda then moves its storage variable, so the check
+    must admit it where `check_consuming_as` rejects the copy.
+  - Probe: the two bindings above.
+  - Found while landing R1435 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

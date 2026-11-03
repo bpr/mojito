@@ -250,6 +250,7 @@ assets/type_error/captured_origin_specialization_rejected.mojo	compile-reject	ag
 assets/type_error/capturing_closure_plain_def_param.mojo	compile-reject	agree	error: invalid call to '__call__': parameter '_Self' has 'def(Int) -> None' type, but value has type 'AnyTrait[def(Int) -> None]'
 assets/type_error/capturing_field_rejected.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/type_error/capturing_lambda_array_reassignment.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/capturing_lambda_binding_transferred_uncopyable.mojo	compile-reject	agree	error: value of type 'def() -> Int' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/capturing_lambda_display_distinct_types.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' is not compatible with value of type 'def(x: Int) -> Int'
 assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/capturing_lambda_parameter_argument.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead

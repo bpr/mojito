@@ -1,5 +1,6 @@
-# A display copies its element, so a capturing lambda that owns a
-# non-copyable value by transfer is not a storable display element.
+# A display copies its element, and a lambda is its storage variable, so a
+# capturing lambda that owns a non-copyable value by transfer is not a
+# storable display element.
 # expect: ImplicitlyCopyable
 struct Token(Movable):
     var id: Int

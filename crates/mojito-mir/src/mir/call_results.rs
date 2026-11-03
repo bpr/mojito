@@ -209,11 +209,28 @@ impl<'a> Flatten<'a> {
     }
 
     fn expr_c_holding(&mut self, e: Node<'a>, views: bool) -> CValue {
-        if let Some(slot) = self.conditional_result_slot(e) {
+        if let Some(slot) = self
+            .conditional_result_slot(e)
+            .or_else(|| self.lambda_storage_variable(e))
+        {
             return CValue::Slot(slot);
         }
         let value = self.expr(e);
         self.call_result(e, value, views)
+    }
+
+    /// The storage variable of capturing lambda `e` where it is not
+    /// converted to a closure: its storage struct built in a slot, the
+    /// lvalue upstream's `emitClosure` returns, which a reading consumer
+    /// lends and an owning one takes.
+    fn lambda_storage_variable(&mut self, e: Node<'a>) -> Option<VarId> {
+        if !matches!(e.op(), CheckedOp::Lambda { .. }) || e.closure_callable() {
+            return None;
+        }
+        let info = self.nested_info(e)?;
+        let storage = info.storage.as_ref()?;
+        storage.method.as_ref()?;
+        Some(self.lambda_storage_slot(&info, storage, &e.location()))
     }
 
     /// The result slot a conditional expression `e` that is not proven

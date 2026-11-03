@@ -829,11 +829,11 @@ impl<'a> Flatten<'a> {
             // already been restricted by checking to copyable value reads.
             CheckedOp::Transfer(inner) => self.transfer(node, operand(inner)?),
             // A lambda expression builds its closure's storage at the
-            // expression's evaluation point, once per evaluation, and moves
-            // it into the closure.
+            // expression's evaluation point, once per evaluation: its value
+            // is that storage variable, or a closure the storage moves into.
             CheckedOp::Lambda { .. } => match self.nested_info(node) {
                 Some(info) if info.storage.is_some() && !node.closure_callable() => {
-                    self.lambda_storage_value(&info, node.location())
+                    self.lambda_storage_value(node, &info)
                 }
                 Some(info) => self.lambda_closure(&info, node.location()),
                 None => self.unsupported_value(

@@ -1457,7 +1457,7 @@ impl Checker {
             // (notably `List[T]`) still controls contextual materialization.
             ExprKind::ListLit(elems) => {
                 let element = self.infer_list_elem(elems)?;
-                self.check_callable_display_element(elems, &element)?;
+                Self::check_callable_display_element(elems, &element)?;
                 if !self.is_movable(&element) {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
@@ -3472,54 +3472,22 @@ impl Checker {
     /// elements never unify. A capturing closure value of another
     /// environment stores only as the display's single lambda expression,
     /// and a named closure of one (an annotated local) is not a storable
-    /// value there. The display copies a lambda element, as upstream's
-    /// lambda is its storage's lvalue, so a transferred capture must itself
-    /// be `ImplicitlyCopyable`.
-    fn check_callable_display_element(
-        &self,
-        elems: &[Expr],
-        element: &Ty,
-    ) -> Result<(), TypeError> {
+    /// value there.
+    fn check_callable_display_element(elems: &[Expr], element: &Ty) -> Result<(), TypeError> {
         let Some(FuncTy { environment, .. }) = element.as_func() else {
             return super::type_resolution::reject_stored_callable_type(
                 element,
                 "a collection display element",
             );
         };
-        let copied_lambda = |value: &Expr| {
-            let ExprKind::Lambda { def } = &value.kind else {
-                return Ok(());
-            };
-            let captures = self
-                .fact(&def.source_span(), |facts| facts.captures.as_ref())
-                .unwrap_or_default();
-            let uncopyable = captures.iter().find(|capture| {
-                capture.kind == mojito_ast::ast::CaptureKind::Move
-                    && !self.is_implicitly_copyable(&capture.ty)
-            });
-            uncopyable.map_or(Ok(()), |capture| {
-                Err(TypeError::TraitNotSatisfied {
-                    param: "T".to_string(),
-                    ty: element.to_string(),
-                    trait_name: "ImplicitlyCopyable".to_string(),
-                    reason: Some(format!(
-                        "the closure owns '{}' by transfer, and '{}' cannot be implicitly copied",
-                        capture.name, capture.ty
-                    )),
-                })
-            })
-        };
         match environment {
-            mojito_types::origin::CallableEnvironment::Storage(_) => {
-                elems.iter().try_for_each(copied_lambda)
-            }
             mojito_types::origin::CallableEnvironment::Capturing(_) => match elems {
                 [
-                    single @ Expr {
+                    Expr {
                         kind: ExprKind::Lambda { .. },
                         ..
                     },
-                ] => copied_lambda(single),
+                ] => Ok(()),
                 [_, _, ..]
                     if elems
                         .iter()
@@ -3537,7 +3505,8 @@ impl Checker {
                     "a collection display element",
                 ),
             },
-            mojito_types::origin::CallableEnvironment::Default
+            mojito_types::origin::CallableEnvironment::Storage(_)
+            | mojito_types::origin::CallableEnvironment::Default
             | mojito_types::origin::CallableEnvironment::Thin => Ok(()),
         }
     }
