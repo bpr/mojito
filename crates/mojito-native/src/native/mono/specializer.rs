@@ -2763,7 +2763,7 @@ impl<'a> Specializer<'a> {
                         && args.len() == 1 + usize::from(method == "__divmod__")
                         && operand.is_some_and(|operand| {
                             operand.is_non_simd_struct()
-                                || matches!(operand.kind(), TyKind::StringLiteral(Some(_)))
+                                || operand.kind().string_literal_value().is_some()
                                 || vector(operand)
                                 || (method == "__divmod__" && operand.is_simd())
                         })
@@ -2816,7 +2816,7 @@ impl<'a> Specializer<'a> {
                         .reg_types
                         .get(&a.0)
                         .map(peel_refs)
-                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+                        .is_some_and(declared_operator_receiver)
                 {
                     let raises = raises.take();
                     *instruction =
@@ -2833,7 +2833,7 @@ impl<'a> Specializer<'a> {
                         .reg_types
                         .get(&a.0)
                         .map(peel_refs)
-                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+                        .is_some_and(declared_operator_receiver)
                 {
                     *resolved = None;
                 }
@@ -2857,7 +2857,7 @@ impl<'a> Specializer<'a> {
                         .reg_types
                         .get(&a.0)
                         .map(peel_refs)
-                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+                        .is_some_and(declared_operator_receiver)
                 {
                     let (resolved, raises) = (resolved.take(), raises.take());
                     *instruction =
@@ -3064,7 +3064,7 @@ impl<'a> Specializer<'a> {
                             param_decls.clear();
                             instantiated_args.clear();
                             param_arg_regs.clear();
-                            if !matches!(peel_refs(receiver).kind(), TyKind::StringLiteral(_)) {
+                            if !peel_refs(receiver).is_string_literal() {
                                 continue;
                             }
                         }
@@ -3076,7 +3076,7 @@ impl<'a> Specializer<'a> {
                         if matches!(
                             method.as_str(),
                             "write" | mojito_symbol::symbol::WRITE_FORMATTED
-                        ) && matches!(peel_refs(receiver).kind(), TyKind::StringLiteral(_))
+                        ) && peel_refs(receiver).is_string_literal()
                         {
                             for arg in args.clone() {
                                 self.enqueue_display_instance(owner, function, arg)?;
@@ -4687,4 +4687,11 @@ fn names_instance_of(arg: &ParamExpr, owner: &str) -> bool {
             .is_some_and(|(name, _)| nominal_template(name) == owner),
         _ => false,
     }
+}
+
+/// Whether an operator on a receiver of `ty` calls its declared dunder: a
+/// struct's, a `SIMD` application's included. A string literal's operator
+/// stays the compiler's, as its run-time value is the descriptor (R1862).
+fn declared_operator_receiver(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_string_literal()
 }

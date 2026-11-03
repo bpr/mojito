@@ -300,9 +300,10 @@ pub fn method_owner_params<'a>(
 pub fn has_no_destructor(ty: &Ty) -> bool {
     ty.is_simd()
         || ty.is_bool()
+        || ty.is_string_literal()
         || matches!(
             ty.kind(),
-            TyKind::StringLiteral(_)
+            TyKind::StringLiteral
                 | TyKind::None
                 | TyKind::IntLiteral(_)
                 | TyKind::FloatLiteral(_)

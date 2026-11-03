@@ -118,7 +118,7 @@ impl LayoutCx<'_> {
             // The borrowed string-literal descriptor: `{ data: ptr, len: u64 }`
             // (`MjStrDesc` in the runtime contract), which a `!kgen.string`
             // is too, as KGEN lowers one to its address and size.
-            TyKind::StringLiteral(_) | TyKind::KgenString => {
+            kind if kind.is_string_literal() || matches!(kind, TyKind::KgenString) => {
                 Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout)
             }
             // The built-in error value: `{ message: MjString }` where

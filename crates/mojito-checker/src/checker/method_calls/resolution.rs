@@ -57,11 +57,10 @@ impl Checker {
         method: &str,
     ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
         if !(ty.is_simd()
+            || ty.kind().string_literal_value().is_some()
             || matches!(
                 ty.kind(),
-                TyKind::StringLiteral(Some(_))
-                    | TyKind::IntLiteral(Some(_))
-                    | TyKind::FloatLiteral(Some(_))
+                TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
             ))
         {
             return None;

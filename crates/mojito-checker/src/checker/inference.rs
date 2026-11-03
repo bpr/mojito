@@ -2637,7 +2637,9 @@ impl Checker {
     pub(super) fn materialized_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
         let ty = self.infer(element)?;
         match ty.kind() {
-            TyKind::StringLiteral(_) => self.nominal_string_wrap(&ty, element.source_span()),
+            kind if kind.is_string_literal() => {
+                self.nominal_string_wrap(&ty, element.source_span())
+            }
             _ => Ok(default_literal(&ty)),
         }
     }

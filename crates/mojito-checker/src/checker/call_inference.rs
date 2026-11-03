@@ -128,8 +128,7 @@ impl Checker {
                     && args.len() == 1
                     && kwargs.is_empty()
                     && param_args.is_empty()
-                    && !(args.len() == 1
-                        && matches!((self.infer(&args[0])?).kind(), TyKind::StringLiteral(_)))
+                    && !(args.len() == 1 && self.infer(&args[0])?.is_string_literal())
                 {
                     self.infer_stringify(args)?;
                     self.record_at(span).overload_target = Some("String".to_string());
@@ -284,7 +283,7 @@ impl Checker {
                     // A literal message avoids an os-module import cycle
                     // for stdlib-internal trap sites; the VM reads either
                     // spelling.
-                    TyKind::StringLiteral(_) => Ok(Ty::none()),
+                    kind if kind.is_string_literal() => Ok(Ty::none()),
                     struct_ty
                         if let Some((name, targs)) = struct_ty.as_non_simd_struct()
                             && targs.is_empty()
@@ -428,9 +427,10 @@ impl Checker {
     /// `None` for any other call. Upstream's structs have no fields, so
     /// their default initializer and their copy each build the one value
     /// the type names: the elaborator writes the closed type's default
-    /// construction, the literal of its value, while the [`Ty::new`]
-    /// bridge holds the instance as the compiler's literal type (R1660,
-    /// R1851).
+    /// construction, the literal of its value, while a string literal's
+    /// run-time value is still the compiler's descriptor and the
+    /// [`Ty::new`] bridge holds a numeric instance as the compiler's
+    /// literal type (R1851).
     fn literal_construction(
         &self,
         span: &SourceSpan,
@@ -459,12 +459,11 @@ impl Checker {
             _ => None,
         }
         .filter(|ty| {
-            matches!(
-                ty.kind(),
-                TyKind::StringLiteral(Some(_))
-                    | TyKind::IntLiteral(Some(_))
-                    | TyKind::FloatLiteral(Some(_))
-            )
+            ty.kind().string_literal_value().is_some()
+                || matches!(
+                    ty.kind(),
+                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
+                )
         })?;
         let construct = || {
             // The application's arguments are typed as the instance's.
@@ -498,6 +497,24 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match instance.kind() {
+            // A literal's default construction is the literal of its value,
+            // symbolic until the instance is elaborated
+            // (`StringLiteral.__add__`'s `{}`).
+            kind if (kind.string_literal_value().is_some()
+                || matches!(
+                    kind,
+                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
+                ))
+                && args.is_empty()
+                && kwargs.is_empty() =>
+            {
+                self.record_at(span.clone()).adjustment = Some(Box::new(
+                    mojito_checked::checked::SemanticAdjustment::ConstructType {
+                        ty: instance.clone(),
+                    },
+                ));
+                Ok(instance.clone())
+            }
             kind if let Some((dtype, width)) = kind.as_simd() => self
                 .declared_simd_construction(span, Some(instance), &[], args, kwargs)
                 .unwrap_or_else(|| {
@@ -527,21 +544,6 @@ impl Checker {
                     }
                     _ => constructed,
                 }),
-            // A literal's default construction is the literal of its value,
-            // symbolic until the instance is elaborated
-            // (`StringLiteral.__add__`'s `{}`).
-            TyKind::StringLiteral(Some(_))
-            | TyKind::IntLiteral(Some(_))
-            | TyKind::FloatLiteral(Some(_))
-                if args.is_empty() && kwargs.is_empty() =>
-            {
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::ConstructType {
-                        ty: instance.clone(),
-                    },
-                ));
-                Ok(instance.clone())
-            }
             // A reflected field type's default construction.
             TyKind::Dependent(_) if args.is_empty() && kwargs.is_empty() => {
                 self.construct_dependent(span.clone(), instance.clone())

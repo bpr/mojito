@@ -1301,8 +1301,8 @@ impl CtValue {
             | (value @ Self::IntLiteral(_), TyKind::IntLiteral(_))
             | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral(_))
             | (value @ Self::Bool(_), TyKind::I1)
-            | (value @ Self::None, TyKind::None)
-            | (value @ Self::Str(_), TyKind::StringLiteral(_)) => Some(value),
+            | (value @ Self::None, TyKind::None) => Some(value),
+            (value @ Self::Str(_), kind) if kind.is_string_literal() => Some(value),
             // A string literal is the nominal `String`'s compile-time form
             // (`comptime E: Dict[String, Int] = {"a": 1}`).
             (value @ Self::Str(_), TyKind::Struct(name, args))
@@ -1740,11 +1740,11 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         // A string literal's type is the closed application of the declared
         // struct, `StringLiteral["text".value]`; a value-less one keeps the
         // elaborator's closed spelling.
-        TyKind::StringLiteral(Some(value)) => Type::Named(
+        kind if let Some(value) = kind.string_literal_value() => Type::Named(
             "StringLiteral".to_string(),
             vec![ParamArg::Value(value.materialize(span)?)],
         ),
-        TyKind::StringLiteral(None) => Type::ClosedStringLiteral,
+        TyKind::StringLiteral => Type::ClosedStringLiteral,
         kind if kind.is_float64() => Type::Named("Float64".to_string(), Vec::new()),
         TyKind::FloatLiteral(None) => Type::Named("Float64".to_string(), Vec::new()),
         TyKind::None => Type::None,

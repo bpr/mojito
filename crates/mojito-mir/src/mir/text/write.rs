@@ -2150,23 +2150,23 @@ fn ty_value(ty: &Ty) -> String {
         kind if kind.is_int() => "Int".into(),
         kind if kind.is_uint() => "UInt".into(),
         kind if kind.is_bool() => "Bool".into(),
-        TyKind::StringLiteral(None) => "StringLiteral".into(),
-        // A literal whose type carries its value is spelled as the struct
-        // application the decoder's `Ty::new` bridges back.
-        TyKind::StringLiteral(Some(_))
-        | TyKind::IntLiteral(Some(_))
-        | TyKind::FloatLiteral(Some(_)) => mojito_types::types::nominal_parts(ty).map_or_else(
-            || "StringLiteral".into(),
-            |(name, args)| {
-                record(
-                    "struct_type",
-                    &[
-                        ("name", symbol(name)),
-                        ("arguments", list(args.iter().map(ty_arg))),
-                    ],
-                )
-            },
-        ),
+        TyKind::StringLiteral => "StringLiteral".into(),
+        // A numeric literal whose type carries its value is spelled as the
+        // struct application the decoder's `Ty::new` bridges back.
+        TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)) => {
+            mojito_types::types::nominal_parts(ty).map_or_else(
+                || "IntLiteral".into(),
+                |(name, args)| {
+                    record(
+                        "struct_type",
+                        &[
+                            ("name", symbol(name)),
+                            ("arguments", list(args.iter().map(ty_arg))),
+                        ],
+                    )
+                },
+            )
+        }
         kind if kind.is_float64() => "Float64".into(),
         TyKind::None => "None".into(),
         TyKind::Never => "Never".into(),
@@ -2297,7 +2297,8 @@ fn ty_value(ty: &Ty) -> String {
                 ("arguments", list(args.iter().map(ty_arg))),
             ],
         ),
-        TyKind::Dependent(DependentType::Parameter(expr)) => {
+        TyKind::Dependent(dependent) => {
+            let DependentType::Parameter(expr) = dependent;
             positional("dependent_parameter", &param_expr(expr))
         }
         // A `SIMD` application keeps its compact record. A symbolic slot is

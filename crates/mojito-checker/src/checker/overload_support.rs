@@ -851,7 +851,7 @@ impl ArgumentBinding {
 /// conversion to `String`, a numeric one the unit of its default type.
 pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
     match actual.kind() {
-        TyKind::StringLiteral(_) => CONVERSION_UNIT,
+        kind if kind.is_string_literal() => CONVERSION_UNIT,
         TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => 1,
         _ => 0,
     }
@@ -868,10 +868,11 @@ pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
 /// `s.__eq__("x")` selecting the `String`-typed overload beside the view one.
 pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
     if actual == expected
+        || actual.kind().string_literal_value().is_some()
+            && matches!(expected.kind(), TyKind::StringLiteral)
         || matches!(
             (actual.kind(), expected.kind()),
-            (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(None))
-                | (TyKind::IntLiteral(Some(_)), TyKind::IntLiteral(None))
+            (TyKind::IntLiteral(Some(_)), TyKind::IntLiteral(None))
                 | (TyKind::FloatLiteral(Some(_)), TyKind::FloatLiteral(None))
         )
     {
@@ -880,7 +881,7 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
         || matches!(actual.kind(), TyKind::FloatLiteral(_)) && expected.is_float64()
     {
         1
-    } else if matches!(actual.kind(), TyKind::StringLiteral(_))
+    } else if actual.is_string_literal()
         && !expected
             .kind()
             .as_non_simd_struct()

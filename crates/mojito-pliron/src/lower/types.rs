@@ -177,7 +177,7 @@ pub fn lower_ty(
         | TyKind::PopArray { .. }
         | TyKind::RuntimePack(_)
         | TyKind::Variant(_)
-        | TyKind::StringLiteral(_)
+        | TyKind::StringLiteral
         | TyKind::KgenString
         | TyKind::Func(_)
             if !ty.is_simd() =>

@@ -445,6 +445,11 @@ impl MirDeclarations {
                 storage,
             )]));
         }
+        // A string literal's run-time value is the compiler's descriptor,
+        // not the declared struct's fields (R1862).
+        if ty.is_string_literal() {
+            return None;
+        }
         let (declaration, arguments) = self.struct_instance(ty)?;
         mojito_types::types::struct_field_types(
             &declaration.param_decls,
@@ -562,7 +567,8 @@ impl MirDeclarations {
             return true;
         }
         match ty.kind() {
-            TyKind::StringLiteral(_) | TyKind::None => true,
+            kind if kind.is_string_literal() => true,
+            TyKind::None => true,
             TyKind::Func(_) | TyKind::GenericFunc(_) => ty.callable().is_some_and(|function| {
                 !matches!(
                     function.environment,
@@ -2142,10 +2148,11 @@ fn lower_function(
 /// name and each instance replaces. `SIMD` and the literal structs are the
 /// exceptions: the checker types their `Self` as the application at the
 /// binders, as upstream's is, since `SIMD`'s lane rules read its slots off
-/// it and the `Ty::new` bridges hold a literal's application as the
-/// compiler's `TyKind::StringLiteral` (R1660), `TyKind::IntLiteral`, and
-/// `TyKind::FloatLiteral` (R1851). The receiver is that type at the
-/// binders, which an instance substitutes as any other type.
+/// it, a string literal's members read its text off it, and the `Ty::new`
+/// bridges hold a numeric literal's application as the compiler's
+/// `TyKind::IntLiteral` and `TyKind::FloatLiteral` (R1851). The receiver
+/// is that type at the binders, which an instance substitutes as any other
+/// type.
 fn self_receiver_ty(name: &str, parameters: &[ParamDecl]) -> Ty {
     let arguments = if [
         mojito_types::types::SIMD_TYPE_NAME,

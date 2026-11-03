@@ -1932,7 +1932,7 @@ pub struct Raises {
 pub fn converts_to_error(ty: &Ty, error: &Ty) -> bool {
     matches!(error.kind(), TyKind::Error)
         && match ty.kind() {
-            TyKind::StringLiteral(_) => true,
+            kind if kind.is_string_literal() => true,
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 mojito_symbol::symbol::is_stdlib_string_struct(name)
             }

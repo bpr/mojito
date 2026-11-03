@@ -2087,10 +2087,10 @@ impl Checker {
             // and re-canonicalizes: `Scalar[dt]` at `dt = DType.float64` is
             // `Float64`.
             kind if (kind.is_simd()
+                || kind.string_literal_value().is_some()
                 || matches!(
                     kind,
                     TyKind::KgenSimd { .. }
-                        | TyKind::StringLiteral(Some(_))
                         | TyKind::IntLiteral(Some(_))
                         | TyKind::FloatLiteral(Some(_))
                         | TyKind::PopArray { .. }
@@ -2351,11 +2351,10 @@ impl Checker {
             // A member alias `SIMD` declares, over the vector's parameters,
             // or one a literal's struct declares (`StringLiteral._from`).
             kind if (kind.is_simd()
+                || kind.string_literal_value().is_some()
                 || matches!(
                     kind,
-                    TyKind::StringLiteral(Some(_))
-                        | TyKind::IntLiteral(Some(_))
-                        | TyKind::FloatLiteral(Some(_))
+                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
                 ))
                 && let Some((sname, targs)) = self.nominal_struct(base)
                 && self.structs.get(sname).is_some_and(|info| {
@@ -4201,11 +4200,15 @@ impl Checker {
     /// literal type of another value; `None` when the two differ in
     /// anything but their origin tails or their values.
     pub(super) fn struct_origin_mismatch(&self, found: &Ty, expected: &Ty) -> Option<TypeError> {
-        if let (TyKind::StringLiteral(Some(_)), TyKind::StringLiteral(Some(_)))
-        | (
-            TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)),
-            TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)),
-        ) = (found.kind(), expected.kind())
+        if found.kind().string_literal_value().is_some()
+            && expected.kind().string_literal_value().is_some()
+            || matches!(
+                (found.kind(), expected.kind()),
+                (
+                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)),
+                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)),
+                )
+            )
         {
             return (found != expected).then(|| TypeError::OriginIdentityMismatch {
                 found: found.to_string(),
@@ -4730,9 +4733,10 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         kind if let Some((dtype, width)) = kind.as_simd() => {
             dtype.is_symbolic() || width.is_symbolic()
         }
+        kind if kind.is_string_literal() => false,
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        TyKind::StringLiteral(_)
+        TyKind::StringLiteral
         | TyKind::None
         | TyKind::Never
         | TyKind::IntLiteral(_)

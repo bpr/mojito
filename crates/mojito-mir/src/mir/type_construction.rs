@@ -235,7 +235,7 @@ fn default_construction(
         kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
             Some(Const::Float(0.0))
         }
-        kind @ TyKind::StringLiteral(_) => Some(Const::Str(
+        kind if kind.is_string_literal() => Some(Const::Str(
             kind.string_literal_text().unwrap_or_default().to_string(),
         )),
         TyKind::None => Some(Const::None),

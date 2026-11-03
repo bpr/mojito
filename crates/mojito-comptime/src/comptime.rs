@@ -478,7 +478,7 @@ fn source_type_from_ty_with_origins(
         }
         kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
         kind if kind.is_bool() => Type::Bool,
-        TyKind::StringLiteral(_) => Type::ClosedStringLiteral,
+        kind if kind.is_string_literal() => Type::ClosedStringLiteral,
         kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
             Type::Named("Float64".to_string(), Vec::new())
         }

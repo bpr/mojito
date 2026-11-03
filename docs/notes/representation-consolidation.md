@@ -74,12 +74,13 @@ command cannot use both.
      initializer), R1788 (module alias order), and R1738 (an
      `Int`-annotated `comptime`) are its neighbours.
    - `StringLiteral` is the same port, after R1657: R1658
-     → R1659 → R1660, then R1651, R1654 (its hash leaf), and R1655.
+     → R1659 → R1660 (landed), then R1861 → R1862 (its run-time
+     descriptor), R1863, R1651, R1654 (its hash leaf), and R1655.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1785 --task R1753 \
      --task R1789 --task R1788 --task R1738 -n 0
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1660 --task R1651 --task R1654 --task R1655 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1861 --task R1862 --task R1863 --task R1651 --task R1654 --task R1655 -n 0
    ```
 
 4. **Finish gap D** (size). R1356 landed in part on 10-26. Its census

@@ -159,7 +159,7 @@ impl<'a> FnLowering<'a> {
         };
         let place = place.clone();
         let hasher_ptr = self.place_address(ctx, &place, dest)?.0;
-        if matches!(receiver.kind(), TyKind::StringLiteral(_)) {
+        if receiver.is_string_literal() {
             // Materialize the literal as an owned nominal String, hash it
             // through the struct's own `__hash__`, and release the copy.
             let target = self.string_hash_instance(dest, hasher_name)?;
@@ -382,8 +382,8 @@ impl<'a> FnLowering<'a> {
                 mojito_symbol::symbol::is_stdlib_string_struct(name)
                     || mojito_types::types::is_stdlib_string_span_struct(name)
             }
-            Some(TyKind::StringLiteral(_)) => true,
-            _ => false,
+            Some(kind) => kind.is_string_literal(),
+            None => false,
         };
         if is_string {
             let ptr = self.reg_ptr(ctx, arg)?;
@@ -611,7 +611,7 @@ impl<'a> FnLowering<'a> {
             return Ok((descriptor.data, descriptor.len));
         }
         match self.func.reg_types.get(&reg.0).map(Ty::kind) {
-            Some(TyKind::StringLiteral(_) | TyKind::Error) => {
+            Some(kind) if kind.is_string_literal() || matches!(kind, TyKind::Error) => {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }

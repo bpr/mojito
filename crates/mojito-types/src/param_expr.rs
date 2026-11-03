@@ -4761,9 +4761,9 @@ fn is_scalar_domain(ty: &Ty) -> bool {
             | TyKind::IntLiteral(_)
             | TyKind::FloatLiteral(_)
             | TyKind::I1
-            | TyKind::StringLiteral(_)
             | TyKind::Dtype
     ) || ty.kind().is_simd()
+        || ty.is_string_literal()
         || ty.is_bool()
 }
 

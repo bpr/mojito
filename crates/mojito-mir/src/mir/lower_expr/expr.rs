@@ -43,10 +43,8 @@ pub(in crate::mir) fn struct_operator_method(
     crate::mir::operator_method(op).filter(|_| {
         receiver.ty().is_some_and(|ty| {
             ty.is_simd()
-                || matches!(
-                    ty.kind(),
-                    TyKind::Struct(..) | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-                )
+                || ty.kind().is_non_simd_struct()
+                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
         })
     })
 }
@@ -875,10 +873,7 @@ impl<'a> Flatten<'a> {
         let ra = if op == PrefixOp::Not
             && value.ty().is_some_and(|ty| {
                 ty.is_simd()
-                    || matches!(
-                        ty.kind(),
-                        TyKind::Struct(..) | TyKind::StringLiteral(Some(_))
-                    )
+                    || matches!(ty.kind(), TyKind::Struct(..))
                     || mojito_types::conformance::is_numeric(&ty)
             }) {
             self.bool_conversion(value.location(), ra, value.ty().as_ref())

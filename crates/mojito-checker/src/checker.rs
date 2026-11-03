@@ -1828,7 +1828,7 @@ impl Checker {
         // `SIMD`'s declared `@implicit` initializers take every dtype; an
         // instance their body rejects fails its own assert.
         let Some((name, args)) = mojito_types::types::nominal_parts(to)
-            .filter(|_| matches!(to.kind(), TyKind::Struct(..)))
+            .filter(|_| matches!(to.kind(), TyKind::Struct(..)) && !to.is_string_literal())
         else {
             return Ok(None);
         };

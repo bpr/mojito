@@ -349,10 +349,9 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         }
         // A literal's text binds a `StringLiteral[v]` pattern's binder, and
         // its value an `IntLiteral[v]` or `FloatLiteral[v]` one's.
-        TyKind::StringLiteral(Some(slot))
-            if let CtValue::Expr(expr) = slot.as_ref()
-                && let Some(binder) = expr.as_decl_ref()
-                && let TyKind::StringLiteral(Some(text)) = actual.kind() =>
+        kind if let Some(CtValue::Expr(expr)) = kind.string_literal_value()
+            && let Some(binder) = expr.as_decl_ref()
+            && let Some(text) = actual.kind().string_literal_value() =>
         {
             bind_value(binder, text, bindings)
         }
@@ -375,10 +374,12 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         // A literal-typed register materializes into whatever concrete
         // storage the checker admitted (`MaterializeLiteral` converts the
         // value at the boundary); the pattern constrains nothing here.
-        _ if matches!(
-            actual.kind(),
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::StringLiteral(_)
-        ) && pattern != actual =>
+        _ if (actual.is_string_literal()
+            || matches!(
+                actual.kind(),
+                TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
+            ))
+            && pattern != actual =>
         {
             Ok(())
         }
@@ -722,10 +723,8 @@ pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> 
     // instance.
     let ty = &materialize_nested_literals(&canonicalize_callable(ty));
     let literal = |ty: &Ty| {
-        matches!(
-            ty.kind(),
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::StringLiteral(_)
-        )
+        ty.is_string_literal()
+            || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
     };
     match bindings.types.get(binder) {
         // A literal-typed actual materializes into whatever concrete storage

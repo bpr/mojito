@@ -14,7 +14,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             // A string literal binds the type it materializes to, as the
             // pin's nonmaterializable `StringLiteral` does.
             let solved = match actual.kind() {
-                TyKind::StringLiteral(_) => TyKind::Struct(
+                kind if kind.is_string_literal() => TyKind::Struct(
                     mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
                     Vec::new(),
                 )
@@ -411,11 +411,10 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 );
             }
         }
-        // A literal's text binds a `StringLiteral[v]` pattern's binder (`g("ab")`
-        // over `s: StringLiteral[v]` solves `v = "ab"`), as its value an
-        // `IntLiteral[v]` or `FloatLiteral[v]` one's.
-        (TyKind::StringLiteral(Some(pattern)), TyKind::StringLiteral(Some(actual)))
-        | (TyKind::IntLiteral(Some(pattern)), TyKind::IntLiteral(Some(actual)))
+        // A literal's value binds an `IntLiteral[v]` or `FloatLiteral[v]`
+        // pattern's binder, as a literal's text binds a `StringLiteral[v]`
+        // one's through the struct arm below.
+        (TyKind::IntLiteral(Some(pattern)), TyKind::IntLiteral(Some(actual)))
         | (TyKind::FloatLiteral(Some(pattern)), TyKind::FloatLiteral(Some(actual))) => {
             if let CtValue::Expr(expr) = pattern.as_ref() {
                 if let Some(reference) = expr.as_decl_ref() {
@@ -745,10 +744,10 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
         // A symbolic literal value closes the same way.
         kind if (kind.is_simd()
+            || kind.string_literal_value().is_some()
             || matches!(
                 kind,
                 TyKind::KgenSimd { .. }
-                    | TyKind::StringLiteral(Some(_))
                     | TyKind::IntLiteral(Some(_))
                     | TyKind::FloatLiteral(Some(_))
                     | TyKind::PopArray { .. }

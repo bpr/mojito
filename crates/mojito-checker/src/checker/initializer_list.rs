@@ -994,8 +994,7 @@ impl Checker {
         let name = match instance.kind() {
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name.clone(),
             kind if kind.is_simd() => mojito_types::types::SIMD_TYPE_NAME.to_string(),
-
-            TyKind::StringLiteral(Some(_)) => {
+            kind if kind.string_literal_value().is_some() => {
                 mojito_types::types::STRING_LITERAL_TYPE_NAME.to_string()
             }
             TyKind::IntLiteral(Some(_)) => mojito_types::types::INT_LITERAL_TYPE_NAME.to_string(),

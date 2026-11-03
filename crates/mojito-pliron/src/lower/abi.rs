@@ -62,10 +62,11 @@ impl FnLowering<'_> {
                         .is_some_and(|ty| ty.kind().is_non_simd_struct())
                     && (self.str_consts.contains_key(&reg.0)
                         || self.str_runtime.contains_key(&reg.0)
-                        || matches!(
-                            self.func.reg_types.get(&reg.0).map(Ty::kind),
-                            Some(TyKind::StringLiteral(_))
-                        ))
+                        || self
+                            .func
+                            .reg_types
+                            .get(&reg.0)
+                            .is_some_and(Ty::is_string_literal))
                 {
                     return self.materialize_string_argument(ctx, reg, owned, dest);
                 }

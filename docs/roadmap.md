@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1862**.
+Next free ID: **R1864**.
 
 ## Ordered Work
 
@@ -11309,50 +11309,72 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     literals whose text is not closed (`checker/operators.rs`), the
     nominal-`String` fallback in `call_inference.rs`, and the element
     `select` in `checker.rs`.
+  - Probe: `comptime k = "ab".value` folds through `CtValue::literal_value`
+    (`ParamContext::field`, `literal_operand` in `constraints.rs`), not
+    through the type's `value` argument (`Checker::struct_value_member`)
+    as a run-time `"ab".value` now reads, because the operand's meta is
+    the value-less literal.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1861 The value-less `TyKind::StringLiteral(None)` still exists**
+- [ ] **R1861 The value-less `TyKind::StringLiteral` still exists**
 
   Upstream's `StringLiteral` type always carries its text, but Mojito
-  keeps a value-less variant and its consumers.
+  keeps a value-less variant and its consumers. A literal's own type is
+  the declared struct's application (`TyKind::string_literal_value`).
   - The consumers: `Ty::string_literal()`/`TyKind::STRING_LITERAL`,
-    `coerces`'s `(Some, None)` arm (`types.rs`), `overload_support.rs`'s
-    and `constraints.rs`'s arms, mangling (`symbol.rs`), MIR text's bare
-    `StringLiteral` (`write.rs`, `parse/types.rs`), `ct::source_type`, and
+    `coerces`'s (application, value-less) arm (`types.rs`),
+    `overload_support.rs`'s and `constraints.rs`'s arms, mangling
+    (`symbol.rs`), MIR text's bare `StringLiteral` (`write.rs`,
+    `parse/types.rs`), `ct::source_type`, and
     `ast::Type::ClosedStringLiteral`.
   - This is the string half of R1849.
-  - Done when the variant holds a `String`, not an `Option`.
+  - Done when `TyKind::StringLiteral` is deleted.
   - Depends on R1858, R1859, R1860, R422.
   - Model: Opus, Not Planned.
 
-- [ ] **R1660 A `StringLiteral[value]` application is the compiler's
-  literal type, held as a 16-byte descriptor**
+- [ ] **R1862 A `StringLiteral[v]` register holds a 16-byte descriptor,
+  where upstream's struct is empty**
 
-  The `Ty::new` bridge (`bridged_string_literal`, `types.rs`) maps the
-  declared struct's application onto `TyKind::StringLiteral`, where
-  upstream's type is the struct itself, empty and register-passable.
-  - So the declared `__init__`'s empty body would build nothing: the
-    checker constructs `StringLiteral[v]()` by rule
-    (`string_literal_construction`, `call_inference.rs`) as a
-    `ConstructType` whose default construction is the literal's text
-    (`type_construction.rs`).
-  - The bridge also keeps literal-specific arms beside every `SIMD` one:
-    `nominal_parts`, `declared_receiver_member`, `self_receiver_ty`
-    (`mir.rs`), `types_compatible` (`verify/types.rs`), the walkers in
-    `types.rs`, and the elaborator's `substitute.rs` and `unify.rs`.
-  - Pliron writes a literal's `repr` through the nominal `String`'s
-    `write_repr_to` (`lower_repr_builtin`), because a literal type has no
-    struct instance whose member table names one.
-  - A literal's `"ab".value` is a compiler fold (`CtValue::literal_value`,
-    `ParamContext::field`'s literal arm), where any other instance's
-    struct parameter read is its type's argument
-    (`Checker::struct_value_member`); as the declared struct, the literal
-    reads its `value` the same way.
-  - This is `SIMD`'s R1557 for the literal. Done when `rg
-    bridged_string_literal crates` is empty.
-  - Depends on R1659.
+  A string literal's run-time value is the `{ptr, len}` descriptor
+  (`layout_of`'s arm in `mojito-native-core/src/layout.rs`, Pliron's
+  `MjStrDesc` in `lower/types.rs`, the VM's `Value::Str`), where the pin's
+  `StringLiteral[v]` carries no data and a conversion reads `v` from the
+  type.
+  - So the application, though the declared struct, is kept out of the
+    struct rules: `TyKind::as_non_simd_struct`, `MirDeclarations::field_types`,
+    `builtin_copy_is_value_read`, and the elaborator's
+    `declared_operator_receiver` (`mono/specializer.rs`) each exclude it.
+  - So the declared `__init__`'s empty body builds nothing: the checker
+    constructs `StringLiteral[v]()` by rule (`literal_construction` and
+    `infer_instance_construction`, `call_inference.rs`), and MIR's
+    `default_construction` writes the literal's text (`type_construction.rs`).
+  - Lever: `Const::Str` of a literal application writes an empty struct,
+    and a conversion to the value-less type, `String`, or `StringSpan`
+    reads the text from the operand's closed type.
+  - Done when those four exclusions and the construction rule are gone.
+  - This is the string twin of R1850.
+  - Depends on R1861.
   - Model: Fable, Not Planned.
+
+- [ ] **R1863 A string literal's members share one member table, keyed by
+  the bare template**
+
+  `symbol::member_table_name` keys every non-`SIMD` struct by its bare
+  name, so the per-text instances of a `StringLiteral[v]` member would all
+  land in one `"StringLiteral"` table, where `SIMD` names its
+  `instance_symbol` table and upstream hangs witnesses off the instance.
+  - So Pliron writes a literal's `repr` through the nominal `String`'s
+    `write_repr_to` (`lower_repr_builtin`, `lower/methods.rs`), which mono
+    enqueues for it (`enqueue_repr_instance`, `mono/instances.rs`), and
+    the call-graph edge in `mojito-pliron/src/lib.rs` names `String`'s.
+  - Lever: `member_table_name` gives a literal application its
+    `instance_symbol` table, as it does `SIMD`; mono enqueues the literal's
+    own `write_repr_to`, and `display_member` finds it there.
+  - Probe: `repr("hi")` and `repr` of a `StringLiteral._from["a\nb"]()`
+    print `'hi'` and `'a\nb'` on Pliron through `StringLiteral.write_repr_to`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1651 `@__nonmaterializable(String)` is not read, so a literal
   materializes by a compiler rule**
@@ -11368,7 +11390,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: parse the decorator onto the declaration and read it where a
     binding materializes, so the literal's rule is that one instance.
   - Probe: the bundled struct declares `@__nonmaterializable(String)` and
-    `rg 'TyKind::StringLiteral' crates/mojito-checker/src/checker/generics.rs`
+    `rg 'is_string_literal' crates/mojito-checker/src/checker/generics.rs`
     finds no materialization arm.
   - Probe: a literal does not materialize before an implicit constructor
     of the parameter type, so `g("a")` over `def g(x: Optional[String])`

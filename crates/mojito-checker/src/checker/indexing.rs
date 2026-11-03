@@ -1061,7 +1061,7 @@ impl Checker {
             // Positional slicing on a StringLiteral value is gone at the
             // audited head along with nominal String positional slicing;
             // only the keyword-unit spellings remain.
-            TyKind::StringLiteral(_) => {
+            kind if kind.is_string_literal() => {
                 return Err(TypeError::Unsupported(
                     "String positional slicing was removed in current Mojo; spell the \
                      unit explicitly: 's[byte=a:b]' or 's[codepoint=a:b]'"
@@ -1986,21 +1986,12 @@ impl Checker {
                 return Ok(ty);
             }
         }
-        // A string literal's `value` parameter is its KGEN string. A
-        // run-time read materializes the parameter, as the pin's
-        // `kgen.param.constant` does.
+        // The value-less string's type carries no `value` parameter to read.
         if field == mojito_types::ct::LITERAL_VALUE_MEMBER
-            && let TyKind::StringLiteral(value) = obj_ty.kind()
+            && matches!(obj_ty.kind(), TyKind::StringLiteral)
         {
             if self.crosses_to_runtime() {
-                let value = value
-                    .as_deref()
-                    .ok_or_else(super::comptime_validation::value_less_literal_value)?;
-                let value = self
-                    .param_context
-                    .constant(value.clone())
-                    .map_err(|error| TypeError::Unsupported(error.to_string()))?;
-                self.record_member_value(span, value);
+                return Err(super::comptime_validation::value_less_literal_value());
             }
             return Ok(TyKind::KgenString.into());
         }

@@ -2828,7 +2828,8 @@ impl Checker {
             return self.is_trivial_register_passable(&element);
         }
         super::builtins::is_numeric(ty)
-            || matches!(ty.kind(), TyKind::Dtype | TyKind::StringLiteral(_))
+            || ty.is_string_literal()
+            || matches!(ty.kind(), TyKind::Dtype)
             || super::builtins::simd_valued_ty(ty)
             || match ty.kind() {
                 struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
@@ -2859,7 +2860,8 @@ impl Checker {
         }
         let proves = |bound: &str| self.trait_implies(bound, "RegisterPassable");
         match ty.kind() {
-            TyKind::StringLiteral(_) | TyKind::None => Proven,
+            kind if kind.is_string_literal() => Proven,
+            TyKind::None => Proven,
             TyKind::Tuple(elements) => elements.iter().fold(Proven, |joined, element| {
                 match (joined, self.register_passability(element)) {
                     (Excluded, _) | (_, Excluded) => Excluded,

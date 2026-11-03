@@ -144,7 +144,7 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 pub(super) fn is_printable(ty: &Ty) -> bool {
     match ty.kind() {
         kind if kind.is_simd() => true,
-        TyKind::StringLiteral(_)
+        TyKind::StringLiteral
         | TyKind::None
         | TyKind::IntLiteral(_)
         | TyKind::FloatLiteral(_)
@@ -231,15 +231,15 @@ fn common_string_literal(a: &Ty, b: &Ty) -> Option<Ty> {
 /// (`[(1, 2), (3, n)]` is a list of `Tuple[Int, Int]`).
 pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
     match (a.kind(), b.kind()) {
-        (TyKind::StringLiteral(_), _) if is_nominal_string(b) => Some(b.clone()),
-        (_, TyKind::StringLiteral(_)) if is_nominal_string(a) => Some(a.clone()),
+        (kind, _) if kind.is_string_literal() && is_nominal_string(b) => Some(b.clone()),
+        (_, kind) if kind.is_string_literal() && is_nominal_string(a) => Some(a.clone()),
         (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), _) if b.is_simd() && coerces(a, b) => {
             Some(b.clone())
         }
         (_, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) if a.is_simd() && coerces(b, a) => {
             Some(a.clone())
         }
-        (TyKind::Struct(..), TyKind::Struct(..)) if a != b && !a.is_simd() && !b.is_simd() => {
+        (left, right) if a != b && left.is_non_simd_struct() && right.is_non_simd_struct() => {
             let materialized = mojito_types::types::default_literal(a);
             (materialized == mojito_types::types::default_literal(b)).then_some(materialized)
         }
@@ -321,10 +321,8 @@ impl Checker {
     pub(super) fn is_list_equatable(&self, ty: &Ty) -> bool {
         is_numeric(ty)
             || ty.is_bool()
-            || matches!(
-                ty.kind(),
-                TyKind::StringLiteral(_) | TyKind::None | TyKind::Dtype
-            )
+            || ty.is_string_literal()
+            || matches!(ty.kind(), TyKind::None | TyKind::Dtype)
             || self.equatable_bound(ty)
     }
 

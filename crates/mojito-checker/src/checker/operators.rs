@@ -327,7 +327,7 @@ impl Checker {
             // which declares no members.
             Add if lt.is_string_literal()
                 && rt.is_string_literal()
-                && !(matches!(rt.kind(), TyKind::StringLiteral(Some(_)))
+                && !(rt.kind().string_literal_value().is_some()
                     && self.declared_receiver_member(&lt, "__add__").is_some()) =>
             {
                 Some(
@@ -817,7 +817,7 @@ impl Checker {
                     TyKind::Tuple(elements) => self.tuple_elements_equatable(elements),
                     _ => self.is_list_equatable(lt),
                 },
-                TyKind::StringLiteral(_) => lt.is_string_literal(),
+                kind if kind.is_string_literal() => lt.is_string_literal(),
                 _ => false,
             };
         if ok {

@@ -574,10 +574,12 @@ impl<'a> Flatten<'a> {
     /// `String`, so the wrap is re-emitted here: the materialized slot must
     /// hold the struct the constructor lends.
     fn nominal_string_view_source(&mut self, e: Node<'a>, value: Reg, target: &str) -> Reg {
-        if !matches!(
-            self.f.reg_types.get(&value.0).map(Ty::kind),
-            Some(TyKind::StringLiteral(_))
-        ) || !mojito_symbol::symbol::single_nominal_string_ctor(target)
+        if !self
+            .f
+            .reg_types
+            .get(&value.0)
+            .is_some_and(Ty::is_string_literal)
+            || !mojito_symbol::symbol::single_nominal_string_ctor(target)
         {
             return value;
         }

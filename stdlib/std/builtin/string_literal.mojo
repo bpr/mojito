@@ -3,9 +3,10 @@
 # `__add__`, the comparisons, `byte_length`, `ptr`, `unsafe_ptr`,
 # `as_string_slice`, `as_bytes`, `_is_identical`, `write_to`, and
 # `write_repr_to`. A literal `"ab"` is a `StringLiteral["ab"]`, whose
-# members are these bodies. The compiler holds an application as its
-# literal type (R1660), and builds one by rule, so the default
-# initializer's empty body constructs nothing. `__hash__` (R1654)
+# members are these bodies. An application is this struct, but its
+# run-time value is still the compiler's descriptor, which the compiler
+# builds by rule (R1862), so the default initializer's empty body
+# constructs nothing. `__hash__` (R1654)
 # and the members whose bodies read `StringSlice(self)` (R1655) are not
 # ported, and for that reason the comparisons, `write_to`, and
 # `write_repr_to` read `as_string_slice()`.

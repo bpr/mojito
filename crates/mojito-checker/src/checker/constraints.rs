@@ -1134,7 +1134,7 @@ impl Checker {
         // the `Int` it materialized as.
         if matches!(
             ty.kind(),
-            TyKind::IntLiteral(None) | TyKind::FloatLiteral(None) | TyKind::StringLiteral(None)
+            TyKind::IntLiteral(None) | TyKind::FloatLiteral(None) | TyKind::StringLiteral
         ) {
             return Err(TypeError::Unsupported(
                 "'type_of' of a literal value is not supported yet".to_string(),
@@ -2582,7 +2582,7 @@ impl Checker {
         let closed = literal
             .as_constant()
             .is_some_and(|value| value.literal_value().is_some());
-        let parameter = matches!(literal.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::StringLiteral(_)));
+        let parameter = matches!(literal.meta(), MetaTy::Value(ty) if ty.is_string_literal());
         (closed || parameter).then_some(literal)
     }
 

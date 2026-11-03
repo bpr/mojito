@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `StringLiteral[value]` application is now the declared struct's type,
+  as `SIMD`'s is, rather than a compiler type the `Ty::new` bridge mapped
+  it onto (R1660). Every rule reads the literal through one accessor, and
+  the compiler's `TyKind::StringLiteral` is only the value-less type. A
+  literal's run-time value is still the descriptor (R1862), and a native
+  `repr` still writes through `String`'s member (R1863).
 - A value-less `StringLiteral` receiver, such as a `[s: StringLiteral]`
   parameter, now runs the struct's `byte_length`, `ptr`, and `unsafe_ptr`
   bodies, as upstream does (R1659). The checker, VM, and Pliron rules that

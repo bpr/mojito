@@ -204,9 +204,11 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         // A literal type whose value is a parameter (`StringLiteral[v]`
         // under its binder) unifies against the argument's text.
-        TyKind::StringLiteral(Some(value))
-        | TyKind::IntLiteral(Some(value))
-        | TyKind::FloatLiteral(Some(value)) => matches!(
+        kind if let Some(value) = kind.string_literal_value() => matches!(
+            value,
+            CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+        ),
+        TyKind::IntLiteral(Some(value)) | TyKind::FloatLiteral(Some(value)) => matches!(
             value.as_ref(),
             CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
         ),

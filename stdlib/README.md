@@ -119,8 +119,9 @@ point, as upstream's toolchain does.
   struct, in part: the type of a string literal (`"ab"` is
   `StringLiteral["ab"]`) and of an explicit application, with the members
   that read its `!kgen.string` through `pop.string.size`,
-  `pop.string.address`, and `#kgen.param.identical`. The compiler holds an
-  application as its literal type (roadmap R1660). The prelude exports it.
+  `pop.string.address`, and `#kgen.param.identical`. An application is
+  the declared struct, whose run-time value is still the compiler's
+  descriptor (roadmap R1862). The prelude exports it.
 - `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
   `pop.bitcast`, re-exported by `std.memory`; `std/builtin/dtype.mojo`
   bundles `_uint_type_of_width`, `_integral_type_of`, and

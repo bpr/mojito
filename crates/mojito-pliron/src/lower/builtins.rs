@@ -72,7 +72,7 @@ impl FnLowering<'_> {
             .as_ref()
             .map(Ty::kind)
         {
-            Some(TyKind::StringLiteral(_)) => {
+            Some(kind) if kind.is_string_literal() => {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 let (_, len) = self.string_parts(ctx, ptr, dest);
                 self.reg_values.insert(dest.0, len);
@@ -306,7 +306,7 @@ impl FnLowering<'_> {
         // type.
         let dest_ty = self.func.reg_types.get(&dest.0).cloned();
         let Some(dest_ty) = dest_ty.filter(|ty| {
-            matches!(ty.kind(), TyKind::StringLiteral(_))
+            ty.is_string_literal()
                 || ty
                     .kind()
                     .as_non_simd_struct()
@@ -331,7 +331,7 @@ impl FnLowering<'_> {
         // The line buffer is owned: a nominal String result is destroyed by
         // drop elaboration, and a StringLiteral result registers the owned
         // runtime descriptor the release rule frees through `str_runtime`.
-        if matches!(dest_ty.kind(), TyKind::StringLiteral(_)) {
+        if dest_ty.is_string_literal() {
             let (data, len) = self.string_parts(ctx, storage, dest);
             self.str_runtime.insert(
                 dest.0,

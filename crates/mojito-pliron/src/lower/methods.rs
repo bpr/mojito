@@ -120,10 +120,11 @@ impl FnLowering<'_> {
                 method,
                 "write" | "write_string" | mojito_symbol::symbol::WRITE_FORMATTED
             )
-            && matches!(
-                self.func.reg_types.get(&recv.0).map(Ty::kind),
-                Some(TyKind::StringLiteral(_))
-            )
+            && self
+                .func
+                .reg_types
+                .get(&recv.0)
+                .is_some_and(Ty::is_string_literal)
         {
             return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
         }
@@ -321,7 +322,7 @@ impl FnLowering<'_> {
         arg: Reg,
     ) -> Result<(), PlironError> {
         // A string literal's repr is its `as_string_slice()`'s: the owned
-        // `String` of its bytes through the nominal member (R1660).
+        // `String` of its bytes through the nominal member (R1863).
         if self
             .func
             .reg_types
@@ -708,7 +709,7 @@ impl FnLowering<'_> {
             return Ok((descriptor.data, descriptor.len));
         }
         match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(TyKind::Error | TyKind::StringLiteral(_)) => {
+            Some(kind) if kind.is_string_literal() || matches!(kind, TyKind::Error) => {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }

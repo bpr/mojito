@@ -311,10 +311,10 @@ pub fn modelled_conformance(
         .strip_prefix("__module$std$math$math$")
         .unwrap_or(trait_name)
     {
-        "Boolable" => matches!(
-            ty.kind(),
-            TyKind::StringLiteral(_) | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-        ),
+        "Boolable" => {
+            ty.is_string_literal()
+                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+        }
         "Intable" => matches!(
             ty.kind(),
             TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Pointer { .. }
@@ -347,9 +347,7 @@ pub fn modelled_conformance(
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 return every(items, trait_name, element);
             }
-            _ => {
-                is_numeric_like(ty) || matches!(ty.kind(), TyKind::StringLiteral(_) | TyKind::None)
-            }
+            _ => is_numeric_like(ty) || ty.is_string_literal() || matches!(ty.kind(), TyKind::None),
         },
         "TrivialRegisterPassable" => modelled_trivial_register_passable(ty),
         "RegisterPassable" => match ty.kind() {
@@ -389,11 +387,7 @@ pub fn modelled_declares(
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases are out of the way.
 pub fn is_scalar(ty: &Ty) -> bool {
-    ty.is_bool()
-        || matches!(
-            ty.kind(),
-            TyKind::StringLiteral(_) | TyKind::None | TyKind::Dtype
-        )
+    ty.is_bool() || ty.is_string_literal() || matches!(ty.kind(), TyKind::None | TyKind::Dtype)
 }
 
 /// Whether `ty` is a numeric type (concrete or literal).
@@ -421,7 +415,7 @@ pub fn is_signed_numeric_like(ty: &Ty) -> bool {
 }
 
 pub fn builtin_hashable_ty(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::StringLiteral(_) | TyKind::Dtype)
+    ty.is_string_literal() || matches!(ty.kind(), TyKind::Dtype)
 }
 
 /// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a

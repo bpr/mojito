@@ -35,7 +35,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         return types_compatible(&found_bool, &expected_bool);
     }
     // Every string literal is one held descriptor whatever its text, which
-    // the checker owns, value-less or still a parameter (R1660).
+    // the checker owns, value-less or still a parameter.
     if found.is_string_literal() && expected.is_string_literal() {
         return true;
     }
@@ -688,9 +688,10 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
             elements.iter().any(contains_type_param)
         }
         TyKind::Ref(reference) => contains_type_param(&reference.referent),
-        TyKind::StringLiteral(Some(value))
-        | TyKind::IntLiteral(Some(value))
-        | TyKind::FloatLiteral(Some(value)) => matches!(value.as_ref(), CtValue::Expr(_)),
+        kind if let Some(value) = kind.string_literal_value() => matches!(value, CtValue::Expr(_)),
+        TyKind::IntLiteral(Some(value)) | TyKind::FloatLiteral(Some(value)) => {
+            matches!(value.as_ref(), CtValue::Expr(_))
+        }
         struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
             arguments.iter().any(|argument| match argument {
                 mojito_types::types::TyArg::Ty(inner) => contains_type_param(inner),

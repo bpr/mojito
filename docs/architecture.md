@@ -4988,12 +4988,15 @@ forwarding through `StringSpan(self)`) is pure library code.
 
 The `StringLiteral`-vs-`String` split is realized at the type level. A
 string literal `"ab"` is upstream's `StringLiteral["ab"]`, the application of
-the struct `std/builtin/string_literal.mojo` declares; the `Ty::new` bridge
-holds that application as `TyKind::StringLiteral(Some(value))`, so the
-compiler's descriptor representation and the struct's library members serve
-one type, and `nominal_parts` answers it
-as the struct's instance. Literal-only operations stay on it. The value-less
-`TyKind::StringLiteral(None)`, which upstream has no type for, still types
+the struct `std/builtin/string_literal.mojo` declares, held as that
+struct's `TyKind::Struct` as `SIMD`'s is (`Ty::new` folds a closed slot to
+its text, and `TyKind::string_literal_value` reads it), and the elaborator
+keeps it under its template name. Its run-time value is still the
+compiler's `{ptr, len}` descriptor (R1862), so the struct rules that read
+fields, copies, and operator dunders (`as_non_simd_struct`,
+`MirDeclarations::field_types`, `builtin_copy_is_value_read`) leave it out,
+and `StringLiteral[v]()` is still built by rule. The value-less
+`TyKind::StringLiteral`, which upstream has no type for, still types
 an untyped compile-time string (`CtValue::Str`'s meta), the elaborator's
 placeholder writer, and a `[s: StringLiteral]` binder's declared type
 (R1861), though its members are the struct's, never a compiler rule; a bare run-time `s: StringLiteral` argument auto-parameterizes as

@@ -712,7 +712,7 @@ impl Literal {
                 )
             }
             (CheckedConst::Bool(value), kind) if kind.is_bool() => (Const::Bool(*value), None),
-            (CheckedConst::String(value), TyKind::StringLiteral(_)) => {
+            (CheckedConst::String(value), kind) if kind.is_string_literal() => {
                 (Const::Str(value.clone()), None)
             }
             (CheckedConst::Dtype(value), TyKind::Dtype) => (Const::Dtype(*value), None),

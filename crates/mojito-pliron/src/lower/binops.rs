@@ -36,10 +36,11 @@ impl FnLowering<'_> {
         let string_shaped = |lowering: &Self, reg: Reg| {
             lowering.str_consts.contains_key(&reg.0)
                 || lowering.str_runtime.contains_key(&reg.0)
-                || matches!(
-                    lowering.func.reg_types.get(&reg.0).map(Ty::kind),
-                    Some(TyKind::StringLiteral(_))
-                )
+                || lowering
+                    .func
+                    .reg_types
+                    .get(&reg.0)
+                    .is_some_and(Ty::is_string_literal)
         };
         if matches!(op, InfixOp::Eq | InfixOp::Ne)
             && string_shaped(self, a)

@@ -83,7 +83,7 @@ impl Specializer<'_> {
             )?;
             return Ok(());
         }
-        if matches!(receiver.kind(), TyKind::StringLiteral(_)) {
+        if receiver.is_string_literal() {
             let string = Ty::new(TyKind::Struct(
                 mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
                 Vec::new(),
@@ -262,7 +262,7 @@ impl Specializer<'_> {
         arg: Reg,
     ) -> Result<(), MonoError> {
         // A string literal's repr is its `as_string_slice()`'s, which the
-        // backends write through the nominal `String`'s member (R1660).
+        // backends write through the nominal `String`'s member (R1863).
         if function
             .reg_types
             .get(&arg.0)

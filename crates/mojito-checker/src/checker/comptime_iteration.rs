@@ -238,7 +238,7 @@ fn iterable_spelling(ty: &Ty) -> String {
 fn materialized_element_spelling(ty: &Ty) -> String {
     match ty.kind() {
         TyKind::IntLiteral(_) => "Int".to_string(),
-        TyKind::StringLiteral(_) => "String".to_string(),
+        kind if kind.is_string_literal() => "String".to_string(),
         TyKind::FloatLiteral(_) => "Float64".to_string(),
         _ => mojito_types::types::unqualified_type_name(ty),
     }

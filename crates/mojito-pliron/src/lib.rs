@@ -1066,7 +1066,7 @@ impl<'p> CallEdges<'p, '_> {
                         }
                         // A literal's repr writes through the nominal
                         // `String`'s member.
-                        Some(TyKind::StringLiteral(_)) => self.push_members(
+                        Some(kind) if kind.is_string_literal() => self.push_members(
                             mojito_symbol::symbol::STDLIB_STRING_STRUCT,
                             "write_repr_to",
                         ),
@@ -1173,8 +1173,7 @@ impl<'p> CallEdges<'p, '_> {
                     // `__hash__` under a tag switch: every nominal
                     // alternative's instances are edges.
                     let mut nominal_alternatives: Vec<&str> = Vec::new();
-                    let mut string_leaf =
-                        matches!(receiver.map(Ty::kind), Some(TyKind::StringLiteral(_)));
+                    let mut string_leaf = receiver.is_some_and(Ty::is_string_literal);
                     if let Some(TyKind::Variant(alternatives)) = receiver.map(Ty::kind) {
                         for alternative in alternatives {
                             if let Some((name, _)) = alternative.kind().as_non_simd_struct() {

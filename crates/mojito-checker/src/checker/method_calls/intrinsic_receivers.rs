@@ -28,7 +28,7 @@ impl Checker {
             ..
         } = call;
         // A string literal's declared member is its struct's body.
-        if matches!(obj_ty.kind(), TyKind::StringLiteral(Some(_)))
+        if obj_ty.kind().string_literal_value().is_some()
             && self.declared_receiver_member(obj_ty, method).is_some()
         {
             return Ok(None);

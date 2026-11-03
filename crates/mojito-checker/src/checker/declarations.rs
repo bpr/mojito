@@ -903,7 +903,8 @@ impl Checker {
                     || vty.is_uint()
                     || vty.is_float64()
                     || vty.is_bool()
-                    || matches!(vty.kind(), TyKind::StringLiteral(_) | TyKind::Dtype))
+                    || vty.is_string_literal()
+                    || matches!(vty.kind(), TyKind::Dtype))
                 {
                     return Err(TypeError::BadValueParamType {
                         name: tp.name.clone(),

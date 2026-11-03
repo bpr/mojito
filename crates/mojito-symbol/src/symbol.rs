@@ -1463,10 +1463,9 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // `SIMD[DType.int32, 4]`), not as a struct's arguments.
         kind if kind.is_simd() => kind.to_string(),
         kind if kind.is_bool() => "Bool".to_string(),
-        TyKind::StringLiteral(None) => "StringLiteral".to_string(),
-        // A literal whose type carries its value spells as the application
-        // `StringLiteral[value]` it bridges.
-        TyKind::StringLiteral(Some(value)) => format!(
+        TyKind::StringLiteral => "StringLiteral".to_string(),
+        // A literal's application spells its text as an instance argument.
+        kind if let Some(value) = kind.string_literal_value() => format!(
             "{}$V{value}",
             encode_identifier(mojito_types::types::STRING_LITERAL_TYPE_NAME)
         ),
@@ -3370,7 +3369,9 @@ impl TypeNameSpeller<'_> {
             TyKind::None => self.qualify("std.builtin.none", "NoneType"),
             TyKind::Dtype => self.qualify("std.builtin.dtype", "DType"),
             TyKind::Error => self.qualify("std.builtin.error", "Error"),
-            TyKind::StringLiteral(_) => self.qualify("std.builtin.string_literal", "StringLiteral"),
+            kind if kind.is_string_literal() => {
+                self.qualify("std.builtin.string_literal", "StringLiteral")
+            }
             // A variadic type pack spells as upstream's printer shows one.
             TyKind::Variant(_) => self.applied("std.utils.variant", "Variant", &Self::pack()),
             struct_ty
@@ -3501,7 +3502,7 @@ fn reflected_base_name(ty: &Ty) -> String {
         TyKind::None => "NoneType",
         TyKind::Dtype => "DType",
         TyKind::Error => "Error",
-        TyKind::StringLiteral(_) => "StringLiteral",
+        kind if kind.is_string_literal() => "StringLiteral",
         TyKind::Variant(_) => "Variant",
         struct_ty
             if let Some(_) = struct_ty.as_non_simd_struct()
