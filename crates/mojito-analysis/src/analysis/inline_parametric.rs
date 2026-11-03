@@ -2945,6 +2945,10 @@ impl MutTypeVisitor for BoundMutabilities {
         Ok(())
     }
 
+    fn visit_field_step(&mut self, _: &mut Proj, _: Option<&Ty>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn visit_lane_mask(&mut self, _: &mut LaneMask) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -4223,6 +4227,15 @@ impl MutTypeVisitor for Instantiation<'_> {
         }
     }
 
+    /// A symbolic field step's index over the bound parameters; the
+    /// elaborator names the field once the base struct is closed.
+    fn visit_field_step(&mut self, step: &mut Proj, _: Option<&Ty>) -> Result<(), ParamError> {
+        if let Proj::FieldAt(index) = step {
+            *index = self.context.replace(index, &self.bindings)?;
+        }
+        Ok(())
+    }
+
     fn visit_lane_mask(&mut self, mask: &mut LaneMask) -> Result<(), ParamError> {
         *mask = mask.try_map_exprs(&mut |expr| self.context.replace(expr, &self.bindings))?;
         Ok(())
@@ -4413,6 +4426,10 @@ impl MutTypeVisitor for NamesBinder<'_> {
     }
 
     fn visit_variant_index(&mut self, _: &mut VariantIndex) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_field_step(&mut self, _: &mut Proj, _: Option<&Ty>) -> Result<(), Self::Error> {
         Ok(())
     }
 

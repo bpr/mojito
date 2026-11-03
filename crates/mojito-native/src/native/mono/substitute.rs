@@ -6,12 +6,12 @@ use super::*;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_checked::declaration::AssociatedParameter;
 use mojito_hir::hir::VarId;
-use mojito_mir::mir::MirParamArg;
 use mojito_mir::mir::variadic_list::FrameTables;
 use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
     walk_instruction_mut,
 };
+use mojito_mir::mir::{MirParamArg, Proj};
 use mojito_types::param_expr::ParamRef;
 use mojito_types::types::TyKind;
 use mojito_types::types::{ArraySize, FuncTy, VariantIndex};
@@ -838,6 +838,10 @@ impl MutTypeVisitor for Substitution<'_> {
         close_variant_index(index, self.bindings)
     }
 
+    fn visit_field_step(&mut self, step: &mut Proj, base: Option<&Ty>) -> Result<(), MonoError> {
+        close_field_step(step, base, self.bindings)
+    }
+
     /// A template's lane-mask attribute closes to its constant; the
     /// instance checks the closed mask against its operands
     /// (`close_lane_masks`).
@@ -970,6 +974,51 @@ fn reject_unconstructed(instruction: &MirInstr) -> Result<(), MonoError> {
         function: None,
         construct,
     })
+}
+
+/// Close a template's symbolic field step once the instance binds its index
+/// and the struct it selects into: the field at that position of the
+/// struct's declaration, as upstream's `lit.ref.struct.ger` folds. A step
+/// the bindings leave open stays for a later instance.
+fn close_field_step(
+    step: &mut Proj,
+    base: Option<&Ty>,
+    bindings: &Bindings,
+) -> Result<(), MonoError> {
+    let Proj::FieldAt(index) = &*step else {
+        return Ok(());
+    };
+    let Some(position) = eval_ct(index, bindings)
+        .ok()
+        .and_then(|value| mojito_types::param_expr::fold::integer_value(&value))
+        .and_then(|value| value.to_u64())
+    else {
+        return Ok(());
+    };
+    let Some(base) = base.filter(|base| !is_symbolic(base)) else {
+        return Ok(());
+    };
+    let Some(instance) = struct_instance(base, bindings)? else {
+        return Err(MonoError {
+            kind: MonoErrorKind::Instantiation,
+            function: None,
+            construct: format!("a field reference into '{base}', which is not a struct"),
+        });
+    };
+    let name = usize::try_from(position)
+        .ok()
+        .and_then(|position| instance.shape.fields.get(position))
+        .map(|(name, _)| name.clone())
+        .ok_or_else(|| MonoError {
+            kind: MonoErrorKind::Instantiation,
+            function: None,
+            construct: format!(
+                "field index {position} is out of range for '{base}' with {} fields",
+                instance.shape.fields.len()
+            ),
+        })?;
+    *step = Proj::Field(name);
+    Ok(())
 }
 
 /// Close a template's `_get_type_index[T, *Ts]()` once the instance binds

@@ -3,9 +3,9 @@
 # defaults `__gt__`, `__le__`, and `__ge__` through `__lt__`. The prelude
 # exports both, as upstream's does.
 #
-# Upstream's `__eq__` has a reflective default comparing every field; it
-# stays a requirement here until its body can read each field through
-# `field_ref` (R1481).
+# Upstream's `__eq__` has a reflective default comparing every field
+# through `field_ref`; it stays a requirement here until that body replaces
+# the compiler's synthesized one (R1481).
 
 
 trait Equatable:

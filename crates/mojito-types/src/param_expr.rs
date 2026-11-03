@@ -380,7 +380,8 @@ impl ParamContext {
     }
 
     /// Select one of a finite, already-checked sequence of types by an integer
-    /// expression. A constant in-range index folds to the selected type.
+    /// expression. A constant in-range index folds to the selected type, and
+    /// any index over a sequence of one repeated type to that type.
     pub fn select(&self, elements: Vec<Ty>, index: &ParamExpr) -> Result<ParamExpr, ParamError> {
         let index = self.intern(index);
         if !index.meta().is_integer() {
@@ -407,6 +408,13 @@ impl ParamContext {
                         "dependent type index {position} is out of range for {count} element(s)"
                     ))
                 });
+        }
+        // Every element the index may select is one type, as upstream
+        // folds a selection over a homogeneous list.
+        if let Some((first, rest)) = elements.split_first()
+            && rest.iter().all(|element| element == first)
+        {
+            return Ok(self.type_shape(first.clone()));
         }
         Ok(self.make(MetaTy::Type, ParamKind::Select { elements, index }))
     }

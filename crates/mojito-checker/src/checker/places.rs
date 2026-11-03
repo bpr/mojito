@@ -304,6 +304,21 @@ impl Checker {
         if self.is_parameter_read(source) {
             return Err(TypeError::ParameterTransfer);
         }
+        // A call's reference result is an lvalue no tracked root holds.
+        if self
+            .node_facts
+            .borrow()
+            .get(&source.source_span())
+            .and_then(|facts| facts.adjustment.as_deref())
+            .is_some_and(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                )
+            })
+        {
+            return Err(TypeError::UntrackedTransfer);
+        }
         if !self.designates_place(source) {
             return Ok(TransferVerdict::PassThrough);
         }

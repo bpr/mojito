@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1878**.
+Next free ID: **R1879**.
 
 ## Ordered Work
 
@@ -1671,6 +1671,25 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     6)`, are rejected the same way; the pin prints `7`, and `5 6` for the
     pair.
   - Found while landing R676 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1878 A `ref` binding of a call's reference result holds no loan
+  against a move of its origin**
+
+  `ref a = fr(p)` over `def fr(ref s: P) -> ref[s] P`, then `var b = p^`
+  and a write through `a`, fails MIR verification after `sroa` ("drop.var
+  of slot $v0 ('p') that some path reaching it does not hold"), where the
+  pin reports "use of uninitialized value 'p'" at the write.
+  - `ref a = p.x` in the same program gets the pin's diagnostic, so the
+    gap is the hidden handle slot a call's reference result binds through
+    (`Lower::materialize_reference_result_place`, `mir/calls.rs`): the
+    moves analysis does not see `a`'s later use as a use of `p`.
+  - The program is rejected either way; the phase and the message are
+    wrong.
+  - Probe: the same with `ref a = reflect[P].field_ref[0](p)` and `a = 5`
+    fails the same way.
+  - Found while landing R77 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6666,6 +6685,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     observation, made 2026-09-20.
   - Which handle methods answer for a scalar, and with what, needs a probe per
     method before the lever is chosen.
+  - Probe: `reflect[Int].field_ref[0](3)` is rejected as "reflect[Int].field_ref
+    over a type that is not a struct"
+    (`Checker::reflected_fields`, `checker/reflection.rs`), where the pin
+    accepts it: the result is `Int`'s `!kgen.scalar<index>` storage, which
+    `print` then rejects as not `Writable`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -6734,30 +6758,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     only in compile-time positions.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R77 A field's value cannot be read by reflection**
-
-  Problem: `reflect[P].field_ref[0](p)`, a reference to field `0` of `p`,
-  is rejected with "a parameterized type is not a value: expected a value,
-  found the type 'reflect[…]'", where the pin prints the field.
-  - `reflect` is a checker intrinsic. `Checker::reflection_query_of`
-    (`checker/reflection.rs`) answers only argument-free queries
-    (`field_count`, `field_names`, `field_types`, `field_index`).
-  - Upstream's `field_ref[idx](ref s)` is a library method returning
-    `ref[s]` the field (`lit.ref.struct.ger`), so in MIR it is a field
-    projection of the argument's place at the field's name.
-  - Upstream's `Equatable`, `Hashable`, and `Writable` defaults read fields
-    through it. Mojito's `Hashable` and `Writable` defaults are synthesized
-    (`comptime/synth.rs`), so no bundled body needs it yet (R1461).
-  - Probe: `print(reflect[P].field_ref[0](p), reflect[P].field_ref[1](p))`
-    over `P(3, 4)` (pin: `3 4`).
-  - Probe: a generic `total[T](x: T)` summing `rebind[Int](r.field_ref[i](x))`
-    under `comptime if types[i] == Int` in a `comptime for` reports
-    "Undefined variable 'r'" (pin: the sum).
-  - Probe: `reflect[P].field_ref[0](p) = 42` then `print(p.x)` (pin:
-    `42`), now rejected at the same query.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R83 A bare reference to a parametric `def` reports a closure
   escape**
@@ -12025,7 +12025,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `_reflection_write_to` (and `_enum_reflection_write_to` for an
   `EnumLike`).
   - The bundled trait's requirements stay `...` until upstream's body
-    checks: `r.field_ref[i](this)` (R77).
+    checks. Its `r.field_ref[i](this)` now checks in a trait default.
   - Each bundled module hosting a defaulted conformer imports
     `_reflection_write_field_to` (`std/span.mojo`, `std/string.mojo`, and
     five more), since the synthesized call names it by its linked name.
@@ -12035,9 +12035,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     ("Could not derive Writable for Holder - member field `o: Opaque` does
     not implement Writable"). The helper, whose `StaticString` result is
     the assert message, is not bundled.
-  - Probe: a user trait whose default is upstream's body text stops at
-    `r.field_ref[i](this)`; its `comptime WriterType = type_of(writer)`
-    checks.
+  - Probe: a user trait whose default is upstream's body text; its
+    `r.field_ref[i](this)` and `comptime WriterType = type_of(writer)`
+    check, so re-probe what stops it now.
   - Done when the trait declares upstream's bodies and the synthesis, the
     helper, and its imports are gone; R1409's generated enum members go
     next.
@@ -12055,8 +12055,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   over `reflect[Self]` (`std/builtin/comparable.mojo`,
   `std/hash/hash.mojo`).
   - `reflect[Self]` in a plain struct's method already reads the fields.
-  - The bodies read each field through `r.field_ref[i](self)` (R77), and
-    assert its conformance with the message `_field_conforms_to_error`
+  - The bodies read each field through `r.field_ref[i](self)`, which now
+    checks in a trait default, and assert its conformance with the message `_field_conforms_to_error`
     builds, which is not bundled.
   - The bundled traits' requirements stay `...` until both check.
   - Done when both traits declare upstream's bodies and the two synthesis

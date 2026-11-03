@@ -318,6 +318,9 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 Proj::Rebind => {
                     errors.push(format!("{head} keeps a rebound place in elaborated MIR"));
                 }
+                Proj::FieldAt(index) => errors.push(format!(
+                    "{head} keeps the symbolic field step `{index}` in elaborated MIR"
+                )),
                 _ => {}
             }
         }

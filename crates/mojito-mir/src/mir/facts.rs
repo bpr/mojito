@@ -616,6 +616,17 @@ impl<'a> Node<'a> {
         constant_param_value(&self.checked.adjustments)
     }
 
+    /// The field step a `reflect[T].field_ref[idx](s)` reference takes into
+    /// its argument's place, if this node is one.
+    pub(super) fn reflected_field(self) -> Option<&'a mojito_checked::checked::ReflectedFieldStep> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ReflectedField(step) => Some(step),
+                _ => None,
+            })
+    }
+
     /// The alternative index of a checked Variant projection recorded on this
     /// node (`v[T]`, `storage[T]`), if any.
     pub(super) fn variant_projection_index(self) -> Option<mojito_types::types::VariantIndex> {

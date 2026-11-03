@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 155;
+pub const VERSION_MINOR: u16 = 156;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -468,6 +468,7 @@ pub const fn projection_spelling(projection: &Proj) -> &'static str {
         Proj::Variant(_) => "variant",
         Proj::UninitPayload => "uninit_payload",
         Proj::Rebind => "rebind",
+        Proj::FieldAt(_) => "field_at",
     }
 }
 

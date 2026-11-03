@@ -952,6 +952,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   asking more rejects), `type_param_argument`, and a local alias of one
   (`bind_template_comptime`) to the dependent element (a `ListGet`
   over the `field_types()` node, viewed through `opaque_element`).
+  `infer_reflected_field_ref` types `field_ref[idx](s)` as upstream's
+  static method returning `ref[s]` the field: the argument binds through
+  `materialized_reference_actual`, the result is a `ReferenceResult` with
+  the argument's origin and mutability, and beside it
+  `SemanticAdjustment::ReflectedField` (`ReflectedFieldStep`, `NodeFacts::
+  reflected_field`) records the field's name once `reflected_fields` gives
+  the subject's fields and the index is closed, else the index. MIR's
+  `mir/calls.rs:reflected_field_place` projects the argument's place by
+  `Proj::Field` or the symbolic `Proj::FieldAt`, which
+  `mono/substitute.rs:close_field_step` closes per instance through the
+  `MutTypeVisitor::visit_field_step` hook.
   Type-level pack algebra lives beside it: `constraints.rs:typelist_receiver`
   reads the compiler-known `TypeList` vocabulary (roadmap R1182) over a
   pack, a `TypeList` construction (bound through `applied_type` as the
@@ -2457,6 +2468,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   symbolic one, `analysis/moves.rs` keys it as `Key::Variant(None)`, and the
   VM (`known_variant_index`, `backend/vm.rs`) and Pliron
   (`lower/variants.rs`) read only a known one.
+- A field at a symbolic index (`reflect[T].field_ref[i](s)`) is the place
+  step `Proj::FieldAt` (schema 1.156, text `field_at(ct_expr(…))`), upstream's
+  index-form `lit.ref.struct.ger`: `MutTypeVisitor::visit_field_step` hands
+  it to each visitor with its base type, `inline_parametric.rs` substitutes
+  its index, `mono/substitute.rs:close_field_step` names the field per
+  instance (failing an index past the struct's fields), `verify/places.rs`
+  wants a struct or a parameter base, `verify/concrete.rs` rejects one left,
+  `analysis/moves.rs` keys it as `Key::FieldAt` (overlapping every field)
+  and `analysis/loans.rs` overlaps it with every field step, and the VM and
+  Pliron never see one.
 - `Tuple` and `TString` are generators (2026-10-06). The checker spells a
   tuple's type as the nominal application (`types::tuple_type`,
   `types::canonical_pack_arguments` in `struct_instance_type`), reads an

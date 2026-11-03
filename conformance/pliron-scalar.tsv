@@ -985,8 +985,11 @@ assets/ok/reflect_self_generic_struct_method.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_name_materialize.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflection_field_ref.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflection_field_ref_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_type_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_type_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflection_homogeneous_field_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_list_materialized_whole.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_module_and_member_handles.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_runtime_query.mojo	-	ineligible	no-scalar-entry-shape

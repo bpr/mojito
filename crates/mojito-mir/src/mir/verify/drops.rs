@@ -751,7 +751,7 @@ fn owned_prefix(place: &MirPlace) -> Vec<OwnedStep> {
             Proj::Field(name) => path.push(OwnedStep::Field(name.clone())),
             Proj::ConstIndex(index) => path.push(OwnedStep::Element(*index)),
             Proj::Rebind => {}
-            Proj::Index(_) | Proj::Variant(_) | Proj::UninitPayload => break,
+            Proj::Index(_) | Proj::Variant(_) | Proj::UninitPayload | Proj::FieldAt(_) => break,
         }
     }
     path

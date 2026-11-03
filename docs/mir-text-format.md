@@ -1051,6 +1051,14 @@ reflection query `unqualified_name()`, which the elaborator answers per
 instance. The checked `TypeName` adjustment goes with it, so the package
 format moves to `mojito-package 177`.
 
+Schema 1.156 adds the projection `field_at(ct_expr(param-expr))`, upstream's
+`lit.ref.struct.ger` at an index: the field a template's
+`reflect[T].field_ref[idx](s)` designates while `T` or `idx` is still a
+parameter, whose type is its dependent `projection_tys` entry. Elaboration
+closes it to `field(symbol)` per instance, so concrete MIR holds none. The
+checked `ReflectedField` adjustment comes with it, so the package format
+moves to `mojito-package 178`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1813,8 +1821,9 @@ loan {
 ```
 
 Projection operations are `field(symbol)`, `index(%rN)`, `const_index(uint)`,
-`variant(variant-index)`, `uninit_payload`, and `rebind` (schema 1.37), whose
-type is the rebind's target. A `variant-index` (schema
+`variant(variant-index)`, `uninit_payload`, `rebind` (schema 1.37), whose
+type is the rebind's target, and `field_at(ct_expr(param-expr))` (schema
+1.156), a template's field at a symbolic index. A `variant-index` (schema
 1.31) is a known alternative's `uint`, or `ct_expr(param-expr)` in a
 template: upstream's `_get_type_index[T, *Ts]()`, spelled
 `param_pack_query { pack, query: pack_index_of(element) }`, which

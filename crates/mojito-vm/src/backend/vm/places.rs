@@ -66,6 +66,7 @@ fn nav_step<'a>(
 ) -> Result<&'a mut Value, RuntimeError> {
     match proj {
         Proj::Rebind => Ok(slot),
+        Proj::FieldAt(_) => Err(super::symbolic_field_step()),
         Proj::Field(name) => match slot {
             Value::Struct { fields, .. } => fields
                 .iter()

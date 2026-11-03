@@ -411,6 +411,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `reflect[T].field_ref[idx](s)` is now a reference to field `idx` of `s`,
+  as upstream's static method returning `ref[s]` the field (R77): it reads
+  the field, is an assignment and `+=` target, binds `ref`, and takes a
+  temporary argument, with the argument's origin and mutability. At a
+  `comptime for` index, or over a subject still a parameter (a generic
+  `def`'s `T`, `reflect[Self]` in a method or a trait default), its step is
+  upstream's index-form `lit.ref.struct.ger`, the new MIR place step
+  `field_at` (schema 1.156, `mojito-package 178`), which the elaborator
+  closes to the field per instance. An argument of another type is
+  rejected with the pin's message, and a `^` out of any call's reference
+  result now reports the pin's "expression does not designate a value
+  with an origin". A field type selected at a symbolic index from fields
+  all of one type is that type, as upstream folds a homogeneous
+  selection, and a generic struct's own `field_types()` list indexes in
+  its methods. A `ref` binding of a call's reference result still misses
+  a later move of its origin (R1878).
 - A call of a generic `comptime` alias's application constructs the type
   it names, as at the pin (R60): `P[Int](8)` over `comptime P[T: AnyType]
   = Pt[T]`, a pack alias (`T2[Int, Bool](1, True)`), `comptime for v in

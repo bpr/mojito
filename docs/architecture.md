@@ -1786,7 +1786,10 @@ target), and the elaborator judges each one against the type it applies to
 per instance once its `comptime if`s are decided and erases it, as upstream's
 `processRebindOp` does (`native::mono`'s `discharge_rebinds`,
 `mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
-error on a mismatch.
+error on a mismatch. A field reference at a symbolic index
+(`reflect[T].field_ref[i](s)` in a `comptime for`) is a place's
+`Proj::FieldAt` step, upstream's index-form `lit.ref.struct.ger`, which the
+elaborator closes to the field's `Proj::Field` per instance.
 Every generic `def` is a template, whatever its binders — type parameters,
 scalar or aggregate value parameters, type packs, and value packs alike: a
 `comptime if`, a `comptime for`, and a `rebind` stay in the template whatever

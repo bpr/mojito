@@ -452,6 +452,22 @@ pub(super) fn verify_place(
             // A rebind's two types legitimately differ in a generator; the
             // elaborator judges them per instance.
             Proj::Rebind => {}
+            // A symbolic field's type is dependent on its index, and its
+            // base is a struct or still a parameter; the elaborator closes
+            // it per instance.
+            Proj::FieldAt(_) => {
+                if let Some(base) = &current
+                    && base.kind().as_non_simd_struct().is_none()
+                    && !matches!(
+                        base.kind(),
+                        TyKind::Param { .. } | TyKind::Dependent(_) | TyKind::SelfType
+                    )
+                {
+                    errors.push(format!(
+                        "{prefix} symbolic field projection requires a struct or a type parameter, got {base}"
+                    ));
+                }
+            }
             Proj::UninitPayload => {
                 if let Some(base) = &current {
                     match mojito_types::types::uninit_storage_element(base) {

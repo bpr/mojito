@@ -75,8 +75,8 @@ point, as upstream's toolchain does.
   `Comparable(Equatable)` traits: `__ne__` defaulted through `__eq__`, and
   `__gt__`, `__le__`, and `__ge__` through `__lt__`; the prelude exports
   both. Upstream's reflective `__eq__` default is a stand-in the compiler
-  synthesizes per conformer until its body can read each field through
-  `field_ref` (R1481), so `__eq__` stays a requirement here. The
+  synthesizes per conformer until its body, over `field_ref`, replaces
+  it (R1481), so `__eq__` stays a requirement here. The
   compiler-modelled scalars and `Bool` conform to both, and `DType` to
   `Equatable`, as the upstream structs they stand in for declare.
 - `std/builtin/bool.mojo`, `std/builtin/int.mojo`,

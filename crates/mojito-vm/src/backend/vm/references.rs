@@ -981,6 +981,7 @@ pub(super) fn place_projection_segments(
             Proj::Variant(index) => RefProjection::Variant(known_variant_index(index)?),
             Proj::UninitPayload => RefProjection::UninitPayload,
             Proj::Rebind => continue,
+            Proj::FieldAt(_) => return Err(super::symbolic_field_step()),
         });
     }
     Ok(segments)

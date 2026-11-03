@@ -782,6 +782,11 @@ pub(super) fn known_variant_index(
     })
 }
 
+/// A symbolic field step reached execution: concrete MIR holds none.
+pub(super) fn symbolic_field_step() -> RuntimeError {
+    RuntimeError::Unsupported("concrete MIR carries no symbolic field step".to_string())
+}
+
 /// The whole program the VM executes: the lowered MIR plus the struct and
 /// function-signature registries. Immutable during execution, so it threads as
 /// `&Prog` beside the mutable output.

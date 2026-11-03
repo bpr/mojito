@@ -55,6 +55,9 @@ pub(super) enum Key {
     /// opaque to ownership tracking (all access is explicitly unsafe), so the
     /// key exists only to keep place paths total; it overlaps itself.
     UninitPayload,
+    /// A template's field at a symbolic index ([`Proj::FieldAt`]), which
+    /// may fold to any field.
+    FieldAt,
 }
 
 pub(super) fn keys_overlap(left: &Key, right: &Key) -> bool {
@@ -65,6 +68,8 @@ pub(super) fn keys_overlap(left: &Key, right: &Key) -> bool {
                 | (Key::ConstIndex(_), Key::Index)
                 | (Key::Variant(None), Key::Variant(_))
                 | (Key::Variant(_), Key::Variant(None))
+                | (Key::FieldAt, Key::Field(_))
+                | (Key::Field(_), Key::FieldAt)
         )
 }
 
@@ -79,6 +84,7 @@ pub(super) fn place_path(place: &MirPlace) -> Vec<Key> {
             Proj::ConstIndex(index) => Some(Key::ConstIndex(*index)),
             Proj::Variant(index) => Some(Key::Variant(index.known())),
             Proj::UninitPayload => Some(Key::UninitPayload),
+            Proj::FieldAt(_) => Some(Key::FieldAt),
             Proj::Rebind => None,
         })
         .collect()
@@ -105,6 +111,7 @@ pub(super) fn place_display(root: &str, path: &[Key]) -> String {
                 s.push(']');
             }
             Key::UninitPayload => s.push_str("[payload]"),
+            Key::FieldAt => s.push_str(".<field#?>"),
         }
     }
     s

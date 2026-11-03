@@ -1973,6 +1973,7 @@ fn projection_value(projection: &Proj) -> String {
         Proj::Variant(v) => positional("variant", &variant_index(v)),
         Proj::UninitPayload => "uninit_payload".into(),
         Proj::Rebind => "rebind".into(),
+        Proj::FieldAt(index) => positional("field_at", &positional("ct_expr", &param_expr(index))),
     }
 }
 fn loan(value: &MirLoan) -> String {

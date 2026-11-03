@@ -592,6 +592,15 @@ pub struct CheckedCompareLink {
     pub right_adjustments: Vec<CheckedCallValueAdjustment>,
 }
 
+/// The field a `reflect[T].field_ref[idx](s)` reference selects: named
+/// once its subject and index are closed, or still the index while either
+/// is a parameter, which the elaborator closes per instance.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ReflectedFieldStep {
+    Named(String),
+    At(mojito_types::param_expr::ParamExpr),
+}
+
 /// How a `^` transfer takes its source, as upstream's `emitTransfer`
 /// decides it once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -804,6 +813,10 @@ pub enum SemanticAdjustment {
     ReferenceResult {
         reference: mojito_types::origin::RefTy,
     },
+    /// `reflect[T].field_ref[idx](s)`: beside its `ReferenceResult`, the
+    /// step into the argument's place the reference designates, as
+    /// upstream's body applies `lit.ref.struct.ger` to the reference to `s`.
+    ReflectedField(ReflectedFieldStep),
     /// Exact per-element extraction selected for one tuple-unpacking RHS. The
     /// unpack syntax has no source `Index` child nodes, so checking carries the
     /// synthetic result type, concrete accessor, and reference-return contract
@@ -6783,6 +6796,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             elements: elements.clone(),
         });
     }
+    if let Some(step) = &facts.reflected_field {
+        adjustments.push(SemanticAdjustment::ReflectedField(step.clone()));
+    }
     if let Some(origin) = &facts.interior_reference {
         adjustments.push(SemanticAdjustment::InteriorReference {
             origin: origin.clone(),
@@ -6986,6 +7002,8 @@ node_facts! {
         /// The one operation record of the occurrence.
         adjustment: Box<SemanticAdjustment>,
         parameterized_method_call: Vec<mojito_types::types::ParamDecl>,
+        /// See [`SemanticAdjustment::ReflectedField`].
+        reflected_field: ReflectedFieldStep,
         tuple_unpack_plan: Vec<CheckedTupleUnpackElement>,
         /// A `match` statement's anchor and commands.
         match_plan: MatchPlan,

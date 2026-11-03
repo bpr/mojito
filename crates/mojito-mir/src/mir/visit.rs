@@ -90,6 +90,10 @@ pub trait MutTypeVisitor {
     fn visit_variant_alternatives(&mut self, alternatives: &mut Vec<Ty>)
     -> Result<(), Self::Error>;
     fn visit_variant_index(&mut self, index: &mut VariantIndex) -> Result<(), Self::Error>;
+    /// A symbolic field step ([`Proj::FieldAt`]) over the type of the
+    /// storage it selects into, already visited: a client closing the step
+    /// rewrites it to its [`Proj::Field`].
+    fn visit_field_step(&mut self, step: &mut Proj, base: Option<&Ty>) -> Result<(), Self::Error>;
     fn visit_lane_mask(&mut self, mask: &mut LaneMask) -> Result<(), Self::Error>;
     fn visit_param_arg(
         &mut self,
@@ -428,7 +432,8 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
 }
 
 /// Visit a place's root type, its projection types, the alternatives its
-/// variant projections select, then its designated type.
+/// variant projections select, its symbolic field steps, then its
+/// designated type.
 pub fn walk_place_mut<V: MutTypeVisitor + ?Sized>(
     visitor: &mut V,
     place: &mut MirPlace,
@@ -437,9 +442,17 @@ pub fn walk_place_mut<V: MutTypeVisitor + ?Sized>(
     for ty in &mut place.projection_tys {
         visitor.visit_ty(ty, TySite::Place)?;
     }
-    for projection in &mut place.proj {
-        if let Proj::Variant(index) = projection {
-            visitor.visit_variant_index(index)?;
+    for (position, projection) in place.proj.iter_mut().enumerate() {
+        match projection {
+            Proj::Variant(index) => visitor.visit_variant_index(index)?,
+            Proj::FieldAt(_) => {
+                let base = match position.checked_sub(1) {
+                    Some(previous) => place.projection_tys.get(previous),
+                    None => place.root_ty.as_ref(),
+                };
+                visitor.visit_field_step(projection, base)?;
+            }
+            _ => {}
         }
     }
     visit_opt_ty(visitor, place.ty.as_mut(), TySite::Place)
@@ -557,6 +570,9 @@ mod tests {
         }
         fn visit_variant_index(&mut self, _: &mut VariantIndex) -> Result<(), ()> {
             self.variant_indices += 1;
+            Ok(())
+        }
+        fn visit_field_step(&mut self, _: &mut Proj, _: Option<&Ty>) -> Result<(), ()> {
             Ok(())
         }
         fn visit_lane_mask(&mut self, _: &mut LaneMask) -> Result<(), ()> {

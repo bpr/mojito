@@ -1309,6 +1309,9 @@ impl<'a> Flatten<'a> {
         if let Some(place) = self.materialize_write_back_place(expression) {
             return Some(place);
         }
+        if let Some(step) = expression.reflected_field() {
+            return Some(self.reflected_field_place(expression, step));
+        }
         let base_place = |this: &mut Self, base: Node<'a>| {
             if base.reference_result().is_some() {
                 this.materialize_reference_result_place(base)
@@ -1352,6 +1355,37 @@ impl<'a> Flatten<'a> {
             }
             _ => None,
         }
+    }
+
+    /// The place a `reflect[T].field_ref[idx](s)` reference designates: the
+    /// argument's place, a temporary's in its hidden slot, plus the field
+    /// step upstream's `lit.ref.struct.ger` takes.
+    fn reflected_field_place(
+        &mut self,
+        expression: Node<'a>,
+        step: &mojito_checked::checked::ReflectedFieldStep,
+    ) -> MirPlace {
+        let argument = *expression
+            .args()
+            .first()
+            .expect("a checked field_ref call has its one argument");
+        let mut place =
+            match mojito_checked::checked::materialized_borrow_owner(argument.adjustments()) {
+                Some(owner) if !self.owner_vars.contains_key(&owner) => self
+                    .materialize_borrow_source(argument, owner)
+                    .1
+                    .unwrap_or_else(|| self.place(argument)),
+                _ => self.place(argument),
+            };
+        let projection = match step {
+            mojito_checked::checked::ReflectedFieldStep::Named(name) => Proj::Field(name.clone()),
+            mojito_checked::checked::ReflectedFieldStep::At(index) => Proj::FieldAt(index.clone()),
+        };
+        let ty = expression
+            .ty()
+            .expect("a checked field_ref call has its field's type");
+        place.project(projection, ty);
+        place
     }
 
     /// Evaluate a call receiver and retain its executable place when checking

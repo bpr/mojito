@@ -11,6 +11,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ParamArg;
+use mojito_checked::checked::{ReflectedFieldStep, SemanticAdjustment};
 use mojito_types::param_expr::{ParamKind, ReflectQuery, TypeNameForm};
 use mojito_types::types::DependentType;
 use mojito_types::types::TyKind;
@@ -29,6 +30,18 @@ impl Checker {
                 Some(bound) => self.infer_reflection(bound),
                 None => Ok(None),
             },
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } if let ExprKind::Member { object, field } = &callee.kind
+                && field == "field_ref"
+                && let Some(subject) = self.reflection_handle(object)? =>
+            {
+                self.infer_reflected_field_ref(expr, &subject, param_args, args, kwargs)
+                    .map(Some)
+            }
             ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => {
                 match self.reflection_query_of(expr)? {
                     Some((subject, query)) => {
@@ -396,6 +409,90 @@ impl Checker {
         Ok(ty)
     }
 
+    /// `reflect[T].field_ref[idx](s)`: a reference to field `idx` of `s`,
+    /// typed as upstream's static method `field_ref[idx: Int](ref s: T) ->
+    /// ref[s] _field_types_of[T]()[idx]`. Its origin and mutability are the
+    /// argument's, and the step its body's `lit.ref.struct.ger` takes is
+    /// recorded beside the `ReferenceResult`: the field's name once the
+    /// subject is a struct and the index is closed, else the index, which
+    /// the elaborator closes per instance.
+    fn infer_reflected_field_ref(
+        &self,
+        expr: &Expr,
+        subject: &Ty,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        let ([ParamArg::Value(index)], [argument], []) = (param_args, args, kwargs) else {
+            return Err(TypeError::BadCall {
+                func: "field_ref".to_string(),
+                reason: "expected one Int parameter and one positional argument".to_string(),
+            });
+        };
+        let index = self.reflection_index(index)?;
+        let (step, field_ty) = if let Some(fields) = self.reflected_fields(subject)?
+            && let Some(position) = index.as_i64()
+        {
+            let (name, ty) = usize::try_from(position)
+                .ok()
+                .and_then(|position| fields.get(position))
+                .ok_or_else(|| {
+                    TypeError::NotComptime(format!(
+                        "field index {position} is out of range for '{subject}' with {} fields",
+                        fields.len()
+                    ))
+                })?;
+            (ReflectedFieldStep::Named(name.clone()), ty.clone())
+        } else {
+            let list = self.eval_reflection(subject, ReflectQuery::FieldTypes)?;
+            let ty = self.reflection_list_get(&list, &index)?;
+            (ReflectedFieldStep::At(index), ty)
+        };
+        let actual = self.materialized_reference_actual(argument)?;
+        if actual.referent != *subject {
+            return Err(TypeError::BadCall {
+                func: "field_ref".to_string(),
+                reason: format!(
+                    "value passed to 's' cannot be converted from '{}' to ref '{subject}'",
+                    actual.referent
+                ),
+            });
+        }
+        let reference = mojito_types::origin::RefTy {
+            referent: field_ty.clone(),
+            mutability: actual.mutability,
+            origin: actual.origin,
+        };
+        let mut record = self.record_at(expr.source_span());
+        record.adjustment = Some(Box::new(SemanticAdjustment::ReferenceResult { reference }));
+        record.reflected_field = Some(step);
+        Ok(field_ty)
+    }
+
+    /// The fields of a reflected struct subject whose fields have resolved,
+    /// at the subject's arguments; `None` while the subject is a parameter
+    /// or a struct still resolving them. Any other subject has no fields a
+    /// reference can select.
+    fn reflected_fields(&self, subject: &Ty) -> Result<Option<Vec<(String, Ty)>>, TypeError> {
+        match subject.kind() {
+            TyKind::Param { .. } | TyKind::Dependent(_) | TyKind::SelfType => Ok(None),
+            kind if let Some((name, arguments)) = kind.as_non_simd_struct()
+                && let Some(info) = self.structs.get(name) =>
+            {
+                Ok(info.fields_resolved().then(|| {
+                    info.fields
+                        .iter()
+                        .map(|(field, ty)| (field.clone(), substitute_at(ty, info, arguments)))
+                        .collect()
+                }))
+            }
+            _ => Err(TypeError::Unsupported(format!(
+                "reflect[{subject}].field_ref over a type that is not a struct"
+            ))),
+        }
+    }
+
     /// The handle and query an expression reads: `r.field_count()`,
     /// `r.is_struct()`, `r.field_names()`, `r.field_types()`,
     /// `r.field_index["x"]()`, with `r` a handle expression or a bound name.
@@ -725,6 +822,30 @@ impl Checker {
     /// (a constant index folds to the field's type), a symbolic one is the
     /// dependent element, as a pack element is.
     fn reflection_list_element(&self, list: &CtValue, index: &Expr) -> Result<Ty, TypeError> {
+        let index = self.reflection_index(index)?;
+        self.reflection_list_get(list, &index)
+    }
+
+    /// Element `index` of a reflected field-type list at a compile-time
+    /// index already compiled.
+    fn reflection_list_get(&self, list: &CtValue, index: &ParamExpr) -> Result<Ty, TypeError> {
+        // A generic struct's own fields at its parameters are types no
+        // constant holds: the element is their selection.
+        if let CtValue::Tuple(values) = list
+            && let Some(types) = values
+                .iter()
+                .map(|value| match value {
+                    CtValue::Type(ty) => Some(ty.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<Ty>>>()
+        {
+            return self
+                .param_context
+                .select(types, index)
+                .map(DependentType::resolve)
+                .map_err(param_error);
+        }
         let list = match list {
             CtValue::Expr(expr) => expr.clone(),
             constant => self
@@ -732,9 +853,8 @@ impl Checker {
                 .constant(constant.clone())
                 .map_err(param_error)?,
         };
-        let index = self.reflection_index(index)?;
         self.param_context
-            .list_get(&list, &index)
+            .list_get(&list, index)
             .map(DependentType::resolve)
             .map_err(param_error)
     }

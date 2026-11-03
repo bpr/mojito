@@ -374,6 +374,10 @@ impl crate::mir::visit::MutTypeVisitor for ClosureStorageTypes<'_> {
         Ok(())
     }
 
+    fn visit_field_step(&mut self, _: &mut Proj, _: Option<&Ty>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn visit_lane_mask(
         &mut self,
         _: &mut mojito_types::types::LaneMask,

@@ -1728,6 +1728,13 @@ pub enum Proj {
     /// and execution read through it ([`MirPlace::storage`]); the elaborator
     /// judges and erases it, so concrete MIR never holds one.
     Rebind,
+    /// Upstream's `lit.ref.struct.ger` at an index: the field of a struct
+    /// that is still a parameter, or at an index that is (a `comptime for`
+    /// variable), which `reflect[T].field_ref[idx](s)` designates. Its type
+    /// is the step's `projection_tys` entry, dependent on the index; the
+    /// elaborator closes it to [`Proj::Field`] per instance, so concrete MIR
+    /// never holds one.
+    FieldAt(mojito_types::param_expr::ParamExpr),
 }
 
 /// A writable location: a root variable plus a chain of projections

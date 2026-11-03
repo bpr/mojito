@@ -3444,6 +3444,33 @@ fn symbolic_variant_index_round_trips() {
         if matches!(place.proj.as_slice(), [Proj::Variant(read)] if *read == index)));
 }
 
+/// A template's field at a symbolic index (`reflect[T].field_ref[i](s)`)
+/// reads back to the same index.
+#[test]
+fn symbolic_field_step_round_trips() {
+    let i = int_parameter("f", 0, "i");
+    let mut projected = sample_place(0);
+    projected.proj = vec![Proj::FieldAt(i.clone())];
+    projected.projection_tys = vec![Ty::int()];
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::int()],
+            vec![MirInstr::LoadPlace {
+                dest: Reg(0),
+                place: projected,
+            }],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("field_at(ct_expr("));
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let instrs = &parsed.program.functions[0].1.blocks[0].instrs;
+    assert!(matches!(&instrs[0], MirInstr::LoadPlace { place, .. }
+        if matches!(place.proj.as_slice(), [Proj::FieldAt(read)] if *read == i)));
+}
+
 /// The three forms only a generator carries — a pack element, a reflection
 /// query, and an application (a static method's dotted name included) —
 /// round trip through the reader.

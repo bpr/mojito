@@ -292,10 +292,16 @@ impl FnLowering<'_> {
                     // `unsafe_write`. The enclosing Store marks presence.
                     ty = element;
                 }
-                // The elaborator erases every rebound place's step.
+                // The elaborator erases every rebound place's step and closes
+                // every symbolic field step.
                 Proj::Rebind => {
                     return Err(
                         self.unsupported_reg("rebound place in elaborated MIR".into(), dest)
+                    );
+                }
+                Proj::FieldAt(_) => {
+                    return Err(
+                        self.unsupported_reg("symbolic field step in elaborated MIR".into(), dest)
                     );
                 }
             }

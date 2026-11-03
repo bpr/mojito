@@ -8315,6 +8315,36 @@ fn a_reflection_body_is_validated_without_instantiation() {
 }
 
 #[test]
+fn a_reflected_field_reference_selects_a_field_of_a_struct() {
+    // `field_ref[idx](s)` checks over a struct at an index in range; a
+    // closed index past the fields, where the pin crashes, and a subject
+    // that is not a struct are rejected explicitly.
+    let header = "@fieldwise_init\nstruct P(Copyable):\n    var x: Int\n    var y: Int\n\ndef main():\n    var p = P(3, 4)\n";
+    check_once(
+        &format!("{header}    print(reflect[P].field_ref[1](p))\n"),
+        "field_ref_in_range.mojo",
+    )
+    .expect("an index in range checks");
+    let error = check_once(
+        &format!("{header}    var n = reflect[P].field_ref[2](p)\n"),
+        "field_ref_out_of_range.mojo",
+    )
+    .expect_err("an index past the fields is rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("field index 2 is out of range for 'P' with 2 fields"),
+        "{error}"
+    );
+    let error = check_once(
+        "def main():\n    var n = reflect[Int].field_ref[0](3)\n",
+        "field_ref_scalar.mojo",
+    )
+    .expect_err("a builtin scalar subject is rejected");
+    assert!(error.to_string().contains("not a struct"), "{error}");
+}
+
+#[test]
 fn a_non_bool_comptime_condition_converts_through_its_bool() {
     // An integer leaf is its `Bool(x)`, `x != 0`, and a float expression or
     // a bare float name the function lifted for its conversion, which reads

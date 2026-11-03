@@ -169,6 +169,15 @@ impl Decoder {
                 "index" => self.reg(inner).map(Proj::Index),
                 "const_index" => self.uint(inner).map(Proj::ConstIndex),
                 "variant" => self.variant_index(inner).map(Proj::Variant),
+                "field_at" => match &inner.kind {
+                    ValueKind::Positional(tag, index) if tag == "ct_expr" => {
+                        self.param_expr(index).map(Proj::FieldAt)
+                    }
+                    _ => {
+                        self.error(inner.span, "expected `ct_expr(...)` field index");
+                        None
+                    }
+                },
                 other => {
                     self.error(value.span, format!("unknown projection `{other}`"));
                     None
