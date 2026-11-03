@@ -272,14 +272,14 @@ impl Checker {
         ty: &Ty,
         member: &str,
     ) -> Result<Option<Vec<mojito_types::param_expr::ParamExpr>>, TypeError> {
-        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = mojito_types::types::nominal_parts(ty) else {
             return Ok(None);
         };
         let Some(info) = self.structs.get(name) else {
             return Ok(None);
         };
         let Some(list) = self
-            .struct_value_member(info, arguments, member)
+            .struct_value_member(info, &arguments, member)
             .transpose()?
         else {
             return Ok(None);

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Bool` conforms to `EnumLike` with upstream's members in
+  `std.builtin.bool` (R1189): `count[Bool]()` over `T: EnumLike` and
+  `True._get_enum_discriminant()` run as at the pin, where they were
+  rejected, and `match` coverage reads `Bool`'s cases from the declaration
+  instead of a checker rule. A `while True:` loop with no `break` of its own
+  now ends a return path, as at the pin.
+
 - `Bool` declares upstream's `Writable` with its `write_to` and
   `write_repr_to` bodies in `std.builtin.bool`, and `print`, `String`,
   `repr`, and `Writer.write` of a `Bool` call them on the VM and natively

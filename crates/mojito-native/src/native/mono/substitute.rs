@@ -248,10 +248,12 @@ pub(super) fn struct_instance<'b>(
     ty: &'b Ty,
     bindings: &'b Bindings,
 ) -> Result<Option<StructInstance<'b>>, MonoError> {
-    let Some((struct_name, struct_args)) = ty.kind().as_non_simd_struct() else {
+    let Some((struct_name, struct_args)) =
+        mojito_types::types::nominal_parts(ty).filter(|_| !ty.is_simd())
+    else {
         return Ok(None);
     };
-    let Some((template, shape)) = [struct_name.as_str(), nominal_template(struct_name)]
+    let Some((template, shape)) = [struct_name, nominal_template(struct_name)]
         .into_iter()
         .find_map(|name| Some((name, bindings.structs.shape(name)?)))
     else {
@@ -263,7 +265,7 @@ pub(super) fn struct_instance<'b>(
         applications: bindings.applications.clone(),
         ..Bindings::default()
     };
-    bind_ty_args(&shape.param_decls, struct_args, &mut instance).map_err(|construct| {
+    bind_ty_args(&shape.param_decls, &struct_args, &mut instance).map_err(|construct| {
         MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,

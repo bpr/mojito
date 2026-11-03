@@ -1,8 +1,9 @@
 # `EnumLike` is the prelude's upstream trait. A hand-written conformer,
-# `Optional`, and `OptionalReg` run one generic `T: EnumLike` body that reads
-# the discriminant, both case lists' lengths, `_enum_is_exhaustive`, and a
-# payload. The pin validates no case metadata at the declaration, so an open
-# enum with three names over two types runs, as does a one-case enum.
+# `Optional`, `OptionalReg`, and `Bool` run one generic `T: EnumLike` body
+# that reads the discriminant, both case lists' lengths,
+# `_enum_is_exhaustive`, and a payload. The pin validates no case metadata
+# at the declaration, so an open enum with three names over two types runs,
+# as does a one-case enum.
 from std.builtin.variadics import TypeList, _MLIR
 from std.collections import OptionalReg
 
@@ -125,5 +126,7 @@ def main():
     _ = show(w)
     print(payload1(w))
     _ = show(Unit())
+    _ = show(True)
+    _ = show(False)
     comptime if conforms_to(Optional[String], EnumLike):
         print("Optional[String] is EnumLike")

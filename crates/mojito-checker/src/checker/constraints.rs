@@ -5500,9 +5500,6 @@ impl Checker {
 
     fn subject_value_member(&self, subject: &Ty, field: &str) -> Option<ParamExpr> {
         match subject.kind() {
-            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => self
-                .struct_value_member(self.structs.get(name)?, arguments, field)?
-                .ok(),
             TyKind::Param { .. } => {
                 let ty = self.lookup_trait_assoc_value_ty(&self.refined_bound(subject)?, field)?;
                 Some(self.param_context.type_member(
@@ -5511,6 +5508,11 @@ impl Checker {
                     &[],
                     mojito_types::param_expr::MetaTy::value(ty),
                 ))
+            }
+            _ if !subject.is_simd() => {
+                let (name, arguments) = mojito_types::types::nominal_parts(subject)?;
+                self.struct_value_member(self.structs.get(name)?, &arguments, field)?
+                    .ok()
             }
             _ => None,
         }

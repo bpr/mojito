@@ -543,6 +543,7 @@ assets/ok/local_comptime_closed_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/local_comptime_float.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/local_type_alias_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_binding_consuming_copy.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/loop_never_breaks_returning_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_result_two_breaks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mapping_key_iteration_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_binding_kinds_on_temporary.mojo	-	ineligible	no-scalar-entry-shape

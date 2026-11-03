@@ -167,6 +167,17 @@ pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> StmtReach) -> b
         // each instantiation's fact, so a loop holding a `return` leaves the
         // fall-through verdict to the executable check of the unrolled clone.
         StmtKind::ComptimeFor { body, .. } => block_holds_return(body),
+        // `while True:` leaves only through a `break` of its own; a
+        // `return` or `raise` in its body leaves the function.
+        StmtKind::While {
+            cond:
+                mojito_ast::ast::Condition::Expr(Expr {
+                    kind: ExprKind::Bool(true),
+                    ..
+                }),
+            body,
+            ..
+        } => !block_breaks_loop(body),
         // A `with` body runs exactly once (its desugar is a `try`/`finally`
         // whose cleanup cannot divert control), so it diverges iff the body does.
         StmtKind::With { body, .. } | StmtKind::Scope(body) => definitely_returns(body, reach),
@@ -199,6 +210,41 @@ pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> StmtReach) -> b
         }
         _ => false,
     }
+}
+
+/// Whether a `break` in `body` leaves the loop `body` belongs to: one not
+/// nested in an inner runtime loop, which owns it.
+fn block_breaks_loop(body: &[Stmt]) -> bool {
+    body.iter().any(|stmt| match &stmt.kind {
+        StmtKind::Break => true,
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            branches.iter().any(|(_, body)| block_breaks_loop(body))
+                || orelse.as_deref().is_some_and(block_breaks_loop)
+        }
+        StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
+            cases.iter().any(|case| block_breaks_loop(&case.body))
+        }
+        StmtKind::While { orelse, .. } | StmtKind::For { orelse, .. } => {
+            orelse.as_deref().is_some_and(block_breaks_loop)
+        }
+        StmtKind::ComptimeFor { body, .. }
+        | StmtKind::With { body, .. }
+        | StmtKind::Scope(body) => block_breaks_loop(body),
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            block_breaks_loop(body)
+                || except
+                    .as_ref()
+                    .is_some_and(|(_, body)| block_breaks_loop(body))
+                || orelse.as_deref().is_some_and(block_breaks_loop)
+                || finalbody.as_deref().is_some_and(block_breaks_loop)
+        }
+        _ => false,
+    })
 }
 
 /// The coverage facts of the `match` statement `stmt` with `cases`: it

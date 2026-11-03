@@ -3093,11 +3093,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `mut` parameter moved before `while True: pass`, is rejected as
     uninitialized at return, where the pin prints `x` (found while landing
     R875, 2026-10-21).
-  - Probe: `conformance/probes/loop_never_breaks_returning_body.mojo`, a
-    `-> Int` body whose arm ends in `while True: pass`, is rejected as
-    "does not return a value on every path", where the pin prints `4`: the
-    checker's return analysis (`stmt_returns`) knows no `while` that never
-    breaks (found while landing R1710, 2026-10-30).
   - Found while landing R1134 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11106,23 +11101,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Bool(value=b)` arm, which reads a folded `i1` as the `Bool`.
   - Depends on R1608, R1609, R1610, R1611, and R1189.
   - Model: Fable, Not Planned.
-
-- [ ] **R1189 `Bool` does not conform to `EnumLike`**
-
-  Problem: `count[Bool]()` over `def count[T: EnumLike]()` is rejected,
-  where the pin's `Bool` conforms with cases `False` and `True` and no
-  payloads.
-  - Give the ported struct upstream's members (`bool.mojo`): the names
-    and payload types by `ParameterList.of` and `TypeList.of`,
-    `_get_enum_discriminant` returning `self.__int__()`, and the
-    never-called payload getter.
-  - Probe: the `Bool` half of
-    `conformance/probes/enum_like_optional_bool.mojo`.
-  - Delete the modelled-`Bool` arm of `enum_constructors`
-    (`checker/coverage.rs`) once the library `Bool` conforms.
-  - Found while planning R1132 (2026-10-20).
-  - Depends on R1132 (the trait) and R1608 (a library `Bool`).
-  - Model: Opus, Not Planned.
 
 - [ ] **R1657 A compile-time string that is no literal is typed by the
   value-less `StringLiteral`**

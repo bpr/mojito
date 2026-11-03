@@ -2633,6 +2633,24 @@ fn rejects_return_only_inside_a_loop() {
 }
 
 #[test]
+fn while_true_without_its_own_break_ends_a_return_path() {
+    // `while True:` leaves only through a `break` of its own, as upstream's
+    // `Bool._unsafe_get_enum_payload` relies on; an inner loop's `break`
+    // stays inside it.
+    ok("def f() -> Int:\n    while True:\n        pass\n");
+    ok("def f(n: Int) -> Int:\n    while True:\n        if n > 0:\n            return n\n");
+    ok("def f(n: Int) -> Int:\n    while True:\n        while n > 0:\n            break\n");
+    for body in [
+        "    while True:\n        break\n",
+        "    while True:\n        if n > 0:\n            break\n",
+        "    while n > 0:\n        pass\n",
+    ] {
+        let e = err_std(&format!("def f(n: Int) -> Int:\n{body}"));
+        assert_eq!(e, TypeError::MissingReturn("f".into()));
+    }
+}
+
+#[test]
 fn a_failing_comptime_assert_ends_a_return_path() {
     // A `comptime assert` whose condition folds to `False` ends every path
     // through it, as the pin's constraint failure does; one over a

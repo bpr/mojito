@@ -4,7 +4,7 @@
 //! subject's type. The space proves when the cases cover every value, finds
 //! the cases earlier ones already cover, and names the values none covers.
 //!
-//! The space is a closed `EnumLike`'s constructors (the modelled `Bool`'s
+//! The space is a closed `EnumLike`'s constructors (`Bool`'s
 //! `False` and `True` among them), an open one's (`_enum_is_exhaustive =
 //! False`, which only a catch-all closes), the Cartesian cells of a tuple or
 //! struct whose every leaf is a closed `EnumLike` (at most 1024, else too
@@ -253,15 +253,8 @@ impl Checker {
 
     /// The constructors of `ty` when it is an `EnumLike`: the case names
     /// `_enum_case_names` folds to and the `_enum_is_exhaustive` flag, each
-    /// unknown when it does not fold. The modelled `Bool` is upstream's
-    /// library conformer (`bool.mojo`), its cases `False` and `True`.
+    /// unknown when it does not fold.
     fn enum_constructors(&self, ty: &Ty) -> Result<Option<Constructors>, TypeError> {
-        if matches!(ty.kind(), TyKind::Bool) {
-            return Ok(Some(Constructors {
-                names: Some(vec!["False".to_string(), "True".to_string()]),
-                exhaustive: Some(true),
-            }));
-        }
         if !self.conforms_to(ty, &enum_like_trait()) {
             return Ok(None);
         }
@@ -274,12 +267,12 @@ impl Checker {
                 })
                 .collect()
         });
-        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = mojito_types::types::nominal_parts(ty) else {
             return Ok(None);
         };
         let flag = match self.structs.get(name) {
             Some(info) => self
-                .struct_value_member(info, arguments, "_enum_is_exhaustive")
+                .struct_value_member(info, &arguments, "_enum_is_exhaustive")
                 .transpose()?,
             None => None,
         };
