@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An `Int`-annotated module `comptime` constant is the `Int` its annotation
+  converts the literal to, as a local one already was (R1738): `print(N / 2)`
+  over `comptime N: Int = 3`, `comptime y = x / 2`, and `comptime g = x // 0`
+  over a module `comptime x: Int = 7` now print `1`, `3`, and `0` as at the
+  pin, where they failed with a literal-materialization or compile-time
+  evaluation error.
+
 - `Bool` is upstream's declared struct throughout the compiler instead of a
   compiler type the checker held it as (R1612): its `@implicit` `i1` and
   `Scalar[.bool]` conversions and `Bool(copy=b)` bind its declared

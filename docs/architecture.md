@@ -1561,7 +1561,10 @@ kept as written. A vector annotation converts a scalar initializer by
 splatting it (`comptime ONES: SIMD[DType.int32, 4] = 1`): the check folds
 a module constant at its annotation (`Checker::splat_at_annotation`), and
 a local binding is its slot materialized at the annotation, as a `var`'s
-is. The check builds every module constant
+is. An `Int` annotation converts an integer initializer to the `Int` it
+names, so the module constant's folded value is that `CtValue::Int`, which
+every compile-time read folds with `Int`'s operators, while
+`ProgramConstants` still holds its number for symbol spelling. The check builds every module constant
 with the one parameter-expression builder — ahead of every declaration
 (`Checker::fold_module_constants`), or in its declaration pass when the
 initializer reads a declaration — and records a body's read as a

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1842**.
+Next free ID: **R1843**.
 
 ## Ordered Work
 
@@ -4697,34 +4697,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1738 An `Int`-annotated `comptime` binding stays an
-  `IntLiteral`**
+- [ ] **R1842 A tuple index over an `Int`-typed compile-time expression
+  stays symbolic**
 
-  `comptime n: Int = 3`, local or module, binds the literal `3`, where the
-  pin binds `Int(3)`, so its reads take literal semantics.
-  - Probe: `comptime n: Int = 3` in `main`, then `var x: UInt8 = n` or
-    `SIMD[DType.uint8, 2](n, n)`, run, where the pin rejects "cannot
-    implicitly convert 'Int' value to 'UInt8'" and "no matching function
-    in initialization". A module `comptime N: Int = 3` does the same.
-  - Probe: `comptime x: Int = 7; comptime y = x / 2` in `main` prints
-    `3.5`, where the pin prints `3`: the literal pair divides exactly.
-  - Probe: `comptime N: Int = 3` at module scope, then `print(N / 2)`,
-    fails "type mismatch for numeric literal materialization of '3/2'",
-    where the pin prints `1`.
-  - Probe: `comptime g = x // 0` over a module `comptime x: Int = 7`, then
-    `print(g)`, fails its compile-time evaluation, where the pin prints
-    `0`: an `Int`'s `//` by zero folds to `0`, the literal pair's does not
-    (R1624).
-  - Cause: the `comptimes` table and `ProgramConstants` hold an
-    `IntLiteral` per constant, and `Checker::eval_ct` folds over literals
-    alone. `fold_module_constants` and the annotated arm of the `Comptime`
-    statement (`checker/statements.rs`) filter an `Int` annotation out and
-    declare the binding `IntLiteral`.
-  - Lever: declare the binding `Int` and record its folded value as an
-    `Int` constant (`CtValue::Int`), so a compile-time read folds as
-    `Int`'s methods do while a value parameter still reads the number.
+  `t[N + 1]` over a module `comptime N: Int = 3`, and `t[n]` or `t[n + 1]`
+  over a local `comptime n: Int = 2`, fail, where the pin prints `5`, `3`,
+  and `4`; `t[N]` and a literal `t[K + 1]` run.
+  - Probe: the module form fails in elaboration, "keeps compile-time
+    parameter `index` in elaborated MIR".
+  - Probe: the local form fails in the check, "an element of 'values' with
+    type 'type_sequence[Int, ...][$comptime$main$c0()]' does not conform to
+    trait 'Writable'".
+  - Cause: `Tuple.__getitem_param__[index: Int]` returns `Self.Ts[index]`,
+    a `ParamKind::Select` that reduces only over a closed constant index.
+    An `Int` operand builds the index as an `Int` application (or a local
+    constant's `$comptime` application), which neither the check nor
+    `native::mono` folds before the select.
+  - Lever: fold a closed `Int` application in the select's index, as a
+    value parameter `f[N + 1]()` already folds.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1646 A construction spelled through a closed type alias is no
   compile-time application**
@@ -7730,7 +7722,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     arithmetic error and the VM's literal division traps.
   - Ledger name: `assets/runtime_error/div_by_zero.mojo`, which moves to
     `assets/ok` when this lands, with its errors-ledger and manifest rows.
-  - Also R1738's `comptime g = x // 0` probe, whose `x` stays a literal.
   - Probe: `W[5 % 0].n` over `struct W[n: Int]` fails its compile-time
     run ("integer division or modulo by zero"), where the pin prints `0`;
     `W[n % 0]` over an `Int` `n` already folds through `SIMD.__mod__`.

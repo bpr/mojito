@@ -454,11 +454,7 @@ impl Checker {
             self.comptime_applied.insert(name.clone(), applied);
             ty
         } else if let Some(folded) = self.program_constants.own(name) {
-            let declared_int = ty
-                .as_ref()
-                .and_then(|annotation| self.ty_from_anno(annotation).ok())
-                .is_some_and(|declared| declared.is_int());
-            Some(if declared_int {
+            Some(if self.annotates_int(ty.as_ref()) {
                 Ty::int()
             } else {
                 Ty::int_literal_of(folded)
@@ -2172,10 +2168,16 @@ impl Checker {
                 });
                 // A module constant was folded before any declaration; only a
                 // body's own constant folds here.
-                let folded = if self.function_bases.is_empty() && self.scopes.len() == 1 {
+                let at_module = self.function_bases.is_empty() && self.scopes.len() == 1;
+                let folded = if at_module {
                     self.program_constants.own(name).cloned().ok_or(())
                 } else {
-                    self.eval_ct(value).map_err(drop)
+                    // A fold through an `Int` constant is an `Int`, which
+                    // the binding takes from its inferred type.
+                    match self.eval_ct_integer(value) {
+                        Ok(CtValue::IntLiteral(literal)) => Ok(literal),
+                        _ => Err(()),
+                    }
                 };
                 if let Some(expected) = annotated {
                     // An annotation other than `Int` is the binding's type: the
@@ -2206,7 +2208,12 @@ impl Checker {
                     } else {
                         Ty::int_literal_of(&v)
                     };
-                    self.comptimes.insert(name.clone(), v);
+                    // A module `Int` constant's value is the `Int`
+                    // `fold_module_constants` recorded, never the literal.
+                    if !(at_module && matches!(self.module_values.get(name), Some(CtValue::Int(_))))
+                    {
+                        self.comptimes.insert(name.clone(), v);
+                    }
                     self.declare_immutable(name, ty)?;
                 } else {
                     let ty = self.infer(value)?;

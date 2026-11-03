@@ -46,8 +46,20 @@ impl Checker {
         &self,
         expr: &Expr,
     ) -> Result<mojito_common::literal::IntLiteral, TypeError> {
+        match self.eval_ct_integer(expr)? {
+            CtValue::IntLiteral(value) => Ok(value),
+            CtValue::Int(value) => Ok(value.into()),
+            _ => Err(TypeError::NotComptime(
+                "unsupported comptime operation".to_string(),
+            )),
+        }
+    }
+
+    /// The integer `expr` folds to, with the operators of its operands'
+    /// types: a literal pair's, or `Int`'s once an `Int` constant takes part.
+    pub(super) fn eval_ct_integer(&self, expr: &Expr) -> Result<CtValue, TypeError> {
         match &expr.kind {
-            ExprKind::Int(n) => Ok(n.clone()),
+            ExprKind::Int(n) => Ok(CtValue::IntLiteral(n.clone())),
             ExprKind::Identifier(name) => self.module_comptime(name).ok_or_else(|| {
                 // A bare struct value parameter (`SIMD[d, length]`) is
                 // upstream's `use 'Self.length'` error, not a missing constant.
@@ -57,18 +69,17 @@ impl Checker {
                     TypeError::NotComptime(name.clone())
                 }
             }),
-            ExprKind::Prefix(PrefixOp::Neg, e) => Ok(self.eval_ct(e)?.neg()),
-            ExprKind::Prefix(PrefixOp::Pos, e) => self.eval_ct(e),
+            ExprKind::Prefix(PrefixOp::Neg, e) => {
+                mojito_types::param_expr::fold::fold_neg(&self.eval_ct_integer(e)?)
+                    .map_err(param_error)
+            }
+            ExprKind::Prefix(PrefixOp::Pos, e) => self.eval_ct_integer(e),
             ExprKind::Infix(op, l, r) => {
-                let (a, b) = (self.eval_ct(l)?, self.eval_ct(r)?);
-                let folded = mojito_types::param_expr::fold::fold_infix(
-                    *op,
-                    &CtValue::IntLiteral(a),
-                    &CtValue::IntLiteral(b),
-                )
-                .map_err(param_error)?;
-                match folded {
-                    CtValue::IntLiteral(value) => Ok(value),
+                let (a, b) = (self.eval_ct_integer(l)?, self.eval_ct_integer(r)?);
+                match mojito_types::param_expr::fold::fold_infix(*op, &a, &b)
+                    .map_err(param_error)?
+                {
+                    folded @ (CtValue::IntLiteral(_) | CtValue::Int(_)) => Ok(folded),
                     _ => Err(TypeError::NotComptime(
                         "unsupported comptime operation".to_string(),
                     )),
@@ -81,11 +92,12 @@ impl Checker {
     }
 
     /// Fold every closed top-level constant of `stmts` once, in source
-    /// order, with the one parameter-expression builder: an integer into the
-    /// module's constants and the program's table every symbol speller
-    /// reads, any other attribute into the module's values, and a literal
-    /// as its initializer. One that reads a declaration not yet registered
-    /// builds in the declaration pass instead.
+    /// order, with the one parameter-expression builder: an integer literal
+    /// into the module's constants and the program's table every symbol
+    /// speller reads, an `Int`-annotated one as its `Int` into the module's
+    /// values and that table, any other attribute into the module's values,
+    /// and a literal as its initializer. One that reads a declaration not
+    /// yet registered builds in the declaration pass instead.
     pub(super) fn fold_module_constants(&mut self, stmts: &[Stmt]) {
         for statement in stmts {
             let StmtKind::Comptime {
@@ -119,6 +131,17 @@ impl Checker {
                     .declare_type_alias(name.clone(), spelling);
             }
             match self.closed_module_constant(value) {
+                // An `Int` annotation converts the literal: the constant is
+                // the `Int`, which every compile-time read folds with `Int`'s
+                // operators, while its number still spells the parameter.
+                Some(CtValue::IntLiteral(constant))
+                    if self.annotates_int(ty.as_ref())
+                        && let Some(int) = constant.to_i64() =>
+                {
+                    self.module_values.insert(name.clone(), CtValue::Int(int));
+                    std::sync::Arc::make_mut(&mut self.program_constants)
+                        .declare(name.clone(), constant);
+                }
                 Some(CtValue::IntLiteral(constant)) => {
                     self.comptimes.insert(name.clone(), constant.clone());
                     std::sync::Arc::make_mut(&mut self.program_constants)
@@ -142,6 +165,13 @@ impl Checker {
         mojito_types::ct::simd_construction_lanes(dtype, width, std::slice::from_ref(scalar))
             .ok()
             .map(|lanes| CtValue::Simd { dtype, lanes })
+    }
+
+    /// Whether `annotation` declares a constant `Int`.
+    pub(super) fn annotates_int(&self, annotation: Option<&SourceType>) -> bool {
+        annotation
+            .and_then(|annotation| self.ty_from_anno(annotation).ok())
+            .is_some_and(|declared| declared.is_int())
     }
 
     /// The dtype and width of `annotation` when it names a vector of more
@@ -1465,12 +1495,22 @@ impl Checker {
         self.binding_scope(name).is_some_and(|scope| scope != 0)
     }
 
-    /// The folded `Int` module constant `name`, unless a nearer binding
-    /// shadows it.
-    pub(super) fn module_comptime(&self, name: &str) -> Option<mojito_common::literal::IntLiteral> {
-        (!self.module_constant_shadowed(name))
-            .then(|| self.comptimes.get(name).cloned())
-            .flatten()
+    /// The folded integer module constant `name`, an `IntLiteral` or an
+    /// `Int`, unless a nearer binding shadows it.
+    pub(super) fn module_comptime(&self, name: &str) -> Option<CtValue> {
+        if self.module_constant_shadowed(name) {
+            return None;
+        }
+        self.comptimes
+            .get(name)
+            .cloned()
+            .map(CtValue::IntLiteral)
+            .or_else(|| {
+                self.module_values
+                    .get(name)
+                    .filter(|value| matches!(value, CtValue::Int(_)))
+                    .cloned()
+            })
     }
 
     /// The symbolic value of a module constant's initializer that applies a
@@ -1483,9 +1523,8 @@ impl Checker {
         match &expr.kind {
             ExprKind::Int(n) => context.constant(CtValue::IntLiteral(n.clone())).ok(),
             ExprKind::Identifier(name) => self
-                .comptimes
-                .get(name)
-                .and_then(|n| context.constant(CtValue::IntLiteral(n.clone())).ok())
+                .module_comptime(name)
+                .and_then(|n| context.constant(n).ok())
                 .or_else(|| self.comptime_applied.get(name).cloned()),
             ExprKind::Prefix(PrefixOp::Neg, operand) => {
                 context.neg(&self.applied_constant_expr(operand)?).ok()
