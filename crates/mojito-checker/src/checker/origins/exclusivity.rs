@@ -119,9 +119,10 @@ pub(in crate::checker) struct ExclusivityReceiver<'a> {
 struct ArgumentAccess {
     name: String,
     own: Option<(OriginPlace, bool)>,
-    /// A positional collector gathers the argument, so its own place is
-    /// judged here rather than by the syntactic place rule.
-    gathered: bool,
+    /// Its own place is judged here rather than by the syntactic place
+    /// rule: a positional collector gathers the argument, or it is a
+    /// reference-returning call, whose place no place path names.
+    own_judged: bool,
     carried: Vec<(OriginPlace, bool)>,
     /// The callee only reads the places the argument's type carries.
     carried_read_only: bool,
@@ -132,7 +133,7 @@ impl ArgumentAccess {
         Self {
             name,
             own: None,
-            gathered: false,
+            own_judged: false,
             carried: Vec::new(),
             carried_read_only,
         }
@@ -148,9 +149,9 @@ impl ArgumentAccess {
     }
 
     /// Whether a mutable path of `self` overlaps any path of `other`,
-    /// other than the two arguments' own places unless one is gathered.
+    /// other than the two arguments' own places unless one is judged here.
     fn mutably_overlaps(&self, other: &Self) -> bool {
-        let judges_own = self.gathered || other.gathered;
+        let judges_own = self.own_judged || other.own_judged;
         let own_mutable = self
             .own
             .iter()
@@ -384,6 +385,8 @@ impl Checker {
                 callee.nested_origins.read_only(),
                 false,
             );
+            access.own_judged = crate::checker::places::place_path(argument).is_none()
+                && self.infer_reference_value(argument).is_some();
             for parameter in [callee.declared.get(index), callee.bound.get(index)]
                 .into_iter()
                 .flatten()
@@ -398,7 +401,7 @@ impl Checker {
                     collected.name.to_string(),
                     callee.nested_origins.read_only(),
                 );
-                access.gathered = true;
+                access.own_judged = true;
                 access.own = self.own_place(
                     argument,
                     collected.convention,

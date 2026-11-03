@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1037
+# swept-count	1038
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -673,6 +673,7 @@ assets/type_error/mlir_simd_shuffle_result_width.mojo	compile-reject	agree	error
 assets/type_error/mlir_string_size_operand.mojo	compile-reject	agree	error: 'pop.string.size' op operand #0 must be String type for parameters, but got '!lit.struct<@std::@builtin::@string_literal::@StringLiteral<:string "ab">>'
 assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to '__mlir_type.i64' in return value
 assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'
+assets/type_error/mut_argument_aliases_reference_result.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'f' call
 assets/type_error/mut_argument_aliases_variadic_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'both' call
 assets/type_error/mut_argument_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'xs' argument and passed mutably to 'b' argument in 'f' call
 assets/type_error/mut_argument_value_getter_without_setter.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to mutable argument 'x' must be mutable

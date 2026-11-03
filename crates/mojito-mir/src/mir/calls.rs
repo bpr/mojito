@@ -2132,6 +2132,9 @@ impl<'a> Flatten<'a> {
         if let Some((object, _)) = expression.index_operands() {
             return self.lower_borrowed_element_read(expression, object);
         }
+        if expression.call_contract().is_some() {
+            return self.lower_borrowed_reference_result(expression);
+        }
         let name = self.name_spelled(expression)?;
         // A closure's storage value is the declaration's slot, lent as any
         // local is; its conversion to a closure, and a body without
@@ -2213,10 +2216,8 @@ impl<'a> Flatten<'a> {
         }) {
             return None;
         }
-        if let Some(reference) = expression.reference_result() {
-            return (owns_droppable_storage(&reference.referent)
-                || matches!(reference.referent.kind(), TyKind::Dependent(_)))
-            .then(|| self.lower_call_receiver(expression).0);
+        if expression.reference_result().is_some() {
+            return self.lower_borrowed_reference_result(expression);
         }
         if expression.call_contract().is_some()
             || !matches!(
@@ -2238,6 +2239,18 @@ impl<'a> Flatten<'a> {
         );
         self.emit(MirInstr::LoadPlace { dest, place });
         Some(dest)
+    }
+
+    /// A borrowed reference result (`show(o.value())`, `f(d[k])` at a read
+    /// slot): the referent is read through the returned reference, as
+    /// upstream binds the `read` parameter to it, so its `__copyinit__`
+    /// never runs for the pass. A referent owning no droppable storage is
+    /// an ordinary value read.
+    fn lower_borrowed_reference_result(&mut self, expression: Node<'a>) -> Option<Reg> {
+        let reference = expression.reference_result()?;
+        (owns_droppable_storage(&reference.referent)
+            || matches!(reference.referent.kind(), TyKind::Dependent(_)))
+        .then(|| self.lower_call_receiver(expression).0)
     }
 
     /// Lower call operand `expression`, a value no place holds, for a call

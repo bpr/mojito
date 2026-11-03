@@ -952,6 +952,7 @@ assets/ok/raising_call_edge_destroys_held_values.mojo	main	exe-differential	sani
 assets/ok/raising_iter_call_edge.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
 assets/ok/read_beside_live_ref_binding.mojo	main	exe-differential	sanitized
+assets/ok/read_parameter_binds_reference_result.mojo	main	exe-differential	sanitized
 assets/ok/read_temporary_conditional_argument_drop.mojo	main	exe-differential	sanitized
 assets/ok/rebind_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_augmented_assignment.mojo	main	exe-differential	sanitized

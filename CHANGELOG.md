@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A reference result passed to a `read` parameter now binds the parameter
+  to the returned reference, as upstream's does (R1440): `show(o.value())`
+  and `print(o.value())` no longer copy the referent into a register and
+  destroy the copy after the call, and a referent that is not
+  `ImplicitlyCopyable` is accepted there. The read is now an access to the
+  reference's origin, so `f(o, o.value())` over a `mut` parameter is
+  rejected as an aliasing violation, as at the pin.
 - `StringLiteral` now declares upstream's members over `StringSlice(self)`
   (R1655): `"12".__int__()`, `"a,b".split(",")`, `" x ".strip()`,
   `"ab" * 3`, the search, case, padding, and iterator members, `join`,

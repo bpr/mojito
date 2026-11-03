@@ -47,10 +47,14 @@ impl Checker {
         receiver: Option<(&Expr, Option<ArgConvention>)>,
     ) {
         let designates_place = |arg: &Expr| self.designates_place(arg);
-        let read_place = |arg: &Expr| match self.designates_place(arg) {
-            false => ReadPlace::Value,
-            true if self.infer_reference_value(arg).is_some() => ReadPlace::ReferenceResult,
-            true => ReadPlace::Place,
+        let read_place = |arg: &Expr| {
+            if self.infer_reference_value(arg).is_some() {
+                ReadPlace::ReferenceResult
+            } else if self.designates_place(arg) {
+                ReadPlace::Place
+            } else {
+                ReadPlace::Value
+            }
         };
         let collected = gathered.read();
         for span in borrowable_read_arguments(
@@ -662,7 +666,9 @@ pub(super) enum ReadPlace {
     Value,
     /// A place: a binding, or a field or subscript chain rooted at one.
     Place,
-    /// A place an accessor's reference result names.
+    /// A place a reference result names: an accessor's, or a
+    /// reference-returning call's (`o.value()`), which the parameter binds
+    /// as upstream binds a `read` argument to the returned reference.
     ReferenceResult,
 }
 
@@ -741,9 +747,11 @@ pub(super) fn borrowable_read_arguments(
         if kind == ReadPlace::Value {
             continue;
         }
-        // An accessor's reference result over a temporary key
-        // (`d[String("k")]`) names no place path, yet the parameter reads
-        // its referent through the handle rather than copying it out.
+        // A reference-returning call (`o.value()`), or an accessor's
+        // reference result over a temporary key (`d[String("k")]`), names
+        // no place path, yet the parameter reads its referent through the
+        // handle rather than copying it out; the origin exclusivity rule
+        // judges its overlap with a `mut` argument.
         let Some((root, path)) = place_path(arg) else {
             if kind == ReadPlace::ReferenceResult {
                 borrowable.push(arg.source_span());

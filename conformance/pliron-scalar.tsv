@@ -952,6 +952,7 @@ assets/ok/raising_call_edge_destroys_held_values.mojo	-	ineligible	no-scalar-ent
 assets/ok/raising_iter_call_edge.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/read_beside_live_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/read_parameter_binds_reference_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/read_temporary_conditional_argument_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_augmented_assignment.mojo	-	ineligible	no-scalar-entry-shape

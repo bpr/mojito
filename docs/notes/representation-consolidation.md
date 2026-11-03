@@ -201,7 +201,7 @@ command cannot use both.
 - Gaps A, B, and C have fully landed. Gap B's residues are conformance
   and cleanup: R1414 (a display's elements bind as call arguments), R695
   after it, R1415 (fieldwise keywords), and R1416 (hand-written MIR).
-- Gap D has R1440–R1445 left.
+- Gap D has R1441–R1445 left.
 - Of the 10-25 gaps, E, F, G, and H have their cores in; I has R1491,
   R1492, R1485, and R1486 left.
 - Of the 10-25 conformance blocks, five have landed: type versus value
@@ -228,7 +228,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 
 | gap | upstream's shape | open core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
-| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1440–R1444, then R1445 | about 15 (below) | yes |
+| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1441–R1444, then R1445 | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1449, R1451 | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1280, R1466, R1287, R1461, and the hash and `__int__` leaves (steps 1–3) | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1436; R1433 → R176 → R1434 | R176, R1349 | yes |
@@ -242,8 +242,9 @@ R1411 and R1413 under *Entries outside the gaps*.
   `__call_result_tmp__`, and each consumer borrows or takes that storage.
   Only register-passable values are SSA registers (`CheckLifetimes`).
 - **Mojito**: R1355 and R1356 moved most consumers onto the call-result
-  slot. The shapes left are R1440–R1444, with probes on R1435 and R1095,
-  and R1445 then rejects the class in the verifier.
+  slot, and R1440 bound a `read` parameter to a reference result. The
+  shapes left are R1441–R1444, with probes on R1435 and R1095, and R1445
+  then rejects the class in the verifier.
 - **Still open from R1355's list**: R1331 and R123 (the `$arg_loan_r`
   anchor), R715 (a `^` argument), R1212 (`$mat_r`), and R406 (a forwarded
   call-result subscript). Re-probe each.

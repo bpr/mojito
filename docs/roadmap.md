@@ -9823,36 +9823,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1440 A reference result passed to a `read` parameter is copied,
-  where upstream binds the parameter to the reference**
-
-  `show(o.value())` over `def show(s: String)` and an `Optional[String]`
-  copies the `String` (`String.__copyinit__` into a register), passes the
-  copy, and destroys it after the call, where upstream's `read` argument is
-  the reference `value()` returned.
-  - Cause: the checker treats a reference result's ordinary value use as
-    owning an independent value (`Checker::check_reference_result_reads`),
-    so MIR lowers it to a `ReadRef` and a `CopyValue`, even when the
-    consumer is a `read` parameter that only borrows it.
-  - So a memory-only value lives in a register that a `deinit` call on it
-    destroys, which R1445's verifier rule rejects.
-  - Probe: `isdir(default_dir.value())` in
-    `assets/ok/tempfile_mkdtemp.mojo` (a generic `read` parameter).
-  - Probe: `s.append(c)` over a `Codepoint` read through a reference
-    (`assets/ok/nominal_string_bytes_capacity.mojo`,
-    `nominal_string_bytes_peek_split.mojo`, `view_temporary_origins.mojo`).
-  - Probe: `print(o.value())` and its kin, a builtin's argument too
-    (R1441): `optional_string_from_stringify.mojo`,
-    `template_method_reference_result.mojo`,
-    `module_reference_result_reads.mojo`,
-    `always_inline_nodebug_reference_results.mojo`,
-    `origin_binder_result_keeps_argument.mojo`, `ctfe_optional_result.mojo`,
-    `match_enum_cases_optional.mojo`, `pack_element_rebind.mojo`, and the
-    `template_method_*` reference fixtures, all under `assets/ok/`.
-  - Found while landing R1356 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1441 A builtin call's memory-only argument reaches it in a
   register, where upstream's library function reads it in place**
 
