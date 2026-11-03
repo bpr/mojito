@@ -3640,7 +3640,8 @@ impl Checker {
                 self.lookup_trait_assoc_value_ty(&self.refined_bound(&subject)?, field)
             }
             TyKind::SelfType => self.trait_self_value_ty(field),
-            TyKind::Struct(name, arguments) if !subject.is_simd() => {
+            _ if !subject.is_simd() => {
+                let (name, arguments) = mojito_types::types::nominal_parts(&subject)?;
                 let info = self.structs.get(name)?;
                 let declared = info.associated_value_types.get(field).or_else(|| {
                     info.decls.iter().find_map(|decl| match decl {
@@ -3648,7 +3649,7 @@ impl Checker {
                         _ => None,
                     })
                 })?;
-                Some(super::generics::substitute_at(declared, info, arguments))
+                Some(super::generics::substitute_at(declared, info, &arguments))
             }
             _ => None,
         }
