@@ -2161,50 +2161,17 @@ impl Checker {
             return Ok(());
         }
 
-        // A tuple literal's elements materialize to the element types the
-        // `Tuple` it initializes declares.
-        if let (Some(actual), Some(expected)) = (tuple_elements(from), tuple_elements(to))
-            && actual.len() == expected.len()
+        if let (TyKind::ComptimeList(actual), TyKind::ComptimeList(expected)) =
+            (from.kind(), to.kind())
         {
             let values = match &expression.kind {
-                ExprKind::TupleLit(values) => Some(values.as_slice()),
-                ExprKind::Call { name, args, .. } if name == "Tuple" => Some(args.as_slice()),
+                ExprKind::ListLit(values) => Some(values.as_slice()),
+                ExprKind::Call { name, args, .. } if name == "List" => Some(args.as_slice()),
                 _ => None,
             };
-            if let Some(values) = values {
-                for ((value, actual), expected) in values.iter().zip(actual).zip(expected) {
-                    self.record_literal_materializations(value, actual, expected)?;
-                }
+            for value in values.into_iter().flatten() {
+                self.record_literal_materializations(value, actual, expected)?;
             }
-            return Ok(());
-        }
-
-        match (from.kind(), to.kind()) {
-            (TyKind::Tuple(actual), TyKind::Tuple(expected)) if actual.len() == expected.len() => {
-                let values = match &expression.kind {
-                    ExprKind::TupleLit(values) => Some(values.as_slice()),
-                    ExprKind::Call { name, args, .. } if name == "Tuple" => Some(args.as_slice()),
-                    _ => None,
-                };
-                if let Some(values) = values {
-                    for ((value, actual), expected) in values.iter().zip(actual).zip(expected) {
-                        self.record_literal_materializations(value, actual, expected)?;
-                    }
-                }
-            }
-            (TyKind::ComptimeList(actual), TyKind::ComptimeList(expected)) => {
-                let values = match &expression.kind {
-                    ExprKind::ListLit(values) => Some(values.as_slice()),
-                    ExprKind::Call { name, args, .. } if name == "List" => Some(args.as_slice()),
-                    _ => None,
-                };
-                if let Some(values) = values {
-                    for value in values {
-                        self.record_literal_materializations(value, actual, expected)?;
-                    }
-                }
-            }
-            _ => {}
         }
         Ok(())
     }

@@ -70,15 +70,14 @@ command cannot use both.
    or `FloatLiteral[value]` and instantiated a bare literal parameter per
    call. What is left:
    - R1785 deletes the value-less numeric literal type and its run-time
-     register. R1753 (literal members), R1786 (a tuple display's
-     elements), R1789 (implicit conversion through the `@implicit`
+     register. R1753 (literal members), R1789 (implicit conversion through the `@implicit`
      initializer), R1788 (module alias order), and R1738 (an
      `Int`-annotated `comptime`) are its neighbours.
    - `StringLiteral` is the same port, still at its start: R1657 → R1658
      → R1659 → R1660, then R1651, R1654 (its hash leaf), and R1655.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1785 --task R1753 --task R1786 \
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1785 --task R1753 \
      --task R1789 --task R1788 --task R1738 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1660 --task R1651 --task R1654 --task R1655 -n 0
    ```

@@ -3088,14 +3088,10 @@ impl Checker {
                 .and_then(|closed| self.param_context.constant(closed).ok()),
         };
         // A string constant's value type is the value-less `StringLiteral`,
-        // which the literal type carrying its value names (R1657), and a
-        // numeric literal constant meets a tuple display's value-less
-        // element (R1786).
+        // which the literal type carrying its value names (R1657).
         if let Some(argument) = argument.filter(|argument| {
             argument.meta().as_value().is_some_and(|found| {
-                found == ty
-                    || *found == mojito_types::types::value_less_literal(ty)
-                    || mojito_types::types::value_less_literal(found) == *ty
+                found == ty || *found == mojito_types::types::value_less_literal(ty)
             })
         }) {
             return Some(argument);

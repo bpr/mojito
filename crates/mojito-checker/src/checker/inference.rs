@@ -1474,13 +1474,13 @@ impl Checker {
                 self.record_array_literal_construction(expr.source_span(), &result)?;
                 Ok(result)
             }
-            // A tuple literal keeps each element's own type (heterogeneous),
-            // a string element materialized to `String` as the pin infers
-            // the pack.
+            // A tuple literal types each element by its deduction, a literal
+            // materialized, as upstream's `Tuple.__init__(var *args: *Ts)`
+            // deduces `Ts`.
             ExprKind::TupleLit(elems) => {
                 let tys = elems
                     .iter()
-                    .map(|e| self.tuple_element_ty(e))
+                    .map(|e| self.materialized_element_ty(e))
                     .collect::<Result<Vec<_>, _>>()?;
                 for (value, ty) in elems.iter().zip(&tys) {
                     // A generic `def` is no runtime value until specialized,
@@ -2629,26 +2629,14 @@ impl Checker {
     /// Infer the common element type of a non-empty list of expressions: numeric
     /// elements unify (widening literals), non-numeric elements must match; the
     /// result is materialized (a literal → its concrete default).
-    /// The stored type of one collection element or key: a literal default,
-    /// with a string literal wrapped into the nominal `String`.
+    /// The stored type of one collection or tuple element or key: a literal
+    /// default, with a string literal wrapped into the nominal `String`, as
+    /// upstream's deduction materializes a `@__nonmaterializable` literal.
     pub(super) fn materialized_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
         let ty = self.infer(element)?;
         match ty.kind() {
             TyKind::StringLiteral(_) => self.nominal_string_wrap(element.source_span()),
             _ => Ok(default_literal(&ty)),
-        }
-    }
-
-    /// The element type a tuple infers for one argument: its own type, with
-    /// a string literal materialized to the nominal `String`, as upstream's
-    /// `Tuple.__init__(var *args: *Ts)` infers `Ts`. A numeric literal is
-    /// its value-less literal type, which materializes where the tuple is
-    /// bound, where upstream's deduction materializes it at once (R1786).
-    pub(super) fn tuple_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
-        let ty = self.infer(element)?;
-        match ty.kind() {
-            TyKind::StringLiteral(_) => self.nominal_string_wrap(element.source_span()),
-            _ => Ok(mojito_types::types::value_less_literal(&ty)),
         }
     }
 
@@ -3161,7 +3149,7 @@ impl Checker {
         if param_args.is_empty() {
             return args
                 .iter()
-                .map(|arg| self.tuple_element_ty(arg))
+                .map(|arg| self.materialized_element_ty(arg))
                 .collect::<Result<Vec<_>, _>>()
                 .map(nominal_tuple_type);
         }

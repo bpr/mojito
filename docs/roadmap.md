@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1852**.
+Next free ID: **R1853**.
 
 ## Ordered Work
 
@@ -6950,19 +6950,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   values the pin types `IntLiteral[v]` or `Int`, so a literal type can
   lose its value.
   - Its remaining producers: the run-time merge (R1848), a literal's
-    unary and `/` operators (`checker/operators.rs`, R1753), a tuple
-    display's element (`Checker::tuple_element_ty`, R1786), the
+    unary and `/` operators (`checker/operators.rs`, R1753), the
     symbolic literal polynomial (`IntDomain::Literal::ty`,
     `param_expr.rs`, upstream's `IntLiteral[#pop.int_literal_bin<…>]`),
     and MIR text's bare `IntLiteral` decode.
   - Its consumers go with it: `coerces`'s and `conversion_count`'s
     `(Some, None)` arms, the `type_of` guard (`constraints.rs`), the
-    numeric arms of `types::value_less_literal`, `applied_value`'s
-    value-less tuple-element tier, mangling, `ct::source_type`, `Display`,
+    numeric arms of `types::value_less_literal`, mangling, `ct::source_type`, `Display`,
     `Ty::int_literal()`/`float_literal()`, and `TyKind::INT_LITERAL`/
     `FLOAT_LITERAL`.
   - Done when the variants hold `Box<CtValue>`, not an `Option`.
-  - Depends on R1848, R1753, R1786.
+  - Depends on R1848, R1753.
   - Model: Fable, Not Planned.
 
 - [ ] **R1850 A numeric literal register holds its value at run time,
@@ -6998,26 +6996,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Done when `rg "TyKind::(IntLiteral|FloatLiteral)|bridged_numeric_literal" crates`
     is empty.
   - Depends on R1850.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1786 A tuple display's numeric literal elements stay literal
-  types, where upstream's deduction materializes them**
-
-  Problem: `(1, 2.5)` is typed `Tuple[IntLiteral, FloatLiteral]` with
-  value-less elements (`Checker::tuple_element_ty`,
-  `checker/inference.rs`), where upstream's `Tuple.__init__(var *args:
-  *Ts)` deduces `Ts` and `@__nonmaterializable` materializes each literal,
-  so the pin's display is `Tuple[Int, Float64]`.
-  - Probe: `var t: type_of((1, 2.5)) = (3, 4.5); print(t[0])` prints `3` at
-    the pin; Mojito fails in the VM ("`SIMD$mono$VDType$int$VSIMDLength$1$`
-    has no `write_to` instance").
-  - Probe: `(1, 2) < (1, 3)` compares through `Tuple.__lt__(self, other:
-    Self)` only because both elements erase to the value-less literal;
-    carried values would make the two `Self`s differ.
-  - Lever: type each element by its deduction (`default_literal`) and let
-    a tuple-typed context convert element-wise, as `coerces` already does
-    for `Tuple[Float64, Float64]` over `(1, 2.0)`.
-  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R137 Checking a deeply nested generic struct type takes time
@@ -9521,6 +9499,32 @@ retained on purpose and re-probed rather than fixed; they are listed in
     application supplies it, as upstream's inference does.
   - Probe: `V[origin_of(l)](5)` over a local `l` runs at both.
   - Found while landing R1192 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1852 A tuple display converts element-wise to any tuple-typed
+  context, where the pin converts it only at a binding**
+
+  `g((1, 2.5))` over `def g(t: Tuple[Int8, Float32])` runs here, where the
+  pin deduces `Tuple[Int, Float64]` first and rejects it with "value passed
+  to 't' cannot be converted from 'Tuple[Int, Float64]'".
+  - `infer_with_expected`'s contextual `TupleLit` arm
+    (`checker/inference.rs`) types each element against any tuple-typed
+    expected type, and call, method, operator, and list-display binding
+    all pass their parameter type as that context.
+  - The pin keeps the element-wise context only for a `var` annotation,
+    an assignment target, a `return`, and a nested tuple display.
+  - Probe: `g((1, 2.0))` over `def g(t: Tuple[Float64, Float64])`.
+  - Probe: `List[Tuple[Int8, Int8]]().append((1, 2))`.
+  - Probe: `var l: List[Tuple[Int8, Int8]] = [(1, 2)]` ("no matching
+    function in initialization" at the pin).
+  - Probe: `t == (1, 2)` over `t: Tuple[Int8, Int8]`.
+  - A list display keeps its context in argument position: `f([1, 2])`
+    into `List[Int8]` runs at both.
+  - Lever: give the arm its context only from the binding, assignment,
+    `return`, and nested-display callers; the other callers infer the
+    display plainly and reach the pin's rejection.
+  - Found while landing R1786 (2026-11-02).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

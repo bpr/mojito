@@ -3369,6 +3369,17 @@ fn tuple_element_coercion_materializes_literals() {
 }
 
 #[test]
+fn tuple_display_materializes_before_implicit_conversion() {
+    // `(1, 2)` deduces `Tuple[Int, Int]`, which `Optional`'s `@implicit`
+    // initializer takes only when the payload is that type.
+    ok_std("def main():\n    var x: Optional[Tuple[Int, Int]] = (1, 2)\n");
+    assert!(matches!(
+        err_std("def main():\n    var x: Optional[Tuple[Int8, Int8]] = (1, 2)\n"),
+        TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
 fn accepts_tuple_constructors_and_structural_operations() {
     ok_std("var inferred = Tuple(1, \"one\")\nvar typed = Tuple[Float64, String](2, \"two\")\n");
     ok_std(

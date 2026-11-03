@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A tuple display's numeric literal elements are their materialized types,
+  as upstream's `Tuple.__init__(var *args: *Ts)` deduces `Ts`, so `(1, 2.5)`
+  is `Tuple[Int, Float64]` (R1786). `var x: Optional[Tuple[Int8, Int8]] =
+  (1, 2)` is now rejected in the checker as at the pin instead of failing
+  MIR verification below the elaborator.
+
 - A compile-time literal constant is of the literal type carrying its
   value instead of the value-less literal type (part of R1785, whose
   remainder is R1848–R1851): a generator-typed parameter given `5` now

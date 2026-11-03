@@ -993,6 +993,7 @@ assets/type_error/tuple_consume_elements_len.mojo	compile-reject	handler-argumen
 assets/type_error/tuple_consume_elements_print.mojo	compile-reject	handler-argument	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
 assets/type_error/tuple_default_element_not_defaultable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/tuple_deinit_with_abandoned_element.mojo	compile-reject	handler-argument	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
+assets/type_error/tuple_display_materializes_before_implicit_conversion.mojo	compile-reject	agree	error: cannot implicitly convert 'Tuple[Int, Int]' value to 'Optional[Tuple[Int8, Int8]]'
 assets/type_error/tuple_literal_elements_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'Tuple[Span[Int, origin_of(xs)], Span[Int, origin_of(xs)]]' initializer call
 assets/type_error/tuple_reverse_explicit_parameter.mojo	compile-reject	agree	error: invalid call to 'reverse': unexpected parameter
 assets/type_error/tuple_reverse_requires_transfer.mojo	compile-reject	agree	error: value of type 'Tuple[Token, Token]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
