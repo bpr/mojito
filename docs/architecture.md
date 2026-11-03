@@ -738,11 +738,16 @@ policy or data-model responsibilities to focused children:
   closure instance for every one: an owned field for a copied or moved
   capture, the referent's copy for a reference binding, and a `ref` field
   for a reference capture, whose referent is the captured sibling's
-  storage for a sibling capture. The struct's parameters are the
-  enclosing binders the closure names, in its fields, its signature, or
-  its body, nested declarations included (`nested::closure_binder_uses`),
-  as upstream's `emitClosureInstance` collects them; the declaration
-  passes them to the `__init__` as its compile-time arguments. The struct
+  storage for a sibling capture. The struct's parameters are its own,
+  declared for the enclosing binders the closure names, in its fields,
+  its signature, or its body, nested declarations included
+  (`nested::closure_binder_uses`), as upstream's `emitClosureInstance`
+  collects them and `liftClosure` declares them, reusing their
+  spellings: once the closure is lowered, `nested::own_storage_binders`
+  moves every reference in its fields, its members, and its method's
+  body (with the bodies nested in it) to the struct's binders, while the
+  declaration names the storage at the enclosing binders and passes them
+  to the `__init__` as its compile-time arguments. The struct
   is register-passable (and
   trivially so) by the meet over its captures, a reference capture
   contributing its referent's, as upstream's `ClosureEmitter::emitClosure`

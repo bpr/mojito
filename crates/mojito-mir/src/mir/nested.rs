@@ -77,12 +77,8 @@ pub(super) fn lower_fn_nested(
         overloads,
         callables,
     } = request;
-    let starts = LoweredFrom {
-        functions: out.len(),
-        declarations: declarations.functions.len(),
-        structs: declarations.structs.len(),
-    };
-    let closure_types = std::cell::RefCell::new(HashMap::new());
+    let starts = LoweredFrom::at(out, declarations);
+    let closures = ClosureLowering::default();
     let children = analyze_root_children(checked, name, statements, returned);
     let registry = scope_registry(
         checked,
@@ -90,7 +86,7 @@ pub(super) fn lower_fn_nested(
         callables,
         &enclosing_binders,
         declarations,
-        &closure_types,
+        &closures.types,
         invariant_errors,
     );
 
@@ -178,11 +174,18 @@ pub(super) fn lower_fn_nested(
                 registry: &registry,
                 binders: &enclosing_binders,
                 locals: &value_parameter_locals,
-                closure_types: &closure_types,
+                closures: &closures,
             },
         );
     }
-    resolve_closure_types(&closure_types.into_inner(), &starts, out, declarations);
+    resolve_closure_types(&closures.types.into_inner(), &starts, out, declarations);
+    let moved: HashSet<String> = closures
+        .storage_scopes
+        .into_inner()
+        .iter()
+        .flat_map(|scope| own_storage_binders(scope, out, declarations))
+        .collect();
+    follow_moved_contracts(&moved, &mut out[starts.functions..], declarations);
 }
 
 /// `RuntimePack` distinguishes per-position variadic checking but is not a
@@ -207,16 +210,62 @@ pub(super) fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
 
 /// Where one [`lower_fn_nested`] began pushing: the functions, function
 /// declarations, and struct declarations it lowers lie past these.
+#[derive(Clone, Copy)]
 struct LoweredFrom {
     functions: usize,
     declarations: usize,
     structs: usize,
 }
 
+impl LoweredFrom {
+    /// The end of what has been pushed to `out` and `declarations` so far.
+    const fn at(out: &[(String, MirFunction)], declarations: &MirDeclarations) -> Self {
+        Self {
+            functions: out.len(),
+            declarations: declarations.functions.len(),
+            structs: declarations.structs.len(),
+        }
+    }
+}
+
+/// A closure storage struct whose binders its lowering declared as the
+/// enclosing declarations', with the range of what was lowered under it
+/// (`from` up to `to`): its struct declaration and synthesized members,
+/// and, when the body is its method, the method and everything nested in
+/// it. [`own_storage_binders`] declares them as the struct's own.
+struct StorageScope {
+    storage: String,
+    from: LoweredFrom,
+    to: LoweredFrom,
+}
+
 /// The storage struct each closure declared in one lowered body names,
 /// by the closure's declaration site, which its checked type carries
 /// ([`mojito_types::origin::CallableEnvironment::Storage`]).
 type ClosureTypes = std::cell::RefCell<HashMap<mojito_types::origin::ClosureSite, Ty>>;
+
+/// What lowering the closures declared in one [`lower_fn_nested`]
+/// collects for it to resolve once they are all lowered.
+#[derive(Default)]
+struct ClosureLowering {
+    types: ClosureTypes,
+    /// The storage scopes it lowered, innermost first.
+    storage_scopes: std::cell::RefCell<Vec<StorageScope>>,
+}
+
+impl ClosureLowering {
+    /// Record `scope`, a storage's own lowering, extended to `method_end`
+    /// when its body is its method, which owns everything lowered under
+    /// it; a storage whose body is not owns its members alone.
+    fn push_storage_scope(&self, scope: Option<StorageScope>, method_end: Option<LoweredFrom>) {
+        if let Some(mut scope) = scope {
+            if let Some(end) = method_end {
+                scope.to = end;
+            }
+            self.storage_scopes.borrow_mut().push(scope);
+        }
+    }
+}
 
 /// Whether a closure whose value type is `callable_ty` is copyable, as
 /// the check decided by upstream's `allCopyable`: a storage the check
@@ -311,6 +360,331 @@ fn retarget_storage_calls(
         for region in instruction_regions_mut(instruction) {
             retarget_storage_calls(region, reg_types, storages);
         }
+    }
+}
+
+/// Declare the binders of the closure storage `scope` names as the
+/// struct's own, as upstream's `liftClosure` declares its storage's
+/// parameters, reusing their spellings: each reference to one in what
+/// was lowered under the storage moves to the struct's binder, a
+/// declaration copying one (a synthesized member's, a compile-time
+/// thunk's) declares the struct's instead, and a reference to a binder
+/// typed by one is retyped. The storage type the enclosing body spells
+/// keeps the enclosing binders as its arguments. Returns the
+/// declarations moved, whose call sites [`follow_moved_contracts`]
+/// updates.
+fn own_storage_binders(
+    scope: &StorageScope,
+    out: &mut [(String, MirFunction)],
+    declarations: &mut MirDeclarations,
+) -> Vec<String> {
+    let structs = &mut declarations.structs[scope.from.structs..scope.to.structs];
+    let Some(storage) = structs
+        .iter_mut()
+        .find(|declaration| declaration.name == scope.storage)
+    else {
+        return Vec::new();
+    };
+    if storage.param_decls.is_empty() {
+        return Vec::new();
+    }
+    let (decls, bindings) =
+        mojito_types::types::reown_as_own_parameters(&storage.param_decls, &scope.storage);
+    let mut binders = StorageBinders {
+        context: ParamContext::detached(),
+        owned: storage
+            .param_decls
+            .iter()
+            .map(ParamDecl::id)
+            .cloned()
+            .zip(decls.iter().cloned())
+            .collect(),
+        bindings,
+    };
+    storage.param_decls = decls;
+    let moved = &mut declarations.functions[scope.from.declarations..scope.to.declarations];
+    let retyped: Vec<ParamDecl> = moved
+        .iter()
+        .flat_map(|declaration| {
+            declaration
+                .param_decls
+                .iter()
+                .chain(&declaration.region_binders)
+        })
+        .filter(|decl| !binders.owned.contains_key(decl.id()))
+        .filter_map(|decl| {
+            let mut retyped = decl.clone();
+            binders.move_decls(std::slice::from_mut(&mut retyped));
+            (retyped != *decl).then_some(retyped)
+        })
+        .collect();
+    for decl in retyped {
+        match decl.own_argument() {
+            TyArg::Ty(ty) => binders.bindings.bind_type(decl.id().clone(), ty),
+            TyArg::Val(CtValue::Expr(reference)) => {
+                binders.bindings.bind(decl.id().clone(), reference);
+            }
+            TyArg::Val(_) | TyArg::Origin(_) => {}
+        }
+    }
+    for declaration in structs {
+        for (_, ty) in &mut declaration.fields {
+            *ty = binders.moved(ty);
+        }
+    }
+    for (_, function) in &mut out[scope.from.functions..scope.to.functions] {
+        let Ok(()) = crate::mir::visit::walk_function_mut(&mut binders, function);
+    }
+    for declaration in moved.iter_mut() {
+        for ty in declaration
+            .param_types
+            .iter_mut()
+            .chain(std::iter::once(&mut declaration.ret_ty))
+            .chain(declaration.variadic.as_mut())
+            .chain(declaration.kw_variadic.as_mut())
+            .chain(declaration.error_ty.as_mut())
+        {
+            *ty = binders.moved(ty);
+        }
+        binders.move_decls(&mut declaration.param_decls);
+        binders.move_decls(&mut declaration.region_binders);
+        for constraint in &mut declaration.availability {
+            binders.move_constraint(constraint);
+        }
+    }
+    moved
+        .iter()
+        .map(|declaration| declaration.lowered_name.clone())
+        .collect()
+}
+
+/// Copy into each method call in `functions` of one of the `moved`
+/// declarations that declaration's compile-time parameters, which a call
+/// carries as its callee declares them.
+fn follow_moved_contracts(
+    moved: &HashSet<String>,
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) {
+    fn follow(blocks: &mut [MirBlock], moved: &HashSet<String>, declarations: &MirDeclarations) {
+        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+            if let MirInstr::MethodCall {
+                resolved: Some(callee),
+                param_decls,
+                ..
+            } = instruction
+                && moved.contains(callee)
+                && let Some(declaration) = declarations.function(callee)
+            {
+                param_decls.clone_from(&declaration.param_decls);
+            }
+            for region in instruction_regions_mut(instruction) {
+                follow(region, moved, declarations);
+            }
+        }
+    }
+    if moved.is_empty() {
+        return;
+    }
+    for (_, function) in functions {
+        follow(&mut function.blocks, moved, declarations);
+    }
+}
+
+/// The rewrite [`own_storage_binders`] applies at every site: a
+/// reference to an enclosing binder the storage declares moves to the
+/// storage's own, which `owned` maps it to.
+struct StorageBinders {
+    context: ParamContext,
+    bindings: mojito_types::param_expr::ParamBindings,
+    owned: HashMap<mojito_types::param_expr::ParamId, ParamDecl>,
+}
+
+impl StorageBinders {
+    fn moved(&self, ty: &Ty) -> Ty {
+        mojito_types::types::replace_parameters(&self.context, ty, &self.bindings, 0)
+            .unwrap_or_else(|_| ty.clone())
+    }
+
+    fn moved_expr(&self, expr: &ParamExpr) -> ParamExpr {
+        self.context
+            .replace(expr, &self.bindings)
+            .unwrap_or_else(|_| expr.clone())
+    }
+
+    fn move_constraint(&self, constraint: &mut GenericConstraint) {
+        if let Ok(moved) = mojito_types::types::replace_constraint_parameters(
+            &self.context,
+            constraint,
+            &self.bindings,
+        ) {
+            *constraint = moved;
+        }
+    }
+
+    /// Move the references `decls` make, each keeping its identity but a
+    /// copy of a binder the storage declares, which becomes the storage's.
+    fn move_decls(&self, decls: &mut [ParamDecl]) {
+        for decl in decls {
+            if let Some(own) = self.owned.get(decl.id()) {
+                decl.clone_from(own);
+                continue;
+            }
+            match decl {
+                ParamDecl::Type {
+                    trait_param,
+                    callable_bound,
+                    default,
+                    constraints,
+                    ..
+                } => {
+                    for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
+                        *ty = self.moved(ty);
+                    }
+                    if let Some(binder) = trait_param
+                        && let Some(own) = self.owned.get(&binder.id)
+                    {
+                        *binder = own.binder();
+                    }
+                    for constraint in constraints {
+                        self.move_constraint(constraint);
+                    }
+                }
+                ParamDecl::Value {
+                    ty,
+                    default,
+                    constraints,
+                    ..
+                } => {
+                    *ty = self.moved(ty);
+                    if let Some(default) = default {
+                        *default = self.moved_expr(default);
+                    }
+                    for constraint in constraints {
+                        self.move_constraint(constraint);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl crate::mir::visit::MutTypeVisitor for StorageBinders {
+    type Error = std::convert::Infallible;
+
+    fn visit_ty(&mut self, ty: &mut Ty, _: crate::mir::visit::TySite) -> Result<(), Self::Error> {
+        *ty = self.moved(ty);
+        Ok(())
+    }
+
+    fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), Self::Error> {
+        *arg = match arg {
+            TyArg::Ty(ty) => TyArg::Ty(self.moved(ty)),
+            _ => {
+                mojito_types::types::replace_argument_parameters(&self.context, arg, &self.bindings)
+                    .unwrap_or_else(|_| arg.clone())
+            }
+        };
+        Ok(())
+    }
+
+    fn visit_variant_alternatives(
+        &mut self,
+        alternatives: &mut Vec<Ty>,
+    ) -> Result<(), Self::Error> {
+        for ty in alternatives {
+            *ty = self.moved(ty);
+        }
+        Ok(())
+    }
+
+    fn visit_variant_index(
+        &mut self,
+        index: &mut mojito_types::types::VariantIndex,
+    ) -> Result<(), Self::Error> {
+        let Ok(()) = index
+            .try_map_expr(|expr| Ok::<_, std::convert::Infallible>(self.moved_expr(expr)))
+            .map(|moved| *index = moved);
+        Ok(())
+    }
+
+    fn visit_field_step(&mut self, step: &mut Proj, _: Option<&Ty>) -> Result<(), Self::Error> {
+        if let Proj::FieldAt(index) = step {
+            *index = self.moved_expr(index);
+        }
+        Ok(())
+    }
+
+    fn visit_lane_mask(
+        &mut self,
+        mask: &mut mojito_types::types::LaneMask,
+    ) -> Result<(), Self::Error> {
+        let Ok(()) = mask
+            .try_map_exprs(&mut |expr| Ok::<_, std::convert::Infallible>(self.moved_expr(expr)))
+            .map(|moved| *mask = moved);
+        Ok(())
+    }
+
+    fn visit_param_arg(
+        &mut self,
+        arg: &mut MirParamArg,
+        _: crate::mir::visit::ParamArgSite,
+    ) -> Result<(), Self::Error> {
+        if let Some(expr) = &mut arg.expr {
+            *expr = self.moved_expr(expr);
+        }
+        Ok(())
+    }
+
+    fn visit_param_decls(
+        &mut self,
+        decls: &mut [ParamDecl],
+        _: crate::mir::visit::ParamDeclSite,
+    ) -> Result<(), Self::Error> {
+        self.move_decls(decls);
+        Ok(())
+    }
+
+    fn visit_constant(&mut self, constant: &mut Const) -> Result<(), Self::Error> {
+        match constant {
+            Const::Param(expr) => *expr = self.moved_expr(expr),
+            Const::Value(value) => {
+                if let Ok(moved) = mojito_types::types::replace_value_parameters(
+                    &self.context,
+                    value,
+                    &self.bindings,
+                ) {
+                    *value = moved;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn visit_param_ref(
+        &mut self,
+        param: &mut mojito_types::param_expr::ParamRef,
+    ) -> Result<(), Self::Error> {
+        if let Some(own) = self.owned.get(&param.id) {
+            *param = own.binder();
+        }
+        Ok(())
+    }
+
+    fn visit_constraint(&mut self, cond: &mut GenericConstraint) -> Result<(), Self::Error> {
+        self.move_constraint(cond);
+        Ok(())
+    }
+
+    fn visit_sequence(
+        &mut self,
+        source: &mut mojito_checked::checked::ComptimeSequence,
+    ) -> Result<(), Self::Error> {
+        let Ok(()) = source
+            .try_map_exprs(&mut |expr| Ok::<_, std::convert::Infallible>(self.moved_expr(expr)))
+            .map(|moved| *source = moved);
+        Ok(())
     }
 }
 
@@ -718,7 +1092,8 @@ fn scope_registry(
 /// captured siblings `registry` registers, declared where `binders` are in
 /// scope: its parameters are the binders its fields, its signature, and
 /// its body name ([`closure_binder_uses`]), as upstream's
-/// `emitClosureInstance` promotes them to the storage's own. `None` for a
+/// `emitClosureInstance` collects them; [`own_storage_binders`] declares
+/// them as the storage's own once its members are lowered. `None` for a
 /// body without captures, whose closure is a function value, and for one
 /// whose fields name a parameter no binder declares.
 fn closure_storage(
@@ -1040,27 +1415,33 @@ fn capture_referent(capture: &NestedCapture) -> Ty {
     }
 }
 
-/// Push the declaration of the storage struct `storage` of the closure
-/// whose `captures` its fields hold, and its synthesized members: the
-/// fieldwise `__init__` the declaration statement calls, as upstream's
-/// `ClosureEmitter` synthesizes it, reading a `var` capture, taking a
-/// moved one, and storing a reference to a reference capture's referent,
+/// Push the declaration of the storage struct `storage`, if any, of the
+/// closure `node`, whose captures its fields hold, and its synthesized
+/// members: the fieldwise `__init__` the declaration statement calls, as
+/// upstream's `ClosureEmitter` synthesizes it, reading a `var` capture,
+/// taking a moved one, and storing a reference to a reference capture's
+/// referent,
 /// and, unless the storage is trivially register-passable, its fieldwise
 /// `__deinit__`, `__moveinit__`, and (when every capture is copyable)
 /// `__copyinit__`, as upstream's `liftClosure` synthesizes them; its
 /// conformances follow (`Copyable` and `ImplicitlyCopyable` by
 /// `allCopyable`, the `IsTrivially*` markers by triviality). A body that
-/// is its method, declared `method`, and owns a moved capture writes its
-/// `self`: the struct lists it among the methods writing `self`, so a
-/// call on the storage's place leaves the call's `self` in it, as
-/// upstream's call by address writes it in place.
+/// is its method, declared under the closure's name, and owns a moved
+/// capture writes its `self`: the struct lists it among the methods
+/// writing `self`, so a call on the storage's place leaves the call's
+/// `self` in it, as
+/// upstream's call by address writes it in place. Returns the scope of
+/// what it lowered, `None` for a closure without storage.
 fn lower_closure_storage(
-    (storage, callable_ty): (&ClosureStorage, Option<&Ty>),
-    captures: &[NestedCapture],
-    method: &str,
+    storage: Option<&ClosureStorage>,
+    node: &NestedNode,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
-) {
+) -> Option<StorageScope> {
+    let storage = storage?;
+    let (callable_ty, captures) = (node.callable_ty.as_ref(), &node.captures);
+    let method = &node.source_name;
+    let from = LoweredFrom::at(functions, declarations);
     let copyable = closure_copyable(callable_ty);
     let Some((name, _)) = storage.ty.kind().as_non_simd_struct() else {
         unreachable!("a closure's storage is a struct")
@@ -1147,10 +1528,7 @@ fn lower_closure_storage(
         name: name.clone(),
         module: String::new(),
         fields: storage.fields.clone(),
-        mut_self_methods: writes_self
-            .then(|| method.to_string())
-            .into_iter()
-            .collect(),
+        mut_self_methods: writes_self.then(|| method.clone()).into_iter().collect(),
         fieldwise_init: true,
         param_decls: storage.param_decls.clone(),
         explicit_destructors: HashMap::new(),
@@ -1209,6 +1587,11 @@ fn lower_closure_storage(
         witness_tables: Vec::new(),
         members: Vec::new(),
     });
+    Some(StorageScope {
+        storage: name.clone(),
+        from,
+        to: LoweredFrom::at(functions, declarations),
+    })
 }
 
 /// Push upstream's `__call__` witness of the closure storage `storage`
@@ -1418,7 +1801,7 @@ struct Enclosing<'a> {
     registry: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &'a EnclosingBinders,
     locals: &'a [(String, Ty)],
-    closure_types: &'a ClosureTypes,
+    closures: &'a ClosureLowering,
 }
 
 impl Enclosing<'_> {
@@ -1471,15 +1854,12 @@ fn lower_nested_node(
         enclosing.registry,
         enclosing_binders,
         declarations,
-        enclosing.closure_types,
+        &enclosing.closures.types,
         invariant_errors,
     );
     let captures = &node.captures;
     let mangled = &symbol;
-    if let Some(storage) = &storage {
-        let closure = (storage, node.callable_ty.as_ref());
-        lower_closure_storage(closure, captures, &node.source_name, out, declarations);
-    }
+    let storage_scope = lower_closure_storage(storage.as_ref(), &node, out, declarations);
     let (capture_types, capture_writes) = capture_parameters(captures, enclosing.registry);
     let named_result = dparams
         .iter()
@@ -1762,10 +2142,14 @@ fn lower_nested_node(
                 registry: &registry,
                 binders: enclosing_binders,
                 locals: &value_parameter_locals,
-                closure_types: enclosing.closure_types,
+                closures: enclosing.closures,
             },
         );
     }
+    let method_end = method.then(|| LoweredFrom::at(out, declarations));
+    enclosing
+        .closures
+        .push_storage_scope(storage_scope, method_end);
 }
 
 /// Rename the declarations `children` nested in the body lowered as

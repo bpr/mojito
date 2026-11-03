@@ -951,8 +951,8 @@ pub fn owned_pack_slot(declaration: &MirFunctionDeclaration) -> Option<VarId> {
 /// A nested body is a generator over its enclosing declarations' binders
 /// and over the binders of the regions it is declared in, which come
 /// between them and its own. A closure's body is a method of its storage
-/// struct, which `structs` declares, whose parameters are the enclosing
-/// binders the closure names: they lead the scope of the method and of
+/// struct, which `structs` declares, whose own parameters stand for the
+/// enclosing binders the closure names: they lead the scope of the method and of
 /// the bodies nested in it, which read them by name as a nested body
 /// reads its enclosing declarations' (an ordinary method reads its
 /// struct's through its receiver alone).
@@ -4800,8 +4800,9 @@ struct ClosureStorage {
     ty: Ty,
     fields: Vec<(String, Ty)>,
     /// The enclosing binders the closure names, in its fields, its
-    /// signature, or its body, the struct's parameters, as upstream's
-    /// `emitClosureInstance` collects them.
+    /// signature, or its body, as upstream's `emitClosureInstance`
+    /// collects them: `ty`'s arguments, and the struct's parameters once
+    /// `own_storage_binders` (`mir/nested.rs`) declares them as its own.
     param_decls: Vec<ParamDecl>,
     /// The body as the struct's `read`-self method
     /// ([`mojito_symbol::symbol::closure_method_name`]), as upstream's

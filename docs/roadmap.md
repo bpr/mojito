@@ -12183,26 +12183,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1430 A closure storage's parameters are its enclosing
-  declarations' binders, where upstream declares them as the storage
-  struct's own**
-
-  The `__storage` struct's `param_decls` are the enclosing binders'
-  own `ParamDecl`s, owned by the enclosing function (or by `S` for a
-  closure in a method of `S`), where upstream's `liftClosure` declares the
-  struct's own parameters, reusing their names.
-  - Not observable: the elaborator binds them by identity from the
-    receiver's type, and `binder_scope` puts them ahead of the method's
-    scope (`mir.rs`).
-  - Re-owning them to the storage means rewriting the method body's and
-    the fields' binder references to the struct's ids at lowering
-    (`closure_storage`, `lower_nested_node`, `mir/nested.rs`).
-  - Probe: `generic_frame` in
-    `assets/ok/closure_storage_method_binders.mojo`, whose
-    `generic_frame$body$__storage` carries `n` owned by `generic_frame`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1431 A nested `def` without a capture list stays a generator
   nested in its enclosing declaration, where the pin promotes it to a
   module-scope function**

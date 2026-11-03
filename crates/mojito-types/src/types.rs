@@ -4525,91 +4525,21 @@ pub fn reown_generic_signature(
     decls: &[ParamDecl],
     owner: &str,
 ) -> (Vec<ParamDecl>, ParamBindings) {
-    let mut bindings = ParamBindings::new();
-    let mut binders: HashMap<ParamId, ParamRef> = HashMap::new();
-    let mut subst = TySubst::new();
-    for decl in decls {
-        let declared = decl.binder();
-        let reowned = ParamRef {
-            id: ParamId::new(owner, declared.id.slot),
-            name: declared.name.clone(),
-        };
-        match decl {
-            ParamDecl::Type {
-                bounds,
-                callable_bound,
-                ..
-            } => {
-                let ty = Ty::new(TyKind::Param {
-                    binder: reowned.clone(),
-                    bounds: bounds.clone(),
-                    callable_bound: callable_bound.clone(),
-                });
-                bindings.bind_type(declared.id.clone(), ty.clone());
-                subst.insert(declared.id.clone(), ty);
-            }
-            ParamDecl::Value { name, ty, .. } => bindings.bind(
-                declared.id.clone(),
-                ParamContext::detached().decl_ref(
-                    reowned.id.clone(),
-                    name.trim_start_matches('*'),
-                    crate::param_expr::MetaTy::value((*ty).clone()),
-                ),
-            ),
-        }
-        binders.insert(declared.id, reowned);
-    }
-    let moved = |ty: &Ty| bind_signature_slots(ty, &bindings);
-    let reowned = decls
-        .iter()
-        .map(|decl| {
-            let mut decl = decl.clone();
-            let (id, constraints) = match &mut decl {
-                ParamDecl::Type {
-                    id,
-                    trait_param,
-                    callable_bound,
-                    default,
-                    constraints,
-                    ..
-                } => {
-                    for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
-                        *ty = moved(ty);
-                    }
-                    if let Some(binder) = trait_param
-                        && let Some(reowned) = binders.get(&binder.id)
-                    {
-                        *binder = reowned.clone();
-                    }
-                    (id, constraints)
-                }
-                ParamDecl::Value {
-                    id,
-                    ty,
-                    default,
-                    constraints,
-                    ..
-                } => {
-                    *ty = moved(ty);
-                    if let Some(default) = default {
-                        *default = ParamContext::detached()
-                            .replace(default, &bindings)
-                            .unwrap_or_else(|_| default.clone());
-                    }
-                    (id, constraints)
-                }
-            };
-            *id = binders[id].id.clone();
-            *constraints = constraints
-                .iter()
-                .map(|constraint| {
-                    rename_constraint_parameters(constraint, &binders, &subst, &bindings)
-                })
-                .collect();
-            decl
-        })
-        .collect();
-    (reowned, bindings)
+    reown_parameters(decls, owner, |_, decl| decl.id().slot)
+}
+
+/// `decls` declared as `owner`'s own, each at its position in `decls`.
+///
+/// They are gathered from the declarations they are in scope of, and the
+/// bindings returned move a reference to one of them
+/// ([`reown_generic_signature`]). Upstream's `liftClosure` declares the
+/// enclosing binders a closure names as its storage struct's own this way,
+/// reusing their spellings.
+pub fn reown_as_own_parameters(
+    decls: &[ParamDecl],
+    owner: &str,
+) -> (Vec<ParamDecl>, ParamBindings) {
+    reown_parameters(decls, owner, |position, _| position)
 }
 
 /// The substitution mapping a struct's type-parameter names to an instance's
@@ -6715,6 +6645,98 @@ fn fmt_pointer_origin(
         }
     }
     Ok(())
+}
+
+fn reown_parameters(
+    decls: &[ParamDecl],
+    owner: &str,
+    slot: impl Fn(usize, &ParamDecl) -> usize,
+) -> (Vec<ParamDecl>, ParamBindings) {
+    let mut bindings = ParamBindings::new();
+    let mut binders: HashMap<ParamId, ParamRef> = HashMap::new();
+    let mut subst = TySubst::new();
+    for (position, decl) in decls.iter().enumerate() {
+        let declared = decl.binder();
+        let reowned = ParamRef {
+            id: ParamId::new(owner, slot(position, decl)),
+            name: declared.name.clone(),
+        };
+        match decl {
+            ParamDecl::Type {
+                bounds,
+                callable_bound,
+                ..
+            } => {
+                let ty = Ty::new(TyKind::Param {
+                    binder: reowned.clone(),
+                    bounds: bounds.clone(),
+                    callable_bound: callable_bound.clone(),
+                });
+                bindings.bind_type(declared.id.clone(), ty.clone());
+                subst.insert(declared.id.clone(), ty);
+            }
+            ParamDecl::Value { name, ty, .. } => bindings.bind(
+                declared.id.clone(),
+                ParamContext::detached().decl_ref(
+                    reowned.id.clone(),
+                    name.trim_start_matches('*'),
+                    crate::param_expr::MetaTy::value((*ty).clone()),
+                ),
+            ),
+        }
+        binders.insert(declared.id, reowned);
+    }
+    let moved = |ty: &Ty| bind_signature_slots(ty, &bindings);
+    let reowned = decls
+        .iter()
+        .map(|decl| {
+            let mut decl = decl.clone();
+            let (id, constraints) = match &mut decl {
+                ParamDecl::Type {
+                    id,
+                    trait_param,
+                    callable_bound,
+                    default,
+                    constraints,
+                    ..
+                } => {
+                    for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
+                        *ty = moved(ty);
+                    }
+                    if let Some(binder) = trait_param
+                        && let Some(reowned) = binders.get(&binder.id)
+                    {
+                        *binder = reowned.clone();
+                    }
+                    (id, constraints)
+                }
+                ParamDecl::Value {
+                    id,
+                    ty,
+                    default,
+                    constraints,
+                    ..
+                } => {
+                    *ty = moved(ty);
+                    if let Some(default) = default {
+                        *default = ParamContext::detached()
+                            .replace(default, &bindings)
+                            .unwrap_or_else(|_| default.clone());
+                    }
+                    (id, constraints)
+                }
+            };
+            *id = binders[id].id.clone();
+            *constraints = constraints
+                .iter()
+                .map(|constraint| {
+                    rename_constraint_parameters(constraint, &binders, &subst, &bindings)
+                })
+                .collect();
+            decl
+        })
+        .collect();
+    (reowned, bindings)
 }
 
 #[cfg(test)]

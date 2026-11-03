@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A closure's storage struct declares its parameters as its own, as
+  upstream's `liftClosure` does, reusing the enclosing binders'
+  spellings, instead of borrowing the enclosing declarations' binders
+  (R1430): its fields, synthesized members, and method body (with the
+  bodies nested in it) read the struct's binders, while the enclosing
+  body names the storage at its own.
+
 - The pin's removed legacy closures are rejected with its texts (R1823):
   the `capturing` effect is a parse error wherever it is spelled (a
   function type, a `def` or method declaration, a lambda), and the

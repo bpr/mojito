@@ -1,5 +1,5 @@
 # A capturing closure's body is a method of its storage struct, whose
-# parameters are the enclosing binders the closure names: in its body
+# own parameters stand for the enclosing binders the closure names: in its body
 # (`n`, a type binder `T`, a `comptime for` index) as in its fields, while
 # its own (`m`) stay the method's. A call by name calls the method on the
 # storage, a closure value is a closure over the method, and a body owning

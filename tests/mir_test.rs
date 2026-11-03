@@ -5058,8 +5058,11 @@ fn closure_storage_carries_the_binders_its_body_names() {
     // The storage's parameters are the enclosing binders the closure
     // names, in its body as in its fields, as upstream's
     // `emitClosureInstance` collects them: `body` reads `n`, `sig` names
-    // no enclosing binder. The closure's own parameter `m` stays its
-    // method's, which is nested in no other declaration.
+    // no enclosing binder. They are the struct's own, as upstream's
+    // `liftClosure` declares them, reusing their spellings, and its
+    // method reads `n` as the struct's, as `frame` names its storage at
+    // its own `n`. The closure's own parameter `m` stays its method's,
+    // which is nested in no other declaration.
     let src = "def frame[n: Int](v: Int) -> Int:\n    var x = v\n    def body() {var x} -> Int:\n        return x + n\n    def sig[m: Int](y: Int) {var x} -> Int:\n        return x + m + y\n    return body() + sig[7](1)\n";
     let mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
@@ -5078,6 +5081,56 @@ fn closure_storage_carries_the_binders_its_body_names() {
     };
     assert_eq!(storage_parameters("frame$body$__storage"), ["n"]);
     assert!(storage_parameters("frame$sig$__storage").is_empty());
+    let storage = mir
+        .declarations
+        .structure("frame$body$__storage")
+        .expect("body's storage declared");
+    assert!(
+        storage
+            .param_decls
+            .iter()
+            .all(|decl| &*decl.id().owner == "frame$body$__storage"),
+        "{:?}",
+        storage.param_decls
+    );
+    let body = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "frame$body$__storage.body")
+        .expect("body is its storage's method");
+    // `n` as the receiver's argument and as the body's read of it.
+    let Some((_, arguments)) = body.1.param_types[0].kind().as_non_simd_struct() else {
+        panic!("body's receiver is its storage")
+    };
+    let mut references: Vec<_> = arguments
+        .iter()
+        .filter_map(|argument| match argument {
+            mojito::TyArg::Val(mojito::CtValue::Expr(expr)) => {
+                expr.as_decl_ref().map(|reference| reference.id.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    references.extend(
+        body.1
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .filter_map(|instruction| match instruction {
+                MirInstr::Const {
+                    k: mojito::mir::Const::Param(expr),
+                    ..
+                } => expr.as_decl_ref().map(|reference| reference.id.clone()),
+                _ => None,
+            }),
+    );
+    assert_eq!(references.len(), 2, "{references:?}");
+    assert!(
+        references
+            .iter()
+            .all(|id| &*id.owner == "frame$body$__storage"),
+        "the method reads `n` as its storage's: {references:?}"
+    );
     let method = mir
         .declarations
         .function("frame$sig$__storage.sig")
