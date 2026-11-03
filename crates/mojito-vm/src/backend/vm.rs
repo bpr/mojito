@@ -90,10 +90,6 @@ pub struct VmBackend {
     /// Host state of the `external_call` libc table: descriptors, directory
     /// streams, `errno`, and the environment overlay (see `libc.rs`).
     host: libc::HostState,
-    /// The never-freed UTF-8 byte allocation behind each distinct literal
-    /// text, by text — the VM's counterpart to the native backend's interned
-    /// `mjstr_<n>` globals, which `StringLiteral.ptr()` addresses.
-    static_literals: HashMap<String, u64>,
     /// The never-freed element allocation behind each distinct closed
     /// parameter list, by element type and spelling — the VM's counterpart
     /// to the native backend's constant globals, which

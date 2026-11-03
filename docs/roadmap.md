@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1858**.
+Next free ID: **R1862**.
 
 ## Ordered Work
 
@@ -11266,36 +11266,64 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1659 The value-less `StringLiteral`'s byte primitives are
-  compiler rules**
+- [ ] **R1858 An unsolved type binder is the value-less `StringLiteral`
+  in the elaborator**
 
-  `byte_length`, `ptr`, and `unsafe_ptr` on a value-less `StringLiteral`
-  receiver run compiler rules, where upstream runs the struct's bodies.
-  - The rules are `string_literal_primitive`
-    (`method_calls/intrinsic_receivers.rs`), the VM's `Value::Str` arms
-    (`invoke.rs`, guarded by `declared_owner`), and Pliron's
-    `lower/methods.rs` arms.
-  - A literal whose type carries its text already runs the declared
-    members (R1652).
-  - Delete the rules and `TyKind::StringLiteral(None)` itself.
-  - The elaborator also defaults an unsolved type binder and the writer
-    slot of a type-reached member to the value-less type
-    (`mono/instances.rs`), a `[s: StringLiteral]` binder's declared
-    type is it (`ct_param_source_type`, `comptime.rs`), and
-    `MetaTy::of_value` types an untyped `CtValue::Str` by it
-    (`param_expr.rs`); each needs its upstream type before the variant can
-    go.
-  - Probe: typing that `CtValue::Str` as `Ty::string_literal_of(text)`
-    makes a `subarch: StaticString = _ANY` default a `StringSpan`
-    construction the elaborator cannot read, so `comptime if
-    is_nvidia_gpu():` fails with "compile-time application
-    `is_nvidia_gpu` reads an unresolved value `StringSpan("<any>",
-    "<any>")`" (`Specializer`'s `argument_value`, `mono/specializer.rs`).
-  - Probe: `def f(s: StringLiteral) -> Int: return s.byte_length()`
-    already prints `3` for `f("abc")`, since the bare argument
-    auto-parameterizes. Done when `rg string_literal_primitive crates` is
-    empty.
-  - Depends on R1658.
+  `Specializer`'s receiver-call instantiation (`mono/instances.rs`)
+  binds every type binder the arguments leave unsolved to the value-less
+  `StringLiteral`, where upstream never elaborates a call with an unsolved
+  type parameter.
+  - Lever: the checker records each binder's solution or default on the
+    call, so the elaborator reads it instead of filling one.
+  - Probe: `rg -n "Ty::string_literal\(\)" crates/mojito-native/src/native/mono/instances.rs`
+    finds only the writer slot R422 owns.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1859 A `[s: StringLiteral]` parameter is typed by the value-less
+  literal**
+
+  A bare `StringLiteral` in a compile-time parameter's type is the
+  value-less `TyKind::StringLiteral(None)` (`ct_param_source_type`,
+  `comptime.rs`, and `SourceType::ClosedStringLiteral` in
+  `type_resolution.rs`), where upstream's is the declared struct with its
+  `value` parameter left to the argument.
+  - Probe: `def g[s: StringLiteral]() -> Int: return s.byte_length()`
+    prints `5` for `g["hello"]()`, through the declared member, and `s`'s
+    type carries no text.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1860 An untyped compile-time string is typed by the value-less
+  `StringLiteral`**
+
+  `MetaTy::of_value` types an untyped `CtValue::Str` as the value-less
+  literal (`param_expr.rs`), where upstream's is `StringLiteral[text]`.
+  - Probe: typing it as `Ty::string_literal_of(text)` makes a
+    `subarch: StaticString = _ANY` default a `StringSpan` construction the
+    elaborator cannot read, so `comptime if is_nvidia_gpu():` fails with
+    "compile-time application `is_nvidia_gpu` reads an unresolved value
+    `StringSpan("<any>", "<any>")`" (`Specializer`'s `argument_value`,
+    `mono/specializer.rs`).
+  - Probe: the checker's other producers are the same gap: `+` over
+    literals whose text is not closed (`checker/operators.rs`), the
+    nominal-`String` fallback in `call_inference.rs`, and the element
+    `select` in `checker.rs`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1861 The value-less `TyKind::StringLiteral(None)` still exists**
+
+  Upstream's `StringLiteral` type always carries its text, but Mojito
+  keeps a value-less variant and its consumers.
+  - The consumers: `Ty::string_literal()`/`TyKind::STRING_LITERAL`,
+    `coerces`'s `(Some, None)` arm (`types.rs`), `overload_support.rs`'s
+    and `constraints.rs`'s arms, mangling (`symbol.rs`), MIR text's bare
+    `StringLiteral` (`write.rs`, `parse/types.rs`), `ct::source_type`, and
+    `ast::Type::ClosedStringLiteral`.
+  - This is the string half of R1849.
+  - Done when the variant holds a `String`, not an `Option`.
+  - Depends on R1858, R1859, R1860, R422.
   - Model: Opus, Not Planned.
 
 - [ ] **R1660 A `StringLiteral[value]` application is the compiler's
@@ -12006,6 +12034,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     elaborator passes it the elements of the collector the call builds
     (`unpack_builtin_collectors`, `native/mono/spread.rs`).
   - Found while landing R414 (2026-10-06).
+  - Probe: the accumulator is a value-less `StringLiteral`, the writer
+    slot `mono/instances.rs` passes a type-reached `write_to`.
   - Depends on nothing.
   - Model: Fable, Planned.
 

@@ -92,13 +92,6 @@ impl Checker {
         {
             return self.infer_literal_format(site).map(Some);
         }
-        if obj_ty.is_string_literal()
-            && args.is_empty()
-            && let Some(ty) = string_literal_primitive(method)
-        {
-            reject_kwargs(kwargs)?;
-            return Ok(Some(ty));
-        }
         // A heterogeneous pack that is still a parameter answers its length;
         // any other member waits for the specialization's concrete storage.
         if let TyKind::VariadicPack(element) = obj_ty.kind()
@@ -296,17 +289,6 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::LiteralFormat,
         ));
         Ok(ty)
-    }
-}
-
-/// Upstream's `StringLiteral` byte primitives (`pop.string.size` /
-/// `pop.string.address`): the literal's UTF-8 bytes live for the whole
-/// program, so the pointer carries the static origin.
-fn string_literal_primitive(method: &str) -> Option<Ty> {
-    match method {
-        "byte_length" => Some(Ty::int()),
-        "ptr" | "unsafe_ptr" => Some(mojito_types::types::static_string_address_ty()),
-        _ => None,
     }
 }
 

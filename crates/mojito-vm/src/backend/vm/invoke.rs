@@ -339,7 +339,7 @@ impl VmBackend {
                             "vm: Hasher `{name}` has no `_update_with_simd` for {leaf}"
                         ))
                     })?;
-                    let arguments = vec![hasher, crate::runtime::hash_leaf_value(recv.clone())];
+                    let arguments = vec![hasher, crate::runtime::hash_leaf_value(recv)];
                     let (_, variables) = self.call_frame(prog, fidx, arguments)?;
                     let updated = variables.into_iter().next().unwrap_or(Value::None);
                     self.store_at_call_place(frame_id, place, updated, regs, vars)?;
@@ -384,24 +384,6 @@ impl VmBackend {
                 let text = format!("{current}{}", self.string_span_text(&args[0])?);
                 self.store_at_call_place(frame_id, place, Value::Str(text), regs, vars)?;
                 Ok(Value::None)
-            }
-            // The value-less `StringLiteral`'s byte primitives (R1659); a
-            // literal whose type carries its text runs `StringLiteral`'s.
-            Value::Str(text)
-                if method == "byte_length" && args.is_empty() && declared_owner.is_none() =>
-            {
-                Ok(Value::Int(text.len() as i64))
-            }
-            Value::Str(text)
-                if matches!(method, "ptr" | "unsafe_ptr")
-                    && args.is_empty()
-                    && declared_owner.is_none() =>
-            {
-                let allocation = self.static_literal_bytes(text)?;
-                Ok(Value::Pointer {
-                    allocation,
-                    offset: 0,
-                })
             }
             Value::Str(current)
                 if matches!(method, "write" | mojito_symbol::symbol::WRITE_FORMATTED) =>

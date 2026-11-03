@@ -800,19 +800,6 @@ impl VmBackend {
         Ok(v)
     }
 
-    /// One heap allocation holding `bytes` as width-1 `UInt8` scalars, sized
-    /// exactly; returns its allocation id (offset 0 is the first byte).
-    /// The program-lifetime byte allocation holding `text`'s UTF-8 bytes,
-    /// allocated once per distinct text and never freed.
-    pub(super) fn static_literal_bytes(&mut self, text: &str) -> Result<u64, RuntimeError> {
-        if let Some(allocation) = self.static_literals.get(text) {
-            return Ok(*allocation);
-        }
-        let allocation = self.alloc_utf8_bytes(text.as_bytes())?;
-        self.static_literals.insert(text.to_string(), allocation);
-        Ok(allocation)
-    }
-
     /// The program-lifetime allocation holding a closed parameter list's
     /// elements, each at `element`, allocated once per distinct list and
     /// never freed.
@@ -839,6 +826,8 @@ impl VmBackend {
         Ok(allocation)
     }
 
+    /// One heap allocation holding `bytes` as width-1 `UInt8` scalars, sized
+    /// exactly; returns its allocation id (offset 0 is the first byte).
     fn alloc_utf8_bytes(&mut self, bytes: &[u8]) -> Result<u64, RuntimeError> {
         let pointer = self.heap_alloc(bytes.len() as i64, 1)?;
         let Value::Pointer { allocation, .. } = pointer else {

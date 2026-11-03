@@ -4996,7 +4996,7 @@ as the struct's instance. Literal-only operations stay on it. The value-less
 `TyKind::StringLiteral(None)`, which upstream has no type for, still types
 an untyped compile-time string (`CtValue::Str`'s meta), the elaborator's
 placeholder writer, and a `[s: StringLiteral]` binder's declared type
-(R1659); a bare run-time `s: StringLiteral` argument auto-parameterizes as
+(R1861), though its members are the struct's, never a compiler rule; a bare run-time `s: StringLiteral` argument auto-parameterizes as
 `StringLiteral[_]` like any parametric struct, a `[text: String]` value
 parameter is a `String`, and a reflected name a `StaticString`. A source
 `String` annotation is not a builtin type keyword: it parses as an ordinary

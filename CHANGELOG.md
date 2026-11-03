@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value-less `StringLiteral` receiver, such as a `[s: StringLiteral]`
+  parameter, now runs the struct's `byte_length`, `ptr`, and `unsafe_ptr`
+  bodies, as upstream does (R1659). The checker, VM, and Pliron rules that
+  answered them by name are gone.
 - A bare `StringLiteral` is now the declared struct, as upstream's is
   (R1658): a `def f(s: StringLiteral)` argument auto-parameterizes as
   `StringLiteral[_]`, so each call instantiates per text and

@@ -112,21 +112,6 @@ impl FnLowering<'_> {
         {
             return self.lower_dtype_predicate(ctx, dest, recv, method);
         }
-        // `StringLiteral`'s byte primitives read the descriptor: the interned
-        // constant's address and length, or a runtime literal's `(data, len)`.
-        if resolved.is_none()
-            && args.is_empty()
-            && matches!(method, "byte_length" | "ptr" | "unsafe_ptr")
-            && matches!(
-                self.func.reg_types.get(&recv.0).map(Ty::kind),
-                Some(TyKind::StringLiteral(_))
-            )
-        {
-            let (data, len) = self.writer_argument_text(ctx, recv, dest)?;
-            let value = if method == "byte_length" { len } else { data };
-            self.reg_values.insert(dest.0, value);
-            return Ok(());
-        }
         // The builtin-string writer receiver (`write_to`'s `Value::Str`
         // accumulator) appends each argument's display text in place; its
         // `write_string` appends the view's bytes the same way.
