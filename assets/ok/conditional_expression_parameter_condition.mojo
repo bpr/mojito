@@ -37,6 +37,14 @@ def label[flag: Bool]() -> String:
     return String("on") if flag else String("off")
 
 
+def doubled[x: UInt16]() -> Int:
+    return 1 if x == 0 else 2 * doubled[x - 1]()
+
+
+def tripled[x: Int8]() -> Int:
+    return 1 if x - 1 < 0 else 3 * tripled[x - 1]()
+
+
 struct Counter[on: Bool, n: Int]:
     @staticmethod
     def total() -> Int:
@@ -47,5 +55,6 @@ def main():
     print(fact[5](), count_down[4](), local_done[4](), evaluated[4]())
     print(flag_count[True, 3](), copy_or_one[Int, 3]())
     print(label[True](), label[False](), Counter[True, 4].total())
+    print(doubled[3](), tripled[4]())
     comptime for i in range(3):
         print("first" if i == 0 else "later")

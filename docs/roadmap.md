@@ -5457,24 +5457,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on R940.
   - Model: Opus, Not Planned.
 
-- [ ] **R893 A conditional expression over a sized-integer value parameter
-  is a run-time `if`, where the pin selects its arm per instance**
-
-  `1 if x == 0 else 2 * f[x - 1]()` in `def f[x: UInt8]()` prints `8` on
-  the pin for `f[3]()`: a sized integer's comparison is a parameter value.
-  - `Checker::parameter_valued_condition`
-    (`checker/comptime_validation.rs`) admits only `Int`, `UInt`, `Bool`,
-    and literal operands, so this conditional elaborates both arms and
-    recurses past the instance budget.
-  - Probe: the `UInt8` shape prints `8` only because `x - 1` wraps, so
-    the 256 instances fit the budget; over `UInt16` it stops with
-    "unsupported instantiation past the 4096-instance budget" (pin: `8`).
-  - A `Float64` operand stays run-time: the pin runs out of memory on the
-    float twin of the probe.
-  - Found while landing R887 (2026-10-14).
-  - Depends on R482.
-  - Model: Opus, Not Planned.
-
 - [ ] **R289 An explicit type argument before an inferred pack binds the
   pack empty**
 

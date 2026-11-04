@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A conditional expression comparing sized-integer value parameters
+  (`1 if x == 0 else 2 * f[x - 1]()` in `def f[x: UInt16]()`) is a
+  parameter-valued condition, selecting its arm per instance as the pin
+  does, rather than a run-time `if` whose dead arm recursed past the
+  instance budget (R893). A `Float64` comparison stays run-time.
+
 - A `comptime if` or `comptime assert` condition carries its `Bool`
   parameter value, the `i1` attribute upstream's `hlcf.comptime.if` takes
   (R1475): the checker composes it leaf by leaf, `and`/`or` as an ordered

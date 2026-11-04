@@ -983,18 +983,21 @@ impl Checker {
     }
 
     /// Whether `operand` of a comparison is a parameter value whose builtin
-    /// operators fold at compile time: an integer or `Bool` literal, or an
-    /// `Int`, `UInt`, or `Bool` parameter value, under arithmetic. A float's
+    /// operators fold at compile time: an integer or `Bool` literal, or a
+    /// `Bool` or integral scalar (`Int`, `UInt8`, ...) parameter value,
+    /// under arithmetic. A float's
     /// comparison is a run-time value, as the pin has it.
     fn parameter_valued_scalar(&self, operand: &Expr) -> bool {
         match &operand.kind {
             ExprKind::Int(_) | ExprKind::Bool(_) => true,
             ExprKind::Identifier(_) | ExprKind::Member { .. } => {
                 self.parameter_value_ty(operand).is_some_and(|ty| {
-                    ty.is_int()
-                        || ty.is_uint()
-                        || ty.is_bool()
+                    ty.is_bool()
                         || matches!(ty.kind(), TyKind::IntLiteral(_))
+                        || ty
+                            .kind()
+                            .known_simd()
+                            .is_some_and(|(dtype, width)| width == 1 && dtype.is_integral())
                 })
             }
             ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Invert | PrefixOp::Pos, inner) => {
