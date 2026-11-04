@@ -742,7 +742,6 @@ fn parses_generic_struct_header_and_self_param_field() {
             name: "Pair".into(),
             decorators: vec![fieldwise_deco()],
             type_params: vec![TypeParam {
-                constraints: vec![],
                 value_type: None,
                 name: "T".into(),
                 bounds: vec!["Copyable".into(), "Movable".into()],
@@ -783,7 +782,6 @@ fn parses_generic_def_with_type_param_signature() {
             name: "id".into(),
             decorators: vec![],
             type_params: vec![TypeParam {
-                constraints: vec![],
                 value_type: None,
                 name: "T".into(),
                 bounds: vec!["AnyType".into()],
@@ -1679,7 +1677,6 @@ fn parses_value_parameter_header() {
             assert_eq!(
                 type_params,
                 &vec![TypeParam {
-                    constraints: vec![],
                     value_type: None,
                     name: "size".into(),
                     bounds: vec!["Int".into()],
@@ -1708,15 +1705,9 @@ fn retains_named_parameter_arguments_and_generic_method_parameters() {
 #[test]
 fn retains_trailing_where_constraints() {
     let statements = parse("def f[n: Int]() -> Int where n > 0 and n < 10:\n    return n\n");
-    let StmtKind::Def {
-        type_params,
-        where_clauses,
-        ..
-    } = &statements[0].kind
-    else {
+    let StmtKind::Def { where_clauses, .. } = &statements[0].kind else {
         panic!("expected def");
     };
-    assert!(type_params[0].constraints.is_empty());
     assert_eq!(where_clauses.len(), 1);
 }
 
@@ -4756,7 +4747,6 @@ fn parses_fully_explicit_lambda() {
         lambda_expr(
             0,
             vec![TypeParam {
-                constraints: vec![],
                 value_type: None,
                 name: "N".into(),
                 bounds: vec!["Int".into()],

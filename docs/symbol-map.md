@@ -1105,7 +1105,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   later trait or alias retried by `compile_pending_header_conditions`)
   and a predicate alias's body compile;
   `bind_constraint`/`bind_declared_constraints` bind what is left to their
-  binders (`GenericConstraint::bind`), and
+  binders (`GenericConstraint::bind`), a bare enclosing-struct parameter
+  rejected first (`unbound_operand`, `UnqualifiedStructParam`);
+  `Checker::conformance_availability` (`checker/traits.rs`) reads a stored
+  header condition as the availability of a default wrapper
+  (`DefaultWrapper::gate`) or a synthesized member
+  (`MethodProvenance::SynthesizedDefault`, `Checker::method_gate`), and
+  `method_clauses` compiles a method's own clauses once, at its signature; and
   `ConstraintEnvironment` is the identity-keyed argument environment every
   verdict reads. Its evaluators resolve names and delegate operator
   semantics to `param_expr::fold`; `compile_dependent_ct_expr` is the one

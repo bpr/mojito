@@ -46,7 +46,7 @@ struct MaybeUninit[T: AnyType](
     @inline(.always)
     def write(
         mut self, var value: Self.T, /
-    ) where IsTriviallyDeinitable[T] and conforms_to(Self.T, Movable):
+    ) where IsTriviallyDeinitable[Self.T] and conforms_to(Self.T, Movable):
         self._storage.unsafe_write(value^)
 
     @inline(.always)

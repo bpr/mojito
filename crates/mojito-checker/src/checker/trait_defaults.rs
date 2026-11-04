@@ -60,7 +60,6 @@ pub fn trait_member_declaration(trait_stmt: &Stmt, index: usize, name: String) -
             .first()
             .is_some_and(|param| param.infer_only),
         default: None,
-        constraints: Vec::new(),
     };
     let receiver = FnParam {
         name: "self".to_string(),
@@ -158,9 +157,9 @@ impl DefaultShape {
 pub(super) type TraitDefaults = (Vec<String>, Vec<DefaultShape>);
 
 /// A default a conformer inherits: the trait declaring it, its shape, and
-/// the `where` condition of the conformance it is inherited under, `None`
-/// when one reaching it holds unconditionally.
-pub(super) type InheritedDefault = (String, DefaultShape, Option<Expr>);
+/// the conditional conformance it is inherited under, `None` when one
+/// reaching it holds unconditionally.
+pub(super) type InheritedDefault = (String, DefaultShape, Option<String>);
 
 /// A trait default the check checked as its trait's member.
 pub(super) struct TraitMember {
@@ -181,9 +180,10 @@ pub(super) struct DefaultWrapper {
     pub(super) declaration: String,
     pub(super) trait_name: String,
     pub(super) shape: DefaultShape,
-    /// The condition of the conformance it is inherited under, which is its
-    /// availability clause, as a method's `where` clause would be.
-    pub(super) condition: Option<Expr>,
+    /// The conditional conformance it is inherited under, whose compiled
+    /// header condition is its availability
+    /// ([`Checker::conformance_availability`]).
+    pub(super) gate: Option<String>,
     /// Its member position: after the struct's spelled methods, in the order
     /// its defaults are reached.
     pub(super) method_index: usize,
@@ -294,12 +294,12 @@ pub(super) fn inherited_defaults(
     // A default is as available as the conformances reaching it: always,
     // when one of them holds unconditionally.
     let mut reached: Vec<(String, DefaultShape)> = Vec::new();
-    let mut conditions: HashMap<String, Option<&Expr>> = HashMap::new();
+    let mut conditions: HashMap<String, Option<&String>> = HashMap::new();
     for conformance in conforms {
         let condition = conformance_conditions
             .iter()
             .find(|(trait_name, _)| trait_name == conformance)
-            .map(|(_, condition)| condition);
+            .map(|(trait_name, _)| trait_name);
         let mut through = Vec::new();
         defaults_for(conformance, traits, &mut HashSet::new(), &mut through)?;
         for (trait_name, default) in through {
@@ -362,7 +362,7 @@ pub(super) fn default_wrappers(
     inherited_defaults(stmt, traits)?
         .into_iter()
         .enumerate()
-        .map(|(index, (trait_name, shape, condition))| {
+        .map(|(index, (trait_name, shape, gate))| {
             if let Some(reason) = &shape.unforwardable {
                 return Err(TypeError::Unsupported(reason.clone()));
             }
@@ -377,7 +377,7 @@ pub(super) fn default_wrappers(
                 lowered_name: format!("{name}.{}", shape.method),
                 trait_name,
                 shape,
-                condition,
+                gate,
                 method_index: methods.len() + index,
                 body,
             })
@@ -672,10 +672,9 @@ impl Checker {
             *ty = moved(ty);
         }
         sig.ret = moved(&sig.ret);
-        if let Some(condition) = &wrapper.condition {
-            let constraint = self.compile_where_clause(condition)?;
+        if let Some(gate) = &wrapper.gate {
             sig.availability
-                .push(self.bind_constraint(&constraint, &sig.decls));
+                .extend(self.conformance_availability(name, gate)?);
         }
         sig.overload = overloaded
             .then(|| mojito_symbol::symbol::overload_qualifier(&lowered).map(str::to_string))
@@ -776,20 +775,14 @@ impl Checker {
         let saved_struct_count = self
             .enclosing_struct_type_params
             .replace(self.enclosing_type_params.len());
-        let where_clauses: Vec<Expr> = wrapper.condition.iter().cloned().collect();
-        let assumptions = self.method_where_assumptions(&where_clauses, &[], &signature.decls);
-        let result = assumptions.and_then(|mut assumptions| {
-            let conditions: Vec<_> = where_clauses
-                .iter()
-                .filter_map(|condition| self.compile_where_clause(condition).ok())
-                .map(|constraint| self.bind_constraint(&constraint, &signature.decls))
-                .collect();
-            assumptions.extend(self.method_propositions(&conditions, &signature.decls));
-            self.push_assumptions(assumptions);
-            let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
-            self.pop_assumptions();
-            result
-        });
+        let mut assumptions = Vec::new();
+        for gate in &signature.availability {
+            self.guaranteed_facts(gate, &mut assumptions);
+        }
+        assumptions.extend(self.method_propositions(&signature.availability, &signature.decls));
+        self.push_assumptions(assumptions);
+        let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
+        self.pop_assumptions();
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.tparams.pop();
         self.method_site = saved_site;
@@ -1001,7 +994,6 @@ fn existential_spelling(
             && param.value_type.is_none()
             && param.callable_bound.is_none()
             && param.default.is_none()
-            && param.constraints.is_empty()
     })?;
     let [bound] = binder.bounds.as_slice() else {
         return None;

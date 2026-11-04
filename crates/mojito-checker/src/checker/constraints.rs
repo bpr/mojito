@@ -3891,8 +3891,8 @@ impl Checker {
     /// inside a proposition remain unsupported constraint syntax.
     /// `constraint` with each operand [`Self::compile_where_clause`] left
     /// unbound bound to its binder: one of `own`, the declaration the clause
-    /// belongs to, else the innermost open scope's, else the enclosing
-    /// struct's.
+    /// belongs to, else the innermost open scope's. One neither binds stays
+    /// unbound, identified by its spelling.
     pub(super) fn bind_constraint(
         &self,
         constraint: &GenericConstraint,
@@ -4076,11 +4076,29 @@ impl Checker {
             ExprKind::Call {
                 name, args, kwargs, ..
             } if name == "conforms_to" && kwargs.is_empty() && args.len() == 2 => {
+                let self_pack = matches!(
+                    &args[0].kind,
+                    ExprKind::Member { object, .. }
+                        if matches!(&object.kind, ExprKind::Member { object: base, .. }
+                            if matches!(&base.kind, ExprKind::Identifier(name) if name == "Self"))
+                );
                 let (param, pack) = match (pack_values_projection(&args[0]), &args[0].kind) {
-                    (Some(pack), _) => (ParamRef::unbound(pack), true),
+                    (Some(pack), _) if self_pack => (self.self_binder(pack), true),
+                    (Some(pack), _) => (
+                        match self.binder_in_scope(pack) {
+                            Some(id) => ParamRef {
+                                id,
+                                name: pack.into(),
+                            },
+                            None => self.unbound_operand(pack)?,
+                        },
+                        true,
+                    ),
                     (None, ExprKind::Identifier(param)) => (
-                        self.type_binder_in_scope(param)
-                            .unwrap_or_else(|| ParamRef::unbound(param)),
+                        match self.type_binder_in_scope(param) {
+                            Some(binder) => binder,
+                            None => self.unbound_operand(param)?,
+                        },
                         false,
                     ),
                     (None, ExprKind::Member { object, field }) if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
@@ -4751,9 +4769,10 @@ impl Checker {
                     ConstraintOperand::Type(ty)
                 } else {
                     let attribute = self.lookup_tparam(name).map(TyArg::Ty);
-                    let binder = self
-                        .type_binder_in_scope(name)
-                        .unwrap_or_else(|| ParamRef::unbound(name));
+                    let binder = match self.type_binder_in_scope(name) {
+                        Some(binder) => binder,
+                        None => self.unbound_operand(name)?,
+                    };
                     return Ok((ConstraintOperand::Param(binder), attribute));
                 }
             }
@@ -4857,7 +4876,7 @@ impl Checker {
                     None => ConstraintOperand::Expr(expression),
                 }
             }
-            ExprKind::Identifier(name) => ConstraintOperand::Param(ParamRef::unbound(name)),
+            ExprKind::Identifier(name) => ConstraintOperand::Param(self.unbound_operand(name)?),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 ConstraintOperand::Param(self.self_binder(field))
             }
@@ -5458,6 +5477,17 @@ impl Checker {
         }
     }
 
+    /// The operand a bare name no open scope binds compiles to: left
+    /// unbound for [`Self::bind_constraint`], unless it names the enclosing
+    /// struct's own parameter, which a member spells `Self.<name>`, as
+    /// upstream rejects the bare spelling.
+    fn unbound_operand(&self, name: &str) -> Result<ParamRef, TypeError> {
+        if self.is_enclosing_struct_param(name) && self.binder_in_scope(name).is_none() {
+            return Err(TypeError::UnqualifiedStructParam(name.to_string()));
+        }
+        Ok(ParamRef::unbound(name))
+    }
+
     /// The enclosing struct's binder `Self.<name>` names.
     fn self_binder(&self, name: &str) -> ParamRef {
         mojito_types::types::bind_reference(&ParamRef::unbound(name), &[&self.self_decls])
@@ -5472,7 +5502,7 @@ impl Checker {
             return bound;
         }
         self.binder_in_scope(&reference.name).map_or_else(
-            || mojito_types::types::bind_reference(reference, &[&self.self_decls]),
+            || reference.clone(),
             |id| ParamRef {
                 id,
                 name: reference.name.clone(),
@@ -6470,7 +6500,6 @@ impl BoundSiblings {
         for value in [&mut param.origin_mutability, &mut param.default]
             .into_iter()
             .flatten()
-            .chain(&mut param.constraints)
         {
             walk_expr_mut(&mut &*self, value);
         }

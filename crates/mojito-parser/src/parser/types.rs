@@ -807,7 +807,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 origin_mutability,
                 infer_only: false,
                 default,
-                constraints: Vec::new(),
             });
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','

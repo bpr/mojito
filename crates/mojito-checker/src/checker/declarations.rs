@@ -657,6 +657,7 @@ impl Checker {
         method: &Method,
         decls: Vec<ParamDecl>,
         all_types: &[Ty],
+        availability: Vec<GenericConstraint>,
     ) -> Result<MethodSig, TypeError> {
         let error = self.declared_error(method.raises, method.raises_type.as_ref())?;
         let collectors = Collectors::of(&method.params, method.keyword_only, all_types);
@@ -669,14 +670,7 @@ impl Checker {
         let regular_params: Vec<&FnParam> = regular.iter().map(|(_, param)| *param).collect();
         let named_result = mojito_ast::ast::named_result(&method.params);
         Ok(MethodSig {
-            availability: method
-                .where_clauses
-                .iter()
-                .map(|condition| {
-                    self.compile_where_clause(condition)
-                        .map(|constraint| self.bind_constraint(&constraint, &decls))
-                })
-                .collect::<Result<_, _>>()?,
+            availability,
             decls,
             has_self: method.has_self,
             params: regular
@@ -758,8 +752,10 @@ impl Checker {
                 .iter()
                 .map(|param| self.reference_parameter_struct_binder(param.origin.as_deref()))
                 .collect(),
-            synthesized_default: method.provenance
-                == mojito_ast::ast::MethodProvenance::SynthesizedDefault,
+            synthesized_default: matches!(
+                method.provenance,
+                mojito_ast::ast::MethodProvenance::SynthesizedDefault(_)
+            ),
             nested_origins: NestedOrigins::of(&method.decorators),
             overload: None,
         })
@@ -999,11 +995,7 @@ impl Checker {
                 },
                 infer_only: tp.infer_only,
                 variadic: tp.name.starts_with('*'),
-                constraints: tp
-                    .constraints
-                    .iter()
-                    .map(|condition| self.compile_where_clause(condition))
-                    .collect::<Result<_, _>>()?,
+                constraints: Vec::new(),
             });
         }
 
@@ -1163,11 +1155,7 @@ impl Checker {
             callable_default: None,
             infer_only: tp.infer_only,
             variadic,
-            constraints: tp
-                .constraints
-                .iter()
-                .map(|condition| self.compile_where_clause(condition))
-                .collect::<Result<_, _>>()?,
+            constraints: Vec::new(),
         })
     }
 
@@ -1407,29 +1395,74 @@ impl Checker {
         Ok(CallableDefault::Symbol(symbol))
     }
 
-    /// The conformance atoms a method's `where` clauses guarantee, assumed
-    /// while checking its body and, in `register_struct_method_signatures`,
-    /// while resolving its own signature (`-> Need[Self.T] where
-    /// conforms_to(Self.T, Copyable)` on a `T: Movable` struct). A clause
-    /// reading one of `arguments` (`where self.dtype.is_integral()`)
-    /// compiles with them in scope, in [`Self::method_sig`], and refines no
-    /// binder here.
+    /// Method `m`'s `where` clauses that read none of its arguments, or
+    /// those that do (`where self.dtype.is_integral()`) when
+    /// `reading_arguments` holds, each compiled once with its own binders
+    /// `decls` open and bound to them, beside its source position. A clause
+    /// reading an argument compiles with the arguments in scope
+    /// (`in_signature_scope`).
+    pub(super) fn method_clauses(
+        &self,
+        m: &Method,
+        decls: &[ParamDecl],
+        reading_arguments: bool,
+    ) -> Result<Vec<(usize, GenericConstraint)>, TypeError> {
+        let arguments = method_arguments(m);
+        m.where_clauses
+            .iter()
+            .enumerate()
+            .filter(|(_, condition)| {
+                super::comptime_validation::names_read(condition)
+                    .iter()
+                    .any(|name| arguments.contains(&name.as_str()))
+                    == reading_arguments
+            })
+            .map(|(index, condition)| {
+                self.compile_where_clause(condition)
+                    .map(|constraint| (index, self.bind_constraint(&constraint, decls)))
+            })
+            .collect()
+    }
+
+    /// The conformance atoms method `m`'s compiled `availability` guarantees,
+    /// assumed while checking its body and, in
+    /// `register_struct_method_signatures`, while resolving its own signature
+    /// (`-> Need[Self.T] where conforms_to(Self.T, Copyable)` on a
+    /// `T: Movable` struct): every entry but a clause reading one of its
+    /// arguments, which refines no binder. An entry past its spelled clauses
+    /// is the conformance gating a synthesized member.
     pub(super) fn method_where_assumptions(
         &self,
-        where_clauses: &[Expr],
-        arguments: &[&str],
-        method_decls: &[ParamDecl],
-    ) -> Result<Vec<ParamExpr>, TypeError> {
+        m: &Method,
+        availability: &[GenericConstraint],
+    ) -> Vec<ParamExpr> {
+        let arguments = method_arguments(m);
         let mut facts = Vec::new();
-        for condition in where_clauses.iter().filter(|condition| {
-            !super::comptime_validation::names_read(condition)
-                .iter()
-                .any(|name| arguments.contains(&name.as_str()))
-        }) {
-            let constraint = self.compile_where_clause(condition)?;
-            self.guaranteed_facts(&self.bind_constraint(&constraint, method_decls), &mut facts);
+        for (index, constraint) in availability.iter().enumerate() {
+            let reads_argument = m.where_clauses.get(index).is_some_and(|condition| {
+                super::comptime_validation::names_read(condition)
+                    .iter()
+                    .any(|name| arguments.contains(&name.as_str()))
+            });
+            if !reads_argument {
+                self.guaranteed_facts(constraint, &mut facts);
+            }
         }
-        Ok(facts)
+        facts
+    }
+
+    /// The availability a synthesized member of struct `declaration` gains
+    /// from the conformance gating it
+    /// ([`mojito_ast::ast::MethodProvenance::SynthesizedDefault`]).
+    pub(super) fn method_gate(
+        &mut self,
+        declaration: &str,
+        m: &Method,
+    ) -> Result<Option<GenericConstraint>, TypeError> {
+        match super::comptime_validation::synthesized_gate(m) {
+            Some(trait_name) => self.conformance_availability(declaration, trait_name),
+            None => Ok(None),
+        }
     }
 
     /// The callable identity the `overload_index`-th registered overload of
@@ -1487,8 +1520,6 @@ impl Checker {
         let saved = self.enclosing_type_params.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
-        let assumptions =
-            self.method_where_assumptions(&m.where_clauses, &method_arguments(m), &decls);
         let availability = self
             .structs
             .get(declaration)
@@ -1496,54 +1527,45 @@ impl Checker {
             .and_then(|methods| methods.get(overload_index))
             .map(|signature| signature.availability.clone())
             .unwrap_or_default();
-        let result = match assumptions {
-            Ok(mut assumptions) => {
-                assumptions.extend(self.method_propositions(&availability, &decls));
-                self.push_assumptions(assumptions);
-                let result = (|| {
-                    for param in 0..m.params.len() {
-                        let site = mojito_checked::checked::AnnotationSite::MethodParam {
-                            module: module.cloned(),
-                            declaration: declaration.to_string(),
-                            method: method_index,
-                            param,
-                        };
-                        let ty = self
-                            .declaration_types
-                            .borrow()
-                            .get(&site)
-                            .cloned()
-                            .ok_or_else(|| {
-                                TypeError::InvariantViolation(format!(
-                                    "method parameter {} for '{}.{}' has no checked type",
-                                    param, declaration, m.name
-                                ))
-                            })?;
-                        // A positional variadic pack (`var *values: T`) is
-                        // never linear: upstream destroys its elements
-                        // implicitly even for a non-`Deinitable` `T`.
-                        let verdict = (m.params[param].kind
-                            != mojito_ast::ast::ParamKind::Variadic)
-                            .then(|| self.destruction_verdict(&ty))
-                            .flatten();
-                        self.record_declaration_verdict(site, verdict);
-                    }
-                    // Transfer summaries belong to the same callable identity
-                    // as dispatch. Same-name overloads may have different loan
-                    // behavior, so a bare method key would merge unrelated
-                    // effects according to declaration order.
-                    let effect_key = self.method_effect_key(
-                        declaration,
-                        lifecycle_method_name(m),
-                        overload_index,
-                    )?;
-                    self.check_method_inner(self_ty, m, &owner, effect_key)
-                })();
-                self.pop_assumptions();
-                result
+        let mut assumptions = self.method_where_assumptions(m, &availability);
+        assumptions.extend(self.method_propositions(&availability, &decls));
+        self.push_assumptions(assumptions);
+        let result = (|| {
+            for param in 0..m.params.len() {
+                let site = mojito_checked::checked::AnnotationSite::MethodParam {
+                    module: module.cloned(),
+                    declaration: declaration.to_string(),
+                    method: method_index,
+                    param,
+                };
+                let ty = self
+                    .declaration_types
+                    .borrow()
+                    .get(&site)
+                    .cloned()
+                    .ok_or_else(|| {
+                        TypeError::InvariantViolation(format!(
+                            "method parameter {} for '{}.{}' has no checked type",
+                            param, declaration, m.name
+                        ))
+                    })?;
+                // A positional variadic pack (`var *values: T`) is
+                // never linear: upstream destroys its elements
+                // implicitly even for a non-`Deinitable` `T`.
+                let verdict = (m.params[param].kind != mojito_ast::ast::ParamKind::Variadic)
+                    .then(|| self.destruction_verdict(&ty))
+                    .flatten();
+                self.record_declaration_verdict(site, verdict);
             }
-            Err(error) => Err(error),
-        };
+            // Transfer summaries belong to the same callable identity
+            // as dispatch. Same-name overloads may have different loan
+            // behavior, so a bare method key would merge unrelated
+            // effects according to declaration order.
+            let effect_key =
+                self.method_effect_key(declaration, lifecycle_method_name(m), overload_index)?;
+            self.check_method_inner(self_ty, m, &owner, effect_key)
+        })();
+        self.pop_assumptions();
         self.enclosing_type_params = saved;
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.tparams.pop();

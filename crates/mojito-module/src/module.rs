@@ -2088,9 +2088,6 @@ fn rewrite_type_param(
     if let Some(value) = &mut parameter.default {
         rewrite_expr(value, names, namespaces);
     }
-    for condition in &mut parameter.constraints {
-        rewrite_expr(condition, names, namespaces);
-    }
 }
 
 fn rewrite_args(

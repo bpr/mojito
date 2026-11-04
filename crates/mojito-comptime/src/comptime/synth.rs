@@ -17,8 +17,9 @@ use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 /// their existing method and constructor paths. A struct with an explicit copy
 /// constructor delegates to it (propagating its raising effect); a fieldwise
 /// Copyable struct uses the same explicit copy-construction spelling, which
-/// lowers to the synthesized fieldwise copy lifecycle. A conditional conformance carries its predicate over as the
-/// method's `where` clause. Structs that already spell `copy` keep their own
+/// lowers to the synthesized fieldwise copy lifecycle. A conditional conformance gates
+/// the method: its provenance names the conformance, whose compiled header
+/// condition is the method's availability. Structs that already spell `copy` keep their own
 /// (the self-hosted collections predate this synthesis).
 pub(super) fn synthesize_copyable_copy(
     program: &mut [Stmt],
@@ -78,7 +79,7 @@ pub(super) fn synthesize_copyable_copy(
         // under a refining conformance's condition when only that declares
         // it.
         let declares_copyable = conforms.iter().any(|conformance| conformance == "Copyable");
-        let where_clauses = conformance_conditions
+        let gate = conformance_conditions
             .iter()
             .find(|(trait_name, _)| trait_name == "Copyable")
             .or_else(|| {
@@ -86,8 +87,7 @@ pub(super) fn synthesize_copyable_copy(
                     .iter()
                     .find(|(trait_name, _)| !declares_copyable && copyable(trait_name))
             })
-            .map(|(_, condition)| vec![condition.clone()])
-            .unwrap_or_default();
+            .map(|(trait_name, _)| trait_name.clone());
         // The body keeps its struct's module, as a linked source body does,
         // so a specialization traces its copy to this template.
         let mut body = vec![mk(StmtKind::Return(Some(result)), span)];
@@ -109,9 +109,9 @@ pub(super) fn synthesize_copyable_copy(
             raises,
             raises_type,
             ret: Some(Type::SelfType),
-            where_clauses,
+            where_clauses: Vec::new(),
             body,
-            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
+            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault(gate),
         });
     }
 }
@@ -210,11 +210,10 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
                 })
                 .collect()
         };
-        let where_clauses = conformance_conditions
+        let gate = conformance_conditions
             .iter()
             .find(|(trait_name, _)| trait_name == "Hashable")
-            .map(|(_, condition)| vec![condition.clone()])
-            .unwrap_or_default();
+            .map(|(trait_name, _)| trait_name.clone());
         methods.push(mojito_ast::ast::Method {
             name: "__hash__".to_string(),
             type_params: Vec::new(),
@@ -243,9 +242,9 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             raises: false,
             raises_type: None,
             ret: None,
-            where_clauses,
+            where_clauses: Vec::new(),
             body,
-            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
+            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault(gate),
         });
     }
 }
@@ -337,7 +336,7 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
         let declares_equatable = conforms
             .iter()
             .any(|conformance| conformance == "Equatable");
-        let where_clauses = conformance_conditions
+        let gate = conformance_conditions
             .iter()
             .find(|(trait_name, _)| trait_name == "Equatable")
             .or_else(|| {
@@ -345,8 +344,7 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
                     .iter()
                     .find(|(trait_name, _)| !declares_equatable && trait_name == "Comparable")
             })
-            .map(|(_, condition)| vec![condition.clone()])
-            .unwrap_or_default();
+            .map(|(trait_name, _)| trait_name.clone());
         methods.push(mojito_ast::ast::Method {
             name: "__eq__".to_string(),
             type_params: Vec::new(),
@@ -369,9 +367,9 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
             raises: false,
             raises_type: None,
             ret: Some(Type::Named("Bool".to_string(), Vec::new())),
-            where_clauses,
+            where_clauses: Vec::new(),
             body,
-            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
+            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault(gate),
         });
     }
 }

@@ -599,7 +599,6 @@ pub fn walk_type_param<V: Visitor>(visitor: &mut V, parameter: &TypeParam) {
     if let Some(default) = &parameter.default {
         walk_expr(visitor, default);
     }
-    walk_exprs(visitor, &parameter.constraints);
 }
 
 pub fn walk_fn_param<V: Visitor>(visitor: &mut V, parameter: &FnParam) {
@@ -1423,9 +1422,6 @@ fn walk_type_params_mut<V: MutVisitor>(visitor: &mut V, params: &mut [TypeParam]
         }
         if let Some(value) = &mut param.default {
             walk_expr_mut(visitor, value);
-        }
-        for condition in &mut param.constraints {
-            walk_expr_mut(visitor, condition);
         }
     }
 }

@@ -201,6 +201,10 @@ pub(in crate::checker) struct ApplicableFunction {
     pub(in crate::checker) folded_body: Option<FoldedBody>,
     /// Its `where` clauses as the declaration spells them.
     where_clauses: Vec<Expr>,
+    /// The conditional conformance gating a synthesized member
+    /// ([`mojito_ast::ast::MethodProvenance::SynthesizedDefault`]), whose
+    /// compiled header condition joins its constraints.
+    gate: Option<String>,
     /// Those clauses compiled over the same argument slots and its struct's
     /// binders ([`Checker::compile_application_constraints`]); `None` until
     /// they compile, and a callable whose clauses do not is applied by no
@@ -419,6 +423,12 @@ impl ApplicableFunction {
     pub(in crate::checker) fn where_clauses(&self) -> &[Expr] {
         &self.where_clauses
     }
+
+    /// The conditional conformance gating it, when it is a synthesized
+    /// member.
+    pub(in crate::checker) fn gate(&self) -> Option<&str> {
+        self.gate.as_deref()
+    }
 }
 
 /// A callable [`applicable_functions`] lists, with the name a call spells
@@ -600,6 +610,7 @@ pub(super) fn applicable_declarations<'a>(
                     raises: *raises,
                     ret: ret.as_ref().unwrap_or(&SourceType::None),
                     where_clauses,
+                    gate: None,
                 };
                 let symbol = mojito_symbol::symbol::lowered_def_name(
                     name,
@@ -666,6 +677,7 @@ pub(super) fn applicable_declarations<'a>(
                         raises: false,
                         ret: &constructed,
                         where_clauses: &[],
+                        gate: None,
                     };
                     let symbol = format!("{name}.__init__");
                     list(
@@ -687,6 +699,7 @@ pub(super) fn applicable_declarations<'a>(
                             raises: method.raises,
                             ret: &constructed,
                             where_clauses: &method.where_clauses,
+                            gate: synthesized_gate(method),
                         };
                         let symbol = mojito_symbol::symbol::lowered_method_name(
                             &format!("{name}.__init__"),
@@ -735,6 +748,7 @@ pub(super) fn applicable_declarations<'a>(
                         raises: method.raises,
                         ret,
                         where_clauses: &method.where_clauses,
+                        gate: synthesized_gate(method),
                     };
                     let source = format!("{name}.{}", method.name);
                     let symbol = mojito_symbol::symbol::lowered_method_name(
@@ -1911,13 +1925,26 @@ impl Checker {
 
     /// Compile the `where` clauses of each callable `stmts` declare that a
     /// compile-time call applies, over its argument slots and its struct's
-    /// binders, as [`Self::fold_builtin_bodies`] folds a builtin body. A
-    /// callable whose clauses do not compile is applied by no call.
+    /// binders, as [`Self::fold_builtin_bodies`] folds a builtin body, and
+    /// join a synthesized member's gating conformance condition, already
+    /// compiled over its struct's binders. A callable whose clauses do not
+    /// compile is applied by no call.
     pub(super) fn compile_application_constraints(&mut self, stmts: &[Stmt]) {
         let declarations = self.listed_declarations(stmts);
         for declaration in declarations {
             let clauses = declaration.function.where_clauses();
-            if clauses.is_empty() {
+            // `None` when the gate's condition does not compile.
+            let gate = match declaration.function.gate() {
+                None => Some(None),
+                Some(gate) => declaration
+                    .owner
+                    .and_then(|owner| match &owner.kind {
+                        StmtKind::Struct { name, .. } => Some(name.clone()),
+                        _ => None,
+                    })
+                    .and_then(|owner| self.conformance_availability(&owner, gate).ok()),
+            };
+            if clauses.is_empty() && matches!(gate, Some(None)) {
                 continue;
             }
             let compiled = self
@@ -1932,7 +1959,12 @@ impl Checker {
                         .collect::<Result<Vec<_>, _>>()
                         .ok()
                 })
-                .flatten();
+                .flatten()
+                .zip(gate)
+                .map(|(mut compiled, gate)| {
+                    compiled.extend(gate);
+                    compiled
+                });
             if let Some(entry) = self.applicable_entry(&declaration) {
                 entry.constraints = compiled;
             }
@@ -5780,6 +5812,7 @@ struct ApplicableShape<'a> {
     raises: bool,
     ret: &'a SourceType,
     where_clauses: &'a [Expr],
+    gate: Option<&'a String>,
 }
 
 impl ApplicableShape<'_> {
@@ -5899,7 +5932,8 @@ impl ApplicableShape<'_> {
                 .unwrap_or_default(),
             folded_body: None,
             where_clauses: self.where_clauses.to_vec(),
-            constraints: self.where_clauses.is_empty().then(Vec::new),
+            gate: self.gate.cloned(),
+            constraints: (self.where_clauses.is_empty() && self.gate.is_none()).then(Vec::new),
         })
     }
 }
@@ -6171,6 +6205,15 @@ fn record_agreed<V: PartialEq>(
         None => {
             recorded.insert(name.to_string(), value);
         }
+    }
+}
+
+/// The conditional conformance gating `method`, when it is a synthesized
+/// member ([`mojito_ast::ast::MethodProvenance::SynthesizedDefault`]).
+pub(super) const fn synthesized_gate(method: &mojito_ast::ast::Method) -> Option<&String> {
+    match &method.provenance {
+        mojito_ast::ast::MethodProvenance::SynthesizedDefault(gate) => gate.as_ref(),
+        mojito_ast::ast::MethodProvenance::Source => None,
     }
 }
 

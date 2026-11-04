@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method's `where` clause compiles once, with its own binders in scope,
+  and reaches its struct's parameters only as `Self.T` (R1895): a bare
+  struct parameter in a method's or associated member's clause is the
+  pin's "unqualified access to struct parameter" error. A synthesized
+  `copy`/`__eq__`/`__hash__` and an inherited trait default carry the
+  conformance gating them and read its compiled header condition rather
+  than recompiling its syntax, and the dead parameter-local `constraints`
+  field of `TypeParam` is gone (`mojito-package 182`).
 - A struct header's conditions and a predicate alias's body compile with
   their binders in scope (R1474): a header may constrain a pack (`struct
   P[*Ts: Movable] where Ts.length == 2`, `where

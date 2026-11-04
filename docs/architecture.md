@@ -1737,9 +1737,17 @@ second expression tree.
   likes. A `where` operand and a callable default's parameter are `ParamRef`s
   as well: `compile_where_clause` leaves an operand unbound
   (`ParamRef::unbound`), `Checker::bind_constraint` binds it at the
-  declaration — its own binders, then the open scopes, then the enclosing
-  struct's — and a clause is judged under a `ConstraintEnvironment` keyed by
-  `ParamId`. A function's, method's, or trait requirement's clauses compile
+  declaration — its own binders, then the open scopes — and a clause is
+  judged under a `ConstraintEnvironment` keyed by `ParamId`. A member's
+  clause reaches its struct's parameters only as `Self.X`: a bare one is
+  upstream's `UnqualifiedStructParam`, never a late bind by spelling. A
+  default's wrapper or a synthesized member (`copy`, `__eq__`, `__hash__`,
+  gated by `MethodProvenance::SynthesizedDefault`) is as available as the
+  conformance reaching it: its availability is that conformance's header
+  condition as the header compiled it
+  (`Checker::conformance_availability`), never the condition's syntax
+  re-read in the member. A method's clauses compile once, at its
+  signature, and its body reads them from `MethodSig::availability`. A function's, method's, or trait requirement's clauses compile
   inside `in_signature_scope` after its arguments, as upstream's
   `Signatures.cpp` emits them, so a clause reads an argument (`where
   x.dtype.is_floating_point()`) through its type. An operand no classified declaration binds (an origin's

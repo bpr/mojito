@@ -3575,7 +3575,6 @@ mod tests {
             origin_mutability: None,
             infer_only: false,
             default: None,
-            constraints: Vec::new(),
         };
         let annotation = Type::Named(
             "Array".to_string(),

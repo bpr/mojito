@@ -467,7 +467,6 @@ fn binder_for(
         origin_mutability: None,
         infer_only: true,
         default: None,
-        constraints: Vec::new(),
     }
 }
 

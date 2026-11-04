@@ -1075,6 +1075,11 @@ A struct declaration's residue holds each conditional-conformance
 condition compiled, over the struct's own binders, rather than as its
 source expression, so the package format moves to `mojito-package 181`.
 
+A synthesized member's provenance names the conformance gating it, in
+place of a copied `where` clause, and a type parameter no longer carries
+parameter-local constraints, so the package format moves to
+`mojito-package 182`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

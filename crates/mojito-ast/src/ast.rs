@@ -331,10 +331,6 @@ pub struct TypeParam {
     /// A retained compile-time default. Semantic classification and dependency
     /// checking happen after all earlier parameters have entered scope.
     pub default: Option<Expr>,
-    /// Legacy storage retained during the typed-boundary migration. Current
-    /// syntax rejects parameter-local `where`, so parsed declarations leave it
-    /// empty and use the declaration's trailing predicate instead.
-    pub constraints: Vec<Expr>,
 }
 
 impl TypeParam {
@@ -1016,7 +1012,7 @@ pub struct Method {
 }
 
 /// How a [`Method`] came to be declared.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum MethodProvenance {
     /// Written in source.
     #[default]
@@ -1024,8 +1020,10 @@ pub enum MethodProvenance {
     /// Materialized from a built-in trait's default (Copyable's `copy`,
     /// Hashable's `__hash__`) rather than written in source: its body
     /// serves every instance of a generic struct, which mints no clone of
-    /// it.
-    SynthesizedDefault,
+    /// it. It is as available as the conformance that reaches it: the
+    /// trait named here when that conformance is conditional, whose
+    /// compiled header condition is its availability.
+    SynthesizedDefault(Option<String>),
 }
 
 /// A method in a `trait`: either a **requirement** (`def …:` with a `...`
@@ -3098,9 +3096,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                 }
                 if let Some(value) = &mut param.default {
                     self.expr(value);
-                }
-                for condition in &mut param.constraints {
-                    self.expr(condition);
                 }
             }
         }

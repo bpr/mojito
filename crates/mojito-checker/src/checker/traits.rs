@@ -315,20 +315,10 @@ impl Checker {
                             "'where' clauses on trait methods are not supported".to_string(),
                         ));
                     }
-                    // The clauses read the arguments, which upstream emits
-                    // before them (`where x.dtype.is_floating_point()`).
-                    let compiled = m
-                        .where_clauses
-                        .iter()
-                        .map(|condition| {
-                            this.compile_where_clause(condition)
-                                .map(|constraint| this.bind_constraint(&constraint, &decls))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok((defaults, all_types, ret, error, compiled))
+                    Ok((defaults, all_types, ret, error))
                 });
                 self.tparams.pop();
-                let (defaults, all_types, ret, error, availability) = signature?;
+                let (defaults, all_types, ret, error) = signature?;
                 self.check_result_origins(
                     m.ret.as_ref(),
                     &m.params,
@@ -364,7 +354,7 @@ impl Checker {
                 };
                 let sig = MethodSig {
                     decls,
-                    availability,
+                    availability: Vec::new(),
                     has_self: true,
                     params: regular
                         .iter()
@@ -623,6 +613,23 @@ impl Checker {
             // types resolve.
             let _ = self.compile_header_conditions(declaration.name, false);
         }
+    }
+
+    /// The availability of a member struct `name` gains through its
+    /// conformance to `trait_name` (an inherited default's wrapper, a
+    /// synthesized `copy`): that conformance's header condition, compiled
+    /// with the header's binders, or `None` when it holds unconditionally.
+    pub(super) fn conformance_availability(
+        &mut self,
+        name: &str,
+        trait_name: &str,
+    ) -> Result<Option<GenericConstraint>, TypeError> {
+        self.compile_header_conditions(name, true)?;
+        self.structs
+            .get(name)
+            .and_then(|info| info.conformance_conditions.get(trait_name))
+            .map(|condition| condition.compiled().cloned())
+            .transpose()
     }
 
     /// Add to each shell registered without its deferred defaults
@@ -1191,17 +1198,30 @@ impl Checker {
         // The method's own `where` clause refines its signature exactly as
         // it refines its body: a conditionally available method may name
         // types its receiver's bare bounds do not admit.
-        let signature = match self.method_where_assumptions(
-            &m.where_clauses,
-            &super::declarations::method_arguments(m),
-            &method_decls,
-        ) {
-            Ok(assumptions) => {
-                self.push_assumptions(assumptions);
+        let signature = self
+            .method_gate(name, m)
+            .and_then(|gate| {
+                self.method_clauses(m, &method_decls, false)
+                    .map(|free| (free, gate))
+            })
+            .and_then(|(free, gate)| {
+                let mut facts = Vec::new();
+                for clause in free.iter().map(|(_, clause)| clause).chain(&gate) {
+                    self.guaranteed_facts(clause, &mut facts);
+                }
+                self.push_assumptions(facts);
                 let receiver = self.self_ty.clone().filter(|_| m.has_self);
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
                     let all_types = this.param_tys(&m.params)?;
-                    let sig = this.method_sig(m, method_decls, &all_types)?;
+                    let mut clauses = free;
+                    clauses.extend(this.method_clauses(m, &method_decls, true)?);
+                    clauses.sort_by_key(|(index, _)| *index);
+                    let availability = clauses
+                        .into_iter()
+                        .map(|(_, clause)| clause)
+                        .chain(gate)
+                        .collect();
+                    let sig = this.method_sig(m, method_decls, &all_types, availability)?;
                     if !name.contains('$') && !m.name.contains('$') {
                         this.check_result_origins(
                             m.ret.as_ref(),
@@ -1214,9 +1234,7 @@ impl Checker {
                 });
                 self.pop_assumptions();
                 signature
-            }
-            Err(error) => Err(error),
-        };
+            });
         self.enclosing_type_params = saved_method_type_params;
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.tparams.pop();
@@ -3798,8 +3816,18 @@ impl Checker {
         let mut params = self.classify_params(&owner, &member.params)?;
         // The requirement's `where` clauses close its parameter list, as a
         // generic alias's do, so an application through a bound checks them.
-        for condition in &member.where_clauses {
-            let constraint = self.compile_where_clause(condition)?.bind(&[&params]);
+        // They compile with its own binders open.
+        let compiled = self.in_param_scope(&params, |this| {
+            member
+                .where_clauses
+                .iter()
+                .map(|condition| {
+                    this.compile_where_clause(condition)
+                        .map(|constraint| constraint.bind(&[&params]))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        for constraint in compiled {
             if let Some(
                 ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. },
             ) = params.last_mut()

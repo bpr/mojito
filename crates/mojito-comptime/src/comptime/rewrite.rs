@@ -783,9 +783,6 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
                 if let Some(default) = &mut parameter.default {
                     rewrite_expr(default, subs);
                 }
-                for constraint in &mut parameter.constraints {
-                    rewrite_expr(constraint, subs);
-                }
             }
             for parameter in params {
                 rewrite_type(&mut parameter.ty, subs);
@@ -930,7 +927,6 @@ fn rewrite_type_parameter(parameter: &mut TypeParam, subs: Subs) {
     if let Some(default) = &mut parameter.default {
         rewrite_expr(default, subs);
     }
-    rewrite_exprs(&mut parameter.constraints, subs);
 }
 
 fn rewrite_fn_parameter(parameter: &mut FnParam, subs: Subs) {
@@ -1456,7 +1452,6 @@ fn retype_type_parameter(parameter: &mut TypeParam, subs: TypeSubs) {
     if let Some(default) = &mut parameter.default {
         retype_expr(default, subs);
     }
-    retype_exprs(&mut parameter.constraints, subs);
 }
 
 fn retype_fn_parameter(parameter: &mut FnParam, subs: TypeSubs) {

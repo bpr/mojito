@@ -6248,7 +6248,7 @@ impl<'a> ArenaBuilder<'a> {
                             raises: method.raises,
                             where_clauses: values(self, &method.where_clauses),
                             body: self.function_body(&method.body),
-                            provenance: method.provenance,
+                            provenance: method.provenance.clone(),
                             inline: crate::declaration::InlineLevel::of(&method.decorators)
                                 .unwrap_or_default(),
                         }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1897**.
+Next free ID: **R1899**.
 
 ## Ordered Work
 
@@ -274,36 +274,49 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1895 A signature's or member's `where` clause is compiled
-  without its declaration's binders in scope**
+- [ ] **R1897 An associated member's own parameters in its `where`
+  clause bind by spelling**
 
-  `compile_where_clause` callers outside a struct header or predicate
-  alias compile with the declaration's own binders closed, so a bare
-  binder there reaches the `ParamRef::unbound` fallback of
-  `constraint_operand` and the `conforms_to` subject, bound by spelling
-  later (`bind_constraint`), where upstream emits each clause with its
-  declaration's parameters in scope.
-  - The lever: open the declaration's binders (`in_param_scope`) where
-    the clause compiles, compile it once, and read the stored clause
-    instead of recompiling the syntax.
-  - Callers: a method's `availability` and `method_where_assumptions`
-    (`declarations.rs`), `inherited_defaults` with
-    `register_default_wrappers` and `check_default_wrapper` (which should
-    carry the struct's compiled header condition from `StructInfo`, not its
-    `Expr`), trait `comptime` member clauses and `generator_requirement`
-    (`traits.rs`), an associated member's own clauses
-    (`check_struct_associated`), and `classify_params`' per-parameter
-    constraints.
-  - Probe: `struct W[T: AnyType]` with `def f() -> Int where
-    IsTriviallyCopyable[T]` runs and prints `1`, where the pin rejects it
-    with "unqualified access to struct parameter 'T'; use 'Self.T'
-    instead" (`TypeError::UnqualifiedStructParam`); it needs an
-    `assets/type_error` fixture and its `conformance/assets-mojo-errors.tsv`
-    row.
-  - Probe: the bundled `stdlib/std/memory/maybe_uninit.mojo` `write`
-    spells `IsTriviallyDeinitable[T]`, which this accepts; upstream spells
-    it `IsTriviallyDeinitable[Self.T]`.
-  - Found while landing R1474 (2026-11-03).
+  `check_struct_associated` (`constraints.rs`) compiles an associated
+  member's clauses before classifying its parameters and stores them
+  unbound, and `validate_member_availability` binds them by name
+  (`decls.iter().map(ParamDecl::name).zip(&bound)`), where upstream emits
+  a member's clause with its own parameters in scope.
+  - The lever: classify the member's decls once, ahead of the type- and
+    value-template branches, compile its clauses in `in_param_scope`,
+    bind them to those decls, and have `validate_member_availability` and
+    `type_resolution.rs`'s `associated_constraints` check bind by id.
+  - Shape: a trait's `comptime` member clauses compile twice in
+    `register_trait` (`ct_constraints`, and again in
+    `generator_requirement`, which opens the binders). The
+    `ct_constraints` copy must stay unbound until this lands, since the
+    conformance check (`verify_conformance`) implies it against the
+    conformer's by-spelling availability; read `generator_requirement`'s
+    stored clauses instead once both sides bind by id.
+  - Probe: `comptime M[k: Int]: Int where k > Self.n = k` on
+    `struct W[n: Int]` prints `3` for `W[2].M[3]`.
+  - Probe: a trait `comptime M[k: Int]: Int where k > 0` witnessed by the
+    same member prints `2` for `S.M[2]`.
+  - Found while landing R1895 (2026-11-03).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1898 A compile-time application recompiles its callable's
+  `where` clauses over slot binders**
+
+  `compile_application_constraints` (`comptime_validation.rs`) compiles
+  each applicable callable's clauses again from syntax, over its
+  argument slots (`builtin_body_binder`), and a clause that fails there
+  is swallowed (`.ok()`), leaving the callable applied by no call, where
+  upstream reads the one emitted signature's clauses.
+  - The lever: key the application's slots by the callable's own
+    declared binders, so it reads `MethodSig::availability` (or a
+    function's compiled clauses) instead of recompiling.
+  - Shape: a synthesized member's gate already reads its compiled header
+    condition, over the struct's binders.
+  - Probe: `@always_inline("builtin")` fixtures with a `where` clause
+    fold as before.
+  - Found while landing R1895 (2026-11-03).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
