@@ -868,8 +868,10 @@ impl Checker {
         })())
     }
 
-    /// The application of the value-bodied generic alias `name` to `args`.
-    /// `None` when `name` names a binding, a value binder, or no such alias.
+    /// The application of the value-bodied generic alias `name` to `args`,
+    /// or of a type-bodied one leaving slots unbound (`Second[Int, _]`), the
+    /// type generator over them. `None` when `name` names a binding, a value
+    /// binder, or no such alias.
     pub(super) fn value_alias_application(
         &self,
         name: &str,
@@ -879,14 +881,21 @@ impl Checker {
             return None;
         }
         let alias = self.comptime_aliases.get(name)?;
-        let AliasBody::Value(body) = &alias.body else {
-            return None;
+        let body = match &alias.body {
+            AliasBody::Value(body) => body.clone(),
+            AliasBody::Type(ty)
+                if mojito_ast::call::bracket_unbound_slots(&alias.decls, args)
+                    .is_ok_and(|unbound| unbound.any_open()) =>
+            {
+                self.param_context.type_shape(ty.clone())
+            }
+            _ => return None,
         };
         Some(
             self.apply_parametric_value(
                 name,
                 &alias.decls,
-                body,
+                &body,
                 args,
                 mojito_types::param_expr::ParamBindings::new(),
             )
@@ -894,8 +903,9 @@ impl Checker {
         )
     }
 
-    /// The value-bodied generic alias `name` read unapplied (`Twice`): the
-    /// generator its declaration is, upstream's `#kgen.gen`. `None` when
+    /// The generic alias `name` read unapplied (`Twice`, `Id`): the
+    /// generator its declaration is, upstream's `#kgen.gen`, over a value,
+    /// a predicate, or a type body. `None` when
     /// `name` names a binding or no such alias.
     pub(super) fn alias_generator(&self, name: &str) -> Option<ParamExpr> {
         if self.lookup(name).is_some() {
@@ -908,7 +918,7 @@ impl Checker {
         let body = match &alias.body {
             AliasBody::Value(body) => body.clone(),
             AliasBody::Predicate(_) => alias.predicate_value.clone()?,
-            AliasBody::Type(_) => return None,
+            AliasBody::Type(ty) => self.param_context.type_shape(ty.clone()),
         };
         self.generator_constant(alias.decls.clone(), body).ok()
     }

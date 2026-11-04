@@ -2053,8 +2053,15 @@ impl Checker {
                     self.resolve_dependent_index(elements, index, parameters)?
                 }
                 // An element of a pack that is still a parameter closes as
-                // its pack and index bind.
-                None if dependent.pack_element().is_some() && !parameters.is_empty() => {
+                // its pack and index bind, and a generator's application as
+                // its generator binds.
+                None if (dependent.pack_element().is_some()
+                    || matches!(
+                        dependent.expr().kind(),
+                        mojito_types::param_expr::ParamKind::BindParams { .. }
+                    ))
+                    && !parameters.is_empty() =>
+                {
                     let context = &self.param_context;
                     let bindings = mojito_types::param_expr::ParamBindings::from_named_values(
                         context, parameters,

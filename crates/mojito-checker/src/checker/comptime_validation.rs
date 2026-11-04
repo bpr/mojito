@@ -5295,9 +5295,11 @@ impl Checker {
 
     /// The bounded type parameter an element of an unbound variadic pack, of
     /// a bound's raw-list member (`TypeList[Trait=AnyType, T._types]()[0]`),
-    /// or a reflected field type of a symbolic subject, behaves as: the
-    /// pack's declared bounds, or the trait the member's declared list holds
-    /// (a field type has none), plus every trait a `where` clause guarantees
+    /// a reflected field type of a symbolic subject, or a type generator's
+    /// application that is still a parameter (`G[Int]`) behaves as: the
+    /// pack's declared bounds, the trait the member's declared list holds,
+    /// or the traits the generator type's result names (a field type has
+    /// none), plus every trait a `where` clause guarantees
     /// of the pack's elements or a `comptime if conforms_to` arm proves of
     /// this element. The dependent type stays the element's identity; this
     /// is what its capabilities are read from.
@@ -5313,7 +5315,9 @@ impl Checker {
         };
         let list = dependent.pack_element().map(|(list, _)| list);
         let pack = list.and_then(ParamExpr::as_decl_ref);
-        let member_traits = list.and_then(|list| self.member_list_traits(list));
+        let member_traits = list
+            .and_then(|list| self.member_list_traits(list))
+            .or_else(|| generator_result_traits(dependent.expr()));
         if pack.is_none()
             && member_traits.is_none()
             && !reflected(dependent.expr())
@@ -6480,4 +6484,20 @@ fn and_or_value(
         [left.clone(), left.clone(), right.clone()]
     };
     context.op(ParamOp::Cond, &arms).ok()
+}
+
+/// The traits a type generator's application that is still a parameter
+/// (`G[Int]` over `G: __generator_type[T: AnyType] Copyable`) yields a type
+/// of: its generator type's result. `None` for any other node.
+fn generator_result_traits(expr: &ParamExpr) -> Option<Vec<String>> {
+    let ParamKind::BindParams { generator, args } = expr.kind() else {
+        return None;
+    };
+    let TyKind::Generator(ty) = generator.meta().as_value()?.kind() else {
+        return None;
+    };
+    match ty.result.kind() {
+        TyKind::Trait(traits) if args.iter().all(Option::is_some) => Some(traits.clone()),
+        _ => None,
+    }
 }

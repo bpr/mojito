@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1908**.
+Next free ID: **R1910**.
 
 ## Ordered Work
 
@@ -6240,32 +6240,36 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1486 A type-valued generator is neither passed unapplied nor
-  applied in a type position**
+- [ ] **R1908 A call headed by a type generator is no construction**
 
-  Problem: `f[Id]()` over `comptime Id[T: AnyType] = T` and `def f[G:
-  __generator_type[T: AnyType] AnyType]()` runs at the pin, where Mojito
-  reports "cannot infer type parameter 'T' of 'Id' from the arguments".
-  - `Checker::alias_generator` answers value and predicate bodies only: a
-    type body (`AliasBody::Type`) read unapplied is no generator.
-  - An application in a type position (`G[Int]`) resolves through
-    `ty_from_anno`, which knows no value binder `G`. Upstream's is a type
-    value over `#kgen.bind_params`: a `TyKind::Dependent` over a
-    `ParamKind::BindParams` node, which `native::mono` folds per instance.
-  - `Checker::generator_type` classifies a generator type's own list with
-    no binder scope, so a result naming its own binders (`__generator_type[T:
-    AnyType] List[T]`) does not resolve.
-  - Probe: `size_of[G[Int]]()` over `Id` and `Pair[T: AnyType] =
-    Tuple[Int, Int]` prints `8 16`.
-  - Probe: `comptime L = G[Int]` in `build[G: __generator_type[T:
-    Copyable] AnyType]`, called as `build[MkList]()` over `MkList[T:
-    Copyable] = List[T]`, runs.
-  - Probe: `var x: G[Int] = 5` over `Id` is rejected at the pin with
-    "cannot implicitly convert 'IntLiteral[5]' value to 'G[Int]'", where
-    Mojito reports "unknown type 'G'".
-  - R1181 and R812 need it: their `tabulate` and `map_to_type` bodies apply
-    type generators in type positions.
-  - Found while landing R808 (2026-10-27).
+  `var z = P[Int]()` over `comptime P = MkList` and `comptime MkList[T:
+  Copyable] = List[T]` reports "Undefined variable 'P'", where the
+  application `P[Int]` is `List[Int]` and the call constructs it.
+  - `Checker::infer_call` resolves a call's head by name among functions,
+    structs, and aliases. A local `comptime` generator binding or a
+    generator parameter is none of them, though the same application in a
+    type position (`var y: P[Int] = [1]`) resolves through
+    `value_headed_type`.
+  - Probe: `comptime Q = P[Int]` then `Q()` reports the same, since the
+    local alias's call is spelled as `P[Int]()`.
+  - Found while landing R1486 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1909 A trait composition after a generator-typed parameter's
+  result is read as further bounds and dropped**
+
+  `[G: __generator_type[T: Copyable] Copyable & Defaultable]` checks as
+  `__generator_type[T: Copyable] Copyable`, so `G[Int]()` reports that
+  `G[Int]` does not conform to `Defaultable`.
+  - The parameter-bound parser (`parser/types.rs`) parses the generator
+    type, then reads `& Defaultable` as another bound of `G`, which the
+    checker ignores for a value parameter.
+  - Upstream's `parseGeneratorType` parses its result as a type
+    expression, so the composition is the result.
+  - Fix: parse the composition into the generator type's result, or
+    reject the extra bound explicitly.
+  - Found while landing R1486 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6306,7 +6310,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     the function type's own `def[...]` binders. `push_param_scope` and
     `classify_params` need `&mut self`.
   - `Checker::generator_type` has the same gap for a generator type's own
-    list (R1486).
+    list: it resolves a result naming only one binder bare (`T`).
+  - Probe: `def f[G: __generator_type[T: AnyType] List[T]]()` reports
+    "not a compile-time Int constant: T", where the result is `List[T]`
+    over the generator type's own binder.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -7755,6 +7762,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The failure is swallowed into the verifier's message, since
     `Specializer::param_constant` keeps a parameter constant whose
     evaluation fails `Unsupported`.
+  - Probe: `size_of[G[Int]]()` in `def sz[G: __generator_type[T:
+    AnyType] AnyType]()`, called as `sz[Pair]()` over `comptime Pair[T:
+    AnyType] = Tuple[Int, Int]`, stops the same way, where the pin prints
+    `16`. Over a non-generic struct body it prints its size.
   - Found while landing R1634 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.

@@ -818,13 +818,14 @@ pub struct GeneratorValue {
 
 impl GeneratorValue {
     /// The generator type this value has: its parameters over its body's
-    /// type, a type-valued body yielding the type of all types.
+    /// type, a type-valued body yielding `AnyType`, as the pin types a type
+    /// alias read unapplied (`__generator_type[T: Copyable] AnyType`).
     pub fn ty(&self) -> Ty {
         let result = self
             .body
             .meta()
             .value_ty()
-            .unwrap_or_else(|| TyKind::TypeType.into());
+            .unwrap_or_else(|| TyKind::Trait(vec!["AnyType".to_string()]).into());
         Ty::generator(self.params.clone(), result)
     }
 }

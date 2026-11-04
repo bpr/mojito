@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type-bodied parameterized `comptime` alias read unapplied is a type
+  generator typed `__generator_type[T: AnyType] AnyType`, as at the pin:
+  `f[Id]()` over `comptime Id[T: AnyType] = T` runs where it reported
+  "cannot infer type parameter 'T' of 'Id'", and a generator parameter's
+  application in a type position (`size_of[G[Int]]()`, `x: G[Int]`,
+  `comptime L = G[Int]`) is a type `native::mono` folds per instance
+  (R1486). A partial application of a type alias (`Second[_, Two]`) is
+  the type generator over its open slots.
+
 - A bracket list may leave parameters unbound, as upstream's partial
   `#kgen.bind_params`: `apply[Add[10, _]]()`, `apply[Add[b=1, ...]]()`,
   and `comptime P = Add[100, _]` then `P[1]` print `13`, `4`, and `101`

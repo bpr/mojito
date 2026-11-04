@@ -3073,7 +3073,8 @@ impl Checker {
         // element instead. An element of a pack in scope (`x: Ts[0]`), or of
         // a type's raw-list member (`x: TypeList[Trait=AnyType,
         // T._types]()[0]`), keeps its dependent type, whose capabilities are
-        // the list's element trait.
+        // the list's element trait, as does a generator's application (`x:
+        // G[Int]`), whose capabilities are its generator type's result.
         let opaque_params: Vec<Option<Ty>> = params
             .iter()
             .zip(&param_tys)
@@ -3087,7 +3088,10 @@ impl Checker {
                                 list.kind(),
                                 mojito_types::param_expr::ParamKind::TypeMember { .. }
                             )
-                    })))
+                    }) && !matches!(
+                        dependent.expr().kind(),
+                        mojito_types::param_expr::ParamKind::BindParams { .. }
+                    )))
                 .then(|| {
                     TyKind::Param {
                         binder: synthetic_binder(&dependent_projection_spelling(&param.ty)),
