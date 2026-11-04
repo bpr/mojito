@@ -64,7 +64,11 @@ impl<'a> Flatten<'a> {
                     }
                     _ => (cond.clone(), None),
                 };
-                self.emit(MirInstr::ComptimeAssert { cond, message });
+                self.emit(MirInstr::ComptimeAssert {
+                    cond,
+                    value: None,
+                    message,
+                });
             }
         }
         if let Some(value) = self

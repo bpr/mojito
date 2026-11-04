@@ -2853,10 +2853,15 @@ pub enum MirInstr {
     /// that holds, else `orelse`, the conditions being parameter expressions
     /// the elaborator decides. `arms` has one region per condition; an arm
     /// that completes ends in [`MirTerm::ComptimeYield`], whose values
-    /// define `results`.
+    /// define `results`. `values` holds, per condition, the `Bool`
+    /// parameter value upstream's op takes as its `i1` attribute — a
+    /// [`Const::Param`], or a [`Const::Bool`] once closed — which the
+    /// elaborator decides where present; the constraint beside it is the
+    /// reading of a condition whose leaves the one builder does not all read.
     ComptimeIf {
         results: Vec<Reg>,
         conds: Vec<GenericConstraint>,
+        values: Vec<Option<Const>>,
         arms: Vec<Vec<MirBlock>>,
         orelse: Vec<MirBlock>,
     },
@@ -2891,9 +2896,11 @@ pub enum MirInstr {
     /// failing the instance when it does not hold with `message`, a
     /// compile-time string ([`Const::Str`]) or the parameter expression
     /// ([`Const::Param`]) it evaluates to one there; concrete MIR carries
-    /// none.
+    /// none. `value` is the condition's `Bool` parameter value, as a
+    /// [`MirInstr::ComptimeIf`] condition's is, decided where present.
     ComptimeAssert {
         cond: Box<GenericConstraint>,
+        value: Option<Const>,
         message: Option<Const>,
     },
     /// `hlcf.match`: run `cases` in order until one completes. A case

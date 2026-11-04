@@ -2402,9 +2402,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   nominal fields and `CtValue::Pointer` memory. `CtValue::comptime_iteration_elements`
   reads the frozen `Array`, `List`, `Set`, or `Dict` storage; a nominal
   `Tuple` (`is_nominal_tuple`) freezes to its elements — and `clone_body`
-  finishes one clone per iterator: `Specializer::decide_comptime_condition`
-  (`mono/specializer.rs`, which decides `and`/`or` left to right and stops
-  once the left side decides) decides its `has_next` test under the
+  finishes one clone per iterator: `Specializer::decide_comptime_test`
+  (`mono/specializer.rs`, from the test's value, the sequence's
+  `has_next`, through `decide_comptime_value`, else its constraint through
+  `decide_comptime_condition`, each deciding `and`/`or` left to right and
+  stopping once the left side decides) decides its `has_next` test under the
   clone's binding and `select::splice_comptime_arm` keeps the taken arm;
   the registers it defines, and the operands a call keeps for a removed
   argument that nothing defines (`FrameTables::dangling`), are fresh
@@ -3109,12 +3111,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 ## The compile-time branch and the request path (2026-10-03)
 
-- `MirInstr::ComptimeIf { conds: Vec<GenericConstraint>, .. }`
-  (`mir/ir.rs`) is a `comptime if` (HIR's `HirInstr::ComptimeIf`, built by
-  `Flatten::lower_instr`); each condition is lowered by
-  `Flatten::comptime_condition` (`mir/lower_expr/entry.rs`) from the
-  checker's `SemanticAdjustment::ComptimeCondition` (recorded in the leaf's
-  own `NodeFacts::comptime_condition`, beside its operation record, by
+- `MirInstr::ComptimeIf { conds: Vec<GenericConstraint>, values:
+  Vec<Option<Const>>, .. }` (`mir/ir.rs`) is a `comptime if` (HIR's
+  `HirInstr::ComptimeIf`, built by `Flatten::lower_instr`); each condition
+  is lowered by `Flatten::comptime_condition` (`mir/lower_expr/entry.rs`)
+  from the checker's `SemanticAdjustment::ComptimeCondition { constraint,
+  value }`, its value through `Flatten::comptime_condition_value_of`, which
+  respells a binder no enclosing declaration is by name (recorded in the
+  leaf's own `NodeFacts::comptime_condition` and
+  `comptime_condition_value`, beside its operation record, the value
+  composed leaf by leaf in `Checker::check_ct_bool` with `and`/`or` as
+  `POC::Cond` (`and_or_value`), by
   `Checker::check_comptime_condition`, `checker/comptime_validation.rs`, per
   leaf under `not`/`and`/`or`; every leaf is recorded, one the constraint
   compiler does not close through `Checker::evaluated_condition`, a
@@ -3128,22 +3135,29 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   as a parameter reference (`Flatten::parameter_reads`, filled from
   `EnclosingBinders::loop_bindings`, read in `Flatten::identifier_read`). `verify/scope.rs`
   (`ScopeCx::constraint`) checks its binders; `verify/concrete.rs` rejects a
-  survivor; the text form is `comptime.if` (schema 1.54).
-- `MirInstr::ComptimeAssert { cond, message }` (`mir/ir.rs`) is a `comptime assert`,
+  survivor; the text form is `comptime.if` (schema 1.54; its `values`
+  field, schema 1.158). `native::mono`'s `decide_comptime_op` decides each
+  condition from its value where present (`Specializer::decide_comptime_test`,
+  then `decide_comptime_value`, which folds a `Cond` lazily and answers a
+  proposition leaf through `proposition_constraint` and `constraint_holds`),
+  else from its constraint (`decide_comptime_condition`).
+- `MirInstr::ComptimeAssert { cond, value, message }` (`mir/ir.rs`) is a `comptime assert`,
   upstream's `kgen.param.assert`: `StmtKind::ComptimeAssert` (parsed by
   `Parser::parse_comptime`; `driver.rs:reject_comptime_statement_outside_function`
   and the struct/trait member parsers reject it outside a function),
   `CheckedStmtOp::ComptimeAssert`, `HirInstr::ComptimeAssert`, then
-  `Flatten::lower_instr`, its condition from `Flatten::comptime_condition`
-  and its message the `Const` of the parameter expression
+  `Flatten::lower_instr`, its condition and value from
+  `Flatten::comptime_condition` and its message the `Const` of the parameter expression
   `Checker::check_assert_message` recorded (`CheckedStmtOp::ComptimeAssert`'s
   `denotes`). `native::mono`'s `decide_comptime_op` decides it with the
-  branches (dropping a holding one, folding a failing one to `False` and
+  branches, from the value where present (`Specializer::decide_comptime_test`)
+  (dropping a holding one, folding a failing one to `False` and
   evaluating its message, `Specializer::assertion_message`), and
   `mono/failure.rs:discharge_comptime_asserts` fails a reached instance at
   a survivor and erases the rest; `verify/scope.rs` checks its binders,
   `verify/concrete.rs` rejects a survivor; the text form is
-  `comptime.assert` (schema 1.81; its `message` field, schema 1.139).
+  `comptime.assert` (schema 1.81; its `message` field, schema 1.139; its
+  `value` field, schema 1.158).
 - `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` (an untyped attribute
   crossing as the opaque `Value::Attribute`) and `CTFE_FUEL`;
   `VmBackend::{call_concrete, freeze}` run a verified fragment for the

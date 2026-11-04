@@ -949,9 +949,15 @@ pub enum SemanticAdjustment {
     /// live arm alone.
     ComptimeConditional,
     /// A `comptime if` condition the checker compiled as a constraint over
-    /// the binders in scope: MIR carries it on the branch, and the elaborator
-    /// decides it. A condition with no such record is lowered as a thunk.
-    ComptimeCondition(mojito_types::types::GenericConstraint),
+    /// the binders in scope, beside its `Bool` parameter value (the `i1`
+    /// attribute upstream's `hlcf.comptime.if` takes) when the one builder
+    /// reads every leaf: MIR carries both on the branch, and the elaborator
+    /// decides the value where present. A condition with no such record is
+    /// lowered as a thunk.
+    ComptimeCondition {
+        constraint: mojito_types::types::GenericConstraint,
+        value: Option<mojito_types::param_expr::ParamExpr>,
+    },
     /// A `comptime for` iterable the checker compiled as a range over the
     /// binders in scope, recorded on the iterable: MIR carries it on the
     /// loop header, and the elaborator unrolls it.
@@ -6794,7 +6800,10 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
         });
     }
     if let Some(constraint) = &facts.comptime_condition {
-        adjustments.push(SemanticAdjustment::ComptimeCondition(constraint.clone()));
+        adjustments.push(SemanticAdjustment::ComptimeCondition {
+            constraint: constraint.clone(),
+            value: facts.comptime_condition_value.clone(),
+        });
     }
     for assertion in facts.instance_assertions.iter().flatten() {
         adjustments.push(SemanticAdjustment::InstanceAssertion(Box::new(
@@ -7081,6 +7090,9 @@ node_facts! {
         /// ([`SemanticAdjustment::ComptimeCondition`]), beside the leaf's
         /// own operation record: a bare name keeps its parameter value.
         comptime_condition: mojito_types::types::GenericConstraint,
+        /// The `Bool` parameter value of the test `comptime_condition`
+        /// decides, when the one builder reads each of its leaves.
+        comptime_condition_value: mojito_types::param_expr::ParamExpr,
         /// The `comptime assert`s of the builtin dunders and constructors
         /// the occurrence applies, in application order
         /// ([`SemanticAdjustment::InstanceAssertion`]).

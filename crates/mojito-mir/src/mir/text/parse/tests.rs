@@ -10,6 +10,10 @@ fn int_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
     ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::int())
 }
 
+fn bool_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
+    ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::bool())
+}
+
 /// The width slot of `lanes` lanes: `SIMDLength(lanes)`.
 fn width_of(lanes: &ParamExpr) -> mojito_types::types::SimdWidth {
     mojito_types::types::SimdWidth::Expr(
@@ -3575,19 +3579,39 @@ fn structured_region_ops_and_terminators_reprint() {
         MirInstr::ComptimeIf {
             results: Vec::new(),
             conds: vec![GenericConstraint::Bool(true)],
+            values: vec![None],
             arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
+            orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+        },
+        MirInstr::ComptimeIf {
+            results: Vec::new(),
+            conds: vec![
+                GenericConstraint::Bool(true),
+                GenericConstraint::Bool(false),
+            ],
+            values: vec![
+                Some(Const::Bool(true)),
+                Some(Const::Param(bool_parameter("$test:flag", 0, "flag"))),
+            ],
+            arms: vec![
+                one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+                one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+            ],
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         },
         MirInstr::ComptimeAssert {
             cond: Box::new(GenericConstraint::Bool(true)),
+            value: None,
             message: None,
         },
         MirInstr::ComptimeAssert {
             cond: Box::new(GenericConstraint::Bool(false)),
+            value: Some(Const::Param(bool_parameter("$test:flag", 0, "flag"))),
             message: Some(Const::Str("positive".to_string())),
         },
         MirInstr::ComptimeAssert {
             cond: Box::new(GenericConstraint::Bool(false)),
+            value: None,
             message: Some(Const::Param(int_parameter("$test:msg", 0, "msg"))),
         },
         MirInstr::Match {
@@ -3891,6 +3915,7 @@ fn conforms_reads_pre_1_102_param_field() {
             vec![MirInstr::ComptimeIf {
                 results: Vec::new(),
                 conds: conds.clone(),
+                values: vec![None; conds.len()],
                 arms: (0..conds.len())
                     .map(|_| block(Vec::new(), MirTerm::ComptimeYield(Vec::new())))
                     .collect(),
@@ -3965,6 +3990,7 @@ fn pack_queries_read_pre_1_111_binder() {
             vec![MirInstr::ComptimeIf {
                 results: Vec::new(),
                 conds: conds.clone(),
+                values: vec![None; conds.len()],
                 arms: (0..conds.len())
                     .map(|_| block(Vec::new(), MirTerm::ComptimeYield(Vec::new())))
                     .collect(),

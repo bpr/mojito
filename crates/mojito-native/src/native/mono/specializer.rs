@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::param_expr::ParamOp;
 use mojito_types::types::TyKind;
 use std::collections::BTreeMap;
 
@@ -2003,6 +2004,79 @@ impl<'a> Specializer<'a> {
         self.enclosing = frame.enclosing;
     }
 
+    /// Whether a compile-time test holds under the bindings: decided from
+    /// `value`, its `Bool` parameter value, where the checker recorded one
+    /// ([`Self::decide_comptime_value`]), else from its constraint `cond`
+    /// ([`Self::decide_comptime_condition`]).
+    pub(super) fn decide_comptime_test(
+        &mut self,
+        template: &str,
+        cond: &GenericConstraint,
+        value: Option<&Const>,
+        bindings: &Bindings,
+    ) -> Result<bool, MonoError> {
+        match value {
+            Some(Const::Bool(value)) => Ok(*value),
+            Some(Const::Param(value)) => self.decide_comptime_value(template, value, bindings),
+            _ => self.decide_comptime_condition(template, cond, bindings),
+        }
+    }
+
+    /// Whether the `Bool` parameter value of a compile-time test holds under
+    /// the bindings, folded as upstream folds the test's
+    /// `ParamOperatorAttr`: a `Cond` decides its condition first and then
+    /// only the arm it selects, so the right operand of an `and`/`or` runs
+    /// its compile-time applications only when it is reached, and `not` is
+    /// the exclusive-or with `True` over its operand, and a commutative
+    /// `BoolAnd`/`BoolOr` decides each operand. Any other node is a
+    /// leaf: a proposition (`conforms_to`, `IsTrivially*`, a pack query) is
+    /// answered by the oracle that decides a `where` clause, and any other
+    /// value has its applications demanded and folds to its `Bool`.
+    pub(super) fn decide_comptime_value(
+        &mut self,
+        template: &str,
+        value: &ParamExpr,
+        bindings: &Bindings,
+    ) -> Result<bool, MonoError> {
+        if let Some(value) = value.as_bool() {
+            return Ok(value);
+        }
+        if let ParamKind::Op { op, operands } = value.kind() {
+            match (op, operands.as_slice()) {
+                (ParamOp::Cond, [condition, then, orelse]) => {
+                    let holds = self.decide_comptime_value(template, condition, bindings)?;
+                    let selected = if holds { then } else { orelse };
+                    if selected == condition {
+                        return Ok(holds);
+                    }
+                    return self.decide_comptime_value(template, selected, bindings);
+                }
+                (ParamOp::BoolXor, [operand, flip]) if flip.as_bool() == Some(true) => {
+                    return Ok(!self.decide_comptime_value(template, operand, bindings)?);
+                }
+                // `conforms_to(T, A & B)`: the conjunction of its
+                // propositions.
+                (ParamOp::BoolAnd | ParamOp::BoolOr, _) => {
+                    let conjunction = *op == ParamOp::BoolAnd;
+                    for operand in operands {
+                        if self.decide_comptime_value(template, operand, bindings)? != conjunction {
+                            return Ok(!conjunction);
+                        }
+                    }
+                    return Ok(conjunction);
+                }
+                _ => {}
+            }
+        }
+        let leaf = proposition_constraint(value).unwrap_or_else(|| {
+            GenericConstraint::Eq(
+                ConstraintOperand::Expr(value.clone()),
+                ConstraintOperand::Value(CtValue::Bool(true)),
+            )
+        });
+        self.decide_comptime_condition(template, &leaf, bindings)
+    }
+
     /// Whether the `comptime if` condition `cond` holds under the bindings.
     /// `and` and `or` decide left to right and stop once the left side
     /// decides them, as upstream's `ParamOperatorAttr` folds them, so a
@@ -2274,36 +2348,16 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
         ty: Option<&Ty>,
     ) -> Result<Option<Const>, MonoError> {
+        if let ParamKind::PackQuery {
+            query: PackQuery::Contains(element),
+            ..
+        } = value.kind()
+            && type_operand(element).is_none()
+        {
+            return Ok(None);
+        }
         let proposition = match value.kind() {
-            ParamKind::PackQuery {
-                pack,
-                query: PackQuery::Conforms(trait_name),
-            } => Some(GenericConstraint::ConformsPack {
-                operand: ConstraintOperand::Param(pack.clone()),
-                trait_name: trait_name.clone(),
-            }),
-            ParamKind::PackQuery {
-                pack,
-                query: PackQuery::Predicate { predicate, all },
-            } => Some(GenericConstraint::PackPredicate {
-                operand: ConstraintOperand::Param(pack.clone()),
-                predicate: predicate.clone(),
-                all: *all,
-            }),
-            ParamKind::PackQuery {
-                pack,
-                query: PackQuery::Contains(element),
-            } => {
-                let element = match element.kind() {
-                    ParamKind::TypeShape(ty) => ty.clone(),
-                    ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
-                    _ => return Ok(None),
-                };
-                Some(GenericConstraint::PackContains {
-                    operand: ConstraintOperand::Param(pack.clone()),
-                    element: ConstraintOperand::Type(element),
-                })
-            }
+            ParamKind::PackQuery { .. } => proposition_constraint(value),
             _ => None,
         };
         // A generator applied at the instance (`P[Int]` over a predicate
@@ -4479,6 +4533,52 @@ fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<
 }
 
 /// Every expression operand of a constraint, in reading order.
+/// The constraint a proposition node of a parameter value states, which
+/// the oracle deciding a `where` clause answers: a pack query, or an
+/// `IsTrivially*` over a type. `None` for any other node, or an operand
+/// no constraint operand spells.
+fn proposition_constraint(value: &ParamExpr) -> Option<GenericConstraint> {
+    match value.kind() {
+        ParamKind::PackQuery { pack, query } => {
+            let operand = ConstraintOperand::Param(pack.clone());
+            Some(match query {
+                PackQuery::Conforms(trait_name) => GenericConstraint::ConformsPack {
+                    operand,
+                    trait_name: trait_name.clone(),
+                },
+                PackQuery::Predicate { predicate, all } => GenericConstraint::PackPredicate {
+                    operand,
+                    predicate: predicate.clone(),
+                    all: *all,
+                },
+                PackQuery::Contains(element) => GenericConstraint::PackContains {
+                    operand,
+                    element: type_operand(element)?,
+                },
+                PackQuery::Length | PackQuery::IndexOf(_) => return None,
+            })
+        }
+        ParamKind::Trivial { lifecycle, subject } => Some(GenericConstraint::Trivial(
+            *lifecycle,
+            match subject.kind() {
+                ParamKind::DeclRef(binder) => ConstraintOperand::Param(binder.clone()),
+                _ => type_operand(subject)?,
+            },
+        )),
+        _ => None,
+    }
+}
+
+/// A type-valued parameter expression as a constraint's type operand.
+fn type_operand(value: &ParamExpr) -> Option<ConstraintOperand> {
+    match value.kind() {
+        ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
+            Some(ConstraintOperand::Type(ty.clone()))
+        }
+        _ => None,
+    }
+}
+
 fn constraint_expressions(constraint: &GenericConstraint) -> Vec<ParamExpr> {
     let expressions = std::cell::RefCell::new(Vec::new());
     let Ok(_) = constraint.try_map::<std::convert::Infallible>(&|operand| {

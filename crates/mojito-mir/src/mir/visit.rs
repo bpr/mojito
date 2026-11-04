@@ -371,15 +371,28 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visitor.visit_constant(has_side_effect)
         }
         I::ArrayGet { index, .. } | I::ArrayReplace { index, .. } => visitor.visit_constant(index),
-        I::ComptimeIf { conds, .. } => conds
-            .iter_mut()
-            .try_for_each(|cond| visitor.visit_constraint(cond)),
+        I::ComptimeIf { conds, values, .. } => {
+            conds
+                .iter_mut()
+                .try_for_each(|cond| visitor.visit_constraint(cond))?;
+            values
+                .iter_mut()
+                .flatten()
+                .try_for_each(|value| visitor.visit_constant(value))
+        }
         I::ComptimeFor { binder, source, .. } => {
             visitor.visit_param_ref(binder)?;
             visitor.visit_sequence(source)
         }
-        I::ComptimeAssert { cond, message } => {
+        I::ComptimeAssert {
+            cond,
+            value,
+            message,
+        } => {
             visitor.visit_constraint(cond)?;
+            value
+                .iter_mut()
+                .try_for_each(|value| visitor.visit_constant(value))?;
             message
                 .iter_mut()
                 .try_for_each(|message| visitor.visit_constant(message))
@@ -660,6 +673,7 @@ mod tests {
                     MirInstr::ComptimeIf {
                         results: Vec::new(),
                         conds: vec![GenericConstraint::Bool(true)],
+                        values: vec![None],
                         arms: vec![vec![MirBlock {
                             instrs: Vec::new(),
                             term: MirTerm::ComptimeYield(Vec::new()),

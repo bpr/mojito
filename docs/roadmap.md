@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1901**.
+Next free ID: **R1906**.
 
 ## Ordered Work
 
@@ -313,25 +313,95 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1896 (2026-11-03).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-- [ ] **R1475 A `comptime if` condition is a `GenericConstraint`, not a
-  `Bool` parameter expression**
+- [ ] **R1901 The one builder reads no proposition the constraint compiler
+  reads by its own arms**
 
-  A type comparison is now one `ParamOp::Eq` as a value and a
-  `GenericConstraint::Eq` as a condition, where upstream's
-  `hlcf.comptime.if` takes its condition as one `i1` parameter value.
-  - MIR's `comptime if` text, mono's `constraint_holds`
-    (`mono/availability.rs`), and the checker's `compile_generic_constraint`
-    all read the constraint form, so the two forms decide one comparison
-    twice.
-  - The lever, first session: the checker records the condition's `Bool`
-    parameter expression (`build_ct`) on the `comptime if`, and mono
-    decides from it where present; deleting the constraint form follows as
-    its own entries.
-  - Probe: `comptime if T == Box[Int]` needed the same type-identity fix in
-    `fold_infix` and in `constraint_holds` (R1387).
-  - Found while landing R1387 (2026-10-26).
-  - Depends on R1896.
-  - Model: Fable, Not Planned.
+  A `comptime if` condition records its `Bool` parameter value only where
+  `build_ct` reads every leaf, and it rejects three propositions that
+  `compile_generic_constraint` (`checker/constraints.rs`) reads specially.
+  - An `IsTrivially*[T]` application is "unknown type". The lever is
+    `ParamContext::trivial`.
+  - A predicate-alias application is "a Bool-valued comptime alias, not a
+    type". The lever is the alias body applied to its arguments.
+  - A `TypeList` proposition (`.contains[T]()`, `.all[P]()`, `.any[P]()`)
+    and a pack `conforms_to(Ts.values, Trait)` are "not an associated
+    comptime expression". The lever is `ParamContext::pack_query`.
+  - Each such condition keeps its constraint form alone, so the elaborator
+    decides it there (`decide_comptime_test`, `mono/specializer.rs`).
+  - Probes: `assets/ok/struct_del_is_trivial_hook.mojo`,
+    `maybe_uninit_predicates.mojo`, `bool_alias_predicate_where.mojo`,
+    `where_module_constant_operand.mojo`, `typelist_comptime_vocabulary.mojo`,
+    `always_inline_nodebug_binders.mojo`, and std `collections/array.mojo`,
+    `utils/static_tuple.mojo`, `io/io.mojo`.
+  - Found while landing R1475 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1902 The one builder rejects a literal compared with a non-`Int`
+  scalar parameter**
+
+  `x < 10` over `x: UInt8`, `Int32`, `Int8`, or a `SIMD` value parameter
+  builds to "parameter expression 'lt' expects UInt8, found IntLiteral[10]",
+  where upstream materializes the literal at the other operand's type.
+  - `ParamContext::build_comparison` coerces a literal only into the `Int`
+    arithmetic domain.
+  - Such a `comptime if` condition records no `Bool` value and is decided
+    from its constraint form.
+  - Probes: `assets/ok/comptime_if_scalar_value_param.mojo`,
+    `simd_comparison_dunders.mojo`, `simd_max_min_members.mojo`, and std
+    `simd.mojo`'s `Scalar` comparisons under
+    `always_inline_builtin_self_method_fold.mojo`.
+  - Found while landing R1475 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1903 The constraint compiler reads two condition operands the one
+  builder rejects**
+
+  `constraint_operand` (`checker/constraints.rs`) compiles operands that
+  `build_ct` fails on, so those conditions record no `Bool` value.
+  - A comparison of `@always_inline("builtin")` struct values (`L(n) <
+    L(3)`) is "not an associated comptime expression".
+  - A local `comptime` tuple of reflected types read at a loop index
+    (`types[i] == Int` after `comptime types = r.field_types()`) is
+    "'(T, Int)' is not a compile-time constant here".
+  - Probes: `assets/ok/always_inline_builtin_self_method_fold.mojo`,
+    `reflection_field_ref_generic.mojo`.
+  - Found while landing R1475 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1904 A builtin operation's instance assertion carries a constraint
+  and no `Bool` value**
+
+  The `comptime assert`s the checker records for a builtin dunder or
+  constructor (`record_instance_constraint`, `checker/operators.rs`) reach
+  MIR as `SemanticAdjustment::InstanceAssertion(GenericConstraint)`, so
+  their `comptime.assert` has no `value`.
+  - The lever: record the assertion's parameter value beside it (`lanes ==
+    1` over the width's lanes), as a `comptime assert` statement's is.
+  - Probe: a `SIMD` construction at a symbolic width prints a
+    `comptime.assert` without `value` under `mojito emit-mir`.
+  - Found while landing R1475 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1905 MIR's compile-time tests carry a constraint beside their
+  `Bool` value**
+
+  `comptime.if` and `comptime.assert` hold both `conditions`/`condition`
+  and `values`/`value`, where upstream's `hlcf.comptime.if` and
+  `kgen.param.assert` take one `i1` parameter value.
+  - What goes: `ComptimeIf.conds`, `ComptimeAssert.cond`, the `constraint`
+    of `SemanticAdjustment::ComptimeCondition`, `comptime_condition_of`'s
+    connective fallback, `decide_comptime_condition`, and the `comptime
+    for` stop test's constraint (`ComptimeSequence::stop_test`).
+  - `canonicalize/hlcf.rs`, `verify/structure.rs`, and mono's unroll then
+    read the value. A schema bump makes `values`/`value` required.
+  - The checker keeps its constraints for assumptions and `where` clauses.
+  - Found while landing R1475 (2026-11-03).
+  - Depends on R1901, R1902, R1903, R1904.
+  - Model: Fable, Planned.
 
 - [ ] **R1339 A `ref self` body types a reference reached through `self`
   as `immutable`, so `automatic-inline` keeps a mutable caller's call**

@@ -1708,17 +1708,31 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::ComptimeIf {
             results,
             conds,
+            values,
             arms,
             orelse,
-        } => record(
-            tag,
-            &[
+        } => {
+            let mut fields = vec![
                 ("results", list(results.iter().map(|v| reg_value(*v)))),
                 ("conditions", list(conds.iter().map(constraint))),
+            ];
+            // Omitted while no condition has a value.
+            if values.iter().any(Option::is_some) {
+                fields.push((
+                    "values",
+                    list(
+                        values
+                            .iter()
+                            .map(|value| option(value.as_ref().map(const_value))),
+                    ),
+                ));
+            }
+            fields.extend([
                 ("arms", list(arms.iter().map(|arm| blocks_value(arm)))),
                 ("else", blocks_value(orelse)),
-            ],
-        ),
+            ]);
+            record(tag, &fields)
+        }
         MirInstr::ComptimeFor {
             binder,
             source,
@@ -1738,13 +1752,19 @@ fn instruction_value(instruction: &MirInstr) -> String {
             ]);
             record(tag, &fields)
         }
-        MirInstr::ComptimeAssert { cond, message } => record(
-            tag,
-            &[
-                ("condition", constraint(cond)),
-                ("message", option(message.as_ref().map(const_value))),
-            ],
-        ),
+        MirInstr::ComptimeAssert {
+            cond,
+            value,
+            message,
+        } => {
+            let mut fields = vec![("condition", constraint(cond))];
+            // Omitted while the condition has no value.
+            if let Some(value) = value {
+                fields.push(("value", const_value(value)));
+            }
+            fields.push(("message", option(message.as_ref().map(const_value))));
+            record(tag, &fields)
+        }
         MirInstr::Match {
             results,
             cases,

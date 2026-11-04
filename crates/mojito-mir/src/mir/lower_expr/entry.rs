@@ -25,11 +25,19 @@ impl<'a> Flatten<'a> {
     /// one the checker compiled and recorded on the expression, else its
     /// connectives over the leaves, each a recorded constraint. A leaf with
     /// no record is the explicit boundary: the check records every leaf.
+    /// Beside it is the condition's `Bool` parameter value, when the check
+    /// recorded one ([`Self::comptime_condition_value_of`]).
     pub(in crate::mir) fn comptime_condition(
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
-    ) -> mojito_types::types::GenericConstraint {
-        self.with_statement_loans(|this| this.comptime_condition_of(this.handle(expression)))
+    ) -> (mojito_types::types::GenericConstraint, Option<Const>) {
+        self.with_statement_loans(|this| {
+            let node = this.handle(expression);
+            (
+                this.comptime_condition_of(node),
+                this.comptime_condition_value_of(node),
+            )
+        })
     }
 
     /// The handle of HIR expression `expression`.
@@ -67,9 +75,10 @@ impl<'a> Flatten<'a> {
             .adjustments()
             .iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ComptimeCondition(constraint) => {
-                    Some(constraint)
-                }
+                mojito_checked::checked::SemanticAdjustment::ComptimeCondition {
+                    constraint,
+                    ..
+                } => Some(constraint),
                 _ => None,
             })
             .cloned();
@@ -111,6 +120,55 @@ impl<'a> Flatten<'a> {
                 GenericConstraint::Bool(false)
             }
         }
+    }
+
+    /// The `Bool` parameter value the checker recorded for the compile-time
+    /// test `expression`, the `i1` attribute its `hlcf.comptime.if` takes: a
+    /// [`Const::Bool`] once closed, else a [`Const::Param`]. A binder it
+    /// names that no enclosing declaration is, a fact carried from an
+    /// earlier discovery round under an overload-qualified symbol, is
+    /// respelled as [`Self::comptime_condition_of`] respells the
+    /// constraint's: the enclosing declaration's of that spelling.
+    pub(in crate::mir) fn comptime_condition_value_of(
+        &self,
+        expression: Node<'a>,
+    ) -> Option<Const> {
+        let value = expression
+            .adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ComptimeCondition {
+                    value, ..
+                } => value.as_ref(),
+                _ => None,
+            })?;
+        let context = mojito_types::param_expr::ParamContext::detached();
+        let mut bindings = mojito_types::param_expr::ParamBindings::new();
+        value.visit(&mut |node| {
+            let mojito_types::param_expr::ParamKind::DeclRef(reference) = node.kind() else {
+                return;
+            };
+            let declarations = &self.enclosing_binders.declarations;
+            if declarations
+                .iter()
+                .any(|declaration| *declaration.id() == reference.id)
+            {
+                return;
+            }
+            if let Some(binder) = declarations
+                .iter()
+                .rev()
+                .find(|declaration| declaration.name() == reference.name.as_ref())
+                .map(ParamDecl::binder)
+            {
+                bindings.bind(
+                    reference.id.clone(),
+                    context.decl_ref(binder.id, &binder.name, node.meta().clone()),
+                );
+            }
+        });
+        let value = context.replace(value, &bindings).ok()?;
+        Some(value.as_bool().map_or(Const::Param(value), Const::Bool))
     }
 
     pub(in crate::mir) fn reference_handle_hir(

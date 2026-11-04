@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime if` or `comptime assert` condition carries its `Bool`
+  parameter value, the `i1` attribute upstream's `hlcf.comptime.if` takes
+  (R1475): the checker composes it leaf by leaf, `and`/`or` as an ordered
+  `Cond` on the left operand, MIR carries it beside the constraint
+  (`values`/`value`, schema 1.158, `mojito-package 183`), and the
+  elaborator decides a condition from its value where present, still
+  lazily, so a right operand's applications run only when reached. A
+  condition whose leaf the one builder does not yet read keeps deciding
+  from its constraint (R1901–R1904). No program's output changes.
 - A name in a `where` clause or a `comptime if`/`comptime assert`
   condition is what the one builder reads it as (R1896): a runtime local
   is an evaluated leaf, and a name that declares nothing (`where m > 0`,

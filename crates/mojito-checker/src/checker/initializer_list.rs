@@ -310,12 +310,15 @@ impl Checker {
         construction: Expr,
         ty: &Ty,
     ) {
-        let condition = self
-            .record_at(expression.source_span())
-            .comptime_condition
-            .clone();
+        let (condition, value) = {
+            let facts = self.record_at(expression.source_span());
+            (
+                facts.comptime_condition.clone(),
+                facts.comptime_condition_value.clone(),
+            )
+        };
         if let Some(condition) = condition {
-            self.record_condition_through_spellings(&construction, &condition);
+            self.record_condition_through_spellings(&construction, &condition, value.as_ref());
         }
         self.record_at(expression.source_span()).ty = Some(ty.clone());
         self.record_at(expression.source_span()).adjustment = Some(Box::new(

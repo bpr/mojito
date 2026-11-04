@@ -240,7 +240,10 @@ impl<'a> Flatten<'a> {
     /// condition the elaborator decides, or by its run-time `Bool`.
     fn arm_test(&mut self, node: Node<'a>, cond: Node<'a>) -> ArmTest {
         if node.comptime_conditional() {
-            ArmTest::Comptime(self.comptime_condition_of(cond))
+            ArmTest::Comptime(
+                self.comptime_condition_of(cond),
+                self.comptime_condition_value_of(cond).map(Box::new),
+            )
         } else {
             ArmTest::Run(self.condition_value(cond))
         }
@@ -1151,7 +1154,7 @@ impl<'a> Flatten<'a> {
 /// or a parameter condition the elaborator decides (`hlcf.comptime.if`).
 enum ArmTest {
     Run(Reg),
-    Comptime(mojito_types::types::GenericConstraint),
+    Comptime(mojito_types::types::GenericConstraint, Option<Box<Const>>),
 }
 
 impl ArmTest {
@@ -1159,7 +1162,7 @@ impl ArmTest {
     const fn yield_values(&self, values: Vec<Reg>) -> MirTerm {
         match self {
             Self::Run(_) => MirTerm::Yield(values),
-            Self::Comptime(_) => MirTerm::ComptimeYield(values),
+            Self::Comptime(..) => MirTerm::ComptimeYield(values),
         }
     }
 
@@ -1174,9 +1177,10 @@ impl ArmTest {
                 else_args: Vec::new(),
                 orelse,
             },
-            Self::Comptime(cond) => MirInstr::ComptimeIf {
+            Self::Comptime(cond, value) => MirInstr::ComptimeIf {
                 results,
                 conds: vec![cond],
+                values: vec![value.map(|value| *value)],
                 arms: vec![then],
                 orelse,
             },

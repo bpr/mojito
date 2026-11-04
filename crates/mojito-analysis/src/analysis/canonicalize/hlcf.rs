@@ -913,6 +913,7 @@ impl Walk<'_> {
             conds,
             arms,
             orelse,
+            ..
         } = &mut block.instrs[index]
         else {
             return false;

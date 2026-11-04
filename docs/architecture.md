@@ -1007,8 +1007,19 @@ the check lifts for that call, else the application of a function lifted
 for the whole leaf — and a leaf that converts through `Bool(x)` is `x != 0`
 for an integer, else the application of the function lifted for its
 conversion, which returns the leaf's truthiness
-(`Checker::evaluated_condition`). MIR mints no function for a condition
-(`Flatten::comptime_condition_of` reads the recorded constraint); the
+(`Checker::evaluated_condition`). Beside each constraint the checker
+records the condition's `Bool` parameter value, the one `i1` attribute
+upstream's `hlcf.comptime.if` and `kgen.param.assert` take, composed leaf
+by leaf in `Checker::check_ct_bool`: `not` is the exclusive-or with
+`True`, and `and`/`or` are `POC::Cond` on the left operand, which keeps
+their order, so a leaf the constraint compiler closes is the one
+builder's reading of it, and an evaluated leaf is the expression its
+constraint compares with `True`. A condition with a leaf the one builder
+does not yet read has no value. MIR mints no function for a condition
+(`Flatten::comptime_condition_of` reads the recorded constraint, and
+`Flatten::comptime_condition_value_of` its value, the `values` of
+`ComptimeIf` and the `value` of `ComptimeAssert`; a `comptime for` stop
+test's value is its sequence's `has_next`); the
 elaborator evaluates an application on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). A
 `comptime assert cond[, message]` (`StmtKind::ComptimeAssert`, parsed in a
@@ -1032,8 +1043,11 @@ For the rest of its block the checker knows the asserted condition, as it
 knows a `comptime if` arm's (`Checker::assume_condition`: the `conforms_to`
 atoms below, and each conjunct of the residual proposition the condition
 states, which proves a callee's `where` clause). The elaborator decides a
-condition lazily, as upstream folds a `ParamOperatorAttr` (`Specializer::
-decide_comptime_condition`): `and` and `or` stop once their left side
+condition lazily, as upstream folds a `ParamOperatorAttr`, from its value
+where present (`Specializer::decide_comptime_test`, then
+`decide_comptime_value`: a `Cond` decides its condition, then only the arm
+it selects) and from its constraint otherwise
+(`decide_comptime_condition`): `and` and `or` stop once their left side
 decides them, and each `comptime if` is decided in order on its region op,
 its taken arm spliced where the op stood before the walk goes on
 (`Specializer::decide_comptime_op`, as `processComptimeIfOp` elaborates

@@ -940,15 +940,31 @@ impl Decoder {
                 results: self.added_regs(fields, "results"),
                 body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
             }),
-            "comptime.if" => Some(MirInstr::ComptimeIf {
-                results: self.req(value, fields, "results", |d, v| Some(d.regs(v)))?,
-                conds: self.req(value, fields, "conditions", |d, v| Some(d.constraints(v)))?,
-                arms: self.req(value, fields, "arms", |d, v| {
-                    let arms = d.list(v).ok()?;
-                    Some(arms.iter().map(|arm| d.region_blocks(arm)).collect())
-                })?,
-                orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
-            }),
+            "comptime.if" => {
+                let conds = self.req(value, fields, "conditions", |d, v| Some(d.constraints(v)))?;
+                // Absent while no condition has a value, and before schema
+                // 1.158.
+                let values = match self.field(fields, "values") {
+                    Ok(values) => {
+                        let values = self.list(values).ok()?;
+                        values
+                            .iter()
+                            .map(|v| self.option_value(Some(v)).and_then(|v| self.constant(v)))
+                            .collect()
+                    }
+                    Err(()) => vec![None; conds.len()],
+                };
+                Some(MirInstr::ComptimeIf {
+                    results: self.req(value, fields, "results", |d, v| Some(d.regs(v)))?,
+                    conds,
+                    values,
+                    arms: self.req(value, fields, "arms", |d, v| {
+                        let arms = d.list(v).ok()?;
+                        Some(arms.iter().map(|arm| d.region_blocks(arm)).collect())
+                    })?,
+                    orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+                })
+            }
             "comptime.for" => Some(MirInstr::ComptimeFor {
                 binder: self.req(value, fields, "binder", Self::binder_ref)?,
                 source: self.comptime_sequence(value, fields)?,
@@ -960,11 +976,18 @@ impl Decoder {
             }),
             "comptime.assert" => {
                 let cond = self.req(value, fields, "condition", Self::constraint)?;
+                // Absent while the condition has no value, and before schema
+                // 1.158.
+                let condition_value = self
+                    .field(fields, "value")
+                    .ok()
+                    .and_then(|v| self.constant(v));
                 // Before schema 1.139 a message rode as `with_message`
                 // around the condition.
                 Some(match self.field(fields, "message") {
                     Ok(message) => MirInstr::ComptimeAssert {
                         cond: Box::new(cond),
+                        value: condition_value,
                         message: self
                             .option_value(Some(message))
                             .and_then(|v| self.constant(v)),
@@ -972,10 +995,12 @@ impl Decoder {
                     Err(()) => match cond {
                         GenericConstraint::WithMessage(cond, message) => MirInstr::ComptimeAssert {
                             cond,
+                            value: condition_value,
                             message: Some(Const::Str(message)),
                         },
                         cond => MirInstr::ComptimeAssert {
                             cond: Box::new(cond),
+                            value: condition_value,
                             message: None,
                         },
                     },

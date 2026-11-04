@@ -106,6 +106,7 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
         MirInstr::ComptimeIf {
             results,
             conds,
+            values,
             arms,
             orelse,
         } => {
@@ -115,6 +116,14 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
                     cx.prefix,
                     conds.len(),
                     arms.len()
+                ));
+            }
+            if values.len() != conds.len() {
+                errors.push(format!(
+                    "{}: comptime if has {} condition values for {} conditions",
+                    cx.prefix,
+                    values.len(),
+                    conds.len()
                 ));
             }
             for region in arms.iter().chain(std::iter::once(orelse)) {
@@ -520,7 +529,7 @@ fn enclosing_loop(context: &RegionContext, label: Option<LoopLabel>) -> Option<(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mir::{MirProgram, SpanTable};
+    use crate::mir::{Const, MirProgram, SpanTable};
     use mojito_checked::checked::ComptimeSequence;
     use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
     use mojito_types::types::GenericConstraint;
@@ -563,6 +572,7 @@ mod tests {
         let test = MirInstr::ComptimeIf {
             results: Vec::new(),
             conds: vec![source.stop_test()],
+            values: vec![Some(Const::Param(source.has_next.clone()))],
             arms: vec![suite],
             orelse: one(Vec::new(), MirTerm::ComptimeBreak(Vec::new())),
         };
@@ -1206,6 +1216,7 @@ mod tests {
         let test = MirInstr::ComptimeIf {
             results: Vec::new(),
             conds: vec![source.stop_test()],
+            values: vec![Some(Const::Param(source.has_next.clone()))],
             arms: vec![one(Vec::new(), MirTerm::ComptimeContinue(next))],
             orelse: one(Vec::new(), MirTerm::ComptimeBreak(out)),
         };
@@ -1397,6 +1408,7 @@ mod tests {
         let function = function_with(vec![MirInstr::ComptimeIf {
             results: Vec::new(),
             conds: vec![GenericConstraint::Bool(true)],
+            values: vec![None],
             arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         }]);

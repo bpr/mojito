@@ -312,19 +312,20 @@ impl Specializer<'_> {
         } = *looped;
         let template = frame.template;
         let mut clone = body.clone();
-        let suite = self.decide_comptime_condition(template, stop, iteration)?;
-        if suite {
-            self.answer_element(template, element, iteration)?;
-        }
-        let opens_with_test = matches!(
-            clone.instrs.first(),
-            Some(MirInstr::ComptimeIf { conds, .. }) if conds.as_slice() == std::slice::from_ref(stop)
-        );
-        if !opens_with_test {
+        let Some(MirInstr::ComptimeIf { values, .. }) = clone
+            .instrs
+            .first()
+            .filter(|test| matches!(test, MirInstr::ComptimeIf { conds, .. } if conds.as_slice() == std::slice::from_ref(stop)))
+        else {
             return Err(self.error(
                 Some(template),
                 "comptime for body does not open with its has_next test".to_string(),
             ));
+        };
+        let value = values.first().cloned().flatten();
+        let suite = self.decide_comptime_test(template, stop, value.as_ref(), iteration)?;
+        if suite {
+            self.answer_element(template, element, iteration)?;
         }
         // The untaken arm is the template's, whose tables go with the body's.
         splice_comptime_arm(&mut clone, 0, suite.then_some(0), &mut Decided::default())

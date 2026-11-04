@@ -377,9 +377,16 @@ impl ScopeCx<'_> {
                 let regions = crate::mir::instruction_regions(instruction);
                 if !regions.is_empty() {
                     match instruction {
-                        MirInstr::ComptimeIf { conds, .. } => {
+                        MirInstr::ComptimeIf { conds, values, .. } => {
+                            let role = format!("block {index} compile-time if");
                             for cond in conds {
-                                self.constraint(&format!("block {index} compile-time if"), cond);
+                                self.constraint(&role, cond);
+                            }
+                            for value in values {
+                                if let Some(Const::Param(value)) = value {
+                                    let mut nested = Vec::new();
+                                    self.expr_nodes(&role, "condition value", value, &mut nested);
+                                }
                             }
                         }
                         MirInstr::ComptimeFor { binder, source, .. } => {
@@ -443,8 +450,18 @@ impl ScopeCx<'_> {
                         self.expr_nodes(&role, "lane mask", value, &mut nested);
                     }
                 }
-                if let MirInstr::ComptimeAssert { cond, message } = instruction {
-                    self.constraint(&format!("block {index} compile-time assertion"), cond);
+                if let MirInstr::ComptimeAssert {
+                    cond,
+                    value,
+                    message,
+                } = instruction
+                {
+                    let role = format!("block {index} compile-time assertion");
+                    self.constraint(&role, cond);
+                    if let Some(Const::Param(value)) = value {
+                        let mut nested = Vec::new();
+                        self.expr_nodes(&role, "condition value", value, &mut nested);
+                    }
                     if let Some(Const::Param(value)) = message {
                         let role = format!("block {index} compile-time assertion message");
                         let mut nested = Vec::new();

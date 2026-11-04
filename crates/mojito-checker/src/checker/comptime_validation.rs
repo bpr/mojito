@@ -793,8 +793,11 @@ impl Checker {
     /// (`SemanticAdjustment::ComptimeCondition`) for the MIR branch: a leaf
     /// the constraint compiler does not close — an application, a `Bool`
     /// binding — is its parameter expression compared with `True`
-    /// ([`Self::evaluated_condition`]). The recorded constraint, its
-    /// operands bound, when the whole condition closes.
+    /// ([`Self::evaluated_condition`]). Beside each constraint is the
+    /// condition's `Bool` parameter value, the one `i1` attribute upstream's
+    /// `hlcf.comptime.if` takes, composed leaf by leaf
+    /// ([`Self::check_ct_bool`]). The recorded constraint, its operands
+    /// bound, when the whole condition closes.
     pub(super) fn check_comptime_condition(
         &self,
         cond: &Expr,
@@ -802,9 +805,9 @@ impl Checker {
     ) -> Result<Option<GenericConstraint>, TypeError> {
         let _position = self.comptime_position();
         let inlined = self.inline_local_comptime_values(cond);
-        Ok(self.check_ct_bool(&inlined, test)?.map(|constraint| {
-            self.record_comptime_condition(cond, &constraint);
-            self.bind_constraint(&constraint, &[])
+        Ok(self.check_ct_bool(&inlined, test)?.map(|condition| {
+            self.record_comptime_condition(cond, &condition);
+            self.bind_constraint(&condition.constraint, &[])
         }))
     }
 
@@ -949,28 +952,34 @@ impl Checker {
         }
     }
 
-    /// Record `constraint` as the compile-time reading of `cond`, each
-    /// operand naming its binder by identity: the innermost open scope's,
-    /// else the enclosing struct's.
-    fn record_comptime_condition(&self, cond: &Expr, constraint: &GenericConstraint) {
-        let bound = self.bind_constraint(constraint, &[]);
-        self.record_condition_through_spellings(cond, &bound);
-    }
-
     /// Record `condition` at `cond` and at each spelling the check gave it:
     /// a condition the check respelled (`Cur.lowers` over a type alias
     /// `Cur`, then the alias's own member read) reaches HIR as its last
-    /// spelling, which holds the condition.
+    /// spelling, which holds the condition. `value` is its `Bool`
+    /// parameter value, when every leaf has one.
     pub(super) fn record_condition_through_spellings(
         &self,
         cond: &Expr,
         condition: &GenericConstraint,
+        value: Option<&ParamExpr>,
     ) {
         let mut spelled = Some(cond.clone());
         while let Some(expression) = spelled {
-            self.record_at(expression.source_span()).comptime_condition = Some(condition.clone());
+            {
+                let mut facts = self.record_at(expression.source_span());
+                facts.comptime_condition = Some(condition.clone());
+                facts.comptime_condition_value = value.cloned();
+            }
             spelled = self.spelled_construction(&expression);
         }
+    }
+
+    /// Record `condition` as the compile-time reading of `cond`, each
+    /// constraint operand naming its binder by identity: the innermost open
+    /// scope's, else the enclosing struct's.
+    fn record_comptime_condition(&self, cond: &Expr, condition: &CompiledCondition) {
+        let bound = self.bind_constraint(&condition.constraint, &[]);
+        self.record_condition_through_spellings(cond, &bound, condition.value.as_ref());
     }
 
     /// Whether `operand` of a comparison is a parameter value whose builtin
@@ -1015,27 +1024,48 @@ impl Checker {
     /// symbolic constraint; a leaf is a generic constraint over the
     /// parameters in scope, a conformance of a concrete type, or a `Bool`
     /// value expression. The constraint the condition compiles to, when every
-    /// leaf does.
+    /// leaf does, beside its `Bool` parameter value: `not` is upstream's
+    /// exclusive-or with `True`, and `and`/`or` its `POC::Cond` on the left
+    /// operand ([`and_or_value`]), which keeps the right operand unreached
+    /// where the left decides the connective.
     fn check_ct_bool(
         &self,
         cond: &Expr,
         test: ComptimeTest,
-    ) -> Result<Option<GenericConstraint>, TypeError> {
+    ) -> Result<Option<CompiledCondition>, TypeError> {
         match &cond.kind {
-            ExprKind::Bool(value) => return Ok(Some(GenericConstraint::Bool(*value))),
+            ExprKind::Bool(value) => {
+                return Ok(Some(CompiledCondition {
+                    constraint: GenericConstraint::Bool(*value),
+                    value: Some(self.param_context.boolean(*value)),
+                }));
+            }
             ExprKind::Prefix(PrefixOp::Not, inner) => {
                 return Ok(self
                     .check_ct_bool(inner, test)?
-                    .map(|inner| GenericConstraint::Not(Box::new(inner))));
+                    .map(|inner| CompiledCondition {
+                        constraint: GenericConstraint::Not(Box::new(inner.constraint)),
+                        value: inner
+                            .value
+                            .and_then(|value| self.param_context.not(&value).ok()),
+                    }));
             }
             ExprKind::Infix(op @ (InfixOp::And | InfixOp::Or), left, right) => {
                 let left = self.check_ct_bool(left, test)?;
                 let right = self.check_ct_bool(right, test)?;
                 return Ok(left.zip(right).map(|(left, right)| {
-                    if *op == InfixOp::And {
-                        GenericConstraint::And(Box::new(left), Box::new(right))
-                    } else {
-                        GenericConstraint::Or(Box::new(left), Box::new(right))
+                    let value = left
+                        .value
+                        .zip(right.value)
+                        .and_then(|(l, r)| and_or_value(&self.param_context, *op, &l, &r));
+                    let (left, right) = (Box::new(left.constraint), Box::new(right.constraint));
+                    CompiledCondition {
+                        constraint: if *op == InfixOp::And {
+                            GenericConstraint::And(left, right)
+                        } else {
+                            GenericConstraint::Or(left, right)
+                        },
+                        value,
                     }
                 }));
             }
@@ -1069,6 +1099,7 @@ impl Checker {
                 };
                 let mut refuted = mojito_types::conformance::reflects_no_conformance(&operand);
                 let mut propositions = Vec::new();
+                let mut values = Vec::new();
                 for trait_name in trait_names {
                     let unknown = match self.conformance(&operand, trait_name) {
                         Conformance::Proven => continue,
@@ -1083,23 +1114,35 @@ impl Checker {
                         .param_context
                         .conforms(&subject, trait_name)
                         .map_err(param_error)?;
+                    values.push(conforms.clone());
                     propositions.push(GenericConstraint::Eq(
                         ConstraintOperand::Expr(conforms),
                         ConstraintOperand::Value(mojito_types::ct::CtValue::Bool(true)),
                     ));
                 }
-                let constraint = if refuted {
-                    GenericConstraint::Bool(false)
+                let condition = if refuted {
+                    CompiledCondition {
+                        constraint: GenericConstraint::Bool(false),
+                        value: Some(self.param_context.boolean(false)),
+                    }
                 } else {
-                    propositions
-                        .into_iter()
-                        .reduce(|all, proposition| {
-                            GenericConstraint::And(Box::new(all), Box::new(proposition))
-                        })
-                        .unwrap_or(GenericConstraint::Bool(true))
+                    CompiledCondition {
+                        constraint: propositions
+                            .into_iter()
+                            .reduce(|all, proposition| {
+                                GenericConstraint::And(Box::new(all), Box::new(proposition))
+                            })
+                            .unwrap_or(GenericConstraint::Bool(true)),
+                        value: values.into_iter().try_fold(
+                            self.param_context.boolean(true),
+                            |all, conforms| {
+                                and_or_value(&self.param_context, InfixOp::And, &all, &conforms)
+                            },
+                        ),
+                    }
                 };
-                self.record_comptime_condition(cond, &constraint);
-                return Ok(Some(constraint));
+                self.record_comptime_condition(cond, &condition);
+                return Ok(Some(condition));
             }
             // An application of an undeclared name (`TriviallyCopyable[Int]`)
             // is neither a predicate nor a type.
@@ -1120,9 +1163,19 @@ impl Checker {
                 self.evaluated_condition(cond, test).map(Some)
             }
             Ok(constraint) => {
-                let constraint = self.fold_closed_constraint(constraint);
-                self.record_comptime_condition(cond, &constraint);
-                Ok(Some(constraint))
+                // The leaf's value is what the one builder reads it as; a
+                // spelling it does not yet read leaves the condition with
+                // its constraint alone.
+                let value = self
+                    .compile_dependent_ct_expr(cond)
+                    .ok()
+                    .filter(|value| *value.meta() == mojito_types::param_expr::MetaTy::bool());
+                let condition = CompiledCondition {
+                    constraint: self.fold_closed_constraint(constraint),
+                    value,
+                };
+                self.record_comptime_condition(cond, &condition);
+                Ok(Some(condition))
             }
             Err(constraint_error) => match self.expect_evaluated_bool(cond, test) {
                 Ok(()) => self.evaluated_condition(cond, test).map(Some),
@@ -1150,7 +1203,7 @@ impl Checker {
         &self,
         cond: &Expr,
         test: ComptimeTest,
-    ) -> Result<GenericConstraint, TypeError> {
+    ) -> Result<CompiledCondition, TypeError> {
         use mojito_types::ct::CtValue;
         self.reject_dynamic_condition(cond, test)?;
         let ty = self.infer(cond)?;
@@ -1166,36 +1219,43 @@ impl Checker {
             ),
         };
         let integer = ty.is_int() || ty.is_uint() || matches!(ty.kind(), TyKind::IntLiteral(_));
-        let constraint =
-            match ty.kind() {
-                kind if kind.is_bool() => structural()
-                    .or_else(|| self.lifted_application(cond))
-                    .map(|expression| {
-                        GenericConstraint::Eq(
-                            operand(expression),
-                            ConstraintOperand::Value(CtValue::Bool(true)),
-                        )
-                    }),
-                _ if integer && let Some(expression) = structural() => Some(GenericConstraint::Ne(
+        let truth = |expression: ParamExpr| CompiledCondition {
+            constraint: GenericConstraint::Eq(
+                operand(expression.clone()),
+                ConstraintOperand::Value(CtValue::Bool(true)),
+            ),
+            value: Some(expression),
+        };
+        let condition = match ty.kind() {
+            kind if kind.is_bool() => structural()
+                .or_else(|| self.lifted_application(cond))
+                .map(truth),
+            // `Int.__bool__` is `x != 0`.
+            _ if integer && let Some(expression) = structural() => Some(CompiledCondition {
+                value: self
+                    .param_context
+                    .constant(CtValue::IntLiteral(0.into()))
+                    .and_then(|zero| self.param_context.infix(InfixOp::Ne, &expression, &zero))
+                    .ok(),
+                constraint: GenericConstraint::Ne(
                     operand(expression),
                     ConstraintOperand::Value(CtValue::Int(0)),
-                )),
-                _ => self.converted_condition(cond).map(|expression| {
-                    GenericConstraint::Eq(
-                        operand(expression),
-                        ConstraintOperand::Value(CtValue::Bool(true)),
-                    )
-                }),
-            }
-            .ok_or_else(|| {
-                TypeError::Unsupported(format!(
-                    "a {} that compiles to no parameter expression",
-                    test.context()
-                ))
-            })?;
-        let constraint = self.fold_closed_constraint(constraint);
-        self.record_comptime_condition(cond, &constraint);
-        Ok(constraint)
+                ),
+            }),
+            _ => self.converted_condition(cond).map(truth),
+        }
+        .ok_or_else(|| {
+            TypeError::Unsupported(format!(
+                "a {} that compiles to no parameter expression",
+                test.context()
+            ))
+        })?;
+        let condition = CompiledCondition {
+            constraint: self.fold_closed_constraint(condition.constraint),
+            value: condition.value,
+        };
+        self.record_comptime_condition(cond, &condition);
+        Ok(condition)
     }
 
     /// The application of the function lifted for the `Bool(x)` conversion
@@ -6390,4 +6450,31 @@ fn written_string(message: &Expr) -> Expr {
         },
         message.span,
     )
+}
+
+/// A compile-time test as the checker compiled it: the constraint the
+/// assumptions and the MIR branch read, and its `Bool` parameter value,
+/// `None` where a leaf is a spelling the one builder does not read.
+struct CompiledCondition {
+    constraint: GenericConstraint,
+    value: Option<ParamExpr>,
+}
+
+/// The value of `left and right` / `left or right` over two `Bool`
+/// condition values, as upstream folds the operator to `POC::Cond` on
+/// `left`: `and` selects `right` when `left` holds and `left` otherwise,
+/// `or` the reverse. A `Cond` keeps its operand order, so the right
+/// operand is reached only where the left one does not decide.
+fn and_or_value(
+    context: &ParamContext,
+    op: InfixOp,
+    left: &ParamExpr,
+    right: &ParamExpr,
+) -> Option<ParamExpr> {
+    let arms = if op == InfixOp::And {
+        [left.clone(), right.clone(), left.clone()]
+    } else {
+        [left.clone(), left.clone(), right.clone()]
+    };
+    context.op(ParamOp::Cond, &arms).ok()
 }
