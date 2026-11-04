@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1895**.
+Next free ID: **R1897**.
 
 ## Ordered Work
 
@@ -274,33 +274,59 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1474 A predicate alias body or a struct header's condition is
-  compiled without its binders in scope**
+- [ ] **R1895 A signature's or member's `where` clause is compiled
+  without its declaration's binders in scope**
 
-  `constraint_operand`, `predicate_operand`, and the `conforms_to` subject
-  arm (`checker/constraints.rs`) read a bare name there as
-  `ParamRef::unbound(name)`, bound by spelling later (`bind_constraint`,
-  `apply_predicate_alias`), where upstream emits the alias body and the
-  conformance condition as parameter expressions with their parameters in
-  scope.
-  - The one builder (`build_ct`) cannot serve these operands: it reports
-    "not a compile-time Int constant: T" or `UnqualifiedStructParam`, so
-    the name fallback stays beside it.
-  - The lever: open the alias's or the header's binders before compiling
-    the condition, so the builder reads them as it reads a body's.
-  - Probe: `assets/ok/bool_alias_predicate_where.mojo` and
-    `std/memory/maybe_uninit.mojo`'s header conditions (about 425 operands
-    in the corpus) reach the fallback.
-  - Probe: `struct P[*Ts: Movable] where Ts.length == 2` used as
-    `P[Int, Bool].two()` stops with "unsupported generic constraint
-    operand" (`constraint_operand`), and `where
-    Ts.all_conforms_to[Copyable]()` in the same place with "unsupported
-    generic where proposition" (`compile_generic_constraint`). The pin
-    prints `2` for each, and a method's own `where Self.Ts.length == 2`
-    runs.
-  - Done when `constraint_operand`'s bare `Identifier` arm is gone.
-  - Found while landing R1387 (2026-10-26).
+  `compile_where_clause` callers outside a struct header or predicate
+  alias compile with the declaration's own binders closed, so a bare
+  binder there reaches the `ParamRef::unbound` fallback of
+  `constraint_operand` and the `conforms_to` subject, bound by spelling
+  later (`bind_constraint`), where upstream emits each clause with its
+  declaration's parameters in scope.
+  - The lever: open the declaration's binders (`in_param_scope`) where
+    the clause compiles, compile it once, and read the stored clause
+    instead of recompiling the syntax.
+  - Callers: a method's `availability` and `method_where_assumptions`
+    (`declarations.rs`), `inherited_defaults` with
+    `register_default_wrappers` and `check_default_wrapper` (which should
+    carry the struct's compiled header condition from `StructInfo`, not its
+    `Expr`), trait `comptime` member clauses and `generator_requirement`
+    (`traits.rs`), an associated member's own clauses
+    (`check_struct_associated`), and `classify_params`' per-parameter
+    constraints.
+  - Probe: `struct W[T: AnyType]` with `def f() -> Int where
+    IsTriviallyCopyable[T]` runs and prints `1`, where the pin rejects it
+    with "unqualified access to struct parameter 'T'; use 'Self.T'
+    instead" (`TypeError::UnqualifiedStructParam`); it needs an
+    `assets/type_error` fixture and its `conformance/assets-mojo-errors.tsv`
+    row.
+  - Probe: the bundled `stdlib/std/memory/maybe_uninit.mojo` `write`
+    spells `IsTriviallyDeinitable[T]`, which this accepts; upstream spells
+    it `IsTriviallyDeinitable[Self.T]`.
+  - Found while landing R1474 (2026-11-03).
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1896 A `comptime if` or `comptime assert` condition tells a
+  runtime local from a parameter by an unbound name**
+
+  `check_ct_bool` (`comptime_validation.rs`) compiles its condition
+  through `compile_generic_constraint` and detects a runtime local or an
+  evaluated binding as a `ParamRef::unbound` operand
+  (`names_unbound_parameter`, `names_evaluated_binding`), so
+  `constraint_operand`'s bare `Identifier` arm, the `conforms_to`
+  subject's and `predicate_operand`'s name fallbacks must stay, where
+  upstream's parameter emitter rejects a runtime name as no parameter.
+  - The lever: a name the builder cannot read is its error (`NotComptime`
+    or an unknown declaration), which the existing `Err` branch of
+    `check_ct_bool` already routes to `expect_evaluated_bool`; then delete
+    `names_unbound_parameter` and the three fallback arms, and
+    `bind_binder`/`bind_constraint` if nothing is left for them to bind.
+  - Probe: `comptime if` fixtures over module constants, value binders,
+    and runtime locals run as before.
+  - Done when `constraint_operand`'s bare `Identifier` arm is gone.
+  - Found while landing R1474 (2026-11-03).
+  - Depends on R1895.
   - Model: Fable, Not Planned.
 
 - [ ] **R1475 A `comptime if` condition is a `GenericConstraint`, not a
@@ -320,7 +346,7 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `comptime if T == Box[Int]` needed the same type-identity fix in
     `fold_infix` and in `constraint_holds` (R1387).
   - Found while landing R1387 (2026-10-26).
-  - Depends on R1474.
+  - Depends on R1896.
   - Model: Fable, Not Planned.
 
 - [ ] **R1339 A `ref self` body types a reference reached through `self`

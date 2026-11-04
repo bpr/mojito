@@ -266,7 +266,7 @@ impl Checker {
         &mut self,
         associated: &[StructComptime],
         conforms: &[String],
-        conformance_conditions: &[(String, Expr)],
+        conformance_conditions: &[(String, GenericConstraint)],
     ) -> Result<StructAssociatedMembers, TypeError> {
         // A member the struct omits is the default a conformed trait
         // declares for it, read after the struct's own, with `Self` as
@@ -323,8 +323,7 @@ impl Checker {
             }
             for (trait_name, condition) in conformance_conditions {
                 if self.trait_requires_comptime_member(trait_name, &member.name) {
-                    let constraint = self.compile_condition(&self.self_decls, condition)?;
-                    self.guaranteed_facts(&constraint, &mut facts);
+                    self.guaranteed_facts(condition, &mut facts);
                 }
             }
             self.push_assumptions(facts);
@@ -1598,6 +1597,19 @@ impl Checker {
     /// closes both, since a value scope deeper than the type scopes is dead.
     pub(super) fn push_param_scope(&mut self, decls: &[ParamDecl]) {
         self.push_param_scope_as(decls, type_scope(decls));
+    }
+
+    /// `compile` run with the binders of `decls` open, as a declaration's
+    /// own conditions are compiled with its parameters in scope.
+    pub(super) fn in_param_scope<R>(
+        &mut self,
+        decls: &[ParamDecl],
+        compile: impl FnOnce(&Self) -> R,
+    ) -> R {
+        self.push_param_scope(decls);
+        let compiled = compile(self);
+        self.tparams.pop();
+        compiled
     }
 
     /// [`Self::push_param_scope`] with the type binders `scope` spells,
@@ -3911,11 +3923,10 @@ impl Checker {
             .collect()
     }
 
-    /// A condition of the declaration owning `decls` (a struct's conditional
-    /// conformance), compiled and bound to those binders alone. It compiles
-    /// the same wherever it is judged: a bare `Ts.all_conforms_to[Trait]()`
-    /// is read against `decls`' packs, not the packs the current scope
-    /// encloses.
+    /// A condition of the declaration owning `decls` (a struct header's
+    /// conditional conformance or `where` clause), compiled with `decls`'
+    /// binders open ([`Self::in_param_scope`]) and bound to them: a bare
+    /// `Ts.all_conforms_to[Trait]()` is read against `decls`' packs.
     pub(super) fn compile_condition(
         &self,
         decls: &[ParamDecl],
@@ -3940,9 +3951,10 @@ impl Checker {
         Ok(compiled.bind(&[decls]))
     }
 
-    /// Compile a `where` clause. An operand names its parameter unbound
-    /// ([`ParamRef::unbound`]), except `Self.<name>`, which is the enclosing
-    /// struct's; [`Self::bind_constraint`] binds the rest.
+    /// Compile a `where` clause. An operand naming a binder of an open
+    /// scope is bound to it, and `Self.<name>` to the enclosing struct's;
+    /// a name no open scope declares is left unbound
+    /// ([`ParamRef::unbound`]) for [`Self::bind_constraint`].
     pub(super) fn compile_where_clause(&self, expr: &Expr) -> Result<GenericConstraint, TypeError> {
         let ExprKind::TupleLit(elements) = &expr.kind else {
             return self.compile_generic_constraint(expr);
@@ -4066,7 +4078,11 @@ impl Checker {
             } if name == "conforms_to" && kwargs.is_empty() && args.len() == 2 => {
                 let (param, pack) = match (pack_values_projection(&args[0]), &args[0].kind) {
                     (Some(pack), _) => (ParamRef::unbound(pack), true),
-                    (None, ExprKind::Identifier(param)) => (ParamRef::unbound(param), false),
+                    (None, ExprKind::Identifier(param)) => (
+                        self.type_binder_in_scope(param)
+                            .unwrap_or_else(|| ParamRef::unbound(param)),
+                        false,
+                    ),
                     (None, ExprKind::Member { object, field }) if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                         (self.self_binder(field), false)
                     }
@@ -4475,7 +4491,7 @@ impl Checker {
     /// application inlines only the body: a declared bound the inlined
     /// proposition would not re-check cannot be silently dropped.
     pub(super) fn compile_predicate_alias_body(
-        &self,
+        &mut self,
         decls: &[ParamDecl],
         value: &Expr,
     ) -> Result<GenericConstraint, TypeError> {
@@ -4524,7 +4540,7 @@ impl Checker {
             }
         }
         let constraint = self
-            .compile_generic_constraint(value)
+            .in_param_scope(decls, |this| this.compile_generic_constraint(value))
             .map_err(|error| match &error {
                 TypeError::Unsupported(message)
                     if message == "unsupported generic where proposition" =>
@@ -4578,22 +4594,19 @@ impl Checker {
         expr: &Expr,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let (name, args) = self.predicate_alias_application(expr)?;
-        // A value binder an argument spells stays its symbolic reference.
-        let symbolic: Vec<(String, TyArg)> = self
+        // A value binder an argument names stays its symbolic reference.
+        let symbolic: Vec<(ParamId, TyArg)> = self
             .vparams
             .iter()
             .take(self.tparams.len())
-            .flat_map(HashMap::keys)
-            .filter_map(|binder| {
-                self.value_parameter_in_scope(binder)
-                    .map(|reference| (binder.clone(), TyArg::Val(CtValue::Expr(reference))))
+            .flat_map(HashMap::values)
+            .filter_map(|reference| {
+                let id = reference.as_decl_ref()?.id.clone();
+                Some((id, TyArg::Val(CtValue::Expr(reference.clone()))))
             })
             .collect();
-        let environment = ConstraintEnvironment::named(
-            &[],
-            symbolic
-                .iter()
-                .map(|(binder, argument)| (binder.as_str(), argument)),
+        let environment = ConstraintEnvironment::by_id(
+            symbolic.iter().map(|(id, argument)| (id.clone(), argument)),
         );
         Some(
             self.apply_predicate_alias(name, &args)
@@ -4738,7 +4751,10 @@ impl Checker {
                     ConstraintOperand::Type(ty)
                 } else {
                     let attribute = self.lookup_tparam(name).map(TyArg::Ty);
-                    return Ok((ConstraintOperand::Param(ParamRef::unbound(name)), attribute));
+                    let binder = self
+                        .type_binder_in_scope(name)
+                        .unwrap_or_else(|| ParamRef::unbound(name));
+                    return Ok((ConstraintOperand::Param(binder), attribute));
                 }
             }
             // `Self.T` names the struct's binder, as in `conforms_to`.
@@ -4818,16 +4834,26 @@ impl Checker {
                 TyKind::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),
                 _ => ConstraintOperand::Type(ty),
             },
-            // A local `comptime` over the binders (`comptime k = n + 1`) is
-            // the parameter expression it names.
+            // A value binder in scope is its reference, and a local
+            // `comptime` over the binders (`comptime k = n + 1`) the
+            // parameter expression it names.
             ExprKind::Identifier(name)
-                if let Some(expression) = self.value_parameter_in_scope(name)
+                if let Some(expression) = self.value_parameter_in_scope(name) =>
+            {
+                match expression.as_decl_ref() {
+                    Some(reference) => ConstraintOperand::Param(reference.clone()),
+                    None => ConstraintOperand::Expr(expression),
+                }
+            }
+            // A module constant is its value, as the builder reads it.
+            ExprKind::Identifier(name)
+                if let Ok(expression) = self.compile_dependent_ct_expr(expr)
                     && expression
                         .as_decl_ref()
                         .is_none_or(|reference| &*reference.name != name) =>
             {
-                match expression.as_decl_ref() {
-                    Some(reference) => ConstraintOperand::Param(reference.clone()),
+                match expression.as_constant() {
+                    Some(value) => ConstraintOperand::Value(value.clone()),
                     None => ConstraintOperand::Expr(expression),
                 }
             }
@@ -5423,6 +5449,15 @@ impl Checker {
         }
     }
 
+    /// The binder of the type parameter a bare name denotes in the open
+    /// scopes, if any.
+    fn type_binder_in_scope(&self, name: &str) -> Option<ParamRef> {
+        match self.lookup_tparam(name)?.kind() {
+            TyKind::Param { binder, .. } => Some(binder.clone()),
+            _ => None,
+        }
+    }
+
     /// The enclosing struct's binder `Self.<name>` names.
     fn self_binder(&self, name: &str) -> ParamRef {
         mojito_types::types::bind_reference(&ParamRef::unbound(name), &[&self.self_decls])
@@ -5886,6 +5921,13 @@ impl<'a> ConstraintEnvironment<'a> {
             environment.bind_named(scopes, name, argument);
         }
         environment
+    }
+
+    /// Each binder bound by its identity.
+    pub(super) fn by_id(arguments: impl IntoIterator<Item = (ParamId, &'a TyArg)>) -> Self {
+        Self {
+            bound: arguments.into_iter().collect(),
+        }
     }
 
     pub(super) fn bind_declared(&mut self, decls: &[ParamDecl], arguments: &'a [TyArg]) {

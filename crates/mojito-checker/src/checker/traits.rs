@@ -543,7 +543,12 @@ impl Checker {
                 conformance_conditions: declaration
                     .conformance_conditions
                     .iter()
-                    .cloned()
+                    .map(|(trait_name, condition)| {
+                        (
+                            trait_name.clone(),
+                            HeaderCondition::Pending(condition.clone()),
+                        )
+                    })
                     .collect(),
                 fields: Vec::new(),
                 declared_field_names: declaration
@@ -564,7 +569,60 @@ impl Checker {
                 materializes_to: None,
             },
         );
+        self.compile_header_conditions(name, false)
+    }
+
+    /// Compile each pending conditional-conformance condition of struct
+    /// `name` with the header's binders open, as upstream resolves a
+    /// declaration's conformance list with its signature. A condition that
+    /// names a trait or alias not yet registered stays pending, unless
+    /// `report` holds, which reports it.
+    pub(super) fn compile_header_conditions(
+        &mut self,
+        name: &str,
+        report: bool,
+    ) -> Result<(), TypeError> {
+        let Some(info) = self.structs.get(name) else {
+            return Ok(());
+        };
+        let pending: Vec<(String, Expr)> = info
+            .conformance_conditions
+            .iter()
+            .filter_map(|(trait_name, condition)| match condition {
+                HeaderCondition::Pending(condition) => {
+                    Some((trait_name.clone(), condition.clone()))
+                }
+                HeaderCondition::Compiled(_) => None,
+            })
+            .collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let decls = info.decls.clone();
+        for (trait_name, condition) in pending {
+            match self.in_param_scope(&decls, |this| this.compile_condition(&decls, &condition)) {
+                Ok(compiled) => {
+                    if let Some(info) = self.structs.get_mut(name) {
+                        info.conformance_conditions
+                            .insert(trait_name, HeaderCondition::Compiled(compiled));
+                    }
+                }
+                Err(error) if report => return Err(error),
+                Err(_) => {}
+            }
+        }
         Ok(())
+    }
+
+    /// [`Self::compile_header_conditions`] over every struct `stmts`
+    /// declares, once the traits or aliases a pending condition names may
+    /// have registered.
+    pub(super) fn compile_pending_header_conditions(&mut self, stmts: &[Stmt]) {
+        for declaration in stmts.iter().filter_map(struct_declaration) {
+            // A condition that still fails is reported when its struct's
+            // types resolve.
+            let _ = self.compile_header_conditions(declaration.name, false);
+        }
     }
 
     /// Add to each shell registered without its deferred defaults
@@ -678,8 +736,9 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
+        self.compile_header_conditions(name, true)?;
         if !declaration.where_clauses.is_empty() {
-            let has_constraint_binder = self
+            let decls = self
                 .structs
                 .get(name)
                 .ok_or_else(|| {
@@ -688,10 +747,11 @@ impl Checker {
                     ))
                 })?
                 .decls
-                .last()
-                .is_some();
+                .clone();
+            let has_constraint_binder = decls.last().is_some();
             for condition in declaration.where_clauses {
-                let constraint = self.compile_where_clause(condition)?;
+                let constraint =
+                    self.in_param_scope(&decls, |this| this.compile_condition(&decls, condition))?;
                 if !has_constraint_binder && declaration.type_params.is_empty() {
                     self.validate_declaration_constraint(name, &constraint)?;
                 }
@@ -799,11 +859,17 @@ impl Checker {
             associated_value_types,
             associated_constraints,
             parameterized_associated,
-        ) = self.check_struct_associated(
-            declaration.associated,
-            declaration.conforms,
-            declaration.conformance_conditions,
-        )?;
+        ) = {
+            let conditions = self.structs.get(name).map_or_else(Vec::new, |info| {
+                info.conformance_conditions
+                    .iter()
+                    .filter_map(|(trait_name, condition)| {
+                        Some((trait_name.clone(), condition.compiled().ok()?.clone()))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            self.check_struct_associated(declaration.associated, declaration.conforms, &conditions)?
+        };
         if let Some(info) = self.structs.get_mut(name) {
             info.associated.clone_from(&associated_values);
             info.associated_value_types = associated_value_types;
@@ -1346,8 +1412,8 @@ impl Checker {
         let declared_condition = self
             .structs
             .get(name)
-            .and_then(|info| Some((info, info.conformance_conditions.get(tr)?)))
-            .map(|(info, condition)| self.compile_condition(&info.decls, condition))
+            .and_then(|info| info.conformance_conditions.get(tr))
+            .map(|condition| condition.compiled().cloned())
             .transpose()?;
         // The focused checker can recognize protocol bounds without linking the
         // implicit prelude, but a registered nominal trait is authoritative.
@@ -1368,7 +1434,7 @@ impl Checker {
         let conformance_assumption = struct_info
             .conformance_conditions
             .get(tr)
-            .map(|condition| self.compile_condition(&struct_info.decls, condition))
+            .map(|condition| condition.compiled().cloned())
             .transpose()?;
         let mut witnesses = Vec::new();
         for (mname, req_sigs) in &trait_info.methods {
@@ -1734,11 +1800,11 @@ impl Checker {
                     let Some(condition) = info.conformance_conditions.get(declared) else {
                         return true;
                     };
-                    let Ok(condition) = self.compile_condition(&info.decls, condition) else {
+                    let Ok(condition) = condition.compiled() else {
                         return false;
                     };
                     self.eval_constraint_under_assumption(
-                        &condition,
+                        condition,
                         &environment,
                         assumption,
                         &mut HashSet::new(),
@@ -1886,17 +1952,12 @@ impl Checker {
                 let Some(condition) = info.conformance_conditions.get(declared) else {
                     return true;
                 };
-                let Ok(condition) = self.compile_condition(&info.decls, condition) else {
+                let Ok(condition) = condition.compiled() else {
                     return false;
                 };
                 let args = positional_pack_arguments(&info.decls, args);
                 let environment = ConstraintEnvironment::declared(&info.decls, &args);
-                self.eval_constraint_under_assumption(
-                    &condition,
-                    &environment,
-                    assumption,
-                    visiting,
-                )
+                self.eval_constraint_under_assumption(condition, &environment, assumption, visiting)
             })
         });
         visiting.remove(&key);
@@ -2257,7 +2318,7 @@ impl Checker {
             .collect();
         let declared = own
             .iter()
-            .map(|(name, info)| (name.clone(), self.declared_conformances(info)))
+            .map(|(name, info)| (name.clone(), declared_conformances(info)))
             .collect();
         let associated = own
             .iter()
@@ -2423,28 +2484,6 @@ impl Checker {
             .collect()
     }
 
-    /// The struct's declared conformances, in declaration order, each with
-    /// its compiled condition (`Bool(true)` when it states none). One whose
-    /// condition does not compile proves nothing, so it is left out.
-    fn declared_conformances(
-        &self,
-        info: &StructInfo,
-    ) -> Vec<mojito_checked::checked::StructConformance> {
-        info.conforms
-            .iter()
-            .filter_map(|declared| {
-                let condition = match info.conformance_conditions.get(declared) {
-                    Some(condition) => self.compile_condition(&info.decls, condition).ok()?,
-                    None => GenericConstraint::Bool(true),
-                };
-                Some(mojito_checked::checked::StructConformance {
-                    trait_name: declared.clone(),
-                    conditions: vec![condition],
-                })
-            })
-            .collect()
-    }
-
     /// The conditions under which an instance of the struct `name` conforms
     /// to `required`, each over the struct's own binders: any one holding
     /// proves it, and none means no instance conforms. `required` may be an
@@ -2481,7 +2520,7 @@ impl Checker {
                 .iter()
                 .filter(|declared| accepts(declared))
                 .filter_map(|declared| match info.conformance_conditions.get(declared) {
-                    Some(condition) => self.compile_condition(&info.decls, condition).ok(),
+                    Some(condition) => condition.compiled().ok().cloned(),
                     None => Some(GenericConstraint::Bool(true)),
                 })
                 .collect()
@@ -2663,9 +2702,9 @@ impl Checker {
         &self,
         info: &StructInfo,
         args: &[TyArg],
-        expr: &Expr,
+        condition: &HeaderCondition,
     ) -> Conformance {
-        let Ok(condition) = self.compile_condition(&info.decls, expr) else {
+        let Ok(condition) = condition.compiled() else {
             return Conformance::Refuted;
         };
         // A sole variadic parameter binds every positional argument as one
@@ -2678,7 +2717,7 @@ impl Checker {
             ),
             _ => ConstraintEnvironment::declared(&info.decls, args),
         };
-        match self.constraint_verdict(&condition, &environment) {
+        match self.constraint_verdict(condition, &environment) {
             Ok(ConstraintVerdict::Proven) => Conformance::Proven,
             Ok(ConstraintVerdict::Residual(proposition))
                 if self.assumptions_prove(&proposition) =>
@@ -2757,15 +2796,7 @@ impl Checker {
             {
                 continue;
             }
-            if let ExprKind::TupleLit(elements) = &condition.kind
-                && let [
-                    _,
-                    Expr {
-                        kind: ExprKind::Str(message),
-                        ..
-                    },
-                ] = elements.as_slice()
-            {
+            if let Ok(GenericConstraint::WithMessage(_, message)) = condition.compiled() {
                 return Some(message.clone());
             }
         }
@@ -4163,4 +4194,23 @@ fn user_lifecycle_defeats(info: &StructInfo, kind: mojito_types::types::TrivialL
         // trivial, as the pin reads `MaybeUninit`'s.
         TrivialLifecycle::Deinitable => info.methods.contains_key("__deinit__"),
     }
+}
+
+/// The struct's declared conformances, in declaration order, each with its
+/// compiled condition (`Bool(true)` when it states none). One whose condition
+/// did not compile proves nothing, so it is left out.
+fn declared_conformances(info: &StructInfo) -> Vec<mojito_checked::checked::StructConformance> {
+    info.conforms
+        .iter()
+        .filter_map(|declared| {
+            let condition = match info.conformance_conditions.get(declared) {
+                Some(condition) => condition.compiled().ok()?.clone(),
+                None => GenericConstraint::Bool(true),
+            };
+            Some(mojito_checked::checked::StructConformance {
+                trait_name: declared.clone(),
+                conditions: vec![condition],
+            })
+        })
+        .collect()
 }

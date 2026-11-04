@@ -1098,8 +1098,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   keyed on a `rebind`.
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` compiles a clause,
-  `bind_constraint`/`bind_declared_constraints`/`compile_condition` bind its
-  operands to their binders (`GenericConstraint::bind`), and
+  binding an operand that names a binder of an open scope;
+  `in_param_scope` opens a declaration's binders, under which a struct's
+  header conditions (`compile_condition`, once at its shell, stored
+  compiled on `StructInfo` as a `HeaderCondition`, a condition naming a
+  later trait or alias retried by `compile_pending_header_conditions`)
+  and a predicate alias's body compile;
+  `bind_constraint`/`bind_declared_constraints` bind what is left to their
+  binders (`GenericConstraint::bind`), and
   `ConstraintEnvironment` is the identity-keyed argument environment every
   verdict reads. Its evaluators resolve names and delegate operator
   semantics to `param_expr::fold`; `compile_dependent_ct_expr` is the one

@@ -216,6 +216,9 @@ impl Checker {
         }
         // A trait naming a later one (`HookFor[...]: PluginHooks` above it).
         self.settle_deferred_traits(stmts, &mut deferred_traits);
+        // A struct header's condition naming a trait this module declares
+        // compiles once the trait has registered.
+        self.compile_pending_header_conditions(stmts);
         // Generic comptime aliases register before struct types and method
         // signatures: a field annotation or a synthesized conditional-method
         // availability (e.g. `copy()` gated on a `Copyable where MyPred[T]`
@@ -241,6 +244,7 @@ impl Checker {
         // StaticString`).
         self.classify_applicable_signatures(stmts);
         self.settle_deferred_traits(stmts, &mut deferred_traits);
+        self.compile_pending_header_conditions(stmts);
         self.resolve_materialization_targets(stmts, true)?;
         drop(phase);
         let phase = timing::span("declarations.types");
@@ -4151,8 +4155,14 @@ impl Checker {
             _ => None,
         };
         let mut decls = self.classify_params(name, type_params)?;
-        for condition in where_clauses {
-            let constraint = self.compile_where_clause(condition)?.bind(&[&decls]);
+        let compiled = self.in_param_scope(&decls, |this| {
+            where_clauses
+                .iter()
+                .map(|condition| this.compile_where_clause(condition))
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        for constraint in compiled {
+            let constraint = constraint.bind(&[&decls]);
             let Some(last) = decls.last_mut() else {
                 return Err(TypeError::Unsupported(
                     "a where clause requires compile-time parameters".to_string(),

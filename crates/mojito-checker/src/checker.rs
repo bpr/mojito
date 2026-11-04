@@ -2521,8 +2521,10 @@ struct StructInfo {
     /// The witness table of each declared conformance, verified at
     /// definition; see [`mojito_checked::declaration::StructDeclaration::witness_tables`].
     witness_tables: Vec<mojito_checked::declaration::WitnessTable>,
+    /// The condition of each conditional conformance, compiled once with
+    /// the header's binders open.
     #[serde(serialize_with = "interface::sorted")]
-    conformance_conditions: HashMap<String, Expr>,
+    conformance_conditions: HashMap<String, HeaderCondition>,
     /// Declared fields, in order (drives the fieldwise constructor).
     fields: Vec<(String, Ty)>,
     /// The declared field names, available from shell registration on (the
@@ -3308,6 +3310,31 @@ struct CallableOriginSignature {
     view_return: Vec<ViewReturnOrigin>,
     /// The rejection of a use of an `@unavailable` declaration.
     unavailable: Option<String>,
+}
+
+/// A struct header's conditional-conformance condition (`Copyable where
+/// conforms_to(T, Copyable)`), compiled with the header's binders in scope.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+enum HeaderCondition {
+    Compiled(GenericConstraint),
+    /// A condition naming a trait or alias the module has not registered
+    /// when the shell is, compiled once the module's traits and aliases
+    /// are. A checked declaration holds none.
+    Pending(Expr),
+}
+
+impl HeaderCondition {
+    /// The compiled condition; a pending one has no verdict yet.
+    fn compiled(&self) -> Result<&GenericConstraint, TypeError> {
+        match self {
+            Self::Compiled(constraint) => Ok(constraint),
+            Self::Pending(_) => Err(TypeError::Unsupported(
+                "a conformance condition read before the traits and aliases it names are \
+                 declared"
+                    .to_string(),
+            )),
+        }
+    }
 }
 
 /// The source-level pieces of a struct declaration passed through checking.

@@ -1071,6 +1071,10 @@ A declaration's residue no longer has an `Elaborated` table: a module
 constant is held once, as its declaration's check rows and its lowered
 integer value, so the package format moves to `mojito-package 180`.
 
+A struct declaration's residue holds each conditional-conformance
+condition compiled, over the struct's own binders, rather than as its
+source expression, so the package format moves to `mojito-package 181`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

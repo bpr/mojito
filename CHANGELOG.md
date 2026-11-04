@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct header's conditions and a predicate alias's body compile with
+  their binders in scope (R1474): a header may constrain a pack (`struct
+  P[*Ts: Movable] where Ts.length == 2`, `where
+  Ts.all_conforms_to[Copyable]()`), and a module constant in a `where`
+  clause or alias body is its value rather than a parameter of its name
+  (`where n == N`). A header's conditional-conformance conditions compile
+  once at its shell and are stored compiled (`mojito-package 181`).
 - A package's declaration residue no longer keeps an `Elaborated` table
   (R1480): a module constant is held once, as its declaration's check rows
   and lowered integer value, as upstream's package holds it, and the

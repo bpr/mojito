@@ -3230,6 +3230,16 @@ per trailing `where` clause, the first failing clause reports its own message,
 and truth-only operations (implication, inherited-requirement merging) fold a
 clause list into one conjunction without erasing the stored per-clause
 messages. Per-trait conditional-conformance conditions stay single-clause.
+A struct header's conditions and a predicate alias's body compile with the
+declaration's own binders open (`Checker::in_param_scope`), so an operand
+naming a binder is bound to it and a module constant is its value, as
+upstream emits them as parameter expressions in the declaration's scope. A
+header's conditional-conformance conditions compile once, at its shell, and
+`StructInfo` stores them compiled; every conformance query reads the stored
+constraint rather than recompiling the syntax in the caller's scope. A
+condition naming a trait or alias the module declares later stays pending
+until the traits and aliases register, and is reported, if it still fails,
+when the struct's types resolve.
 
 Evaluation is three-valued. `Checker::constraint_verdict` lowers a constraint
 under an environment to a `Bool` parameter expression and classifies it as
