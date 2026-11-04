@@ -1111,20 +1111,11 @@ impl Checker {
             }
             _ => {}
         }
-        let constraint = self
-            .compile_generic_constraint(cond)
-            .and_then(|constraint| {
-                self.constraint_operands_resolve(&constraint)
-                    .map(|()| constraint)
-            });
-        match constraint {
-            // A local `comptime` binding the elaborator evaluates (`comptime
-            // e = L[1]`) is no parameter: the condition runs with it. A
-            // runtime local compiles to a parameter no binder declares.
-            Ok(constraint)
-                if self.names_evaluated_binding(&constraint)
-                    || self.names_unbound_parameter(&constraint) =>
-            {
+        match self.compile_generic_constraint(cond) {
+            // A name the builder reads as no parameter (a runtime local, or
+            // a local `comptime` binding the elaborator evaluates, `comptime
+            // e = L[1]`) makes the leaf one the elaborator runs.
+            Err(TypeError::NotComptime(_)) => {
                 self.expect_evaluated_bool(cond, test)?;
                 self.evaluated_condition(cond, test).map(Some)
             }
@@ -5406,66 +5397,6 @@ impl Checker {
         let ty = self.infer(&construction)?;
         self.record_spelled_construction(expression, construction, &ty);
         Ok(ty)
-    }
-
-    fn constraint_operands_resolve(&self, constraint: &GenericConstraint) -> Result<(), TypeError> {
-        Self::each_constraint_parameter(constraint, &|name| self.comptime_name_resolves(name))
-    }
-
-    /// Whether a compiled condition names, as a parameter, a local
-    /// `comptime` binding of the executable check that denotes no parameter
-    /// expression.
-    fn names_evaluated_binding(&self, constraint: &GenericConstraint) -> bool {
-        Self::each_constraint_parameter(constraint, &|name| {
-            let evaluated = self
-                .lookup_owner(name)
-                .is_some_and(|owner| self.is_comptime_binding_owner(owner))
-                && !self
-                    .local_comptime_parameters
-                    .iter()
-                    .any(|scope| scope.contains_key(name))
-                && !self.installs(interface::Table::ComptimeParameters, name);
-            if evaluated {
-                Err(TypeError::NotComptime(name.to_string()))
-            } else {
-                Ok(())
-            }
-        })
-        .is_err()
-    }
-
-    /// Whether a compiled condition names, as a parameter, a name no binder
-    /// in scope declares once its operands are bound.
-    fn names_unbound_parameter(&self, constraint: &GenericConstraint) -> bool {
-        let bound = |reference: &ParamRef| {
-            if reference.is_unbound() {
-                Err(())
-            } else {
-                Ok(reference.clone())
-            }
-        };
-        self.bind_constraint(constraint, &[])
-            .try_map(&|operand| match operand {
-                ConstraintOperand::Param(reference) => bound(reference).map(|_| operand.clone()),
-                _ => Ok(operand.clone()),
-            })
-            .is_err()
-    }
-
-    /// Visit the name of every `Param` operand of a compiled condition,
-    /// stopping at the first one `visit` rejects.
-    fn each_constraint_parameter(
-        constraint: &GenericConstraint,
-        visit: &dyn Fn(&str) -> Result<(), TypeError>,
-    ) -> Result<(), TypeError> {
-        constraint
-            .try_map(&|operand| match operand {
-                ConstraintOperand::Param(param) => visit(&param.name).map(|()| operand.clone()),
-                // An arithmetic operand resolved its names when it was
-                // compiled.
-                _ => Ok(operand.clone()),
-            })
-            .map(|_| ())
     }
 
     fn comptime_name_resolves(&self, name: &str) -> Result<(), TypeError> {

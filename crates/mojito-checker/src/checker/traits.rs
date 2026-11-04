@@ -198,34 +198,39 @@ impl Checker {
             }
         }
         for member in comptime_members {
-            let requirement = match self.ct_member_req_from_anno(&member.params, &member.ty)? {
-                CtMemberReq::Value(result) if !member.params.is_empty() => {
-                    self.generator_requirement(name, member, result)?
-                }
-                requirement => requirement,
-            };
-            if !member.where_clauses.is_empty() {
-                let constraints = member
-                    .where_clauses
-                    .iter()
-                    .map(|condition| self.compile_where_clause(condition))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if let Some(previous) =
-                    ct_constraints.insert(member.name.clone(), constraints.clone())
-                {
-                    // Implication compares whole declarations, so fold each
-                    // clause list to one conjunction; the stored list keeps
-                    // per-clause messages.
-                    let previous = fold_constraint_conjunction(&previous);
-                    let declared = fold_constraint_conjunction(&constraints);
-                    if !self.constraint_implies(&previous, &declared)
-                        && !self.constraint_implies(&declared, &previous)
-                    {
-                        return Err(TypeError::Unsupported(format!(
-                            "conflicting inherited constraints on associated member '{}'",
-                            member.name
-                        )));
+            let (requirement, constraints) =
+                match self.ct_member_req_from_anno(&member.params, &member.ty)? {
+                    CtMemberReq::Value(result) if !member.params.is_empty() => {
+                        self.generator_requirement(name, member, result)?
                     }
+                    requirement => {
+                        let owner = requirement_owner(name, &member.name);
+                        let decls = if member.params.is_empty() {
+                            Vec::new()
+                        } else {
+                            self.classify_params(&owner, &member.params)?
+                        };
+                        let types = type_scope(&decls);
+                        let clauses = self.member_clauses(&decls, types, &member.where_clauses)?;
+                        (requirement, clauses)
+                    }
+                };
+            if !constraints.is_empty()
+                && let Some(previous) =
+                    ct_constraints.insert(member.name.clone(), constraints.clone())
+            {
+                // Implication compares whole declarations, so fold each
+                // clause list to one conjunction; the stored list keeps
+                // per-clause messages.
+                let previous = fold_constraint_conjunction(&previous);
+                let declared = fold_constraint_conjunction(&constraints);
+                if !self.constraint_implies(&previous, &declared)
+                    && !self.constraint_implies(&declared, &previous)
+                {
+                    return Err(TypeError::Unsupported(format!(
+                        "conflicting inherited constraints on associated member '{}'",
+                        member.name
+                    )));
                 }
             }
             if let Some(existing) = ct_members.get_mut(&member.name) {
@@ -1502,10 +1507,29 @@ impl Checker {
                         .map(Vec::as_slice)
                 })
                 .unwrap_or(&[]);
+            // A requirement's clause is stated over its own binders (those
+            // of the trait declaring it); the witness's are over the
+            // member's, slot by slot.
+            let witness_decls = struct_info.parameterized_associated.get(member).map(
+                |definition| match &definition.template {
+                    MemberTemplate::Value { decls, .. } | MemberTemplate::Type { decls, .. } => {
+                        decls.as_slice()
+                    }
+                },
+            );
             let requirement_premise = trait_info
                 .comptime_constraints
                 .get(member)
-                .map(|premises| fold_constraint_conjunction(premises));
+                .map(|premises| fold_constraint_conjunction(premises))
+                .map(|premise| match witness_decls {
+                    Some(decls) => self
+                        .requirement_binder_owners(tr, member)
+                        .iter()
+                        .fold(premise, |premise, owner| {
+                            rebind_slots(&premise, owner, decls)
+                        }),
+                    None => premise,
+                });
             for constraint in witness_constraints {
                 if matches!(constraint, GenericConstraint::Bool(true)) {
                     continue;
@@ -1522,7 +1546,7 @@ impl Checker {
                             format!("constraint failed: {message}")
                         }
                         _ => {
-                            format!("associated member constraint is not satisfied: {constraint:?}")
+                            format!("associated member constraint is not satisfied: {constraint}")
                         }
                     };
                     return Err(TypeError::BadCall {
@@ -2751,6 +2775,25 @@ impl Checker {
         refines_trait(&self.traits, candidate, required)
     }
 
+    /// The owner of the own binders of trait `trait_name`'s `comptime`
+    /// member `member`, and of each refined trait's, over which a
+    /// requirement it inherits is stated.
+    fn requirement_binder_owners(&self, trait_name: &str, member: &str) -> Vec<String> {
+        let mut owners = Vec::new();
+        let mut pending = vec![trait_name];
+        while let Some(name) = pending.pop() {
+            let owner = requirement_binder_owner(name, member);
+            if owners.contains(&owner) {
+                continue;
+            }
+            owners.push(owner);
+            if let Some(info) = self.traits.get(name) {
+                pending.extend(info.refines.iter().map(String::as_str));
+            }
+        }
+        owners
+    }
+
     /// Whether a type parameter bounded by `bound` constructs with no
     /// arguments (`HasherType()`): the bound is or refines `Defaultable`, or
     /// requires a nullary `__init__` of its own.
@@ -3800,7 +3843,7 @@ impl Checker {
         trait_name: &str,
         member: &TraitComptime,
         result: Ty,
-    ) -> Result<CtMemberReq, TypeError> {
+    ) -> Result<(CtMemberReq, Vec<GenericConstraint>), TypeError> {
         if member.params.iter().any(|parameter| {
             parameter.is_origin_mutability_binder(&member.params)
                 || matches!(
@@ -3812,30 +3855,18 @@ impl Checker {
                 "origin parameters on a parameterized comptime value".to_string(),
             ));
         }
-        let owner = format!("{}.{}", binder_owner(trait_name), member.name);
+        let owner = requirement_owner(trait_name, &member.name);
         let mut params = self.classify_params(&owner, &member.params)?;
         // The requirement's `where` clauses close its parameter list, as a
         // generic alias's do, so an application through a bound checks them.
         // They compile with its own binders open.
-        let compiled = self.in_param_scope(&params, |this| {
-            member
-                .where_clauses
-                .iter()
-                .map(|condition| {
-                    this.compile_where_clause(condition)
-                        .map(|constraint| constraint.bind(&[&params]))
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })?;
-        for constraint in compiled {
-            if let Some(
-                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. },
-            ) = params.last_mut()
-            {
-                constraints.push(constraint);
-            }
+        let compiled = self.member_clauses(&params, type_scope(&params), &member.where_clauses)?;
+        if let Some(ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. }) =
+            params.last_mut()
+        {
+            constraints.extend(compiled.iter().cloned());
         }
-        Ok(CtMemberReq::Generator { params, result })
+        Ok((CtMemberReq::Generator { params, result }, compiled))
     }
 
     fn parameter_default_shape(&self, default: &Expr, decls: &[ParamDecl]) -> bool {
@@ -4241,4 +4272,15 @@ fn declared_conformances(info: &StructInfo) -> Vec<mojito_checked::checked::Stru
             })
         })
         .collect()
+}
+
+/// The declaration name owning trait `trait_name`'s `comptime` member
+/// `member`'s parameters.
+fn requirement_owner(trait_name: &str, member: &str) -> String {
+    format!("{}.{member}", binder_owner(trait_name))
+}
+
+/// The owner of the binders [`requirement_owner`]'s declaration classifies.
+fn requirement_binder_owner(trait_name: &str, member: &str) -> String {
+    binder_owner(&requirement_owner(trait_name, member))
 }

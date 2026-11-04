@@ -2609,6 +2609,7 @@ impl Checker {
             &member.availability,
             struct_decls,
             struct_targs,
+            decls,
             member
                 .params
                 .iter()

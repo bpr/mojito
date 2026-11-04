@@ -308,15 +308,23 @@ impl Checker {
                 .as_ref()
                 .map(|annotation| self.ct_member_req_from_anno(&member.params, annotation))
                 .transpose()?;
+            // A parameterized member's own binders, classified once: its
+            // clause compiles with them open and bound to them, as upstream
+            // emits a member's clause in the member's own scope.
+            let own_decls = if member.params.is_empty() {
+                Vec::new()
+            } else {
+                self.classify_params(&member_owner, &member.params)?
+            };
             // The member's own clause and the conditions of the conditional
             // traits requiring it are assumed while its body resolves; every
             // application re-checks the clause (`availability`), and a
             // conditional conformance is verified to imply the member's clause.
-            let compiled = member
-                .where_clauses
-                .iter()
-                .map(|condition| self.compile_where_clause(condition))
-                .collect::<Result<Vec<_>, _>>()?;
+            let compiled = self.member_clauses(
+                &own_decls,
+                member_type_scope(&member_owner, &member.params),
+                &member.where_clauses,
+            )?;
             let mut facts = Vec::new();
             for constraint in &compiled {
                 self.guaranteed_facts(&self.bind_constraint(constraint, &[]), &mut facts);
@@ -356,7 +364,7 @@ impl Checker {
                 let as_type = match requirement {
                     Some(CtMemberReq::Value(_)) => Err(unsupported_assoc_body()),
                     _ => assoc_body_source_type(&member.value).and_then(|source_ty| {
-                        let decls = self.classify_params(&member_owner, &member.params)?;
+                        let decls = own_decls.clone();
                         let template = self.lower_parameterized_member(
                             &member_owner,
                             &decls,
@@ -393,7 +401,7 @@ impl Checker {
                                 type_error
                             });
                         }
-                        let decls = self.classify_params(&member_owner, &member.params)?;
+                        let decls = own_decls.clone();
                         match self.lower_parametric_value(&decls, &member.value, declared) {
                             Ok(body) => MemberTemplate::Value { decls, body },
                             Err(_) if spelled_as_type => return Err(type_error),
@@ -965,6 +973,7 @@ impl Checker {
                 &member.availability,
                 &info.decls,
                 arguments,
+                decls,
                 decls.iter().map(ParamDecl::name).zip(&bound),
             )?;
             self.reject_generator_dependence(object, field, &value)?;
@@ -1010,14 +1019,16 @@ impl Checker {
 
     /// Check a parameterized member's own `where` clauses at an
     /// application: the struct's arguments bound to its declarations, and
-    /// the member's, which are not classified in the clause, by spelling.
-    /// A clause over arguments still symbolic is checked per instance.
+    /// the member's to the member's own (`member_decls`), which its clauses
+    /// are bound to. A clause over arguments still symbolic is checked per
+    /// instance.
     pub(super) fn validate_member_availability<'a>(
         &self,
         label: &str,
         availability: &[GenericConstraint],
         struct_decls: &[ParamDecl],
         struct_arguments: &'a [TyArg],
+        member_decls: &[ParamDecl],
         member_arguments: impl IntoIterator<Item = (&'a str, &'a TyArg)>,
     ) -> Result<(), TypeError> {
         if availability.is_empty() {
@@ -1025,7 +1036,7 @@ impl Checker {
         }
         let mut environment = ConstraintEnvironment::declared(struct_decls, struct_arguments);
         for (name, argument) in member_arguments {
-            environment.bind_named(&[], name, argument);
+            environment.bind_named(&[member_decls], name, argument);
         }
         if environment.arguments().any(tyarg_is_symbolic) {
             return Ok(());
@@ -3885,14 +3896,10 @@ impl Checker {
         pack.as_decl_ref().cloned()
     }
 
-    /// Compile a declaration-level `where` clause, retaining the optional
-    /// diagnostic carried by current Mojo's `(condition, "message")` form.
-    /// Only the outer clause may carry a message; tuple expressions nested
-    /// inside a proposition remain unsupported constraint syntax.
-    /// `constraint` with each operand [`Self::compile_where_clause`] left
-    /// unbound bound to its binder: one of `own`, the declaration the clause
-    /// belongs to, else the innermost open scope's. One neither binds stays
-    /// unbound, identified by its spelling.
+    /// `constraint` with each pack receiver [`Self::compile_where_clause`]
+    /// left unbound bound to its binder: one of `own`, the declaration the
+    /// clause belongs to, else the innermost open scope's. One neither binds
+    /// stays unbound, identified by its spelling.
     pub(super) fn bind_constraint(
         &self,
         constraint: &GenericConstraint,
@@ -3951,10 +3958,43 @@ impl Checker {
         Ok(compiled.bind(&[decls]))
     }
 
-    /// Compile a `where` clause. An operand naming a binder of an open
-    /// scope is bound to it, and `Self.<name>` to the enclosing struct's;
-    /// a name no open scope declares is left unbound
-    /// ([`ParamRef::unbound`]) for [`Self::bind_constraint`].
+    /// The `where` clauses of a parameterized member, compiled with its
+    /// own binders `decls` open (`types` spelling its type binders, as its
+    /// body's scope does) and bound to them; an unparameterized member's
+    /// compile in the enclosing scope.
+    pub(super) fn member_clauses(
+        &mut self,
+        decls: &[ParamDecl],
+        types: HashMap<String, Ty>,
+        clauses: &[Expr],
+    ) -> Result<Vec<GenericConstraint>, TypeError> {
+        if decls.is_empty() {
+            return clauses
+                .iter()
+                .map(|condition| self.compile_where_clause(condition))
+                .collect();
+        }
+        self.push_param_scope_as(decls, types);
+        let compiled = clauses
+            .iter()
+            .map(|condition| {
+                self.compile_where_clause(condition)
+                    .map(|constraint| constraint.bind(&[decls]))
+            })
+            .collect();
+        self.tparams.pop();
+        compiled
+    }
+
+    /// Compile a declaration-level `where` clause, retaining the optional
+    /// diagnostic carried by current Mojo's `(condition, "message")` form.
+    /// Only the outer clause may carry a message; tuple expressions nested
+    /// inside a proposition remain unsupported constraint syntax. An operand
+    /// is what the one builder reads it as: a binder of an open scope its
+    /// reference, `Self.<name>` the enclosing struct's, and a name that is
+    /// no parameter (a runtime local, an unknown name) the builder's error.
+    /// Only a bare pack receiver is left unbound ([`ParamRef::unbound`]) for
+    /// [`Self::bind_constraint`].
     pub(super) fn compile_where_clause(&self, expr: &Expr) -> Result<GenericConstraint, TypeError> {
         let ExprKind::TupleLit(elements) = &expr.kind else {
             return self.compile_generic_constraint(expr);
@@ -4082,33 +4122,45 @@ impl Checker {
                         if matches!(&object.kind, ExprKind::Member { object: base, .. }
                             if matches!(&base.kind, ExprKind::Identifier(name) if name == "Self"))
                 );
-                let (param, pack) = match (pack_values_projection(&args[0]), &args[0].kind) {
-                    (Some(pack), _) if self_pack => (self.self_binder(pack), true),
+                // The subject is a binder in scope, else the type the one
+                // builder reads (a concrete type's conformance is a fact),
+                // else the builder's error: a runtime local, an unknown
+                // name, or a bare struct parameter.
+                let (subject, pack) = match (pack_values_projection(&args[0]), &args[0].kind) {
+                    (Some(pack), _) if self_pack => (Ok(self.self_binder(pack)), true),
                     (Some(pack), _) => (
-                        match self.binder_in_scope(pack) {
-                            Some(id) => ParamRef {
-                                id,
-                                name: pack.into(),
-                            },
-                            None => self.unbound_operand(pack)?,
-                        },
+                        Ok(ParamRef {
+                            id: self
+                                .binder_in_scope(pack)
+                                .ok_or_else(|| self.unresolved_head(pack))?,
+                            name: pack.into(),
+                        }),
                         true,
                     ),
-                    (None, ExprKind::Identifier(param)) => (
-                        match self.type_binder_in_scope(param) {
-                            Some(binder) => binder,
-                            None => self.unbound_operand(param)?,
-                        },
-                        false,
-                    ),
+                    (None, ExprKind::Identifier(param))
+                        if let Some(binder) = self.type_binder_in_scope(param) =>
+                    {
+                        (Ok(binder), false)
+                    }
                     (None, ExprKind::Member { object, field }) if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-                        (self.self_binder(field), false)
+                        (Ok(self.self_binder(field)), false)
                     }
-                    _ => {
-                        return Err(TypeError::Unsupported(
-                            "conforms_to requires a parameter name".to_string(),
-                        ));
-                    }
+                    _ => match self.comptime_type_operand(&args[0])? {
+                        Some(ty) => match ty.kind() {
+                            TyKind::Param { binder, .. } => (Ok(binder.clone()), false),
+                            _ => (Err(ty), false),
+                        },
+                        None => {
+                            return Err(self
+                                .compile_dependent_ct_expr(&args[0])
+                                .err()
+                                .unwrap_or_else(|| {
+                                    TypeError::Unsupported(
+                                        "conforms_to requires a parameter name".to_string(),
+                                    )
+                                }));
+                        }
+                    },
                 };
                 // A composition (`Deinitable & Movable`) is the conjunction
                 // of its traits' conformances.
@@ -4121,6 +4173,18 @@ impl Checker {
                     .into_iter()
                     .map(|trait_name| {
                         self.check_trait_name(trait_name)?;
+                        let param = match &subject {
+                            Ok(param) => param,
+                            Err(ty) => {
+                                return match self.conformance(ty, trait_name) {
+                                    Conformance::Proven => Ok(GenericConstraint::Bool(true)),
+                                    Conformance::Refuted => Ok(GenericConstraint::Bool(false)),
+                                    Conformance::Unknown => Err(TypeError::Unsupported(
+                                        "conforms_to requires a parameter name".to_string(),
+                                    )),
+                                };
+                            }
+                        };
                         let operand = ConstraintOperand::Param(param.clone());
                         let trait_name = trait_name.to_string();
                         Ok(if pack {
@@ -4755,26 +4819,22 @@ impl Checker {
     }
 
     /// A single argument of a comptime predicate (`IsTrivially*` or a
-    /// predicate-alias application): a bare name is a generic parameter
-    /// (as `conforms_to` compiles its subject) unless it names a
-    /// scalar; any other annotation resolves as a concrete type.
+    /// predicate-alias application): a bare name of a type binder in scope
+    /// is that binder (as `conforms_to` compiles its subject); any other
+    /// annotation resolves as a concrete type.
     fn predicate_operand(
         &self,
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<(ConstraintOperand, Option<TyArg>), TypeError> {
         let operand = match argument {
             mojito_ast::ast::ParamArg::Value(expr) => self.constraint_operand(expr)?,
-            mojito_ast::ast::ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
-                if let Some(ty) = scalar_type_name(name) {
-                    ConstraintOperand::Type(ty)
-                } else {
-                    let attribute = self.lookup_tparam(name).map(TyArg::Ty);
-                    let binder = match self.type_binder_in_scope(name) {
-                        Some(binder) => binder,
-                        None => self.unbound_operand(name)?,
-                    };
-                    return Ok((ConstraintOperand::Param(binder), attribute));
-                }
+            mojito_ast::ast::ParamArg::Type(SourceType::Named(name, args))
+                if args.is_empty()
+                    && scalar_type_name(name).is_none()
+                    && let Some(binder) = self.type_binder_in_scope(name) =>
+            {
+                let attribute = self.lookup_tparam(name).map(TyArg::Ty);
+                return Ok((ConstraintOperand::Param(binder), attribute));
             }
             // `Self.T` names the struct's binder, as in `conforms_to`.
             mojito_ast::ast::ParamArg::Type(ty @ SourceType::SelfParam(name)) => {
@@ -4864,19 +4924,19 @@ impl Checker {
                     None => ConstraintOperand::Expr(expression),
                 }
             }
-            // A module constant is its value, as the builder reads it.
-            ExprKind::Identifier(name)
-                if let Ok(expression) = self.compile_dependent_ct_expr(expr)
-                    && expression
-                        .as_decl_ref()
-                        .is_none_or(|reference| &*reference.name != name) =>
-            {
+            // Any other name is what the builder reads it as: a module
+            // constant its value, a binder its reference; a runtime local,
+            // an unknown name, or a bare struct parameter its error.
+            ExprKind::Identifier(_) => {
+                let expression = self.compile_dependent_ct_expr(expr)?;
                 match expression.as_constant() {
                     Some(value) => ConstraintOperand::Value(value.clone()),
-                    None => ConstraintOperand::Expr(expression),
+                    None => expression.as_decl_ref().map_or_else(
+                        || ConstraintOperand::Expr(expression.clone()),
+                        |reference| ConstraintOperand::Param(reference.clone()),
+                    ),
                 }
             }
-            ExprKind::Identifier(name) => ConstraintOperand::Param(self.unbound_operand(name)?),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 ConstraintOperand::Param(self.self_binder(field))
             }
@@ -5475,17 +5535,6 @@ impl Checker {
             TyKind::Param { binder, .. } => Some(binder.clone()),
             _ => None,
         }
-    }
-
-    /// The operand a bare name no open scope binds compiles to: left
-    /// unbound for [`Self::bind_constraint`], unless it names the enclosing
-    /// struct's own parameter, which a member spells `Self.<name>`, as
-    /// upstream rejects the bare spelling.
-    fn unbound_operand(&self, name: &str) -> Result<ParamRef, TypeError> {
-        if self.is_enclosing_struct_param(name) && self.binder_in_scope(name).is_none() {
-            return Err(TypeError::UnqualifiedStructParam(name.to_string()));
-        }
-        Ok(ParamRef::unbound(name))
     }
 
     /// The enclosing struct's binder `Self.<name>` names.

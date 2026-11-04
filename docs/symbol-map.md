@@ -1104,9 +1104,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   compiled on `StructInfo` as a `HeaderCondition`, a condition naming a
   later trait or alias retried by `compile_pending_header_conditions`)
   and a predicate alias's body compile;
-  `bind_constraint`/`bind_declared_constraints` bind what is left to their
-  binders (`GenericConstraint::bind`), a bare enclosing-struct parameter
-  rejected first (`unbound_operand`, `UnqualifiedStructParam`);
+  `member_clauses` compiles a parameterized `comptime` member's clauses
+  with its own binders open (`rebind_slots`, `checker/traits_support.rs`,
+  restating a trait requirement's over a witness's);
+  `bind_constraint`/`bind_declared_constraints` bind a bare pack receiver
+  left unbound to its binder (`GenericConstraint::bind`), and a bare
+  enclosing-struct parameter is the builder's `UnqualifiedStructParam`;
   `Checker::conformance_availability` (`checker/traits.rs`) reads a stored
   header condition as the availability of a default wrapper
   (`DefaultWrapper::gate`) or a synthesized member
@@ -1139,9 +1142,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and `Type::TypeOf` reach, typing its operand inside a probe; a
   compile-time struct value's subscript is its `__getitem_param__`
   (`build_ct_rest`, through `compile_time_struct_value`), `comptime_type_operand` (`comptime_validation.rs`) and
-  `constraint_operand` adapt it (the latter keeping a bare-name
-  `ParamRef::unbound` fallback for conditions compiled without their
-  binders, R1474), and `infer_type_comparison` (hooked at the top of
+  `constraint_operand` adapt it (a bare name is the builder's reading or
+  its error, which `check_ct_bool` routes to an evaluated leaf when it is
+  `NotComptime`), and `infer_type_comparison` (hooked at the top of
   `inference.rs:infer_impl`) types a type comparison read as a value as a
   `Bool` and records its parameter expression as
   `SemanticAdjustment::ParamValue`, which MIR's `call_family` lowers as
@@ -2032,7 +2035,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`lower_comptime_binding`, over the statement's
   `CheckedStmtOp::Comptime::denotes`; a runtime read of a collection is
   rejected by `reject_display_crossing`), a condition naming an evaluated
-  binding is left uncompiled (`names_evaluated_binding`), and a runtime
+  binding is the builder's `NotComptime`, evaluated as a leaf
+  (`check_ct_bool`), and a runtime
   read is rejected (`reject_display_crossing`, from `inference.rs`). Every
   iterable — a collection display, a display binding, a module constant, an
   application, `range(...)`, a value pack, a reflected field-name list — is

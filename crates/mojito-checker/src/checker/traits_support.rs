@@ -58,6 +58,40 @@ pub(super) fn merge_associated_requirement(
     }
 }
 
+/// `constraint` over the binders `from_owner` owns restated over `to`'s,
+/// slot by slot, as a conformer's member restates a requirement's clause
+/// over its own parameters, names aside.
+pub(super) fn rebind_slots(
+    constraint: &GenericConstraint,
+    from_owner: &str,
+    to: &[ParamDecl],
+) -> GenericConstraint {
+    let context = ParamContext::detached();
+    let mut renamed = mojito_types::param_expr::ParamBindings::new();
+    for (slot, target) in to.iter().enumerate() {
+        renamed.bind(
+            ParamId::new(from_owner, slot),
+            context.decl_ref(target.id().clone(), target.name(), target.binder_meta()),
+        );
+    }
+    let binder = |reference: &ParamRef| match to.get(reference.id.slot) {
+        Some(target) if *reference.id.owner == *from_owner => ParamRef {
+            id: target.id().clone(),
+            name: target.name().into(),
+        },
+        _ => reference.clone(),
+    };
+    let operand = |operand: &ConstraintOperand| match operand {
+        ConstraintOperand::Expr(expr) => ConstraintOperand::Expr(
+            context
+                .replace(expr, &renamed)
+                .unwrap_or_else(|_| expr.clone()),
+        ),
+        other => other.clone(),
+    };
+    constraint.map(&binder, &operand)
+}
+
 /// Whether two compile-time arguments are equal: values as the one folder
 /// compares them, and a value it does not compare (a tuple, a frozen struct)
 /// structurally.

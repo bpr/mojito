@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A name in a `where` clause or a `comptime if`/`comptime assert`
+  condition is what the one builder reads it as (R1896): a runtime local
+  is an evaluated leaf, and a name that declares nothing (`where m > 0`,
+  `conforms_to(Undeclared, Copyable)`, `conforms_to(Us.values, ...)`) is
+  rejected at the declaration, as the pin rejects it, rather than failing
+  every call. A clause's `conforms_to` over a concrete type is decided
+  (`where conforms_to(Int, Copyable)` now holds). A parameterized
+  `comptime` member's clause, struct witness or trait requirement,
+  compiles with its own binders open (R1897), and a conformance check
+  restates the requirement's clause over the witness's parameters.
 - A method's `where` clause compiles once, with its own binders in scope,
   and reaches its struct's parameters only as `Self.T` (R1895): a bare
   struct parameter in a method's or associated member's clause is the

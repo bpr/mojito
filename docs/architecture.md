@@ -1735,10 +1735,14 @@ second expression tree.
   contract's binders are `$contract` slots, so contracts differing only in
   spelling are one identity and a trait witness may spell its binder as it
   likes. A `where` operand and a callable default's parameter are `ParamRef`s
-  as well: `compile_where_clause` leaves an operand unbound
-  (`ParamRef::unbound`), `Checker::bind_constraint` binds it at the
-  declaration — its own binders, then the open scopes — and a clause is
-  judged under a `ConstraintEnvironment` keyed by `ParamId`. A member's
+  as well: `compile_where_clause` reads an operand through the one
+  builder, so a binder of an open scope is its reference and a name that
+  is no parameter (a runtime local, an unknown name) is the builder's
+  error at the declaration, as upstream's parameter emitter rejects it;
+  only a bare pack receiver is left unbound (`ParamRef::unbound`) for
+  `Checker::bind_constraint` to bind at the declaration — its own
+  binders, then the open scopes — and a clause is judged under a
+  `ConstraintEnvironment` keyed by `ParamId`. A member's
   clause reaches its struct's parameters only as `Self.X`: a bare one is
   upstream's `UnqualifiedStructParam`, never a late bind by spelling. A
   default's wrapper or a synthesized member (`copy`, `__eq__`, `__hash__`,
@@ -1750,9 +1754,11 @@ second expression tree.
   signature, and its body reads them from `MethodSig::availability`. A function's, method's, or trait requirement's clauses compile
   inside `in_signature_scope` after its arguments, as upstream's
   `Signatures.cpp` emits them, so a clause reads an argument (`where
-  x.dtype.is_floating_point()`) through its type. An operand no classified declaration binds (an origin's
-  mutability parameter, an associated member's own parameter) stays unbound
-  and is identified by its spelling. A deferred slot (`CtValue::Deferred`)
+  x.dtype.is_floating_point()`) through its type. A parameterized
+  `comptime` member's clause (a struct's witness or a trait's requirement)
+  compiles with the member's own binders open (`Checker::member_clauses`),
+  and a conformance check restates the requirement's clause over the
+  witness's binders slot by slot (`rebind_slots`). A deferred slot (`CtValue::Deferred`)
   carries the `ParamRef` of the binder whose slot it fills, taken from the
   declaration at each site the checker builds one, so the Tuple closedness
   check (`ClosingBinders`) counts it as bound only by that binder. The

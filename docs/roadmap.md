@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1899**.
+Next free ID: **R1901**.
 
 ## Ordered Work
 
@@ -274,33 +274,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1897 An associated member's own parameters in its `where`
-  clause bind by spelling**
-
-  `check_struct_associated` (`constraints.rs`) compiles an associated
-  member's clauses before classifying its parameters and stores them
-  unbound, and `validate_member_availability` binds them by name
-  (`decls.iter().map(ParamDecl::name).zip(&bound)`), where upstream emits
-  a member's clause with its own parameters in scope.
-  - The lever: classify the member's decls once, ahead of the type- and
-    value-template branches, compile its clauses in `in_param_scope`,
-    bind them to those decls, and have `validate_member_availability` and
-    `type_resolution.rs`'s `associated_constraints` check bind by id.
-  - Shape: a trait's `comptime` member clauses compile twice in
-    `register_trait` (`ct_constraints`, and again in
-    `generator_requirement`, which opens the binders). The
-    `ct_constraints` copy must stay unbound until this lands, since the
-    conformance check (`verify_conformance`) implies it against the
-    conformer's by-spelling availability; read `generator_requirement`'s
-    stored clauses instead once both sides bind by id.
-  - Probe: `comptime M[k: Int]: Int where k > Self.n = k` on
-    `struct W[n: Int]` prints `3` for `W[2].M[3]`.
-  - Probe: a trait `comptime M[k: Int]: Int where k > 0` witnessed by the
-    same member prints `2` for `S.M[2]`.
-  - Found while landing R1895 (2026-11-03).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1898 A compile-time application recompiles its callable's
   `where` clauses over slot binders**
 
@@ -320,28 +293,26 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1896 A `comptime if` or `comptime assert` condition tells a
-  runtime local from a parameter by an unbound name**
+- [ ] **R1899 A bare pack receiver in a condition is left unbound and
+  bound late by spelling**
 
-  `check_ct_bool` (`comptime_validation.rs`) compiles its condition
-  through `compile_generic_constraint` and detects a runtime local or an
-  evaluated binding as a `ParamRef::unbound` operand
-  (`names_unbound_parameter`, `names_evaluated_binding`), so
-  `constraint_operand`'s bare `Identifier` arm, the `conforms_to`
-  subject's and `predicate_operand`'s name fallbacks must stay, where
-  upstream's parameter emitter rejects a runtime name as no parameter.
-  - The lever: a name the builder cannot read is its error (`NotComptime`
-    or an unknown declaration), which the existing `Err` branch of
-    `check_ct_bool` already routes to `expect_evaluated_bool`; then delete
-    `names_unbound_parameter` and the three fallback arms, and
-    `bind_binder`/`bind_constraint` if nothing is left for them to bind.
-  - Probe: `comptime if` fixtures over module constants, value binders,
-    and runtime locals run as before.
-  - Done when `constraint_operand`'s bare `Identifier` arm is gone.
-  - Found while landing R1474 (2026-11-03).
-  - Depends on R1895.
+  `typelist_receiver`'s bare-pack arm and
+  `compile_declaration_proposition`'s `ConformsPack` (`constraints.rs`)
+  compile a pack name to `ParamRef::unbound`, which `bind_constraint`
+  (`bind_binder`) binds afterwards by spelling, where upstream's parameter
+  emitter reads the pack's binder when it emits the condition.
+  - The lever: bind at production, through `binder_in_scope` and the
+    declaration's own decls (`compile_condition`'s `decls`).
+  - Then delete `bind_binder`, `bind_constraint`, and its `own` path,
+    which no fixture takes.
+  - Every other operand of a clause or a `comptime if` condition is
+    already the one builder's reading (R1896).
+  - Probe: `assets/ok/abstract_dispatch_effect_free_conformers.mojo`, and
+    std's `Tuple.concat` / `Variant` conditions with
+    `MOJITO_STD_PACKAGE=0`.
+  - Found while landing R1896 (2026-11-03).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
-
 - [ ] **R1475 A `comptime if` condition is a `GenericConstraint`, not a
   `Bool` parameter expression**
 
@@ -7922,6 +7893,22 @@ retained on purpose and re-probed rather than fixed; they are listed in
     origin, new at the `a431ffa8af` pin (the previous pin rejected it).
   - Probe: `conformance/probes/autoparam_nested_hole_single_caller.mojo`.
   - Found at the 2026-11-01 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1900 A refining trait may restate its parent's parameterized
+  `comptime` requirement**
+
+  Mojito merges a refinement's `comptime M[j: Int]: Int` with its
+  parent's `comptime M[k: Int]: Int`, where the pin rejects it as "invalid
+  redefinition of 'M'", even when the two match in everything but names.
+  - `merge_associated_requirement` (`traits_support.rs`) accepts a
+    generator requirement whose signature matches the inherited one,
+    names aside.
+  - A restated parameterized type requirement with the same parameter
+    list is merged too (`comptime T[k: Int]: AnyType` in both).
+  - Ledger name: `conformance/probes/trait_refinement_restates_generator.mojo`.
+  - Found while landing R1896 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
