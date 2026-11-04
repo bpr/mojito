@@ -260,10 +260,12 @@ pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
 /// annotation. Retaining the complete checked `TyKind::Param` is important for
 /// callable bounds: a name-only/bounds-only scope would discard the signature
 /// needed to type `f(...)` inside `[F: def(...) -> ...]`.
+///
+/// A type pack's list binder is keyed by its spread spelling, `*Ts`.
 pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Ty> {
     decls
         .iter()
-        .filter_map(|decl| type_parameter(decl).map(|ty| (decl.name().to_string(), ty)))
+        .filter_map(|decl| type_parameter(decl).map(|ty| (decl.binder().name.to_string(), ty)))
         .collect()
 }
 
@@ -404,6 +406,7 @@ pub(super) fn param_error(error: mojito_types::param_expr::ParamError) -> TypeEr
 pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
+        .filter(|decl| !decl.is_pack_list())
         .filter_map(|decl| match decl {
             ParamDecl::Type {
                 name,
@@ -429,12 +432,12 @@ pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
         .collect()
 }
 
-/// The reference to the implicit list binder (`vs.values`) the value pack
-/// `decl` of `decls` declares, which an element, a length, or a forwarded
-/// list of the pack reads. `None` for any other binder.
+/// The reference to the implicit list binder (`vs.values`, `Ts.values`)
+/// the pack `decl` of `decls` declares, which an element, a length, or a
+/// forwarded list of the pack reads. `None` for any other binder.
 pub(super) fn pack_list_expr(decls: &[ParamDecl], decl: &ParamDecl) -> Option<ParamExpr> {
     let list = ParamDecl::pack_list(decls, decl)?;
-    Some(ParamContext::detached().decl_ref(list.id().clone(), list.name(), list.binder_meta()))
+    Some(list.list_reference(list.id()))
 }
 
 /// The value-parameter scope a declaration's own binders open: a callable
@@ -443,7 +446,7 @@ pub(super) fn pack_list_expr(decls: &[ParamDecl], decl: &ParamDecl) -> Option<Pa
 pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
-        .filter(|decl| !decl.is_pack_list())
+        .filter(|decl| !decl.is_pack_list() && !decl.is_type_pack())
         .filter_map(|decl| match decl {
             ParamDecl::Value { name, .. } if let Some(list) = pack_list_expr(decls, decl) => {
                 Some((name.trim_start_matches('*').to_string(), list))

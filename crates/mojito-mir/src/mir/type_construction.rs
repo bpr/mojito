@@ -13,9 +13,8 @@ use crate::mir::{
     Const, FuncRef, MirBlock, MirDeclarations, MirInstr, MirParamArg, MirPlace, Reg,
     instruction_regions_mut,
 };
-use mojito_types::ct::CtValue;
 use mojito_types::param_expr::ParamRef;
-use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
+use mojito_types::types::{Ty, TyArg, TyKind};
 use std::fmt;
 
 /// The types a construction's binder and pack element are bound to.
@@ -312,29 +311,12 @@ fn struct_arguments(ty: &Ty, declarations: &MirDeclarations) -> Vec<TyArg> {
     let TyKind::Struct(name, arguments) = ty.kind() else {
         return Vec::new();
     };
-    let lone_pack = declarations
+    declarations
         .structure(mojito_types::types::struct_template(name))
-        .is_some_and(|declaration| {
-            matches!(
-                declaration.param_decls.as_slice(),
-                [ParamDecl::Type { variadic: true, .. }]
-            )
-        });
-    let whole = matches!(arguments.as_slice(), [TyArg::Val(_)])
-        || matches!(arguments.as_slice(), [TyArg::Ty(pack)]
-            if matches!(pack.kind(), TyKind::RuntimePack(_)));
-    if !lone_pack || whole {
-        return arguments.clone();
-    }
-    vec![TyArg::Val(CtValue::Tuple(
-        arguments
-            .iter()
-            .filter_map(|argument| match argument {
-                TyArg::Ty(element) => Some(CtValue::Type(element.clone())),
-                TyArg::Origin(_) | TyArg::Val(_) => None,
-            })
-            .collect(),
-    ))]
+        .and_then(|declaration| {
+            mojito_types::types::lone_pack_arguments(&declaration.param_decls, arguments)
+        })
+        .unwrap_or_else(|| arguments.clone())
 }
 
 /// A call of the struct initializer `initializer` over the keyword

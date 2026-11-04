@@ -5082,12 +5082,14 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
         // a function lifted from a constructor (`$comptime$S.__init__$c0`)
         // constructs nothing.
         ParamKind::Apply { function, args, .. } => {
-            // A value pack's visible binder is its zero-sized
-            // `ParameterList`, which its list beside it spells.
-            let pack = crate::types::ParamDecl::parameter_list_value();
+            // A pack's visible binder is its zero-sized `ParameterList` or
+            // `TypeList`, which its list beside it spells.
             let (mut types, values): (Vec<_>, Vec<_>) = args
                 .iter()
-                .filter(|arg| arg.as_constant() != Some(&pack))
+                .filter(|arg| {
+                    !arg.as_constant()
+                        .is_some_and(crate::types::ParamDecl::is_pack_value)
+                })
                 .partition(|arg| matches!(arg.meta(), MetaTy::Type));
             if write_operator_application(f, function, &values)? {
                 return Ok(());

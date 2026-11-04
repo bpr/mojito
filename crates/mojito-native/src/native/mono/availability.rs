@@ -472,6 +472,9 @@ fn bind_struct_arguments(
         .filter(|argument| !matches!(argument, TyArg::Origin(_)))
         .cloned()
         .collect();
+    if let Some(declared) = mojito_types::types::lone_pack_arguments(decls, &arguments) {
+        return bind_ty_args(decls, &declared, bindings).ok();
+    }
     match decls.split_last() {
         Some((pack @ ParamDecl::Type { variadic: true, .. }, leading))
             if arguments.len() >= leading.len() =>

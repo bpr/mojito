@@ -199,10 +199,9 @@ use mojito_types::param_expr::{
 };
 use mojito_types::types::{
     GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
-    default_literal, erase_origins, is_scalar_simd, list_spread_argument, names_binder,
-    nominal_parts, pack_spread, pack_spread_argument, replace_argument_parameters,
-    replace_constraint_parameters, replace_parameters, replace_value_parameters, rewrite_ty,
-    scalar_simd_dtype, simd_storage,
+    default_literal, erase_origins, is_scalar_simd, names_binder, nominal_parts, pack_spread,
+    replace_argument_parameters, replace_constraint_parameters, replace_parameters,
+    replace_value_parameters, rewrite_ty, scalar_simd_dtype, simd_storage,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -1579,10 +1578,7 @@ impl<'c> Inliner<'_, 'c> {
                     && name == template
                     && arguments.is_empty()
                     && (self.is_member_of(template)
-                        || !matches!(
-                            decls.as_slice(),
-                            [ParamDecl::Type { variadic: true, .. }]
-                        )) =>
+                        || ParamDecl::sole_type_pack(decls).is_none()) =>
             {
                 Some(Owner::Unbound)
             }
@@ -3943,27 +3939,18 @@ fn owner_binder_arguments<'a>(
     decls: &[ParamDecl],
     arguments: &'a [TyArg],
 ) -> Option<Cow<'a, [TyArg]>> {
-    match decls {
-        [ParamDecl::Type { variadic: true, .. }]
-            if !matches!(arguments, [TyArg::Val(_)])
-                && pack_spread_argument(arguments).is_none()
-                && list_spread_argument(arguments).is_none() =>
-        {
-            let elements = arguments
-                .iter()
-                .filter_map(|argument| match argument {
-                    TyArg::Ty(ty) => Some(Some(CtValue::Type(default_literal(ty)))),
-                    TyArg::Origin(_) => None,
-                    TyArg::Val(_) => Some(None),
-                })
-                .collect::<Option<Vec<_>>>()?;
-            Some(Cow::Owned(vec![TyArg::Val(CtValue::Tuple(elements))]))
+    if let Some(mut declared) = mojito_types::types::lone_pack_arguments(decls, arguments) {
+        if let Some(TyArg::Val(CtValue::Tuple(elements))) = declared.first_mut() {
+            for element in elements {
+                if let CtValue::Type(ty) = element {
+                    *ty = default_literal(ty);
+                }
+            }
         }
-        _ => {
-            let binding: Vec<TyArg> = without_origins(arguments).cloned().collect();
-            (binding.len() == decls.len()).then_some(Cow::Owned(binding))
-        }
+        return Some(Cow::Owned(declared));
     }
+    let binding: Vec<TyArg> = without_origins(arguments).cloned().collect();
+    (binding.len() == decls.len()).then_some(Cow::Owned(binding))
 }
 
 /// `arguments` without its origin arguments, which bind no binder: a
@@ -4154,10 +4141,7 @@ impl<'d> Instantiation<'d> {
             // caller's own pack it forwards (`f[*Us]()`) binds as that pack.
             (
                 ParamDecl::Type {
-                    id,
-                    name,
-                    variadic: true,
-                    ..
+                    id, variadic: true, ..
                 },
                 argument,
             ) => {
@@ -4192,10 +4176,7 @@ impl<'d> Instantiation<'d> {
                 };
                 self.bindings.bind(id.clone(), value);
                 self.bindings.bind_type(id.clone(), ty);
-                self.types.push(ParamRef {
-                    id: id.clone(),
-                    name: name.as_str().into(),
-                });
+                self.types.push(decl.binder());
                 Some(Bound::Type)
             }
             // A callable value binder is bound to the function the call's

@@ -331,7 +331,7 @@ impl Checker {
             for bound in &param.bounds {
                 self.check_trait_name(bound)?;
             }
-            decls.push(ParamDecl::Type {
+            let decl = ParamDecl::Type {
                 id,
                 name,
                 bounds: param.bounds.clone(),
@@ -341,7 +341,13 @@ impl Checker {
                 infer_only,
                 variadic,
                 constraints: Vec::new(),
-            });
+            };
+            if variadic {
+                let trait_value = CtValue::Trait(self.canonical_trait_set(&param.bounds));
+                ParamDecl::push_type_pack(&mut decls, decl, &trait_value);
+            } else {
+                decls.push(decl);
+            }
         }
         let result = match result {
             SourceType::Named(name, args) if args.is_empty() => {
@@ -2277,11 +2283,9 @@ impl Checker {
         decls
             .iter()
             .zip(arguments)
+            .filter(|(declaration, _)| !declaration.is_type_pack())
             .filter_map(|(declaration, argument)| match argument {
-                TyArg::Val(value) => Some((
-                    declaration.name().trim_start_matches('*').to_string(),
-                    value.clone(),
-                )),
+                TyArg::Val(value) => Some((declaration.spelling().to_string(), value.clone())),
                 TyArg::Ty(_) | TyArg::Origin(_) => None,
             })
             .collect()
@@ -2417,7 +2421,7 @@ impl Checker {
                 .decls
                 .iter()
                 .position(|decl| decl.name() == name)
-                .and_then(|index| targs.get(index))
+                .and_then(|index| ParamDecl::source_argument(&info.decls, targs, index))
         {
             return Ok(argument.clone());
         }
@@ -2576,7 +2580,7 @@ impl Checker {
             super::generics::bound_pack_elements(struct_decls, struct_targs)
             && let Some(decl) = struct_decls
                 .iter()
-                .find(|decl| decl.name().trim_start_matches('*') == pack)
+                .find(|decl| !decl.is_type_pack() && decl.spelling() == pack)
             && let Ok(list) = self.param_context.type_list(elements)
         {
             ids.bind(decl.id().clone(), list);
@@ -2649,6 +2653,7 @@ impl Checker {
                 decls
                     .iter()
                     .find(|decl| decl.name() == parameter.name)
+                    .map(|decl| ParamDecl::pack_list(decls, decl).unwrap_or(decl))
                     .map(|decl| (decl.clone(), argument.clone()))
             })
             .unzip();
@@ -3817,13 +3822,8 @@ impl Checker {
         match base {
             SourceType::SelfParam(name) => {
                 let starred = format!("*{}", name.trim_start_matches('*'));
-                self.self_decls
-                    .iter()
-                    .any(|decl| {
-                        matches!(decl, ParamDecl::Type { name, variadic: true, .. } if *name == starred)
-                    })
-                    .then(|| self.ty_from_anno(&SourceType::SelfParam(starred)).ok())
-                    .flatten()
+                ParamDecl::type_pack_list(&self.self_decls, name)
+                    .and_then(|_| self.ty_from_anno(&SourceType::SelfParam(starred)).ok())
                     .filter(|ty| matches!(ty.kind(), TyKind::Param { .. }))
             }
             SourceType::Named(name, arguments) if arguments.is_empty() => {

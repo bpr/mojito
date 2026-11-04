@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1912**.
+Next free ID: **R1915**.
 
 ## Ordered Work
 
@@ -9760,6 +9760,38 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1914 The VM reads a `Bool` value pack's elements as `False`**
+
+  `for f in fs: print(f)` in `def flags[*fs: Bool]()` at `flags[True,
+  False, True]()` prints `False` three times on the VM, where the native
+  backend and the pin print `True`, `False`, `True`.
+  - The elements live in the static array `MirInstr::ParamListAddress`
+    lays out (`static_param_list`, `mojito-vm` `vm/values.rs`), each
+    thawed at the element type (`thaw`, `vm/adapters.rs`); an `Int` or a
+    `DType` element reads back right, so the gap is the `Bool` thaw or
+    its load.
+  - Probe: `assets/ok/value_pack_runtime_read.mojo`'s fourth line is `0`
+    on the VM and `2` natively.
+  - Found while landing R1492 (2026-11-03); the binary before R1492 does
+    the same.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1913 A type binder bound to a value-annotated `comptime` name
+  is accepted**
+
+  `comptime x: Int = T` in `def go[T: Copyable]` runs here, where the pin
+  rejects it: "cannot implicitly convert 'Copyable' value to 'Int'".
+  - The checker judges a `comptime` initializer against its annotation
+    only as a value; a type binder's value is its metatype (the trait it
+    is bounded by), which converts to no value type.
+  - Probe: `comptime x: Int = T` over `T: Copyable`.
+  - Probe: `comptime x: Int = Ts[0]` over `*Ts: Copyable`, the same
+    message at the pin.
+  - Found while landing R1492 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -11136,6 +11168,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     ParameterList[Int, vs.values]"; the pin says
     'ParameterList[vs.values]', the infer-only `Int` elided.
   - Probe: R904's pack loop.
+  - Probe: a `Tuple[*Ts]` local's type is `Tuple[*Ts.values]` at the pin
+    and `Tuple[*Ts]` here, and `*args: *Ts` is `VariadicPack[False,
+    *Ts.values]` there. A type pack's list binder (`Ts.values`, R1492) is
+    spelled as its pack, `Ts` and `*Ts` (`ParamDecl::binder`,
+    `ParamDecl::list_reference`), so the `TypeList` probe above reads
+    `TypeList[Movable, Ts]` where the pin's `Ts.values` is the list
+    binder's own name.
   - Found while landing R1169 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -12608,21 +12647,28 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1492 A variadic type parameter is one binder where upstream
-  declares two**
+- [ ] **R1912 A type pack's compile-time and run-time reads re-spell
+  its `TypeList` instead of reading the visible binder**
 
-  Upstream's `*Ts: Tr` declares an implicit infer-only `Ts.values:
-  !kgen.param_list<Tr>` binder and the visible `Ts: TypeList[Tr,
-  Ts.values]`, where Mojito declares the one `ParamDecl::Type { variadic:
-  true }` and re-spells `TypeList[Ts.values]()` at each run-time read.
-  - The same split as R1491, for type packs: the `TypeList` half of the
-    spelled pack read goes, and so does `pack_parameter_in_scope`.
-  - Probe: `var y: Int = Ts` in `def go[*Ts: Movable]` reports "found
-    TypeList[Movable, Ts]"; the pin says 'TypeList[Ts.values]' (R1489's
-    type half).
-  - A session should plan this first and split it if it does not fit.
-  - Found while landing R1151 (2026-10-27).
-  - Depends on R1491.
+  A bare `Ts` or `Self.Ts` read is re-spelled `TypeList[Ts.values]()`
+  (`infer_type_pack_read`, `type_pack_type_list`,
+  `checker/comptime_validation.rs`), where upstream reads the visible
+  binder `Ts: TypeList[Tr, Ts.values]` that R1492 now declares.
+  - The checker's pack scope maps `Ts` to the list binder, and
+    `value_scope` and `declare_value_parameters` skip the visible binder
+    (`checker/annotations.rs`, `checker/scopes.rs`), so it is declared and
+    bound but never read.
+  - `pack_parameter_in_scope` goes: its callers (`type_pack_named`,
+    `pack_reference`, `ty_value_from_name`) read the pack through the
+    visible binder's type (`ParamDecl::pack_list`), as R1910 does for
+    `value_pack_in_scope`.
+  - `type_pack_trait` becomes the visible binder's first `TypeList`
+    argument, which R1492 computes at declaration.
+  - Done when `rg 'pack_parameter_in_scope|infer_type_pack_read'` finds
+    nothing and R1492's gate fixtures (`type_pack_*`, `pack_struct_*`,
+    `typelist_*`) still run.
+  - Found while landing R1492 (2026-11-03).
+  - Depends on R1910.
   - Model: Fable, Not Planned.
 
 - [ ] **R1495 A refined type parameter is not a type**
@@ -13700,6 +13746,11 @@ Track: `tooling`.
   - Every later binder's slot moves up one, so the reader must renumber
     references through its id table (`text/parse/types.rs`).
   - Precedent: R808's 1.112 rejection, which R1151 withdrew.
+  - Schema 1.160 does the same for a type pack (R1492): a 1.159 or older
+    `type_param` with `variadic: true` is rejected. Its upgrade is the same
+    split, the old id the list binder's (renamed `Ts.values`, infer-only,
+    at the insertion point) and a visible `value_param` typed
+    `TypeList[Tr, Ts]` at the end.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

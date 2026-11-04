@@ -833,12 +833,12 @@ impl Specializer<'_> {
                         self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
                     })?;
                 }
-                // A value pack's visible binder is its zero-sized
-                // `ParameterList`, whatever its list.
-                (ParamDecl::Value { variadic: true, .. }, _) if decl.pack_list_ref().is_some() => {
-                    bindings
-                        .values
-                        .insert(decl.binder(), ParamDecl::parameter_list_value());
+                // A pack's visible binder is its zero-sized `ParameterList`
+                // or `TypeList`, whatever its list.
+                (ParamDecl::Value { variadic: true, .. }, _)
+                    if let Some(value) = decl.pack_value() =>
+                {
+                    bindings.values.insert(decl.binder(), value);
                 }
                 // A value pack's list is the list of values the checker
                 // recorded, each closed under the caller's bindings.

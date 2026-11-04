@@ -887,10 +887,7 @@ impl Checker {
                 let index = pack_index_expression(index, expression.span)
                     .or_else(|| self.comptime_alias_spelling(index, expression.span))
                     .ok_or_else(unspellable)?;
-                let own = self.self_decls.iter().any(|declaration| {
-                    matches!(declaration, ParamDecl::Type { name, variadic: true, .. }
-                        if name.trim_start_matches('*') == pack)
-                });
+                let own = ParamDecl::type_pack_list(&self.self_decls, &pack).is_some();
                 let callee = if own {
                     ExprKind::Member {
                         object: Box::new(Expr::new(

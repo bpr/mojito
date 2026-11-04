@@ -1766,10 +1766,11 @@ impl Checker {
                 ..
             } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
                 // A pack's elements are its list binder's.
-                Some(match ParamDecl::pack_list(&self.self_decls, decl) {
-                    Some(list @ ParamDecl::Value { ty, .. }) => value_parameter(list, ty),
-                    _ => value_parameter(decl, ty),
-                })
+                match ParamDecl::pack_list(&self.self_decls, decl) {
+                    Some(list @ ParamDecl::Value { ty, .. }) => Some(value_parameter(list, ty)),
+                    Some(list @ ParamDecl::Type { .. }) => type_parameter(list).map(CtValue::Type),
+                    None => Some(value_parameter(decl, ty)),
+                }
             }
             // `Self.Ts` names the struct's pack by its unstarred spelling.
             ParamDecl::Type {
@@ -5637,12 +5638,7 @@ impl Checker {
         decls: &[ParamDecl],
         expr: &Expr,
     ) -> Result<GenericConstraint, TypeError> {
-        let declares_pack = |pack: &str| {
-            decls.iter().any(|decl| {
-                matches!(decl, ParamDecl::Type { variadic: true, .. })
-                    && decl.name().trim_start_matches('*') == pack
-            })
-        };
+        let declares_pack = |pack: &str| ParamDecl::type_pack_list(decls, pack).is_some();
         Ok(match &expr.kind {
             ExprKind::Prefix(PrefixOp::Not, value) => GenericConstraint::Not(Box::new(
                 self.compile_declaration_proposition(decls, value)?,
@@ -6066,7 +6062,7 @@ impl<'a> ConstraintEnvironment<'a> {
         let declared: Vec<&ParamId> = scopes
             .iter()
             .flat_map(|decls| decls.iter())
-            .filter(|decl| decl.name().trim_start_matches('*') == spelling)
+            .filter(|decl| !decl.is_type_pack() && decl.spelling() == spelling)
             .map(ParamDecl::id)
             .collect();
         if declared.is_empty() {

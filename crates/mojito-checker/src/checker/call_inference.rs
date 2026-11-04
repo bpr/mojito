@@ -2695,9 +2695,7 @@ impl Checker {
         let Some(collector) = self.collector_names.get(name) else {
             return failure;
         };
-        if !decls.iter().any(|decl| {
-            decl.name() == param && matches!(decl, ParamDecl::Type { variadic: true, .. })
-        }) {
+        if ParamDecl::type_pack_list(decls, param).is_none() {
             return failure;
         }
         TypeError::BadCall {

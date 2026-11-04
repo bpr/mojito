@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.159
+mojito-mir 1.160
 ```
 
-The writer emits 1.159. The reader accepts 1.0 through 1.159; *Schema 1.0*
+The writer emits 1.160. The reader accepts 1.0 through 1.160; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1101,6 +1101,19 @@ binder; an application binds it to the list and the visible binder to
 list's slot moves up one. A 1.158 or older artifact that declares a value
 pack is rejected with a request to re-emit it (roadmap R1911). The package
 format moves to `mojito-package 184`.
+
+Schema 1.160 declares a type pack `*Ts: Tr` the same way (R1492): the
+infer-only, `variadic: true` `type_param` named `Ts.values`, whose bounds
+are the element trait and which a spread names as `*Ts`, placed after the
+leading infer-only binders, and the `variadic: true` `value_param` `*Ts`
+of type `struct_type { name: TypeList, arguments: [value_arg(<the trait
+value>), value_arg(ct_expr(<the list binder's param_decl_ref>))] }`. An
+application binds the list binder to the list (or a forwarded spread) and
+the visible binder to `ct_struct { name: TypeList, fields: [] }`; `Tuple`,
+`Variant`, and `TString` keep spelling their arguments element by element.
+A 1.159 or older artifact that declares a type pack is rejected with a
+request to re-emit it (roadmap R1911). The package format moves to
+`mojito-package 185`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:

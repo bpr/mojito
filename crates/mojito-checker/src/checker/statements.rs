@@ -3148,6 +3148,7 @@ impl Checker {
                     name, ty, variadic, ..
                 } = d
                     && !d.is_pack_list()
+                    && !d.is_type_pack()
                 {
                     result = self.declare_value_parameter(
                         name.trim_start_matches('*'),

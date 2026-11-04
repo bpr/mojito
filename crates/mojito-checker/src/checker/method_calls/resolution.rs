@@ -748,9 +748,8 @@ fn collector_element_failure(sig: &MethodSig, failure: &TypeError) -> Option<Str
         return None;
     };
     let collector = sig.variadic_name.as_ref()?;
-    sig.decls
-        .iter()
-        .any(|decl| decl.name() == param && matches!(decl, ParamDecl::Type { variadic: true, .. }))
+    ParamDecl::type_pack_list(&sig.decls, param)
+        .is_some()
         .then(|| {
             format!(
                 "an element of '{collector}' with type '{ty}' does not conform to trait \

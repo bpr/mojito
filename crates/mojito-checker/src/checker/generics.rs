@@ -263,21 +263,14 @@ pub(super) fn expand_solved_packs(ty: &Ty, decls: &[ParamDecl], tyargs: &[TyArg]
         .iter()
         .zip(tyargs)
         .filter_map(|(decl, argument)| match (decl, argument) {
-            (
-                ParamDecl::Type {
-                    name,
-                    variadic: true,
-                    ..
-                },
-                TyArg::Val(CtValue::Tuple(values)),
-            ) => values
+            (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(values))) => values
                 .iter()
                 .map(|value| match value {
                     CtValue::Type(ty) => Some(ty.clone()),
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()
-                .map(|elements| (name.trim_start_matches('*'), elements)),
+                .map(|elements| (decl.spelling(), elements)),
             _ => None,
         })
         .fold(ty.clone(), |ty, (pack, elements)| {
@@ -301,13 +294,9 @@ pub(super) fn bound_pack_elements(
                 .zip(targs)
                 .find_map(|(decl, argument)| match (decl, argument) {
                     (
-                        ParamDecl::Type {
-                            name,
-                            variadic: true,
-                            ..
-                        },
+                        ParamDecl::Type { variadic: true, .. },
                         TyArg::Val(binding @ CtValue::Tuple(_)),
-                    ) => Some((name.trim_start_matches('*').to_string(), binding.clone())),
+                    ) => Some((decl.spelling().to_string(), binding.clone())),
                     _ => None,
                 })
         })
@@ -341,19 +330,17 @@ pub(super) fn solved_value_bindings(
     decls: &[ParamDecl],
     tyargs: &[TyArg],
 ) -> HashMap<String, CtValue> {
+    // A type pack's list binder is keyed as the pack, `*Ts`, whose
+    // visible binder's `TypeList` binds nothing a type reads.
     decls
         .iter()
         .zip(tyargs)
+        .filter(|(decl, _)| !decl.is_type_pack())
         .filter_map(|(decl, argument)| match (decl, argument) {
             (
-                ParamDecl::Value { name, .. }
-                | ParamDecl::Type {
-                    name,
-                    variadic: true,
-                    ..
-                },
+                ParamDecl::Value { .. } | ParamDecl::Type { variadic: true, .. },
                 TyArg::Val(value),
-            ) => Some((name.clone(), value.clone())),
+            ) => Some((decl.binder().name.to_string(), value.clone())),
             _ => None,
         })
         .collect()

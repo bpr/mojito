@@ -1658,7 +1658,6 @@ impl Checker {
     ) -> Result<(), TypeError> {
         for (decl, argument) in decls.iter().zip(arguments) {
             let ParamDecl::Type {
-                name,
                 trait_param: Some(binder),
                 ..
             } = decl
@@ -1697,7 +1696,7 @@ impl Checker {
             {
                 return Err(TypeError::ParamValueType {
                     callee: generic_name.to_string(),
-                    param: name.trim_start_matches('*').to_string(),
+                    param: decl.spelling().to_string(),
                     expected: traits.join(" & "),
                     found: format!("AnyStruct[{ty}]"),
                 });

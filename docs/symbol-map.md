@@ -2691,9 +2691,25 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ParamDecl::parameter_list_value`. `ParamDecl::pack_list` and
   `list_pack` relate the two, `is_pack_list` tells the list binder,
   `source_argument` reads a pack's list from an argument list, and the
-  checker's `bind_value_pack` (`declarations.rs`) and the elaborator's
+  checker's `bind_pack` (`declarations.rs`) and the elaborator's
   `bind_explicit_value_arguments`/`bind_instantiated_arguments` bind the
-  list binder from the pack's arguments. `MetaTy::value`
+  list binder from the pack's arguments. A type pack (`*Ts: Tr`) declares
+  the same two binders (`ParamDecl::push_type_pack`, sharing
+  `push_pack`'s insertion and renumbering; the checker's `push_param`
+  computes the `Tr` argument): its list binder is the `ParamDecl::Type {
+  variadic: true }` renamed `Ts.values` and made infer-only, whose
+  `ParamDecl::binder` and `list_reference` still spell `*Ts` and `Ts`
+  (`ParamDecl::spelling`), and the visible `*Ts` is a `ParamDecl::Value`
+  typed `TypeList[Tr, Ts]` (`TYPE_LIST_TYPE_NAME`), bound to
+  `ParamDecl::type_list_value`. `is_type_pack`/`is_value_pack` tell the
+  visible binders apart, `pack_value` answers either's `{}`
+  (`is_pack_value` recognises one in an argument list), `type_pack_list`
+  finds a type pack's list binder by the pack's name, and
+  `sole_type_pack` recognises a struct keyed on its lone pack (`Tuple`,
+  `Variant`). `declared_pack_arguments`/`canonical_pack_arguments` and
+  `lone_pack_arguments` (`types.rs`) regroup an elementwise argument list
+  into the list and its `{}`, and a rewrite expands a spread beside the
+  `{}` (`spread_struct_arguments`). `MetaTy::value`
   canonicalizes that type and `MetaTy::value_ty` inverts it, so every
   binder's meta-type is its declared type's (`ParamDecl::binder_meta`,
   `mojito-types`, `types.rs`), read by `annotations::value_parameter_expr`

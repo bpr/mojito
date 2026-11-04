@@ -4230,9 +4230,9 @@ impl Checker {
             .self_decls
             .iter()
             .filter_map(|decl| match decl {
-                ParamDecl::Type { name, variadic, .. } => Some(self.param_context.decl_ref(
+                ParamDecl::Type { variadic, .. } => Some(self.param_context.decl_ref(
                     decl.id().clone(),
-                    name.trim_start_matches('*'),
+                    decl.spelling(),
                     if *variadic {
                         MetaTy::type_list()
                     } else {
@@ -4243,7 +4243,7 @@ impl Checker {
                     ty,
                     callable_default: None,
                     ..
-                } if !decl.binds_callables() => {
+                } if !decl.binds_callables() && !decl.is_type_pack() => {
                     Some(super::annotations::value_parameter_expr(decl, ty))
                 }
                 ParamDecl::Value { .. } => None,
@@ -4421,10 +4421,7 @@ impl Checker {
             return None;
         }
         let (base, spelled, reference) = if through_self {
-            let declared = self.self_decls.iter().any(|decl| {
-                matches!(decl, ParamDecl::Type { name, variadic: true, .. }
-                    if name.trim_start_matches('*') == pack)
-            });
+            let declared = ParamDecl::type_pack_list(&self.self_decls, pack).is_some();
             let reference = self.pack_reference(pack).filter(|_| declared)?;
             (
                 SourceType::SelfParam(pack.to_string()),
@@ -4712,10 +4709,7 @@ impl Checker {
             }
             ExprKind::Member { object, field }
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-                    && self.self_decls.iter().any(|decl| {
-                        matches!(decl, ParamDecl::Type { name, variadic: true, .. }
-                            if name.trim_start_matches('*') == field)
-                    }) =>
+                    && ParamDecl::type_pack_list(&self.self_decls, field).is_some() =>
             {
                 self.pack_reference(field)
             }
@@ -4927,7 +4921,7 @@ impl Checker {
                 name,
                 variadic: true,
                 ..
-            } if name.trim_start_matches('*') == field => Some(
+            } if name.trim_start_matches('*') == field && !decl.is_type_pack() => Some(
                 self.param_context
                     .intern(&super::annotations::pack_list_expr(&self.self_decls, decl)?),
             ),
@@ -5294,8 +5288,9 @@ impl Checker {
         let values: HashMap<String, CtValue> = scopes
             .iter()
             .flat_map(|(decls, arguments)| decls.iter().zip(arguments.iter()))
+            .filter(|(decl, _)| !decl.is_type_pack())
             .filter_map(|(decl, argument)| {
-                let name = decl.name().trim_start_matches('*').to_string();
+                let name = decl.spelling().to_string();
                 match argument {
                     TyArg::Val(value) => Some((name, value.clone())),
                     TyArg::Ty(ty)
@@ -5351,13 +5346,7 @@ impl Checker {
         let pack_name = pack.map(|reference| reference.name.to_string());
         let declared = pack_name.as_deref().and_then(|pack| {
             self.lookup_tparam(&format!("*{pack}")).or_else(|| {
-                self.self_decls
-                    .iter()
-                    .filter(|decl| {
-                        matches!(decl, ParamDecl::Type { variadic: true, .. })
-                            && decl.name().trim_start_matches('*') == pack
-                    })
-                    .find_map(type_parameter)
+                ParamDecl::type_pack_list(&self.self_decls, pack).and_then(type_parameter)
             })
         });
         let mut bounds = match declared.as_ref().map(Ty::kind) {
@@ -5647,10 +5636,25 @@ pub(super) fn positional_pack_arguments<'a>(
     decls: &[ParamDecl],
     arguments: &'a [TyArg],
 ) -> std::borrow::Cow<'a, [TyArg]> {
-    positional_pack_binding(decls, arguments)
-        .map_or(std::borrow::Cow::Borrowed(arguments), |(_, pack)| {
-            std::borrow::Cow::Owned(vec![pack])
-        })
+    // A type pack's visible binder is its zero-sized `TypeList`.
+    let declared = |list: TyArg| {
+        let mut declared = vec![list];
+        if decls.len() == 2 {
+            declared.push(TyArg::Val(ParamDecl::type_list_value()));
+        }
+        std::borrow::Cow::Owned(declared)
+    };
+    match positional_pack_binding(decls, arguments) {
+        Some((_, pack)) => declared(pack),
+        None if ParamDecl::sole_type_pack(decls).is_some()
+            && decls.len() == 2
+            && (mojito_types::types::pack_spread_argument(arguments).is_some()
+                || mojito_types::types::list_spread_argument(arguments).is_some()) =>
+        {
+            declared(arguments[0].clone())
+        }
+        None => std::borrow::Cow::Borrowed(arguments),
+    }
 }
 
 /// The pack binding of a variadic struct applied element by element
@@ -5661,16 +5665,7 @@ pub(super) fn positional_pack_binding(
     decls: &[ParamDecl],
     arguments: &[TyArg],
 ) -> Option<(String, TyArg)> {
-    let [
-        ParamDecl::Type {
-            name,
-            variadic: true,
-            ..
-        },
-    ] = decls
-    else {
-        return None;
-    };
+    let list = ParamDecl::sole_type_pack(decls)?;
     if mojito_types::types::pack_spread_argument(arguments).is_some()
         || mojito_types::types::list_spread_argument(arguments).is_some()
     {
@@ -5685,7 +5680,7 @@ pub(super) fn positional_pack_binding(
         .collect::<Option<Vec<_>>>()
         .map(|types| {
             (
-                name.trim_start_matches('*').to_string(),
+                list.spelling().to_string(),
                 TyArg::Val(CtValue::Tuple(types)),
             )
         })

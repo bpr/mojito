@@ -386,6 +386,17 @@ impl Decoder {
                         "constraints",
                     ],
                 );
+                // Schema 1.159 and older declared a type pack as one
+                // binder, where the pack is now its list binder and a
+                // visible `TypeList` binder.
+                if variadic && self.minor <= 159 {
+                    self.error(
+                        value.span,
+                        "a type pack declared before MIR 1.160 is one binder; re-emit the \
+                         artifact",
+                    );
+                    return None;
+                }
                 Some(ParamDecl::Type {
                     id: self.binder_id(value, fields, &name)?,
                     name,

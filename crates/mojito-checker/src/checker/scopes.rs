@@ -95,8 +95,9 @@ impl Checker {
         decls: &[ParamDecl],
     ) -> Result<(), TypeError> {
         decls.iter().try_for_each(|decl| match decl {
-            // A pack's list binder is read through the pack.
-            ParamDecl::Value { .. } if decl.is_pack_list() => Ok(()),
+            // A pack's list binder is read through the pack, and a type
+            // pack's visible binder is read as the pack's list for now.
+            ParamDecl::Value { .. } if decl.is_pack_list() || decl.is_type_pack() => Ok(()),
             ParamDecl::Value {
                 name, ty, variadic, ..
             } => self.declare_value_parameter(

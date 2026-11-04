@@ -62,10 +62,12 @@ pub(super) fn bound_argument(
             .get(&decl.binder())
             .cloned()
             .map(InstanceArg::Ty),
+        // A pack's visible binder is always its zero-sized list struct.
         ParamDecl::Value { .. } => bindings
             .values
             .get(&decl.binder())
             .cloned()
+            .or_else(|| decl.pack_value())
             .map(InstanceArg::Value),
     }
     .ok_or_else(|| MonoError {
@@ -108,6 +110,8 @@ pub(super) fn owner_instance_ty(
                     )));
                 }
             }
+            // An elementwise struct spells its pack's elements alone.
+            (_, InstanceArg::Value(value)) if elementwise && ParamDecl::is_pack_value(&value) => {}
             (_, argument) => arguments.push(argument),
         }
     }
@@ -298,7 +302,11 @@ pub(super) fn bind_ty_args(
 ) -> Result<(), String> {
     // A struct keyed on its lone pack applied element by element
     // (`Row[Int, Bool]`) binds the pack to every element.
-    if let [decl @ ParamDecl::Type { variadic: true, .. }] = decls
+    let declared = args
+        .iter()
+        .any(|argument| matches!(argument, TyArg::Val(value) if ParamDecl::is_pack_value(value)));
+    if let Some(decl) = ParamDecl::sole_type_pack(decls)
+        && !declared
         && !matches!(args, [TyArg::Val(_)])
         && !matches!(args, [TyArg::Ty(pack)] if matches!(pack.kind(), TyKind::RuntimePack(_)))
     {
@@ -314,7 +322,23 @@ pub(super) fn bind_ty_args(
             })
             .collect::<Result<Vec<_>, _>>()?;
         bind_pack(&decl.binder(), elements, bindings);
+        if let Some(visible) = decls.iter().find(|visible| visible.is_type_pack())
+            && let Some(value) = visible.pack_value()
+        {
+            bindings.values.insert(visible.binder(), value);
+        }
         return Ok(());
+    }
+    // A sole pack bound whole beside no visible binder's argument.
+    if ParamDecl::sole_type_pack(decls).is_some()
+        && decls.len() == 2
+        && let [argument] = args
+    {
+        return bind_ty_args(
+            decls,
+            &[argument.clone(), TyArg::Val(ParamDecl::type_list_value())],
+            bindings,
+        );
     }
     for (decl, arg) in decls.iter().zip(args) {
         match (decl, arg) {
@@ -462,6 +486,28 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             )
         }
         struct_ty if let Some((pn, pa)) = struct_ty.as_non_simd_struct() => match actual.kind() {
+            // A type pack's visible `TypeList` beside its spread binds
+            // nothing; an elementwise actual spells none.
+            struct_ty
+                if let Some((an, _)) = struct_ty.as_non_simd_struct()
+                    && pa.iter().any(|argument| {
+                        matches!(argument, TyArg::Val(value) if ParamDecl::is_pack_value(value))
+                    })
+                    && mojito_types::types::binds_pack_elementwise(an) =>
+            {
+                let spread: Vec<TyArg> = pa
+                    .iter()
+                    .filter(|argument| {
+                        !matches!(argument, TyArg::Val(value) if ParamDecl::is_pack_value(value))
+                    })
+                    .cloned()
+                    .collect();
+                unify(
+                    &TyKind::Struct(pn.clone(), spread).into(),
+                    actual,
+                    bindings,
+                )
+            }
             struct_ty
                 if let Some((an, _)) = struct_ty.as_non_simd_struct()
                     && nominal_template(pn) == nominal_template(an)
@@ -668,6 +714,27 @@ pub(super) fn unify_arg(
     bindings: &mut Bindings,
 ) -> Result<(), String> {
     match (pattern, actual) {
+        // A type pack's list slot spreading the pack binds it to the
+        // actual's list, beside the visible binder's `TypeList`.
+        (TyArg::Ty(p), TyArg::Val(CtValue::Tuple(values)))
+            if let Some(TyKind::Param { binder, .. }) =
+                mojito_types::types::pack_spread(std::slice::from_ref(p)).map(Ty::kind) =>
+        {
+            let elements = values
+                .iter()
+                .map(|value| match value {
+                    CtValue::Type(ty) => Some(ty.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| "generic application arguments disagree".to_string())?;
+            if !bindings.types.contains_key(binder) {
+                bind_pack(binder, elements, bindings);
+            }
+            Ok(())
+        }
+        // A spread of a list computed from packs solves nothing.
+        (TyArg::Ty(p), _) if mojito_types::types::list_spread(p).is_some() => Ok(()),
         (TyArg::Ty(p), TyArg::Ty(a)) => unify(p, a, bindings),
         // An erased argument stands in for a type binder the instance does
         // not hold, which it binds to nothing, as a receiver's does.

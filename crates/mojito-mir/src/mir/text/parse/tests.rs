@@ -3153,6 +3153,61 @@ fn value_pack_declarations_from_older_artifacts_are_rejected() {
     assert!(artifact(older.as_bytes(), "unit.mir".to_string()).is_err());
 }
 
+/// A type pack's two binders round-trip; a 1.159 or older artifact
+/// declared a type pack as one binder, which the reader rejects rather than
+/// misreads.
+#[test]
+fn type_pack_declarations_from_older_artifacts_are_rejected() {
+    let mut decls = Vec::new();
+    let list = ParamDecl::Type {
+        id: ParamId::new("f", 0),
+        name: "*Ts".into(),
+        bounds: vec!["Movable".into()],
+        trait_param: None,
+        callable_bound: None,
+        default: None,
+        infer_only: false,
+        variadic: true,
+        constraints: Vec::new(),
+    };
+    ParamDecl::push_type_pack(&mut decls, list, &CtValue::Trait(vec!["Movable".into()]));
+    let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
+        decls: decls.clone(),
+        func: FuncTy {
+            environment: CallableEnvironment::Thin,
+            params: Vec::new(),
+            names: Vec::new(),
+            ret: Ty::none(),
+            required: Vec::new(),
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: Vec::new(),
+            ref_params: Vec::new(),
+            ref_return: None,
+            transfers: TransferSet(Vec::new()),
+        },
+    }));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![generic.into()], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    match (parsed.program.functions[0].1.reg_types[&0]).kind() {
+        TyKind::GenericFunc(generic) => assert_eq!(generic.decls, decls),
+        other => panic!("expected a generic function type, read {other}"),
+    }
+
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let older = text.replacen(&current, "mojito-mir 1.159", 1);
+    assert!(artifact(older.as_bytes(), "unit.mir".to_string()).is_err());
+}
+
 /// Schema 1.4 carries a binder's identity on a `where` operand and on a
 /// callable default's parameter; an older artifact spells only its name,
 /// which is the binder of that spelling in the declaring parameter list.

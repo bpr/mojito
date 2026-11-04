@@ -2751,14 +2751,8 @@ impl Checker {
         };
         // A sole variadic parameter binds every positional argument as one
         // pack.
-        let pack = positional_pack_binding(&info.decls, args).map(|(_, list)| list);
-        let environment = match (&pack, info.decls.as_slice()) {
-            (Some(list), [decl]) => ConstraintEnvironment::declared(
-                std::slice::from_ref(decl),
-                std::slice::from_ref(list),
-            ),
-            _ => ConstraintEnvironment::declared(&info.decls, args),
-        };
+        let arguments = positional_pack_arguments(&info.decls, args);
+        let environment = ConstraintEnvironment::declared(&info.decls, &arguments);
         match self.constraint_verdict(condition, &environment) {
             Ok(ConstraintVerdict::Proven) => Conformance::Proven,
             Ok(ConstraintVerdict::Residual(proposition))

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A variadic type parameter `*Ts: Tr` declares upstream's two binders:
+  the implicit infer-only `Ts.values` list, placed after the leading
+  infer-only binders, and the visible `Ts: TypeList[Tr, Ts.values]`,
+  bound to the zero-sized `{}` (R1492). A struct's identity holds both,
+  so `reflect[S[3, Int, Bool]].name()` over `S[n: Int, *Ts: Movable]`
+  prints `S[<unprintable>, 3 : SIMD[DType.int, 1], {}]` as the pin does;
+  `Tuple`, `Variant`, and `TString` still spell their elements. MIR text
+  moves to 1.160 (package 185), and the reader rejects an older artifact
+  that declares a type pack (R1911). A bare read of `Ts` still spells
+  `TypeList[Ts.values]()` (R1912).
+
 - A variadic value parameter `*vs: T` declares upstream's two binders:
   the implicit infer-only `vs.values` list, placed after the leading
   infer-only binders, and the visible `vs: ParameterList[T, vs.values]`,

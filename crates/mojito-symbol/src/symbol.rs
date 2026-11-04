@@ -3356,10 +3356,10 @@ impl TypeNameSpeller<'_> {
                     demangle_specialization(template).unwrap_or((template, Vec::new()));
                 let mut spelled: Vec<String> =
                     baked.iter().map(|value| self.value(value)).collect();
-                // A value pack's list, which its implicit list binder
-                // holds, prints as the pin's printer shows a parameter list.
+                // A pack's list, which its implicit list binder holds,
+                // prints as the pin's printer shows a parameter list.
                 let list =
-                    mojito_types::types::value_pack_arguments(arguments).map(|(list, _)| list);
+                    mojito_types::types::pack_list_arguments(arguments).map(|(list, _)| list);
                 spelled.extend(arguments.iter().enumerate().map(
                     |(index, argument)| match argument {
                         _ if Some(index) == list => "<unprintable>".to_string(),

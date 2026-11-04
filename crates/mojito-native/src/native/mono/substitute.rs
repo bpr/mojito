@@ -326,45 +326,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             };
             // A spread of a bound pack is a whole argument list: element by
             // element for `Tuple` and `TString`, one bound list for any other
-            // struct, as `expand_pack_spread` spells it.
-            let spread = match (mojito_types::types::pack_spread_argument(original)).map(Ty::kind) {
-                Some(TyKind::Param { binder, .. }) => {
-                    match bindings.types.get(binder).map(Ty::kind) {
-                        Some(TyKind::RuntimePack(elements)) => Some(sub_types(elements, bindings)?),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            let args = match spread {
-                Some(elements) if mojito_types::types::binds_pack_elementwise(name) => {
-                    elements.into_iter().map(TyArg::Ty).collect()
-                }
-                Some(elements) => vec![TyArg::Val(CtValue::Tuple(
-                    elements.into_iter().map(CtValue::Type).collect(),
-                ))],
-                // A spread of a list computed from packs is that list's
-                // elements under the instance's bindings.
-                None if let Some(list) = mojito_types::types::list_spread_argument(original) => {
-                    let closed = ParamContext::detached()
-                        .replace(list, &ct_bindings(bindings))
-                        .and_then(|list| mojito_types::types::spread_arguments(name, &list))
-                        .map_err(|error| unsupported(error.to_string()))?;
-                    if mojito_types::types::list_spread_argument(&closed).is_some() {
-                        return Err(unsupported(format!(
-                            "spread list `{list}` has no concrete elements"
-                        )));
-                    }
-                    closed
-                        .iter()
-                        .map(|arg| substitute_arg(arg, bindings))
-                        .collect::<Result<Vec<_>, _>>()?
-                }
-                None => original
-                    .iter()
-                    .map(|arg| substitute_arg(arg, bindings))
-                    .collect::<Result<Vec<_>, _>>()?,
-            };
+            // struct, as `expand_pack_spread` spells it. A spread of a list
+            // computed from packs is that list's elements under the
+            // instance's bindings. The list sits beside its visible binder's
+            // zero-sized `TypeList`, which an elementwise spelling drops.
+            let args = substituted_struct_arguments(name, original, bindings)?;
             // A literal type argument (`Tuple[IntLiteral, String]`, the type
             // of `(1, "a")`) names the instance its materialized form names.
             let args: Vec<TyArg> = args
@@ -609,6 +575,70 @@ fn closed_literal(ty: &Ty, value: &CtValue, bindings: &Bindings) -> Ty {
             (!closed.kind().is_non_simd_struct()).then_some(closed)
         })
         .unwrap_or_else(|| ty.clone())
+}
+
+/// The arguments `original` of the struct `name` under `bindings`.
+fn substituted_struct_arguments(
+    name: &str,
+    original: &[TyArg],
+    bindings: &Bindings,
+) -> Result<Vec<TyArg>, MonoError> {
+    let unsupported = |what: String| MonoError {
+        kind: MonoErrorKind::Unsupported,
+        function: None,
+        construct: what,
+    };
+    let elementwise = mojito_types::types::binds_pack_elementwise(name);
+    let spread_arguments = |argument: &TyArg| -> Result<Option<Vec<TyArg>>, MonoError> {
+        let TyArg::Ty(ty) = argument else {
+            return Ok(None);
+        };
+        if let Some(TyKind::Param { binder, .. }) =
+            mojito_types::types::pack_spread(std::slice::from_ref(ty)).map(Ty::kind)
+        {
+            return Ok(match bindings.types.get(binder).map(Ty::kind) {
+                Some(TyKind::RuntimePack(elements)) => {
+                    let elements = sub_types(elements, bindings)?;
+                    Some(if elementwise {
+                        elements.into_iter().map(TyArg::Ty).collect()
+                    } else {
+                        vec![TyArg::Val(CtValue::Tuple(
+                            elements.into_iter().map(CtValue::Type).collect(),
+                        ))]
+                    })
+                }
+                _ => None,
+            });
+        }
+        let Some(list) = mojito_types::types::list_spread(ty) else {
+            return Ok(None);
+        };
+        let closed = ParamContext::detached()
+            .replace(list, &ct_bindings(bindings))
+            .and_then(|list| mojito_types::types::spread_arguments(name, &list))
+            .map_err(|error| unsupported(error.to_string()))?;
+        if mojito_types::types::list_spread_argument(&closed).is_some() {
+            return Err(unsupported(format!(
+                "spread list `{list}` has no concrete elements"
+            )));
+        }
+        closed
+            .iter()
+            .map(|arg| substitute_arg(arg, bindings))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    };
+    let mut args = Vec::with_capacity(original.len());
+    for argument in original {
+        match spread_arguments(argument)? {
+            Some(spread) => args.extend(spread),
+            None if elementwise
+                && matches!(argument, TyArg::Val(value)
+                    if ParamDecl::is_pack_value(value)) => {}
+            None => args.push(substitute_arg(argument, bindings)?),
+        }
+    }
+    Ok(args)
 }
 
 fn sub_spread_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {

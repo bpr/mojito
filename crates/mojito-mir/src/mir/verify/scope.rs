@@ -770,8 +770,24 @@ impl ScopeCx<'_> {
     ) {
         // A spread of a list computed from packs still open is the whole
         // argument list, a `ParamList` rather than one type.
-        if let Some(list) = mojito_types::types::list_spread_argument(args) {
-            self.expr(role, "spread list", list, &MetaTy::type_list(), nested);
+        // A type pack's list sits beside its visible binder's `TypeList`.
+        if let Some(position) = args.iter().position(|argument| {
+            matches!(argument, TyArg::Ty(ty) if mojito_types::types::list_spread(ty).is_some())
+        }) {
+            if let TyArg::Ty(ty) = &args[position]
+                && let Some(list) = mojito_types::types::list_spread(ty)
+            {
+                self.expr(role, "spread list", list, &MetaTy::type_list(), nested);
+            }
+            let rest: Vec<TyArg> = args
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != position)
+                .map(|(_, argument)| argument.clone())
+                .collect();
+            if !rest.is_empty() {
+                self.arguments(role, None, &rest, nested);
+            }
             return;
         }
         // A value parameter typed by a sibling binder (`v: T`, `t:

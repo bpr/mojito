@@ -4154,11 +4154,8 @@ impl<'a> Specializer<'a> {
         };
         // An instance applied element by element binds its lone pack to
         // every argument, of which the empty tuple has none.
-        let elementwise = name != template_name
-            && matches!(
-                template.param_decls.as_slice(),
-                [ParamDecl::Type { variadic: true, .. }]
-            );
+        let elementwise =
+            name != template_name && ParamDecl::sole_type_pack(&template.param_decls).is_some();
         if arguments.len() < template.param_decls.len() && !elementwise {
             return Ok(None);
         }
