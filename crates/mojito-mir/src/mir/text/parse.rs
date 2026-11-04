@@ -1,9 +1,9 @@
 use super::{ArtifactDiagnostic, ArtifactReport, ArtifactSourceMap, ParsedArtifact};
 use crate::mir::{
-    Const, FuncRef, MirBlock, MirCaptureAccess, MirCaptureMode, MirClosureCapture, MirDeclarations,
-    MirFunction, MirFunctionDeclaration, MirInstr, MirInteriorOrigin, MirIntrinsicSubscript,
-    MirLoan, MirParamArg, MirPlace, MirProgram, MirStructDeclaration, MirSubscriptArg,
-    MirSubscriptCall, MirTerm, Proj, Reg, SpanTable, TraitDeclaration, TraitRequirement, UseMode,
+    Const, FuncRef, MirBlock, MirCaptureAccess, MirClosureCapture, MirDeclarations, MirFunction,
+    MirFunctionDeclaration, MirInstr, MirInteriorOrigin, MirIntrinsicSubscript, MirLoan,
+    MirParamArg, MirPlace, MirProgram, MirStructDeclaration, MirSubscriptArg, MirSubscriptCall,
+    MirTerm, Proj, Reg, SpanTable, TraitDeclaration, TraitRequirement, UseMode,
 };
 use mojito_ast::ast::{ArgConvention, Dtype, InfixOp, PrefixOp};
 use mojito_checked::checked::{

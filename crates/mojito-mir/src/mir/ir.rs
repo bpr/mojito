@@ -2031,9 +2031,7 @@ pub enum MirInstr {
         value: Reg,
     },
     /// Build a non-escaping closure value from a lifted function and its explicit
-    /// environment. The capture mode fixes whether declaration evaluation stores
-    /// a reference handle, an owned snapshot, or a transferred value; an owned
-    /// capture names the constructor it runs ([`MirClosureCapture::constructor`]).
+    /// environment: a reference handle to each captured place.
     MakeClosure {
         dest: Reg,
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
@@ -3103,8 +3101,8 @@ impl MirInstr {
     /// - a move, forward, or place move: each ends a slot;
     /// - an operator: a generic operand's becomes a dunder call per instance,
     ///   and built-in division traps;
-    /// - a tuple or variant construction, or a closure of a moved capture:
-    ///   it takes or copies owned operands; a type construction
+    /// - a tuple or variant construction: it takes or copies owned
+    ///   operands; a type construction
     ///   runs an initializer;
     /// - `rebind`, a place read through an index, variant, uninit-payload, or
     ///   rebind projection: each calls `__getitem__`, traps, or is an
@@ -3151,12 +3149,9 @@ impl MirInstr {
             Self::CallLlvmIntrinsic {
                 has_side_effect, ..
             } => matches!(has_side_effect, Const::Value(CtValue::Bool(false))),
-            // A closure of reference captures is a struct of pointers to
-            // the captured places, as upstream's trivially register-passable
-            // closure is; a moved capture runs its constructor.
-            Self::MakeClosure { captures, .. } => captures
-                .iter()
-                .all(|capture| capture.mode == MirCaptureMode::Reference),
+            // A closure is a struct of pointers to its captured places, as
+            // upstream's trivially register-passable closure is.
+            Self::MakeClosure { .. } => true,
             Self::UseVar { mode, .. } => matches!(mode, UseMode::BorrowShared | UseMode::BorrowMut),
             Self::LoadPlace { place, .. } | Self::MakeRef { place, .. } => reads_storage(place),
             Self::EstablishLoans { .. }
@@ -3518,17 +3513,6 @@ impl MirInstr {
     }
 }
 
-/// How a [`MirClosureCapture`] holds its place.
-///
-/// A reference to it (a `@parameter` closure's capture, or a `def`'s
-/// storage), or its value moved into the closure (a lambda's storage,
-/// built where it stands).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum MirCaptureMode {
-    Reference,
-    Move,
-}
-
 /// The bound a call through an archetype receiver was selected by.
 ///
 /// It is recorded where it differs from what the receiver's type spells: a
@@ -3571,40 +3555,11 @@ impl MirResultAdapter {
     }
 }
 
-/// One captured place of a [`MirInstr::MakeClosure`].
-///
-/// A reference to the place, or a move of its value naming the
-/// `__moveinit__` it runs, as a [`MirInstr::UseVar`] does, and the
-/// `__deinit__` the owned value runs when the closure value dies, as a
-/// [`MirInstr::DropVar`] names its slot's.
+/// One captured place of a [`MirInstr::MakeClosure`]: a reference to it
+/// (a `@parameter` closure's capture, or a closure storage's place).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirClosureCapture {
     pub place: MirPlace,
-    pub mode: MirCaptureMode,
-    #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
-    pub constructor: Option<String>,
-    #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
-    pub destructor: Option<String>,
-}
-
-impl MirClosureCapture {
-    /// The lifecycle member the capture runs: `__moveinit__` for a move,
-    /// none for a reference.
-    pub const fn constructor_member(&self) -> Option<&'static str> {
-        match self.mode {
-            MirCaptureMode::Move => Some("__moveinit__"),
-            MirCaptureMode::Reference => None,
-        }
-    }
-
-    /// The lifecycle member the capture's value runs when the closure value
-    /// dies: `__deinit__` for an owned capture, none for a reference.
-    pub const fn destructor_member(&self) -> Option<&'static str> {
-        match self.mode {
-            MirCaptureMode::Move => Some("__deinit__"),
-            MirCaptureMode::Reference => None,
-        }
-    }
 }
 
 /// A static access to owner storage performed by a callable environment while

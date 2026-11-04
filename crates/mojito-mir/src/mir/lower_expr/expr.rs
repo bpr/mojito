@@ -833,7 +833,7 @@ impl<'a> Flatten<'a> {
             // is that storage variable.
             CheckedOp::Lambda { .. } => match self.nested_info(node) {
                 Some(info) if info.storage.is_some() => self.lambda_storage_value(node, &info),
-                Some(info) => self.lambda_closure(&info, node.location()),
+                Some(info) => self.emit_nested_closure(&info, node.location()),
                 None => self.unsupported_value(
                     node.location(),
                     "lambda expression lost its checked nested declaration",

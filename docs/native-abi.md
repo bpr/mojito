@@ -319,30 +319,20 @@ Rules:
   raising, a `Scalar(Ptr)` ok payload in the tagged outcome. The thunk
   forwards it unchanged, and the caller checks that contract and target
   agree on the result form before binding a value.
-- One thunk is interned per (compiled target, capture-mode vector). The thunk
+- One thunk is interned per (compiled target, capture count). The thunk
   rebuilds the target's leading capture arguments from the environment
-  record and calls the target directly. A storage-less body's capture
-  parameters are reference parameters, each `Reference` slot passing its
-  stored place address. A capture-list `def`'s or capturing lambda's body
-  instead takes its closure's storage struct as its one leading `read`
-  parameter, which a struct parameter receives by address: a `def`'s
-  closure's one `Reference` slot holds the storage's address, and a
-  lambda's one moved (`m`) slot holds the storage itself, passing the
-  slot's own address, or, when the storage is a held struct passed by
-  value (see [Calling convention](#calling-convention)), the value loaded
-  from the slot. A moved slot naming no `__moveinit__` is relocated
-  into the record, running none, since the record is the lambda's storage.
+  record and calls the target directly, each slot passing its stored place
+  address. A storage-less body's capture parameters are reference
+  parameters; a capture-list `def`'s body instead takes its closure's
+  storage struct as its one leading `read` parameter, which a struct
+  parameter receives by address, so the closure's one slot holds the
+  storage's address.
 - The **environment record** is frame-local storage of the creating
   `MakeClosure` (one entry allocation per site, slots re-stored on each
-  execution): `{ drop: ptr, slots... }` laid out by the ordinary aggregate
-  rules. A `Reference` capture slot holds the captured place's address; a
-  moved capture slot holds the value inline. `drop` is null unless some
-  owned slot needs drop work, in which case it names a per-site teardown
-  thunk that destroys owned slots in reverse order and then nulls the header
-  (drops are idempotent per record — a two-word copy aliases the record, so
-  the first teardown wins; the VM's deep-copying closure clones are a
-  recorded divergence). No runtime symbol participates: the value, record,
-  and thunks are entirely compiler-side.
+  execution): one pointer slot per capture, holding the captured place's
+  address. A closure owns nothing, so dropping one does no work. No runtime
+  symbol participates: the value, record, and thunks are entirely
+  compiler-side.
 
 ## Calling convention
 

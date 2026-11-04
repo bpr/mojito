@@ -7,18 +7,18 @@
 //! a `fold` that returns an attribute (through the replacement `sccp`
 //! shares, `fold::replace_folded`); an instruction that folds to
 //! one of its operands ([`MirInstr::forwarded_operand`], an identity
-//! `value.copy`, or a copy of a closure of reference captures, a struct of
-//! pointers) is replaced by that operand in every reader, as MLIR's greedy
+//! `value.copy`, or a copy of a closure, a struct of pointers) is replaced by that operand in every reader, as MLIR's greedy
 //! driver applies a `fold` that returns an operand; and an instruction
 //! whose results nothing reads goes when it has no effect but reading
 //! ([`MirInstr::would_be_trivially_dead`]), repeated until nothing changes.
-//! A `call.indirect` whose callee is defined once by a function constant,
-//! or by a closure of reference captures, becomes a direct call of that
+//! A `call.indirect` whose callee is defined once by a function constant
+//! or a closure becomes a direct call of that
 //! function, its captured places prepended to the arguments or its
 //! storage the receiver, as KGEN's `CallParamOp` and `CallIndirectOp`
 //! canonicalizers fold a known callee.
-//! A `drop.reg` of a register whose type an instantiation made one whose
-//! destruction runs no code goes first, as upstream tracks no
+//! A `drop.reg` of a register holding no owned value (a closure, or a
+//! type an instantiation made one whose destruction runs no code) goes
+//! first, as upstream tracks no
 //! register-passable trivial value: a fold may then forward the register
 //! past where it died.
 //!
@@ -41,7 +41,7 @@ use mojito_ast::ast::InfixOp;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    Const, FuncRef, MirBlock, MirCaptureAccess, MirCaptureMode, MirDeclarations, MirFunction,
+    Const, FuncRef, MirBlock, MirCaptureAccess, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, Proj, Reg, count_register_reads, fresh_register,
     instruction_regions_mut, instruction_regs_mut, terminator_regs_mut,
 };
@@ -270,7 +270,7 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 {
                     host_comparisons.insert(dest.0);
                 }
-                MirInstr::MakeClosure { dest, .. } if instruction.would_be_trivially_dead() => {
+                MirInstr::MakeClosure { dest, .. } => {
                     closures.insert(dest.0);
                 }
                 MirInstr::MakeStruct { dest, fields } => {
@@ -289,7 +289,7 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
         creates,
         extracts,
     };
-    // A copy of a closure of reference captures copies its pointers.
+    // A copy of a closure copies its pointers.
     let copied_closure = |instruction: &MirInstr| match instruction {
         MirInstr::CopyValue { dest, value, .. }
             if closures.contains(&value.0) && reg_types.get(&dest.0) == reg_types.get(&value.0) =>
@@ -492,16 +492,14 @@ fn erase_dead(blocks: &mut [MirBlock], reads: &[u32], erased: &mut HashSet<u32>)
 }
 
 /// Rewrite each `call.indirect` of `function` whose callee register is
-/// defined once by a function constant, or by a closure of reference
-/// captures, into a direct call of that function; returns how many were
+/// defined once by a function constant or a closure, into a direct call of that function; returns how many were
 /// rewritten.
 ///
 /// This is KGEN's `CallParamOp::canonicalize`, a call of a known callee
 /// symbol, and its `CallIndirectOp::canonicalize` over a `create_closure`,
 /// which prepends the closure's captures to the arguments: each captured
 /// place is loaded before the call and passed as a direct call of a
-/// capturing nested `def` passes it. A closure holding a lambda's moved
-/// storage has no place to load it from and stays indirect. A copied
+/// capturing nested `def` passes it. A copied
 /// callee was forwarded to its constant already; one read out of a slot
 /// is not a known callee.
 fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations) -> usize {
@@ -518,10 +516,7 @@ fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations
                     dest,
                     function,
                     captures,
-                } if captures
-                    .iter()
-                    .all(|capture| capture.mode == MirCaptureMode::Reference) =>
-                {
+                } => {
                     let places = captures.iter().map(|capture| capture.place.clone());
                     (dest, KnownCallee::new(function, places.collect()))
                 }
@@ -557,38 +552,7 @@ fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations
         block.instrs = instructions;
     });
     function.blocks = blocks;
-    if folded > 0 {
-        erase_closure_drops(function, &callees);
-    }
     folded
-}
-
-/// Erase each `drop.reg` of a closure in `callees` that is its last
-/// reader: a closure of references destroys nothing, so once its calls
-/// are direct it goes with the erasure of dead instructions.
-fn erase_closure_drops(function: &mut MirFunction, callees: &HashMap<u32, KnownCallee>) {
-    let mut reads = vec![0; function.n_regs as usize];
-    count_register_reads(&mut function.blocks, &mut reads);
-    let mut drops: HashMap<u32, u32> = HashMap::new();
-    visit_blocks(&mut function.blocks, &mut |block| {
-        for instruction in &block.instrs {
-            if let MirInstr::Drop { reg, .. } = instruction
-                && callees.contains_key(&reg.0)
-            {
-                *drops.entry(reg.0).or_default() += 1;
-            }
-        }
-    });
-    drops.retain(|reg, count| reads.get(*reg as usize) == Some(count));
-    if drops.is_empty() {
-        return;
-    }
-    visit_blocks(&mut function.blocks, &mut |block| {
-        block.instrs.retain(|instruction| match instruction {
-            MirInstr::Drop { reg, .. } => !drops.contains_key(&reg.0),
-            _ => true,
-        });
-    });
 }
 
 /// The callee a `call.indirect` is known to call: the function a constant

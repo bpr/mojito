@@ -263,14 +263,6 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
         // ordinary drop as well would run the destructor the named
         // destructor replaced.
         MirInstr::MethodCall { .. } => i.consumed_receiver_slot().into_iter().collect(),
-        // A declaration-time move capture transfers a whole root into the
-        // closure owner. Projected captures leave a residual aggregate that
-        // still needs its ordinary drop, so only whole-root moves suppress it.
-        MirInstr::MakeClosure { captures, .. } => captures
-            .iter()
-            .filter(|capture| capture.mode == MirCaptureMode::Move && capture.place.is_whole_root())
-            .map(|capture| capture.place.root)
-            .collect(),
         // A whole slot marked destroyed has handed its value on through a
         // pointer (an owned `VariadicList`'s element).
         MirInstr::MarkDestroyed { place } if place.is_whole_root() => vec![place.root],

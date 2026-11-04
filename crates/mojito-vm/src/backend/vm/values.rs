@@ -570,26 +570,9 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         let (function, captures) = match &callable {
             Value::Function(function) => (function.clone(), Vec::new()),
-            // A lambda's moved storage reaches its body's `read self` as a
-            // value, which only a body that never writes it allows: the
-            // handler is called once, from no stable storage.
             Value::Closure {
                 function, captures, ..
-            } => {
-                let writes = prog.capture_writes(function);
-                let mut materialized = Vec::with_capacity(captures.len());
-                for (index, capture) in captures.iter().enumerate() {
-                    if capture.owned && writes.get(index).copied().unwrap_or(true) {
-                        return Err(RuntimeError::Unsupported(
-                            "vm: a closure whose body writes its owned storage is not \
-                             supported as a Variant owning-operation handler"
-                                .to_string(),
-                        ));
-                    }
-                    materialized.push(capture.value.clone());
-                }
-                (function.clone(), materialized)
-            }
+            } => (function.clone(), captures.clone()),
             // A closure's storage, or any struct conforming to a closure
             // trait, is called through its `__call__`, the struct its
             // receiver.
@@ -672,24 +655,6 @@ impl VmBackend {
                 index: *index,
                 value: Box::new(self.clone_value(prog, value)?),
             }),
-            Value::Closure { function, captures } => {
-                let mut copied = Vec::with_capacity(captures.len());
-                for capture in captures {
-                    copied.push(ClosureCapture {
-                        value: if capture.owned {
-                            self.clone_value(prog, &capture.value)?
-                        } else {
-                            capture.value.clone()
-                        },
-                        owned: capture.owned,
-                        destructor: capture.destructor.clone(),
-                    });
-                }
-                Ok(Value::Closure {
-                    function: function.clone(),
-                    captures: copied,
-                })
-            }
             // Scalars alias/copy trivially; a bare pointer copy *aliases* (correct —
             // deep-copy is the owning struct's `__copyinit__` job, handled above).
             other => Ok(other.clone()),

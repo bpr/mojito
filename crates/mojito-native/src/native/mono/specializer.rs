@@ -1167,9 +1167,6 @@ impl<'a> Specializer<'a> {
                         through: Some(slot),
                         ..MirPlace::root(slot, function.var_tys.get(&slot).cloned())
                     },
-                    mode: MirCaptureMode::Reference,
-                    constructor: None,
-                    destructor: None,
                 })
                 .collect();
             self.closure_captures.insert(target.clone(), captures);
@@ -4196,9 +4193,7 @@ impl<'a> Specializer<'a> {
 
     /// The captured places a direct call to the lifted body `target` passes
     /// ahead of its source arguments, each paired with a fresh register the
-    /// call loads it into. Only by-reference environments are the caller's
-    /// storage; a moved capture, a lambda's storage, is the closure's own,
-    /// which a direct call cannot recover.
+    /// call loads it into.
     fn capture_arguments(
         &self,
         owner: &str,
@@ -4209,14 +4204,10 @@ impl<'a> Specializer<'a> {
             .closure_captures
             .get(target)
             .map_or(&[][..], Vec::as_slice);
-        if captures.is_empty()
-            || captures
-                .iter()
-                .any(|capture| capture.mode == MirCaptureMode::Move)
-        {
+        if captures.is_empty() {
             return Err(self.error(
                 Some(owner),
-                format!("retained callable `{target}` captures by value"),
+                format!("retained callable `{target}` has no captured environment"),
             ));
         }
         captures
@@ -4599,20 +4590,6 @@ fn for_each_lifecycle_site_mut(
                 } => reg_types
                     .get(&dest.0)
                     .map(|ty| (ty, "__copyinit__", constructor)),
-                MirInstr::MakeClosure { captures, .. } => {
-                    for capture in captures {
-                        let Some(ty) = capture.place.storage_ty(var_tys) else {
-                            continue;
-                        };
-                        if let Some(member) = capture.constructor_member() {
-                            name(ty, member, &mut capture.constructor)?;
-                        }
-                        if let Some(member) = capture.destructor_member() {
-                            name(ty, member, &mut capture.destructor)?;
-                        }
-                    }
-                    None
-                }
                 MirInstr::PointerStorageDestroy {
                     element,
                     destructor,

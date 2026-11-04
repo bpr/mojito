@@ -12290,41 +12290,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1893.
   - Model: Fable, Not Planned.
 
-- [ ] **R1434 A closure keeps owned captures, which no pin-shaped value
-  needs once a closure's value is its storage**
-
-  A capturing lambda converted to a run-time callable moves its storage
-  into a one-capture `closure.make` (`MirCaptureMode::Move`,
-  `lambda_closure` in `mir/lower_expr/calls.rs`), the only producer of an
-  owned capture.
-  - Its consumers exist for that shape alone: the VM's owned-capture
-    `RefProjection::Capture` and `callee_place` paths
-    (`closure_capture_arguments`, `backend/vm/references.rs`), and
-    Pliron's value capture slots and `mjdrop_<n>` thunks
-    (`lower/closures.rs`).
-  - No checked program reaches them any more: the `capturing` effect no
-    longer parses, so nothing converts a
-    storage to a closure of its body. Delete them, and the MIR verifier's
-    rule binding a storage method closure's first capture to its receiver
-    (`closure environment for`), whose checked-program test went with
-    the conversion.
-  - Once deleted, `mem-2-reg`'s call-through rule (`Facts::candidate`,
-    `analysis/mem2reg.rs`) can admit every function-typed slot, not only
-    a thin one or a local holding a closure of reference captures: a
-    call through a function-typed parameter with a capturing environment
-    still keeps its `callee_place` and the slot it names.
-  - `canonicalize`'s `fold_known_callees` folds a call through a closure
-    of reference captures only: a closure holding a lambda's moved
-    storage has no place to pass as its body's `self`, so a call through
-    `closure.make` of a `$lambda` storage method stays `call.indirect`.
-  - A capturing closure's register is owned (`owned_register`,
-    `mir/register_ends.rs`) for the same reason, so a closure of
-    reference captures keeps its `drop.reg` until `canonicalize` erases
-    it once its calls are folded.
-  - Found while landing R1378 (2026-10-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1889 The compile-time capturing-callable environment survives
   the removal of its only producers**
 
@@ -12353,6 +12318,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `mir/ir.rs`, `mir/verify/instr.rs`, `native/mono/environment.rs`,
     `checked.rs`, `pliron/lower/support.rs`) to the paths that remain, or
     delete those paths if only a `@parameter` closure took them.
+  - Probe: `load_nested_closure`'s storage branch (`mir/lower_expr/calls.rs`),
+    a closure capturing a `def`'s storage by reference at a converted
+    first-class use, and the receiver arm of `capture_binds`
+    (`mir/verify/instr.rs`) that admits it may be reached by no checked
+    program since R176; delete both if so.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

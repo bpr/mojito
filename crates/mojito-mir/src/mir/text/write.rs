@@ -824,28 +824,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 (
                     "captures",
                     list(captures.iter().map(|capture| {
-                        record(
-                            "closure_capture",
-                            &with_symbol(
-                                with_symbol(
-                                    vec![
-                                        ("place", place_value(&capture.place)),
-                                        (
-                                            "mode",
-                                            match capture.mode {
-                                                MirCaptureMode::Reference => "reference",
-                                                MirCaptureMode::Move => "move",
-                                            }
-                                            .into(),
-                                        ),
-                                    ],
-                                    "constructor",
-                                    capture.constructor.as_deref(),
-                                ),
-                                "destructor",
-                                capture.destructor.as_deref(),
-                            ),
-                        )
+                        record("closure_capture", &[("place", place_value(&capture.place))])
                     })),
                 ),
             ],

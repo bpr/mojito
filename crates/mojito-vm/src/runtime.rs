@@ -34,7 +34,7 @@ pub enum Value {
     /// A lifted non-escaping function plus its explicit capture environment.
     Closure {
         function: String,
-        captures: Vec<ClosureCapture>,
+        captures: Vec<Self>,
     },
     /// A struct instance: its type name and field values (in declaration
     /// order). An instance's compile-time arguments are in its name, as the
@@ -114,26 +114,9 @@ pub enum RefProjection {
     /// which selects element 0 of a collection reached the same way.
     Deref,
     Variant(usize),
-    /// One owned slot in a closure's declaration-created environment.
-    Capture(usize),
     /// The payload of a [`Value::UninitStorage`] slot; reading it while the
     /// storage is uninitialized traps.
     UninitPayload,
-}
-
-/// One slot in a lifted closure's environment.
-///
-/// Reference captures retain their original frame handle; a moved capture,
-/// a lambda's storage, is owned by the closure and borrowed in place on
-/// every invocation.
-#[derive(Debug, Clone)]
-pub struct ClosureCapture {
-    pub value: Value,
-    pub owned: bool,
-    /// The `__deinit__` an owned capture's value runs when the closure
-    /// value dies, as the `closure.make` capture names it; `None` for a
-    /// reference, or for a value whose type names none.
-    pub destructor: Option<String>,
 }
 
 /// The lanes of a SIMD value, one representation per element-type kind.

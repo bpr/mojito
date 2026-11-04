@@ -19,8 +19,8 @@
 //! `ref.read` is a read and each `ref.write` a store, at its own position.
 //! A destructor or copy constructor would take the slot's address, so a
 //! type with either is never one, as upstream's never is; a borrow, a
-//! capture, a loan, or a projected place keeps the slot too. A slot every
-//! store of which is a closure of reference captures is one too: that
+//! capture, a loan, or a projected place keeps the slot too. A slot of a
+//! function type, or every store of which is a closure, is one too: a
 //! closure is a struct of pointers, trivially register-passable as
 //! upstream's is, and a call through it needs no stable storage, nor
 //! through a thin function's, so a `call.indirect` naming such a slot as
@@ -60,7 +60,6 @@ use mojito_mir::mir::{
     retire_slots, try_raises_mut,
 };
 use mojito_symbol::symbol::is_initializer_symbol;
-use mojito_types::origin::CallableEnvironment;
 use mojito_types::types::Ty;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
@@ -289,7 +288,7 @@ struct Census {
 struct Facts {
     definitions: Vec<u32>,
     reads: Vec<u32>,
-    /// The registers defined by a `closure.make` of reference captures.
+    /// The registers defined by a `closure.make`.
     closures: HashSet<u32>,
     uses: Uses,
 }
@@ -328,15 +327,14 @@ impl Facts {
     }
 
     /// Whether `var`, whose census is `entry`, may be promoted: a local (or
-    /// one of the `entry_stored` parameters) of a promotable type or a thin
-    /// function type, or one every store of which is a closure of reference
-    /// captures, kept by no mention, whose stores each store a register
-    /// defined once, and read only there unless the slot's copy is the
-    /// identity, as upstream's stored SSA value is read anywhere, and whose
-    /// reads read its type. A
-    /// call through the slot leaves only a slot of a thin function type, or
-    /// a local some store of which gives it a closure: neither value
-    /// carries storage it lends.
+    /// one of the `entry_stored` parameters) of a promotable type or a
+    /// function type, or one every store of which is a closure, kept by no
+    /// mention, whose stores each store a register defined once, and read
+    /// only there unless the slot's copy is the identity, as upstream's
+    /// stored SSA value is read anywhere, and whose reads read its type. A
+    /// call through the slot leaves only a slot of a function type, or a
+    /// local some store of which gives it a closure: a function value is a
+    /// thin function or a struct of pointers, carrying no storage it lends.
     fn candidate(
         &self,
         function: &MirFunction,
@@ -350,10 +348,8 @@ impl Facts {
             Mention::Store(src) => self.closures.contains(&src.0),
             _ => true,
         });
-        let thin = typed
-            .and_then(|ty| ty.kind().as_func())
-            .is_some_and(|func| matches!(func.environment, CallableEnvironment::Thin));
-        let callable_value = thin
+        let function_typed = typed.is_some_and(|ty| ty.kind().as_func().is_some());
+        let callable_value = function_typed
             || stores_closures
                 && !entry_stored.contains(&var)
                 && entry
@@ -363,7 +359,7 @@ impl Facts {
         let identity = typed.is_some_and(|ty| declarations.copy_is_identity(ty));
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
-            && (thin || stores_closures || identity)
+            && (function_typed || stores_closures || identity)
             && entry.mentions.iter().all(|(_, mention)| match *mention {
                 Mention::Store(src) => {
                     function.reg_types.get(&src.0) == typed
@@ -943,16 +939,14 @@ const fn edge_values_mut(term: &mut MirTerm) -> Option<&mut Vec<Reg>> {
 }
 
 /// The registers `blocks`, its regions included, defines by a
-/// `closure.make` of reference captures: a struct of pointers, trivially
-/// register-passable as upstream's closure of borrows is.
+/// `closure.make`: a struct of pointers, trivially register-passable as
+/// upstream's closure of borrows is.
 fn reference_closures(blocks: &[MirBlock], closures: &mut HashSet<u32>) {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
         for region in instruction_regions(instruction) {
             reference_closures(region, closures);
         }
-        if let MirInstr::MakeClosure { dest, .. } = instruction
-            && instruction.would_be_trivially_dead()
-        {
+        if let MirInstr::MakeClosure { dest, .. } = instruction {
             closures.insert(dest.0);
         }
     }

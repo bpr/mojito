@@ -282,7 +282,6 @@ impl VmBackend {
             callee,
             args,
             kwargs,
-            callee_place,
             arg_places,
             kwarg_places,
             ..
@@ -293,17 +292,7 @@ impl VmBackend {
                 Value::Function(function_name) => (function_name.clone(), Vec::new()),
                 Value::Closure {
                     function, captures, ..
-                } => (
-                    function.clone(),
-                    Self::closure_capture_arguments(
-                        caller.id,
-                        &caller.registers,
-                        &caller.variables,
-                        callee_place.as_deref(),
-                        captures,
-                        &prog.capture_writes(function),
-                    )?,
-                ),
+                } => (function.clone(), captures.clone()),
                 value => {
                     return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
                 }

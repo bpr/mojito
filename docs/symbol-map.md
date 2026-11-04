@@ -1603,7 +1603,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameters as its `__init__`'s compile-time arguments. `verify/instr.rs`
   (`capture_binds`) binds a closure's first capture to a method's
   receiver, and the VM's `bind_for_closure_call` passes it in frame slot
-  zero (`Prog::capture_writes`). `verify/scope.rs` (`Scope::of_function`)
+  zero. `verify/scope.rs` (`Scope::of_function`)
   walks that chain for the binders a body may name; `mir::binder_scope`
   puts a closure method's struct parameters ahead of its chain, from the
   struct declarations it is given; `native::mono`

@@ -464,35 +464,19 @@ impl Decoder {
             .filter_map(|entry| {
                 let fields = self.record(entry, "closure_capture").ok()?;
                 let place = self.req(entry, fields, "place", Self::place);
-                let mode = self.req(entry, fields, "mode", Self::capture_mode);
-                let constructor = self
-                    .field(fields, "constructor")
-                    .ok()
-                    .and_then(|value| self.symbol(value));
-                let destructor = self
-                    .field(fields, "destructor")
-                    .ok()
-                    .and_then(|value| self.symbol(value));
-                self.unknown(fields, &["place", "mode", "constructor", "destructor"]);
-                Some(MirClosureCapture {
-                    place: place?,
-                    mode: mode?,
-                    constructor,
-                    destructor,
-                })
+                // Schema 1.156 and older may spell a capture's mode, of
+                // which 1.157 keeps only `reference`, now implied.
+                if self.minor <= 156 {
+                    if let Ok(mode) = self.field(fields, "mode") {
+                        self.reference_capture_mode(mode)?;
+                    }
+                    self.unknown(fields, &["place", "mode"]);
+                } else {
+                    self.unknown(fields, &["place"]);
+                }
+                Some(MirClosureCapture { place: place? })
             })
             .collect()
-    }
-
-    pub(super) fn capture_mode(&mut self, value: &Value) -> Option<MirCaptureMode> {
-        match self.atom(value)? {
-            "reference" => Some(MirCaptureMode::Reference),
-            "move" => Some(MirCaptureMode::Move),
-            other => {
-                self.error(value.span, format!("unknown capture mode `{other}`"));
-                None
-            }
-        }
     }
 
     pub(super) fn reg(&mut self, value: &Value) -> Option<Reg> {
@@ -588,5 +572,16 @@ impl Decoder {
             id: mojito_types::param_expr::ParamId::new(&owner, slot),
             name: name.into(),
         })
+    }
+
+    /// A schema 1.156 capture's mode, of which only `reference` remains.
+    fn reference_capture_mode(&mut self, value: &Value) -> Option<()> {
+        match self.atom(value)? {
+            "reference" => Some(()),
+            other => {
+                self.error(value.span, format!("withdrawn capture mode `{other}`"));
+                None
+            }
+        }
     }
 }

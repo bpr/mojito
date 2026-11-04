@@ -222,39 +222,12 @@ impl VmBackend {
                 function: target,
                 captures,
             } => {
-                let mut environment = Vec::with_capacity(captures.len());
-                for capture in captures {
-                    let reference =
-                        Self::reference_to_place_parts(frame_id, regs, vars, &capture.place)?;
-                    // A moved capture moves by the constructor it names, as
-                    // a `var.use` does.
-                    let ty = capture
-                        .place
-                        .storage_ty(&prog.mir.functions[function].1.var_tys);
-                    let constructor = capture.constructor.as_deref();
-                    let value = match capture.mode {
-                        MirCaptureMode::Reference => reference,
-                        MirCaptureMode::Move => {
-                            let value = self.read_reference(&reference, frame_id, vars)?;
-                            self.write_reference(&reference, frame_id, vars, Value::Moved)?;
-                            if self.has_moveinit {
-                                self.move_named(prog, value, ty, constructor)?
-                            } else {
-                                value
-                            }
-                        }
-                    };
-                    if matches!(value, Value::Moved) {
-                        return Err(RuntimeError::TypeError(
-                            "vm: closure captured an already-moved value".to_string(),
-                        ));
-                    }
-                    environment.push(ClosureCapture {
-                        value,
-                        owned: !matches!(capture.mode, MirCaptureMode::Reference),
-                        destructor: capture.destructor.clone(),
-                    });
-                }
+                let environment = captures
+                    .iter()
+                    .map(|capture| {
+                        Self::reference_to_place_parts(frame_id, regs, vars, &capture.place)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 regs[dest.0 as usize] = Value::Closure {
                     function: target.clone(),
                     captures: environment,
@@ -740,7 +713,6 @@ impl VmBackend {
                 callee,
                 args,
                 kwargs,
-                callee_place,
                 arg_places,
                 kwarg_places,
                 ..
@@ -750,17 +722,7 @@ impl VmBackend {
                     Value::Function(function) => (function.clone(), Vec::new()),
                     Value::Closure {
                         function, captures, ..
-                    } => (
-                        function.clone(),
-                        Self::closure_capture_arguments(
-                            frame_id,
-                            regs,
-                            vars,
-                            callee_place.as_deref(),
-                            captures,
-                            &prog.capture_writes(function),
-                        )?,
-                    ),
+                    } => (function.clone(), captures.clone()),
                     value => {
                         return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
                     }

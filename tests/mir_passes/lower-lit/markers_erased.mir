@@ -49,7 +49,7 @@ artifact {
               drop.var { var: $v2 },
               interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r14 },
               var.store { var: $v1, src: %r13, binding_type: absent, in_place: false },
-              closure.make { dest: %r15, function: "markers$add", captures: [closure_capture { place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }, mode: reference }] },
+              closure.make { dest: %r15, function: "markers$add", captures: [closure_capture { place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }] },
               var.store { var: $v3, src: %r15, binding_type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v126, path: [] }, access: read }])), param_decls: [], params: [Int], names: [b], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), in_place: false },
               var.use { dest: %r16, var: $v3, mode: borrow_shared },
               var.use { dest: %r17, var: $v1, mode: copy },

@@ -58,7 +58,7 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
-    Const as MirConst, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
+    Const as MirConst, MirBlock, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj, Raises, Reg,
     RegionFrame, TryLabel, UseMode,
 };
@@ -167,15 +167,9 @@ pub struct ModuleShared {
     /// `externs.rs`); like `rt_types`, declared once per module on demand.
     extern_types: HashMap<&'static str, TypedHandle<FuncType>>,
     strings: HashMap<Vec<u8>, Identifier>,
-    /// Interned callable thunks, keyed by (mangled target, capture-mode
-    /// string — `r`/`c`/`m` per leading capture parameter). One lifted body
-    /// gets distinct thunks per mode vector because declaration sites
-    /// capture with real modes while in-body forwarding sites re-capture
-    /// everything by reference.
-    thunks: HashMap<(String, String), Identifier>,
-    /// Interned capture-record teardown thunks (`mjdrop_<n>`), keyed like
-    /// [`Self::thunks`] by (target, capture-mode string).
-    drop_thunks: HashMap<(String, String), Identifier>,
+    /// Interned callable thunks, keyed by (mangled target, count of
+    /// leading capture parameters).
+    thunks: HashMap<(String, usize), Identifier>,
     /// Interned parameter-list element arrays (`mjplist_<n>`), keyed by
     /// their bytes and alignment.
     param_lists: HashMap<(Vec<u8>, u32), Identifier>,

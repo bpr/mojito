@@ -1059,6 +1059,14 @@ closes it to `field(symbol)` per instance, so concrete MIR holds none. The
 checked `ReflectedField` adjustment comes with it, so the package format
 moves to `mojito-package 178`.
 
+Schema 1.157 withdraws the capture mode `move`, with the capture's
+`constructor` and `destructor`: no checked program converts a closure's
+storage to a run-time callable, so a `closure.make` captures each place by
+reference and a closure value owns nothing. A capture is
+`closure_capture { place }`; a 1.156 or older artifact's capture may spell
+`mode: reference`, and one spelling `move` is rejected. The package format
+moves to `mojito-package 179`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1853,7 +1861,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `InvalidateInteriors` | `interiors.invalidate` (pre-drop and drop-elaborated only: `lower-lit` erases it before the pre-elaboration pipeline, and concrete verification refuses one) |
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` — a `value.copy` carries `constructor: "<symbol>"` after its operands when it names the `__copyinit__` it runs, as `var.use` does (schema 1.68) |
-| `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`: a capture is a `reference` or a lambda's storage moved in) |
+| `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`; schema 1.157 withdraws mode `move` and with it `constructor` and `destructor`: a capture is `closure_capture { place }`, a reference to its place, and a 1.156 or older artifact's capture may spell `mode: reference`) |
 | `Const` / `MaterializeLiteral` | `const` / `literal.materialize` (schema 1.148 removes `layout.size_of`, schema 1.155 `type.name`) |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage |

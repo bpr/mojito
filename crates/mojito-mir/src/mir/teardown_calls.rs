@@ -63,13 +63,6 @@ fn name_in_blocks(
                         .map(|alternative| named(Some(alternative)))
                         .collect();
                 }
-                MirInstr::MakeClosure { captures, .. } => {
-                    for capture in captures {
-                        capture.destructor = capture
-                            .destructor_member()
-                            .and_then(|_| named(capture.place.storage_ty(var_tys)));
-                    }
-                }
                 _ => {}
             }
             for region in instruction_regions_mut(instruction) {

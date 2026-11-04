@@ -719,23 +719,19 @@ pub fn owned_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
 /// Whether a register of type `ty` holds an owned value whose end matters.
 ///
 /// It is no reference, no compile-time-only value (a parameter list, a
-/// trait, a type), no thin function value, which upstream passes as a
-/// register-passable trivial value, and a type whose drop runs code.
+/// trait, a type), no function value, which owns nothing (upstream passes
+/// a thin one as a register-passable trivial value and a closure is a
+/// struct of pointers), and a type whose drop runs code.
 pub fn owned_register(ty: &Ty, declarations: &MirDeclarations) -> bool {
-    let untracked = match ty.kind() {
+    let untracked = matches!(
+        ty.kind(),
         TyKind::Ref(_)
-        | TyKind::ParamList(_)
-        | TyKind::AnyTrait(_)
-        | TyKind::Trait(_)
-        | TyKind::TypeType => true,
-        TyKind::Func(function) => {
-            matches!(
-                function.environment,
-                mojito_types::origin::CallableEnvironment::Thin
-            )
-        }
-        _ => false,
-    };
+            | TyKind::ParamList(_)
+            | TyKind::AnyTrait(_)
+            | TyKind::Trait(_)
+            | TyKind::TypeType
+            | TyKind::Func(_)
+    );
     !untracked && !declarations.drop_runs_no_code(ty)
 }
 

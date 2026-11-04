@@ -542,17 +542,7 @@ pub(super) fn loan_accesses(
         }
         MirInstr::MakeClosure { dest, captures, .. } => captures
             .iter()
-            .map(|capture| {
-                (
-                    capture.place.clone(),
-                    if capture.mode == MirCaptureMode::Move {
-                        LoanAccess::Write
-                    } else {
-                        LoanAccess::Read
-                    },
-                    span_for(*dest),
-                )
-            })
+            .map(|capture| (capture.place.clone(), LoanAccess::Read, span_for(*dest)))
             .collect(),
         MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }

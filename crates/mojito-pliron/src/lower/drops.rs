@@ -17,38 +17,6 @@ impl<'a> FnLowering<'a> {
             .map(|(_, symbol)| symbol)
     }
 
-    /// Whether `ty`'s teardown/copy chain can reach a user-authored
-    /// lifecycle method (`__deinit__`/`__copyinit__`/`__moveinit__`),
-    /// walking struct fields and pointer element types (a container reaches
-    /// pointed-to elements through its compiled chain). Stdlib-authored
-    /// chains are exempt: pure frees/relocations, nothing user-observable.
-    pub(super) fn chain_runs_user_lifecycle(&self, ty: &Ty, method: &str) -> bool {
-        match ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                let template = name.split("$mono").next().unwrap_or(name);
-                let stdlib = template.starts_with("__module$std$")
-                    || mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    || matches!(
-                        template,
-                        "List" | "Dict" | "Set" | "Optional" | "Array" | "Span" | "StringSpan"
-                    );
-                if !stdlib && self.lifecycle_symbol(name, method).is_some() {
-                    return true;
-                }
-                self.struct_decls.get(name.as_str()).is_some_and(|decl| {
-                    decl.fields
-                        .iter()
-                        .any(|(_, field)| self.chain_runs_user_lifecycle(field, method))
-                })
-            }
-            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
-                .iter()
-                .any(|element| self.chain_runs_user_lifecycle(element, method)),
-            TyKind::Pointer { element, .. } => self.chain_runs_user_lifecycle(element, method),
-            _ => false,
-        }
-    }
-
     /// The entries of the member `method` (`write_to`, `__eq__`) in the
     /// struct `name`'s member table, each overload and instance with its
     /// key, that the program declares.
@@ -186,38 +154,6 @@ impl<'a> FnLowering<'a> {
         }
     }
 
-    /// Branch on `value != null` into a fresh guarded-work block, returning
-    /// the continuation block. The caller emits the guarded work into the
-    /// current block, then closes with [`Self::end_guard`].
-    pub(super) fn begin_nonnull_guard(
-        &mut self,
-        ctx: &mut Context,
-        value: Value,
-    ) -> Ptr<BasicBlock> {
-        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-        let null = ZeroOp::new(ctx, ptr_ty);
-        self.append(ctx, null.get_operation(), None);
-        let compare = ICmpOp::new(ctx, ICmpPredicateAttr::NE, value, null.get_result(ctx));
-        self.append(ctx, compare.get_operation(), None);
-        let region = self.region.expect("lowering is inside a function");
-        let work = BasicBlock::new(ctx, None, vec![]);
-        work.insert_at_back(region, ctx);
-        let cont = BasicBlock::new(ctx, None, vec![]);
-        cont.insert_at_back(region, ctx);
-        let branch = CondBrOp::new(ctx, compare.get_result(ctx), work, vec![], cont, vec![]);
-        self.append(ctx, branch.get_operation(), None);
-        self.current = Some(work);
-        cont
-    }
-
-    /// Close a [`Self::begin_nonnull_guard`] region: jump to and continue in
-    /// the continuation block.
-    pub(super) fn end_guard(&mut self, ctx: &mut Context, cont: Ptr<BasicBlock>) {
-        let jump = BrOp::new(ctx, cont, vec![]);
-        self.append(ctx, jump.get_operation(), None);
-        self.current = Some(cont);
-    }
-
     /// Emit the VM's `drop_value` over storage no instruction names a
     /// destructor for (a field of a struct without one, a frame-exit
     /// release): [`Self::emit_drop`] with the `__deinit__` the member table
@@ -251,37 +187,6 @@ impl<'a> FnLowering<'a> {
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
                 self.emit_free(ctx, data.get_result(ctx));
-                Ok(())
-            }
-            // A retained callable's teardown lives behind its record header:
-            // env null (thin/bare value) and header null (no owned droppable
-            // captures) are no-ops, and the drop thunk nulls the header
-            // after running, so drops of aliasing two-word copies are
-            // idempotent per record — the VM's deep-copying closure clones
-            // are a recorded divergence.
-            TyKind::Func(_) => {
-                let handle = ScalarTy::Ptr.handle(ctx);
-                let env_address = self.gep_byte_unspanned(ctx, ptr, 8);
-                let env = LoadOp::new(ctx, env_address, handle);
-                self.append(ctx, env.get_operation(), None);
-                let env = env.get_result(ctx);
-                let cont_env = self.begin_nonnull_guard(ctx, env);
-                let drop_thunk = LoadOp::new(ctx, env, handle);
-                self.append(ctx, drop_thunk.get_operation(), None);
-                let drop_thunk = drop_thunk.get_result(ctx);
-                let cont_thunk = self.begin_nonnull_guard(ctx, drop_thunk);
-                let void = VoidType::get(ctx).to_handle();
-                let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-                let thunk_ty = FuncType::get(ctx, void, vec![ptr_ty], false);
-                let call = CallOp::new(
-                    ctx,
-                    CallOpCallable::Indirect(drop_thunk),
-                    thunk_ty,
-                    vec![env],
-                );
-                self.append(ctx, call.get_operation(), None);
-                self.end_guard(ctx, cont_thunk);
-                self.end_guard(ctx, cont_env);
                 Ok(())
             }
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
@@ -394,9 +299,7 @@ impl<'a> FnLowering<'a> {
 
     /// [`Self::needs_drop`] for a drop naming `destructor` as `ty`'s own.
     pub(super) fn needs_named_drop(&self, ty: &Ty, destructor: Option<&str>) -> bool {
-        destructor.is_some()
-            || matches!(ty.kind(), TyKind::Error | TyKind::Func(_))
-            || self.fields_need_drop(ty)
+        destructor.is_some() || matches!(ty.kind(), TyKind::Error) || self.fields_need_drop(ty)
     }
 
     /// Whether any transitive field/element of `ty` performs drop work

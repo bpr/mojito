@@ -63,8 +63,8 @@ use mojito_mir::mir::verify::{
     instruction_operand_regs, instruction_places, instruction_places_mut, instruction_result_regs,
 };
 use mojito_mir::mir::{
-    MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm, Proj, Reg,
-    UseMode, count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm, Proj, Reg, UseMode,
+    count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
     instruction_slots, retire_slots, terminator_regs,
 };
 use mojito_types::types::{GenericConstraint, Ty, TyKind};
@@ -531,7 +531,7 @@ fn take_census(
                                     rest.iter().all(|step| matches!(step, Proj::Rebind))
                                 })
                         })
-                        .filter_map(|place| first_field(place, declared))
+                        .and_then(|place| first_field(place, declared))
                         .map(String::from),
                 );
             }
@@ -539,25 +539,15 @@ fn take_census(
     }
 }
 
-/// The places `instruction` ends: a place move or drop, the receiver
+/// The places `instruction` ends: a place move or drop, and the receiver
 /// place of a call whose `deinit` receiver consumes it in place, as
-/// upstream's call consumes a `deinit` operand's address, and a closure's
-/// move captures.
-fn ended_places(instruction: &MirInstr) -> impl Iterator<Item = &MirPlace> {
-    let (single, captures) = match instruction {
-        MirInstr::MovePlace { place, .. } | MirInstr::DropPlace { place, .. } => {
-            (Some(place), &[][..])
-        }
-        MirInstr::MethodCall { .. } => (instruction.consumed_receiver(), &[][..]),
-        MirInstr::MakeClosure { captures, .. } => (None, captures.as_slice()),
-        _ => (None, &[][..]),
-    };
-    single.into_iter().chain(
-        captures
-            .iter()
-            .filter(|capture| capture.mode == MirCaptureMode::Move)
-            .map(|capture| &capture.place),
-    )
+/// upstream's call consumes a `deinit` operand's address.
+fn ended_places(instruction: &MirInstr) -> Option<&MirPlace> {
+    match instruction {
+        MirInstr::MovePlace { place, .. } | MirInstr::DropPlace { place, .. } => Some(place),
+        MirInstr::MethodCall { .. } => instruction.consumed_receiver(),
+        _ => None,
+    }
 }
 
 /// The declared field `place` projects first, directly on its root.

@@ -212,22 +212,17 @@ impl VmBackend {
                     self.canonicalize_value_references(current, current_variables, field);
                 }
             }
-            Value::ComptimeList(values) | Value::Tuple(values) => {
+            Value::ComptimeList(values)
+            | Value::Tuple(values)
+            | Value::Closure {
+                captures: values, ..
+            } => {
                 for element in values {
                     self.canonicalize_value_references(current, current_variables, element);
                 }
             }
             Value::Variant { value, .. } => {
                 self.canonicalize_value_references(current, current_variables, value);
-            }
-            Value::Closure { captures, .. } => {
-                for capture in captures {
-                    self.canonicalize_value_references(
-                        current,
-                        current_variables,
-                        &mut capture.value,
-                    );
-                }
             }
             _ => {}
         }
@@ -293,49 +288,6 @@ impl VmBackend {
             }
         }
         (frame, slot, projection)
-    }
-
-    /// Turn a closure environment into the leading arguments of its lifted
-    /// function, whose parameters `writes` says it may write. Reference
-    /// captures already are handles. A moved capture, a lambda's storage,
-    /// instead borrows the stable slot inside the closure value itself,
-    /// which preserves the body's writes across repeated invocations; a
-    /// closure called from no stable storage passes the storage itself to
-    /// a body that never writes it.
-    pub(super) fn closure_capture_arguments(
-        frame_id: FrameId,
-        registers: &[Value],
-        variables: &[Value],
-        callee_place: Option<&MirPlace>,
-        captures: &[ClosureCapture],
-        writes: &[bool],
-    ) -> Result<Vec<Value>, RuntimeError> {
-        captures
-            .iter()
-            .enumerate()
-            .map(|(index, capture)| {
-                if !capture.owned {
-                    return Ok(capture.value.clone());
-                }
-                let Some(place) = callee_place else {
-                    return if writes.get(index).copied().unwrap_or(true) {
-                        Err(RuntimeError::TypeError(
-                            "vm: a closure whose body writes its owned storage must be called from stable storage"
-                                .to_string(),
-                        ))
-                    } else {
-                        Ok(capture.value.clone())
-                    };
-                };
-                let mut reference =
-                    Self::reference_to_place_parts(frame_id, registers, variables, place)?;
-                let Value::Ref { projection, .. } = &mut reference else {
-                    unreachable!("reference_to_place_parts always returns a handle")
-                };
-                projection.push(RefProjection::Capture(index));
-                Ok(reference)
-            })
-            .collect()
     }
 
     pub(super) fn read_reference(
@@ -539,12 +491,6 @@ impl VmBackend {
                     }
                     *value
                 }
-                (RefProjection::Capture(index), Value::Closure { captures, .. }) => captures
-                    .get(*index)
-                    .map(|capture| capture.value.clone())
-                    .ok_or_else(|| {
-                        RuntimeError::TypeError("closure capture index out of bounds".to_string())
-                    })?,
                 (RefProjection::UninitPayload, Value::UninitStorage(payload)) => *payload
                     .ok_or_else(|| {
                         RuntimeError::TypeError(
@@ -629,16 +575,6 @@ impl VmBackend {
                     value = items.get(*index).cloned().ok_or_else(|| {
                         RuntimeError::TypeError("reference index out of bounds".to_string())
                     })?;
-                }
-                (RefProjection::Capture(index), Value::Closure { captures, .. }) => {
-                    value = captures
-                        .get(*index)
-                        .map(|capture| capture.value.clone())
-                        .ok_or_else(|| {
-                            RuntimeError::TypeError(
-                                "closure capture index out of bounds".to_string(),
-                            )
-                        })?;
                 }
                 (
                     RefProjection::Variant(expected),
@@ -1011,9 +947,6 @@ pub(super) fn navigate_reference_step<'a>(
                 ..
             },
         ) if index == expected => Some(payload),
-        (RefProjection::Capture(index), Value::Closure { captures, .. }) => {
-            captures.get(*index).map(|capture| &capture.value)
-        }
         (RefProjection::UninitPayload, Value::UninitStorage(payload)) => payload.as_deref(),
         _ => None,
     }

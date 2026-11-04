@@ -8,8 +8,8 @@
 
 use crate::runtime::RuntimeError;
 use crate::runtime::{
-    ClosureCapture, RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_error,
-    builtin_input, builtin_min_max, builtin_round, simd_from_values, value_as_index,
+    RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_error, builtin_input,
+    builtin_min_max, builtin_round, simd_from_values, value_as_index,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use calls::*;
@@ -19,8 +19,8 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr, MirIntrinsicSubscript,
-    MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
+    ConcreteMir, Const, MirBlock, MirFunction, MirInstr, MirIntrinsicSubscript, MirPlace,
+    MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::ct::ScalarConversion;
@@ -1003,29 +1003,6 @@ impl Prog {
             .map(Constructed::Value)
     }
 
-    /// Per argument a closure's captures fill in a call of its body
-    /// `name`, whether the body may write it: a lifted body's storage
-    /// when it owns a moved capture. A method's receiver, a closure's
-    /// storage, leads, written when its struct lists the method among
-    /// those writing `self`.
-    fn capture_writes(&self, name: &str) -> Vec<bool> {
-        let Some(declaration) = self.mir.declarations.function(name) else {
-            return Vec::new();
-        };
-        let receiver = declaration.has_receiver.then(|| {
-            mojito_symbol::symbol::split_method_symbol(name).is_some_and(|(owner, method)| {
-                self.mir
-                    .declarations
-                    .structure(owner)
-                    .is_some_and(|owner| owner.mut_self_methods.contains(method))
-            })
-        });
-        receiver
-            .into_iter()
-            .chain(declaration.param_writes.iter().copied())
-            .collect()
-    }
-
     /// Whether the function `name` is one the compiler synthesized, whose
     /// lifecycle events the trace leaves out.
     fn synthesized(&self, name: &str) -> bool {
@@ -1730,19 +1707,6 @@ fn navigate_reference_mut<'a>(
                 _ => {
                     return Err(RuntimeError::TypeError(
                         "invalid mutable Variant reference projection".to_string(),
-                    ));
-                }
-            },
-            RefProjection::Capture(index) => match value {
-                Value::Closure { captures, .. } => captures
-                    .get_mut(*index)
-                    .map(|capture| &mut capture.value)
-                    .ok_or_else(|| {
-                        RuntimeError::TypeError("closure capture index out of bounds".to_string())
-                    })?,
-                _ => {
-                    return Err(RuntimeError::TypeError(
-                        "invalid closure capture projection".to_string(),
                     ));
                 }
             },

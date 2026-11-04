@@ -6,15 +6,14 @@ use super::*;
 use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
 
 /// Emit the body of an `invoke` thunk (see [`ModuleShared::ensure_thunk`]):
-/// load/take the capture arguments out of the environment record, forward
+/// load the capture arguments out of the environment record, forward
 /// the out-pointer and every user argument unchanged, call the lifted
 /// target directly, and return its result.
 pub fn emit_thunk_body(
     ctx: &mut Context,
     func: FuncOp,
     target: &FnSignature,
-    modes: &str,
-    capture_offsets: &[u64],
+    captures: usize,
     has_out: bool,
 ) {
     let entry = func.get_or_create_entry_block(ctx);
@@ -31,44 +30,27 @@ pub fn emit_thunk_body(
         operands.push(argument(ctx, &mut next_argument));
     }
     let env = argument(ctx, &mut next_argument);
-    for (index, (mode, offset)) in modes.chars().zip(capture_offsets).enumerate() {
-        let slot = if *offset == 0 {
+    // Each slot stores a captured place's address, which a `@parameter`
+    // closure's body takes as a reference parameter and a `def`'s as its
+    // storage `self`.
+    for index in 0..captures {
+        let slot = if index == 0 {
             env
         } else {
-            let index = u32::try_from(*offset).expect("environment offsets fit u32");
-            let gep = GetElementPtrOp::new(ctx, env, vec![GepIndex::Constant(index)], i8_ty);
+            let offset = u32::try_from(index * 8).expect("environment offsets fit u32");
+            let gep = GetElementPtrOp::new(ctx, env, vec![GepIndex::Constant(offset)], i8_ty);
             gep.get_operation().insert_at_back(entry, ctx);
             gep.get_result(ctx)
         };
-        // A `Reference` slot stores the captured place's address, which a
-        // `@parameter` closure's body takes as a reference parameter and a
-        // `def`'s as its storage `self`; a moved (`m`) slot, a lambda's
-        // storage, holds the value inline and passes its own address to the
-        // body's `self`, as the VM's owned-capture re-referencing does. A
-        // held storage struct passes by value, so its slot passes the value
-        // loaded from it, and a zero-sized one passes nothing.
-        let by_reference = target.ref_params.get(index).copied().unwrap_or(false);
-        match target.params.get(index) {
-            _ if mode == 'r' => {
-                let load = LoadOp::new(ctx, slot, ptr_ty);
-                load.get_operation().insert_at_back(entry, ctx);
-                operands.push(load.get_result(ctx));
-            }
-            Some(LowerTy::Scalar(scalar)) if !by_reference => {
-                let load = LoadOp::new(ctx, slot, scalar.handle(ctx));
-                load.get_operation().insert_at_back(entry, ctx);
-                operands.push(load.get_result(ctx));
-            }
-            Some(LowerTy::ZeroSized) if !by_reference => {}
-            _ => operands.push(slot),
-        }
+        let load = LoadOp::new(ctx, slot, ptr_ty);
+        load.get_operation().insert_at_back(entry, ctx);
+        operands.push(load.get_result(ctx));
     }
-    let physical_captures = modes.len();
     let mut remaining = target
         .params
         .iter()
         .enumerate()
-        .skip(physical_captures)
+        .skip(captures)
         .filter(|(index, param)| {
             !matches!(param, LowerTy::ZeroSized)
                 || target.ref_params.get(*index).copied().unwrap_or(false)

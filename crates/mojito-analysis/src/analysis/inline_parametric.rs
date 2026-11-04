@@ -59,13 +59,13 @@
 //! function the call's register names, as upstream substitutes the
 //! parameter value: the body's reads of its slot become that function as a
 //! constant and a call through the slot a call through the constant. One
-//! whose register names a closure of reference captures the caller makes
+//! whose register names a closure the caller makes
 //! binds to that closure, as upstream substitutes the closure value: the
 //! body's slot holds it, the inlined entry storing it there at the
 //! closure's type, so a call through the slot is a call through a closure
 //! the caller makes, and the call's accesses to the captured places are
-//! that closure call's. One whose register names a closure with a copied
-//! or moved capture, one loaded from a slot, or nothing keeps the call. A callable-bound type binder (`F: def(Int) -> Int`) binds as any
+//! that closure call's. One whose register names a closure loaded from a
+//! slot, or nothing, keeps the call. A callable-bound type binder (`F: def(Int) -> Int`) binds as any
 //! type. An origin argument binds nothing: the declaration's binders are
 //! its type and value parameters, and the body's origin parameters stay
 //! symbolic in the caller as in an instance. A binder's constraints, the
@@ -180,13 +180,13 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
 };
 use mojito_mir::mir::{
-    Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirCaptureMode,
-    MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame,
-    RegisterEnds, TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
-    converts_to_error, count_register_reads, dunder_method_call, erase_removed_operands,
-    error_conversion, fresh_register, has_no_destructor, instruction_regions,
-    instruction_regions_mut, instruction_regs_mut, instruction_slots, instruction_subscript_call,
+    Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirClosureCapture,
+    MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace,
+    MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame, RegisterEnds,
+    TypeConstructionError, UseMode, callable_targets, construct_type_parameters, converts_to_error,
+    count_register_reads, dunder_method_call, erase_removed_operands, error_conversion,
+    fresh_register, has_no_destructor, instruction_regions, instruction_regions_mut,
+    instruction_regs_mut, instruction_slots, instruction_subscript_call,
     instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
     member_receiver_ty, name_constructors, operator_method, region_exit, removed_argument_operands,
     renumber_block_slots, storage_construction, subscript_store_call, terminator_regs_mut,
@@ -1448,9 +1448,7 @@ impl<'c> Inliner<'_, 'c> {
                     let capture = &site.captures[position];
                     let borrowed_storage = !is_owned_parameter(callee, param)
                         && !declaration.param_writes.get(param).copied().unwrap_or(true);
-                    if capture.mode != MirCaptureMode::Reference
-                        || !(is_reference_parameter(callee, param) || borrowed_storage)
-                    {
+                    if !(is_reference_parameter(callee, param) || borrowed_storage) {
                         return None;
                     }
                     Binding::Place(capture.place.clone())
@@ -1534,21 +1532,16 @@ impl<'c> Inliner<'_, 'c> {
     /// What the register `argument`, a call's compile-time argument passed
     /// at `index` of `block`, holds: the capture-free function the
     /// caller's dataflow resolves it to or the block defines it as a
-    /// constant, or a closure of reference captures the caller makes;
-    /// `None` for a closure with a copied or moved capture, one the caller
-    /// loads from a slot, or an unknown value, whose call stays.
+    /// constant, or a closure the caller makes; `None` for a closure the
+    /// caller loads from a slot, or an unknown value, whose call stays.
     fn callable_argument(
         &self,
         block: &MirBlock,
         index: usize,
         argument: Reg,
     ) -> Option<CallableArgument> {
-        if let Some(closure) = self.closures.made.get(&argument.0) {
-            return closure
-                .captures
-                .iter()
-                .all(|capture| capture.mode == MirCaptureMode::Reference)
-                .then_some(CallableArgument::Closure(argument));
+        if self.closures.made.contains_key(&argument.0) {
+            return Some(CallableArgument::Closure(argument));
         }
         match self.function_values.get(&argument.0) {
             Some((function, true)) => Some(CallableArgument::Function(function.clone())),

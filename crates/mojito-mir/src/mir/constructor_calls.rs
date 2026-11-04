@@ -108,14 +108,6 @@ fn name_in_blocks(
             MirInstr::DefVar { src, in_place, .. } if copied_values.contains(&src.0) => {
                 *in_place = false;
             }
-            MirInstr::MakeClosure { captures, .. } => {
-                for capture in captures {
-                    capture.constructor = named(
-                        capture.place.storage_ty(var_tys),
-                        capture.constructor_member(),
-                    );
-                }
-            }
             MirInstr::MakeVariant {
                 alternatives,
                 index,

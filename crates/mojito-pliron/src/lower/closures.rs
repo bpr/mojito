@@ -1,28 +1,9 @@
-//! Closure lowering: `MakeClosure`, capture drop thunks, and indirect
-//! calls through contract slots.
+//! Closure lowering: `MakeClosure` and indirect calls through contract
+//! slots.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
-
-/// One slot of a capture record: its mode (`r` a reference, `m` a move),
-/// the captured type, its byte offset in the record, and the
-/// `__deinit__` the owned value runs when the closure dies, as the
-/// `closure.make` capture names it.
-pub(super) struct CaptureSlot {
-    pub mode: char,
-    pub ty: Ty,
-    pub offset: u64,
-    pub destructor: Option<String>,
-}
-
-impl CaptureSlot {
-    /// Whether the closure's teardown does work on the slot: an owned value
-    /// whose named destructor, or whose fields, perform a drop.
-    fn releases(&self, lowering: &FnLowering<'_>) -> bool {
-        self.mode != 'r' && lowering.needs_named_drop(&self.ty, self.destructor.as_deref())
-    }
-}
 
 impl FnLowering<'_> {
     /// Build the two-word `{ invoke, env }` value of a retained callable:
@@ -45,146 +26,28 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg(format!("closure over uncompiled `{function}`"), dest));
         };
         self.check_contract_target(&abi, target, captures.len(), function, dest)?;
-        // The environment record: `{ drop: ptr, slots... }`. A `Reference`
-        // slot stores the captured place's address; a moved slot, a
-        // lambda's storage, stores the value inline — the record is the
-        // closure's storage, whose address the invoke thunk passes as the
-        // body's `self`.
-        let pointer_slot = Ty::new(TyKind::Pointer {
-            element: Ty::none(),
-            origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-        });
-        let mut modes = String::with_capacity(captures.len());
-        let mut slot_tys = vec![pointer_slot.clone()];
-        let mut destructors = Vec::with_capacity(captures.len());
-        for capture in captures {
-            let (mode, slot_ty) = match capture.mode {
-                MirCaptureMode::Reference => ('r', pointer_slot.clone()),
-                MirCaptureMode::Move => {
-                    let Some(ty) = capture
-                        .place
-                        .ty
-                        .clone()
-                        .or_else(|| self.func.var_tys.get(&capture.place.root).cloned())
-                    else {
-                        return Err(self.unsupported_reg("untyped closure capture".into(), dest));
-                    };
-                    // A moved capture naming its constructor runs it, as the
-                    // VM does. One naming none relocates its bytes, as the
-                    // VM relocates a struct declaring no `__moveinit__`
-                    // without running its fields', so only a type's own
-                    // user `__moveinit__` reached that way rejects; the
-                    // nominal String's bridged constructor is exactly the
-                    // native relocation.
-                    if named_capture_constructor(capture, &ty).is_none()
-                        && ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
-                            self.lifecycle_symbol(name, "__moveinit__").is_some()
-                        })
-                        && self.chain_runs_user_lifecycle(&ty, "__moveinit__")
-                    {
-                        return Err(self.unsupported_reg(
-                            format!("moved closure capture of `{ty}` with a user `__moveinit__`"),
-                            dest,
-                        ));
-                    }
-                    if !capture.place.proj.is_empty() {
-                        // A projected move capture leaves a residual
-                        // aggregate whose partial-drop bookkeeping the
-                        // leaf-flag pre-scan does not cover here.
-                        return Err(
-                            self.unsupported_reg("projected move closure capture".into(), dest)
-                        );
-                    }
-                    ('m', ty)
-                }
-            };
-            modes.push(mode);
-            slot_tys.push(slot_ty);
-            destructors.push(capture.destructor.clone());
-        }
-        let (env, capture_offsets) = if captures.is_empty() {
+        // The environment record: one slot per capture, each storing the
+        // captured place's address.
+        let env = if captures.is_empty() {
             let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
             let null = ZeroOp::new(ctx, ptr_ty);
             self.append(ctx, null.get_operation(), Some(dest));
-            (null.get_result(ctx), Vec::new())
+            null.get_result(ctx)
         } else {
-            let composed = self.struct_layout_of(&slot_tys, dest)?;
-            let record = self.entry_alloca(ctx, composed.layout.size, composed.layout.align);
-            // Header: the per-site drop thunk when some owned slot needs
-            // drop work, else null. Re-stored on every execution — a loop
-            // re-creating a dropped closure revives the tombstoned header.
-            let droppable: Vec<CaptureSlot> = modes
-                .chars()
-                .zip(&slot_tys[1..])
-                .zip(&composed.offsets[1..])
-                .zip(destructors)
-                .map(|(((mode, ty), offset), destructor)| CaptureSlot {
-                    mode,
-                    ty: ty.clone(),
-                    offset: *offset,
-                    destructor,
-                })
-                .collect();
-            let header = if droppable.iter().any(|slot| slot.releases(self)) {
-                let thunk = self.ensure_capture_drop_thunk(ctx, function, &modes, &droppable)?;
-                let address = AddressOfOp::new(ctx, thunk, 0);
-                self.append(ctx, address.get_operation(), Some(dest));
-                address.get_result(ctx)
-            } else {
-                let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-                let null = ZeroOp::new(ctx, ptr_ty);
-                self.append(ctx, null.get_operation(), Some(dest));
-                null.get_result(ctx)
-            };
-            let store_header = StoreOp::new(ctx, header, record);
-            self.append(ctx, store_header.get_operation(), Some(dest));
-            for (capture, (slot, offset)) in captures
-                .iter()
-                .zip(droppable.iter().zip(&composed.offsets[1..]))
-            {
-                let (mode, ty) = (&slot.mode, &slot.ty);
-                let slot = if *offset == 0 {
+            let record = self.entry_alloca(ctx, 8 * captures.len() as u64, 8);
+            for (index, capture) in captures.iter().enumerate() {
+                let slot = if index == 0 {
                     record
                 } else {
-                    self.gep_byte(ctx, record, *offset, dest)
+                    self.gep_byte(ctx, record, 8 * index as u64, dest)
                 };
-                let place = capture.place.clone();
-                let (source, _) = self.place_address(ctx, &place, dest)?;
-                if *mode == 'r' {
-                    let store = StoreOp::new(ctx, source, slot);
-                    self.append(ctx, store.get_operation(), Some(dest));
-                    continue;
-                }
-                let layout = self.layout.layout_of(ty).map_err(|error| {
-                    self.unsupported_reg(format!("closure capture layout ({error})"), dest)
-                })?;
-                let named = named_capture_constructor(capture, ty);
-                if let Some(constructor) = named {
-                    // The capture runs the constructor it names, `(out
-                    // self, source)`, into its slot.
-                    self.emit_constructor_call(ctx, constructor, slot, source, dest)?;
-                } else {
-                    self.mem_copy(ctx, slot, source, layout.size, dest);
-                }
-                // The VM's move capture runs the compiled stdlib
-                // `__moveinit__` (`move_value`), whose `deinit other`
-                // teardown reports one consume event; the byte relocation
-                // above is that constructor's exact semantics, so mirror
-                // the event.
-                if named.is_none()
-                    && self.trace_lifecycle
-                    && let Some((name, _)) = ty.kind().as_non_simd_struct()
-                    && self.lifecycle_symbol(name, "__moveinit__").is_some()
-                {
-                    let name = name.clone();
-                    self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
-                }
+                let (source, _) = self.place_address(ctx, &capture.place, dest)?;
+                let store = StoreOp::new(ctx, source, slot);
+                self.append(ctx, store.get_operation(), Some(dest));
             }
-            (record, composed.offsets[1..].to_vec())
+            record
         };
-        let thunk = self
-            .shared
-            .ensure_thunk(ctx, target, &modes, &capture_offsets);
+        let thunk = self.shared.ensure_thunk(ctx, target, captures.len());
         let storage = self.entry_alloca(ctx, 16, 8);
         let invoke = AddressOfOp::new(ctx, thunk, 0);
         self.append(ctx, invoke.get_operation(), Some(dest));
@@ -195,75 +58,6 @@ impl FnLowering<'_> {
         self.append(ctx, store_env.get_operation(), Some(dest));
         self.reg_values.insert(dest.0, storage);
         Ok(())
-    }
-
-    /// Emit (once per `(target, modes)`) the teardown thunk a capture
-    /// record's header names: destroy the owned droppable slots in reverse
-    /// capture order (the VM's closure-drop order), each by the destructor
-    /// its capture names, then null the header — drops are idempotent per
-    /// record, which is what keeps aliasing two-word copies sound.
-    pub(super) fn ensure_capture_drop_thunk(
-        &mut self,
-        ctx: &mut Context,
-        function: &str,
-        modes: &str,
-        slots: &[CaptureSlot],
-    ) -> Result<Identifier, PlironError> {
-        let key = (function.to_string(), modes.to_string());
-        if let Some(name) = self.shared.drop_thunks.get(&key) {
-            return Ok(name.clone());
-        }
-        let name: Identifier = format!("mjdrop_{}", self.shared.drop_thunks.len())
-            .try_into()
-            .expect("thunk names are identifier-safe");
-        let void = VoidType::get(ctx).to_handle();
-        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-        let thunk_ty = FuncType::get(ctx, void, vec![ptr_ty], false);
-        let func = FuncOp::new(ctx, name.clone(), thunk_ty);
-        self.shared
-            .module
-            .append_operation(ctx, func.get_operation(), 0);
-        let entry = func.get_or_create_entry_block(ctx);
-        let region = func
-            .get_operation()
-            .deref(ctx)
-            .regions()
-            .next()
-            .expect("llvm.func has a body region");
-        // Retarget the emission cursor into the thunk body: the drop chain
-        // is ordinary `emit_drop_value` output (trace events included, so
-        // capture drops report at drop time like the VM's).
-        let saved_current = self.current;
-        let saved_region = self.region;
-        self.current = Some(entry);
-        self.region = Some(region);
-        let emit = |lowering: &mut Self, ctx: &mut Context| -> Result<(), PlironError> {
-            let env = entry.deref(ctx).get_argument(0);
-            for slot in slots.iter().rev() {
-                if !slot.releases(lowering) {
-                    continue;
-                }
-                let address = if slot.offset == 0 {
-                    env
-                } else {
-                    lowering.gep_byte_unspanned(ctx, env, slot.offset)
-                };
-                lowering.emit_drop(ctx, address, &slot.ty, slot.destructor.as_deref())?;
-            }
-            let null = ZeroOp::new(ctx, ptr_ty);
-            lowering.append(ctx, null.get_operation(), None);
-            let tombstone = StoreOp::new(ctx, null.get_result(ctx), env);
-            lowering.append(ctx, tombstone.get_operation(), None);
-            let ret = ReturnOp::new(ctx, None);
-            lowering.append(ctx, ret.get_operation(), None);
-            Ok(())
-        };
-        let emitted = emit(self, ctx);
-        self.current = saved_current;
-        self.region = saved_region;
-        emitted?;
-        self.shared.drop_thunks.insert(key, name.clone());
-        Ok(name)
     }
 
     /// Call through a retained callable value: bind the arguments against
@@ -480,15 +274,4 @@ impl FnLowering<'_> {
             )),
         }
     }
-}
-
-/// The compiled constructor an owned `capture` of a `ty` value names, none
-/// for a capture naming none or for the nominal String, whose constructors
-/// are bridged natively.
-fn named_capture_constructor<'c>(capture: &'c MirClosureCapture, ty: &Ty) -> Option<&'c str> {
-    capture.constructor.as_deref().filter(|_| {
-        !ty.kind()
-            .as_non_simd_struct()
-            .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
-    })
 }

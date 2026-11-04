@@ -180,21 +180,7 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
         for instruction in &mut block.instrs {
             match instruction {
                 MirInstr::Call { func, .. } => replace(&mut func.0),
-                MirInstr::MakeClosure {
-                    function, captures, ..
-                } => {
-                    replace(function);
-                    captures
-                        .iter_mut()
-                        .flat_map(|capture| {
-                            capture
-                                .constructor
-                                .as_mut()
-                                .into_iter()
-                                .chain(capture.destructor.as_mut())
-                        })
-                        .for_each(&mut *replace);
-                }
+                MirInstr::MakeClosure { function, .. } => replace(function),
                 MirInstr::Const {
                     k: Const::Function(function) | Const::FunctionInstance { function, .. },
                     ..

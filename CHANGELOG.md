@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A closure value owns nothing (R1434): `closure.make` captures every
+  place by reference (MIR text schema 1.157 withdraws the `move` capture
+  mode with its constructor and destructor; `mojito-package 179`), so the
+  VM's owned-capture projections, Pliron's inline capture slots and
+  `mjdrop_<n>` teardown thunks, and the verifier's moved-receiver rule are
+  gone. A function-typed register is no longer owned, `canonicalize` folds
+  a call through any closure, and `mem-2-reg` promotes every
+  function-typed slot.
+
 - The check declares a closure's storage struct (R1436): its fields, its
   copyability and passabilities, and whether a call writes it are a
   `CheckedClosureStorage` on the closure's `CheckedDef`, computed once

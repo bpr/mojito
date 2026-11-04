@@ -48,9 +48,9 @@ use mojito_common::error::OwnershipError;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj,
-    Reg, lower_copies_and_moves,
+    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirInteriorOrigin,
+    MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
+    lower_copies_and_moves,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;

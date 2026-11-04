@@ -12,7 +12,7 @@
 //! `u` is not a hex digit; the `mj_` prefix keeps mangled names clear of the
 //! synthesized executable wrapper `main`, the C `exit`, the reserved
 //! `mjrt_*` runtime namespace (the `mojito-runtime` crate's exports), and
-//! the backend's interned callable thunks (`mjthunk_<n>`, `mjdrop_<n>`).
+//! the backend's interned callable thunks (`mjthunk_<n>`).
 
 /// Mangle a MIR symbol name into a C-safe native symbol.
 #[allow(

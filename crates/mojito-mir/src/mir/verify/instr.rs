@@ -2,7 +2,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::{MirCaptureMode, MirClosureCapture};
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::TyKind;
 use mojito_types::types::{i1_as_bool, storage_ty, storage_value_ty};
@@ -774,25 +773,6 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             function: target,
             captures,
         } => {
-            for capture in captures {
-                let ty = capture.place.storage_ty(&cx.function.var_tys);
-                verify_lifecycle_symbol(
-                    cx,
-                    "closure capture",
-                    ty,
-                    capture.constructor_member(),
-                    capture.constructor.as_deref(),
-                    errors,
-                );
-                verify_lifecycle_symbol(
-                    cx,
-                    "closure capture release",
-                    ty,
-                    capture.destructor_member(),
-                    capture.destructor.as_deref(),
-                    errors,
-                );
-            }
             match declared(cx.declarations, target) {
                 None => errors.push(format!(
                     "{prefix}: closure refers to undeclared lifted function '{target}'"
@@ -808,13 +788,9 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                             parameters
                         ));
                     }
-                    if !captures
-                        .iter()
-                        .enumerate()
-                        .all(|(index, capture)| capture_binds(declaration, index, capture))
-                    {
+                    if !(0..captures.len()).all(|index| capture_binds(declaration, index)) {
                         errors.push(format!(
-                            "{prefix}: closure environment for '{target}' binds neither, by reference, a leading reference parameter nor, by reference or moved in, a leading `read` one of its type"
+                            "{prefix}: closure environment for '{target}' binds neither a leading reference parameter nor a leading `read` one"
                         ));
                     }
                 }
@@ -1232,56 +1208,21 @@ fn verify_struct_creation(cx: &InstrCx<'_>, dest: Reg, fields: &[Reg], errors: &
     }
 }
 
-/// Whether the closure capture `capture` binds the leading parameter
-/// `index` of its lifted body `declaration`: a reference parameter by
-/// reference (a `@parameter` closure's), or a `read` one, a closure's
-/// storage, by reference (a `def` used as a value) or moved in (a
-/// lambda's) as a value of its type. A method's receiver leads its
-/// parameters: a closure's storage is the `read` `self` of the method its
-/// body is.
-fn capture_binds(
-    declaration: &MirFunctionDeclaration,
-    index: usize,
-    capture: &MirClosureCapture,
-) -> bool {
+/// Whether a closure's capture binds the leading parameter `index` of its
+/// lifted body `declaration`: a reference parameter (a `@parameter`
+/// closure's), or a `read` one, a closure's storage (a `def` used as a
+/// value). A method's receiver leads its parameters: a closure's storage
+/// is the `read` `self` of the method its body is.
+fn capture_binds(declaration: &MirFunctionDeclaration, index: usize) -> bool {
     match index.checked_sub(usize::from(declaration.has_receiver)) {
-        Some(index) => parameter_binds(declaration, index, capture),
-        None => {
-            declaration.receiver_convention.is_none()
-                && match capture.mode {
-                    MirCaptureMode::Reference => true,
-                    MirCaptureMode::Move => capture.place.ty.as_ref().is_none_or(|ty| {
-                        ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
-                            mojito_symbol::symbol::split_method_symbol(&declaration.lowered_name)
-                                .is_some_and(|(owner, _)| owner == name)
-                        })
-                    }),
-                }
+        Some(index) => {
+            declaration.ref_params.get(index).copied().unwrap_or(false)
+                || matches!(
+                    declaration.param_conventions.get(index),
+                    Some(None | Some(ArgConvention::Imm))
+                )
         }
-    }
-}
-
-/// [`capture_binds`] for the parameter `index`, its receiver apart, of
-/// `declaration`.
-fn parameter_binds(
-    declaration: &MirFunctionDeclaration,
-    index: usize,
-    capture: &MirClosureCapture,
-) -> bool {
-    if declaration.ref_params.get(index).copied().unwrap_or(false) {
-        return capture.mode == MirCaptureMode::Reference;
-    }
-    matches!(
-        declaration.param_conventions.get(index),
-        Some(None | Some(ArgConvention::Imm))
-    ) && match capture.mode {
-        MirCaptureMode::Reference => true,
-        MirCaptureMode::Move => capture.place.ty.as_ref().is_none_or(|ty| {
-            declaration
-                .param_types
-                .get(index)
-                .is_some_and(|param| types_compatible(ty, param))
-        }),
+        None => declaration.receiver_convention.is_none(),
     }
 }
 

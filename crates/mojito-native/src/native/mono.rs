@@ -31,7 +31,7 @@ use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
 use mojito_mir::mir::text::package::PackageBodies;
 use mojito_mir::mir::{
-    ConcreteMir, Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
+    ConcreteMir, Const, MirBlock, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, Reg,
 };
 use mojito_native_core::layout::StructFieldIndex;

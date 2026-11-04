@@ -177,21 +177,6 @@ impl Walk<'_> {
                 Some(destructor) => self.named(Some(element), Some(destructor)),
                 None => self.pending.push((element.clone(), true)),
             },
-            // An owned capture dies with the closure value, by the
-            // destructor the capture names.
-            MirInstr::MakeClosure { captures, .. } => {
-                for capture in captures {
-                    if capture.destructor_member().is_none() {
-                        continue;
-                    }
-                    match &capture.destructor {
-                        Some(destructor) => {
-                            self.named(capture.place.storage_ty(self.var_tys), Some(destructor));
-                        }
-                        None => self.place(&capture.place, true),
-                    }
-                }
-            }
             _ => {}
         }
     }

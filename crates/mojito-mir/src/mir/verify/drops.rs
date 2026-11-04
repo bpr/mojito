@@ -46,8 +46,8 @@ use super::{
 };
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{
-    MirCaptureMode, MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds,
-    VarId, instruction_regions, instruction_slots, region_exit, terminator_regs,
+    MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds, VarId,
+    instruction_regions, instruction_slots, region_exit, terminator_regs,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -714,11 +714,6 @@ impl<'a> Walk<'a> {
             MirInstr::MovePlace { place, .. }
             | MirInstr::DropPlace { place, .. }
             | MirInstr::MarkDestroyed { place } => vec![place],
-            MirInstr::MakeClosure { captures, .. } => captures
-                .iter()
-                .filter(|capture| capture.mode == MirCaptureMode::Move)
-                .map(|capture| &capture.place)
-                .collect(),
             _ => Vec::new(),
         };
         for place in ended.into_iter().chain(consumed) {

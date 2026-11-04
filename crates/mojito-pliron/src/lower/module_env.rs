@@ -16,7 +16,6 @@ impl ModuleShared {
             extern_types: HashMap::new(),
             strings: HashMap::new(),
             thunks: HashMap::new(),
-            drop_thunks: HashMap::new(),
             param_lists: HashMap::new(),
             kgen_string_lists: HashMap::new(),
         }
@@ -211,25 +210,20 @@ impl ModuleShared {
     }
 
     /// Intern the `invoke` thunk adapting compiled `target` to the uniform
-    /// indirect-call ABI and return its symbol. `modes` encodes the leading
-    /// capture parameters (`r` reference / `c` copy / `m` move — empty for a
-    /// bare function value); `capture_offsets` gives each capture's byte
-    /// offset in the environment record. The thunk takes
-    /// `[outcome*|sret*], env*, params...`, rebuilds the target's leading
-    /// capture arguments from the record — a `Reference` slot holds the
-    /// captured place's address (loaded), an owned slot holds the value
-    /// inline (its address is the argument, since every capture parameter is
-    /// a reference parameter) — and forwards everything else unchanged,
-    /// out-pointer included, so a raising target's tagged outcome flows
-    /// through untouched.
+    /// indirect-call ABI and return its symbol. `captures` counts the
+    /// leading capture parameters (none for a bare function value). The
+    /// thunk takes `[outcome*|sret*], env*, params...`, rebuilds the
+    /// target's leading capture arguments from the record, one captured
+    /// place's address per pointer slot, and forwards everything else
+    /// unchanged, out-pointer included, so a raising target's tagged
+    /// outcome flows through untouched.
     pub(super) fn ensure_thunk(
         &mut self,
         ctx: &mut Context,
         target: &FnSignature,
-        modes: &str,
-        capture_offsets: &[u64],
+        captures: usize,
     ) -> Identifier {
-        let key = (target.mangled.clone(), modes.to_string());
+        let key = (target.mangled.clone(), captures);
         if let Some(name) = self.thunks.get(&key) {
             return name.clone();
         }
@@ -237,7 +231,6 @@ impl ModuleShared {
             .try_into()
             .expect("thunk names are identifier-safe");
         let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-        let captures = modes.len();
         let has_out = target.sret.is_some() || target.outcome.is_some();
         let mut param_handles: Vec<TypeHandle> = Vec::new();
         if has_out {
@@ -257,7 +250,7 @@ impl ModuleShared {
         let thunk_ty = FuncType::get(ctx, result, param_handles, false);
         let func = FuncOp::new(ctx, name.clone(), thunk_ty);
         self.module.append_operation(ctx, func.get_operation(), 0);
-        emit_thunk_body(ctx, func, target, modes, capture_offsets, has_out);
+        emit_thunk_body(ctx, func, target, captures, has_out);
         self.thunks.insert(key, name.clone());
         name
     }

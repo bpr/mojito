@@ -246,15 +246,6 @@ impl VmBackend {
                 }
             }
             Value::Variant { value, .. } => self.drop_value(prog, *value)?,
-            // An owned capture runs the destructor its `closure.make`
-            // capture named, as a drop runs the one it names.
-            Value::Closure { captures, .. } => {
-                for capture in captures.into_iter().rev() {
-                    if capture.owned && !matches!(capture.value, Value::Moved) {
-                        self.drop_named(prog, capture.value, None, capture.destructor.as_deref())?;
-                    }
-                }
-            }
             _ => {}
         }
         Ok(())

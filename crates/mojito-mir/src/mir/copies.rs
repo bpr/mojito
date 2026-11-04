@@ -10,7 +10,7 @@
 //! move of a struct without the member may reach.
 
 use crate::mir::{
-    MirBlock, MirCaptureMode, MirFunction, MirInstr, MirPlace, MirStructDeclaration, Reg, UseMode,
+    MirBlock, MirFunction, MirInstr, MirPlace, MirStructDeclaration, Reg, UseMode,
     instruction_regions,
 };
 use mojito_hir::hir::VarId;
@@ -179,27 +179,6 @@ impl Walk<'_> {
                 UseMode::Move => self.var(*var, true),
                 UseMode::BorrowShared | UseMode::BorrowMut | UseMode::Forward => {}
             },
-            // A closure value copies its owned captures with itself.
-            MirInstr::MakeClosure { captures, .. } => {
-                for capture in captures {
-                    // A copy or move of the closure itself relocates the
-                    // capture the other way, finding the member by type.
-                    match (&capture.constructor, capture.mode) {
-                        (_, MirCaptureMode::Reference) => {}
-                        (Some(constructor), MirCaptureMode::Move) => {
-                            self.named(
-                                capture.place.storage_ty(&self.function.var_tys),
-                                constructor,
-                            );
-                            self.place(&capture.place, false);
-                        }
-                        (None, _) => {
-                            self.place(&capture.place, false);
-                            self.place(&capture.place, true);
-                        }
-                    }
-                }
-            }
             MirInstr::MakeVariant { value, .. }
             | MirInstr::VariantSet { value, .. }
             | MirInstr::VariantReplace { value, .. } => self.register(*value),

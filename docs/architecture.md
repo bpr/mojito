@@ -818,8 +818,9 @@ policy or data-model responsibilities to focused children:
   as a value is that storage variable, which a `read` parameter borrows
   and an owning use copies, so the check asks its storage for
   `ImplicitlyCopyable` there (`Flatten::lambda_storage_variable`,
-  `Flatten::lambda_storage_value`), and one the check converts to a run-time callable moves the storage
-  into a one-capture `closure.make` (`Flatten::lambda_closure`). The storage's `__init__` takes a moved capture
+  `Flatten::lambda_storage_value`); no use converts it to a run-time
+  callable, so every `closure.make` captures places by reference and a
+  closure value owns nothing. The storage's `__init__` takes a moved capture
   by forwarding its storage to the `var` parameter, as an owned argument
   binds it, so the capture moves once, into the field. The path that
   passes a storage-less body its captures as leading reference

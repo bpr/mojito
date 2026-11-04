@@ -733,32 +733,6 @@ impl<'a> Flatten<'a> {
         self.take_c(node, crate::mir::call_results::CValue::Slot(slot))
     }
 
-    /// The closure value of the lambda `info` at `at`: a capturing
-    /// lambda builds its storage here, once per evaluation, and moves it
-    /// into a closure of its lifted body, whose `self` it is; a lambda
-    /// without storage makes the closure of its captured places.
-    pub(in crate::mir) fn lambda_closure(&mut self, info: &NestedInfo, at: SourceSpan) -> Reg {
-        let Some(storage) = &info.storage else {
-            return self.emit_nested_closure(info, at);
-        };
-        let slot = self.lambda_storage_slot(info, storage, &at);
-        let dest = match Self::closure_value_ty(info) {
-            Some(ty) => self.fresh_typed(at, None, ty),
-            None => self.fresh(at, None),
-        };
-        self.emit(MirInstr::MakeClosure {
-            dest,
-            function: info.mangled.clone(),
-            captures: vec![MirClosureCapture {
-                place: MirPlace::root(slot, Some(storage.ty.clone())),
-                mode: MirCaptureMode::Move,
-                constructor: None,
-                destructor: None,
-            }],
-        });
-        dest
-    }
-
     /// The closure of the body `info` without storage at `at` (a thin
     /// lambda, or a `@parameter` closure or capture-free `def` used as a
     /// value): each capture is a reference to its place, which a
@@ -769,9 +743,6 @@ impl<'a> Flatten<'a> {
             .iter()
             .map(|capture| MirClosureCapture {
                 place: self.capture_place(capture),
-                mode: MirCaptureMode::Reference,
-                constructor: None,
-                destructor: None,
             })
             .collect();
         let dest = match Self::closure_value_ty(info) {
@@ -807,12 +778,7 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::MakeClosure {
                 dest,
                 function: info.mangled.clone(),
-                captures: vec![MirClosureCapture {
-                    place,
-                    mode: MirCaptureMode::Reference,
-                    constructor: None,
-                    destructor: None,
-                }],
+                captures: vec![MirClosureCapture { place }],
             });
             return dest;
         }

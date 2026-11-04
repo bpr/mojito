@@ -978,24 +978,9 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(5),
             function: "outer::lambda#1".into(),
             captures: vec![
-                MirClosureCapture {
-                    place: place(0),
-                    mode: MirCaptureMode::Reference,
-                    constructor: None,
-                    destructor: None,
-                },
-                MirClosureCapture {
-                    place: place(1),
-                    mode: MirCaptureMode::Move,
-                    constructor: None,
-                    destructor: None,
-                },
-                MirClosureCapture {
-                    place: place(2),
-                    mode: MirCaptureMode::Move,
-                    constructor: None,
-                    destructor: None,
-                },
+                MirClosureCapture { place: place(0) },
+                MirClosureCapture { place: place(1) },
+                MirClosureCapture { place: place(2) },
             ],
         },
         MirInstr::KeepAlive { var: 1 },

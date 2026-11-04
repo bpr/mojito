@@ -1216,23 +1216,9 @@ impl<'p> CallEdges<'p, '_> {
             // instruction; the per-target thunk calls it, so the body
             // must be declared and compiled even when every invocation
             // is indirect.
-            // Its moved captures run the constructors and, at the
-            // closure's death, the destructors they name.
             MirInstr::MakeClosure {
-                function: target,
-                captures,
-                ..
-            } => {
-                self.push_named(target);
-                for capture in captures {
-                    if let Some(constructor) = &capture.constructor {
-                        self.push_named(constructor);
-                    }
-                    if let Some(destructor) = &capture.destructor {
-                        self.push_named(destructor);
-                    }
-                }
-            }
+                function: target, ..
+            } => self.push_named(target),
             // A storage destroy runs the destructor it names.
             MirInstr::PointerStorageDestroy {
                 destructor: Some(destructor),
