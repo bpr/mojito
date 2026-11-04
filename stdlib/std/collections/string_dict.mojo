@@ -133,10 +133,11 @@ struct StringDict[V: Movable](
     ]:
         var existing: Int = self.find_index(key)
         if existing >= 0:
+            var data = self.entries._storage._alloc._ptr
             var displaced = Optional[DictEntry[String, Self.V]](
-                self.entries.data.unsafe_offset(existing).unsafe_take_pointee()
+                data.unsafe_offset(existing).unsafe_take_pointee()
             )
-            self.entries.data[existing] = DictEntry[String, Self.V](key, value^)
+            data[existing] = DictEntry[String, Self.V](key, value^)
             return displaced^
         # Fresh-key path: append and index directly (like `__setitem__`'s
         # fresh branch) — delegating would demand its `Deinitable` bound.

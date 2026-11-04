@@ -455,19 +455,7 @@ impl VmBackend {
                 (RefProjection::Index(index), Value::Struct { name, fields, .. })
                     if name == "List" || name.ends_with("$List") =>
                 {
-                    let (allocation, offset) = fields
-                        .into_iter()
-                        .find_map(|(field, value)| match (field.as_str(), value) {
-                            ("data", Value::Pointer { allocation, offset }) => {
-                                Some((allocation, offset))
-                            }
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            RuntimeError::TypeError(
-                                "self-hosted List has no pointer storage".to_string(),
-                            )
-                        })?;
+                    let (allocation, offset) = list_storage_pointer(&fields)?;
                     self.heap_read(allocation, offset, *index as i64)?
                 }
                 (
@@ -544,19 +532,7 @@ impl VmBackend {
                 (RefProjection::Index(index), Value::Struct { name, fields, .. })
                     if name == "List" || name.ends_with("$List") =>
                 {
-                    let (allocation, offset) = fields
-                        .into_iter()
-                        .find_map(|(field, value)| match (field.as_str(), value) {
-                            ("data", Value::Pointer { allocation, offset }) => {
-                                Some((allocation, offset))
-                            }
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            RuntimeError::TypeError(
-                                "self-hosted List has no pointer storage".to_string(),
-                            )
-                        })?;
+                    let (allocation, offset) = list_storage_pointer(&fields)?;
                     return Ok(Some(ReferencePointerBoundary {
                         allocation,
                         offset,
@@ -949,5 +925,26 @@ pub(super) fn navigate_reference_step<'a>(
         ) if index == expected => Some(payload),
         (RefProjection::UninitPayload, Value::UninitStorage(payload)) => payload.as_deref(),
         _ => None,
+    }
+}
+
+/// The buffer a self-hosted `List` indexes: its `_storage` `Allocation`'s
+/// `ThinAllocation` pointer.
+fn list_storage_pointer(fields: &[(String, Value)]) -> Result<(u64, i64), RuntimeError> {
+    let field = |fields: &[(String, Value)], wanted: &str| {
+        fields
+            .iter()
+            .find(|(field, _)| field == wanted)
+            .map(|(_, value)| value.clone())
+    };
+    let nested = |value: Option<Value>, wanted: &str| match value {
+        Some(Value::Struct { fields, .. }) => field(&fields, wanted),
+        _ => None,
+    };
+    match nested(nested(field(fields, "_storage"), "_alloc"), "_ptr") {
+        Some(Value::Pointer { allocation, offset }) => Ok((allocation, offset)),
+        _ => Err(RuntimeError::TypeError(
+            "self-hosted List has no pointer storage".into(),
+        )),
     }
 }

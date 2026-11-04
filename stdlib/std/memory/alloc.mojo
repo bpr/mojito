@@ -50,7 +50,7 @@ struct ThinAllocation[T: AnyType](Movable, Deinitable where False):
 
 
 @explicit_destroy("an Allocation owns heap storage; release it with dealloc(allocation^) or leak it explicitly")
-struct Allocation[T: AnyType](Movable, Deinitable where False):
+struct Allocation[T: AnyType](Movable, Sized, Deinitable where False):
     var _alloc: ThinAllocation[Self.T]
     var _layout: Layout[Self.T]
 
@@ -72,6 +72,10 @@ struct Allocation[T: AnyType](Movable, Deinitable where False):
 
     def layout(self) -> Layout[Self.T]:
         return self._layout
+
+    # The element count the storage was allocated for.
+    def __len__(self) -> Int:
+        return self._layout._count
 
     def into_thin(deinit self) -> ThinAllocation[Self.T]:
         return self._alloc^

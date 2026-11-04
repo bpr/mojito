@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled `List` stores upstream's two fields, `_storage:
+  Allocation[T]` (the buffer, its `Layout` carrying the capacity) and
+  `_len`, rather than `data`, `size`, and `cap`, so
+  `reflect[List[Int]].field_count()` prints `2` as the pin does and every
+  reflected read of a `List` answers upstream's struct (R1482).
+  `Allocation` gains upstream's `__len__` and `Sized` conformance.
+
 - A conditional expression comparing sized-integer value parameters
   (`1 if x == 0 else 2 * f[x - 1]()` in `def f[x: UInt16]()`) is a
   parameter-valued condition, selecting its arm per instance as the pin

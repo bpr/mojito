@@ -5027,7 +5027,7 @@ destinations carry interior paths.
 ### Nominal String and the literal bridges
 
 The self-hosted `String` (stdlib/std/string.mojo) is an ordinary struct — a
-UTF-8 byte buffer over `UnsafePointer[Byte]` in the List storage pattern —
+UTF-8 byte buffer over `UnsafePointer[Byte]` with its byte length and capacity —
 and its literal constructors are ordinary Mojo bodies. The one intrinsic is
 upstream's pair of `StringLiteral` byte primitives, `byte_length()` and
 `ptr() -> Pointer[Byte, ImmStaticOrigin]` (`pop.string.size` /

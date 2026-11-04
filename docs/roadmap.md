@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1906**.
+Next free ID: **R1907**.
 
 ## Ordered Work
 
@@ -9604,19 +9604,18 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1482 The bundled `List` stores three fields where upstream's
-  stores two**
+- [ ] **R1906 The bundled owned `List` iterator holds a raw buffer, where
+  upstream's holds the drained `List`**
 
-  `reflect[List[Int]].field_count()` prints `3`, where the pin prints `2`:
-  the bundled `List` holds `data: UnsafePointer[T]`, `size`, and `cap`,
-  where upstream's holds `_storage: Allocation[T]` (the buffer and its
-  capacity) and `_len`, so every reflected read of a `List` (field names,
-  types, indexes) answers another struct.
-  - Porting it needs upstream's `Allocation` and a rewrite of every
-    bundled `List` member over the two fields.
-  - The VM reads a `List`-shaped value's `data`, `size`, and `cap` by name
-    (`backend/vm/values.rs`), which moves with it.
-  - Found while landing R1383 (2026-10-26).
+  `reflect[type_of(it)]` over `var it = xs^.__iter__()` names
+  `_ListOwnedIter` with fields `data`, `size`, and `index`, where the pin
+  names `_ListIterOwned` holding `_list: List[T]` and `_index`.
+  - Lever: `_ListOwnedIter` and `List.__iter__(var self)` in
+    `stdlib/std/collections/list.mojo`, and `Set.__iter__(var self)` in
+    `set.mojo`, which build it from the list's leaked `_storage`.
+  - Upstream's `__deinit__` destroys the untaken tail and zeroes
+    `_list._len` so the held `List` frees only its buffer.
+  - Found while landing R1482 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

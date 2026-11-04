@@ -83,7 +83,7 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
     @inline(.always)
     @implicit
     def __init__(out self, ref [Self.origin] list: List[Self.T]):
-        self._data = list.data.unsafe_origin_cast[
+        self._data = list._storage._alloc._ptr.unsafe_origin_cast[
             origin._get_owned_interior["element"]
         ]()
         self._size = len(list)

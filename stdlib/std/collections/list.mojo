@@ -1,6 +1,8 @@
-# A self-hosted growable List.  Heap slots in `[0, size)` are initialized —
-# or, after an `unsafe_uninit_length` construction or resize, owed an
-# initialization by the caller — and slots in `[size, cap)` are not.
+# A self-hosted growable List over upstream's two fields: `_storage`, the
+# `Allocation` whose `Layout` carries the capacity, and `_len`.  Heap slots in
+# `[0, _len)` are initialized — or, after an `unsafe_uninit_length`
+# construction or resize, owed an initialization by the caller — and slots in
+# `[_len, capacity())` are not.
 # `unsafe_offset(i).unsafe_take_pointee()`
 # moves an initialized slot out and `unsafe_offset(i).unsafe_deinit_pointee()`
 # destroys one in place — the public raw-pointer vocabulary over storage this
@@ -10,7 +12,7 @@ from std.string import check_slice_bounds
 from std.builtin.builtin_slice import ContiguousSlice, StridedSlice
 from std.span import Span
 
-from std.memory.alloc import unsafe_alloc
+from std.memory.alloc import Allocation, Layout, alloc, dealloc
 
 from std.reflection.type_info import _unqualified_type_name
 from std.hash import Hasher
@@ -147,20 +149,18 @@ struct List[T: AnyType](
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = _ListReversedIter[Self.T, iterable_origin]
 
-    var data: UnsafePointer[Self.T]
-    var size: Int
-    var cap: Int
+    # The storage backing the list; its `Layout` carries the capacity.
+    var _storage: Allocation[Self.T]
+    var _len: Int
 
     def __init__(out self):
-        self.cap = 4
-        self.size = 0
-        self.data = unsafe_alloc[Self.T](self.cap)
+        self._storage = alloc(Layout[Self.T](count=4))
+        self._len = 0
 
     # Capacity hint: the first `capacity` appends never reallocate.
     def __init__(out self, *, capacity: Int):
-        self.cap = capacity
-        self.size = 0
-        self.data = unsafe_alloc[Self.T](self.cap)
+        self._storage = alloc(Layout[Self.T](count=capacity))
+        self._len = 0
 
     # Length without initialization: the caller writes every slot in
     # `[0, length)` through raw pointer stores before it is read, copied, or
@@ -169,28 +169,25 @@ struct List[T: AnyType](
     # storage is raw bytes, as upstream.
     @inline(.always)
     def __init__(out self, *, unsafe_uninit_length: Int):
-        self.cap = unsafe_uninit_length
-        self.size = unsafe_uninit_length
-        self.data = unsafe_alloc[Self.T](self.cap)
+        self._storage = alloc(Layout[Self.T](count=unsafe_uninit_length))
+        self._len = unsafe_uninit_length
 
     def __init__(out self, *, length: Int, fill: Self.T) where conforms_to(
         Self.T, Copyable
     ):
-        self.cap = length
-        self.size = length
-        self.data = unsafe_alloc[Self.T](self.cap)
+        self._storage = alloc(Layout[Self.T](count=length))
+        self._len = length
         var i = 0
         while i < length:
-            self.data.unsafe_offset(i).unsafe_write(copy=fill)
+            self._storage._alloc._ptr.unsafe_offset(i).unsafe_write(copy=fill)
             i += 1
 
     @inline(.always)
     def __init__(
         out self, var *values: Self.T, __list_literal__: NoneType
     ) where conforms_to(Self.T, Movable):
-        self.cap = 4
-        self.size = 0
-        self.data = unsafe_alloc[Self.T](self.cap)
+        self._storage = alloc(Layout[Self.T](count=4))
+        self._len = 0
         for var value in values^:
             self.append(value^)
 
@@ -212,116 +209,118 @@ struct List[T: AnyType](
             self.append(rebind[type_of(self).T](element)^)
 
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
-        self.cap = copy.cap
-        self.size = copy.size
-        self.data = unsafe_alloc[Self.T](copy.cap)
+        self._storage = alloc(Layout[Self.T](count=copy.capacity()))
+        self._len = copy._len
+        var data = self._storage._alloc._ptr
+        var source = copy._storage._alloc._ptr
         var i = 0
-        while i < copy.size:
-            self.data.unsafe_offset(i).unsafe_write(copy=copy.data[i])
+        while i < copy._len:
+            data.unsafe_offset(i).unsafe_write(copy=source[i])
             i += 1
 
     def copy(self) -> Self where conforms_to(Self.T, Copyable):
         return List[Self.T](copy: self)
 
     def __init__(out self, *, deinit move: Self):
-        self.cap = move.cap
-        self.size = move.size
-        self.data = move.data^
+        self._storage = move._storage^
+        self._len = move._len
 
     def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
         var i = 0
-        while i < self.size:
-            self.data.unsafe_offset(i).unsafe_deinit_pointee()
+        while i < self._len:
+            self._storage._alloc._ptr.unsafe_offset(i).unsafe_deinit_pointee()
             i += 1
-        self.data.unsafe_free()
+        dealloc(self._storage^)
 
     def grow(mut self) where conforms_to(Self.T, Movable):
-        var new_cap = self.cap * 2
+        var new_cap = self.capacity() * 2
         if new_cap == 0:
             new_cap = 4
         self._realloc(new_cap)
 
     # Ensure capacity for at least `capacity` elements; never shrinks.
     def reserve(mut self, capacity: Int) where conforms_to(Self.T, Movable):
-        if self.cap >= capacity:
+        if self.capacity() >= capacity:
             return
         self._realloc(capacity)
 
     @__unsafe_nested_origins_read_only
     def append(mut self, var value: Self.T) where conforms_to(Self.T, Movable):
-        if self.size == self.cap:
+        if self._len == self.capacity():
             self.grow()
-        self.data[self.size] = value^
-        self.size += 1
+        self._storage._alloc._ptr[self._len] = value^
+        self._len += 1
 
     @inline(.always)
     def insert(
         mut self, index: Int, var value: Self.T
     ) where conforms_to(Self.T, Movable):
-        if self.size == self.cap:
+        if self._len == self.capacity():
             self.grow()
-        var i = self.size
+        var data = self._storage._alloc._ptr
+        var i = self._len
         while i > index:
-            self.data[i] = self.data.unsafe_offset(i - 1).unsafe_take_pointee()
+            data[i] = data.unsafe_offset(i - 1).unsafe_take_pointee()
             i -= 1
-        self.data[index] = value^
-        self.size += 1
+        data[index] = value^
+        self._len += 1
 
     @inline(.nodebug)
     def __len__(self) -> Int:
-        return self.size
+        return self._len
 
     def __bool__(self) -> Bool:
-        return self.size > 0
+        return self._len > 0
 
     @inline(.nodebug)
     def capacity(self) -> Int:
-        return self.cap
+        return len(self._storage)
 
     # Grow to `length` by appending copies of `fill`, or discard the tail
     # when `length` is smaller.
     def resize(mut self, length: Int, fill: Self.T) where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
-        if length < self.size:
+        if length < self._len:
             self.shrink(length)
             return
         self.reserve(length)
-        while self.size < length:
-            self.data.unsafe_offset(self.size).unsafe_write(copy=fill)
-            self.size += 1
+        while self._len < length:
+            self._storage._alloc._ptr.unsafe_offset(self._len).unsafe_write(copy=fill)
+            self._len += 1
 
     # Grow to `unsafe_uninit_length` leaving the new slots uninitialized (the
     # caller's raw-pointer stores initialize them), or discard the tail.
     def resize(mut self, *, unsafe_uninit_length: Int) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
-        if unsafe_uninit_length <= self.size:
+        if unsafe_uninit_length <= self._len:
             self.shrink(unsafe_uninit_length)
             return
         self.reserve(unsafe_uninit_length)
-        self.size = unsafe_uninit_length
+        self._len = unsafe_uninit_length
 
     # Discard elements at the end; aborts when `new_length` exceeds the
     # current length.
     def shrink(mut self, new_length: Int) where conforms_to(Self.T, Deinitable):
-        if self.size < new_length:
+        if self._len < new_length:
             _mojito_abort("shrink: new size is bigger than current")
         var i = new_length
-        while i < self.size:
-            self.data.unsafe_offset(i).unsafe_deinit_pointee()
+        while i < self._len:
+            self._storage._alloc._ptr.unsafe_offset(i).unsafe_deinit_pointee()
             i += 1
-        self.size = new_length
+        self._len = new_length
 
     def swap_elements(mut self, elt_idx_1: Int, elt_idx_2: Int) where conforms_to(
         Self.T, Movable
     ):
         if elt_idx_1 == elt_idx_2:
             return
-        var first = self.data.unsafe_offset(elt_idx_1).unsafe_take_pointee()
-        var second = self.data.unsafe_offset(elt_idx_2).unsafe_take_pointee()
-        self.data[elt_idx_1] = second^
-        self.data[elt_idx_2] = first^
+        var data = self._storage._alloc._ptr
+        var first = data.unsafe_offset(elt_idx_1).unsafe_take_pointee()
+        var second = data.unsafe_offset(elt_idx_2).unsafe_take_pointee()
+        data[elt_idx_1] = second^
+        data[elt_idx_2] = first^
 
     # A borrowed multi-element pointer over the element storage (current
     # Mojo's `unsafe_ptr` accessor). The interior-generation origin keeps the
@@ -330,7 +329,7 @@ struct List[T: AnyType](
     def unsafe_ptr(ref self) -> Pointer[
         Self.T, origin_of(self)._get_owned_interior["element"]
     ]:
-        return self.data.unsafe_origin_cast[
+        return self._storage._alloc._ptr.unsafe_origin_cast[
             origin_of(self)._get_owned_interior["element"]
         ]()
 
@@ -343,9 +342,9 @@ struct List[T: AnyType](
     def __getitem__(
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
-        if index < 0 or index >= self.size:
+        if index < 0 or index >= self._len:
             _mojito_abort("List index out of range")
-        return self.data[index]
+        return self._storage._alloc._ptr[index]
 
     # Internal value accessor for generic library code that needs an owned copy.
     # Keeping this distinct from overloaded `__getitem__` also avoids erasing the
@@ -353,12 +352,12 @@ struct List[T: AnyType](
     def _get_copy(self, index: Int) -> Self.T where conforms_to(
         Self.T, Copyable
     ):
-        return self.data[index].copy()
+        return self._storage._alloc._ptr[index].copy()
 
     def __getitem__(self, slice: StridedSlice) -> Self where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Movable):
-        var bounds = slice.indices(self.size)
+        var bounds = slice.indices(self._len)
         var start = bounds[0]
         var stop = bounds[1]
         var step = bounds[2]
@@ -385,8 +384,8 @@ struct List[T: AnyType](
         ref self, slice: ContiguousSlice
     ) -> Span[Self.T, origin_of(self)._get_owned_interior["element"]]:
         var start = slice.start.or_else(0)
-        var end = slice.end.or_else(self.size)
-        check_slice_bounds(start, end, self.size)
+        var end = slice.end.or_else(self._len)
+        check_slice_bounds(start, end, self._len)
         return {
             unsafe_ptr = self.unsafe_ptr().unsafe_offset(start),
             length = end - start,
@@ -399,8 +398,8 @@ struct List[T: AnyType](
     def __setitem__(mut self, index: Int, var value: Self.T) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
-        self.data.unsafe_offset(index).unsafe_deinit_pointee()
-        self.data[index] = value^
+        self._storage._alloc._ptr.unsafe_offset(index).unsafe_deinit_pointee()
+        self._storage._alloc._ptr[index] = value^
 
     # Unchecked element access: out-of-range indices are undefined behavior
     # (the VM still diagnoses them deterministically).
@@ -409,14 +408,14 @@ struct List[T: AnyType](
     def unsafe_get(
         ref self, idx: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
-        return self.data[idx]
+        return self._storage._alloc._ptr[idx]
 
     @inline(.always)
     def unsafe_set(mut self, idx: Int, var value: Self.T) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
-        self.data.unsafe_offset(idx).unsafe_deinit_pointee()
-        self.data[idx] = value^
+        self._storage._alloc._ptr.unsafe_offset(idx).unsafe_deinit_pointee()
+        self._storage._alloc._ptr[idx] = value^
 
     # Upstream feeds each element to the caller's hasher with no length
     # prefix (`element.__hash__(hasher)`), read where it lies. The walk
@@ -432,8 +431,8 @@ struct List[T: AnyType](
         Self.T, Equatable
     ):
         var i = 0
-        while i < self.size:
-            if self.data[i] == value:
+        while i < self._len:
+            if self._storage._alloc._ptr[i] == value:
                 return True
             i += 1
         return False
@@ -442,31 +441,32 @@ struct List[T: AnyType](
         Self.T, Equatable
     ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
         var i = 0
-        while i < self.size:
-            if self.data[i] == value:
+        while i < self._len:
+            if self._storage._alloc._ptr[i] == value:
                 var removed = self.pop(i)
                 return
             i += 1
 
     def pop(mut self) -> Self.T where conforms_to(Self.T, Movable):
-        return self.pop(self.size - 1)^
+        return self.pop(self._len - 1)^
 
     @inline(.always)
     def pop(mut self, index: Int) -> Self.T where conforms_to(Self.T, Movable):
-        var result = self.data.unsafe_offset(index).unsafe_take_pointee()
+        var data = self._storage._alloc._ptr
+        var result = data.unsafe_offset(index).unsafe_take_pointee()
         var i = index
-        while i + 1 < self.size:
-            self.data[i] = self.data.unsafe_offset(i + 1).unsafe_take_pointee()
+        while i + 1 < self._len:
+            data[i] = data.unsafe_offset(i + 1).unsafe_take_pointee()
             i += 1
-        self.size -= 1
+        self._len -= 1
         return result^
 
     def clear(mut self) where conforms_to(Self.T, Deinitable):
         var i = 0
-        while i < self.size:
-            self.data.unsafe_offset(i).unsafe_deinit_pointee()
+        while i < self._len:
+            self._storage._alloc._ptr.unsafe_offset(i).unsafe_deinit_pointee()
             i += 1
-        self.size = 0
+        self._len = 0
 
     # Consuming teardown for any element: each element is handed to the
     # caller-supplied consuming handler (no `Deinitable` requirement), then
@@ -474,21 +474,22 @@ struct List[T: AnyType](
     # write-back state, so only trivial residual fields remain.
     def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         var i = 0
-        while i < self.size:
-            deinit_func(self.data.unsafe_offset(i).unsafe_take_pointee())
+        while i < self._len:
+            deinit_func(
+                self._storage._alloc._ptr.unsafe_offset(i).unsafe_take_pointee()
+            )
             i += 1
-        self.data.unsafe_free()
-        self.size = 0
-        self.cap = 0
+        dealloc(self._storage^)
 
     def reverse(mut self) where conforms_to(Self.T, Movable):
         var left = 0
-        var right = self.size - 1
+        var right = self._len - 1
         while left < right:
-            var left_value = self.data.unsafe_offset(left).unsafe_take_pointee()
-            var right_value = self.data.unsafe_offset(right).unsafe_take_pointee()
-            self.data[left] = right_value^
-            self.data[right] = left_value^
+            var data = self._storage._alloc._ptr
+            var left_value = data.unsafe_offset(left).unsafe_take_pointee()
+            var right_value = data.unsafe_offset(right).unsafe_take_pointee()
+            data[left] = right_value^
+            data[right] = left_value^
             left += 1
             right -= 1
 
@@ -498,22 +499,23 @@ struct List[T: AnyType](
     def extend(mut self, var other: Self) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
-        self.reserve(self.size + other.size)
+        self.reserve(self._len + other._len)
+        var source = other._storage._alloc._ptr
         var i = 0
-        while i < other.size:
-            self.append(other.data.unsafe_offset(i).unsafe_take_pointee())
+        while i < other._len:
+            self.append(source.unsafe_offset(i).unsafe_take_pointee())
             i += 1
-        other.data.unsafe_free()
-        other.data = unsafe_alloc[Self.T](0)
-        other.size = 0
-        other.cap = 0
+        var drained = other._storage^
+        other._storage = alloc(Layout[Self.T](count=0))
+        other._len = 0
+        dealloc(drained^)
 
     # Borrowing extend: copy every element of the view (the source list
     # stays intact).
     def extend(mut self, elements: Span[Self.T, _]) where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Movable):
-        self.reserve(self.size + len(elements))
+        self.reserve(self._len + len(elements))
         var i = 0
         while i < len(elements):
             self.append(elements[i].copy())
@@ -522,8 +524,8 @@ struct List[T: AnyType](
     def count(self, value: Self.T) -> Int where conforms_to(Self.T, Equatable):
         var result = 0
         var i = 0
-        while i < self.size:
-            if self.data[i] == value:
+        while i < self._len:
+            if self._storage._alloc._ptr[i] == value:
                 result += 1
             i += 1
         return result
@@ -533,8 +535,8 @@ struct List[T: AnyType](
         Self.T, Equatable
     ):
         var i = 0
-        while i < self.size:
-            if self.data[i] == value:
+        while i < self._len:
+            if self._storage._alloc._ptr[i] == value:
                 return Optional[Int](i)
             i += 1
         return Optional[Int]()
@@ -553,11 +555,11 @@ struct List[T: AnyType](
     def __eq__(self, other: Self, /) -> Bool where conforms_to(
         Self.T, Equatable
     ):
-        if self.size != other.size:
+        if self._len != other._len:
             return False
         var i = 0
-        while i < self.size:
-            if not (self.data[i] == other.data[i]):
+        while i < self._len:
+            if not (self._storage._alloc._ptr[i] == other._storage._alloc._ptr[i]):
                 return False
             i += 1
         return True
@@ -596,11 +598,11 @@ struct List[T: AnyType](
     def __imul__(mut self, x: Int) where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
-        if x <= 0 or self.size == 0:
+        if x <= 0 or self._len == 0:
             self.clear()
             return
         var orig = self.copy()
-        self.reserve(self.size * x)
+        self.reserve(self._len * x)
         var n = 1
         while n < x:
             self.extend(orig.copy())
@@ -621,23 +623,25 @@ struct List[T: AnyType](
     def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
         Self.T, Deinitable
     ):
-        var result = _ListOwnedIter[Self.T](self.data, self.size)
-        self.data = unsafe_alloc[Self.T](0)
-        self.size = 0
-        self.cap = 0
+        var storage = self._storage^
+        self._storage = alloc(Layout[Self.T](count=0))
+        var result = _ListOwnedIter[Self.T](storage^.unsafe_leak(), self._len)
+        self._len = 0
         return result^
 
     # Move the elements into a fresh allocation of `new_cap` slots.
     @inline(.never)
     def _realloc(mut self, new_cap: Int) where conforms_to(Self.T, Movable):
-        var new_data = unsafe_alloc[Self.T](new_cap)
+        var new_storage = alloc(Layout[Self.T](count=new_cap))
+        var new_data = new_storage._alloc._ptr
+        var old_data = self._storage._alloc._ptr
         var i = 0
-        while i < self.size:
-            new_data[i] = self.data.unsafe_offset(i).unsafe_take_pointee()
+        while i < self._len:
+            new_data[i] = old_data.unsafe_offset(i).unsafe_take_pointee()
             i += 1
-        self.data.unsafe_free()
-        self.data = new_data
-        self.cap = new_cap
+        var old_storage = self._storage^
+        self._storage = new_storage^
+        dealloc(old_storage^)
 
     @inline(.never)
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
@@ -645,10 +649,10 @@ struct List[T: AnyType](
     ):
         writer.write("[")
         var i = 0
-        while i < self.size:
+        while i < self._len:
             if i > 0:
                 writer.write(", ")
-            writer.write(self.data[i])
+            writer.write(self._storage._alloc._ptr[i])
             i += 1
         writer.write("]")
 
@@ -659,9 +663,9 @@ struct List[T: AnyType](
     ):
         writer.write("List[", _unqualified_type_name[Self.T](), "]([")
         var i = 0
-        while i < self.size:
+        while i < self._len:
             if i > 0:
                 writer.write(", ")
-            writer.write(repr(self.data[i]))
+            writer.write(repr(self._storage._alloc._ptr[i]))
             i += 1
         writer.write("])")

@@ -332,10 +332,11 @@ struct Dict[
         var key_hash = hash[Self.H](key)
         var i = self._find_index(key_hash, key)
         if i >= 0:
+            var data = self.entries._storage._alloc._ptr
             var displaced = Optional[DictEntry[Self.K, Self.V, Self.H]](
-                self.entries.data.unsafe_offset(i).unsafe_take_pointee()
+                data.unsafe_offset(i).unsafe_take_pointee()
             )
-            self.entries.data[i] = DictEntry[Self.K, Self.V, Self.H](
+            data[i] = DictEntry[Self.K, Self.V, Self.H](
                 key^, value^, unsafe_hash=key_hash
             )
             return displaced^

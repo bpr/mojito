@@ -2,7 +2,7 @@ from std.collections.list import List, _ListOwnedIter
 from std.reflection.type_info import _unqualified_type_name
 from std.hash import Hasher, default_hasher, hash
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
-from std.memory.alloc import unsafe_alloc
+from std.memory.alloc import Layout, alloc
 from std.collections.optional import Optional
 
 @fieldwise_init
@@ -311,10 +311,12 @@ struct Set[
     ):
         # Consuming iteration drains the backing list in insertion order,
         # constructing the owned iterator directly like the borrowed overload.
-        var result = _ListOwnedIter[Self.T](self.items.data, self.items.size)
-        self.items.data = unsafe_alloc[Self.T](0)
-        self.items.size = 0
-        self.items.cap = 0
+        var storage = self.items._storage^
+        self.items._storage = alloc(Layout[Self.T](count=0))
+        var result = _ListOwnedIter[Self.T](
+            storage^.unsafe_leak(), self.items._len
+        )
+        self.items._len = 0
         return result^
 
     @inline(.never)

@@ -174,7 +174,7 @@ impl VmBackend {
                 },
                 through: place.through,
             };
-            // A parent reached through a stored handle (`self.src.entries.data`
+            // A parent reached through a stored handle (`self.src.entries._storage`
             // through a `ref` field) is read through the reference walk, as
             // a load of it is.
             let crossing = references::place_crosses_reference(&parent)

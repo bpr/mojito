@@ -918,17 +918,12 @@ impl CtValue {
     /// collection whose storage is not fully initialized.
     fn frozen_collection_elements(&self) -> Option<Vec<Self>> {
         use crate::types::{ARRAY_TYPE_NAME, DICT_TYPE_NAME, LIST_TYPE_NAME, SET_TYPE_NAME};
-        let Self::Struct { name, fields } = self else {
+        let Self::Struct { name, .. } = self else {
             return None;
         };
-        let field = |wanted: &str| {
-            fields
-                .iter()
-                .find(|(field, _)| field == wanted)
-                .map(|(_, value)| value)
-        };
-        let storage = |size: &str| {
-            if field(size) == Some(&Self::Int(0)) {
+        let field = |wanted: &str| self.struct_field(wanted);
+        let storage = |pointer: Option<&Self>, size: Option<&Self>| {
+            if size == Some(&Self::Int(0)) {
                 return Some(Vec::new());
             }
             let (
@@ -937,7 +932,7 @@ impl CtValue {
                     offset,
                 }),
                 Some(Self::Int(size)),
-            ) = (field("data"), field(size))
+            ) = (pointer, size)
             else {
                 return None;
             };
@@ -946,9 +941,14 @@ impl CtValue {
             slots.get(start..end)?.iter().cloned().collect()
         };
         if crate::types::is_nominal_instance(name, ARRAY_TYPE_NAME) {
-            storage("_size")
+            storage(field("data"), field("_size"))
         } else if crate::types::is_nominal_instance(name, LIST_TYPE_NAME) {
-            storage("size")
+            // `List._storage` is an `Allocation`, whose `ThinAllocation`
+            // holds the buffer pointer.
+            let pointer = field("_storage")
+                .and_then(|storage| storage.struct_field("_alloc"))
+                .and_then(|thin| thin.struct_field("_ptr"));
+            storage(pointer, field("_len"))
         } else if crate::types::is_nominal_instance(name, SET_TYPE_NAME) {
             field("items")?.frozen_collection_elements()
         } else if crate::types::is_nominal_instance(name, DICT_TYPE_NAME) {
@@ -1685,6 +1685,17 @@ impl CtValue {
             source: None,
             syntax_id: mojito_common::token::SyntaxId::fresh(),
         })
+    }
+
+    /// A struct value's field by name; `None` for any other value.
+    fn struct_field(&self, wanted: &str) -> Option<&Self> {
+        let Self::Struct { fields, .. } = self else {
+            return None;
+        };
+        fields
+            .iter()
+            .find(|(field, _)| field == wanted)
+            .map(|(_, value)| value)
     }
 
     /// A field or element of a closed aggregate parameter value: a scalar,
