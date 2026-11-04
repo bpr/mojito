@@ -189,9 +189,21 @@ pub fn unread_parameters_of<'a>(
                 .iter()
                 .any(|removed| !removed.contains(id))
     };
+    // A value pack's arguments bind its list binder, so the pack's
+    // visible binder and its list binder are kept or removed together.
+    let partner = |decl: &ParamDecl| {
+        candidates.iter().copied().find(|other| {
+            decl.pack_list_ref()
+                .is_some_and(|list| list.id == *other.id())
+                || other
+                    .pack_list_ref()
+                    .is_some_and(|list| list.id == *decl.id())
+        })
+    };
     let mut unread: Vec<ParamId> = candidates
-        .into_iter()
-        .filter(|decl| !read(decl))
+        .iter()
+        .copied()
+        .filter(|decl| !read(decl) && partner(decl).is_none_or(|partner| !read(partner)))
         .map(|decl| decl.id().clone())
         .collect();
     unread.sort();
@@ -1424,6 +1436,15 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 } => {
                     if let Some(bound) = callable_bound {
                         self.ty(bound);
+                    }
+                    self.visit(constraints);
+                }
+                // A value pack's `ParameterList` names its own list
+                // binder, which that is no read of: the two are kept or
+                // removed together.
+                ParamDecl::Value { constraints, .. } if decl.pack_list_ref().is_some() => {
+                    if let Some(element) = decl.value_element_ty() {
+                        self.ty(element);
                     }
                     self.visit(constraints);
                 }

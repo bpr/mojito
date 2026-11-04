@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.150
+mojito-mir 1.159
 ```
 
-The writer emits 1.150. The reader accepts 1.0 through 1.150; *Schema 1.0*
+The writer emits 1.159. The reader accepts 1.0 through 1.159; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1089,6 +1089,18 @@ from its value where present and from its constraint otherwise. Both
 fields are omitted while no condition has a value, which is how a 1.157 or
 older artifact reads. The checked `ComptimeCondition` adjustment carries
 the value too, so the package format moves to `mojito-package 183`.
+
+Schema 1.159 declares a value pack `*vs: T` as upstream's two binders
+(R1491): an infer-only `value_param` named `vs.values` of type
+`param_list(T)`, placed after the leading infer-only binders, and the
+`variadic: true` `value_param` `*vs` of type `struct_type { name:
+ParameterList, arguments: [type_arg(T), value_arg(ct_expr(<the list
+binder's param_decl_ref>))] }`. A body reference to the pack names the list
+binder; an application binds it to the list and the visible binder to
+`ct_struct { name: ParameterList, fields: [] }`. Every binder after the
+list's slot moves up one. A 1.158 or older artifact that declares a value
+pack is rejected with a request to re-emit it (roadmap R1911). The package
+format moves to `mojito-package 184`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:

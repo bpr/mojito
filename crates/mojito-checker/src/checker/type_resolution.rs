@@ -294,8 +294,8 @@ impl Checker {
         result: &SourceType,
     ) -> Result<Ty, TypeError> {
         let mut decls = Vec::new();
-        for (slot, param) in params.iter().enumerate() {
-            let id = mojito_types::param_expr::ParamId::new(GENERATOR_TYPE_OWNER, slot);
+        for param in params {
+            let id = mojito_types::param_expr::ParamId::new(GENERATOR_TYPE_OWNER, decls.len());
             let value_ty = match (&param.value_type, param.bounds.as_slice()) {
                 (Some(value_type), _) => Some(self.resolve_ty_from_anno(value_type)?),
                 (None, [only]) => scalar_type_name(only).or_else(|| {
@@ -311,16 +311,21 @@ impl Checker {
                 param.name.starts_with('*'),
             );
             if let Some(ty) = value_ty {
-                decls.push(ParamDecl::Value {
+                let decl = ParamDecl::Value {
                     id,
                     name,
-                    ty: ParamDecl::value_list_ty(ty, variadic),
+                    ty,
                     default: None,
                     callable_default: None,
                     infer_only,
                     variadic,
                     constraints: Vec::new(),
-                });
+                };
+                if variadic {
+                    ParamDecl::push_value_pack(&mut decls, decl);
+                } else {
+                    decls.push(decl);
+                }
                 continue;
             }
             for bound in &param.bounds {
@@ -897,7 +902,11 @@ impl Checker {
                 let bound = self.resolve_use_params(&label, decls, args, &[], &[])?;
                 let arguments: Vec<TyArg> = slots
                     .into_iter()
-                    .map(|index| bound.arguments[index].clone())
+                    .map(|index| {
+                        ParamDecl::source_argument(decls, &bound.arguments, index)
+                            .cloned()
+                            .unwrap_or_else(|| bound.arguments[index].clone())
+                    })
                     .collect();
                 return self.associated_type_from_base(base_ty, name, &arguments);
             }
@@ -2554,8 +2563,11 @@ impl Checker {
         // the element list the instance closed it at (`Self.Ts[id]`).
         let mut types = struct_subst(struct_decls, struct_targs);
         let mut values = HashMap::new();
-        for (decl, targ) in struct_decls.iter().zip(struct_targs) {
-            if let (ParamDecl::Value { name, .. }, TyArg::Val(value)) = (decl, targ) {
+        for (index, decl) in struct_decls.iter().enumerate() {
+            if let (ParamDecl::Value { name, .. }, Some(TyArg::Val(value))) = (
+                decl,
+                ParamDecl::source_argument(struct_decls, struct_targs, index),
+            ) {
                 values.insert(name.clone(), value.clone());
             }
         }
@@ -2602,7 +2614,9 @@ impl Checker {
                     if let Some(decl) = decl
                         && let Some(bound) = self.bound_parameter_value(&value)
                     {
-                        ids.bind(decl.id().clone(), bound);
+                        // A pack's arguments are its list binder's.
+                        let id = ParamDecl::pack_list(decls, decl).unwrap_or(decl).id();
+                        ids.bind(id.clone(), bound);
                     }
                     values.insert(param.name.clone(), value);
                 }

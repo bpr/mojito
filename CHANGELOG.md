@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A variadic value parameter `*vs: T` declares upstream's two binders:
+  the implicit infer-only `vs.values` list, placed after the leading
+  infer-only binders, and the visible `vs: ParameterList[T, vs.values]`,
+  bound to the zero-sized `{}` (R1491). A struct's identity holds both,
+  so `reflect[S[3, 1, 2]].name()` over `S[n: Int, *vs: Int]` prints
+  `S[<unprintable>, 3 : SIMD[DType.int, 1], {}]` as the pin does, and a
+  pack read where a `String` is expected reports
+  `ParameterList[Int, vs.values]`. MIR text moves to 1.159 (package 184),
+  and the reader rejects an older artifact that declares a value pack
+  (R1911).
+
 - A type-bodied parameterized `comptime` alias read unapplied is a type
   generator typed `__generator_type[T: AnyType] AnyType`, as at the pin:
   `f[Id]()` over `comptime Id[T: AnyType] = T` runs where it reported

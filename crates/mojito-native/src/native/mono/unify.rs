@@ -180,14 +180,33 @@ pub(super) fn bind_explicit_value_arguments(
                     }
                 };
                 let binder = declaration.binder();
-                if !matches!(declaration, ParamDecl::Value { variadic: true, .. }) {
-                    bindings.values.insert(binder, value);
+                // A caller's pack forwarded whole (`total[*vs]()`) is its
+                // list, every element of it an argument.
+                let variadic = matches!(declaration, ParamDecl::Value { variadic: true, .. });
+                let values = match value {
+                    CtValue::Tuple(elements)
+                        if variadic
+                            && argument.expr.as_ref().is_some_and(|expr| {
+                                matches!(
+                                    expr.meta(),
+                                    mojito_types::param_expr::MetaTy::ParamList(_)
+                                )
+                            }) =>
+                    {
+                        elements
+                    }
+                    value => vec![value],
+                };
+                if !variadic {
+                    if let Some(value) = values.into_iter().next() {
+                        bindings.values.insert(binder, value);
+                    }
                 } else if let Some((_, elements)) =
                     packs.iter_mut().find(|(pack, _)| *pack == binder)
                 {
-                    elements.push(value);
+                    elements.extend(values);
                 } else {
-                    packs.push((binder, vec![value]));
+                    packs.push((binder, values));
                 }
             }
             // A type argument is compile-time data on the call, bound from
@@ -195,9 +214,28 @@ pub(super) fn bind_explicit_value_arguments(
             ParamDecl::Type { .. } => {}
         }
     }
-    // A value pack binds the list of its positional arguments.
+    // A value pack binds the list of its positional arguments to its
+    // implicit list binder, as upstream's inference solves `vs.values` from
+    // the visible `vs`'s arguments, and the visible binder to its
+    // zero-sized `ParameterList`.
     for (binder, elements) in packs {
-        bindings.values.insert(binder, CtValue::Tuple(elements));
+        let list = decls
+            .iter()
+            .find(|decl| decl.binder() == binder)
+            .and_then(|decl| ParamDecl::pack_list(decls, decl));
+        match list {
+            Some(list) => {
+                bindings
+                    .values
+                    .insert(list.binder(), CtValue::Tuple(elements));
+                bindings
+                    .values
+                    .insert(binder, ParamDecl::parameter_list_value());
+            }
+            None => {
+                bindings.values.insert(binder, CtValue::Tuple(elements));
+            }
+        }
     }
     Ok(())
 }

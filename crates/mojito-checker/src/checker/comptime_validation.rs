@@ -322,7 +322,11 @@ impl ApplicableFunction {
                         return ParamDecl::Value {
                             id,
                             name: name.to_string(),
-                            ty: ParamDecl::value_list_ty(slot_ty(&ty), variadic),
+                            ty: if variadic {
+                                TyKind::ParamList(slot_ty(&ty)).into()
+                            } else {
+                                slot_ty(&ty)
+                            },
                             default: None,
                             callable_default: None,
                             infer_only: false,
@@ -2051,6 +2055,12 @@ impl Checker {
                     return true;
                 };
                 if let Some(entry) = self.applicable_entry(declaration) {
+                    // A value pack's implicit list binder is a slot too.
+                    entry.binders = signature
+                        .decls
+                        .iter()
+                        .map(|decl| decl.name().to_string())
+                        .collect();
                     entry.signature = Some(signature);
                     let slots = entry.params.iter_mut().map(|param| &mut param.ty).chain(
                         entry
@@ -2182,7 +2192,7 @@ impl Checker {
         let decls = self
             .classify_params(&function.key, declaration.type_params)
             .ok()?;
-        if decls.len() != function.binders.len() {
+        if decls.iter().filter(|decl| !decl.is_pack_list()).count() != function.binders.len() {
             return None;
         }
         self.push_param_scope(&decls);
@@ -3104,12 +3114,20 @@ impl Checker {
                         ParamDecl::Type { variadic: true, .. },
                         TyArg::Val(list @ CtValue::Tuple(_)),
                     ) => self.param_context.constant(list.clone()).ok()?,
-                    // A value pack's elements are each its element's value.
-                    (
-                        ParamDecl::Value { variadic: true, .. },
-                        TyArg::Val(CtValue::Tuple(values)),
-                    ) => {
-                        let element = resolve(decl.value_element_ty()?)?;
+                    // A value pack's visible binder is its zero-sized
+                    // `ParameterList`.
+                    (ParamDecl::Value { variadic: true, .. }, _) => self
+                        .param_context
+                        .constant(ParamDecl::parameter_list_value())
+                        .ok()?,
+                    // A value pack's list holds each its element's value.
+                    (ParamDecl::Value { ty, .. }, TyArg::Val(CtValue::Tuple(values)))
+                        if decl.is_pack_list() =>
+                    {
+                        let TyKind::ParamList(element) = ty.kind() else {
+                            return None;
+                        };
+                        let element = resolve(element)?;
                         let values = values
                             .iter()
                             .map(|value| {
@@ -3120,8 +3138,11 @@ impl Checker {
                         self.param_context.constant(CtValue::Tuple(values)).ok()?
                     }
                     // A caller's pack forwarded whole (`[*mask]`) is that
-                    // pack, which the binding checked against the element.
-                    (ParamDecl::Value { variadic: true, .. }, TyArg::Val(CtValue::Expr(pack))) => {
+                    // pack's list, which the binding checked against the
+                    // element.
+                    (ParamDecl::Value { .. }, TyArg::Val(CtValue::Expr(pack)))
+                        if decl.is_pack_list() =>
+                    {
                         pack.clone()
                     }
                     (ParamDecl::Value { ty, .. }, TyArg::Val(value)) => {
@@ -4878,6 +4899,9 @@ impl Checker {
     /// The enclosing struct's own value pack or raw parameter list
     /// `Self.<field>`, as the parameter-list reference its binder declares.
     pub(super) fn self_raw_list(&self, field: &str) -> Option<ParamExpr> {
+        if let Some(pack) = self.self_value_pack(field) {
+            return Some(pack);
+        }
         self.self_decls.iter().find_map(|decl| match decl {
             ParamDecl::Value { ty, .. }
                 if decl.name().trim_start_matches('*') == field
@@ -4901,12 +4925,11 @@ impl Checker {
         self.self_decls.iter().find_map(|decl| match decl {
             ParamDecl::Value {
                 name,
-                ty,
                 variadic: true,
                 ..
             } if name.trim_start_matches('*') == field => Some(
                 self.param_context
-                    .intern(&super::annotations::value_parameter_expr(decl, ty)),
+                    .intern(&super::annotations::pack_list_expr(&self.self_decls, decl)?),
             ),
             _ => None,
         })

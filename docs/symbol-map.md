@@ -2681,15 +2681,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and `typelist_proposition_query` (`checker/comptime_validation.rs`), from
   `infer_member` (`Ts.length`, `indexing.rs`) and the `Invoke` arm of `infer` (`Ts.contains[X]()`,
   `Ts.all_conforms_to[T]()`, `inference.rs`). A value pack that is still a
-  parameter (`*values: Int`) is declared with the raw list it binds,
-  `TyKind::ParamList(Int)`, as upstream's implicit `values.values` binder
-  is and as a raw-list binder (`values: KGENParamList[T]`) is; `MetaTy::value`
+  parameter (`*values: Int`) declares two binders
+  (`ParamDecl::push_value_pack`, `mojito-types`, `types.rs`): the implicit
+  infer-only `values.values` typed with the raw list it binds,
+  `TyKind::ParamList(Int)`, as a raw-list binder (`values:
+  KGENParamList[T]`) is, after the leading infer-only binders, and the
+  visible `*values` typed `ParameterList[Int, values.values]`
+  (`PARAMETER_LIST_TYPE_NAME`), always bound to
+  `ParamDecl::parameter_list_value`. `ParamDecl::pack_list` and
+  `list_pack` relate the two, `is_pack_list` tells the list binder,
+  `source_argument` reads a pack's list from an argument list, and the
+  checker's `bind_value_pack` (`declarations.rs`) and the elaborator's
+  `bind_explicit_value_arguments`/`bind_instantiated_arguments` bind the
+  list binder from the pack's arguments. `MetaTy::value`
   canonicalizes that type and `MetaTy::value_ty` inverts it, so every
   binder's meta-type is its declared type's (`ParamDecl::binder_meta`,
   `mojito-types`, `types.rs`), read by `annotations::value_parameter_expr`
   and the MIR scope verifier. `ParamDecl::value_element_ty` reads the type
-  each bound value has (a bracket argument is checked against it), and
-  `ParamDecl::value_list_ty` builds the declared type from it.
+  each bound value has (a bracket argument is checked against it).
+  `annotations::pack_scope` and `value_scope` map the pack's name to its
+  list binder (`annotations::pack_list_expr`).
   `Checker::value_pack_named` resolves a pack — the bare name through
   `value_pack_in_scope` (the one pack scope `pack_params`, from
   `annotations::pack_scope`, holds type and value packs and no raw list;

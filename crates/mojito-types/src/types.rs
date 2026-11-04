@@ -1491,6 +1491,10 @@ pub const DICT_TYPE_NAME: &str = "Dict";
 
 pub const TUPLE_TYPE_NAME: &str = "Tuple";
 
+/// The name of upstream's `ParameterList`, declared in
+/// `std.builtin.variadics`: the type a value pack's visible binder has.
+pub const PARAMETER_LIST_TYPE_NAME: &str = "ParameterList";
+
 /// The name of upstream's `SIMDLength`, the type of `SIMD`'s width.
 pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
 
@@ -2271,6 +2275,23 @@ pub fn canonical_pack_arguments(name: &str, arguments: Vec<TyArg>) -> Vec<TyArg>
     canonical
 }
 
+/// The positions of a value pack's list and of its visible binder among a
+/// struct's `arguments`.
+///
+/// The visible binder holds its zero-sized `ParameterList`, and the list is
+/// the first argument that is a parameter list. `None` when the struct
+/// binds no value pack.
+pub fn value_pack_arguments(arguments: &[TyArg]) -> Option<(usize, usize)> {
+    let visible = TyArg::Val(ParamDecl::parameter_list_value());
+    let is_list = |argument: &TyArg| match argument {
+        TyArg::Val(CtValue::Tuple(_)) => true,
+        TyArg::Val(CtValue::Expr(expr)) => matches!(expr.meta(), MetaTy::ParamList(_)),
+        _ => false,
+    };
+    let pack = arguments.iter().position(|argument| *argument == visible)?;
+    Some((arguments.iter().position(is_list)?, pack))
+}
+
 /// The argument list of an application of the struct `name` aligned with
 /// its declared parameters `decls`.
 ///
@@ -2417,10 +2438,12 @@ pub enum ParamDecl {
         /// The binder's identity; a `DeclRef` to this parameter carries it.
         id: ParamId,
         name: String,
-        /// The declared type. A pack (`*values: T`, `variadic`) is declared
-        /// with the raw list it binds, `TyKind::ParamList(T)`, as upstream's
-        /// `values.values` binder is; [`ParamDecl::value_element_ty`] reads
-        /// the element each bound value has.
+        /// The declared type. A pack (`*values: T`, `variadic`) is the
+        /// visible binder `values: ParameterList[T, values.values]` beside
+        /// the implicit infer-only `values.values: KGENParamList[T]`
+        /// ([`ParamDecl::push_value_pack`]), as upstream declares it;
+        /// [`ParamDecl::value_element_ty`] reads the element each bound
+        /// value has.
         ty: Ty,
         default: Option<ParamExpr>,
         /// A callable default is deliberately not a `CtValue`: captured
@@ -2803,8 +2826,9 @@ impl ParamDecl {
     }
 
     /// The meta-type a reference to this binder has: a value binder's
-    /// declared type's, which for a pack (`*values: T`) is the raw list it
-    /// binds, as for a raw-list binder (`values: KGENParamList[T]`); a type
+    /// declared type's, which for a pack's visible binder (`*values: T`) is
+    /// its `ParameterList` and for its implicit `values.values` the raw
+    /// list, as for a raw-list binder (`values: KGENParamList[T]`); a type
     /// binder's `Type`, or a type list for a type pack.
     pub fn binder_meta(&self) -> MetaTy {
         match self {
@@ -2814,27 +2838,164 @@ impl ParamDecl {
         }
     }
 
-    /// The type a value binder whose values have type `element` is
-    /// declared with: a pack (`*vs: T`, `variadic`) binds the raw list
-    /// `TyKind::ParamList(T)`, as upstream's implicit `vs.values:
-    /// !kgen.param_list<T>` binder does; any other value binder `element`.
-    pub fn value_list_ty(element: Ty, variadic: bool) -> Ty {
-        if variadic {
-            TyKind::ParamList(element).into()
-        } else {
-            element
+    /// Declare the value pack `visible` (`*vs: T`, its declared type the
+    /// element `T`) after `decls` as upstream's `typeCheckVariadicParams`
+    /// declares it: an implicit infer-only `vs.values: KGENParamList[T]`
+    /// binder, inserted after the leading infer-only binders as
+    /// `addImplicitTypeParams(append=false)` inserts one, and the visible
+    /// `vs: ParameterList[T, vs.values]` at the end. Each binder after the
+    /// insertion point moves up a slot, as does every reference to one.
+    ///
+    /// Returns each moved binder's old identity with its new one.
+    pub fn push_value_pack(decls: &mut Vec<Self>, visible: Self) -> Vec<(ParamId, ParamId)> {
+        let Self::Value {
+            id,
+            name,
+            ty: element,
+            ..
+        } = &visible
+        else {
+            decls.push(visible);
+            return Vec::new();
+        };
+        let owner = id.owner.clone();
+        let position = decls
+            .iter()
+            .take_while(|decl| mojito_ast::call::CompileTimeParam::infer_only(*decl))
+            .count();
+        let mut ordered = decls.clone();
+        ordered.push(visible.clone());
+        let (moved, bindings) = reown_parameters(&ordered, &owner, |slot, _| {
+            if slot < position { slot } else { slot + 1 }
+        });
+        let renumbered = ordered
+            .iter()
+            .zip(&moved)
+            .filter(|(old, new)| old.id() != new.id())
+            .map(|(old, new)| (old.id().clone(), new.id().clone()))
+            .collect();
+        let mut moved = moved;
+        let Some(mut visible) = moved.pop() else {
+            return renumbered;
+        };
+        let element = bind_signature_slots(element, &bindings);
+        let list_name = format!("{}.values", name.trim_start_matches('*'));
+        let hidden_id = ParamId::new(&owner, position);
+        let list = ParamContext::detached().decl_ref(
+            hidden_id.clone(),
+            &list_name,
+            MetaTy::value(TyKind::ParamList(element.clone()).into()),
+        );
+        if let Self::Value { ty, .. } = &mut visible {
+            *ty = TyKind::Struct(
+                PARAMETER_LIST_TYPE_NAME.to_string(),
+                vec![TyArg::Ty(element.clone()), TyArg::Val(CtValue::Expr(list))],
+            )
+            .into();
         }
+        moved.insert(
+            position,
+            Self::Value {
+                id: hidden_id,
+                name: list_name,
+                ty: TyKind::ParamList(element).into(),
+                default: None,
+                callable_default: None,
+                infer_only: true,
+                variadic: false,
+                constraints: Vec::new(),
+            },
+        );
+        moved.push(visible);
+        *decls = moved;
+        renumbered
+    }
+
+    /// The value a value pack's visible binder (`vs: ParameterList[T,
+    /// vs.values]`) always has: the zero-sized `ParameterList` whose type
+    /// carries the list.
+    pub fn parameter_list_value() -> CtValue {
+        CtValue::Struct {
+            name: PARAMETER_LIST_TYPE_NAME.to_string(),
+            fields: Vec::new(),
+        }
+    }
+
+    /// The implicit list binder (`vs.values`) of the value pack `visible`
+    /// declares, among `decls`: the binder its `ParameterList` type names.
+    pub fn pack_list<'a>(decls: &'a [Self], visible: &Self) -> Option<&'a Self> {
+        let list = visible.pack_list_ref()?;
+        decls.iter().find(|decl| *decl.id() == list.id)
+    }
+
+    /// The reference a value pack's visible binder's `ParameterList` type
+    /// makes to its implicit list binder. `None` for any other binder.
+    pub fn pack_list_ref(&self) -> Option<ParamRef> {
+        let Self::Value {
+            ty, variadic: true, ..
+        } = self
+        else {
+            return None;
+        };
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return None;
+        };
+        if name != PARAMETER_LIST_TYPE_NAME {
+            return None;
+        }
+        let [_, TyArg::Val(CtValue::Expr(list))] = arguments.as_slice() else {
+            return None;
+        };
+        list.as_decl_ref().cloned()
+    }
+
+    /// The argument `arguments`, aligned with `decls`, gives `decls[index]`
+    /// as a source parameter reads it: a value pack's list, which its
+    /// implicit list binder holds, and any other binder's own.
+    pub fn source_argument<'a>(
+        decls: &[Self],
+        arguments: &'a [TyArg],
+        index: usize,
+    ) -> Option<&'a TyArg> {
+        let list = decls.get(index)?.pack_list_ref().and_then(|list| {
+            decls
+                .iter()
+                .position(|decl| *decl.id() == list.id)
+                .and_then(|slot| arguments.get(slot))
+        });
+        list.or_else(|| arguments.get(index))
+    }
+
+    /// Whether this is a value pack's implicit list binder (`vs.values`),
+    /// whose dotted name no source binder can spell.
+    pub fn is_pack_list(&self) -> bool {
+        matches!(self, Self::Value { name, .. } if name.contains('.'))
+    }
+
+    /// The value pack whose implicit list binder (`vs.values`) this is,
+    /// among `decls`. `None` for any other binder.
+    pub fn list_pack<'a>(&self, decls: &'a [Self]) -> Option<&'a Self> {
+        decls.iter().find(|decl| {
+            decl.pack_list_ref()
+                .is_some_and(|list| list.id == *self.id())
+        })
     }
 
     /// The type each value this binder binds has: a pack's element (the
     /// element type upstream's `ASTType::getParameterListInfo` reads off
-    /// the declared list), any other value binder's declared type. `None`
-    /// for a type binder.
+    /// the visible binder's `ParameterList`), any other value binder's
+    /// declared type. `None` for a type binder.
     pub fn value_element_ty(&self) -> Option<&Ty> {
         match self {
             Self::Value {
                 ty, variadic: true, ..
             } => Some(match ty.kind() {
+                TyKind::Struct(name, arguments) if name == PARAMETER_LIST_TYPE_NAME => {
+                    match arguments.first() {
+                        Some(TyArg::Ty(element)) => element,
+                        _ => ty,
+                    }
+                }
                 TyKind::ParamList(element) => element,
                 _ => ty,
             }),
@@ -2888,6 +3049,9 @@ impl ParamDecl {
                 }
                 .into(),
             ),
+            Self::Value { .. } if self.pack_list_ref().is_some() => {
+                TyArg::Val(Self::parameter_list_value())
+            }
             Self::Value { .. } => TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
                 self.id().clone(),
                 self.name().trim_start_matches('*'),
@@ -3119,8 +3283,8 @@ impl fmt::Display for TyKind {
                 // printed spelling (specialization symbols and reflection
                 // read this text; diagnostics that show origins render them
                 // through the checker, which knows the places' names).
-                let mut shown = args
-                    .iter()
+                let mut shown = displayed_pack_arguments(args)
+                    .into_iter()
                     .filter(|argument| !matches!(argument, TyArg::Origin(_)))
                     .peekable();
                 if shown.peek().is_some() {
@@ -3137,6 +3301,28 @@ impl fmt::Display for TyKind {
             }
         }
     }
+}
+
+/// A struct's arguments as its source spells them: a value pack's list,
+/// which its implicit list binder holds, in the place of the visible
+/// binder's zero-sized `ParameterList`, and the list binder's slot
+/// dropped. The list is the first argument that is one.
+fn displayed_pack_arguments(arguments: &[TyArg]) -> Vec<&TyArg> {
+    let Some((list, pack)) = value_pack_arguments(arguments) else {
+        return arguments.iter().collect();
+    };
+    arguments
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != list)
+        .map(|(index, argument)| {
+            if index == pack {
+                &arguments[list]
+            } else {
+                argument
+            }
+        })
+        .collect()
 }
 
 fn nominal_type_arguments<'a>(ty: &'a TyKind, expected: &str) -> Option<Vec<&'a Ty>> {
@@ -3341,7 +3527,7 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
 /// Copyable]`.
 pub fn write_param_decls(f: &mut fmt::Formatter<'_>, decls: &[ParamDecl]) -> fmt::Result {
     write!(f, "[")?;
-    for (index, decl) in decls.iter().enumerate() {
+    for (index, decl) in decls.iter().filter(|decl| !decl.is_pack_list()).enumerate() {
         if index > 0 {
             write!(f, ", ")?;
         }
@@ -7319,17 +7505,28 @@ mod struct_field_types_tests {
 mod value_pack_decl_tests {
     use super::*;
 
-    fn value_pack() -> ParamDecl {
-        ParamDecl::Value {
-            id: ParamId::new("f", 0),
-            name: "*vs".to_string(),
-            ty: TyKind::ParamList(Ty::int()).into(),
+    /// `[n: Int, *vs: Int]` as two binders and the pack's list.
+    fn value_pack() -> Vec<ParamDecl> {
+        let value = |slot, name: &str| ParamDecl::Value {
+            id: ParamId::new("f", slot),
+            name: name.to_string(),
+            ty: Ty::int(),
             default: None,
             callable_default: None,
             infer_only: false,
-            variadic: true,
+            variadic: name.starts_with('*'),
             constraints: Vec::new(),
-        }
+        };
+        let mut decls = vec![value(0, "n")];
+        let moved = ParamDecl::push_value_pack(&mut decls, value(1, "*vs"));
+        assert_eq!(
+            moved,
+            vec![
+                (ParamId::new("f", 0), ParamId::new("f", 1)),
+                (ParamId::new("f", 1), ParamId::new("f", 2)),
+            ]
+        );
+        decls
     }
 
     struct Decls(Vec<ParamDecl>);
@@ -7341,21 +7538,29 @@ mod value_pack_decl_tests {
     }
 
     #[test]
-    fn a_value_pack_binds_the_raw_list_it_is_declared_with() {
+    fn a_value_pack_declares_its_list_after_the_infer_only_binders() {
+        let decls = value_pack();
         assert_eq!(
-            value_pack().binder_meta(),
+            decls.iter().map(ParamDecl::name).collect::<Vec<_>>(),
+            ["vs.values", "n", "*vs"]
+        );
+        assert_eq!(decls[0].id(), &ParamId::new("f", 0));
+        assert_eq!(ParamDecl::pack_list(&decls, &decls[2]), Some(&decls[0]));
+        assert_eq!(decls[0].list_pack(&decls), Some(&decls[2]));
+        assert_eq!(
+            decls[0].binder_meta(),
             MetaTy::ParamList(Box::new(MetaTy::value(Ty::int())))
         );
     }
 
     #[test]
     fn a_value_pack_binds_values_of_its_element_type() {
-        assert_eq!(value_pack().value_element_ty(), Some(&Ty::int()));
+        assert_eq!(value_pack()[2].value_element_ty(), Some(&Ty::int()));
     }
 
     #[test]
     fn a_value_pack_displays_its_element_type() {
-        assert_eq!(Decls(vec![value_pack()]).to_string(), "[*vs: Int]");
+        assert_eq!(Decls(value_pack()).to_string(), "[n: Int, *vs: Int]");
     }
 }
 

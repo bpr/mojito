@@ -5724,13 +5724,12 @@ impl EnclosingBinders {
                     variadic: false,
                     callable_default: None,
                     ..
-                } if !declaration.binds_callables() => {
+                } if !declaration.binds_callables() && !declaration.is_pack_list() => {
                     binders.values.push((declaration.binder(), (*ty).clone()));
                 }
-                // A value pack has no frame local; a thunk reads it through
-                // the parameter constants it binds.
+                // A value pack, and its list binder, has no frame local; a
+                // thunk reads it through the parameter constants it binds.
                 ParamDecl::Value {
-                    variadic: true,
                     callable_default: None,
                     ..
                 } if !declaration.binds_callables() => {}

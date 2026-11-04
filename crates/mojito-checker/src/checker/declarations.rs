@@ -879,7 +879,8 @@ impl Checker {
             }
             if let Some(value_type) = &tp.value_type {
                 let ty = self.ty_from_anno(value_type)?;
-                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
+                let decl = self.value_param_decl(tp, binder_id(decls.len()), ty)?;
+                self.push_value_param(&mut decls, decl);
                 continue;
             }
             // The removed `SIMDSize` width spelling (upstream hard removal,
@@ -907,7 +908,8 @@ impl Checker {
                         ty: only.clone(),
                     });
                 }
-                decls.push(self.value_param_decl(tp, binder_id(decls.len()), vty)?);
+                let decl = self.value_param_decl(tp, binder_id(decls.len()), vty)?;
+                self.push_value_param(&mut decls, decl);
                 continue;
             }
             // A lone bound naming a registered struct is a struct-typed
@@ -916,7 +918,8 @@ impl Checker {
                 && self.structs.contains_key(only)
             {
                 let ty = TyKind::Struct(only.clone(), Vec::new());
-                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty.into())?);
+                let decl = self.value_param_decl(tp, binder_id(decls.len()), ty.into())?;
+                self.push_value_param(&mut decls, decl);
                 continue;
             }
             // A lone bound naming an alias of a generator type (`G: Gen` over
@@ -925,7 +928,8 @@ impl Checker {
             if let [only] = tp.bounds.as_slice()
                 && let Some(ty) = self.generator_type_alias(only)
             {
-                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
+                let decl = self.value_param_decl(tp, binder_id(decls.len()), ty)?;
+                self.push_value_param(&mut decls, decl);
                 continue;
             }
             // A lone bound naming an earlier type binder of this list is a
@@ -934,7 +938,8 @@ impl Checker {
             if let [only] = tp.bounds.as_slice()
                 && let Some(ty) = sibling_type_binder(&decls, only)
             {
-                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
+                let decl = self.value_param_decl(tp, binder_id(decls.len()), ty)?;
+                self.push_value_param(&mut decls, decl);
                 continue;
             }
             // Any other lone annotation is resolved like any type expression,
@@ -942,7 +947,8 @@ impl Checker {
             // parameter, and a type (`Int16`, an alias of `Int`) a value
             // parameter of that type.
             if let Some(ty) = self.value_binder_type(tp, &decls) {
-                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
+                let decl = self.value_param_decl(tp, binder_id(decls.len()), ty)?;
+                self.push_value_param(&mut decls, decl);
                 continue;
             }
             // A bound naming an earlier trait-valued binder (`T: Tr`, `T: Tr
@@ -1047,16 +1053,27 @@ impl Checker {
                             self.compile_callable_default(default, &checked, &decls[..index])
                         })
                         .transpose()?;
-                    decls[index] = ParamDecl::Value {
+                    let decl = ParamDecl::Value {
                         id: binder_id(index),
                         name: source.name.clone(),
-                        ty: ParamDecl::value_list_ty(checked, variadic),
+                        ty: checked,
                         default: None,
                         callable_default,
                         infer_only,
                         variadic,
                         constraints,
                     };
+                    if !variadic {
+                        decls[index] = decl;
+                    } else if index + 1 == decls.len() {
+                        decls.pop();
+                        self.push_value_param(&mut decls, decl);
+                    } else {
+                        return Err(TypeError::Unsupported(format!(
+                            "a callable value pack '{}' before another parameter",
+                            source.name
+                        )));
+                    }
                 } else {
                     let ParamDecl::Type { callable_bound, .. } = &mut decls[index] else {
                         unreachable!("callable type parameter changed classification")
@@ -1146,17 +1163,42 @@ impl Checker {
                 })
                 .transpose()?,
         };
-        let variadic = tp.name.starts_with('*');
         Ok(ParamDecl::Value {
             id,
             name: tp.name.clone(),
-            ty: ParamDecl::value_list_ty(ty, variadic),
+            ty,
             default,
             callable_default: None,
             infer_only: tp.infer_only,
-            variadic,
+            variadic: tp.name.starts_with('*'),
             constraints: Vec::new(),
         })
+    }
+
+    /// Declare the value binder `decl` after `decls`: a pack (`*vs: T`) as
+    /// its implicit list binder and its visible `ParameterList` binder
+    /// ([`ParamDecl::push_value_pack`]), each binder it moves up a slot
+    /// moved in the trait-bounded binders too.
+    fn push_value_param(&mut self, decls: &mut Vec<ParamDecl>, decl: ParamDecl) {
+        if !matches!(decl, ParamDecl::Value { variadic: true, .. }) {
+            decls.push(decl);
+            return;
+        }
+        let moved: HashMap<ParamId, ParamId> = ParamDecl::push_value_pack(decls, decl)
+            .into_iter()
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        self.trait_bounded_binders = std::mem::take(&mut self.trait_bounded_binders)
+            .into_iter()
+            .map(|(binder, mut bound)| {
+                if let Some(id) = moved.get(&bound.id) {
+                    bound.id = id.clone();
+                }
+                (moved.get(&binder).cloned().unwrap_or(binder), bound)
+            })
+            .collect();
     }
 
     /// The default of a trait-valued parameter (`Tr: type_of(AnyType) =
@@ -3973,11 +4015,27 @@ impl Checker {
                     ty,
                     ..
                 } => {
-                    // A value pack's list is solved under its binder's
-                    // name, which its declaration spells with the `*`.
+                    // A value pack's visible binder is its zero-sized
+                    // `ParameterList`, its list solved for the list binder.
+                    if let Some(list) = ParamDecl::pack_list(decls, decl) {
+                        if let Some(value) = value_environment.get(list.name()).cloned() {
+                            value_environment
+                                .insert(pname.trim_start_matches('*').to_string(), value);
+                        }
+                        tyargs.push(TyArg::Val(ParamDecl::parameter_list_value()));
+                        continue;
+                    }
+                    // A value pack's list is solved under its list
+                    // binder's name, or the pack's, which its declaration
+                    // spells with the `*`.
+                    let pack = decl.list_pack(decls).map(ParamDecl::name);
                     if let Some(value) = value_solutions
                         .get(pname)
                         .or_else(|| value_solutions.get(pname.trim_start_matches('*')))
+                        .or_else(|| pack.and_then(|pack| value_solutions.get(pack)))
+                        .or_else(|| {
+                            pack.and_then(|pack| value_solutions.get(pack.trim_start_matches('*')))
+                        })
                     {
                         value_environment
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
@@ -3997,7 +4055,8 @@ impl Checker {
                     } else if callable_default.is_some() {
                         tyargs.push(TyArg::Val(CtValue::Deferred(decl.binder())));
                     } else {
-                        return Err(self.unsolved_binder(name, decl, patterns, actuals));
+                        let unsolved = decl.list_pack(decls).unwrap_or(decl);
+                        return Err(self.unsolved_binder(name, unsolved, patterns, actuals));
                     }
                 }
                 ParamDecl::Type {
@@ -5152,6 +5211,36 @@ fn sibling_trait_binder(decls: &[ParamDecl], name: &str) -> Option<(ParamRef, Ve
     })
 }
 
+/// Bind the value pack `decl` of `decls` to the list `value`, its
+/// arguments: its implicit list binder, already pushed to `tyargs` as a
+/// placeholder, to the list, and the visible binder to its zero-sized
+/// `ParameterList`, as upstream binds both. `environment` reads the list
+/// under either name.
+fn bind_value_pack(
+    decls: &[ParamDecl],
+    decl: &ParamDecl,
+    value: CtValue,
+    tyargs: &mut Vec<TyArg>,
+    environment: &mut HashMap<String, CtValue>,
+) {
+    let Some(list) = ParamDecl::pack_list(decls, decl) else {
+        environment.insert(
+            decl.name().trim_start_matches('*').to_string(),
+            value.clone(),
+        );
+        tyargs.push(TyArg::Val(value));
+        return;
+    };
+    if let Some(slot) = decls.iter().position(|other| other.id() == list.id())
+        && let Some(placeholder) = tyargs.get_mut(slot)
+    {
+        *placeholder = TyArg::Val(value.clone());
+    }
+    environment.insert(list.name().to_string(), value.clone());
+    environment.insert(decl.name().trim_start_matches('*').to_string(), value);
+    tyargs.push(TyArg::Val(ParamDecl::parameter_list_value()));
+}
+
 /// Solve each value binder a default's type determines (`def g[t: T =
 /// T[n=4]()]` over an infer-only `n`) into `solutions`.
 fn solve_value_binders_from_defaults<'a>(
@@ -5334,6 +5423,13 @@ impl Checker {
                 tyargs.push(decl.own_argument());
                 continue;
             }
+            // A value pack's list binder is solved from the pack's own
+            // arguments, which come after it: upstream infers the
+            // `vs.values` binder from the visible `vs`'s.
+            if decl.is_pack_list() {
+                tyargs.push(TyArg::Val(CtValue::Tuple(Vec::new())));
+                continue;
+            }
             let variadic = matches!(
                 decl,
                 ParamDecl::Type { variadic: true, .. } | ParamDecl::Value { variadic: true, .. }
@@ -5386,13 +5482,15 @@ impl Checker {
                         }
                         _ => bracket_attribute(argument, &value),
                     };
-                    if let TyArg::Val(value) = &value {
-                        value_environment.insert(
-                            decl.name().trim_start_matches('*').to_string(),
-                            value.clone(),
+                    if let TyArg::Val(value) = value {
+                        bind_value_pack(
+                            decls,
+                            &decls[index],
+                            value,
+                            &mut tyargs,
+                            &mut value_environment,
                         );
                     }
-                    tyargs.push(value);
                     continue;
                 }
                 // Each argument binds one value of the pack's element,
@@ -5442,12 +5540,13 @@ impl Checker {
                     tyargs.push(TyArg::Ty((*pack).clone()));
                     continue;
                 }
-                let value = CtValue::Tuple(values);
-                value_environment.insert(
-                    decl.name().trim_start_matches('*').to_string(),
-                    value.clone(),
+                bind_value_pack(
+                    decls,
+                    &decls[index],
+                    CtValue::Tuple(values),
+                    &mut tyargs,
+                    &mut value_environment,
                 );
-                tyargs.push(TyArg::Val(value));
                 continue;
             }
             let tyarg = if let Some((position, argument)) = arguments.first() {

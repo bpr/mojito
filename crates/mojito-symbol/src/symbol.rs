@@ -3356,11 +3356,18 @@ impl TypeNameSpeller<'_> {
                     demangle_specialization(template).unwrap_or((template, Vec::new()));
                 let mut spelled: Vec<String> =
                     baked.iter().map(|value| self.value(value)).collect();
-                spelled.extend(arguments.iter().map(|argument| match argument {
-                    TyArg::Ty(ty) => self.name(ty),
-                    TyArg::Val(value) => self.value(value),
-                    TyArg::Origin(_) => "{}".to_string(),
-                }));
+                // A value pack's list, which its implicit list binder
+                // holds, prints as the pin's printer shows a parameter list.
+                let list =
+                    mojito_types::types::value_pack_arguments(arguments).map(|(list, _)| list);
+                spelled.extend(arguments.iter().enumerate().map(
+                    |(index, argument)| match argument {
+                        _ if Some(index) == list => "<unprintable>".to_string(),
+                        TyArg::Ty(ty) => self.name(ty),
+                        TyArg::Val(value) => self.value(value),
+                        TyArg::Origin(_) => "{}".to_string(),
+                    },
+                ));
                 self.applied(
                     &(self.module_of)(template).unwrap_or_default(),
                     declared_struct_name(template),

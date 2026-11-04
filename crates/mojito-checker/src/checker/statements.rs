@@ -3147,6 +3147,7 @@ impl Checker {
                 if let ParamDecl::Value {
                     name, ty, variadic, ..
                 } = d
+                    && !d.is_pack_list()
                 {
                     result = self.declare_value_parameter(
                         name.trim_start_matches('*'),

@@ -1747,7 +1747,8 @@ impl Checker {
                 .self_decls
                 .iter()
                 .position(|d| d.name() == name && matches!(d, ParamDecl::Value { .. }))
-            && let Some(TyArg::Val(bound)) = arguments.get(index)
+            && let Some(TyArg::Val(bound)) =
+                ParamDecl::source_argument(&self.self_decls, arguments, index)
             && !matches!(bound, CtValue::Expr(_))
         {
             return Some(bound.clone());
@@ -1764,7 +1765,11 @@ impl Checker {
                 variadic,
                 ..
             } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
-                Some(value_parameter(decl, ty))
+                // A pack's elements are its list binder's.
+                Some(match ParamDecl::pack_list(&self.self_decls, decl) {
+                    Some(list @ ParamDecl::Value { ty, .. }) => value_parameter(list, ty),
+                    _ => value_parameter(decl, ty),
+                })
             }
             // `Self.Ts` names the struct's pack by its unstarred spelling.
             ParamDecl::Type {

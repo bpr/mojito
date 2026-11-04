@@ -833,6 +833,32 @@ impl Specializer<'_> {
                         self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
                     })?;
                 }
+                // A value pack's visible binder is its zero-sized
+                // `ParameterList`, whatever its list.
+                (ParamDecl::Value { variadic: true, .. }, _) if decl.pack_list_ref().is_some() => {
+                    bindings
+                        .values
+                        .insert(decl.binder(), ParamDecl::parameter_list_value());
+                }
+                // A value pack's list is the list of values the checker
+                // recorded, each closed under the caller's bindings.
+                (ParamDecl::Value { .. }, TyArg::Val(CtValue::Tuple(elements)))
+                    if decl.is_pack_list() =>
+                {
+                    let elements = elements
+                        .iter()
+                        .map(|element| match element {
+                            CtValue::Expr(expr) => eval_ct(expr, &self.enclosing).ok(),
+                            CtValue::Deferred(_) | CtValue::Marker(_) => None,
+                            value => Some(value.clone()),
+                        })
+                        .collect::<Option<Vec<CtValue>>>();
+                    if let Some(elements) = elements {
+                        bindings
+                            .values
+                            .insert(decl.binder(), CtValue::Tuple(elements));
+                    }
+                }
                 // A value the checker solved from an argument's type (`dt`
                 // from a `Scalar[dt]` parameter) binds here, as does an
                 // expression the caller's bindings close (an applied local
@@ -858,23 +884,6 @@ impl Specializer<'_> {
                     bind_value(&decl.binder(), &closed, bindings).map_err(|e| {
                         self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
                     })?;
-                }
-                // A value pack's solution is the list of values the checker
-                // recorded, each closed under the caller's bindings.
-                (ParamDecl::Value { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
-                    let elements = elements
-                        .iter()
-                        .map(|element| match element {
-                            CtValue::Expr(expr) => eval_ct(expr, &self.enclosing).ok(),
-                            CtValue::Deferred(_) | CtValue::Marker(_) => None,
-                            value => Some(value.clone()),
-                        })
-                        .collect::<Option<Vec<CtValue>>>();
-                    if let Some(elements) = elements {
-                        bindings
-                            .values
-                            .insert(decl.binder(), CtValue::Tuple(elements));
-                    }
                 }
                 // A type pack's solution is the element list the checker
                 // recorded, bound whole.

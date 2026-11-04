@@ -201,8 +201,8 @@ command cannot use both.
   and cleanup: R1414 (a display's elements bind as call arguments), R695
   after it, R1415 (fieldwise keywords), and R1416 (hand-written MIR).
 - Gap D has R1441–R1445 left.
-- Of the 10-25 gaps, E, F, G, and H have their cores in; I has R1491,
-  R1492, R1485, and R1486 left.
+- Of the 10-25 gaps, E, F, G, and H have their cores in; I has R1910
+  (a value pack's run-time read of its visible binder) and R1492 left.
 - Of the 10-25 conformance blocks, five have landed: type versus value
   (R1369–R1372), one subscript lvalue (R1373–R1375), conformance
   evidence (R1364, R1365), transfers (R1366, R1367), and abandonment
@@ -313,7 +313,8 @@ R1411 and R1413 under *Entries outside the gaps*.
   library members run by CTFE.
 - **Cores**: R1491 and R1492 (a value pack, then a type pack, declares
   upstream's two binders: the hidden `vs.values` list and the visible
-  `ParameterList` / `TypeList`), R1485, and R1486.
+  `ParameterList` / `TypeList`), R1485, and R1486. R1491 has landed; its
+  run-time read of the visible binder is R1910.
 - **Members**:
   - Queries: R1284, R800, R904, R1182, R1302, R445, R803, R345, R804,
     R348, R1071.

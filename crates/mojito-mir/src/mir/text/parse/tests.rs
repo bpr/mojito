@@ -3095,10 +3095,10 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
     assert_eq!(recorded(&older), None);
 }
 
-/// Schema 1.113 declares a value pack with the raw list it binds; an older
-/// artifact wrote its element, which reads back as that list.
+/// A value pack's binder round-trips; a 1.158 or older artifact declared
+/// a pack as one binder, which the reader rejects rather than misreads.
 #[test]
-fn value_pack_declarations_read_their_list_from_older_artifacts() {
+fn value_pack_declarations_from_older_artifacts_are_rejected() {
     let pack: Ty = TyKind::ParamList(Ty::int()).into();
     let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
         decls: vec![ParamDecl::Value {
@@ -3149,10 +3149,8 @@ fn value_pack_declarations_read_their_list_from_older_artifacts() {
     assert_eq!(read_ty(&text), pack);
 
     let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
-    let older = text
-        .replacen(&current, "mojito-mir 1.112", 1)
-        .replace("type: param_list(Int)", "type: Int");
-    assert_eq!(read_ty(&older), pack);
+    let older = text.replacen(&current, "mojito-mir 1.158", 1);
+    assert!(artifact(older.as_bytes(), "unit.mir".to_string()).is_err());
 }
 
 /// Schema 1.4 carries a binder's identity on a `where` operand and on a

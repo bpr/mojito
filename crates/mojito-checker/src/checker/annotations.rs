@@ -416,15 +416,25 @@ pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
                 ..
             } => Some((
                 name.trim_start_matches('*').to_string(),
-                ParamContext::detached().decl_ref(
-                    decl.id().clone(),
-                    name.trim_start_matches('*'),
-                    decl.binder_meta(),
-                ),
+                pack_list_expr(decls, decl).unwrap_or_else(|| {
+                    ParamContext::detached().decl_ref(
+                        decl.id().clone(),
+                        name.trim_start_matches('*'),
+                        decl.binder_meta(),
+                    )
+                }),
             )),
             _ => None,
         })
         .collect()
+}
+
+/// The reference to the implicit list binder (`vs.values`) the value pack
+/// `decl` of `decls` declares, which an element, a length, or a forwarded
+/// list of the pack reads. `None` for any other binder.
+pub(super) fn pack_list_expr(decls: &[ParamDecl], decl: &ParamDecl) -> Option<ParamExpr> {
+    let list = ParamDecl::pack_list(decls, decl)?;
+    Some(ParamContext::detached().decl_ref(list.id().clone(), list.name(), list.binder_meta()))
 }
 
 /// The value-parameter scope a declaration's own binders open: a callable
@@ -433,7 +443,11 @@ pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
 pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
+        .filter(|decl| !decl.is_pack_list())
         .filter_map(|decl| match decl {
+            ParamDecl::Value { name, .. } if let Some(list) = pack_list_expr(decls, decl) => {
+                Some((name.trim_start_matches('*').to_string(), list))
+            }
             ParamDecl::Value {
                 name,
                 ty,

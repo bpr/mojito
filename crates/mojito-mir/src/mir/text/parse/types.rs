@@ -429,13 +429,17 @@ impl Decoder {
                         "constraints",
                     ],
                 );
-                // Schema 1.112 and older wrote a pack's element, not the
-                // list it binds.
-                let ty = if self.minor <= 112 {
-                    ParamDecl::value_list_ty(ty, variadic)
-                } else {
-                    ty
-                };
+                // Schema 1.158 and older declared a value pack as one
+                // binder, which every reference in a body names with the
+                // raw list's meaning, where the pack is now two.
+                if variadic && self.minor <= 158 {
+                    self.error(
+                        value.span,
+                        "a value pack declared before MIR 1.159 is one binder; re-emit the \
+                         artifact",
+                    );
+                    return None;
+                }
                 Some(ParamDecl::Value {
                     id: self.binder_id(value, fields, &name)?,
                     name,

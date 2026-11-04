@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1910**.
+Next free ID: **R1912**.
 
 ## Ordered Work
 
@@ -11133,7 +11133,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     "found TypeList[AnyType, (Int, Bool)]"; the pin says
     'TypeList[Int, Bool]'.
   - Probe: `var t: Int = vs` in `def go[*vs: Int]` reports "found
-    ParameterList[Int, vs]"; the pin says 'ParameterList[vs.values]'.
+    ParameterList[Int, vs.values]"; the pin says
+    'ParameterList[vs.values]', the infer-only `Int` elided.
   - Probe: R904's pack loop.
   - Found while landing R1169 (2026-10-27).
   - Depends on nothing.
@@ -12583,29 +12584,29 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1491 A variadic value parameter is one binder where upstream
-  declares two**
+- [ ] **R1910 A value pack's run-time read is spelled again instead of
+  read from its visible binder**
 
-  Upstream's `*vs: T` declares an implicit infer-only `vs.values:
-  !kgen.param_list<T>` binder and the visible `vs: ParameterList[T,
-  vs.values]` (`typeCheckVariadicParams`, `Signatures.cpp`), where
-  Mojito declares the one `ParamDecl::Value { ty: ParamList(T), variadic:
-  true }` and re-spells `ParameterList[vs.values]()` at each run-time
-  read (`infer_value_pack_read`).
-  - The hidden binder goes after the existing infer-only parameters, as
-    `addImplicitTypeParams(append=false)` inserts it, so slot numbering,
-    mangling, and a struct's identity gain the list slot.
-  - Bracket arguments bind the hidden list through the visible binder's
-    element type (`getParameterListInfo`, `ParamInf.cpp`).
-  - Then a pack and a raw-list binder differ by declared type, as
-    upstream's do, and `value_pack_in_scope`'s pack-scope test goes.
-  - Probe: `var x: String = vs` in `def f[*vs: Int]` reports "found
-    ParameterList[Int, vs]"; the pin says 'ParameterList[vs.values]'
-    (R1489's value half).
-  - A session should plan this first and split it if it does not fit.
-  - Found while landing R1151 (2026-10-27).
+  A bare `vs` read at run time is re-spelled as `ParameterList[vs.values]()`
+  (`infer_value_pack_read`, `checker/comptime_validation.rs`), where
+  upstream reads the visible binder `vs: ParameterList[T, vs.values]`
+  that R1491 now declares, materialized from its `{}` constant.
+  - Today the checker's value and pack scopes both map `vs` to the list
+    binder (`value_scope`, `pack_scope`, `checker/annotations.rs`), so the
+    visible binder is declared and bound but never read.
+  - `declare_value_parameters` (`checker/scopes.rs`) then declares `vs` at
+    its `ParameterList` type instead of `VariadicPack(T)`.
+  - `value_pack_in_scope`'s pack-scope test (`checker/constraints.rs`)
+    goes: a pack and a raw-list binder already differ by declared type.
+  - A callable pack (`*fs: thin def()`) keeps its frame slot. It is
+    rejected when another parameter follows it; probe the pin before
+    keeping either rule.
+  - Risk: R1601's removed-argument display, when the read value is printed.
+  - Done when `rg infer_value_pack_read` finds nothing and the R1491 gate
+    fixtures (`value_pack_*`, `parameter_list_*`) still run.
+  - Found while landing R1491 (2026-11-03).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Fable, Planned.
 
 - [ ] **R1492 A variadic type parameter is one binder where upstream
   declares two**
@@ -13686,6 +13687,21 @@ residue found inside a task moves to the task that owns its fix.
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
+
+- [ ] **R1911 The MIR text reader rejects an older artifact that
+  declares a value pack**
+
+  Schema 1.159 declares a value pack as two binders (R1491), and the
+  reader rejects a 1.158 or older artifact whose `value_param` is
+  `variadic: true`, asking for it to be re-emitted.
+  - The upgrade splits the old binder: its id becomes the list binder's,
+    which every body reference names with the raw list's meaning, and the
+    visible binder takes the slot after the leading infer-only binders.
+  - Every later binder's slot moves up one, so the reader must renumber
+    references through its id table (`text/parse/types.rs`).
+  - Precedent: R808's 1.112 rejection, which R1151 withdrew.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1297 The MIR text reader hangs on an unbalanced type**
 
