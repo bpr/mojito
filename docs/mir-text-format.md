@@ -1067,6 +1067,10 @@ reference and a closure value owns nothing. A capture is
 `mode: reference`, and one spelling `move` is rejected. The package format
 moves to `mojito-package 179`.
 
+A declaration's residue no longer has an `Elaborated` table: a module
+constant is held once, as its declaration's check rows and its lowered
+integer value, so the package format moves to `mojito-package 180`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -2108,13 +2112,14 @@ mojito-package 82
   parameters, format 51), never as syntax; its expressions decode stamped with the path the importer reached
   the module by, so a compilation decodes it, and joins it with the
   lowered part, the first time a lookup names one of its keys. One that
-  does not decode fails the compilation. A module constant's residue
-  holds the constant as the build's comptime elaboration folded it (a
-  module alias is only its `Aliases` row, and its type's spelling sits in
-  its lowered part beside an integer constant's value, format 105), and
-  a declaration's residue holds the module-scope compile-time facts its
-  names bind (tables `Elaborated`, `ComptimeDtypes`, `ComptimeParameters`,
-  and `ComptimeValues`); no module has a checker record of its own.
+  does not decode fails the compilation. A module constant is held once,
+  as its declaration's check rows (a module alias is only its `Aliases`
+  row, and its type's spelling sits in its lowered part beside an integer
+  constant's value, format 105; format 180 dropped the `Elaborated`
+  table), and a declaration's residue holds the module-scope
+  compile-time facts its names bind (tables `ComptimeDtypes`,
+  `ComptimeParameters`, and `ComptimeValues`); no module has a checker
+  record of its own.
 - The importer maps the file (`PackageBytes`, `memmap2`) and decodes only
   the header eagerly. A cached package is written to
   a private partial file and renamed over its path, and removed only by

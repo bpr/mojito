@@ -134,27 +134,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1480 A package's declaration residue keeps an `Elaborated` table
-  no importer reads**
-
-  A module value constant's residue holds an `ElaboratedConstant` row
-  beside the check's own rows, where upstream's package holds a constant
-  once, as its declaration.
-  - Since R1388 the elaborator folds nothing and nothing calls
-    `CheckContext::record_elaborated`, so the rows only mirror the check's
-    integer constants (`elaborated_constant`), and
-    `InstalledInterfaces::elaborated` has no caller.
-  - The lever: delete `ElaboratedConstant`, `ElaboratedConstants`,
-    `CheckContext::record_elaborated` with its field, `Table::Elaborated`
-    with `DeclarationInterface::elaborated` and its `project`/`join`
-    projection (`elaborated_constant`) and the interface unit tests that
-    pin it, `InstalledInterfaces::elaborated`, and `declaring_modules`'
-    `elaborated` parameter.
-  - Bump `PACKAGE_FORMAT`.
-  - Done when `rg ElaboratedConstant crates` is empty.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1692 `SIMD`'s element list in a parameter position is the
   checker's fold, not an application**
 

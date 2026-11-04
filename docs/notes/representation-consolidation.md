@@ -145,14 +145,13 @@ command cannot use both.
     `comptime` declaration. What is left:
     - R1474 (a condition compiled without its binders in scope) and R1475
      (a `comptime if` condition kept as a `GenericConstraint`).
-    - R1480 (a package's module constants exported as an `Elaborated`
-     table) and R1482 (the bundled `List`'s field layout).
+    - R1482 (the bundled `List`'s field layout).
     - R893 stops an instance-budget blowup.
     - The members under *H* below were filed against `Elab`'s arms or the
      checker's folds. Re-probe each before planning it.
 
     ```sh
-    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1474 --task R1475 --task R1480 --task R1482 --task R893 -n 0
+    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1474 --task R1475 --task R1482 --task R893 -n 0
     ```
 
 9. **Gap I: packs are binder kinds** (slight size, about 20 entries):
@@ -232,7 +231,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1874 | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1280, R1466, R1287, R1461, and the hash and `__int__` leaves (steps 1–3) | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1436; R1434 (R1433, R176 done) | R1349 | yes |
-| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1474, R1475, R1480, R1482 | about 25 (below) | partial |
+| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1474, R1475, R1482 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1491, R1492, R1485, R1486 | about 20 (below) | slight |
 
 ### D′. Memory-only values live in registers

@@ -257,11 +257,9 @@ import (every compilation that links the bundled library):
   callable origin facts, and the applicable functions and declared results
   a compile-time call reads. A table key belongs to the declaration it
   names, an overload's signature-qualified key or a member's
-  `Owner.member` included. A module value constant's residue also holds
-  an `Elaborated` row (`checker::ElaboratedConstant`), which the build
-  fills only from the check's integer constants since the elaborator
-  folds nothing (`CheckContext::record_elaborated` has no caller) and no
-  importer reads (roadmap R1480 deletes it). A module alias, generic or not, travels only as the check's `Aliases` row,
+  `Owner.member` included. A module constant is held once, as its
+  declaration's check rows, as upstream's package holds it as its
+  declaration. A module alias, generic or not, travels only as the check's `Aliases` row,
   as upstream holds an alias only as its declaration: an importer's check
   reads it there, and the elaborator's prepare-time folds read a type
   alias's type through `InstalledInterfaces::type_alias`. A declaration's
@@ -270,10 +268,10 @@ import (every compilation that links the bundled library):
   Its lowered part holds its integer constant's
   one exact value (`package::LoweredDeclaration::constant`), and its type
   alias's spelling (`LoweredDeclaration::type_alias`), which the
-  residue's integer row and elaborated value are joined back from, as
-  upstream holds a constant once in its declaration's op; the build
-  refuses a library whose check and elaboration fold a constant to other
-  values (`InterfaceExport::checked_constants`,
+  residue's integer row is joined back from, as upstream holds a
+  constant once in its declaration's op; the build refuses a library
+  whose check and lowering fold a constant to other values
+  (`InterfaceExport::checked_constants`,
   `DeclarationInterface::project`). In every compilation the check folds
   each module integer constant once, first, before any declaration's
   symbol is spelled (`Checker::fold_module_constants`), and records each

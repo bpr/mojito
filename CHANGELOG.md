@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package's declaration residue no longer keeps an `Elaborated` table
+  (R1480): a module constant is held once, as its declaration's check rows
+  and lowered integer value, as upstream's package holds it, and the
+  unread `ElaboratedConstant` rows, their export hook, and their lookup are
+  gone (`mojito-package 180`).
 - A closure value owns nothing (R1434): `closure.make` captures every
   place by reference (MIR text schema 1.157 withdraws the `move` capture
   mode with its constructor and destructor; `mojito-package 179`), so the

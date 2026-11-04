@@ -273,17 +273,6 @@ impl InstalledInterfaces {
         }))
     }
 
-    /// The module constant `name` of a reached module, as the build's
-    /// comptime elaboration left it, decoding its declaration's record on
-    /// first use.
-    pub fn elaborated(&self, name: &str) -> Option<&ElaboratedConstant> {
-        let constants = &self.declaration(Table::Elaborated, name)?.elaborated;
-        constants
-            .binary_search_by(|(constant, _)| constant.as_str().cmp(name))
-            .ok()
-            .map(|position| &constants[position].1)
-    }
-
     /// Whether a reached module declares struct `name`, decoding nothing.
     pub fn declares_struct(&self, name: &str) -> bool {
         self.has_key(Table::Structs, name)
@@ -548,21 +537,6 @@ impl InstalledInterfaces {
     }
 }
 
-/// A module `comptime` value constant as the build's comptime elaboration
-/// folded it, which an importer's elaboration reads instead of folding it.
-///
-/// It is a closed constant's folded value, or the marker of one the check
-/// binds. A module alias, generic or not, travels only as the check's
-/// `Aliases` row.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum ElaboratedConstant {
-    Value(CtValue),
-}
-
-/// The elaborated module constants of a package's program, each beside its
-/// name and the module declaring it.
-pub type ElaboratedConstants = Vec<(String, String, ElaboratedConstant)>;
-
 /// One library declaration's rows of the checker's tables, as the build's
 /// check resolved them.
 ///
@@ -605,10 +579,6 @@ pub(super) struct DeclarationInterface {
     /// The declaration's module-scope bindings: a `def`, its overloads
     /// merged, or a module constant.
     bindings: Vec<ModuleBinding>,
-    /// The module constant it declares, as the build's comptime elaboration
-    /// resolved it.
-    #[serde(with = "keyless")]
-    elaborated: Vec<(String, ElaboratedConstant)>,
     /// Its module-scope compile-time facts, as the scope-0 entries of the
     /// checker's per-scope tables.
     #[serde(with = "keyless")]
@@ -696,19 +666,14 @@ pub(super) struct ModuleBinding {
 
 impl Checker {
     /// The interface of every library declaration `program` makes, from
-    /// this checker's tables after it checked `program` whole, with each
-    /// module constant of `elaborated` in its own declaration's record.
+    /// this checker's tables after it checked `program` whole.
     ///
     /// # Errors
     ///
     /// A module-scope fact the interface cannot carry, a name two modules
     /// declare, or a table that holds a binding owner or a hole, naming it.
-    pub(super) fn export_interfaces(
-        &self,
-        program: &[Stmt],
-        elaborated: &[(String, String, ElaboratedConstant)],
-    ) -> Result<InterfaceExport, String> {
-        let modules = declaring_modules(program, elaborated)?;
+    pub(super) fn export_interfaces(&self, program: &[Stmt]) -> Result<InterfaceExport, String> {
+        let modules = DeclaringModules::of(program)?;
         let builtin = Self::new();
         let mut declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)> =
             BTreeMap::new();
@@ -872,13 +837,6 @@ impl Checker {
                     compile_time: compile_time.contains(name),
                 });
                 keys.push((Table::Bindings, name.clone()));
-            }
-        }
-        for (_, name, constant) in elaborated {
-            if let Some(declaration) = place(name, false) {
-                let (record, keys) = declarations.entry(declaration).or_default();
-                record.elaborated.push((name.clone(), constant.clone()));
-                keys.push((Table::Elaborated, name.clone()));
             }
         }
         let overloads = self.overload_sets.own().clone();
@@ -1204,9 +1162,8 @@ impl DeclarationInterface {
         Ok(())
     }
 
-    /// Leave out each integer row and elaborated value of a module constant
-    /// whose one value `lowered` holds, once the guard finds each says
-    /// exactly that value.
+    /// Leave out each integer row of a module constant whose one value
+    /// `lowered` holds, once the guard finds each says exactly that value.
     fn project_constants(&mut self, lowered: &LoweredDeclaration) -> Result<(), String> {
         for (name, value) in &self.comptimes {
             if !lowered
@@ -1218,18 +1175,7 @@ impl DeclarationInterface {
                 ));
             }
         }
-        for (name, constant) in &self.elaborated {
-            if let Some(value) = lowered.constant(name)
-                && !same_bytes(constant, &elaborated_constant(value))
-            {
-                return Err(format!(
-                    "the elaboration of `{name}` says other than its check"
-                ));
-            }
-        }
         self.comptimes.clear();
-        self.elaborated
-            .retain(|(name, _)| lowered.constant(name).is_none());
         Ok(())
     }
 
@@ -1286,20 +1232,14 @@ impl DeclarationInterface {
             }
         }
         by_name(&mut self.explicit_destroy);
-        for (table, key) in keys {
-            let Some(value) = lowered.constant(key) else {
-                continue;
-            };
-            match table {
-                Table::Comptimes => self.comptimes.push((key.to_string(), value.clone())),
-                Table::Elaborated => self
-                    .elaborated
-                    .push((key.to_string(), elaborated_constant(value))),
-                _ => {}
-            }
-        }
+        self.comptimes
+            .extend(keys.iter().filter_map(|(table, key)| {
+                (*table == Table::Comptimes)
+                    .then(|| lowered.constant(key))
+                    .flatten()
+                    .map(|value| (key.to_string(), value.clone()))
+            }));
         by_name(&mut self.comptimes);
-        by_name(&mut self.elaborated);
         for projected in std::mem::take(&mut self.projected_bindings) {
             let declaration = lowered_function(lowered, &projected.name).ok_or_else(|| {
                 format!("function `{}` has no lowered declaration", projected.name)
@@ -1339,7 +1279,7 @@ impl DeclarationInterface {
     }
 
     /// Each column of names the encoded residue leaves to the directory.
-    fn key_columns(&mut self) -> [(KeyColumn, Vec<&mut String>); 19] {
+    fn key_columns(&mut self) -> [(KeyColumn, Vec<&mut String>); 18] {
         fn keys<V>(entries: &mut [(String, V)]) -> Vec<&mut String> {
             entries.iter_mut().map(|(key, _)| key).collect()
         }
@@ -1391,10 +1331,6 @@ impl DeclarationInterface {
                     .collect(),
             ),
             (
-                KeyColumn::Table(Table::Elaborated),
-                keys(&mut self.elaborated),
-            ),
-            (
                 KeyColumn::Table(Table::ComptimeDtypes),
                 keys(&mut self.comptime_dtypes),
             ),
@@ -1436,7 +1372,6 @@ impl DeclarationInterface {
         by_name(&mut self.owned_collectors);
         by_name(&mut self.collector_names);
         by_name(&mut self.explicit_destroy);
-        by_name(&mut self.elaborated);
         by_name(&mut self.comptime_dtypes);
         by_name(&mut self.comptime_parameters);
         by_name(&mut self.comptime_values);
@@ -1856,12 +1791,6 @@ fn summarized<V: Clone>(
         .collect()
 }
 
-/// The elaborated value of the module integer constant whose one value is
-/// `value`.
-fn elaborated_constant(value: &IntLiteral) -> ElaboratedConstant {
-    ElaboratedConstant::Value(CtValue::IntLiteral(value.clone()))
-}
-
 /// Whether `left` and `right` encode the same bytes.
 fn same_bytes<L: serde::Serialize, R: serde::Serialize>(left: &L, right: &R) -> bool {
     matches!(
@@ -1891,8 +1820,8 @@ enum KeyColumn {
 /// The names `column` holds in the residue of a declaration whose
 /// directory keys are `keys` and whose lowered part is `lowered`: a table's
 /// keys, but for a projected struct's explicit-destruction row, which its
-/// lowered declaration holds, and a module integer constant's integer row
-/// and elaborated value, which its lowered constant holds.
+/// lowered declaration holds, and a module integer constant's integer row,
+/// which its lowered constant holds.
 fn implied_keys<'k>(
     column: KeyColumn,
     keys: &[(Table, &'k str)],
@@ -1907,7 +1836,7 @@ fn implied_keys<'k>(
         KeyColumn::Table(Table::ExplicitDestroy) => of(Table::ExplicitDestroy)
             .filter(|key| lowered_struct(lowered, key).is_none())
             .collect(),
-        KeyColumn::Table(table @ (Table::Comptimes | Table::Elaborated)) => of(table)
+        KeyColumn::Table(Table::Comptimes) => of(Table::Comptimes)
             .filter(|key| lowered.constant(key).is_none())
             .collect(),
         KeyColumn::Table(table) => of(table).collect(),
@@ -1931,20 +1860,6 @@ fn scope_names<V>(stack: &[HashMap<String, V>]) -> Vec<String> {
         .first()
         .map(|scope| scope.keys().cloned().collect())
         .unwrap_or_default()
-}
-
-/// The module declaring each library declaration of `program`, and each
-/// constant of `elaborated`: one the elaboration folded away (a type
-/// handle) is still a declaration of its module.
-fn declaring_modules(
-    program: &[Stmt],
-    elaborated: &[(String, String, ElaboratedConstant)],
-) -> Result<DeclaringModules, String> {
-    let mut modules = DeclaringModules::of(program)?;
-    for (module, name, _) in elaborated {
-        modules.declare(name, module)?;
-    }
-    Ok(modules)
 }
 
 /// Refuse a library fact no library declaration owns, naming each.
@@ -1998,15 +1913,11 @@ mod tests {
     fn residue_of_n(value: i64) -> DeclarationInterface {
         DeclarationInterface {
             comptimes: vec![("N".to_string(), IntLiteral::from(value))],
-            elaborated: vec![(
-                "N".to_string(),
-                elaborated_constant(&IntLiteral::from(value)),
-            )],
             ..DeclarationInterface::default()
         }
     }
 
-    const KEYS: [(Table, &str); 2] = [(Table::Comptimes, "N"), (Table::Elaborated, "N")];
+    const KEYS: [(Table, &str); 1] = [(Table::Comptimes, "N")];
 
     fn method_function(lowered_name: &str) -> FunctionDeclaration {
         FunctionDeclaration {
@@ -2188,12 +2099,11 @@ mod tests {
         let lowered = constant_n(3);
         let mut residue = residue_of_n(3);
         residue.project(&lowered).expect("the rows agree");
-        assert!(residue.comptimes.is_empty() && residue.elaborated.is_empty());
+        assert!(residue.comptimes.is_empty());
         let bytes = postcard::to_stdvec(&residue).expect("encodes");
         let mut decoded: DeclarationInterface = postcard::from_bytes(&bytes).expect("decodes");
         decoded.join(&KEYS, &lowered).expect("joins");
         assert!(same_bytes(&decoded.comptimes, &residue_of_n(3).comptimes));
-        assert!(same_bytes(&decoded.elaborated, &residue_of_n(3).elaborated));
     }
 
     #[test]
@@ -2202,16 +2112,6 @@ mod tests {
             .project(&constant_n(4))
             .expect_err("the values differ");
         assert!(error.contains("the lowered constant `N`"), "{error}");
-    }
-
-    #[test]
-    fn an_elaborated_value_other_than_the_check_is_refused() {
-        let mut residue = residue_of_n(3);
-        residue.elaborated[0].1 = elaborated_constant(&IntLiteral::from(4_i64));
-        let error = residue
-            .project(&constant_n(3))
-            .expect_err("the elaboration differs");
-        assert!(error.contains("the elaboration of `N`"), "{error}");
     }
 
     #[test]

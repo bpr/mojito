@@ -232,8 +232,6 @@ pub enum InterfaceTable {
     NestedOriginsReadOnlyFunctions,
     ExplicitDestroy,
     Bindings,
-    /// A module constant as the build's comptime elaboration resolved it.
-    Elaborated,
     /// The module scope's compile-time facts, each under its binding's
     /// name: a bound dtype, a lifted constant's application, and a kept
     /// compile-time value.
@@ -261,7 +259,6 @@ impl InterfaceTable {
         Self::NestedOriginsReadOnlyFunctions,
         Self::ExplicitDestroy,
         Self::Bindings,
-        Self::Elaborated,
         Self::ComptimeDtypes,
         Self::ComptimeParameters,
         Self::ComptimeValues,
@@ -1928,25 +1925,6 @@ impl DeclaringModules {
             }
         }
         Ok(Self { names })
-    }
-
-    /// Record `name` as a declaration of `module`, one the program no
-    /// longer spells (a module constant its elaboration folded away).
-    ///
-    /// # Errors
-    ///
-    /// Another module declares `name`.
-    pub fn declare(&mut self, name: &str, module: &str) -> Result<(), String> {
-        match self.names.get(name) {
-            Some(declared) if declared != module => Err(format!(
-                "`{name}` is declared in both `{declared}` and `{module}`"
-            )),
-            Some(_) => Ok(()),
-            None => {
-                self.names.insert(name.to_string(), module.to_string());
-                Ok(())
-            }
-        }
     }
 
     /// Every declaring module.

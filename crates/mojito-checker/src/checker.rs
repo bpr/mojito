@@ -117,9 +117,6 @@ pub struct CheckContext {
     /// The interfaces the last check exported, encoded with their
     /// directory.
     interfaces: Option<Result<InterfaceExport, String>>,
-    /// The module constants the program's comptime elaboration resolved,
-    /// which an exported interface carries.
-    elaborated: ElaboratedConstants,
 }
 
 impl CheckContext {
@@ -131,7 +128,6 @@ impl CheckContext {
             installed: None,
             record_interfaces: false,
             interfaces: None,
-            elaborated: Vec::new(),
         }
     }
 
@@ -145,12 +141,6 @@ impl CheckContext {
     /// ends ([`Self::take_interfaces`]).
     pub const fn record_interfaces(&mut self) {
         self.record_interfaces = true;
-    }
-
-    /// Export `elaborated`, the module constants the program's comptime
-    /// elaboration resolved, each in its declaring module's interface.
-    pub fn record_elaborated(&mut self, elaborated: ElaboratedConstants) {
-        self.elaborated = elaborated;
     }
 
     /// The library interface the last check exported, which the package
@@ -327,7 +317,7 @@ fn check_program_carrying(
     // nothing.
     if context.record_interfaces {
         let _export = timing::span("export_interfaces");
-        context.interfaces = Some(checker.export_interfaces(&expanded, &context.elaborated));
+        context.interfaces = Some(checker.export_interfaces(&expanded));
     }
     // Context managers and sequence destructuring are desugared by the
     // checker; later phases see only the ordinary statements it checked.
@@ -355,10 +345,7 @@ mod declaration_table;
 pub(crate) use declaration_table::DeclarationTable;
 mod interface;
 mod node_facts;
-pub use interface::{
-    DeclarationInterfaces, ElaboratedConstant, ElaboratedConstants, InstalledInterfaces,
-    InterfaceExport,
-};
+pub use interface::{DeclarationInterfaces, InstalledInterfaces, InterfaceExport};
 mod overload_support;
 mod probe;
 pub use body_carry::PassCarry;
