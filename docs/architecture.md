@@ -738,7 +738,14 @@ policy or data-model responsibilities to focused children:
   closure instance for every one: an owned field for a copied or moved
   capture, the referent's copy for a reference binding, and a `ref` field
   for a reference capture, whose referent is the captured sibling's
-  storage for a sibling capture. The struct's parameters are its own,
+  storage for a sibling capture. The check declares those fields, with
+  the struct's copyability, passabilities, and whether a call writes it,
+  when it finalizes the closure's type (`Checker::closure_storage`,
+  `CheckedDef::storage`, a `CheckedClosureStorage`), as upstream's
+  `liftClosure` declares the struct in the front end; MIR's
+  `nested::closure_storage` lowers that declaration, naming the struct
+  and pointing a sibling's reference field at its lowered storage. The
+  struct's parameters are its own,
   declared for the enclosing binders the closure names, in its fields,
   its signature, or its body, nested declarations included
   (`nested::closure_binder_uses`), as upstream's `emitClosureInstance`
@@ -751,7 +758,8 @@ policy or data-model responsibilities to focused children:
   is register-passable (and
   trivially so) by the meet over its captures, a reference capture
   contributing its referent's, as upstream's `ClosureEmitter::emitClosure`
-  decides. MIR lowering synthesizes the struct's declaration, its
+  decides: the check computes the meet once, and both the value's type
+  and MIR's lowering read it. MIR lowering synthesizes the struct's declaration, its
   fieldwise `__init__`, which the declaration calls with the captures,
   and, unless it is trivially register-passable, its fieldwise
   `__deinit__`, `__moveinit__`, and (when every capture is copyable,

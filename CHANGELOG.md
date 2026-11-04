@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check declares a closure's storage struct (R1436): its fields, its
+  copyability and passabilities, and whether a call writes it are a
+  `CheckedClosureStorage` on the closure's `CheckedDef`, computed once
+  when the closure's type is finalized, as upstream's `liftClosure`
+  declares the struct in the front end. MIR lowers that declaration
+  instead of deriving it, and the value's type reads the same meet.
+
 - A closure's storage struct declares its parameters as its own, as
   upstream's `liftClosure` does, reusing the enclosing binders'
   spellings, instead of borrowing the enclosing declarations' binders

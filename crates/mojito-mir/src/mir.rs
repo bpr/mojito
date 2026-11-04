@@ -4811,17 +4811,10 @@ struct ClosureStorage {
     /// parameter: it stays a generator nested in its enclosing
     /// declaration, taking the storage as its leading parameter.
     method: Option<String>,
-    /// Whether a call of the body may write the storage: it owns a field,
-    /// or a field is a mutable reference.
-    writes: bool,
-    /// Whether the storage is register-passable, as upstream's
-    /// `emitClosure` meets its captures' passabilities, a reference
-    /// capture contributing its referent's: a call passes it by value,
-    /// else by address.
-    register_passable: bool,
-    /// Whether the storage is trivially register-passable, by the same
-    /// meet.
-    trivial: bool,
+    /// The declaration the check made: whether a call writes it, its
+    /// copyability, and its passability (a call passes a register-passable
+    /// storage by value, else by address).
+    declared: mojito_checked::checked::CheckedClosureStorage,
 }
 
 /// The frame slots a lifted nested body binds its captures to: each

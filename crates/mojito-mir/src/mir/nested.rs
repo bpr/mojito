@@ -85,7 +85,6 @@ pub(super) fn lower_fn_nested(
         &children,
         callables,
         &enclosing_binders,
-        declarations,
         &closures.types,
         invariant_errors,
     );
@@ -265,16 +264,6 @@ impl ClosureLowering {
             self.storage_scopes.borrow_mut().push(scope);
         }
     }
-}
-
-/// Whether a closure whose value type is `callable_ty` is copyable, as
-/// the check decided by upstream's `allCopyable`: a storage the check
-/// typed answers by its environment, any other closure is.
-fn closure_copyable(callable_ty: Option<&Ty>) -> bool {
-    !matches!(
-        callable_ty.and_then(Ty::callable).map(|func| &func.environment),
-        Some(mojito_types::origin::CallableEnvironment::Storage(storage)) if !storage.copyable
-    )
 }
 
 /// The declaration site a closure's own value type names, `None` for any
@@ -828,7 +817,6 @@ fn find_nested_defs(
                 .map(|node| NestedSite {
                     node,
                     loops: loops.clone(),
-                    lambda: true,
                 }),
         );
         let bodies = match &node.op {
@@ -836,7 +824,6 @@ fn find_nested_defs(
                 out.push(NestedSite {
                     node: *id,
                     loops: loops.clone(),
-                    lambda: false,
                 });
                 continue;
             }
@@ -910,12 +897,10 @@ fn statement_lambda_operands(op: &CheckedStmtOp) -> Vec<CheckedNodeId> {
 }
 
 /// A declaration [`find_nested_defs`] found: its statement node, the
-/// `comptime for` statements of its scope enclosing it, outermost first,
-/// and whether it is a lambda's hidden `def`.
+/// `comptime for` statements of its scope enclosing it, outermost first.
 struct NestedSite {
     node: CheckedStmtId,
     loops: Vec<CheckedStmtId>,
-    lambda: bool,
 }
 
 /// One declaration in the lexical closure tree. Checked capture facts already
@@ -931,13 +916,11 @@ struct NestedNode {
     mangled: String,
     captures: Vec<NestedCapture>,
     callable_ty: Option<Ty>,
-    /// Whether a lambda expression declares it, which makes its closure
-    /// where it stands rather than at a declaration statement.
-    lambda: bool,
-    /// Whether it declares a capture list ([`CheckedDef::capture_list`]).
+    /// The storage struct the check declared for its closure
+    /// ([`CheckedDef::storage`]).
     ///
-    /// [`CheckedDef::capture_list`]: mojito_checked::checked::CheckedDef::capture_list
-    capture_list: bool,
+    /// [`CheckedDef::storage`]: mojito_checked::checked::CheckedDef::storage
+    storage: Option<mojito_checked::checked::CheckedClosureStorage>,
     /// Each parameter's checked default node.
     defaults: Vec<Option<CheckedNodeId>>,
     children: Vec<Self>,
@@ -964,11 +947,7 @@ fn analyze_node(
     parent_mangled: &str,
     duplicate_name: bool,
 ) -> NestedNode {
-    let NestedSite {
-        node,
-        loops,
-        lambda,
-    } = site;
+    let NestedSite { node, loops } = site;
     let statement = checked
         .tables()
         .statement(node)
@@ -1006,8 +985,7 @@ fn analyze_node(
             })
             .cloned()
             .map(mir_nested_callable_ty),
-        lambda,
-        capture_list: def.capture_list,
+        storage: def.storage.clone(),
         defaults: def.params.iter().map(|param| param.default).collect(),
         children,
     }
@@ -1032,7 +1010,6 @@ fn scope_registry(
     children: &[NestedNode],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &EnclosingBinders,
-    declarations: &MirDeclarations,
     closure_types: &ClosureTypes,
     invariant_errors: &mut Vec<String>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
@@ -1050,11 +1027,11 @@ fn scope_registry(
                     .iter()
                     .any(|capture| capture.binding == child.binding)
         });
-        let storage_backed = (child.lambda || child.capture_list) && !child.captures.is_empty();
-        let storage = storage_backed
-            .then(|| closure_storage(checked, child, &registry, binders, declarations))
-            .flatten();
-        if storage_backed && storage.is_none() {
+        let storage = child
+            .storage
+            .as_ref()
+            .and_then(|declared| closure_storage(checked, child, declared, &registry, binders));
+        if child.storage.is_some() && storage.is_none() {
             invariant_errors.push(format!(
                 "nested def `{}`: its closure storage names a parameter no enclosing declaration binds",
                 child.source_name
@@ -1088,85 +1065,43 @@ fn scope_registry(
     registry
 }
 
-/// The storage struct of the capture-list `def` or capturing lambda `child`, whose
-/// captured siblings `registry` registers, declared where `binders` are in
-/// scope: its parameters are the binders its fields, its signature, and
-/// its body name ([`closure_binder_uses`]), as upstream's
-/// `emitClosureInstance` collects them; [`own_storage_binders`] declares
-/// them as the storage's own once its members are lowered. `None` for a
-/// body without captures, whose closure is a function value, and for one
-/// whose fields name a parameter no binder declares.
+/// The storage struct of the capture-list `def` or capturing lambda
+/// `child`, lowered from the declaration the check made (`declared`),
+/// whose captured siblings `registry` registers, declared where `binders`
+/// are in scope: a reference field to a captured sibling refers to its
+/// storage struct, and the struct's parameters are the binders its
+/// fields, its signature, and its body name ([`closure_binder_uses`]), as
+/// upstream's `emitClosureInstance` collects them; [`own_storage_binders`]
+/// declares them as the storage's own once its members are lowered.
+/// `None` for one whose fields name a parameter no binder declares.
 fn closure_storage(
     checked: &mojito_checked::checked::CheckedProgram,
     child: &NestedNode,
+    declared: &mojito_checked::checked::CheckedClosureStorage,
     registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &EnclosingBinders,
-    declarations: &MirDeclarations,
 ) -> Option<ClosureStorage> {
-    if child.captures.is_empty() {
-        return None;
-    }
-    let mut writes = false;
-    let (mut register_passable, mut trivial) = (true, true);
-    let mut meet = |passable: bool, identity: bool| {
-        register_passable &= passable;
-        trivial &= identity;
-    };
-    let fields: Vec<(String, Ty)> = child
-        .captures
+    let fields: Vec<(String, Ty)> = declared
+        .fields
         .iter()
-        .map(|capture| {
-            let ty = match capture.kind {
-                mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move => {
-                    writes = true;
-                    // A copy of a reference binding copies its referent.
-                    let ty = capture_referent(capture);
-                    meet(
-                        declarations.register_passable(&ty),
-                        declarations.copy_is_identity(&ty),
-                    );
-                    ty
-                }
-                mojito_ast::ast::CaptureKind::Imm
-                | mojito_ast::ast::CaptureKind::Mut
-                | mojito_ast::ast::CaptureKind::Ref => {
-                    let (referent, mutable, passable, identity) =
-                        captured_storage(registry, capture).map_or_else(
-                            || {
-                                let referent = capture_referent(capture);
-                                let passable = declarations.register_passable(&referent);
-                                let identity = declarations.copy_is_identity(&referent);
-                                (
-                                    referent,
-                                    capture.kind != mojito_ast::ast::CaptureKind::Imm,
-                                    passable,
-                                    identity,
-                                )
-                            },
-                            |storage| {
-                                (
-                                    storage.ty.clone(),
-                                    storage.writes,
-                                    storage.register_passable,
-                                    storage.trivial,
-                                )
-                            },
-                        );
-                    meet(passable, identity);
-                    writes |= mutable;
+        .zip(&child.captures)
+        .map(|(field, capture)| {
+            let ty = match field.reference {
+                None => mir_nested_callable_ty(field.ty.clone()),
+                Some(mutability) => {
+                    let referent = captured_storage(registry, capture)
+                        .map_or_else(|| field.ty.clone(), |storage| storage.ty.clone());
                     TyKind::Ref(mojito_types::origin::RefTy {
                         referent,
-                        origin: mojito_types::origin::Origin::Untracked { mutable },
-                        mutability: if mutable {
-                            mojito_types::origin::Mutability::Mutable
-                        } else {
-                            mojito_types::origin::Mutability::Immutable
+                        origin: mojito_types::origin::Origin::Untracked {
+                            mutable: mutability == mojito_types::origin::Mutability::Mutable,
                         },
+                        mutability,
                     })
                     .into()
                 }
             };
-            (capture.name.clone(), ty)
+            (field.name.clone(), ty)
         })
         .collect();
     let in_scope = binders.with(&child.region_binders());
@@ -1229,9 +1164,7 @@ fn closure_storage(
         method: (!in_scope.callables.iter().any(named)).then(|| {
             mojito_symbol::symbol::closure_method_name(&child.mangled, &child.source_name)
         }),
-        writes,
-        register_passable,
-        trivial,
+        declared: declared.clone(),
     })
 }
 
@@ -1439,10 +1372,10 @@ fn lower_closure_storage(
     declarations: &mut MirDeclarations,
 ) -> Option<StorageScope> {
     let storage = storage?;
-    let (callable_ty, captures) = (node.callable_ty.as_ref(), &node.captures);
+    let captures = &node.captures;
     let method = &node.source_name;
     let from = LoweredFrom::at(functions, declarations);
-    let copyable = closure_copyable(callable_ty);
+    let copyable = storage.declared.copyable;
     let Some((name, _)) = storage.ty.kind().as_non_simd_struct() else {
         unreachable!("a closure's storage is a struct")
     };
@@ -1490,7 +1423,7 @@ fn lower_closure_storage(
     // Upstream's storage `__del__` is trivial exactly when the storage is
     // trivially register-passable (`ClosureEmitter`'s
     // `__del__is_trivial`), as are its copy and move.
-    if !storage.trivial {
+    if !storage.declared.trivially_register_passable() {
         lower_synthesized_member(
             (name, &[]),
             &storage.fields,
@@ -1502,7 +1435,7 @@ fn lower_closure_storage(
     // Upstream's `liftClosure` synthesizes the fieldwise move and, for a
     // copyable storage, copy; a trivially register-passable storage's are
     // the value itself.
-    if !storage.trivial {
+    if !storage.declared.trivially_register_passable() {
         lower_synthesized_member(
             (name, &storage.param_decls),
             &storage.fields,
@@ -1538,9 +1471,18 @@ fn lower_closure_storage(
             ("ImplicitlyCopyable", copyable),
             ("Movable", true),
             ("Deinitable", true),
-            ("IsTriviallyCopyable", storage.trivial),
-            ("IsTriviallyMovable", storage.trivial),
-            ("IsTriviallyDeinitable", storage.trivial),
+            (
+                "IsTriviallyCopyable",
+                storage.declared.trivially_register_passable(),
+            ),
+            (
+                "IsTriviallyMovable",
+                storage.declared.trivially_register_passable(),
+            ),
+            (
+                "IsTriviallyDeinitable",
+                storage.declared.trivially_register_passable(),
+            ),
         ]
         .into_iter()
         .map(
@@ -1567,8 +1509,11 @@ fn lower_closure_storage(
             })
             .chain(
                 [
-                    (storage.trivial, "TrivialRegisterPassable"),
-                    (storage.register_passable, "RegisterPassable"),
+                    (
+                        storage.declared.trivially_register_passable(),
+                        "TrivialRegisterPassable",
+                    ),
+                    (storage.declared.register_passable(), "RegisterPassable"),
                 ]
                 .into_iter()
                 .filter(|(holds, _)| *holds)
@@ -1685,7 +1630,7 @@ fn lower_storage_call_witness(
         result_adapter: None,
         args,
         kwargs: Vec::new(),
-        recv_place: (!storage.register_passable).then(|| Box::new(root(0, &storage.ty))),
+        recv_place: (!storage.declared.register_passable()).then(|| Box::new(root(0, &storage.ty))),
         recv_writes: writes_self,
         receiver_convention: None,
         arg_places,
@@ -1853,7 +1798,6 @@ fn lower_nested_node(
         &node.children,
         enclosing.registry,
         enclosing_binders,
-        declarations,
         &enclosing.closures.types,
         invariant_errors,
     );
@@ -2209,7 +2153,7 @@ fn capture_parameters(
     captures
         .iter()
         .map(|capture| match captured_storage(registry, capture) {
-            Some(storage) => (storage.ty.clone(), storage.writes),
+            Some(storage) => (storage.ty.clone(), storage.declared.writes),
             None => (
                 match capture.kind {
                     mojito_ast::ast::CaptureKind::Imm
@@ -2399,7 +2343,6 @@ fn analyze_root_children(
                 .map(|node| NestedSite {
                     node,
                     loops: Vec::new(),
-                    lambda: true,
                 }),
         );
     }

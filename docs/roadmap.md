@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1891**.
+Next free ID: **R1895**.
 
 ## Ordered Work
 
@@ -12202,27 +12202,92 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1436 The checker names a closure's type by its declaration site,
-  and MIR builds its storage struct, where upstream's front end builds the
-  struct and types the value with it**
+- [ ] **R1891 MIR collects the binders a closure's storage struct
+  declares, where upstream's front end collects them**
+
+  The check declares a closure's storage fields and conformances
+  (`CheckedDef::storage`), but its parameters are still found in MIR by
+  `closure_binder_uses` over the enclosing binders (`EnclosingBinders`,
+  `mir/nested.rs`), where upstream's `usesFromAbove` runs in the front end
+  after the body is emitted.
+  - Move the walk, the filter over the binders in scope (the enclosing
+    struct's, the function's, enclosing nested defs', `comptime for`
+    indices), and the "unbound binder" check into the check, as
+    `CheckedClosureStorage::param_decls`, already own
+    (`reown_as_own_parameters`).
+  - Decide `ClosureStorage::method` there too (a body naming an enclosing
+    callable binder stays a generator, R92).
+  - The checked tables the walk reads are built after the check
+    (`CheckedProgram::new`), so it runs either over the AST and node facts
+    or as the check's last step over the tables.
+  - Probe: `cargo run -- own assets/ok/closure_storage_method_binders.mojo`
+    prints the same MIR text before and after.
+  - Found while landing R1436 (2026-11-03).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1892 MIR names each lifted closure, where upstream's front end
+  names it**
+
+  `CheckedDef::symbol` holds only a nested def's own name. MIR's
+  `analyze_node` qualifies it (`parent$inner`, or
+  `parent$inner$decl<CheckedDeclId>` for two same-spelled declarations)
+  and `rename_nested` renames children of a storage method, so the check
+  cannot name a closure's storage struct.
+  - The disambiguator must be one the check knows, such as the
+    declaration's ordinal in its enclosing body, since `CheckedDeclId` is
+    assigned after the check. `tests/symbol_test.rs` pins the spelling.
+  - Add the storage's name to `CheckedClosureStorage`, then delete
+    `rename_nested` and the duplicate counting in `analyze_root_children`.
+  - Probe: assert MIR's name equals the checked one over
+    `assets/ok/nested_def_*` and `generic_nested_def_*` before deleting
+    MIR's naming.
+  - Found while landing R1436 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1893 A closure's checked type names its declaration site, where
+  upstream types the value by its storage struct**
 
   A capture-list closure's or capturing lambda's checked type is a
-  `def(...)` whose environment is `CallableEnvironment::Storage` (its site,
-  captures, copyability, and passability), which
-  `nested::resolve_closure_types` replaces by the `__storage` struct
-  `closure_storage` derives in MIR, where upstream's `liftClosure`
-  declares the struct in the front end.
-  - Move `closure_storage`'s derivation into the checked program (a checked
-    storage declaration on `CheckedDef`), so the value's type is a
-    `TyKind::Struct` from the check on.
-  - The storage's `ref` fields carry an untracked origin; upstream promotes
-    the captures' origins to the struct's origin parameters
-    (`outlineAndPromoteOrigins`). The environment's capture set stands in
-    for them in the checker.
-  - The checker's copyability and passability of the storage duplicate
-    MIR's meet over the captures (`closure_storage`, `mir/nested.rs`).
-  - Found while landing R1378 (2026-10-25).
-  - Depends on R1430.
+  `def(...)` whose environment is `CallableEnvironment::Storage`, which
+  `nested::resolve_closure_types` replaces by the storage struct in MIR,
+  where upstream's `emitClosure` returns a value typed by the struct.
+  - Register the storage as a checker `StructInfo` with its closure trait
+    as `callable_conformance` and `<storage>.__call__` as
+    `callable_target`, the path a nominal `struct S(def(Int) -> Int)`
+    already takes.
+  - Rewrite the `Storage` consumers (`conformance.rs`, `types.rs`
+    coercion and display, `traits.rs`, `places.rs`, `inference.rs`,
+    `ref_params.rs`), then delete `ClosureSite`, `resolve_closure_types`,
+    `retarget_storage_calls`, and the verifier's `unresolved_closure`.
+  - Display must keep the pin's text, the closure trait with names
+    (`cannot implicitly convert 'def(a: Int) -> Int' value to 'Int'`).
+  - Probe: `rg 'CallableEnvironment::Storage|ClosureSite' crates` is
+    empty, and `assets/type_error/capturing_lambda_display_*` and
+    `closure_capturing_loop_ref_escapes.mojo` keep their texts.
+  - Found while landing R1436 (2026-11-03).
+  - Depends on R1891, R1892.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1894 A closure storage's reference fields carry an untracked
+  origin, where upstream promotes the captured origins to the struct's
+  origin parameters**
+
+  `closure_storage` (`mir/nested.rs`) types a reference field
+  `ref[Untracked]`, and the checker reads the closure's loans and effects
+  from its capture set instead, where upstream's
+  `outlineAndPromoteOrigins` makes each captured origin a parameter of
+  the storage struct.
+  - Declare one origin parameter per reference capture, type the field
+    `ref[o]`, and let loans follow the existing struct-field collection
+    (`ref_params.rs`, `call_capture_effects`).
+  - Premise to probe first: an `{imm k}` capture still observes a write
+    to `k` between declaration and call, as at the pin.
+  - Probe: `rg Untracked crates/mojito-mir/src/mir/nested.rs` has no
+    storage-field hit.
+  - Found while landing R1436 (2026-11-03).
+  - Depends on R1893.
   - Model: Fable, Not Planned.
 
 - [ ] **R1434 A closure keeps owned captures, which no pin-shaped value

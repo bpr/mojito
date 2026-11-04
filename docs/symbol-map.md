@@ -1522,11 +1522,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `FunctionLowering::callables`) inherits the body's nested `def`s that
   have neither storage nor captures, so its call of one is the direct call
   of the generator over the binders the thunk declares, as the pin's
-  compile-time expression names `outer::inner`. `scope_registry` gives every direct declaration with a
-  non-empty capture list (`CheckedDef::capture_list`, `NestedNode::capture_list`),
-  and every capturing lambda (`NestedNode::lambda`), its storage struct (`NestedInfo::storage`, a `ClosureStorage` that
-  `closure_storage` derives, with its register passability and triviality
-  as the meet over the captures, named by `symbol::closure_storage_name`,
+  compile-time expression names `outer::inner`. `scope_registry` gives every direct declaration
+  the check declared a storage for (`CheckedDef::storage`, a
+  `checked::CheckedClosureStorage` of `CheckedStorageField`s and a
+  `StoragePassability`, that
+  `Checker::closure_storage` derives at the closure's finalization, with
+  its copyability, register passability, and triviality as the meet over
+  the captures, which its `CallableEnvironment::Storage` flags read;
+  `NestedNode::storage`) its storage struct (`NestedInfo::storage`, a
+  `ClosureStorage` that `closure_storage` lowers from it, named by
+  `symbol::closure_storage_name`,
   its parameters the enclosing binders the closure's fields, signature,
   and body name, `closure_binder_uses`, over `EnclosingBinders`, whose
   `callables` list the callable binders), names its body the storage's

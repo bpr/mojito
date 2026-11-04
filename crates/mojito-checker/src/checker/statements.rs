@@ -3384,11 +3384,11 @@ impl Checker {
             );
             // A capture-list closure or capturing lambda that captures is
             // its storage struct, as upstream's `emitClosure` returns the
-            // storage, copyable when each moved capture's type is
-            // (`allCopyable`).
+            // storage.
             let storage_backed = (lambda || captures_list) && !captures.is_empty();
             let environment = if storage_backed {
-                mojito_types::origin::CallableEnvironment::Storage(Box::new(
+                let storage = self.closure_storage(&captures);
+                let environment = mojito_types::origin::CallableEnvironment::Storage(Box::new(
                     mojito_types::origin::ClosureStorageEnvironment {
                         site: mojito_types::origin::ClosureSite {
                             module: stmt.module.clone(),
@@ -3396,19 +3396,13 @@ impl Checker {
                             syntax: stmt.syntax_id,
                         },
                         captures: concrete,
-                        copyable: captures.iter().all(|capture| {
-                            capture.kind != mojito_ast::ast::CaptureKind::Move
-                                || self.is_copyable(&capture.ty)
-                        }),
-                        register_passable: captures.iter().all(|capture| {
-                            self.register_passability(capture_referent(&capture.ty))
-                                == super::traits::RegisterPassability::Proven
-                        }),
-                        trivially_register_passable: captures.iter().all(|capture| {
-                            self.is_trivial_register_passable(capture_referent(&capture.ty))
-                        }),
+                        copyable: storage.copyable,
+                        register_passable: storage.register_passable(),
+                        trivially_register_passable: storage.trivially_register_passable(),
                     },
-                ))
+                ));
+                self.record_at(stmt.source_span()).closure_storage = Some(Box::new(storage));
+                environment
             } else if lambda_forces_closure || !captures.is_empty() {
                 mojito_types::origin::CallableEnvironment::Capturing(concrete)
             } else {
@@ -3465,6 +3459,89 @@ impl Checker {
         self.pop_assumptions();
         self.tparams.pop();
         result
+    }
+
+    /// The storage struct of a closure capturing `captures`, as upstream's
+    /// `liftClosure` declares it: an owned field holding a `var` or moved
+    /// capture's value, and a reference field to a reference capture's
+    /// referent, which is a captured sibling closure's own storage, written
+    /// through when the sibling's call writes it. Its copyability and
+    /// passabilities meet its captures', a reference capture contributing
+    /// its referent's.
+    fn closure_storage(
+        &self,
+        captures: &[mojito_checked::checked::CheckedCapture],
+    ) -> mojito_checked::checked::CheckedClosureStorage {
+        use mojito_ast::ast::CaptureKind;
+        use mojito_checked::checked::StoragePassability;
+        use mojito_types::origin::Mutability;
+        let fields: Vec<_> = captures
+            .iter()
+            .map(|capture| {
+                let ty = capture_referent(&capture.ty).clone();
+                let reference = match capture.kind {
+                    CaptureKind::Copy | CaptureKind::Move => None,
+                    CaptureKind::Imm | CaptureKind::Mut | CaptureKind::Ref => {
+                        let writes = self
+                            .sibling_storage(capture)
+                            .map_or(capture.kind != CaptureKind::Imm, |sibling| sibling.writes);
+                        Some(if writes {
+                            Mutability::Mutable
+                        } else {
+                            Mutability::Immutable
+                        })
+                    }
+                };
+                mojito_checked::checked::CheckedStorageField {
+                    name: capture.name.clone(),
+                    ty,
+                    reference,
+                }
+            })
+            .collect();
+        mojito_checked::checked::CheckedClosureStorage {
+            writes: fields
+                .iter()
+                .any(|field| field.reference != Some(Mutability::Immutable)),
+            copyable: captures
+                .iter()
+                .all(|capture| capture.kind != CaptureKind::Move || self.is_copyable(&capture.ty)),
+            passability: if !fields.iter().all(|field| {
+                self.register_passability(&field.ty) == super::traits::RegisterPassability::Proven
+            }) {
+                StoragePassability::MemoryOnly
+            } else if fields
+                .iter()
+                .all(|field| self.is_trivial_register_passable(&field.ty))
+            {
+                StoragePassability::TriviallyRegisterPassable
+            } else {
+                StoragePassability::RegisterPassable
+            },
+            fields,
+        }
+    }
+
+    /// The storage of the sibling closure `capture` captures: the
+    /// declaration its binding names, when its type is that closure's
+    /// storage.
+    fn sibling_storage(
+        &self,
+        capture: &mojito_checked::checked::CheckedCapture,
+    ) -> Option<mojito_checked::checked::CheckedClosureStorage> {
+        let mojito_types::origin::CallableEnvironment::Storage(storage) =
+            &capture.ty.callable()?.environment
+        else {
+            return None;
+        };
+        let site = SourceSpan::syntax(
+            storage.site.module.clone(),
+            storage.site.declaration,
+            storage.site.syntax,
+        );
+        (self.fact(&site, |facts| facts.statement_binding.as_ref()) == Some(capture.binding))
+            .then(|| self.fact(&site, |facts| facts.closure_storage.as_deref()))
+            .flatten()
     }
 
     /// Resolve a function declaration's signature: its parameters, result,

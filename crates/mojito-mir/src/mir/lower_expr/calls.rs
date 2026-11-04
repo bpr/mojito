@@ -465,7 +465,10 @@ impl<'a> Flatten<'a> {
                     dest,
                     place: place.clone(),
                 });
-                vec![(dest, (!storage.register_passable).then_some(place))]
+                vec![(
+                    dest,
+                    (!storage.declared.register_passable()).then_some(place),
+                )]
             }
             None => info
                 .captures

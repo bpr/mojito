@@ -2741,6 +2741,10 @@ pub struct CheckedDef {
     /// `constructClosure` builds a closure storage struct; a `@parameter`
     /// closure captures without one.
     pub capture_list: bool,
+    /// The storage struct its closure is, for a capture-list `def` or a
+    /// capturing lambda that captures, as upstream's `liftClosure`
+    /// declares it in the front end.
+    pub storage: Option<CheckedClosureStorage>,
     /// The level its inline decorator names, as upstream's function op
     /// records it.
     pub inline: crate::declaration::InlineLevel,
@@ -3758,6 +3762,57 @@ pub struct CheckedDeclaration {
     pub binding: Option<mojito_types::origin::OwnerId>,
     pub ty: Option<Ty>,
     pub children: Vec<CheckedDeclId>,
+}
+
+/// The storage struct of a capture-list closure, as the check derived it
+/// from the closure's captures: one field per capture, in capture order,
+/// and the conformances upstream's `liftClosure` gives it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedClosureStorage {
+    pub fields: Vec<CheckedStorageField>,
+    /// Whether a call of the body may write the storage: it owns a field,
+    /// or a field is a mutable reference.
+    pub writes: bool,
+    /// Whether every moved capture's type is copyable, upstream's
+    /// `allCopyable`.
+    pub copyable: bool,
+    /// How it passes, as upstream's `emitClosure` meets its captures'
+    /// passabilities, a reference capture contributing its referent's.
+    pub passability: StoragePassability,
+}
+
+impl CheckedClosureStorage {
+    /// Whether it is register-passable: a call passes it by value.
+    pub fn register_passable(&self) -> bool {
+        self.passability != StoragePassability::MemoryOnly
+    }
+
+    /// Whether it is trivially register-passable.
+    pub fn trivially_register_passable(&self) -> bool {
+        self.passability == StoragePassability::TriviallyRegisterPassable
+    }
+}
+
+/// The passability of a [`CheckedClosureStorage`]: `TrivialRegisterPassable`
+/// refines `RegisterPassable`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum StoragePassability {
+    MemoryOnly,
+    RegisterPassable,
+    TriviallyRegisterPassable,
+}
+
+/// One field of a [`CheckedClosureStorage`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedStorageField {
+    /// The capture's name.
+    pub name: String,
+    /// The value it holds, or a reference field's referent: a captured
+    /// sibling closure's own type when the field refers to it.
+    pub ty: Ty,
+    /// The permission of a reference capture's field, `None` for an owned
+    /// one (`var` or moved).
+    pub reference: Option<mojito_types::origin::Mutability>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -6136,6 +6191,11 @@ impl<'a> ArenaBuilder<'a> {
                     .clone()
                     .unwrap_or_default(),
                 capture_list: captures.is_some(),
+                storage: self
+                    .facts(&statement.source_span())
+                    .closure_storage
+                    .as_deref()
+                    .cloned(),
                 inline: crate::declaration::InlineLevel::of(decorators).unwrap_or_default(),
                 unavailable: mojito_ast::ast::is_unavailable(decorators),
             })),
@@ -6987,6 +7047,8 @@ node_facts! {
         comptime_value: Box<mojito_types::param_expr::ParamExpr>,
         /// A nested declaration's explicit captures.
         captures: Vec<CheckedCapture>,
+        /// The storage struct a capture-list closure's captures make it.
+        closure_storage: Box<CheckedClosureStorage>,
         comprehension_bindings: Vec<CheckedComprehensionBinding>,
         place_ty: Ty,
         binding_ty: Ty,
