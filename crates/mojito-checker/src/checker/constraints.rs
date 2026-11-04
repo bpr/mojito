@@ -6,6 +6,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{ParamArg, multi_subscript_param_args, subscript_param_args};
+use mojito_ast::call::Unbound;
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::conformance::Conformance;
 use mojito_types::ct::SimdConstructionError;
@@ -512,11 +513,11 @@ impl Checker {
                 _ => return Ok(None),
             };
             match unbound_slot(inner) {
-                Some((UnboundSlot::Rest, spelling)) if position + 1 == args.len() => {
+                Some((Unbound::Rest, spelling)) if position + 1 == args.len() => {
                     rest = Some(spelling.clone());
                 }
-                Some((UnboundSlot::Rest, _)) => return Ok(None),
-                Some((UnboundSlot::Hole, spelling)) => open.push((index, false, spelling.clone())),
+                Some((Unbound::Rest, _)) => return Ok(None),
+                Some((Unbound::Hole, spelling)) => open.push((index, false, spelling.clone())),
                 None => slots[index] = Some(arg.clone()),
             }
         }
@@ -578,7 +579,7 @@ impl Checker {
             .iter()
             .take_while(|arg| {
                 !matches!(arg, ParamArg::Named { .. })
-                    && !matches!(unbound_slot(arg), Some((UnboundSlot::Rest, _)))
+                    && !matches!(unbound_slot(arg), Some((Unbound::Rest, _)))
             })
             .count();
         let mut rewritten = Vec::new();
@@ -767,7 +768,10 @@ impl Checker {
     /// Apply a parametric value template: `args` bound to `decls` through
     /// the contract a struct application uses (arity, bounds, defaults,
     /// `where` clauses), substituted into `body` beside the `outer`
-    /// bindings, and folded. Returns the bound arguments beside the value.
+    /// bindings, and folded. A list leaving slots unbound (`Add[10, _]`)
+    /// is the template's generator bound partially, upstream's
+    /// `#kgen.bind_params`. Returns the bound arguments beside the value,
+    /// `None` at an unbound slot.
     pub(super) fn apply_parametric_value(
         &self,
         label: &str,
@@ -775,16 +779,20 @@ impl Checker {
         body: &ParamExpr,
         args: &[mojito_ast::ast::ParamArg],
         mut bindings: mojito_types::param_expr::ParamBindings,
-    ) -> Result<(ParamExpr, Vec<TyArg>), TypeError> {
-        let arguments = self
-            .resolve_use_params(label, decls, args, &[], &[])?
-            .arguments;
-        self.bind_declared(&mut bindings, decls, &arguments)?;
+    ) -> Result<(ParamExpr, Vec<Option<TyArg>>), TypeError> {
+        let (arguments, unbound) = self.resolve_partial_use_params(label, decls, args)?;
         let context = &self.param_context;
-        let value = context
-            .replace(body, &bindings)
-            .and_then(|replaced| context.fold(&replaced))
-            .map_err(param_error)?;
+        if let Some(closed) = arguments.iter().cloned().collect::<Option<Vec<_>>>() {
+            self.bind_declared(&mut bindings, decls, &closed)?;
+            let value = context
+                .replace(body, &bindings)
+                .and_then(|replaced| context.fold(&replaced))
+                .map_err(param_error)?;
+            return Ok((value, arguments));
+        }
+        let body = context.replace(body, &bindings).map_err(param_error)?;
+        let generator = self.generator_constant(unbound_generator_params(decls, &unbound), body)?;
+        let value = self.bind_generator(&generator, &arguments)?;
         Ok((value, arguments))
     }
 
@@ -845,25 +853,18 @@ impl Checker {
         let TyKind::Generator(ty) = generator.meta().as_value()?.kind() else {
             return None;
         };
+        let params = ty.params.clone();
         let label = generator.to_string();
         Some((|| {
-            let arguments = self
-                .resolve_use_params(&label, &ty.params, args, &[], &[])?
-                .arguments;
-            let context = &self.param_context;
-            let arguments = arguments
-                .into_iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => Ok(Some(context.type_shape(ty))),
-                    TyArg::Val(value) => context.constant(value).map(Some).map_err(param_error),
-                    TyArg::Origin(_) => Err(TypeError::Unsupported(
-                        "origin parameters on a parameterized comptime value".to_string(),
-                    )),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            context
-                .bind_params(&generator, &arguments)
-                .map_err(param_error)
+            let (arguments, unbound) = self.resolve_partial_use_params(&label, &params, args)?;
+            let generator = match generator.as_constant() {
+                Some(CtValue::Generator(value)) if unbound.any_open() => self.generator_constant(
+                    unbound_generator_params(&value.params, &unbound),
+                    value.body.clone(),
+                )?,
+                _ => generator,
+            };
+            self.bind_generator(&generator, &arguments)
         })())
     }
 
@@ -909,14 +910,7 @@ impl Checker {
             AliasBody::Predicate(_) => alias.predicate_value.clone()?,
             AliasBody::Type(_) => return None,
         };
-        self.param_context
-            .constant(CtValue::Generator(Box::new(
-                mojito_types::ct::GeneratorValue {
-                    params: alias.decls.clone(),
-                    body,
-                },
-            )))
-            .ok()
+        self.generator_constant(alias.decls.clone(), body).ok()
     }
 
     /// Whether `expr` applies a value-bodied generic alias (`First[5, 6]`),
@@ -968,14 +962,17 @@ impl Checker {
             let mut outer = mojito_types::param_expr::ParamBindings::new();
             self.bind_declared(&mut outer, &info.decls, arguments)?;
             let (value, bound) = self.apply_parametric_value(&label, decls, body, args, outer)?;
-            self.validate_member_availability(
-                &label,
-                &member.availability,
-                &info.decls,
-                arguments,
-                decls,
-                decls.iter().map(ParamDecl::name).zip(&bound),
-            )?;
+            // A partial binding's `where` clauses wait for its application.
+            if let Some(bound) = bound.into_iter().collect::<Option<Vec<_>>>() {
+                self.validate_member_availability(
+                    &label,
+                    &member.availability,
+                    &info.decls,
+                    arguments,
+                    decls,
+                    decls.iter().map(ParamDecl::name).zip(&bound),
+                )?;
+            }
             self.reject_generator_dependence(object, field, &value)?;
             Ok(value)
         })())
@@ -995,26 +992,57 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<ParamExpr, TypeError> {
         let label = format!("{subject}.{field}");
-        let arguments = self
-            .resolve_use_params(&label, params, args, &[], &[])?
-            .arguments;
+        let (arguments, _) = self.resolve_partial_use_params(&label, params, args)?;
         let context = &self.param_context;
-        let arguments = arguments
-            .into_iter()
-            .map(|argument| match argument {
-                TyArg::Ty(ty) => Ok(context.type_shape(ty)),
-                TyArg::Val(value) => context.constant(value).map_err(param_error),
-                TyArg::Origin(_) => Err(TypeError::Unsupported(
-                    "origin parameters on a parameterized comptime value".to_string(),
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(context.type_member(
+        let unapplied = context.type_member(
             &context.type_shape(subject.clone()),
             field,
-            &arguments,
-            mojito_types::param_expr::MetaTy::value(result.clone()),
-        ))
+            &[],
+            mojito_types::param_expr::MetaTy::value(Ty::generator(params.to_vec(), result.clone())),
+        );
+        self.bind_generator(&unapplied, &arguments)
+    }
+
+    /// The constant generator over `params` whose body is `body`,
+    /// upstream's `#kgen.gen`.
+    fn generator_constant(
+        &self,
+        params: Vec<ParamDecl>,
+        body: ParamExpr,
+    ) -> Result<ParamExpr, TypeError> {
+        self.param_context
+            .constant(CtValue::Generator(Box::new(
+                mojito_types::ct::GeneratorValue { params, body },
+            )))
+            .map_err(param_error)
+    }
+
+    /// `generator` bound to bracket `arguments`, `None` leaving a slot
+    /// unbound: upstream's `#kgen.bind_params`.
+    fn bind_generator(
+        &self,
+        generator: &ParamExpr,
+        arguments: &[Option<TyArg>],
+    ) -> Result<ParamExpr, TypeError> {
+        let context = &self.param_context;
+        let arguments = arguments
+            .iter()
+            .map(|argument| {
+                argument
+                    .clone()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => Ok(context.type_shape(ty)),
+                        TyArg::Val(value) => context.constant(value).map_err(param_error),
+                        TyArg::Origin(_) => Err(TypeError::Unsupported(
+                            "origin parameters on a parameterized comptime value".to_string(),
+                        )),
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        context
+            .bind_params(generator, &arguments)
+            .map_err(param_error)
     }
 
     /// Check a parameterized member's own `where` clauses at an
@@ -6496,24 +6524,43 @@ fn generator_is_closed(generator: &mojito_types::ct::GeneratorValue) -> bool {
     closed
 }
 
-/// How an application leaves a parameter open: a `_` hole leaves its own
-/// slot, a trailing `...` every slot the arguments before it leave.
-#[derive(Clone, Copy)]
-enum UnboundSlot {
-    Hole,
-    Rest,
+/// A generator's `params` as a bracket list leaving `unbound` open sees
+/// them: a slot a `_` leaves keeps no default, where a slot a trailing
+/// `...` unbinds keeps its own, as [`Checker::partially_bound_generator`]
+/// binds a struct's.
+fn unbound_generator_params(
+    params: &[ParamDecl],
+    unbound: &mojito_ast::call::UnboundSlots,
+) -> Vec<ParamDecl> {
+    params
+        .iter()
+        .zip(&unbound.open)
+        .map(|(param, open)| {
+            let mut param = param.clone();
+            if *open == Some(Unbound::Hole) {
+                match &mut param {
+                    ParamDecl::Type { default, .. } => *default = None,
+                    ParamDecl::Value {
+                        default,
+                        callable_default,
+                        ..
+                    } => {
+                        *default = None;
+                        *callable_default = None;
+                    }
+                }
+            }
+            param
+        })
+        .collect()
 }
 
 /// The unbound slot `arg` spells (`_`, `...`, or a keyword one) and the
 /// expression spelling it.
-fn unbound_slot(arg: &ParamArg) -> Option<(UnboundSlot, &Expr)> {
+fn unbound_slot(arg: &ParamArg) -> Option<(Unbound, &Expr)> {
     match arg {
         ParamArg::Named { value, .. } => unbound_slot(value),
-        ParamArg::Value(value) => match &value.kind {
-            ExprKind::Identifier(name) if name == "_" => Some((UnboundSlot::Hole, value)),
-            ExprKind::Identifier(name) if name == "..." => Some((UnboundSlot::Rest, value)),
-            _ => None,
-        },
+        ParamArg::Value(value) => mojito_ast::call::unbound_marker(arg).map(|slot| (slot, value)),
         ParamArg::Type(_) => None,
     }
 }

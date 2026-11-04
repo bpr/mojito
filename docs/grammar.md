@@ -599,6 +599,11 @@ An **origin** slot additionally accepts the placeholder spellings `_` and `...`
 (`Span[Int, _]`, `Span[Int, ...]`): the slot is explicitly marked inferred, the
 application counts as complete, and concrete-storage positions (struct fields,
 uninitialized locals) reject the placeholder exactly like an omitted slot.
+Any other slot accepts them as unbound markers, positionally or by keyword
+(`Add[10, _]`, `Add[a=_, b=5]`), and a `...` only as the list's last,
+positional argument (`Add[b=1, ...]`): a `_` leaves its own slot unbound, a
+trailing `...` every slot left, and the application is a partial binding
+(`docs/features.md`, Generics).
 A variadic compile-time pack consumes its available positional segment while a
 required suffix can be named, so packs and semantic-only `Origin` parameters may
 be interleaved without changing source argument identity. If the bracket list is

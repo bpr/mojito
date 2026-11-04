@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1907**.
+Next free ID: **R1908**.
 
 ## Ordered Work
 
@@ -6203,36 +6203,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1485 An unbound application `Alias[a, _]` or `Alias[b=1, ...]`
-  is rejected**
+- [ ] **R1907 A generator value read as a run-time value is rejected only
+  by the elaborator**
 
-  Problem: `apply[Add[10, _]]()`, `apply[Add[b=1, ...]]()`, and `comptime
-  P = Add[100, _]` then `P[1]` print `13`, `4`, and `101` at the pin, where
-  Mojito rejects each with "type mismatch for value parameter 'b':
-  expected Int, found a non-materializable compile-time value".
-  - `Checker::apply_parametric_value` binds the bracket list through
-    `resolve_use_params`, which has no unbound slot, so `_` and `...`
-    resolve as values. Upstream marks a `_` argument explicitly unbound
-    (`ParamInf.cpp`), installing no default for it, and a trailing `...`
-    unbinds every slot left, defaulted ones included.
-  - `ParamContext::bind_params` already folds a partial binding of a
-    constant generator to the generator over the open slots; only the
-    bracket list's binding is missing.
-  - Probe: `Add[_, _]`, `Add[...]`, and `Add[a=_, b=5]` applied print `3
-    7 6`.
-  - Probe: over `Add3[a, b, c]`, `Add3[1, _, 3]`, `Add3[_, 2, ...]`,
-    `Add3[1, ...]`, and `Add3[b=2, ...]` print `7 11 7 3`.
-  - Probe: over `AddD[a: Int, b: Int = 10]`, `AddD[...]` then `P[1, 2]`
-    and `AddD[1, ...]` then `Q[5]` print `3 6`, and `AddD[_]` then `Q[5]`
-    prints `15`.
-  - Probe: `print(Add[1, _])` is rejected at the pin as not `Writable`,
-    its type `__generator_type[b: Int] Int`.
-  - A partially bound struct (`Box[Int, _]`) is no generator at the pin
-    and keeps today's meaning.
-  - Plan: `R808-a-generator-type-t-parameter-and-plan.md`, §S7.
-  - Found while landing R808 (2026-10-27).
+  Problem: `var x = S.k` over `comptime k[i: Int]: Int` in `struct S`,
+  `var x = Add[1, _]`, and `var x = G` in `def show[G: __generator_type[b:
+  Int] Int]()` pass the checker and stop in `native::mono` with "holds the
+  compile-time-only metatype `__generator_type[...]`", an internal message.
+  - Upstream's `!kgen.generator` is a parameter-domain type: a read of one
+    where a run-time value is needed has no lowering.
+  - The checker types the read as a value of `TyKind::Generator`
+    (`Checker::read_parametric_value`, `checker/indexing.rs`, and the
+    generator parameter's own read), and only a trait bound refutes it
+    (`print` over `Writable`), so a binding or a non-generic argument
+    reaches MIR.
+  - Probe: each of the three `var` bindings above; confirm the pin's own
+    wording before choosing the checker's.
+  - Found while landing R1485 (2026-11-03).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1649 A partially bound alias whose open parameter's name its bound
   arguments read is rejected**

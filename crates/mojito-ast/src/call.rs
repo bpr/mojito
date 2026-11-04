@@ -7,7 +7,7 @@
 //! `ParamMatchError::into_type_error`, the checker-facing renderings that
 //! must live beside the types they convert.
 
-use crate::ast::{DeclaredParam, ParamArg, ParamKind};
+use crate::ast::{DeclaredParam, ExprKind, ParamArg, ParamKind, Type};
 use mojito_common::error::TypeError;
 
 #[derive(Clone, Copy)]
@@ -127,6 +127,8 @@ pub enum ParamMatchError {
     /// A keyword naming a slot another argument already filled.
     UnexpectedKeyword(String),
     UnknownKeyword(String),
+    /// A `...` that is not the list's last, positional argument.
+    MisplacedRest,
 }
 
 /// Checker-facing adaptation: the structural mismatch as a `TypeError`.
@@ -152,6 +154,10 @@ impl ParamMatchError {
             Self::UnknownKeyword(keyword) => TypeError::Unsupported(format!(
                 "generic '{name}' has no parameter named '{keyword}'"
             )),
+            Self::MisplacedRest => TypeError::BadCall {
+                func: name.to_string(),
+                reason: "'...' must be the last parameter".to_string(),
+            },
         }
     }
 }
@@ -374,6 +380,102 @@ pub fn match_parameter_slots<P: CompileTimeParam>(
     Ok(slots.into_iter().flatten().collect())
 }
 
+/// How a bracket argument leaves a parameter unbound: a `_` its own slot,
+/// a trailing `...` every slot the arguments before it leave, defaulted
+/// ones included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unbound {
+    Hole,
+    Rest,
+}
+
+/// The unbound marker `argument` spells itself (`_` or `...`, in either
+/// spelling the parser gives it), a keyword argument's value not looked
+/// through.
+pub fn unbound_marker(argument: &ParamArg) -> Option<Unbound> {
+    let name = match argument {
+        ParamArg::Value(value) => match &value.kind {
+            ExprKind::Identifier(name) => name,
+            _ => return None,
+        },
+        ParamArg::Type(Type::Named(name, args)) if args.is_empty() => name,
+        ParamArg::Type(_) | ParamArg::Named { .. } => return None,
+    };
+    match name.as_str() {
+        "_" => Some(Unbound::Hole),
+        "..." => Some(Unbound::Rest),
+        _ => None,
+    }
+}
+
+/// A bracket list's binding with its unbound markers taken out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnboundSlots {
+    /// How many leading arguments bind a slot, `_` included: the list
+    /// without its trailing `...`.
+    pub listed: usize,
+    /// The positions of the arguments that bind a value.
+    pub kept: Vec<usize>,
+    /// Per parameter, the marker that leaves it unbound, if any.
+    pub open: Vec<Option<Unbound>>,
+}
+
+impl UnboundSlots {
+    /// Whether the list leaves any parameter unbound.
+    pub fn any_open(&self) -> bool {
+        self.open.iter().any(Option::is_some)
+    }
+}
+
+/// The parameters a bracket list leaves unbound.
+///
+/// As upstream's parameter inference marks them, a `_` (positional or
+/// keyword) leaves its own slot unbound, installing no default there, and
+/// a trailing `...` every slot that is not infer-only and no other argument
+/// fills.
+pub fn bracket_unbound_slots<P: CompileTimeParam>(
+    params: &[P],
+    arguments: &[ParamArg],
+) -> Result<UnboundSlots, ParamMatchError> {
+    let marker = |argument: &ParamArg| match argument {
+        ParamArg::Named { value, .. } => unbound_marker(value),
+        positional => unbound_marker(positional),
+    };
+    let rest = matches!(arguments.last(), Some(last @ (ParamArg::Value(_) | ParamArg::Type(_)))
+        if unbound_marker(last) == Some(Unbound::Rest));
+    let bound = &arguments[..arguments.len() - usize::from(rest)];
+    if bound
+        .iter()
+        .any(|argument| marker(argument) == Some(Unbound::Rest))
+    {
+        return Err(ParamMatchError::MisplacedRest);
+    }
+    let slots = match_parameter_slots(params, &bracket_keywords(bound))?;
+    let mut open = vec![None; params.len()];
+    let mut filled = vec![false; params.len()];
+    let mut kept = Vec::with_capacity(bound.len());
+    for (position, (argument, slot)) in bound.iter().zip(slots).enumerate() {
+        filled[slot] = true;
+        if marker(argument) == Some(Unbound::Hole) {
+            open[slot] = Some(Unbound::Hole);
+        } else {
+            kept.push(position);
+        }
+    }
+    if rest {
+        for (index, param) in params.iter().enumerate() {
+            if !filled[index] && !param.infer_only() {
+                open[index] = Some(Unbound::Rest);
+            }
+        }
+    }
+    Ok(UnboundSlots {
+        listed: bound.len(),
+        kept,
+        open,
+    })
+}
+
 /// Each source bracket argument's keyword, as [`match_parameter_slots`]
 /// reads it.
 pub fn bracket_keywords(arguments: &[ParamArg]) -> Vec<Option<&str>> {
@@ -463,6 +565,71 @@ mod tests {
         assert_eq!(
             match_parameter_slots(&params, &[Some("z")]),
             Err(ParamMatchError::UnknownKeyword("z".to_string()))
+        );
+    }
+
+    fn bracket(source: &[&str]) -> Vec<ParamArg> {
+        source
+            .iter()
+            .map(|argument| {
+                let (name, value) = match argument.split_once('=') {
+                    Some((name, value)) => (Some(name), value),
+                    None => (None, *argument),
+                };
+                let value = ParamArg::Value(crate::ast::Expr::new(
+                    ExprKind::Identifier(value.to_string()),
+                    mojito_common::token::Span::default(),
+                ));
+                match name {
+                    Some(name) => ParamArg::Named {
+                        name: name.to_string(),
+                        value: Box::new(value),
+                    },
+                    None => value,
+                }
+            })
+            .collect()
+    }
+
+    fn unbound(listed: usize, kept: &[usize], open: &str) -> Result<UnboundSlots, ParamMatchError> {
+        let open = open
+            .chars()
+            .map(|slot| match slot {
+                '_' => Some(Unbound::Hole),
+                '.' => Some(Unbound::Rest),
+                _ => None,
+            })
+            .collect();
+        Ok(UnboundSlots {
+            listed,
+            kept: kept.to_vec(),
+            open,
+        })
+    }
+
+    #[test]
+    fn bracket_unbound_slots_marks_a_hole_and_a_trailing_rest() {
+        let params = [
+            Param("a", false, false),
+            Param("b", false, false),
+            Param("c", false, false),
+        ];
+        let slots = |source: &[&str]| bracket_unbound_slots(&params, &bracket(source));
+        assert_eq!(slots(&["x", "_", "y"]), unbound(3, &[0, 2], "x_x"));
+        assert_eq!(slots(&["b=x", "..."]), unbound(1, &[0], ".x."));
+        assert_eq!(slots(&["..."]), unbound(0, &[], "..."));
+        assert_eq!(slots(&["_", "x", "..."]), unbound(2, &[1], "_x."));
+        assert_eq!(slots(&["a=_", "b=x", "c=y"]), unbound(3, &[1, 2], "_xx"));
+        assert_eq!(slots(&["...", "x"]), Err(ParamMatchError::MisplacedRest));
+        assert_eq!(slots(&["b=..."]), Err(ParamMatchError::MisplacedRest));
+    }
+
+    #[test]
+    fn bracket_unbound_slots_leaves_an_infer_only_parameter_to_inference() {
+        let params = [Param("T", true, false), Param("a", false, false)];
+        assert_eq!(
+            bracket_unbound_slots(&params, &bracket(&["..."])),
+            unbound(0, &[], "x.")
         );
     }
 

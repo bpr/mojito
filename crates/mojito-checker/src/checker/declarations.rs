@@ -3852,7 +3852,6 @@ impl Checker {
     /// inferred; otherwise every parameter is inferred from
     /// `patterns`/`actuals` (a value parameter where it occupies an argument
     /// type's slot).
-    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn resolve_use_params(
         &self,
         name: &str,
@@ -3877,235 +3876,7 @@ impl Checker {
             });
         }
         if !param_args.is_empty() {
-            let bound = bracket_bindings(name, decls, param_args)?;
-            let mut attributes: BracketAttributes = vec![None; param_args.len()];
-            // Infer parameters hidden before `//` even when later parameters
-            // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
-            // `value` while binding the explicit hasher argument). A pack
-            // pattern (`*args: *Self.Ts`) is bound from the arguments above,
-            // each element checked against its bound there; unifying it
-            // would tie the pack to the first collected argument.
-            for (pattern, actual) in patterns.iter().zip(actuals) {
-                if matches!(pattern.kind(), TyKind::Param { binder, .. } if binder.name.starts_with('*'))
-                {
-                    continue;
-                }
-                unify(pattern, actual, &mut subst, &|ty: &Ty| self.deduced_ty(ty))?;
-            }
-            // A value binder no bracket argument spells is solved from the
-            // argument types as in an inferred call (`bitcast[DType.uint8,
-            // 4](x)` solves `src_dtype` and `src_width` from `x`).
-            let mut value_solutions = HashMap::new();
-            for (pattern, actual) in patterns.iter().zip(actuals) {
-                solve_value_args(pattern, actual, &mut value_solutions);
-            }
-            self.solve_value_binders_from_brackets(decls, &bound, &mut value_solutions);
-            solve_value_binders_from_defaults(
-                decls
-                    .iter()
-                    .zip(&bound)
-                    .filter(|(_, arguments)| arguments.is_empty())
-                    .map(|(decl, _)| decl),
-                &mut value_solutions,
-            );
-            unify_through_callable_bounds(decls, &mut subst)?;
-            self.solve_binders_from_values(decls, &mut subst, |index, declared| {
-                self.bound_value_ty(&bound[index], declared)
-            })?;
-            let trait_solutions = self.solve_trait_binders_from_lists(
-                decls,
-                |index| bound[index].is_empty(),
-                |index, declared| self.bound_value_ty(&bound[index], declared),
-            )?;
-            let mut tyargs = Vec::with_capacity(decls.len());
-            let mut value_environment = HashMap::new();
-            for (decl, arguments) in decls.iter().zip(bound) {
-                let typed = substituted_value_decl(decl, &subst);
-                let typed = with_earlier_arguments(typed.as_ref().unwrap_or(decl), decls, &tyargs)
-                    .or(typed);
-                let decl = typed.as_ref().unwrap_or(decl);
-                let variadic = matches!(
-                    decl,
-                    ParamDecl::Type { variadic: true, .. }
-                        | ParamDecl::Value { variadic: true, .. }
-                );
-                if variadic {
-                    // A pack no bracket argument binds is inferred from the
-                    // runtime arguments, as Mojo binds `scaled[3](7, "x")`'s
-                    // `*Us` beside the explicit `n`.
-                    if arguments.is_empty()
-                        && let ParamDecl::Type { id, .. } = decl
-                    {
-                        let argument = self.collected_pack_argument(id, patterns, actuals);
-                        match &argument {
-                            TyArg::Val(value) => {
-                                value_environment.insert(
-                                    decl.name().trim_start_matches('*').to_string(),
-                                    value.clone(),
-                                );
-                            }
-                            TyArg::Ty(pack) => {
-                                subst.insert(id.clone(), pack.clone());
-                            }
-                            TyArg::Origin(_) => {}
-                        }
-                        tyargs.push(argument);
-                        continue;
-                    }
-                    // A spread of a value pack that is still a parameter
-                    // (`PL[*vs]`, `PL[*Self.vs]`) forwards that pack whole,
-                    // and a spread `ParameterList` construction its raw list
-                    // (`It[*ParameterList[Self.values]()]`).
-                    if let [(position, argument)] = arguments.as_slice()
-                        && matches!(decl, ParamDecl::Value { .. })
-                        && let Some(list) = self
-                            .value_pack_spread(argument)
-                            .map(|pack| Ok(CtValue::Expr(pack)))
-                            .or_else(|| {
-                                self.parameter_list_spread(argument)
-                                    .map(|spread| spread.map(|(_, raw)| raw))
-                            })
-                    {
-                        let value = TyArg::Val(list?);
-                        // The spread construction is compile-time only: the
-                        // list it binds is its attribute.
-                        attributes[*position] = match argument {
-                            mojito_ast::ast::ParamArg::Value(spread) => {
-                                self.record_at(spread.source_span()).argument_attribute =
-                                    Some(value.clone());
-                                Some(value.clone())
-                            }
-                            _ => bracket_attribute(argument, &value),
-                        };
-                        if let TyArg::Val(value) = &value {
-                            value_environment.insert(
-                                decl.name().trim_start_matches('*').to_string(),
-                                value.clone(),
-                            );
-                        }
-                        tyargs.push(value);
-                        continue;
-                    }
-                    // Each argument binds one value of the pack's element,
-                    // as upstream checks a variadic argument against its
-                    // list's `getParameterListInfo().elementType`.
-                    let element = decl
-                        .value_element_ty()
-                        .map(|element| decl.with_value_type(element.clone()));
-                    let element = element.as_ref().unwrap_or(decl);
-                    let mut values = Vec::with_capacity(arguments.len());
-                    for (position, argument) in arguments {
-                        // A spread of a computed list binds its elements,
-                        // or the list itself while a length in it is open.
-                        if let mojito_ast::ast::ParamArg::Value(Expr {
-                            kind: ExprKind::Spread(operand),
-                            ..
-                        }) = argument
-                        {
-                            values.extend(self.spread_pack_values(operand)?);
-                            continue;
-                        }
-                        let resolved = self.resolve_param_arg(element, argument)?;
-                        attributes[position] = self.bound_bracket_attribute(argument, &resolved);
-                        values.push(resolved.ct_value().ok_or_else(|| {
-                            TypeError::Unsupported(
-                                "an origin argument cannot bind a type or value parameter"
-                                    .to_string(),
-                            )
-                        })?);
-                    }
-                    // A spread of a pack that is still a parameter forwards
-                    // that pack whole, as `Self`'s own argument spells it.
-                    let spread: Vec<Ty> = values
-                        .iter()
-                        .filter_map(|value| match value {
-                            CtValue::Type(ty) => Some(ty.clone()),
-                            _ => None,
-                        })
-                        .collect();
-                    Self::reject_mixed_spread(name, &spread)?;
-                    if let [CtValue::Type(pack)] = values.as_slice()
-                        && (mojito_types::types::pack_spread(std::slice::from_ref(pack)).is_some()
-                            || mojito_types::types::list_spread(pack).is_some())
-                    {
-                        if let ParamDecl::Type { id, .. } = decl {
-                            subst.insert(id.clone(), (*pack).clone());
-                        }
-                        tyargs.push(TyArg::Ty((*pack).clone()));
-                        continue;
-                    }
-                    let value = CtValue::Tuple(values);
-                    value_environment.insert(
-                        decl.name().trim_start_matches('*').to_string(),
-                        value.clone(),
-                    );
-                    tyargs.push(TyArg::Val(value));
-                    continue;
-                }
-                let tyarg = if let Some((position, argument)) = arguments.first() {
-                    let resolved = self.resolve_param_arg(decl, argument)?;
-                    attributes[*position] = self.bound_bracket_attribute(argument, &resolved);
-                    resolved
-                } else if let Some(solved) = trait_solutions.get(decl.id()) {
-                    TyArg::Val(solved.clone())
-                } else if let ParamDecl::Value { name: pname, .. } = decl
-                    && let Some(solved) = value_solutions.get(pname)
-                {
-                    TyArg::Val(solved.clone())
-                } else if let ParamDecl::Value {
-                    callable_default: Some(_),
-                    ..
-                } = decl
-                {
-                    // The VM evaluates the symbolic default after reifying all
-                    // preceding scalar/callable parameters.  Generic identity
-                    // records only that this runtime value occupies the slot.
-                    TyArg::Val(CtValue::Deferred(decl.binder()))
-                } else if let ParamDecl::Value {
-                    default: Some(value),
-                    ty,
-                    ..
-                } = decl
-                {
-                    TyArg::Val(default_argument(
-                        &self.param_context,
-                        decls,
-                        value,
-                        &value_environment,
-                        ty,
-                        decl.name(),
-                    )?)
-                } else if let ParamDecl::Type { id, .. } = decl
-                    && let Some(inferred) = subst.get(id)
-                {
-                    TyArg::Ty(inferred.clone())
-                } else if let ParamDecl::Type {
-                    default: Some(ty), ..
-                } = decl
-                {
-                    TyArg::Ty((*ty).clone())
-                } else {
-                    return Err(self.unsolved_binder(name, decl, patterns, actuals));
-                };
-                if let (ParamDecl::Type { id, .. }, TyArg::Ty(t)) = (decl, &tyarg) {
-                    subst.insert(id.clone(), t.clone());
-                }
-                tyargs.push(tyarg);
-                if let Some(TyArg::Val(value)) = tyargs.last() {
-                    value_environment.insert(
-                        decl.name().trim_start_matches('*').to_string(),
-                        value.clone(),
-                    );
-                }
-            }
-            self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
-            self.validate_trait_parameter_bounds(name, decls, &tyargs)?;
-            self.validate_generic_constraints(name, decls, &tyargs)?;
-            return Ok(BoundParameters {
-                subst,
-                arguments: tyargs,
-                attributes,
-            });
+            return self.bind_bracket_params(name, decls, param_args, None, patterns, actuals);
         }
         // Inference: type parameters (and value parameters occupying a solved
         // argument slot, `Array[T, length]` against `Array[Int, 3]`) from the
@@ -4302,6 +4073,42 @@ impl Checker {
         })
     }
 
+    /// [`Self::resolve_use_params`] of a bracket list that may leave
+    /// parameters unbound (`Add[10, _]`, `Add[b=1, ...]`), upstream's
+    /// partial `#kgen.bind_params`: each argument the list leaves unbound
+    /// is `None`, with no default installed and no inference solution
+    /// taken for it, beside the markers that leave it so. A list with no
+    /// marker binds as [`Self::resolve_use_params`] does.
+    pub(super) fn resolve_partial_use_params(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Vec<Option<TyArg>>, mojito_ast::call::UnboundSlots), TypeError> {
+        let unbound = mojito_ast::call::bracket_unbound_slots(decls, param_args)
+            .map_err(|error| error.into_type_error(name))?;
+        if !unbound.any_open() {
+            let bound = self.resolve_use_params(name, decls, param_args, &[], &[])?;
+            return Ok((bound.arguments.into_iter().map(Some).collect(), unbound));
+        }
+        if let Some(decl) = decls.iter().zip(&unbound.open).find_map(|(decl, open)| {
+            (open.is_some() && mojito_ast::call::CompileTimeParam::variadic(decl)).then_some(decl)
+        }) {
+            return Err(TypeError::Unsupported(format!(
+                "leaving the pack parameter '{}' of '{name}' unbound",
+                decl.name()
+            )));
+        }
+        let bound = self.bind_bracket_params(name, decls, param_args, Some(&unbound), &[], &[])?;
+        let arguments = bound
+            .arguments
+            .into_iter()
+            .zip(&unbound.open)
+            .map(|(argument, open)| open.is_none().then_some(argument))
+            .collect();
+        Ok((arguments, unbound))
+    }
+
     /// The type binders of `decls` a call's bracket arguments bind
     /// explicitly, each with the type it names: an argument display solves
     /// only the binders these leave open.
@@ -4315,7 +4122,10 @@ impl Checker {
         if param_args.is_empty() || decls.is_empty() {
             return Ok(explicit);
         }
-        for (decl, arguments) in decls.iter().zip(bracket_bindings(name, decls, param_args)?) {
+        for (decl, arguments) in decls
+            .iter()
+            .zip(bracket_bindings(name, decls, param_args, None)?)
+        {
             if let (
                 ParamDecl::Type {
                     id,
@@ -5008,7 +4818,8 @@ impl Checker {
         // refinement naming an own parameter no argument, no explicit own
         // argument, and no spelled instance determines leaves its struct
         // parameter uninferred.
-        let spelled_own = bracket_bindings(&format!("{name}.__init__"), &sig.decls, explicit)?;
+        let spelled_own =
+            bracket_bindings(&format!("{name}.__init__"), &sig.decls, explicit, None)?;
         for ((decl, argument), defined) in decls.iter().zip(&refinement).zip(&defined) {
             if !defined || known.is_some() {
                 continue;
@@ -5452,6 +5263,264 @@ fn substituted_own_decl(decl: &ParamDecl, struct_subst: &TySubst) -> ParamDecl {
     solved
 }
 
+impl Checker {
+    /// The explicit-bracket binding [`Self::resolve_use_params`] and
+    /// [`Self::resolve_partial_use_params`] share: `unbound`, when given,
+    /// names the arguments that bind and the slots the list leaves open,
+    /// each read as its own binder.
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    fn bind_bracket_params(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+        unbound: Option<&mojito_ast::call::UnboundSlots>,
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> Result<BoundParameters, TypeError> {
+        let mut subst: TySubst = TySubst::new();
+        let bound = bracket_bindings(name, decls, param_args, unbound)?;
+        let open = |index: usize| unbound.is_some_and(|slots| slots.open[index].is_some());
+        let mut attributes: BracketAttributes = vec![None; param_args.len()];
+        // Infer parameters hidden before `//` even when later parameters
+        // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
+        // `value` while binding the explicit hasher argument). A pack
+        // pattern (`*args: *Self.Ts`) is bound from the arguments above,
+        // each element checked against its bound there; unifying it
+        // would tie the pack to the first collected argument.
+        for (pattern, actual) in patterns.iter().zip(actuals) {
+            if matches!(pattern.kind(), TyKind::Param { binder, .. } if binder.name.starts_with('*'))
+            {
+                continue;
+            }
+            unify(pattern, actual, &mut subst, &|ty: &Ty| self.deduced_ty(ty))?;
+        }
+        // A value binder no bracket argument spells is solved from the
+        // argument types as in an inferred call (`bitcast[DType.uint8,
+        // 4](x)` solves `src_dtype` and `src_width` from `x`).
+        let mut value_solutions = HashMap::new();
+        for (pattern, actual) in patterns.iter().zip(actuals) {
+            solve_value_args(pattern, actual, &mut value_solutions);
+        }
+        self.solve_value_binders_from_brackets(decls, &bound, &mut value_solutions);
+        solve_value_binders_from_defaults(
+            decls
+                .iter()
+                .zip(&bound)
+                .enumerate()
+                .filter(|(index, (_, arguments))| arguments.is_empty() && !open(*index))
+                .map(|(_, (decl, _))| decl),
+            &mut value_solutions,
+        );
+        unify_through_callable_bounds(decls, &mut subst)?;
+        self.solve_binders_from_values(decls, &mut subst, |index, declared| {
+            self.bound_value_ty(&bound[index], declared)
+        })?;
+        let trait_solutions = self.solve_trait_binders_from_lists(
+            decls,
+            |index| bound[index].is_empty() && !open(index),
+            |index, declared| self.bound_value_ty(&bound[index], declared),
+        )?;
+        let mut tyargs = Vec::with_capacity(decls.len());
+        let mut value_environment = HashMap::new();
+        for (index, (decl, arguments)) in decls.iter().zip(bound).enumerate() {
+            let typed = substituted_value_decl(decl, &subst);
+            let typed =
+                with_earlier_arguments(typed.as_ref().unwrap_or(decl), decls, &tyargs).or(typed);
+            let decl = typed.as_ref().unwrap_or(decl);
+            // An unbound slot reads its own binder, as a generic body's
+            // identity arguments do, so later slots' types see it open.
+            if open(index) {
+                tyargs.push(decl.own_argument());
+                continue;
+            }
+            let variadic = matches!(
+                decl,
+                ParamDecl::Type { variadic: true, .. } | ParamDecl::Value { variadic: true, .. }
+            );
+            if variadic {
+                // A pack no bracket argument binds is inferred from the
+                // runtime arguments, as Mojo binds `scaled[3](7, "x")`'s
+                // `*Us` beside the explicit `n`.
+                if arguments.is_empty()
+                    && let ParamDecl::Type { id, .. } = decl
+                {
+                    let argument = self.collected_pack_argument(id, patterns, actuals);
+                    match &argument {
+                        TyArg::Val(value) => {
+                            value_environment.insert(
+                                decl.name().trim_start_matches('*').to_string(),
+                                value.clone(),
+                            );
+                        }
+                        TyArg::Ty(pack) => {
+                            subst.insert(id.clone(), pack.clone());
+                        }
+                        TyArg::Origin(_) => {}
+                    }
+                    tyargs.push(argument);
+                    continue;
+                }
+                // A spread of a value pack that is still a parameter
+                // (`PL[*vs]`, `PL[*Self.vs]`) forwards that pack whole,
+                // and a spread `ParameterList` construction its raw list
+                // (`It[*ParameterList[Self.values]()]`).
+                if let [(position, argument)] = arguments.as_slice()
+                    && matches!(decl, ParamDecl::Value { .. })
+                    && let Some(list) = self
+                        .value_pack_spread(argument)
+                        .map(|pack| Ok(CtValue::Expr(pack)))
+                        .or_else(|| {
+                            self.parameter_list_spread(argument)
+                                .map(|spread| spread.map(|(_, raw)| raw))
+                        })
+                {
+                    let value = TyArg::Val(list?);
+                    // The spread construction is compile-time only: the
+                    // list it binds is its attribute.
+                    attributes[*position] = match argument {
+                        mojito_ast::ast::ParamArg::Value(spread) => {
+                            self.record_at(spread.source_span()).argument_attribute =
+                                Some(value.clone());
+                            Some(value.clone())
+                        }
+                        _ => bracket_attribute(argument, &value),
+                    };
+                    if let TyArg::Val(value) = &value {
+                        value_environment.insert(
+                            decl.name().trim_start_matches('*').to_string(),
+                            value.clone(),
+                        );
+                    }
+                    tyargs.push(value);
+                    continue;
+                }
+                // Each argument binds one value of the pack's element,
+                // as upstream checks a variadic argument against its
+                // list's `getParameterListInfo().elementType`.
+                let element = decl
+                    .value_element_ty()
+                    .map(|element| decl.with_value_type(element.clone()));
+                let element = element.as_ref().unwrap_or(decl);
+                let mut values = Vec::with_capacity(arguments.len());
+                for (position, argument) in arguments {
+                    // A spread of a computed list binds its elements,
+                    // or the list itself while a length in it is open.
+                    if let mojito_ast::ast::ParamArg::Value(Expr {
+                        kind: ExprKind::Spread(operand),
+                        ..
+                    }) = argument
+                    {
+                        values.extend(self.spread_pack_values(operand)?);
+                        continue;
+                    }
+                    let resolved = self.resolve_param_arg(element, argument)?;
+                    attributes[position] = self.bound_bracket_attribute(argument, &resolved);
+                    values.push(resolved.ct_value().ok_or_else(|| {
+                        TypeError::Unsupported(
+                            "an origin argument cannot bind a type or value parameter".to_string(),
+                        )
+                    })?);
+                }
+                // A spread of a pack that is still a parameter forwards
+                // that pack whole, as `Self`'s own argument spells it.
+                let spread: Vec<Ty> = values
+                    .iter()
+                    .filter_map(|value| match value {
+                        CtValue::Type(ty) => Some(ty.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                Self::reject_mixed_spread(name, &spread)?;
+                if let [CtValue::Type(pack)] = values.as_slice()
+                    && (mojito_types::types::pack_spread(std::slice::from_ref(pack)).is_some()
+                        || mojito_types::types::list_spread(pack).is_some())
+                {
+                    if let ParamDecl::Type { id, .. } = decl {
+                        subst.insert(id.clone(), (*pack).clone());
+                    }
+                    tyargs.push(TyArg::Ty((*pack).clone()));
+                    continue;
+                }
+                let value = CtValue::Tuple(values);
+                value_environment.insert(
+                    decl.name().trim_start_matches('*').to_string(),
+                    value.clone(),
+                );
+                tyargs.push(TyArg::Val(value));
+                continue;
+            }
+            let tyarg = if let Some((position, argument)) = arguments.first() {
+                let resolved = self.resolve_param_arg(decl, argument)?;
+                attributes[*position] = self.bound_bracket_attribute(argument, &resolved);
+                resolved
+            } else if let Some(solved) = trait_solutions.get(decl.id()) {
+                TyArg::Val(solved.clone())
+            } else if let ParamDecl::Value { name: pname, .. } = decl
+                && let Some(solved) = value_solutions.get(pname)
+            {
+                TyArg::Val(solved.clone())
+            } else if let ParamDecl::Value {
+                callable_default: Some(_),
+                ..
+            } = decl
+            {
+                // The VM evaluates the symbolic default after reifying all
+                // preceding scalar/callable parameters.  Generic identity
+                // records only that this runtime value occupies the slot.
+                TyArg::Val(CtValue::Deferred(decl.binder()))
+            } else if let ParamDecl::Value {
+                default: Some(value),
+                ty,
+                ..
+            } = decl
+            {
+                TyArg::Val(default_argument(
+                    &self.param_context,
+                    decls,
+                    value,
+                    &value_environment,
+                    ty,
+                    decl.name(),
+                )?)
+            } else if let ParamDecl::Type { id, .. } = decl
+                && let Some(inferred) = subst.get(id)
+            {
+                TyArg::Ty(inferred.clone())
+            } else if let ParamDecl::Type {
+                default: Some(ty), ..
+            } = decl
+            {
+                TyArg::Ty((*ty).clone())
+            } else {
+                return Err(self.unsolved_binder(name, decl, patterns, actuals));
+            };
+            if let (ParamDecl::Type { id, .. }, TyArg::Ty(t)) = (decl, &tyarg) {
+                subst.insert(id.clone(), t.clone());
+            }
+            tyargs.push(tyarg);
+            if let Some(TyArg::Val(value)) = tyargs.last() {
+                value_environment.insert(
+                    decl.name().trim_start_matches('*').to_string(),
+                    value.clone(),
+                );
+            }
+        }
+        // A partial binding's bounds and `where` clauses wait for the
+        // generator's application, which binds every slot.
+        if !unbound.is_some_and(mojito_ast::call::UnboundSlots::any_open) {
+            self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
+            self.validate_trait_parameter_bounds(name, decls, &tyargs)?;
+            self.validate_generic_constraints(name, decls, &tyargs)?;
+        }
+        Ok(BoundParameters {
+            subst,
+            arguments: tyargs,
+            attributes,
+        })
+    }
+}
+
 /// Each of `decls`' bracket arguments in `param_args`, with its source
 /// position, bound as [`mojito_ast::call::match_parameter_slots`] binds them:
 /// positional arguments to the slots that are not infer-only, in order, then
@@ -5460,12 +5529,17 @@ fn bracket_bindings<'a>(
     name: &str,
     decls: &[ParamDecl],
     param_args: &'a [mojito_ast::ast::ParamArg],
+    unbound: Option<&mojito_ast::call::UnboundSlots>,
 ) -> Result<Vec<Vec<(usize, &'a mojito_ast::ast::ParamArg)>>, TypeError> {
-    let keywords = mojito_ast::call::bracket_keywords(param_args);
+    let listed = &param_args[..unbound.map_or(param_args.len(), |slots| slots.listed)];
+    let keywords = mojito_ast::call::bracket_keywords(listed);
     let slots = mojito_ast::call::match_parameter_slots(decls, &keywords)
         .map_err(|error| error.into_type_error(name))?;
     let mut bound: Vec<Vec<(usize, &mojito_ast::ast::ParamArg)>> = vec![Vec::new(); decls.len()];
-    for (position, (argument, index)) in param_args.iter().zip(slots).enumerate() {
+    for (position, (argument, index)) in listed.iter().zip(slots).enumerate() {
+        if unbound.is_some_and(|slots| !slots.kept.contains(&position)) {
+            continue;
+        }
         let argument = match argument {
             mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
             positional => positional,

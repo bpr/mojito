@@ -4,6 +4,7 @@
 //! takes the argument.
 
 use mojito_ast::ast::{FnParam, ParamArg, auto_binder_name};
+use mojito_ast::call::Unbound;
 use mojito_ast::visit::MutVisitor;
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -357,20 +358,20 @@ impl Slots {
                         .iter()
                         .position(|parameter| &parameter.name == name)?;
                     slots[index] = match hole(value) {
-                        Some(Hole::One) => Slot::Unbound,
-                        Some(Hole::Rest) => return None,
+                        Some(Unbound::Hole) => Slot::Unbound,
+                        Some(Unbound::Rest) => return None,
                         None => Slot::Bound((**value).clone()),
                     };
                 }
                 positional => match hole(positional) {
-                    Some(Hole::Rest) => {
+                    Some(Unbound::Rest) => {
                         for index in positions.by_ref() {
                             if matches!(slots[index], Slot::Absent) {
                                 slots[index] = Slot::Unbound;
                             }
                         }
                     }
-                    Some(Hole::One) => slots[positions.next()?] = Slot::Unbound,
+                    Some(Unbound::Hole) => slots[positions.next()?] = Slot::Unbound,
                     None => slots[positions.next()?] = Slot::Bound(positional.clone()),
                 },
             }
@@ -380,14 +381,6 @@ impl Slots {
             .any(|slot| matches!(slot, Slot::Unbound))
             .then_some(Self(slots))
     }
-}
-
-/// An unbound parameter argument's spelling.
-enum Hole {
-    /// `_`, one parameter.
-    One,
-    /// `...`, every remaining positional parameter.
-    Rest,
 }
 
 /// A partial alias's arguments `alias_args` applied to `args`
@@ -405,27 +398,15 @@ fn fill_holes(alias_args: &[ParamArg], args: &[ParamArg]) -> Option<Vec<ParamArg
     let filled = alias_args
         .iter()
         .map(|argument| match hole(argument) {
-            Some(Hole::One) => applied.next().unwrap_or(argument).clone(),
+            Some(Unbound::Hole) => applied.next().unwrap_or(argument).clone(),
             _ => argument.clone(),
         })
         .collect();
     applied.next().is_none().then_some(filled)
 }
 
-fn hole(argument: &ParamArg) -> Option<Hole> {
-    let (ParamArg::Value(Expr {
-        kind: ExprKind::Identifier(name),
-        ..
-    })
-    | ParamArg::Type(Type::Named(name, _))) = argument
-    else {
-        return None;
-    };
-    match name.as_str() {
-        "_" => Some(Hole::One),
-        "..." => Some(Hole::Rest),
-        _ => None,
-    }
+fn hole(argument: &ParamArg) -> Option<Unbound> {
+    mojito_ast::call::unbound_marker(argument)
 }
 
 fn identifier(name: &str, span: Span) -> ParamArg {

@@ -340,7 +340,8 @@ pub fn modelled_conformance(
             | TyKind::I1
             | TyKind::KgenSimd { .. }
             | TyKind::KgenPointer(_)
-            | TyKind::LitRef { .. } => false,
+            | TyKind::LitRef { .. }
+            | TyKind::Generator(_) => false,
             _ => true,
         },
         "Defaultable" => match ty.kind() {

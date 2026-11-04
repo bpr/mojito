@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A bracket list may leave parameters unbound, as upstream's partial
+  `#kgen.bind_params`: `apply[Add[10, _]]()`, `apply[Add[b=1, ...]]()`,
+  and `comptime P = Add[100, _]` then `P[1]` print `13`, `4`, and `101`
+  as the pin does, where each was rejected as "a non-materializable
+  compile-time value" (R1485). A `_` leaves its own slot with no default
+  and a trailing `...` every slot left; aliases, struct members, a bound's
+  requirement, and generator values all bind this way, and printing a
+  partial binding is the pin's not-`Writable` rejection.
+
 - The bundled `List` stores upstream's two fields, `_storage:
   Allocation[T]` (the buffer, its `Layout` carrying the capacity) and
   `_len`, rather than `data`, `size`, and `cap`, so

@@ -1280,6 +1280,24 @@ fn bind_params_folds_a_constant_generator_and_binds_one_partially() {
 }
 
 #[test]
+fn bind_params_substitutes_a_filled_slot_into_a_bound_one_reading_it() {
+    let context = ParamContext::new();
+    let add = add_generator(&context);
+    // `Add[_, b=a]`: the bound `b` reads the open `a`, so the binding
+    // stays a node until `a` is bound.
+    let a = int_param(&context, "Add", 0, "a");
+    let partial = context
+        .bind_params(&add, &[None, Some(a)])
+        .expect("a partial binding");
+    assert!(matches!(partial.kind(), ParamKind::BindParams { .. }));
+    let three = context.constant(CtValue::Int(3)).expect("a constant");
+    let applied = context
+        .bind_params(&partial, &[Some(three)])
+        .expect("the open slot binds");
+    assert_eq!(applied.as_i64(), Some(6));
+}
+
+#[test]
 fn bind_params_applies_a_member_read_and_waits_on_a_parameter() {
     let context = ParamContext::new();
     let generator_ty = Ty::generator(vec![int_decl("$generator", 0, "Idx")], Ty::int());

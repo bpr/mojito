@@ -936,11 +936,28 @@ impl ParamContext {
                 generator: inner,
                 args: inner_args,
             } => {
+                // A bound slot may read an open one (`D[_]` over `D[a:
+                // Int, b: Int = a]` binds `b` to `a`), so the slots this
+                // binding fills are substituted into the bound ones.
                 let mut open = args.into_iter();
-                let merged: Vec<Option<ParamExpr>> = inner_args
+                let filled: Vec<Option<ParamExpr>> = inner_args
                     .iter()
-                    .map(|slot| slot.clone().or_else(|| open.next().flatten()))
+                    .map(|slot| slot.is_none().then(|| open.next().flatten()).flatten())
                     .collect();
+                let fresh = match inner.meta().as_value().map(Ty::kind) {
+                    Some(TyKind::Generator(inner_ty)) => {
+                        generator_bindings(&inner_ty.params, &filled)
+                    }
+                    _ => ParamBindings::new(),
+                };
+                let merged = inner_args
+                    .iter()
+                    .zip(filled)
+                    .map(|(slot, filled)| match slot {
+                        Some(bound) => self.replace(bound, &fresh).map(Some),
+                        None => Ok(filled),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 return self.bind_params(inner, &merged);
             }
             _ => {}
