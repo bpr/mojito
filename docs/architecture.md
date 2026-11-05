@@ -745,10 +745,18 @@ policy or data-model responsibilities to focused children:
   and pointing a sibling's reference field at its lowered storage. The
   struct's parameters are its own,
   declared for the enclosing binders the closure names, in its fields,
-  its signature, or its body, nested declarations included
-  (`nested::closure_binder_uses`), as upstream's `emitClosureInstance`
-  collects them and `liftClosure` declares them, reusing their
-  spellings: once the closure is lowered, `nested::own_storage_binders`
+  its signature, or its body, nested declarations included, which the
+  check's last step collects over the checked tables, as upstream's
+  `usesFromAbove` runs once the body is emitted
+  (`CheckedProgram::collect_closure_uses` in `mojito-checked`'s
+  `closure_uses.rs`, recorded as `CheckedClosureStorage::uses`, a
+  `CheckedClosureUses` of the binders, in scope order, and whether the
+  body is the storage's method, which it is not when it names an
+  enclosing callable binder); a storage with no uses recorded is a
+  broken invariant MIR reports. `emitClosureInstance` applies the struct
+  to them and `liftClosure` declares them, reusing their spellings;
+  MIR still makes that declaration until the check names the struct
+  (R1892): once the closure is lowered, `nested::own_storage_binders`
   moves every reference in its fields, its members, and its method's
   body (with the bodies nested in it) to the struct's binders, while the
   declaration names the storage at the enclosing binders and passes them
@@ -3225,7 +3233,7 @@ lowers only a body's live statements (`CheckedTables::live_statements`):
 the statements after a `return`, `break`, `continue`, or `raise` are erased
 before they lower, as `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the
 ops after a terminator, so they reach no slot, block, or nested function
-(`find_nested_defs` reads the same rule). MIR lowering builds the matching
+(`CheckedTables::nested_defs` reads the same rule). MIR lowering builds the matching
 MIR region ops (`Flatten::hir_region`), which every MIR phase reads; only
 Pliron lowers them to blocks (`lower/regions.rs`), as upstream's
 `LowerControlFlow` lowers `hlcf` on its way to LLVM.

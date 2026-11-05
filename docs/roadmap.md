@@ -12188,37 +12188,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `constructClosure` calls `promoteClosure(decl, paramCaptures)`: a
   module-scope function whose parameters are the enclosing binders it
   names, then its own.
-  - The binder collection is `closure_binder_uses` (`mir/nested.rs`), which
-    a capturing closure's storage already uses.
+  - The binder collection is the check's `closure_uses`
+    (`crates/mojito-checked`), which a capturing closure's storage
+    already uses; it records uses only for a closure with storage.
   - Probe: `def outer[n: Int]() -> Int:` declaring `def helper() -> Int:
     return n * 2` lowers `outer$helper` with `enclosing: outer`; the pin's
     `helper` is a top-level function parameterized on `n`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1891 MIR collects the binders a closure's storage struct
-  declares, where upstream's front end collects them**
-
-  The check declares a closure's storage fields and conformances
-  (`CheckedDef::storage`), but its parameters are still found in MIR by
-  `closure_binder_uses` over the enclosing binders (`EnclosingBinders`,
-  `mir/nested.rs`), where upstream's `usesFromAbove` runs in the front end
-  after the body is emitted.
-  - Move the walk, the filter over the binders in scope (the enclosing
-    struct's, the function's, enclosing nested defs', `comptime for`
-    indices), and the "unbound binder" check into the check, as
-    `CheckedClosureStorage::param_decls`, already own
-    (`reown_as_own_parameters`).
-  - Decide `ClosureStorage::method` there too (a body naming an enclosing
-    callable binder stays a generator, R92).
-  - The checked tables the walk reads are built after the check
-    (`CheckedProgram::new`), so it runs either over the AST and node facts
-    or as the check's last step over the tables.
-  - Probe: `cargo run -- own assets/ok/closure_storage_method_binders.mojo`
-    prints the same MIR text before and after.
-  - Found while landing R1436 (2026-11-03).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1892 MIR names each lifted closure, where upstream's front end
   names it**
@@ -12233,6 +12210,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     assigned after the check. `tests/symbol_test.rs` pins the spelling.
   - Add the storage's name to `CheckedClosureStorage`, then delete
     `rename_nested` and the duplicate counting in `analyze_root_children`.
+  - With the name in the check, declare `CheckedClosureUses::binders` as
+    the struct's own there (`reown_as_own_parameters`), as upstream's
+    `liftClosure` does, and let `own_storage_binders` read them.
   - Probe: assert MIR's name equals the checked one over
     `assets/ok/nested_def_*` and `generic_nested_def_*` before deleting
     MIR's naming.

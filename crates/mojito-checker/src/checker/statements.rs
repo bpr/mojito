@@ -3529,6 +3529,7 @@ impl Checker {
                 StoragePassability::RegisterPassable
             },
             fields,
+            uses: None,
         }
     }
 

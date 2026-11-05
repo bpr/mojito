@@ -57,8 +57,9 @@ command cannot use both.
    declaration. R1434 deleted owned captures, and R1823 rejects the
    `capturing` effect and `@parameter` closures as the pin does. What is
    left:
-   - R1891 and R1892 (MIR collects a closure's binders and names it,
-     where upstream's front end does), then R1893 (the closure's checked
+   - R1892 (MIR names a closure and declares the binders the check
+     collects for it as the struct's own, where upstream's front end
+     does), then R1893 (the closure's checked
      type names its site, not its storage struct), then R1894 (captured
      origins as the struct's origin parameters).
    - R1889 deletes the compile-time capturing-callable environment, whose
@@ -205,7 +206,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932, behind R359 | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none (R1874 landed 11-05) | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1933, R1868, R1882, R1462, R1936, R1937, R1544 | about 20 (below) | yes, the largest |
-| G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1891, R1892 → R1893 → R1894 | R1349, R1870, R1888 | yes |
+| G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1892 → R1893 → R1894 | R1349, R1870, R1888 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1901–R1904 → R1905, R1898 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1910 → R1912 | about 20 (below) | slight |
 
@@ -247,8 +248,9 @@ R1411 and R1413 under *Entries outside the gaps*.
   struct, which the check declares, its body a method of it, and its
   value is the struct. Captures are by reference, and run-time
   `capturing[...]` values and `@parameter` closures are rejected as at the
-  pin. MIR still collects the struct's binders and names it (R1891,
-  R1892), and the checked type names the closure's site (R1893).
+  pin. The check collects the struct's binders, as upstream's
+  `usesFromAbove` does; MIR still names the struct and declares them as
+  its own (R1892), and the checked type names the closure's site (R1893).
 - **Upstream**: a `F: def(...)` binder is instantiated at the struct
   type, so every call is direct. `kgen.create_closure` is made only for
   capture-free values.

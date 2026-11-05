@@ -501,6 +501,28 @@ pub struct ComptimeIteration {
     pub next_value: mojito_types::param_expr::ParamExpr,
 }
 
+impl ComptimeIteration {
+    /// The loop's index as a binder of its body's scope: a value binder of
+    /// the iterator's type.
+    pub fn index_declaration(&self) -> mojito_types::types::ParamDecl {
+        mojito_types::types::ParamDecl::Value {
+            id: self.binder.id.clone(),
+            name: self.binder.name.to_string(),
+            ty: self
+                .initial
+                .meta()
+                .as_value()
+                .cloned()
+                .unwrap_or_else(Ty::int),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        }
+    }
+}
+
 /// What a `comptime for` iterates, as upstream's `kgen.param.for` steps an
 /// iterator.
 ///
@@ -3767,6 +3789,12 @@ pub struct CheckedClosureStorage {
     /// How it passes, as upstream's `emitClosure` meets its captures'
     /// passabilities, a reference capture contributing its referent's.
     pub passability: StoragePassability,
+    /// The enclosing binders its closure names, which the check's last
+    /// step records ([`CheckedProgram::collect_closure_uses`]). `None`
+    /// where it recorded none: a closure whose fields name a binder no
+    /// enclosing declaration binds, or one no lowering unit reaches, which
+    /// lowering reports as a broken invariant.
+    pub uses: Option<CheckedClosureUses>,
 }
 
 impl CheckedClosureStorage {
@@ -3779,6 +3807,18 @@ impl CheckedClosureStorage {
     pub fn trivially_register_passable(&self) -> bool {
         self.passability == StoragePassability::TriviallyRegisterPassable
     }
+}
+
+/// The enclosing binders a closure names, as upstream's `usesFromAbove`
+/// collects them after its body is emitted.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedClosureUses {
+    /// In scope order: the arguments its storage type is applied to,
+    /// which lowering declares as the struct's own parameters.
+    pub binders: Vec<mojito_types::types::ParamDecl>,
+    /// Whether its body becomes the storage's method; not when the body
+    /// names an enclosing callable binder.
+    pub method: bool,
 }
 
 /// The passability of a [`CheckedClosureStorage`]: `TrivialRegisterPassable`
@@ -4954,7 +4994,7 @@ impl CheckedProgram {
                 .cloned()
         });
         drop(declarations_span);
-        Self {
+        let mut program = Self {
             warnings,
             compatibility_overload_targets: fact_index(&node_facts, |facts| {
                 facts.overload_target.as_ref()
@@ -4984,7 +5024,9 @@ impl CheckedProgram {
             constants,
             default_wrappers,
             trait_members,
-        }
+        };
+        program.collect_closure_uses();
+        program
     }
 
     /// The program of one package unit: its checked `tables` as the
@@ -5152,6 +5194,10 @@ impl CheckedProgram {
 
     pub fn expressions(&self) -> &[CheckedExpr] {
         &self.tables.expressions
+    }
+
+    pub(crate) const fn tables_mut(&mut self) -> &mut Arc<CheckedTables> {
+        &mut self.tables
     }
 
     pub fn declarations(&self) -> &[CheckedDeclaration] {

@@ -3316,6 +3316,21 @@ impl ParamDecl {
             .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
     }
 
+    /// Whether a call by name reads this binder as its parameter constant:
+    /// a value binder with a callable default, or one of callables that is
+    /// neither a value pack nor a pack's list binder.
+    pub fn is_callable_binder(&self) -> bool {
+        match self {
+            Self::Value {
+                callable_default, ..
+            } => {
+                callable_default.is_some()
+                    || (self.binds_callables() && !self.is_value_pack() && !self.is_pack_list())
+            }
+            Self::Type { .. } => false,
+        }
+    }
+
     /// The reference a use of this binder carries: its identity with its
     /// spelling attached.
     ///

@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::closure_uses::NestedDefSite;
 use mojito_types::types::TyKind;
 
 // --- Nested `def` (closure) lifting -----------------------------------------
@@ -75,14 +76,7 @@ pub(super) fn lower_fn_nested(
     let starts = LoweredFrom::at(out, declarations);
     let closures = ClosureLowering::default();
     let children = analyze_root_children(checked, name, statements, returned);
-    let registry = scope_registry(
-        checked,
-        &children,
-        callables,
-        &enclosing_binders,
-        &closures.types,
-        invariant_errors,
-    );
+    let registry = scope_registry(&children, callables, &closures.types, invariant_errors);
 
     let cfg = returned.map_or_else(
         || Cfg::build_checked_fn(checked, param_names, statements),
@@ -770,117 +764,6 @@ impl crate::mir::visit::MutTypeVisitor for ClosureStorageTypes<'_> {
     }
 }
 
-/// Collect the declarations belonging to one lexical function scope (those in
-/// the body, its control-flow blocks, and its kept compile-time regions),
-/// without descending into another declaration's body, each with the
-/// `comptime for` statements of this scope enclosing it, outermost first.
-/// Recursive lifting calls this once per lexical scope of statement nodes
-/// `ids`.
-fn find_nested_defs(
-    tables: &mojito_checked::checked::CheckedTables,
-    ids: &[CheckedStmtId],
-    loops: &mut Vec<CheckedStmtId>,
-    out: &mut Vec<NestedSite>,
-) {
-    for id in tables.live_statements(ids) {
-        let node = tables
-            .statement(*id)
-            .expect("a body statement id names a node of its tables");
-        // Lambda expressions anywhere in this statement's own expressions
-        // (conditions, iterables, values, arguments) declare hidden nested
-        // definitions in this scope.
-        out.extend(
-            lambda_defs(tables, node)
-                .into_iter()
-                .map(|node| NestedSite {
-                    node,
-                    loops: loops.clone(),
-                }),
-        );
-        let bodies = match &node.op {
-            CheckedStmtOp::Def(_) => {
-                out.push(NestedSite {
-                    node: *id,
-                    loops: loops.clone(),
-                });
-                continue;
-            }
-            CheckedStmtOp::If { .. }
-            | CheckedStmtOp::ComptimeIf { .. }
-            | CheckedStmtOp::While { .. }
-            | CheckedStmtOp::For { .. }
-            | CheckedStmtOp::ComptimeFor { .. }
-            | CheckedStmtOp::Match { .. }
-            | CheckedStmtOp::ComptimeMatch { .. }
-            | CheckedStmtOp::Scope(_)
-            | CheckedStmtOp::Try { .. } => node.op.bodies(),
-            _ => continue,
-        };
-        let region = matches!(node.op, CheckedStmtOp::ComptimeFor { .. });
-        if region {
-            loops.push(*id);
-        }
-        for ids in bodies {
-            find_nested_defs(tables, ids, loops, out);
-        }
-        if region {
-            loops.pop();
-        }
-    }
-}
-
-/// The hidden `def` of each lambda among statement `node`'s own value
-/// expressions ([`statement_lambda_operands`]); a lambda inside a lambda is
-/// the inner scope's.
-fn lambda_defs(
-    tables: &mojito_checked::checked::CheckedTables,
-    node: &mojito_checked::checked::CheckedStmt,
-) -> Vec<CheckedStmtId> {
-    statement_lambda_operands(&node.op)
-        .into_iter()
-        .flat_map(|expression| expression_lambda_defs(tables, expression))
-        .collect()
-}
-
-/// The hidden `def` of each lambda in `expression`; a lambda inside a
-/// lambda is the inner scope's.
-fn expression_lambda_defs(
-    tables: &mojito_checked::checked::CheckedTables,
-    expression: CheckedNodeId,
-) -> Vec<CheckedStmtId> {
-    let mut defs = Vec::new();
-    tables.walk_expression(expression, &mut |walked| match walked {
-        Walked::Expression(mojito_checked::checked::CheckedExpr {
-            op: CheckedOp::Lambda { def },
-            ..
-        }) => {
-            defs.push(*def);
-            WalkResult::SkipBodies
-        }
-        _ => WalkResult::Advance,
-    });
-    defs
-}
-
-/// The expressions of statement `op` whose lambdas declare nested
-/// functions in its scope: the statement's own value expressions, which
-/// for a module `comptime` is its value alone. A declaration's parameter
-/// defaults and constraints declare none.
-fn statement_lambda_operands(op: &CheckedStmtOp) -> Vec<CheckedNodeId> {
-    match op {
-        CheckedStmtOp::Def(_) | CheckedStmtOp::Struct(_) | CheckedStmtOp::Trait(_) => Vec::new(),
-        CheckedStmtOp::Comptime { value, .. } => vec![*value],
-        _ => op.expressions(),
-    }
-}
-
-/// A declaration [`find_nested_defs`] found: its statement node, the
-/// `comptime for` statements of its scope enclosing it, outermost first.
-struct NestedSite {
-    node: CheckedStmtId,
-    loops: Vec<CheckedStmtId>,
-}
-
 /// One declaration in the lexical closure tree. Checked capture facts already
 /// include any ancestor forwarding required across intermediate functions.
 struct NestedNode {
@@ -921,11 +804,11 @@ impl NestedNode {
 
 fn analyze_node(
     checked: &mojito_checked::checked::CheckedProgram,
-    site: NestedSite,
+    site: NestedDefSite,
     parent_mangled: &str,
     duplicate_name: bool,
 ) -> NestedNode {
-    let NestedSite { node, loops } = site;
+    let NestedDefSite { node, loops } = site;
     let statement = checked
         .tables()
         .statement(node)
@@ -949,7 +832,7 @@ fn analyze_node(
         node,
         loop_indices: loops
             .iter()
-            .filter_map(|id| loop_index(checked, *id))
+            .filter_map(|id| checked.tables().comptime_loop_index(*id))
             .collect(),
         binding,
         source_name: name.clone(),
@@ -980,14 +863,13 @@ fn analyze_node(
 /// ([`ClosureStorage::method`]); one without storage a sibling
 /// captures keeps its closure in a slot ([`NestedInfo::slotted`]). A
 /// `@parameter` closure, which captures without a list, takes its
-/// captures as leading reference parameters. A declaration whose storage names a
-/// binder no enclosing declaration binds is an invariant failure,
-/// recorded in `invariant_errors`.
+/// captures as leading reference parameters. A declaration whose storage
+/// the check recorded no uses for, one naming a binder no enclosing
+/// declaration binds or one no lowering unit reaches, is an invariant
+/// failure, recorded in `invariant_errors`.
 fn scope_registry(
-    checked: &mojito_checked::checked::CheckedProgram,
     children: &[NestedNode],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    binders: &EnclosingBinders,
     closure_types: &ClosureTypes,
     invariant_errors: &mut Vec<String>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
@@ -1008,10 +890,10 @@ fn scope_registry(
         let storage = child
             .storage
             .as_ref()
-            .and_then(|declared| closure_storage(checked, child, declared, &registry, binders));
+            .and_then(|declared| closure_storage(child, declared, &registry));
         if child.storage.is_some() && storage.is_none() {
             invariant_errors.push(format!(
-                "nested def `{}`: its closure storage names a parameter no enclosing declaration binds",
+                "nested def `{}`: the check recorded no enclosing binders for its closure storage",
                 child.source_name
             ));
         }
@@ -1045,20 +927,21 @@ fn scope_registry(
 
 /// The storage struct of the capture-list `def` or capturing lambda
 /// `child`, lowered from the declaration the check made (`declared`),
-/// whose captured siblings `registry` registers, declared where `binders`
-/// are in scope: a reference field to a captured sibling refers to its
-/// storage struct, and the struct's parameters are the binders its
-/// fields, its signature, and its body name ([`closure_binder_uses`]), as
-/// upstream's `emitClosureInstance` collects them; [`own_storage_binders`]
-/// declares them as the storage's own once its members are lowered.
-/// `None` for one whose fields name a parameter no binder declares.
+/// whose captured siblings `registry` registers: a reference field to a
+/// captured sibling refers to its storage struct, and the struct is applied
+/// to the enclosing binders the check collected
+/// ([`CheckedClosureStorage::uses`]), as upstream's `emitClosureInstance`
+/// applies it; [`own_storage_binders`] declares them as the storage's own
+/// once its members are lowered. `None` for one the check recorded no uses
+/// for.
+///
+/// [`CheckedClosureStorage::uses`]: mojito_checked::checked::CheckedClosureStorage::uses
 fn closure_storage(
-    checked: &mojito_checked::checked::CheckedProgram,
     child: &NestedNode,
     declared: &mojito_checked::checked::CheckedClosureStorage,
     registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    binders: &EnclosingBinders,
 ) -> Option<ClosureStorage> {
+    let uses = declared.uses.as_ref()?;
     let fields: Vec<(String, Ty)> = declared
         .fields
         .iter()
@@ -1082,239 +965,19 @@ fn closure_storage(
             (field.name.clone(), ty)
         })
         .collect();
-    let in_scope = binders.with(&child.region_binders());
-    // A reference field names the binders its referent names.
-    let contents: Vec<&Ty> = fields
-        .iter()
-        .map(|(_, ty)| match ty.kind() {
-            TyKind::Ref(reference) => &reference.referent,
-            _ => ty,
-        })
-        .collect();
-    let names_binder = |ty: &Ty, id: &mojito_types::param_expr::ParamId| {
-        mojito_types::types::mentions(
-            ty,
-            &|ty| matches!(ty.kind(), TyKind::Param { binder, .. } if binder.id == *id),
-        )
-    };
-    let mut values = HashSet::new();
-    for ty in &contents {
-        mojito_types::types::referenced_parameters(ty, &mut values);
-    }
-    let uses = closure_binder_uses(checked, def_of(checked, child.node), &in_scope);
-    let named = |declaration: &ParamDecl| {
-        uses.ids.contains(declaration.id())
-            || uses
-                .names
-                .contains(declaration.name().trim_start_matches('*'))
-    };
-    let used = |declaration: &ParamDecl| {
-        values.contains(declaration.name().trim_start_matches('*'))
-            || contents.iter().any(|ty| names_binder(ty, declaration.id()))
-            || named(declaration)
-    };
-    // A pack's implicit list binder (`Ts.values`) is a parameter wherever
-    // its pack is: the pack's declared type and every element read name it.
-    let param_decls: Vec<ParamDecl> = in_scope
-        .declarations
-        .iter()
-        .filter(|declaration| {
-            used(declaration)
-                || declaration
-                    .list_pack(&in_scope.declarations)
-                    .is_some_and(used)
-        })
-        .cloned()
-        .collect();
-    let unbound = contents.iter().any(|ty| {
-        mojito_types::types::mentions(ty, &|ty| {
-            matches!(ty.kind(), TyKind::Param { binder, .. }
-                if !param_decls.iter().any(|declaration| *declaration.id() == binder.id))
-        })
-    }) || values.iter().any(|name| {
-        !param_decls
-            .iter()
-            .any(|declaration| declaration.name().trim_start_matches('*') == name)
-    });
-    if unbound {
-        return None;
-    }
     Some(ClosureStorage {
         ty: TyKind::Struct(
             mojito_symbol::symbol::closure_storage_name(&child.mangled),
-            param_decls.iter().map(ParamDecl::own_argument).collect(),
+            uses.binders.iter().map(ParamDecl::own_argument).collect(),
         )
         .into(),
         fields,
-        param_decls,
-        method: (!in_scope.callables.iter().any(named)).then(|| {
+        param_decls: uses.binders.clone(),
+        method: uses.method.then(|| {
             mojito_symbol::symbol::closure_method_name(&child.mangled, &child.source_name)
         }),
         declared: declared.clone(),
     })
-}
-
-/// The binders a closure names ([`closure_binder_uses`]): by identity,
-/// and by the spelling of a value binder.
-struct BinderUses {
-    ids: HashSet<mojito_types::param_expr::ParamId>,
-    names: HashSet<String>,
-}
-
-/// The enclosing binders a closure's declaration `def` names, among those
-/// `in_scope` declares: by identity, a type binder a type of its
-/// signature or its body mentions, or the `comptime for` index a body
-/// read binds; by name, a value binder such a type, a parameter
-/// expression, or a body read spells. The body includes the declarations
-/// nested in it, as upstream's `usesFromAbove` covers nested ops. The
-/// closure's own parameters shadow the enclosing binders they spell.
-fn closure_binder_uses(
-    checked: &mojito_checked::checked::CheckedProgram,
-    def: &mojito_checked::checked::CheckedDef,
-    in_scope: &EnclosingBinders,
-) -> BinderUses {
-    fn attribute(argument: &CheckedParamArg) -> Option<&TyArg> {
-        match argument {
-            CheckedParamArg::Attribute { value, .. } => value.as_ref(),
-            CheckedParamArg::Named { value, .. } => attribute(value),
-            CheckedParamArg::Value(_) => None,
-        }
-    }
-    fn signature_types(signature: &mojito_checked::checked::CheckedSignature) -> Vec<Ty> {
-        signature
-            .params
-            .iter()
-            .flatten()
-            .chain(&signature.result)
-            .chain(
-                signature
-                    .effect
-                    .as_ref()
-                    .and_then(|effect| effect.error.as_ref()),
-            )
-            .cloned()
-            .collect()
-    }
-    let mut types = signature_types(&def.signature);
-    let mut exprs: Vec<ParamExpr> = Vec::new();
-    let mut names = HashSet::new();
-    let mut ids = HashSet::new();
-    let mut reads = Vec::new();
-    let mut declared: HashSet<mojito_types::origin::OwnerId> =
-        def.captures.iter().map(|capture| capture.binding).collect();
-    let tables = checked.tables();
-    let mut visit = |walked: Walked<'_>| {
-        match walked {
-            Walked::Statement(statement) => {
-                declared.extend(statement.binding);
-                types.extend(statement.binding_ty.clone());
-                if let CheckedStmtOp::Def(nested) = &statement.op {
-                    types.extend(signature_types(&nested.signature));
-                }
-            }
-            Walked::Expression(expression) => {
-                types.extend(
-                    [&expression.ty, &expression.place_ty, &expression.binding_ty]
-                        .into_iter()
-                        .flatten()
-                        .cloned(),
-                );
-                declared.extend(
-                    expression
-                        .comprehension_bindings
-                        .iter()
-                        .map(|binding| binding.owner),
-                );
-                match &expression.op {
-                    CheckedOp::Identifier(name) | CheckedOp::Call { name, .. } => {
-                        reads.push((name.clone(), expression.binding));
-                    }
-                    CheckedOp::TypeValue { ty: Some(ty), .. } => types.push(ty.clone()),
-                    _ => {}
-                }
-                if let CheckedOp::Call { param_args, .. }
-                | CheckedOp::Invoke { param_args, .. }
-                | CheckedOp::TypeApply {
-                    args: param_args, ..
-                } = &expression.op
-                {
-                    for argument in param_args.iter().filter_map(attribute) {
-                        match argument {
-                            TyArg::Ty(ty) => types.push(ty.clone()),
-                            TyArg::Val(CtValue::Expr(expr)) => exprs.push(expr.clone()),
-                            TyArg::Val(CtValue::Type(ty)) => types.push(ty.clone()),
-                            TyArg::Val(_) | TyArg::Origin(_) => {}
-                        }
-                    }
-                }
-                for adjustment in &expression.adjustments {
-                    if let mojito_checked::checked::SemanticAdjustment::ParamValue {
-                        value, ..
-                    } = adjustment
-                    {
-                        exprs.push(value.clone());
-                    }
-                }
-            }
-        }
-        WalkResult::Advance
-    };
-    tables.walk(&def.body, &mut visit);
-    for default in def.params.iter().filter_map(|param| param.default) {
-        tables.walk_expression(default, &mut visit);
-    }
-    // A read of a name the body does not declare is a read of an
-    // enclosing binder of that name, or of the `comptime for` index its
-    // binding is.
-    for (name, binding) in reads {
-        if binding.is_some_and(|binding| declared.contains(&binding)) {
-            continue;
-        }
-        ids.extend(
-            in_scope
-                .loop_bindings
-                .iter()
-                .filter(|(loop_binding, _)| Some(*loop_binding) == binding)
-                .map(|(_, binder)| binder.id.clone()),
-        );
-        names.insert(name);
-    }
-    for expr in &exprs {
-        expr.referenced_parameters(&mut names);
-        for reference in expr.free_parameters() {
-            ids.insert(reference.id);
-        }
-    }
-    // `mentions` does not descend into a reference: each referent is
-    // walked in turn.
-    let mut pending = types;
-    let mentioned = std::cell::RefCell::new(ids);
-    while let Some(ty) = pending.pop() {
-        mojito_types::types::referenced_parameters(&ty, &mut names);
-        let referents = std::cell::RefCell::new(Vec::new());
-        mojito_types::types::mentions(&ty, &|ty| {
-            match ty.kind() {
-                TyKind::Param { binder, .. } => {
-                    mentioned.borrow_mut().insert(binder.id.clone());
-                }
-                TyKind::Ref(reference) => referents.borrow_mut().push(reference.referent.clone()),
-                _ => {}
-            }
-            false
-        });
-        pending.extend(referents.into_inner());
-    }
-    let ids = mentioned.into_inner();
-    for own in def
-        .signature
-        .parameters
-        .iter()
-        .map(ParamDecl::name)
-        .chain(def.params.iter().map(|param| param.name.as_str()))
-    {
-        names.remove(own.trim_start_matches('*'));
-    }
-    BinderUses { ids, names }
 }
 
 /// The storage of the sibling closure `capture` captures, if it has one.
@@ -1799,10 +1462,8 @@ fn lower_nested_node(
         .with_loops(&node.loop_indices)
         .with(&param_decls);
     let registry = scope_registry(
-        checked,
         &node.children,
         enclosing.registry,
-        enclosing_binders,
         &enclosing.closures.types,
         invariant_errors,
     );
@@ -2316,15 +1977,16 @@ fn analyze_root_children(
     ids: &[CheckedStmtId],
     returned: Option<CheckedNodeId>,
 ) -> Vec<NestedNode> {
-    let mut direct = Vec::new();
-    find_nested_defs(checked.tables(), ids, &mut Vec::new(), &mut direct);
+    let mut direct = checked.tables().nested_defs(ids);
     // A thunk's returned expression (an invoked lambda in a lifted
     // `comptime` initializer) declares its lambdas in the thunk's scope.
     if let Some(returned) = returned {
         direct.extend(
-            expression_lambda_defs(checked.tables(), returned)
+            checked
+                .tables()
+                .expression_lambda_defs(returned)
                 .into_iter()
-                .map(|node| NestedSite {
+                .map(|node| NestedDefSite {
                     node,
                     loops: Vec::new(),
                 }),
@@ -2347,27 +2009,4 @@ fn analyze_root_children(
             analyze_node(checked, site, parent_mangled, duplicate)
         })
         .collect()
-}
-
-/// The index a `comptime for` statement binds, as the CFG of its body sees
-/// it ([`LoopIndex::of`]).
-fn loop_index(
-    checked: &mojito_checked::checked::CheckedProgram,
-    id: CheckedStmtId,
-) -> Option<LoopIndex> {
-    let node = checked.tables().statement(id)?;
-    let mojito_checked::checked::CheckedStmtOp::ComptimeFor { iter, .. } = &node.op else {
-        return None;
-    };
-    let iteration = checked
-        .expression(*iter)?
-        .adjustments
-        .iter()
-        .find_map(|adjustment| match adjustment {
-            mojito_checked::checked::SemanticAdjustment::ComptimeIteration(iteration) => {
-                Some(iteration)
-            }
-            _ => None,
-        })?;
-    Some(LoopIndex::of(iteration, node.binding))
 }

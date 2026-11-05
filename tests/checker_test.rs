@@ -3347,6 +3347,67 @@ fn accepts_inferred_var_of_a_closure() {
     );
 }
 
+/// The uses the check's last step recorded on the storage of each closure
+/// `name` declares outside the bundled library, in source order: its
+/// binders' names and whether its body is the storage's method.
+fn closure_uses(source: &str, name: &str) -> Vec<(Vec<String>, bool)> {
+    let checked = checked_with_std(source).expect("check");
+    checked
+        .tables()
+        .statements
+        .iter()
+        .filter_map(|node| match &node.op {
+            mojito::checked::CheckedStmtOp::Def(def)
+                if def.name == name && !from_library(node.module.as_deref()) =>
+            {
+                let uses = def
+                    .storage
+                    .as_ref()
+                    .and_then(|storage| storage.uses.as_ref())
+                    .expect("the check recorded the closure's uses");
+                Some((
+                    uses.binders
+                        .iter()
+                        .map(|binder| binder.name().to_string())
+                        .collect(),
+                    uses.method,
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn closure_uses_are_the_enclosing_binders_its_body_names() {
+    // As upstream's `usesFromAbove`: `body` reads the enclosing `n`, and
+    // `sig` names only its own `m`, which is no use from above.
+    let source = "def frame[n: Int](v: Int) -> Int:\n    var x = v\n    def body() {var x} -> Int:\n        return x + n\n    def sig[m: Int](y: Int) {var x} -> Int:\n        return x + m + y\n    return body() + sig[7](1)\n";
+    assert_eq!(
+        closure_uses(source, "body"),
+        [(vec!["n".to_string()], true)]
+    );
+    assert_eq!(closure_uses(source, "sig"), [(Vec::new(), true)]);
+}
+
+#[test]
+fn closure_naming_a_callable_binder_is_no_storage_method() {
+    // No storage instance carries the callable binder `f`, so the body
+    // stays a generator nested in `callable_frame`.
+    let source = "def seven() -> Int:\n    return 7\n\ndef callable_frame[f: def() thin -> Int](v: Int) -> Int:\n    var x = v\n    def body() {var x} -> Int:\n        return x + f()\n    return body()\n";
+    assert_eq!(closure_uses(source, "body"), [(Vec::new(), false)]);
+}
+
+#[test]
+fn closure_uses_a_comptime_for_index_it_reads() {
+    let source = "def looped(v: Int) -> Int:\n    var x = v\n    var total = 0\n    comptime for i in range(3):\n        def body() {var x} -> Int:\n            return x + i\n        total += body()\n    return total\n";
+    let uses = closure_uses(source, "body");
+    assert!(
+        matches!(uses.as_slice(), [(binders, true)] if binders.len() == 1),
+        "{uses:?}"
+    );
+}
+
 #[test]
 fn rejects_two_closures_in_one_binding() {
     // Each closure is its own storage type.

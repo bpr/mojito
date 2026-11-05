@@ -27,6 +27,7 @@ use mojito_checked::checked::{
     CheckedConst, CheckedNodeId, CheckedOp, CheckedParamArg, CheckedProgram, CheckedStmt,
     CheckedStmtId, CheckedStmtOp, WalkResult, Walked,
 };
+use mojito_checked::closure_uses::LoopIndex;
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, SlotParameter,
     StructDeclaration as MirStructDeclaration, StructMember as MirStructMember, TraitDeclaration,
@@ -3274,44 +3275,6 @@ struct Flatten<'a> {
     raise_target: Option<(TryLabel, VarId)>,
 }
 
-/// A `comptime for` index in scope: the binder the checker recorded on the
-/// loop's iterable, and the loop variable's checked binding.
-#[derive(Clone)]
-struct LoopIndex {
-    declaration: ParamDecl,
-    binding: Option<mojito_types::origin::OwnerId>,
-}
-
-impl LoopIndex {
-    /// The index of a loop the checker recorded `iteration` on, its
-    /// variable checked as `binding`: a value binder of the iterator's type.
-    fn of(
-        iteration: &mojito_checked::checked::ComptimeIteration,
-        binding: Option<mojito_types::origin::OwnerId>,
-    ) -> Self {
-        let binder = &iteration.binder;
-        let ty = iteration
-            .initial
-            .meta()
-            .as_value()
-            .cloned()
-            .unwrap_or_else(Ty::int);
-        Self {
-            declaration: ParamDecl::Value {
-                id: binder.id.clone(),
-                name: binder.name.to_string(),
-                ty,
-                default: None,
-                callable_default: None,
-                infer_only: false,
-                variadic: false,
-                constraints: Vec::new(),
-            },
-            binding,
-        }
-    }
-}
-
 /// The expression the local `comptime` binding `owner` denotes among
 /// `bindings`.
 fn comptime_binding_value(
@@ -4773,14 +4736,16 @@ struct ClosureStorage {
     ty: Ty,
     fields: Vec<(String, Ty)>,
     /// The enclosing binders the closure names, in its fields, its
-    /// signature, or its body, as upstream's `emitClosureInstance`
-    /// collects them: `ty`'s arguments, and the struct's parameters once
-    /// `own_storage_binders` (`mir/nested.rs`) declares them as its own.
+    /// signature, or its body, as the check collected them
+    /// (`CheckedClosureUses::binders`): `ty`'s arguments, and the struct's
+    /// parameters once `own_storage_binders` (`mir/nested.rs`) declares
+    /// them as its own.
     param_decls: Vec<ParamDecl>,
     /// The body as the struct's `read`-self method
     /// ([`mojito_symbol::symbol::closure_method_name`]), as upstream's
-    /// `liftClosureIntoMethod` makes it. `None` for a body naming an
-    /// enclosing callable binder, which no struct instance carries as a
+    /// `liftClosureIntoMethod` makes it (`CheckedClosureUses::method`).
+    /// `None` for a body naming an enclosing callable binder, which no
+    /// struct instance carries as a
     /// parameter: it stays a generator nested in its enclosing
     /// declaration, taking the storage as its leading parameter.
     method: Option<String>,
@@ -5687,12 +5652,15 @@ impl EnclosingBinders {
     fn with<'a>(&self, declarations: impl IntoIterator<Item = &'a ParamDecl>) -> Self {
         let mut binders = self.clone();
         for declaration in declarations {
+            if declaration.is_callable_binder() {
+                binders.callables.push(declaration.clone());
+                continue;
+            }
             match declaration {
                 ParamDecl::Type { .. } => binders.types.push(declaration.binder()),
                 ParamDecl::Value {
                     ty,
                     variadic: false,
-                    callable_default: None,
                     ..
                 } if !declaration.binds_callables() && !declaration.is_pack_list() => {
                     binders.values.push((declaration.binder(), (*ty).clone()));
@@ -5700,16 +5668,7 @@ impl EnclosingBinders {
                 // A value pack, and its list binder, has no frame local; a
                 // thunk reads it through the parameter constants it binds. A
                 // pack of callables is one too.
-                ParamDecl::Value {
-                    callable_default: None,
-                    ..
-                } if !declaration.binds_callables()
-                    || declaration.is_value_pack()
-                    || declaration.is_pack_list() => {}
-                ParamDecl::Value { .. } => {
-                    binders.callables.push(declaration.clone());
-                    continue;
-                }
+                ParamDecl::Value { .. } => {}
             }
             binders.declarations.push(declaration.clone());
         }

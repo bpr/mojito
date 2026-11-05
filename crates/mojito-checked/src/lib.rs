@@ -3,6 +3,7 @@
 //! invariant 4).
 
 pub mod checked;
+pub mod closure_uses;
 pub mod declaration;
 pub mod fact_store;
 pub mod package;

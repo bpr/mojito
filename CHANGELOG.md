@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The enclosing binders a closure's storage struct is applied to, and
+  whether its body becomes the struct's method, are now collected by the
+  check's last step (`CheckedClosureStorage::uses`), as upstream's
+  `usesFromAbove` collects them in the front end, instead of by MIR while
+  it lowers the closure (R1891). Programs lower as before; MIR reports a
+  storage the check recorded no uses for as a broken invariant.
+
 - A call through a closure's storage value with a `mut` capture (`var
   extend = lambda (x: Int) {mut pieces}: pieces.append(x)`, then
   `extend(2)`, or `var g = extend` then `g(3)`) now runs, as at the pin,
