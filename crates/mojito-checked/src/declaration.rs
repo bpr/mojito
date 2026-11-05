@@ -222,6 +222,22 @@ impl StructDeclaration {
             .map(|witness| witness.member.as_str())
     }
 
+    /// The `__call__` witnessing the struct's `def(...)` conformance, the
+    /// one requirement of that function-type trait; `None` for a struct
+    /// declaring none.
+    ///
+    /// A call through a `def(...)` bound names the requirement under the
+    /// bound's own spelling of its signature, which a generic struct's
+    /// conformance spells over its parameters, so the conformance is found
+    /// by its trait, of which a struct declares at most one.
+    pub fn callable_witness(&self) -> Option<&str> {
+        self.witness_tables
+            .iter()
+            .find(|table| table.is_function_type())
+            .and_then(|table| table.witnesses.first())
+            .map(|witness| witness.member.as_str())
+    }
+
     /// The type the associated member `name` of the struct at `arguments`
     /// names, applied to `args` (`IteratorType[o]` of `List[Int]` is
     /// `_ListIter[Int, o]`), as upstream's substitution resolves an
@@ -311,6 +327,16 @@ impl StructDeclaration {
 pub struct WitnessTable {
     pub trait_name: String,
     pub witnesses: Vec<Witness>,
+}
+
+impl WitnessTable {
+    /// Whether the conformance is to a function type (`def(Int) -> Int`),
+    /// which no trait name spells, rather than to a declared trait.
+    pub fn is_function_type(&self) -> bool {
+        self.trait_name
+            .strip_prefix("def")
+            .is_some_and(|rest| rest.starts_with(['(', '[']))
+    }
 }
 
 /// One requirement of a [`WitnessTable`] and the member satisfying it.

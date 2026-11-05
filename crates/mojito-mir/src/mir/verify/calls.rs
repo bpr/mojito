@@ -1060,9 +1060,24 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
                 "{prefix}: indirect-call target '{target}' is not a __call__ method"
             ));
         }
-        let concrete = nominal_name
-            .and_then(|name| mojito_symbol::symbol::retarget_method_symbol(target, name))
-            .unwrap_or_else(|| target.clone());
+        // A struct callee runs the `__call__` its `def(...)` conformance's
+        // witness table records, as the elaborator resolves the call.
+        let concrete = match nominal_name {
+            Some(name) => {
+                let Some(member) = cx
+                    .declarations
+                    .structure(mojito_types::types::struct_template(name))
+                    .and_then(|declaration| declaration.callable_witness())
+                else {
+                    errors.push(format!(
+                        "{prefix}: nominal indirect-call callee '{name}' records no `def(...)` witness"
+                    ));
+                    return;
+                };
+                member.to_string()
+            }
+            None => target.clone(),
+        };
         if let Some(declaration) = declared(cx.declarations, &concrete) {
             verify_direct_call(
                 prefix,

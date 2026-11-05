@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1933**.
+Next free ID: **R1935**.
 
 ## Ordered Work
 
@@ -3842,37 +3842,35 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1877 A call through a `def(...)` bound is a `call.indirect`, not
+- [ ] **R1933 A call through a `def(...)` bound is a `call.indirect`, not
   the bound's `__call__` requirement call**
 
-  `f(x)` in `def apply[F: def(Int) -> Int](f: F, x: Int)` lowers as a
-  `call.indirect` whose target is the contract's
-  `__trait_dispatch.__call__…`, where upstream reads a `def(...)` bound as
-  a trait whose requirement is `__call__` and checks the call as
-  `f.__call__(x)`.
-  - The gap: a Mojito function or closure value declares no `__call__`,
-    so the call cannot be a `call.method` while `F` may still be bound to
-    one.
-  - Probe: `apply(Counter(10), 5)`, with `struct Counter(def(Int) ->
-    Int)` declaring `__call__`, prints `15` at the pin and in Mojito; after
-    elaboration it should hold a `call.method` on `Counter.__call__`, where
-    the specializer devirtualizes the `call.indirect` over the struct
-    (`native/mono/specializer.rs`).
-  - That devirtualization is the last place `native::mono` composes a
-    callee's name (`symbol::retarget_method_symbol` on the contract's
-    target), as is the struct-callee check of `call.indirect` in
-    `mir/verify/calls.rs`; both go once the call is a method call.
-  - The devirtualization names a reduced `__call__` without dropping its
-    operands ("'Add$mono$V1.__call__$REMOVED$ARG' expects 0 argument(s),
-    got 1" once `__call__` leaves `mir::TYPE_REACHED_MEMBERS`); a
-    `call.method` reduces through `Specializer::reduce_method_call`.
-  - Lever: give a function value the `__call__` witness the bound's
-    witness table answers, check the call through the bound as that
-    requirement's method call, and let the elaborator fold it per instance
-    as any requirement call.
-  - Found while landing R1466 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
+  MIR lowers `f(x)` in `def apply[F: def(Int) -> Int](f: F, x: Int)` as
+  a `call.indirect` carrying the contract's `__trait_dispatch.__call__…`
+  symbol, where upstream reads a `def(...)` bound as a trait whose one
+  requirement is `__call__` and checks the call as `f.__call__(x)`.
+  - A struct's `def(...)` conformance and a closure storage's `__call__`
+    witness already record witness tables, which the elaborator reads
+    (`StructDeclaration::callable_witness`); what is left is the
+    instruction.
+  - The gap: a function value has no `__call__` witness, so a
+    `call.method` on it must become the value's own `call.indirect`
+    wherever `F` becomes a function type: the specializer, and
+    `inline-parametric`'s substitution.
+  - Every pre-elaboration reader of `call.indirect`'s callee place,
+    capture accesses, and generic contract (`inline_parametric`,
+    `canonicalize::fold_known_callees`, `mem2reg`, `loans`, `scan`,
+    `register_loans`, `call_defaults`, `register_ends`) must read the
+    `call.method` receiver the same way.
+  - Probe: pre-elaboration `emit-mir` of `apply` should hold a
+    `call.method` of `__call__` on `f`, while `apply(Counter(10), 5)`,
+    `apply(double, 5)`, and a `{imm k}` closure still print `15`, `10`,
+    and `8` on both backends.
+  - Then the specializer's struct-callee devirtualization of
+    `call.indirect` and `mir/verify/calls.rs`'s nominal-callee branch go.
+  - Split from R1877 (2026-11-05).
+  - Depends on R1934, since the probe reads `emit-mir`.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1515 A bracket followed by a call is fused into the call's
   parameter list**
@@ -10055,6 +10053,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets/ok` and `assets/ownership_ok`, both ways, before landing.
   - Split from R1873 (2026-11-05).
   - Depends on R359.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1934 `emit-mir` rejects every program at the bundled
+  `unsupported_target_error`'s compile-time body**
+
+  `mojito emit-mir` fails on any program, `def main(): print(1)`
+  included, where the MIR verifier reports "drop.reg destroys %r0 of
+  memory-only type Optional[String], which upstream destroys through its
+  storage" in
+  `$comptime$__module$std$sys$info$CompilationTarget.unsupported_target_error$c0`.
+  - `run` verifies the same program cleanly, so the disassembly reaches
+    a compile-time body the production pipeline does not verify, or
+    verifies it before the pass that stores its `Optional[String]`.
+  - It started with R1873's rule (2026-11-05), and blocks every probe
+    that reads `emit-mir`, with or without `MOJITO_PRE_ELABORATION=0`.
+  - Probe: `emit-mir` of `def main(): print(1)` prints its MIR.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler

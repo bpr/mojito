@@ -3424,26 +3424,10 @@ impl<'a> Specializer<'a> {
                         else {
                             continue;
                         };
-                        // A `def(...)` contract is no trait, so no witness
-                        // table answers it: a call through the bound over a
-                        // struct composes its `__call__` until R1877 checks
-                        // that call as the requirement's method call.
-                        let selected = resolved.as_deref().and_then(|contract| {
-                            mojito_symbol::symbol::retarget_method_symbol(
-                                contract,
-                                nominal_template(receiver_name),
-                            )
-                        });
-                        let target = mojito_symbol::symbol::resolve_method_symbol(
-                            &self.functions,
-                            nominal_template(receiver_name),
-                            "__call__",
-                            selected.as_deref(),
-                            args.len() + kwargs.len(),
-                        );
-                        if !self.functions.contains_key(target.as_str()) {
-                            continue;
-                        }
+                        // The struct's `def(...)` conformance records the
+                        // `__call__` answering the function type's one
+                        // requirement, as a declared trait's table does.
+                        let target = self.callable_witness(owner, receiver_name)?;
                         let (target, bindings, arguments) = self.infer_call(
                             owner,
                             function,
@@ -3470,6 +3454,7 @@ impl<'a> Specializer<'a> {
                             .declarations
                             .get(target.as_str())
                             .and_then(|declaration| declaration.receiver_convention);
+                        let reduced = bindings.reduced;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *instruction = MirInstr::MethodCall {
                             dest: *dest,
@@ -3493,6 +3478,9 @@ impl<'a> Specializer<'a> {
                             spread: spread.take(),
                             refined_bound: None,
                         };
+                        if reduced {
+                            self.reduce_method_call(owner, &target, instruction)?;
+                        }
                     }
                     // A generic function's value names its instance at the
                     // arguments its bracket bound.

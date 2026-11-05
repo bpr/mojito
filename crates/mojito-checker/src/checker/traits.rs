@@ -1333,10 +1333,25 @@ impl Checker {
                     self.self_instance_ty(name).as_ref(),
                 )
             };
-            self.structs
+            // The function type is a trait whose one requirement is
+            // `__call__`, so the conformance records its witness table as a
+            // declared trait's does.
+            let info = self
+                .structs
                 .get_mut(name)
-                .expect("callable struct remains registered")
-                .callable_target = Some(target);
+                .expect("callable struct remains registered");
+            if let Some(requirement) = callable_contract_target(&expected) {
+                info.witness_tables.push(WitnessTable {
+                    trait_name: expected.to_string(),
+                    witnesses: vec![Witness {
+                        requirement,
+                        member: target.clone(),
+                    }],
+                });
+                info.witness_tables
+                    .sort_by(|left, right| left.trait_name.cmp(&right.trait_name));
+            }
+            info.callable_target = Some(target);
         }
         // Method bodies, each with `self` bound to this struct at its own type
         // parameters (so `self.field : TyKind::Param` inside a generic struct).

@@ -787,8 +787,7 @@ pub fn is_trait_dispatch_symbol(symbol: &str) -> bool {
 /// and signature suffix.
 ///
 /// It spells an instance's member names (`List.grow` as
-/// `List$mono$TInt.grow`), and a `def(...)` contract's `__call__` on a
-/// struct callee (R1877).
+/// `List$mono$TInt.grow`).
 ///
 /// Keeping this parsing here preserves this module's ownership of the overload
 /// encoding.

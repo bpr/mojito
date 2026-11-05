@@ -4401,6 +4401,15 @@ function or closure, never a struct, since the checker rejects a nominal
 callable where a `def(...)` value is expected, as the pin does. The elaborator
 devirtualizes every nominal-callee `CallIndirect` into a `MethodCall` naming
 the `__call__` instance, and that call is what demands the member (R1009).
+The member is the one the struct's witness table records for its
+`def(...)` conformance (`StructDeclaration::callable_witness`), as for a
+declared trait's requirement: the checker records that table beside the
+struct's trait conformances, MIR records one for each closure storage's
+`__call__` witness, and neither the elaborator nor `mir::verify` composes a
+`{struct}.__call__` name. A conformance is found by its function-type
+trait, of which a struct declares at most one, since the call's dispatch
+symbol spells the bound's signature and a generic struct's conformance
+spells its own parameters.
 Consequently same-arity `__call__` overloads do not fall back to runtime value
 tags or source-name/arity selection. The checker has already matched the
 arguments against the callable signature, so indirect execution shares the same

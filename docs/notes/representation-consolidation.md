@@ -29,8 +29,10 @@ command cannot use both.
    R1466 (a call on a struct value is its `__call__`), R1287 (`print` is
    library code), and R1461 landed 11-03. `mir::TYPE_REACHED_MEMBERS`
    still lists seven members, and each has entries:
-   - `__call__`: R1877 (a call through a `def(...)` bound is a
-     `call.indirect`) and R1868 (`Variant`'s `init_with` handlers).
+   - `__call__`: R1933 (a call through a `def(...)` bound is a
+     `call.indirect`; its witness tables landed with R1877 on 11-05,
+     and its probe waits on R1934's `emit-mir`) and R1868 (`Variant`'s
+     `init_with` handlers).
    - Display (`write_to`, `write_repr_to`, `write_string`): R1882
      (`String(x)` and `repr(x)` are builtins) and R1462 (a `write_to`
      through a bound is host-formatted).
@@ -45,7 +47,7 @@ command cannot use both.
    calls `__mojito_fieldwise_copy`) is the first piece.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1877 --task R1868 --task R1882 \
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1933 --task R1868 --task R1882 \
      --task R1462 --task R160 --task R1544 --task R712 --task R579 -n 0
    ```
 
@@ -201,7 +203,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932, behind R359 | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none (R1874 landed 11-05) | R788, R378, R472, R508, R602 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1877, R1868, R1882, R1462, R160, R1544 | about 20 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1933, R1868, R1882, R1462, R160, R1544 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1891, R1892 → R1893 → R1894 | R1349, R1870, R1888 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1901–R1904 → R1905, R1898 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1910 → R1912 | about 20 (below) | slight |
@@ -235,7 +237,7 @@ R1411 and R1413 under *Entries outside the gaps*.
   requirement, which substitution folds to the member.
 - **Size**: R987 counts 868 `List.__len__` and 523 `Span.__len__`
   instances reached through trait-bound calls.
-- **Closes**: R1877, R1868, R712, R579.
+- **Closes**: R1933, R1868, R712, R579.
 - **Shrinks** R987, R1291, R113, R1119, R25, R817, and R860.
 
 ### G. A capture-list closure is a capture list

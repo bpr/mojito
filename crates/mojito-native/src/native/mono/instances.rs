@@ -219,6 +219,27 @@ impl Specializer<'_> {
             })
     }
 
+    /// The `__call__` the receiver's template records for its `def(...)`
+    /// conformance, which a call through a `def(...)` bound runs on a struct
+    /// instance. A struct declaring none fails as [`Self::witness`] does.
+    pub(super) fn callable_witness(
+        &self,
+        owner: &str,
+        receiver_name: &str,
+    ) -> Result<String, MonoError> {
+        let template = nominal_template(receiver_name);
+        self.structs
+            .get(template)
+            .and_then(|declaration| declaration.callable_witness())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                self.error(
+                    Some(owner),
+                    format!("struct `{template}` records no witness for a `def(...)` conformance"),
+                )
+            })
+    }
+
     /// Whether the declared struct `receiver` is an instance of answers the
     /// requirement `dispatch` with a body: `SIMD`'s, for a `SIMD`
     /// receiver, once `std.simd` declares the witness. Any other requirement

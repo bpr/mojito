@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's `def(...)` conformance and a closure storage's `__call__`
+  witness now record a witness table, as a declared trait's conformance
+  does, and the elaborator resolves a call through a `def(...)` bound on
+  a struct instance from it instead of composing `{struct}.__call__`;
+  `mir::verify` reads the same table (R1877). The devirtualized call now
+  drops the operands of a `__call__` parameter the instance removed. The
+  call is still a `call.indirect` before elaboration (R1933).
 - A pack of callables (`*fs: def() thin -> None`) is now read as its
   `ParameterList` of the bound functions, as any value pack is, instead
   of from a frame slot nothing stores, so `fs[i]()` and `fs[i](x)` in a

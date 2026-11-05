@@ -1661,6 +1661,9 @@ fn lower_storage_call_witness(
             declaration.mut_self_methods.insert("__call__".to_string());
         }
         declaration.record_member("__call__", &symbol);
+        declaration
+            .witness_tables
+            .extend(closure_trait_witness_table(method, &symbol));
     }
     let mut witness = method.clone();
     witness.lowered_name.clone_from(&symbol);
@@ -1712,6 +1715,41 @@ fn lower_storage_call_witness(
             ..MirFunction::default()
         },
     ));
+}
+
+/// The storage's conformance to its closure trait, the function type of
+/// the closure's `method`: its one requirement, `__call__`, answered by the
+/// witness `symbol`, as a declared `def(...)` conformance records it.
+fn closure_trait_witness_table(
+    method: &MirFunctionDeclaration,
+    symbol: &str,
+) -> Option<mojito_checked::declaration::WitnessTable> {
+    let arity = method.param_types.len();
+    let closure_trait = Ty::new(TyKind::Func(Box::new(mojito_types::types::FuncTy {
+        environment: mojito_types::origin::CallableEnvironment::Default,
+        params: method.param_types.clone(),
+        names: method.param_names.clone(),
+        ret: method.ret_ty.clone(),
+        required: vec![true; arity],
+        variadic: None,
+        kw_variadic: None,
+        positional_only: None,
+        keyword_only: None,
+        raises: method.raises,
+        error: method.error_ty.clone(),
+        conventions: method.param_conventions.clone(),
+        ref_params: vec![None; arity],
+        ref_return: None,
+        transfers: mojito_types::types::TransferSet::default(),
+    })));
+    let requirement = mojito_symbol::symbol::callable_contract_target(&closure_trait)?;
+    Some(mojito_checked::declaration::WitnessTable {
+        trait_name: closure_trait.to_string(),
+        witnesses: vec![mojito_checked::declaration::Witness {
+            requirement,
+            member: symbol.to_string(),
+        }],
+    })
 }
 
 /// The source name of the closure method `method`, its symbol's last
