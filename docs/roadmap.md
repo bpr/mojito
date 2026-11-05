@@ -1519,29 +1519,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1888 A call through a closure's storage value conflicts with the
-  loan that storage holds on its `mut` capture**
-
-  The call replays the body's write to the captured place, and the
-  ownership check reads that write as an access conflicting with the
-  storage value's own loan of the place, where the pin runs both probes.
-  - The declaration's own name calls the lifted body directly and runs
-    (`def extend(x: Int) {mut pieces}`, then `extend(2)`); only a call
-    through the storage *value* (a lambda's local, or `var g = extend`)
-    conflicts.
-  - Probe: `var pieces: List[Int] = [1]`, `var extend = lambda (x: Int)
-    {mut pieces}: pieces.append(x)`, `extend(2)`, `print(len(pieces))`
-    reports "access to 'pieces' conflicts with live reference 'extend'"
-    even with the `print` removed; the pin prints `2`.
-  - Probe: the nested-def form with `var g = extend`, `g(3)`,
-    `print(len(pieces))` reports the conflict on `'g'`; the pin prints
-    `2 3`.
-  - Once fixed, restore the `{mut pieces}` paragraph R176 dropped from
-    `assets/ok/lambda_capture_storage_values.mojo`.
-  - Found while landing R176 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R731 A transferred call temporary skips the move initializer the
   pin runs**
 

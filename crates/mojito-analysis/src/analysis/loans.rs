@@ -358,30 +358,38 @@ pub(super) fn loan_accesses(
             .get(&reg.0)
             .map_or_else(|| fallback.clone(), |(span, _)| span.clone())
     };
-    let captured = |access: &mojito_mir::mir::MirCaptureAccess, marker: Reg| {
-        let mut place = MirPlace::root(access.root, None);
-        // A concrete field prefix improves precision. Abstract indices and
-        // interior-storage markers collapse to their owner prefix, which is the
-        // conservative overlap relation required for call-side effects.
-        for segment in &access.path {
-            match segment {
-                mojito_types::origin::OriginSeg::Field(field) => {
-                    place.proj.push(Proj::Field(field.clone()));
+    // A capture access of a call through a closure's storage value is the
+    // body's access through that storage's own loan on the captured place,
+    // as a `ref` capture field is reached through the closure value.
+    let captured_through =
+        |access: &mojito_mir::mir::MirCaptureAccess, marker: Reg, through: Option<VarId>| {
+            let mut place = MirPlace::root(access.root, None);
+            place.through = through;
+            // A concrete field prefix improves precision. Abstract indices and
+            // interior-storage markers collapse to their owner prefix, which is the
+            // conservative overlap relation required for call-side effects.
+            for segment in &access.path {
+                match segment {
+                    mojito_types::origin::OriginSeg::Field(field) => {
+                        place.proj.push(Proj::Field(field.clone()));
+                    }
+                    mojito_types::origin::OriginSeg::AnyIndex
+                    | mojito_types::origin::OriginSeg::Interior(_)
+                    | mojito_types::origin::OriginSeg::Subtree => break,
                 }
-                mojito_types::origin::OriginSeg::AnyIndex
-                | mojito_types::origin::OriginSeg::Interior(_)
-                | mojito_types::origin::OriginSeg::Subtree => break,
             }
-        }
-        (
-            place,
-            if access.access == mojito_types::origin::CaptureAccess::Write {
-                LoanAccess::Write
-            } else {
-                LoanAccess::Read
-            },
-            span_for(marker),
-        )
+            (
+                place,
+                if access.access == mojito_types::origin::CaptureAccess::Write {
+                    LoanAccess::Write
+                } else {
+                    LoanAccess::Read
+                },
+                span_for(marker),
+            )
+        };
+    let captured = |access: &mojito_mir::mir::MirCaptureAccess, marker: Reg| {
+        captured_through(access, marker, None)
     };
     let access_for_convention = |convention: Option<mojito_ast::ast::ArgConvention>| {
         if matches!(
@@ -635,10 +643,11 @@ pub(super) fn loan_accesses(
                         }),
                 )
                 .collect::<Vec<_>>();
+            let storage = callee_place.as_deref().map(|place| place.root);
             accesses.extend(
                 capture_accesses
                     .iter()
-                    .map(|access| captured(access, *dest)),
+                    .map(|access| captured_through(access, *dest, storage)),
             );
             accesses
         }

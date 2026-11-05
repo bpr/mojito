@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a closure's storage value with a `mut` capture (`var
+  extend = lambda (x: Int) {mut pieces}: pieces.append(x)`, then
+  `extend(2)`, or `var g = extend` then `g(3)`) now runs, as at the pin,
+  instead of reporting that its access to the captured place conflicts
+  with the storage's own loan of it (R1888). The ownership check counts
+  the body's capture accesses at such a call as made through the storage.
+
 - A capture-list `def` passed by name to an owned parameter at its last
   use now moves its storage into the parameter instead of copying it and
   destroying the original, as at the pin (R1870): `own(h)` over `def
