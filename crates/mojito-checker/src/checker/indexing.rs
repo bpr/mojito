@@ -1968,7 +1968,13 @@ impl Checker {
             let info = self.structs.get(sname).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
             })?;
-            if let Some((_, fty)) = info.fields.iter().find(|(n, _)| n == field) {
+            // A closure's storage keeps its captures out of member access.
+            if let Some((_, fty)) = info
+                .fields
+                .iter()
+                .find(|(n, _)| n == field)
+                .filter(|_| !super::is_closure_storage(&obj_ty))
+            {
                 // The receiver's arguments — origin tail included — bind the
                 // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`).
                 let value = substitute_at(fty, info, targs);

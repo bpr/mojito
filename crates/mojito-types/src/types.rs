@@ -3671,7 +3671,7 @@ impl fmt::Display for TyKind {
                 write!(f, "]")
             }
             Self::Struct(name, args) => {
-                if args.is_empty()
+                if args.iter().all(|arg| matches!(arg, TyArg::Origin(_)))
                     && let Some(contract) = crate::closure_trait::closure_trait(name)
                 {
                     return match contract.kind() {

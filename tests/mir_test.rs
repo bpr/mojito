@@ -5421,6 +5421,53 @@ fn closure_value_is_its_storage_struct() {
 }
 
 #[test]
+fn closure_storage_reference_fields_refer_through_its_origin_parameters() {
+    // As upstream's `outlineAndPromoteOrigins`: the `imm k` capture's field
+    // refers through the storage's own origin parameter, which the closure's
+    // value applies to `k`'s place; the `var m` capture is owned and
+    // promotes none.
+    use mojito::TyArg;
+    use mojito::origin::{Mutability, Origin, OriginParamId};
+    let src = "def outer(v: Int) -> Int:\n    var k = v\n    var m = v\n    def f() {imm k, var m} -> Int:\n        return k + m\n    var g = f\n    return g()\n";
+    let mir = lower_program(&linked(src)).expect("checked lowering");
+    let storage = mir
+        .declarations
+        .structs
+        .iter()
+        .find(|declaration| declaration.name == "outer$f$__storage")
+        .expect("the storage struct");
+    assert!(matches!(
+        storage.fields.as_slice(),
+        [(k, reference), (m, owned)]
+            if k == "k"
+                && m == "m"
+                && matches!(
+                    reference.kind(),
+                    TyKind::Ref(reference)
+                        if reference.origin == Origin::Param(OriginParamId(0))
+                            && reference.mutability == Mutability::Immutable
+                )
+                && !matches!(owned.kind(), TyKind::Ref(_))
+    ));
+    let outer = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "outer")
+        .expect("outer lowered")
+        .1;
+    let slot = outer
+        .var_names
+        .iter()
+        .position(|name| name == "g")
+        .expect("the binding's slot") as u32;
+    assert!(matches!(
+        outer.var_tys.get(&slot).map(Ty::kind),
+        Some(TyKind::Struct(_, arguments))
+            if matches!(arguments.as_slice(), [TyArg::Origin(Origin::Place(_))])
+    ));
+}
+
+#[test]
 fn origin_specialized_function_values_use_indirect_call_mir() {
     let src = "def borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += 2\n";
     let program = linked(src);

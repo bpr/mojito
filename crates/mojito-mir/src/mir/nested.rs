@@ -733,6 +733,11 @@ fn closure_storage(
     registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
 ) -> Option<ClosureStorage> {
     let uses = declared.uses.as_ref()?;
+    // The origin parameters follow the binders among the struct's
+    // parameters, which number them.
+    let origin_param = |origin: mojito_types::origin::OriginParamId| {
+        mojito_types::origin::OriginParamId(uses.binders.len() as u32 + origin.0)
+    };
     let fields: Vec<(String, Ty)> = declared
         .fields
         .iter()
@@ -740,15 +745,13 @@ fn closure_storage(
         .map(|(field, capture)| {
             let ty = match field.reference {
                 None => mir_nested_callable_ty(field.ty.clone()),
-                Some(mutability) => {
+                Some(reference) => {
                     let referent = captured_storage(registry, capture)
-                        .map_or_else(|| field.ty.clone(), |storage| storage.ty.clone());
+                        .map_or_else(|| field.ty.clone(), |storage| storage.instance_ty.clone());
                     TyKind::Ref(mojito_types::origin::RefTy {
                         referent,
-                        origin: mojito_types::origin::Origin::Untracked {
-                            mutable: mutability == mojito_types::origin::Mutability::Mutable,
-                        },
-                        mutability,
+                        origin: mojito_types::origin::Origin::Param(origin_param(reference.origin)),
+                        mutability: reference.mutability,
                     })
                     .into()
                 }
@@ -756,10 +759,25 @@ fn closure_storage(
             (field.name.clone(), ty)
         })
         .collect();
+    let binders = || uses.binders.iter().map(ParamDecl::own_argument);
     Some(ClosureStorage {
         ty: TyKind::Struct(
             declared.name.clone(),
-            uses.binders.iter().map(ParamDecl::own_argument).collect(),
+            binders()
+                .chain(declared.fields.iter().filter_map(|field| {
+                    let origin = field.reference?.origin;
+                    Some(TyArg::Origin(mojito_types::origin::Origin::Param(
+                        origin_param(origin),
+                    )))
+                }))
+                .collect(),
+        )
+        .into(),
+        instance_ty: TyKind::Struct(
+            declared.name.clone(),
+            binders()
+                .chain(declared.origin_arguments.iter().cloned().map(TyArg::Origin))
+                .collect(),
         )
         .into(),
         fields,
@@ -1567,7 +1585,7 @@ fn capture_parameters(
     captures
         .iter()
         .map(|capture| match captured_storage(registry, capture) {
-            Some(storage) => (storage.ty.clone(), storage.declared.writes),
+            Some(storage) => (storage.instance_ty.clone(), storage.declared.writes),
             None => (
                 match capture.kind {
                     mojito_ast::ast::CaptureKind::Imm

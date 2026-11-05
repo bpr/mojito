@@ -3486,8 +3486,9 @@ impl Checker {
         contract: Ty,
     ) -> mojito_checked::checked::CheckedClosureStorage {
         use mojito_ast::ast::CaptureKind;
-        use mojito_checked::checked::StoragePassability;
-        use mojito_types::origin::Mutability;
+        use mojito_checked::checked::{StoragePassability, StorageReference};
+        use mojito_types::origin::{Mutability, Origin, OriginParamId, OriginPlace};
+        let mut origin_arguments = Vec::new();
         let fields: Vec<_> = captures
             .iter()
             .map(|capture| {
@@ -3498,10 +3499,18 @@ impl Checker {
                         let writes = self
                             .sibling_storage(capture)
                             .map_or(capture.kind != CaptureKind::Imm, |sibling| sibling.writes);
-                        Some(if writes {
-                            Mutability::Mutable
-                        } else {
-                            Mutability::Immutable
+                        let origin = OriginParamId(origin_arguments.len() as u32);
+                        origin_arguments.push(Origin::Place(OriginPlace {
+                            root: capture.binding,
+                            path: Vec::new(),
+                        }));
+                        Some(StorageReference {
+                            mutability: if writes {
+                                Mutability::Mutable
+                            } else {
+                                Mutability::Immutable
+                            },
+                            origin,
                         })
                     }
                 };
@@ -3513,9 +3522,11 @@ impl Checker {
             })
             .collect();
         mojito_checked::checked::CheckedClosureStorage {
-            writes: fields
-                .iter()
-                .any(|field| field.reference != Some(Mutability::Immutable)),
+            writes: fields.iter().any(|field| {
+                field
+                    .reference
+                    .is_none_or(|reference| reference.mutability != Mutability::Immutable)
+            }),
             copyable: captures
                 .iter()
                 .all(|capture| capture.kind != CaptureKind::Move || self.is_copyable(&capture.ty)),
@@ -3533,6 +3544,7 @@ impl Checker {
             },
             name: String::new(),
             fields,
+            origin_arguments,
             contract,
             uses: None,
         }
@@ -4047,8 +4059,12 @@ impl Checker {
     /// the storage the check recorded there, and return its type: a struct
     /// nested in the declaration, as upstream's `emitClosure` declares it,
     /// whose enclosing binders are implicit until the lift applies it to
-    /// them. It conforms to its closure trait, which a call through it binds
-    /// against and which it prints as; it is `Copyable` and
+    /// them. It declares an origin parameter per reference field, which the
+    /// returned type applies to the captured place, as upstream's
+    /// `outlineAndPromoteOrigins` promotes the captured origins, and its
+    /// fields, which member access does not reach. It conforms to its
+    /// closure trait, which a call through it binds against and which it
+    /// prints as; it is `Copyable` and
     /// `ImplicitlyCopyable` when its captures are, and as register-passable
     /// as they are. A carried body registers its closures again from the
     /// storage it copies.
@@ -4072,18 +4088,65 @@ impl Checker {
             }
         }
         mojito_types::closure_trait::declare_closure_trait(&name, &contract);
+        let span = site.span;
+        let reference_fields = || {
+            storage
+                .fields
+                .iter()
+                .filter_map(|field| Some((field, field.reference?)))
+        };
+        let source_params = reference_fields()
+            .map(|(field, reference)| mojito_ast::ast::TypeParam {
+                name: format!("__origin_{}", field.name),
+                bounds: vec!["Origin".to_string()],
+                value_type: None,
+                callable_bound: None,
+                origin_mutability: Some(Expr::new(
+                    ExprKind::Bool(
+                        reference.mutability == mojito_types::origin::Mutability::Mutable,
+                    ),
+                    span,
+                )),
+                infer_only: false,
+                default: None,
+            })
+            .collect();
+        let fields = storage
+            .fields
+            .iter()
+            .map(|field| {
+                let ty = field.reference.map_or_else(
+                    || field.ty.clone(),
+                    |reference| {
+                        TyKind::Ref(mojito_types::origin::RefTy {
+                            referent: field.ty.clone(),
+                            origin: mojito_types::origin::Origin::Param(reference.origin),
+                            mutability: reference.mutability,
+                        })
+                        .into()
+                    },
+                );
+                (field.name.clone(), ty)
+            })
+            .collect();
+        let arguments = storage
+            .origin_arguments
+            .iter()
+            .cloned()
+            .map(TyArg::Origin)
+            .collect();
         self.structs.insert(
             name.clone(),
             super::StructInfo {
                 decls: Vec::new(),
-                source_params: Vec::new(),
+                source_params,
                 module: site.source.clone().unwrap_or_default(),
                 conforms,
                 callable_target: super::callable_contract_target(&contract),
                 callable_conformance: Some(contract),
                 witness_tables: Vec::new(),
                 conformance_conditions: HashMap::new(),
-                fields: Vec::new(),
+                fields,
                 declared_field_names: Vec::new(),
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
@@ -4099,7 +4162,7 @@ impl Checker {
             },
         );
         self.closure_sites.insert(name.clone(), site.clone());
-        Some(TyKind::Struct(name, Vec::new()).into())
+        Some(TyKind::Struct(name, arguments).into())
     }
 
     /// The first runtime binding — an enclosing local or a parameter — a

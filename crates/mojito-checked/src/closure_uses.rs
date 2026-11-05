@@ -956,11 +956,15 @@ fn binder_uses(tables: &CheckedTables, def: &CheckedDef, in_scope: &BinderScope)
 /// The storage struct nested in a closure's declaration that a closure's
 /// own value type names before the lift
 /// ([`mojito_symbol::symbol::nested_closure_storage_name`]), `None` for any
-/// other type.
+/// other type. Its arguments are the captured origins its origin
+/// parameters are applied to.
 fn nested_storage(ty: &Ty) -> Option<&str> {
     match ty.kind() {
         TyKind::Struct(name, arguments)
-            if arguments.is_empty() && mojito_symbol::symbol::is_closure_storage_name(name) =>
+            if mojito_symbol::symbol::is_closure_storage_name(name)
+                && arguments
+                    .iter()
+                    .all(|argument| matches!(argument, TyArg::Origin(_))) =>
         {
             Some(name)
         }
@@ -970,12 +974,25 @@ fn nested_storage(ty: &Ty) -> Option<&str> {
 
 /// The rewrite [`CheckedProgram::type_closures_by_storage`] applies at
 /// every type the program records: a closure's nested storage struct
-/// becomes the lifted one, applied to its uses.
+/// becomes the lifted one, applied to its uses and then to the origins the
+/// occurrence applies the nested one to.
 struct ClosureStorageTypes<'a>(&'a HashMap<String, Ty>);
 
 impl mojito_types::types::TyRewrite for ClosureStorageTypes<'_> {
     fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-        nested_storage(ty).and_then(|nested| self.0.get(nested).cloned())
+        let lifted = self.0.get(nested_storage(ty)?)?;
+        let (TyKind::Struct(name, binders), TyKind::Struct(_, origins)) =
+            (lifted.kind(), ty.kind())
+        else {
+            return None;
+        };
+        Some(
+            TyKind::Struct(
+                name.clone(),
+                binders.iter().chain(origins).cloned().collect(),
+            )
+            .into(),
+        )
     }
 
     fn expr(

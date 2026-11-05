@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1944**.
+Next free ID: **R1945**.
 
 ## Ordered Work
 
@@ -12217,24 +12217,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1894 A closure storage's reference fields carry an untracked
-  origin, where upstream promotes the captured origins to the struct's
-  origin parameters**
+- [ ] **R1944 A closure storage's field types name the enclosing places
+  their captured values carry, where upstream promotes every captured
+  origin to an origin parameter of the storage**
 
-  `closure_storage` (`mir/nested.rs`) types a reference field
-  `ref[Untracked]`, and the checker reads the closure's loans and effects
-  from its capture set instead, where upstream's
-  `outlineAndPromoteOrigins` makes each captured origin a parameter of
-  the storage struct.
-  - Declare one origin parameter per reference capture, type the field
-    `ref[o]`, and let loans follow the existing struct-field collection
-    (`ref_params.rs`, `call_capture_effects`).
-  - Premise to probe first: an `{imm k}` capture still observes a write
-    to `k` between declaration and call, as at the pin.
-  - Probe: `rg Untracked crates/mojito-mir/src/mir/nested.rs` has no
-    storage-field hit.
-  - Found while landing R1436 (2026-11-03).
-  - Depends on R1893.
+  `Checker::closure_storage` promotes only a reference capture's own place
+  (`StorageReference`), so a captured value whose type carries an origin
+  (`Span[Int, origin_of(xs)]`, `Pointer[Int, origin_of(k)]`), and a
+  sibling capture's referent `S_f[origin_of(k)]`, keep the enclosing
+  place in the storage's field types, which its `__init__` and method are
+  verified against.
+  - Promote each origin a field's type carries to its own origin
+    parameter, and apply it at the closure's value
+    (`CheckedClosureStorage::origin_arguments`).
+  - Probe: `var p = Pointer(to=k)`, `def f() {p} -> Int: return p[]`,
+    `print(f())` fails MIR verification ("MakeRef destination targets
+    Pointer[Int, origin@…], incompatible with place storage Int") where
+    the pin prints `1`.
+  - Probe: `var s = Span(xs)` over `var xs = [1, 2, 3]`, then `def f()
+    {s} -> Int: return s[0]` (or `{imm s}`) and `print(f())` fails MIR
+    verification ("MakeRef destination recovers permission unavailable
+    through its source capability") where the pin prints `1`.
+  - Found while landing R1894 (2026-11-05).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1943 A closure's explicit `f.__call__(x)` is rejected, where

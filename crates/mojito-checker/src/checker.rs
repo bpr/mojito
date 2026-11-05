@@ -1229,22 +1229,27 @@ impl Checker {
         });
     }
 
+    /// The origins a call through a value of `ty` may access: a callable
+    /// struct's (a closure's storage) are its fields' at its arguments, a
+    /// callable type's its concrete environment's.
     fn concrete_callable_captures(&self, ty: &Ty) -> Vec<mojito_types::origin::CaptureOrigin> {
         use mojito_types::origin::CaptureOriginSet;
-        let callable = match ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
-                .structs
-                .get(name)
-                .and_then(|info| info.callable_conformance.as_ref()),
-            _ => Some(ty),
-        };
-        match callable
-            .and_then(Ty::callable)
-            .and_then(|func| func.environment.captures())
-        {
+        if self.is_callable_struct(ty) {
+            return self.capture_origins_in_type(ty);
+        }
+        match ty.callable().and_then(|func| func.environment.captures()) {
             Some(CaptureOriginSet::Concrete(captures)) => captures.clone(),
             _ => Vec::new(),
         }
+    }
+
+    /// Whether `ty` is a struct conforming to a callable contract: a
+    /// closure's storage.
+    fn is_callable_struct(&self, ty: &Ty) -> bool {
+        ty.kind()
+            .as_non_simd_struct()
+            .and_then(|(name, _)| self.structs.get(name))
+            .is_some_and(|info| info.callable_conformance.is_some())
     }
 
     /// Retain every concrete environment access that may happen while a call is

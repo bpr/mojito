@@ -3786,6 +3786,10 @@ pub struct CheckedClosureStorage {
     /// names with its closure ([`CheckedProgram::collect_closure_uses`]).
     pub name: String,
     pub fields: Vec<CheckedStorageField>,
+    /// The captured origin each reference field's origin parameter is
+    /// applied to at the closure's value, in field order, as upstream's
+    /// `emitClosureInstance` applies the promoted origins.
+    pub origin_arguments: Vec<mojito_types::origin::Origin>,
     /// The closure trait the struct conforms to, as upstream's
     /// `emitClosure` declares the conformance: the closure's function
     /// type, its captures a `Capturing` environment.
@@ -3851,9 +3855,22 @@ pub struct CheckedStorageField {
     /// The value it holds, or a reference field's referent: a captured
     /// sibling closure's own type when the field refers to it.
     pub ty: Ty,
-    /// The permission of a reference capture's field, `None` for an owned
-    /// one (`var` or moved).
-    pub reference: Option<mojito_types::origin::Mutability>,
+    /// A reference capture's field, `None` for an owned one (`var` or
+    /// moved).
+    pub reference: Option<StorageReference>,
+}
+
+/// A reference field of a [`CheckedClosureStorage`]: `ref[origin]` over
+/// the struct's own origin parameter, as upstream's
+/// `outlineAndPromoteOrigins` promotes each captured origin to one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StorageReference {
+    pub mutability: mojito_types::origin::Mutability,
+    /// The struct's origin parameter the field refers through: its
+    /// position among the reference fields, in capture order, which is its
+    /// position in [`CheckedClosureStorage::origin_arguments`]. The lifted
+    /// struct declares it after the enclosing binders it is applied to.
+    pub origin: mojito_types::origin::OriginParamId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

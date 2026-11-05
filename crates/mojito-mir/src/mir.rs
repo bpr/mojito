@@ -4732,9 +4732,17 @@ struct NestedInfo {
 /// sibling's storage is when it has one.
 #[derive(Clone)]
 struct ClosureStorage {
-    /// `Struct(<lifted>$__storage, binders)`, the name the check gave it
-    /// (`CheckedClosureStorage::name`).
+    /// The struct's own `Self` type, `Struct(<lifted>$__storage, binders ++
+    /// origins)` with the name the check gave it
+    /// (`CheckedClosureStorage::name`): each enclosing binder, then each
+    /// origin parameter a reference field refers through, as itself. Its
+    /// members take it.
     ty: Ty,
+    /// The closure's value at its declaration: `ty` with each origin
+    /// parameter applied to the origin it captures
+    /// (`CheckedClosureStorage::origin_arguments`), as upstream's
+    /// `emitClosureInstance` applies the promoted origins.
+    instance_ty: Ty,
     fields: Vec<(String, Ty)>,
     /// The enclosing binders the closure names, in its fields, its
     /// signature, or its body, as the check collected them

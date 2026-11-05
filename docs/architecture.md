@@ -734,9 +734,22 @@ policy or data-model responsibilities to focused children:
   declaration (`NestedInfo::storage`, `<lifted>$__storage`, one field per
   capture in capture order), as upstream's `constructClosure` emits a
   closure instance for every one: an owned field for a copied or moved
-  capture, the referent's copy for a reference binding, and a `ref` field
-  for a reference capture, whose referent is the captured sibling's
-  storage for a sibling capture. The check declares those fields, with
+  capture, the referent's copy for a reference binding, and a `ref[o]`
+  field for a reference capture, whose referent is the captured sibling's
+  storage for a sibling capture. As upstream's `outlineAndPromoteOrigins`
+  promotes each captured origin to a parameter of the storage, each
+  reference field refers through an origin parameter of the struct's own
+  (`StorageReference::origin`), declared after the enclosing binders, and
+  the closure's value applies it to the captured place
+  (`CheckedClosureStorage::origin_arguments`, MIR's
+  `ClosureStorage::instance_ty`), as `emitClosureInstance` does; the
+  struct's members take it at its own parameters (`ClosureStorage::ty`).
+  The check registers that struct with those origin slots and fields, so
+  argument exclusivity reads the closure's captured places from its
+  origin tail as from any struct's (`record_carried_places`), and a
+  closure's loans and a call's capture accesses are its fields' at its
+  arguments (`capture_origins_in_type`, `concrete_callable_captures`); a
+  user's member access does not reach those fields. The check declares those fields, with
   the struct's copyability, passabilities, and whether a call writes it,
   when it finalizes the closure's type (`Checker::closure_storage`,
   `CheckedDef::storage`, a `CheckedClosureStorage`), as upstream's
@@ -814,7 +827,7 @@ policy or data-model responsibilities to focused children:
   its captures allow, and the check's last step, as `liftClosure`
   replaces every reference to the nested struct, replaces every such type
   the checked program records by the lifted storage struct applied to its
-  uses and points each call through one at the witness
+  uses, then to the origins the occurrence applies, and points each call through one at the witness
   (`CheckedProgram::type_closures_by_storage`, over the
   `checked/rewrite_types.rs` walk). MIR therefore lowers struct-typed
   closure values, reading the declaration's slot as any local

@@ -117,6 +117,7 @@ assets/ok/chained_comparison_link_drop_order.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/chained_comparison_operand_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closure_storage_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closure_storage_method_binders.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/closure_storage_origin_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closure_storage_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closures.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_display_default.mojo	-	ineligible	no-scalar-entry-shape

@@ -146,54 +146,88 @@ impl Checker {
         }
     }
 
+    /// The origins a value of `ty` holds loans on, and how a use of it may
+    /// access them. A struct contributes its fields at its arguments, its
+    /// origin parameters bound to its origin tail, a `ref` field accessed
+    /// as its mutability permits: a closure's storage holds each reference
+    /// capture so, over the captured origin it is applied to.
     pub(in crate::checker) fn capture_origins_in_type(
         &self,
         ty: &Ty,
     ) -> Vec<mojito_types::origin::CaptureOrigin> {
-        use mojito_types::origin::{CaptureOrigin, CaptureOriginSet};
+        use mojito_types::origin::{
+            CaptureAccess, CaptureOrigin, CaptureOriginSet, Mutability, Origin, OriginParamId,
+        };
 
-        fn collect(checker: &Checker, ty: &Ty, out: &mut Vec<CaptureOrigin>) {
+        type Bindings = HashMap<OriginParamId, Origin>;
+
+        fn bound(origin: Origin, origins: &Bindings) -> Origin {
+            super::subst::substitute_origin_params(origin, &|id| origins.get(&id).cloned())
+        }
+
+        fn collect(checker: &Checker, ty: &Ty, origins: &Bindings, out: &mut Vec<CaptureOrigin>) {
             if let Some(element) = list_element(ty).or_else(|| set_element(ty)) {
-                collect(checker, element, out);
+                collect(checker, element, origins, out);
                 return;
             }
             if let Some((key, value)) = dict_elements(ty) {
-                collect(checker, key, out);
-                collect(checker, value, out);
+                collect(checker, key, origins, out);
+                collect(checker, value, origins, out);
                 return;
             }
             if let Some(elements) = tuple_elements(ty) {
                 for element in elements {
-                    collect(checker, element, out);
+                    collect(checker, element, origins, out);
                 }
                 return;
             }
             match ty.kind() {
-                TyKind::Ref(reference) => out.push(CaptureOrigin::read(reference.origin.clone())),
+                TyKind::Ref(reference) => {
+                    out.push(CaptureOrigin::read(bound(
+                        reference.origin.clone(),
+                        origins,
+                    )));
+                }
                 TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
                     if let Some(origin) = origin.as_origin() {
-                        out.push(CaptureOrigin::read(origin));
+                        out.push(CaptureOrigin::read(bound(origin, origins)));
                     }
-                    collect(checker, element, out);
+                    collect(checker, element, origins, out);
                 }
-                TyKind::ComptimeList(element) => collect(checker, element, out),
+                TyKind::ComptimeList(element) => collect(checker, element, origins, out),
                 TyKind::Tuple(elements)
                 | TyKind::RuntimePack(elements)
                 | TyKind::Variant(elements) => {
                     for element in elements {
-                        collect(checker, element, out);
+                        collect(checker, element, origins, out);
                     }
-                }
-                _ if crate::checker::is_closure_storage(ty) => {
-                    out.extend(checker.concrete_callable_captures(ty));
                 }
                 struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                     let Some(info) = checker.structs.get(name) else {
                         return;
                     };
                     let subst = struct_subst(&info.decls, arguments);
+                    let own: Bindings = info
+                        .tail_origin_bindings(arguments)
+                        .into_iter()
+                        .map(|(id, origin)| (id, bound(origin, origins)))
+                        .collect();
                     for (_, field) in &info.fields {
-                        collect(checker, &substitute(field, &subst), out);
+                        let field = substitute(field, &subst);
+                        match field.kind() {
+                            TyKind::Ref(reference) => {
+                                out.push(CaptureOrigin {
+                                    origin: bound(reference.origin.clone(), &own),
+                                    access: if reference.mutability == Mutability::Mutable {
+                                        CaptureAccess::Write
+                                    } else {
+                                        CaptureAccess::Read
+                                    },
+                                });
+                                collect(checker, &reference.referent, &own, out);
+                            }
+                            _ => collect(checker, &field, &own, out),
+                        }
                     }
                 }
                 TyKind::Func(_) | TyKind::GenericFunc(_)
@@ -207,7 +241,7 @@ impl Checker {
         }
 
         let mut origins = Vec::new();
-        collect(self, ty, &mut origins);
+        collect(self, ty, &HashMap::new(), &mut origins);
         let CaptureOriginSet::Concrete(origins) = CaptureOriginSet::concrete(origins) else {
             unreachable!("concrete capture canonicalization stays concrete")
         };
@@ -288,16 +322,6 @@ impl Checker {
                 TyKind::Variant(alternatives) => alternatives
                     .iter()
                     .any(|alternative| contains(checker, alternative, pointer_loans, seen)),
-                _ if crate::checker::is_closure_storage(ty) => checker
-                    .concrete_callable_captures(ty)
-                    .iter()
-                    .any(|capture| {
-                        matches!(
-                            capture.origin,
-                            mojito_types::origin::Origin::Place(_)
-                                | mojito_types::origin::Origin::Param(_)
-                        )
-                    }),
                 struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                     let key = ty.to_string();
                     if !seen.insert(key.clone()) {
@@ -402,8 +426,8 @@ impl Checker {
                         .into_iter()
                         .map(|capture| capture.origin)
                         .collect(),
-                    _ if found.is_some_and(crate::checker::is_closure_storage) => self
-                        .capture_origins_in_type(found.expect("matched a closure"))
+                    _ if found.is_some_and(|ty| self.is_callable_struct(ty)) => self
+                        .capture_origins_in_type(found.expect("matched a callable struct"))
                         .into_iter()
                         .map(|capture| capture.origin)
                         .collect(),

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A closure's storage struct now declares an origin parameter for each
+  reference capture, types that capture's field `ref[o]` over it instead
+  of an untracked origin, and the closure's value applies it to the
+  captured place, as upstream's `outlineAndPromoteOrigins` and
+  `emitClosureInstance` do (R1894). Argument exclusivity therefore sees a
+  closure's captured places: `g(k, f)` beside a `mut` argument over a
+  captured `k`, and a `mut`-capturing closure passed twice to one call,
+  are rejected as at the pin. A closure's loans and a call's capture
+  accesses are read from the struct's fields at its origin arguments, and
+  a struct's captured value now contributes its own origin arguments
+  rather than its declaration's origin parameters.
 - The check now types a capture-list closure's or capturing lambda's
   value by a struct nested in the closure's declaration, as upstream's
   `emitClosure` returns its storage, instead of a `def(...)` whose

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1068
+# swept-count	1070
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -266,6 +266,7 @@ assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo	compile-r
 assets/type_error/capturing_lambda_parameter_argument.mojo	compile-reject	agree	error: cannot use a capturing lambda in type parameter
 assets/type_error/chained_comparison_middle_not_deinitable.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
 assets/type_error/chained_comparison_middle_not_implicitly_copyable.mojo	compile-reject	agree	error: value of type 'P' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/closure_capture_aliases_mut_argument.mojo	compile-reject	agree	error: aliasing values passed mutably to 'x' argument and passed immutably to 'f' argument in 'g' call
 assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	error: cannot implicitly convert 'def() -> Int' value to 'Int'
 assets/type_error/closure_storage_not_trivially_register_passable.mojo	compile-reject	agree	error: invalid call to 'call': value passed to 'f' cannot be converted from 'def(a: Int) -> Int' to 'F', argument type 'def(a: Int) -> Int' does not conform to trait 'def(Int) -> Int & TrivialRegisterPassable'
 assets/type_error/closure_storage_parameter_argument.mojo	compile-reject	agree	error: invalid call to 'invoke': cannot use a dynamic value in a parameter list
@@ -697,6 +698,7 @@ assets/type_error/mut_argument_aliases_reference_result.mojo	compile-reject	agre
 assets/type_error/mut_argument_aliases_variadic_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'both' call
 assets/type_error/mut_argument_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'xs' argument and passed mutably to 'b' argument in 'f' call
 assets/type_error/mut_argument_value_getter_without_setter.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to mutable argument 'x' must be mutable
+assets/type_error/mut_capture_closure_passed_twice.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed mutably to 'b' argument in 'two' call
 assets/type_error/mut_capture_transfer.mojo	compile-reject	agree	error: cannot consume indirect references to values
 assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
 assets/type_error/mut_origin_constructor_rejects_immutable_pointer.mojo	compile-reject	agree	error: no matching function in initialization

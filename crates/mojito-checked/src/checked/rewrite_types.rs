@@ -1234,6 +1234,7 @@ impl RewriteTypes for CheckedClosureStorage {
         let Self {
             name: _,
             fields,
+            origin_arguments: _,
             contract,
             writes: _,
             copyable: _,

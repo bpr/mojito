@@ -2188,11 +2188,11 @@ impl<'a> Flatten<'a> {
     ) -> VarId {
         let src = self.build_closure_storage(info, storage, at);
         let slot = self.fresh_var();
-        self.var_types.insert(slot, storage.ty.clone());
+        self.var_types.insert(slot, storage.instance_ty.clone());
         self.emit(MirInstr::DefVar {
             var: slot,
             src,
-            binding_ty: Some(storage.ty.clone()),
+            binding_ty: Some(storage.instance_ty.clone()),
             in_place: false,
         });
         slot
@@ -2209,11 +2209,11 @@ impl<'a> Flatten<'a> {
     ) {
         let dest = self.build_closure_storage(info, storage, at);
         let var = self.declare_binding_var(info.binding, name);
-        self.var_types.insert(var, storage.ty.clone());
+        self.var_types.insert(var, storage.instance_ty.clone());
         self.emit(MirInstr::DefVar {
             var,
             src: dest,
-            binding_ty: Some(storage.ty.clone()),
+            binding_ty: Some(storage.instance_ty.clone()),
             in_place: false,
         });
     }
@@ -2256,11 +2256,11 @@ impl<'a> Flatten<'a> {
             }
             args.push(dest);
         }
-        let Some((structure, parameters)) = storage.ty.kind().as_non_simd_struct() else {
+        let Some((structure, parameters)) = storage.instance_ty.kind().as_non_simd_struct() else {
             unreachable!("a closure's storage is a struct")
         };
         let constructor = format!("{structure}.__init__");
-        let dest = self.fresh_typed(at.clone(), None, storage.ty.clone());
+        let dest = self.fresh_typed(at.clone(), None, storage.instance_ty.clone());
         self.record_call(dest, Some(constructor.clone()), 0);
         self.emit_call(MirInstr::Call {
             dest,
