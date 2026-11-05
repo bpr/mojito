@@ -322,6 +322,8 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::MakeTuple { .. } => "MakeTuple",
         MirInstr::MakeStruct { .. } => "MakeStruct",
         MirInstr::MakeArray { .. } => "MakeArray",
+        MirInstr::MakeRefPack { .. } => "MakeRefPack",
+        MirInstr::LoadIndirect { .. } => "LoadIndirect",
         MirInstr::ArrayRepeat { .. } => "ArrayRepeat",
         MirInstr::ArrayGet { .. } => "ArrayGet",
         MirInstr::ArrayReplace { .. } => "ArrayReplace",

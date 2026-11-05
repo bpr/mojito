@@ -97,6 +97,8 @@ pub(super) fn verify_instruction(
             on_false,
         } => verify_select(&cx, *dest, *condition, [*on_true, *on_false], errors),
         MirInstr::Pop { dest, op, operands } => verify_pop(&cx, *dest, *op, operands, errors),
+        MirInstr::MakeRefPack { dest, elems } => verify_ref_pack_create(&cx, *dest, elems, errors),
+        MirInstr::LoadIndirect { dest, pack } => verify_load_indirect(&cx, *dest, *pack, errors),
         MirInstr::ArrayRepeat { .. }
         | MirInstr::ArrayGet { .. }
         | MirInstr::ArrayReplace { .. } => {
@@ -1400,6 +1402,62 @@ fn verify_select(
     }
 }
 
+/// Upstream's `lit.ref.pack.create` verifier: the result is a reference
+/// pack with one operand per element, each a reference to that element.
+fn verify_ref_pack_create(cx: &InstrCx<'_>, dest: Reg, elems: &[Reg], errors: &mut Vec<String>) {
+    let prefix = cx.prefix;
+    let Some(TyKind::LitRefPack { elements, .. }) = cx.reg_ty(dest).map(Ty::kind) else {
+        errors.push(format!(
+            "{prefix}: lit.ref.pack.create result is not a reference pack"
+        ));
+        return;
+    };
+    if mojito_types::types::pack_spread(elements).is_some() {
+        return;
+    }
+    if elements.len() != elems.len() {
+        errors.push(format!(
+            "{prefix}: lit.ref.pack.create passes {} operands for {} elements",
+            elems.len(),
+            elements.len()
+        ));
+        return;
+    }
+    for (index, (operand, element)) in elems.iter().zip(elements).enumerate() {
+        match cx.reg_ty(*operand).map(Ty::kind) {
+            Some(TyKind::Pointer { element: found, .. } | TyKind::LitRef { element: found, .. })
+                if types_compatible(found, element) => {}
+            Some(TyKind::Ref(reference)) if types_compatible(&reference.referent, element) => {}
+            Some(found) => errors.push(format!(
+                "{prefix}: lit.ref.pack.create operand {index} has type {found}, not a reference to {element}"
+            )),
+            None => errors.push(format!(
+                "{prefix}: lit.ref.pack.create operand {index} has no type"
+            )),
+        }
+    }
+}
+
+/// Upstream's `kgen.struct.load_indirect` verifier: the operand is a
+/// reference pack and the result the literal struct of its elements.
+fn verify_load_indirect(cx: &InstrCx<'_>, dest: Reg, pack: Reg, errors: &mut Vec<String>) {
+    let prefix = cx.prefix;
+    let Some(TyKind::LitRefPack { elements, .. }) = cx.reg_ty(pack).map(Ty::kind) else {
+        errors.push(format!(
+            "{prefix}: kgen.struct.load_indirect operand is not a reference pack"
+        ));
+        return;
+    };
+    let loaded: Ty = TyKind::Tuple(elements.clone()).into();
+    if let Some(found) = cx.reg_ty(dest)
+        && !types_compatible(found, &loaded)
+    {
+        errors.push(format!(
+            "{prefix}: kgen.struct.load_indirect result has type {found}, not {loaded}"
+        ));
+    }
+}
+
 /// Upstream's `pop.array` verifiers: the value is the array's element
 /// type, `array.replace` keeps its array's type, and a closed index is below
 /// a known size. A template's open index or size is checked by the
@@ -1494,6 +1552,8 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
         TyKind::Pointer { element, .. }
         | TyKind::KgenPointer(element)
         | TyKind::LitRef { element, .. } => Some(element.clone()),
+        // A `ref` value is the `!lit.ref` upstream holds it as.
+        TyKind::Ref(reference) => Some(reference.referent.clone()),
         _ => None,
     };
     let (Some(to_element), Some(from_element)) = (element(to), element(from)) else {

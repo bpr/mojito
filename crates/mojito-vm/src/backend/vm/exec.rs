@@ -251,6 +251,18 @@ impl VmBackend {
                 // holding the pointer.
                 regs[dest.0 as usize] = self.heap_reference_result(handle, target, frame_id, vars);
             }
+            MirInstr::LoadIndirect { dest, pack } => {
+                let Value::Tuple(references) = regs[pack.0 as usize].clone() else {
+                    return Err(RuntimeError::TypeError(
+                        "vm: kgen.struct.load_indirect over no reference pack".to_string(),
+                    ));
+                };
+                let loaded = references
+                    .iter()
+                    .map(|handle| self.read_reference(handle, frame_id, vars))
+                    .collect::<Result<Vec<_>, _>>()?;
+                regs[dest.0 as usize] = Value::Tuple(loaded);
+            }
             MirInstr::ReadRef { dest, reference } => {
                 let handle = regs[reference.0 as usize].clone();
                 regs[dest.0 as usize] =
@@ -1363,7 +1375,7 @@ impl VmBackend {
                 };
                 regs[dest.0 as usize] = Value::Tuple(items);
             }
-            MirInstr::MakeArray { dest, elems } => {
+            MirInstr::MakeArray { dest, elems } | MirInstr::MakeRefPack { dest, elems } => {
                 regs[dest.0 as usize] =
                     Value::Tuple(elems.iter().map(|r| regs[r.0 as usize].clone()).collect());
             }

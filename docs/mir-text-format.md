@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.161
+mojito-mir 1.162
 ```
 
-The writer emits 1.161. The reader accepts 1.0 through 1.161; *Schema 1.0*
+The writer emits 1.162. The reader accepts 1.0 through 1.162; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1121,6 +1121,16 @@ the bundled `VariadicPack` holds: one `lit_ref` to each element of a type
 list, its `elements` a `tuple`'s (a type-pack spread standing for the pack
 until it is bound). The package format moves to `mojito-package 186`.
 
+Schema 1.162 adds the instructions `lit.ref.pack.create { dest, elems }`,
+upstream's `lit.ref.pack.create`, which builds `dest`'s `lit_ref_pack` from
+one reference per element (a `pointer`, `lit_ref`, or `ref` to it), and
+`kgen.struct.load_indirect { dest, pack }`, upstream's
+`kgen.struct.load_indirect`, which loads every element of the
+`lit_ref_pack` `pack` into `dest`'s `tuple`. A call builds the first for a
+`read` collector's `VariadicPack`; the elaborator expands the second once
+the pack is bound, so concrete MIR holds none. The package format moves
+to `mojito-package 187`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1944,6 +1954,8 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Store` / `StoreRef` | `place.store` / `place.store_ref` |
 | `MakeStruct` | `struct.create { dest, fields: [%rA, …] }` (schema 1.87: upstream's `kgen.struct.create`, a struct value of `dest`'s register type built from one register per declared field, in declaration order, running no constructor; `sroa` emits it for a whole read of a split slot, and the verifier checks the result is a declared struct, the operand count, and, for a non-generic struct, each operand's type) |
 | `MakeTuple` | `tuple.make` — the elements of a heterogeneous collector or of a typed `Tuple[T, ...]` construction (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
+| `MakeRefPack` | `lit.ref.pack.create { dest, elems: [%rA, …] }` (schema 1.162: upstream's `lit.ref.pack.create`, the `lit_ref_pack` of `dest`'s register type built from one reference per element, in order; a call builds its callee's `read` `*args: *Ts` `VariadicPack` over it) |
+| `LoadIndirect` | `kgen.struct.load_indirect { dest, pack: %rA }` (schema 1.162: upstream's `kgen.struct.load_indirect`, the `tuple` of the `lit_ref_pack` `pack`'s elements, each loaded through its reference; `VariadicPack.get_loaded_kgen_pack()` lowers to it, and the elaborator expands it) |
 | `MakeArray` | `array.create { dest, elems: [%rA, …] }` (schema 1.97: upstream's `pop.array.create`, the `!pop.array` of `dest`'s register type built from one register per element, in order; a call builds the element pointers of its callee's `*xs: T` so, stored in its `__passed_varargs__` slot) |
 | `ArrayRepeat` / `ArrayGet` / `ArrayReplace` | `array.repeat { dest, value }` / `array.get { dest, array, index }` / `array.replace { dest, array, value, index }` (schema 1.137): upstream's `pop.array.repeat`, the `!pop.array` of `dest`'s register type holding `value` in every element, `pop.array.get`, element `index` of `array`, and `pop.array.replace`, `array` with element `index` replaced by `value`; `index` is a closed `index` constant, or a template's `param(...)` constant elaboration closes and checks against the array's size; the element is trivially register-passable, and the verifier checks the value against it and a closed index against a known size |
 | `ArrayGep` | `array.gep { dest, array, index }` (schema 1.141): upstream's `pop.array.gep`, the `kgen_pointer` to element `index` (an `index` register) of the `pop_array` the `kgen_pointer` `array` addresses; it reads nothing and checks no bound, and the verifier checks the operand, index, and result types |

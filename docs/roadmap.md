@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1927**.
+Next free ID: **R1930**.
 
 ## Ordered Work
 
@@ -3503,6 +3503,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     with `@staticmethod` requirements; `StaticTuple` also omits
     `_to_device_type` and the static `get_type_name`.
   - Found while landing R914 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1928 An instance call in a parameter context does not resolve
+  to the receiver type's static overload**
+
+  `comptime for i in range(s.__len__())` over `var s = S[3](7)`, `S` a
+  `RegisterPassable` struct declaring both `@staticmethod def __len__()`
+  and `def __len__(self)`, is rejected with "cannot use a dynamic value in
+  'for' iterator expression", where the pin selects the static overload,
+  warns that `s` is unused, and prints `0 1 2`.
+  - The pin's rule: in a parameter context, an instance call through a
+    dynamic register-passable receiver selects a matching zero-receiver
+    `@staticmethod` overload and never evaluates the receiver.
+  - Mojito answers it only for the bundled `VariadicPack`'s `__len__()`
+    (`Checker::collector_pack`, `intrinsic_receivers.rs`), as the pack's
+    length query.
+  - Lever: rank the static overload in method resolution when the call
+    is checked in a parameter context, then retire the `VariadicPack`
+    special case.
+  - Found while landing R1921 (2026-11-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7493,6 +7514,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `mir/call_defaults.rs`). A `mut` collector needs the same pointers as
     mutable loans, and its `VariadicList` instance at `elt_is_mutable=True`.
   - Probe: the program above (pin: `2 3`).
+  - Probe: a heterogeneous `mut *args: *Ts` parses the same way. Past the
+    parser, `build_variadic_pack` (`mir/variadics.rs`) already builds a
+    mutable reference pack for a `mut` collector, which nothing has run.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10082,7 +10106,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     storage handed over, the form `lower_drops` gives every slot drop.
   - A 2026-11-03 census of `assets/ok` and `assets/ownership_ok` with the
     rule on found 10 fixtures (35 with `MOJITO_PRE_ELABORATION=0`, the rest
-    `llvm_intrinsic`'s pack spread), each a probe now filed on R1921,
+    `llvm_intrinsic`'s pack spread), each a probe then filed on R1921
+    (landed 2026-11-05: a `read` collector's elements are addresses now),
     R701, or R1458 (R1418 and R1917 have landed).
   - Re-run the census, both ways, before landing it: the rule runs after
     every pass in a debug build.
@@ -10407,63 +10432,78 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1921 A heterogeneous collector is a tuple of its elements'
-  values, where upstream's call builds the declared `VariadicPack` over
-  their references**
+- [ ] **R1927 An owned heterogeneous collector is the tuple of its
+  elements' values, where upstream's is an owned `VariadicPack` of their
+  references**
 
-  `*args: *Ts` binds `TyKind::VariadicPack(*Ts)` in its body, which
+  `var *args: *Ts` binds `TyKind::VariadicPack(*Ts)` in its body, which
   `native::mono::substitute_ty` rewrites to the `Tuple` of the bound
-  elements, and the call builds a `tuple.make` of loaded values, where the
-  pin types it `VariadicPack[elt_is_mutable, origin, Trait, is_owned, *Ts]`
-  and passes a `!lit.ref.pack` of the arguments' addresses.
-  - The bundled `std/builtin/variadics.mojo` declares `VariadicPack` over
-    `TyKind::LitRefPack` (R1302), so only the collector's construction and
-    reads are left.
-  - Lever: `variadic_collector_type`'s heterogeneous arms return the
-    `VariadicPack` instance (owned for `var`), `build_collector` builds the
-    references, a `LitRefPack` aggregate, and a `struct.create`, as
-    `build_variadic_list` builds `VariadicList`, and the mono tuple arm goes.
-  - Every `print` builds one (`*values: *Ts`), so this changes the MIR of
-    nearly every fixture; snapshots are the nightly gate's.
-  - Probe: `verify_pack_spread` admits a `Tuple`-typed spread argument,
-    which every bound spread passes.
-  - Probe: a `read` collector holds its elements' values where upstream's
-    `VariadicPack` refers to them, so `build_collector` references each
-    loaded place again after the call to keep its owner live. An element
-    read through a reference-returning call is not such a place:
-    `print("end", o.value().v, c.t.v, h.o.value().v)` destroys `h`'s and
-    `o`'s values before `c`'s, where the pin destroys `c`, `h`, `o`
-    together after the call
-    (`assets/ok/condition_truthiness_reads_in_place.mojo`).
-  - Probe (from R1873, via R1917): a memory-only element of a `read`
-    collector is a loaded register the call's end destroys, where
-    upstream's `VariadicPack` holds its address: `print(e)` over `e: T.E`
-    (`where_refined_bound_members.mojo`), `print(name_of(s))`
-    (`always_inline_nodebug_reference_results.mojo`,
-    `module_reference_result_reads.mojo`), `print(names[0] :=
-    String("zz"))` (`walrus_place_targets.mojo`), and `print(first([v,
-    v], v))` (`pack_element_list_display.mojo`).
-  - Probe (from R1873, via R1917): `llvm_intrinsic`'s `*args` spread
-    (`lower_pack_spread_argument`, `mir/calls.rs`) moves the whole
-    `$variadic[*types]` pack into the call.
-  - The VM and Pliron read a `LitRefPack` element (`index` with
-    `TupleStorage`) as a tuple element; neither has run one yet.
-  - Found while planning R743 (2026-10-23); split from R1302.
-  - Depends on nothing.
+  elements, and the call builds a `tuple.make` of the moved values, where
+  the pin types it `VariadicPack[..., is_owned=True, *Ts]` over the
+  addresses of slots the call moves each argument into.
+  - A `read` collector is the bundled `VariadicPack` already
+    (`build_variadic_pack`, `mir/variadics.rs`).
+  - Lever: `variadic_collector_type`'s owned arm returns
+    `variadic_pack_type(..., true)`, and `build_variadic_pack` moves each
+    element into a slot it `ended`s, as an owned `VariadicList` does.
+  - `VariadicPack.__deinit__`'s `unsafe_deinit_pointee` then destroys the
+    elements last to first, and `pack_drops.rs::refine_pack_drops`'s
+    owning-collector branch goes.
+  - `Tuple.__init__(var *args)`'s `__RuntimeTuple(*args^)`
+    (`stdlib/std/builtin/tuple.mojo`) must move each element out through
+    the references, or call upstream's `args^.consume_elements(...)`.
+  - The mono tuple arm (`substitute.rs`), the `TyKind::VariadicPack`
+    collector role, and `verify_pack_spread`'s `Tuple`/`RuntimePack`
+    admission go with it.
+  - Probe: `owned_pack_destroyed_in_reverse.mojo` and
+    `pack_constructor_spread_served.mojo` keep their output.
+  - Split from R1921 (2026-11-05).
+  - Depends on R1924.
   - Model: Fable, Not Planned.
+
+- [ ] **R1929 A read collector cannot keep alive the owner of an element
+  read through a call's reference result**
+
+  A call's reference result binds through a hidden mutable `ref` slot
+  (`$call_ref`, `Lower::materialize_reference_result_place`) or a pointer
+  register, whose owner is reachable only through an origin, so a
+  `VariadicPack` element read through it keeps no owner live by name,
+  where upstream's pack carries the elements' origin.
+  - Probe: `print("end", o.value().v, c.t.v, h.o.value().v)` destroys
+    `h`, `o`, then `c` after the call, where the pin destroys `c`, `h`,
+    `o` (`assets/ok/condition_truthiness_reads_in_place.mojo`).
+  - Keeping the hidden slot alive past the call instead is rejected when
+    a later argument reads the origin: `print("i", xs[0].v, len(xs))`
+    over an owned `VariadicList` reports "access to 'xs' conflicts with
+    live reference", since the slot is a mutable loan where the pin's
+    pack element is an immutable reference.
+  - Probe: `print(idn(wp)[].v)` over `var wp = Pointer(to=w)` and
+    `idn` returning its pointer argument destroys `w` before the call,
+    where the pin destroys it after
+    (`assets/ok/call_result_pointer_deref_keeps_owner.mojo`). The element
+    is a value read through the returned pointer, whose register carries
+    the loan on `w`; the slot the pack binds the value to does not.
+  - Lever: give a read of a reference result an immutable reborrow, or
+    record the result's owner on the element, so `build_variadic_pack`
+    can keep the owner itself alive.
+  - Found while landing R1921 (2026-11-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1922 `get_loaded_kgen_pack` is a compiler rule, where upstream's
   `VariadicPack` declares it over `variadic_ptr_map`**
 
   `args.get_loaded_kgen_pack()`, which the bundled `llvm_intrinsic` calls,
-  is typed as the collector itself (`mc_infer.rs`) and lowered to it
-  (`expr_method.rs`), and the elaborator expands an intrinsic's spread
-  (`mono/spread.rs`), where upstream's method is `kgen.struct.load_indirect`
-  over `get_as_kgen_pack()`.
+  is typed by the compiler as the loaded elements' tuple (`mc_infer.rs`,
+  `types::loaded_pack_type`) and lowered to a `kgen.struct.load_indirect`
+  of the pack's `_value` field (`expr_method.rs`), where upstream declares
+  the method over `get_as_kgen_pack()`.
+  - `MirInstr::LoadIndirect` (`kgen.struct.load_indirect`) exists, and the
+    elaborator expands it (`mono/spread.rs`, `expand_load_indirect`).
   - Needs the `#kgen.param.expr<variadic_ptr_map, …>` and
     `<variadic_ptrremove_map, …>` attributes in `mlir_applied_type`, as
-    parameter expressions that fold once the pack is bound, and
-    `kgen.struct.load_indirect`.
+    parameter expressions that fold once the pack is bound, and an
+    `__mlir_op.\`kgen.struct.load_indirect\`` the checker types.
   - Then declare `_kgen_element_types`, `_variadic_pointer_types`,
     `_kgen_pack_with_pointer_type`, `get_as_kgen_pack`,
     `_variadic_with_pointers_removed`, `_loaded_kgen_pack_type`, and
@@ -10528,7 +10568,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Problem: every call of a `*xs: T` callee stores its element pointers'
   `!pop.array` in `__passed_varargs__`, as upstream's does, then builds the
   `Span` and the list over it as two `struct.create`s
-  (`mir::variadic_list::build_variadic_list`), where upstream calls
+  (`mir::variadics::build_variadic_list`), where upstream calls
   `VariadicList.__init__[size, container_origin]` on a reference to that
   slot, inlined.
   - Probe: the bundled `VariadicList` declares no constructor
@@ -12314,10 +12354,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `print_emit_fn` on purpose.
   - Spell the selection as `std.math` does (`comptime hook = …; comptime
     if hook:`) until `comptime if case` lands.
-  - Probe: upstream's `comptime assert Ts.all_conforms_to[Writable]()` and
-    `values._write_to(buffer, sep=sep, end=end)` are respelled as a
-    `comptime for` over the pack, where the bundled `VariadicPack` now
-    declares `_write_to`, once R1921 makes `*values` one.
+  - Probe: upstream's `values._write_to(buffer, sep=sep, end=end)` is
+    respelled as a `comptime for` over the pack, since the bundled
+    `_write_to` takes `StaticString` delimiters where `print`'s are
+    `StringSlice`s (R1926).
   - Found while landing R1287 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.

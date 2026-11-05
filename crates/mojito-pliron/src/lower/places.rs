@@ -501,6 +501,26 @@ impl FnLowering<'_> {
         Ok(())
     }
 
+    /// `lit.ref.pack.create`: fresh storage holding one address per
+    /// element, the `!kgen.struct` of pointers upstream lowers a
+    /// `!lit.ref.pack` to.
+    pub(super) fn lower_ref_pack_create(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        elems: &[Reg],
+    ) -> Result<(), PlironError> {
+        let Some(TyKind::LitRefPack { elements, origin }) =
+            self.func.reg_types.get(&dest.0).map(Ty::kind)
+        else {
+            return Err(self.unsupported_reg("untyped reference pack".into(), dest));
+        };
+        let pointers = ref_pack_pointers(elements, origin);
+        let storage = self.collect_pack_elements(ctx, &pointers, elems, dest)?;
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
     /// `array.repeat`: fresh `!pop.array` storage holding `value` at every
     /// element's stride.
     pub(super) fn lower_array_repeat(
@@ -664,6 +684,24 @@ impl FnLowering<'_> {
         }
         Ok(storage)
     }
+}
+
+/// The element addresses a reference pack over `elements` holds, each a
+/// `!lit.ref` under the pack's `origin`.
+pub(super) fn ref_pack_pointers(
+    elements: &[Ty],
+    origin: &mojito_types::origin::PointerOrigin,
+) -> Vec<Ty> {
+    elements
+        .iter()
+        .map(|element| {
+            TyKind::LitRef {
+                element: element.clone(),
+                origin: origin.clone(),
+            }
+            .into()
+        })
+        .collect()
 }
 
 /// Whether a recorded loan-place projection and a later use's projection

@@ -407,6 +407,8 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         }
         | I::MakeStruct { .. }
         | I::MakeArray { .. }
+        | I::MakeRefPack { .. }
+        | I::LoadIndirect { .. }
         | I::ArrayRepeat { .. }
         | I::InvalidateInteriors { .. }
         | I::ReadRef { .. }

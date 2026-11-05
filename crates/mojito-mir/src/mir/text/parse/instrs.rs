@@ -739,6 +739,14 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 elems: self.req(value, fields, "elems", |d, v| Some(d.regs(v)))?,
             }),
+            "kgen.struct.load_indirect" => Some(MirInstr::LoadIndirect {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                pack: self.req(value, fields, "pack", Self::reg)?,
+            }),
+            "lit.ref.pack.create" => Some(MirInstr::MakeRefPack {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                elems: self.req(value, fields, "elems", |d, v| Some(d.regs(v)))?,
+            }),
             "array.repeat" => Some(MirInstr::ArrayRepeat {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,

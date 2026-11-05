@@ -84,6 +84,25 @@ impl Checker {
         {
             return self.infer_inverted_write(site).map(Some);
         }
+        // A `VariadicPack` whose pack is still a parameter answers
+        // `__len__()` through its static overload, `Self.Ts.length`, as the
+        // pin resolves a register-passable receiver's in a parameter
+        // context: the receiver is not read. Its other members are its
+        // declared ones.
+        if mojito_types::types::variadic_pack_owned(obj_ty.kind()).is_some()
+            && method == "__len__"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && param_args.is_empty()
+            && let Some(pack) = self.collector_pack(object)
+        {
+            self.record_pack_query_value(
+                span.clone(),
+                &pack,
+                mojito_types::param_expr::PackQuery::Length,
+            );
+            return Ok(Some(Ty::int()));
+        }
         // A heterogeneous pack that is still a parameter answers its length;
         // any other member waits for the specialization's concrete storage.
         if let TyKind::VariadicPack(element) = obj_ty.kind()

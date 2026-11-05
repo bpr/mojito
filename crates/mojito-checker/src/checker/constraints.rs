@@ -3887,12 +3887,12 @@ impl Checker {
         let ExprKind::Identifier(name) = &object.kind else {
             return None;
         };
-        let pack = match (self.lookup(name)?).kind() {
-            TyKind::VariadicPack(element) => {
-                mojito_types::types::pack_spread(std::slice::from_ref(element))
-            }
+        let ty = self.lookup(name)?;
+        let pack = match ty.kind() {
             TyKind::Tuple(elements) => mojito_types::types::pack_spread(elements),
-            _ => None,
+            // The register-passable `VariadicPack`'s `__len__()` in a
+            // parameter context is its static overload, `Self.Ts.length`.
+            _ => mojito_types::types::collector_pack_spread(ty),
         }?;
         let TyKind::Param { binder, .. } = pack.kind() else {
             return None;

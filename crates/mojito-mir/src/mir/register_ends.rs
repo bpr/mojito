@@ -101,6 +101,7 @@ impl<'f> RegisterEnds<'f> {
             MirInstr::UninitStorage { init, .. } => out.extend(init.iter().copied()),
             MirInstr::MakeTuple { dest, elems, .. }
             | MirInstr::MakeArray { dest, elems }
+            | MirInstr::MakeRefPack { dest, elems }
             | MirInstr::MakeStruct {
                 dest,
                 fields: elems,
@@ -345,6 +346,7 @@ impl<'f> RegisterEnds<'f> {
             defined.extend(region_argument_regs(instruction));
             if let MirInstr::MakeTuple { dest, elems, .. }
             | MirInstr::MakeArray { dest, elems }
+            | MirInstr::MakeRefPack { dest, elems }
             | MirInstr::MakeStruct {
                 dest,
                 fields: elems,
@@ -674,6 +676,7 @@ pub fn owned_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MovePlace { dest, .. }
         | MirInstr::MakeTuple { dest, .. }
         | MirInstr::MakeArray { dest, .. }
+        | MirInstr::MakeRefPack { dest, .. }
         | MirInstr::MakeStruct { dest, .. }
         | MirInstr::MakeVariant { dest, .. }
         | MirInstr::MakeClosure { dest, .. }

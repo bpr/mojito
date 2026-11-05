@@ -43,6 +43,8 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MakeTuple { dest, .. }
         | MirInstr::MakeStruct { dest, .. }
         | MirInstr::MakeArray { dest, .. }
+        | MirInstr::MakeRefPack { dest, .. }
+        | MirInstr::LoadIndirect { dest, .. }
         | MirInstr::ArrayRepeat { dest, .. }
         | MirInstr::ArrayGet { dest, .. }
         | MirInstr::ArrayReplace { dest, .. }
@@ -131,26 +133,27 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MakeRef { place: p, .. }
         | MirInstr::MovePlace { place: p, .. }
         | MirInstr::LoadPlace { place: p, .. } => index_regs(p, out),
-        MirInstr::ReadRef { reference, .. } => out.push(*reference),
         MirInstr::CopyValue { value, .. }
+        | MirInstr::ReadRef {
+            reference: value, ..
+        }
+        | MirInstr::LoadIndirect { pack: value, .. }
         | MirInstr::Rebind { value, .. }
         | MirInstr::SimdReduce { value, .. }
         | MirInstr::MakeVariant { value, .. }
         | MirInstr::ArrayRepeat { value, .. }
-        | MirInstr::ArrayGet { array: value, .. } => out.push(*value),
+        | MirInstr::ArrayGet { array: value, .. }
+        | MirInstr::MaterializeLiteral { value, .. }
+        | MirInstr::ScalarCast { value, .. }
+        | MirInstr::BuiltinCast { value, .. }
+        | MirInstr::PointerConvert { value, .. }
+        | MirInstr::StoreToMem { src: value, .. } => out.push(*value),
         MirInstr::WriteRef {
             reference: array,
             value,
         }
         | MirInstr::ArrayReplace { array, value, .. } => out.extend([*array, *value]),
         MirInstr::ArrayGep { array, index, .. } => out.extend([*array, *index]),
-        MirInstr::MaterializeLiteral { value, .. }
-        | MirInstr::ScalarCast { value, .. }
-        | MirInstr::BuiltinCast { value, .. }
-        | MirInstr::PointerConvert { value, .. }
-        | MirInstr::StoreToMem { src: value, .. } => {
-            out.push(*value);
-        }
         MirInstr::UnOp { a, .. } => out.push(*a),
         MirInstr::BinOp { a, b, .. } => out.extend([*a, *b]),
         MirInstr::Store { place: p, src } => {
@@ -327,6 +330,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         }
         | MirInstr::CallLlvmIntrinsic { args: elems, .. }
         | MirInstr::MakeArray { elems, .. }
+        | MirInstr::MakeRefPack { elems, .. }
         | MirInstr::MakeStruct { fields: elems, .. } => {
             out.extend(elems.iter().copied());
         }

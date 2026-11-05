@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `read` heterogeneous collector (`*args: *Ts`, every `print`'s) is the
+  bundled `VariadicPack`: the call builds the reference pack over its
+  arguments' addresses (`lit.ref.pack.create`, MIR schema 1.162, package
+  format 187) and the pack over it, as upstream's call does, instead of a
+  tuple of loaded values (R1921). An argument is read where it lies, an
+  rvalue lives in a slot the caller destroys after the call, and the
+  owners die after the call, latest-declared first: `show(a, mk(3), b)`
+  destroys the temporary, `b`, then `a`, as the pin does. The body reads
+  `args[i]` through `__getitem_param__`, `args.__len__()` at compile time,
+  and `args._write_to(...)` (the bundled `String(*args)` now calls it), and
+  a collector forwards to a `VariadicPack` parameter. `llvm_intrinsic`'s
+  `get_loaded_kgen_pack()` is a `kgen.struct.load_indirect` of the pack's
+  references, which the elaborator expands and `canonicalize` folds. An
+  owned collector (`var *args: *Ts`) is still a tuple (R1927).
+
 - The bundled `std.builtin.variadics` declares upstream's `VariadicPack`
   over its `!lit.ref.pack` field, now a type of its own
   (`TyKind::LitRefPack`, MIR schema 1.161 `lit_ref_pack`, package format

@@ -444,21 +444,15 @@ impl Specializer<'_> {
                         format!("binding the collector of `{target}`: {e:?}"),
                     )
                 })?;
-                match reg_ty(caller, args[position], owner)?.kind() {
-                    TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
-                    TyKind::VariadicPack(element) => vec![element.clone()],
-                    list if let Some(element) =
-                        mojito_types::types::variadic_list_element(list) =>
-                    {
-                        vec![element.clone()]
-                    }
-                    _ => {
-                        return Err(self.error(
-                            Some(owner),
-                            format!("the collector a call of `{target}` passes is not a pack"),
-                        ));
-                    }
-                }
+                let collector = reg_ty(caller, args[position], owner)?;
+                collector_elements(collector).ok_or_else(|| {
+                    self.error(
+                        Some(owner),
+                        format!(
+                            "the collector a call of `{target}` passes is not a pack: {collector}"
+                        ),
+                    )
+                })?
             }
             None => slots
                 .positional_overflow
@@ -1019,5 +1013,21 @@ fn bound_value_ty<'a>(operand: &'a Ty, declared: &Ty) -> &'a Ty {
         operand
     } else {
         mojito_mir::mir::operand_value_ty(operand)
+    }
+}
+
+/// The element types of the collector `collector` a call passes: an owned
+/// pack's tuple, a `VariadicPack`'s bound list or symbolic pack, or a
+/// `VariadicList`'s one element type.
+fn collector_elements(collector: &Ty) -> Option<Vec<Ty>> {
+    match collector.kind() {
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => Some(elements.clone()),
+        TyKind::VariadicPack(element) => Some(vec![element.clone()]),
+        kind => mojito_types::types::variadic_list_element(kind)
+            .map(|element| vec![element.clone()])
+            .or_else(|| mojito_types::types::variadic_pack_elements(kind))
+            .or_else(|| {
+                mojito_types::types::collector_pack_spread(collector).map(|pack| vec![pack.clone()])
+            }),
     }
 }

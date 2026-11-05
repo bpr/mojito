@@ -771,7 +771,11 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.push(dest);
             place_regs_mut(place, &mut out);
         }
-        MirInstr::ReadRef { dest, reference } => out.extend([dest, reference]),
+        MirInstr::ReadRef { dest, reference }
+        | MirInstr::LoadIndirect {
+            dest,
+            pack: reference,
+        } => out.extend([dest, reference]),
         MirInstr::CopyValue { dest, value, .. } | MirInstr::Rebind { dest, value } => {
             out.extend([dest, value]);
         }
@@ -986,6 +990,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             dest, args: elems, ..
         }
         | MirInstr::MakeArray { dest, elems }
+        | MirInstr::MakeRefPack { dest, elems }
         | MirInstr::MakeStruct {
             dest,
             fields: elems,
@@ -2551,10 +2556,26 @@ pub enum MirInstr {
     /// Build `dest`'s `!pop.array` from one register per element, in
     /// order: upstream's `pop.array.create`, which a call emits for the
     /// element pointers of its callee's `*xs: T`
-    /// ([`crate::mir::variadic_list`]).
+    /// ([`crate::mir::variadics`]).
     MakeArray {
         dest: Reg,
         elems: Vec<Reg>,
+    },
+    /// Build `dest`'s reference pack (`!lit.ref.pack`, `TyKind::LitRefPack`)
+    /// from one reference per element, in order: upstream's
+    /// `lit.ref.pack.create`, which a call emits for the elements of its
+    /// callee's `*args: *Ts` ([`crate::mir::variadics`]).
+    MakeRefPack {
+        dest: Reg,
+        elems: Vec<Reg>,
+    },
+    /// Load every element of the reference pack `pack` into `dest`'s
+    /// literal struct (`TyKind::Tuple`) of their values: upstream's
+    /// `kgen.struct.load_indirect`, which `VariadicPack.get_loaded_kgen_pack`
+    /// applies. The elaborator expands it once the pack is bound.
+    LoadIndirect {
+        dest: Reg,
+        pack: Reg,
     },
     /// Build `dest`'s `!pop.array` holding `value` in every element:
     /// upstream's `pop.array.repeat`. The element count is `dest`'s type's.
@@ -3140,6 +3161,8 @@ impl MirInstr {
             | Self::MakeSimd { .. }
             | Self::MakeStruct { .. }
             | Self::MakeArray { .. }
+            | Self::MakeRefPack { .. }
+            | Self::LoadIndirect { .. }
             | Self::ArrayRepeat { .. }
             | Self::ArrayGet { .. }
             | Self::ArrayReplace { .. }

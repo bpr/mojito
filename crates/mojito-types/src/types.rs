@@ -1893,31 +1893,127 @@ pub fn variadic_list_type(element: Ty, is_owned: bool) -> Ty {
     .into()
 }
 
-/// The type a positional collector of `element`s (`*xs: element`) has in
-/// its callee's body.
+/// The bundled `VariadicPack`, upstream's heterogeneous argument
+/// collector.
+pub const VARIADIC_PACK_TYPE_NAME: &str = "VariadicPack";
+
+/// `VariadicPack[element_trait=trait, is_owned, *Ts]` over the type pack
+/// `pack` (`*Ts`), a `read` heterogeneous collector's type in its body.
 ///
-/// A specialized heterogeneous one (`$pack`) is the tuple
-/// of its elements, an unspecialized one (`*args: *Ts`) the compiler's pack
-/// storage, and a homogeneous one upstream's `VariadicList[element,
-/// is_owned]`, owned for a `var` collector.
-pub fn variadic_collector_type(element: Ty, convention: Option<ArgConvention>) -> Ty {
-    match element.kind() {
-        TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
-        _ if pack_spread(std::slice::from_ref(&element)).is_some() => {
-            TyKind::VariadicPack(element).into()
+/// It is spelled as the checker resolves that spelling: the infer-only
+/// element trait and pack list, the ownership flag, and the pack's
+/// zero-sized `TypeList` binder. The trait is the pack binder's bound.
+pub fn variadic_pack_type(pack: Ty, is_owned: bool) -> Ty {
+    let traits = pack_traits(&pack);
+    variadic_pack_over(traits, TyArg::Ty(pack), is_owned)
+}
+
+/// [`variadic_pack_type`] with the pack `pack` bound to `elements`, the
+/// list an instance's arguments hold in its place.
+pub fn bound_variadic_pack_type(pack: &Ty, elements: &[Ty], is_owned: bool) -> Ty {
+    variadic_pack_over(
+        pack_traits(pack),
+        TyArg::Val(CtValue::Tuple(
+            elements.iter().cloned().map(CtValue::Type).collect(),
+        )),
+        is_owned,
+    )
+}
+
+/// Whether `ty` is a `VariadicPack`, an elaborated instance included, and
+/// if so whether it is owned.
+pub fn variadic_pack_owned(ty: &TyKind) -> Option<bool> {
+    let TyKind::Struct(name, arguments) = ty else {
+        return None;
+    };
+    (struct_template(name) == VARIADIC_PACK_TYPE_NAME).then(|| {
+        arguments
+            .iter()
+            .any(|argument| matches!(argument, TyArg::Val(CtValue::Bool(true))))
+    })
+}
+
+/// The element types of a `VariadicPack` whose pack is bound: the list its
+/// arguments hold, or the `RuntimePack` an elaborated declaration binds.
+pub fn variadic_pack_elements(ty: &TyKind) -> Option<Vec<Ty>> {
+    variadic_pack_owned(ty)?;
+    let TyKind::Struct(_, arguments) = ty else {
+        return None;
+    };
+    arguments.iter().find_map(|argument| match argument {
+        TyArg::Val(CtValue::Tuple(values)) => values
+            .iter()
+            .map(|value| match value {
+                CtValue::Type(ty) => Some(ty.clone()),
+                _ => None,
+            })
+            .collect(),
+        TyArg::Ty(pack) => match pack.kind() {
+            TyKind::RuntimePack(elements) | TyKind::Tuple(elements) => Some(elements.clone()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// The type pack (`*Ts`) a heterogeneous collector's type spreads while
+/// the pack is still a parameter: a `VariadicPack`'s, or an owned
+/// collector's pack storage's.
+pub fn collector_pack_spread(ty: &Ty) -> Option<&Ty> {
+    match ty.kind() {
+        TyKind::VariadicPack(element) => pack_spread(std::slice::from_ref(element)),
+        TyKind::Struct(_, arguments) if variadic_pack_owned(ty.kind()).is_some() => {
+            arguments.iter().find_map(|argument| match argument {
+                TyArg::Ty(pack) => pack_spread(std::slice::from_ref(pack)),
+                _ => None,
+            })
         }
-        _ => variadic_list_type(element, matches!(convention, Some(ArgConvention::Var))),
+        _ => None,
     }
 }
 
-/// Whether `ty` is a heterogeneous collector's type while its pack is
-/// still a parameter (`*args: *Ts`), upstream's `VariadicPack`.
+/// The literal struct of a `VariadicPack`'s loaded elements, upstream's
+/// `_loaded_kgen_pack_type`: the tuple of its pack (`*Ts`) or of its bound
+/// elements. `None` for any other type.
+pub fn loaded_pack_type(ty: &Ty) -> Option<Ty> {
+    let elements = match collector_pack_spread(ty) {
+        Some(pack) if variadic_pack_owned(ty.kind()).is_some() => vec![pack.clone()],
+        _ => variadic_pack_elements(ty.kind())?,
+    };
+    Some(TyKind::Tuple(elements).into())
+}
+
+/// The type a positional collector of `element`s (`*xs: element`) has in
+/// its callee's body.
+///
+/// A `read` or `mut` heterogeneous one (`*args: *Ts`) is upstream's
+/// `VariadicPack` over the pack; an owned one (`var *args: *Ts`) the
+/// compiler's pack storage, the tuple of its elements once specialized
+/// (`$pack`); and a homogeneous one upstream's `VariadicList[element,
+/// is_owned]`, owned for a `var` collector.
+pub fn variadic_collector_type(element: Ty, convention: Option<ArgConvention>) -> Ty {
+    let owned = matches!(convention, Some(ArgConvention::Var));
+    let heterogeneous = matches!(element.kind(), TyKind::RuntimePack(_))
+        || pack_spread(std::slice::from_ref(&element)).is_some();
+    match element.kind() {
+        TyKind::RuntimePack(elements) if !owned => {
+            bound_variadic_pack_type(&element, elements, false)
+        }
+        _ if heterogeneous && !owned => variadic_pack_type(element, false),
+        TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
+        _ if heterogeneous => TyKind::VariadicPack(element).into(),
+        _ => variadic_list_type(element, owned),
+    }
+}
+
+/// Whether `ty` is a heterogeneous collector's type: upstream's
+/// `VariadicPack`, or an owned collector's pack storage.
 pub fn is_heterogeneous_collector(ty: &Ty) -> bool {
     match ty.kind() {
         TyKind::RuntimePack(_) => true,
         TyKind::VariadicPack(element) => pack_spread(std::slice::from_ref(element)).is_some(),
         TyKind::Tuple(elements) => pack_spread(elements).is_some(),
-        _ => false,
+        kind => variadic_pack_owned(kind).is_some(),
     }
 }
 
@@ -2273,14 +2369,10 @@ pub fn spread_arguments(name: &str, list: &ParamExpr) -> Result<Vec<TyArg>, Para
 /// generated specialization symbol: their identity is that spelling
 /// (`Variant[Int, String]`).
 pub fn binds_pack_elementwise(name: &str) -> bool {
+    let template = struct_template(name);
     [TUPLE_TYPE_NAME, TSTRING_TYPE_NAME, VARIANT_TYPE_NAME]
         .iter()
-        .any(|public| {
-            name == *public
-                || name.ends_with(&format!("${public}"))
-                || name.starts_with(&format!("{public}$"))
-                || name.contains(&format!("${public}$"))
-        })
+        .any(|public| template == *public || template.ends_with(&format!("${public}")))
 }
 
 /// The canonical argument list of an application of the struct `name`.
@@ -7403,6 +7495,30 @@ fn reown_parameters(
         })
         .collect();
     (reowned, bindings)
+}
+
+/// The `VariadicPack` with the element trait `traits` over `pack`, the
+/// pack's argument.
+fn variadic_pack_over(traits: Vec<String>, pack: TyArg, is_owned: bool) -> Ty {
+    TyKind::Struct(
+        VARIADIC_PACK_TYPE_NAME.to_string(),
+        vec![
+            TyArg::Val(CtValue::Trait(traits)),
+            pack,
+            TyArg::Val(CtValue::Bool(is_owned)),
+            TyArg::Val(ParamDecl::type_list_value()),
+        ],
+    )
+    .into()
+}
+
+/// The trait a type pack's elements conform to: its binder's bounds,
+/// `AnyType` for a pack with none.
+fn pack_traits(pack: &Ty) -> Vec<String> {
+    match pack.kind() {
+        TyKind::Param { bounds, .. } if !bounds.is_empty() => bounds.clone(),
+        _ => vec!["AnyType".to_string()],
+    }
 }
 
 #[cfg(test)]

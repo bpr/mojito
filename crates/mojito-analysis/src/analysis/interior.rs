@@ -487,6 +487,8 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::MakeTuple { .. }
         | MirInstr::MakeStruct { .. }
         | MirInstr::MakeArray { .. }
+        | MirInstr::MakeRefPack { .. }
+        | MirInstr::LoadIndirect { .. }
         | MirInstr::ArrayRepeat { .. }
         | MirInstr::ArrayGet { .. }
         | MirInstr::ArrayReplace { .. }

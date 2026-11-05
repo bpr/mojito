@@ -250,6 +250,13 @@ impl VmBackend {
             {
                 return self.thawed_variadic_list(prog, items, element, target);
             }
+            CtValue::Tuple(items)
+                if let Some(target) = target
+                    && let Some(elements) =
+                        mojito_types::types::variadic_pack_elements(target.kind()) =>
+            {
+                return self.thawed_variadic_pack(prog, items, &elements, target);
+            }
             CtValue::Tuple(items) => {
                 let storage = match target.map(Ty::kind) {
                     Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => prog
@@ -321,7 +328,7 @@ impl VmBackend {
 
     /// The `VariadicList` `target` over `items`, each thawed at `element`,
     /// as a call builds the list it passes a `*xs` collector
-    /// (`mir::variadic_list::build_variadic_list`), in compile-time memory:
+    /// (`mir::variadics::build_variadic_list`), in compile-time memory:
     /// each element stored where its pointer addresses it, the array of
     /// those pointers stored, and the `Span` over the array's first element
     /// and its length, which the list wraps. An empty list's array holds one
@@ -368,6 +375,31 @@ impl VmBackend {
             vec![first, Value::Int(length)],
         )?;
         super::calls::struct_value(&prog.structs[list_name], list_name, vec![span])
+    }
+
+    /// The `VariadicPack` `target` over `items`, each thawed at its element
+    /// type, as a call builds the pack it passes a `*args: *Ts` collector
+    /// (`mir::variadics::build_variadic_pack`), in compile-time memory: each
+    /// element stored where its reference addresses it, and the pack over
+    /// the references.
+    fn thawed_variadic_pack(
+        &mut self,
+        prog: &Prog,
+        items: &[mojito_types::ct::CtValue],
+        elements: &[Ty],
+        target: &Ty,
+    ) -> Result<Value, RuntimeError> {
+        let mut references = Vec::with_capacity(items.len());
+        for (index, item) in items.iter().enumerate() {
+            let value = self.thaw(prog, item, elements.get(index))?;
+            references.push(self.store_to_comptime_memory(value));
+        }
+        let name = prog.declared_struct(Some(target)).ok_or_else(|| {
+            RuntimeError::Unsupported(format!(
+                "the variadic pack `{target}` has no declaration to thaw into"
+            ))
+        })?;
+        super::calls::struct_value(&prog.structs[name], name, vec![Value::Tuple(references)])
     }
 
     /// Build an uninitialized `self` skeleton for `name` (fields = `None`).

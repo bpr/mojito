@@ -5,8 +5,8 @@
 # other is rejected when its instance is elaborated.
 #
 # The body is upstream's, except that `args.get_loaded_kgen_pack()` is
-# served by the compiler on the collector, which is compiler storage rather
-# than upstream's nominal `VariadicPack` (roadmap R1921, R1922).
+# served by the compiler, a `kgen.struct.load_indirect` of the
+# `VariadicPack`'s references, where upstream declares it (roadmap R1922).
 # `_RegisterPackType` is upstream's, verbatim: its `!kgen.struct` field is
 # Mojito's compiler-private tuple storage of the same elements.
 # Omitted: the gather, scatter, masked load and store, prefetch,

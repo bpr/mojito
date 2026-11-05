@@ -17,22 +17,22 @@
 //! takes, as upstream's call builds the `VariadicPack` or `VariadicList` it
 //! passes: a `tuple.make` of the call's overflow operands, or a homogeneous
 //! collector's `VariadicList` over pointers to them
-//! ([`crate::mir::variadic_list`]), passed as one operand. It
+//! ([`crate::mir::variadics`]), passed as one operand. It
 //! builds the keyword collector a callee's `**kwargs` takes as upstream's
 //! call builds the dictionary: the collector's empty constructor, one
 //! `_insert` per collected keyword, and the filled collector passed as the
 //! call's one `**` operand.
 
 use crate::mir::type_construction::storage_construction;
-use crate::mir::variadic_list::{
-    FrameTables, ListElement, build_variadic_list, element_pointer_type,
+use crate::mir::variadics::{
+    FrameTables, ListElement, build_variadic_list, build_variadic_pack, element_pointer_type,
 };
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
     CALL_RESULT_SLOT, Const, FuncRef, LoweredCall, MirBlock, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, Reg, UseMode, callable_targets,
-    calls::literal_materializes_to, fresh_register, instruction_regions, instruction_regions_mut,
-    instruction_regs_mut, instruction_slots, terminator_regs_mut,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, Proj, Reg, UseMode,
+    callable_targets, calls::literal_materializes_to, fresh_register, instruction_regions,
+    instruction_regions_mut, instruction_regs_mut, instruction_slots, terminator_regs_mut,
 };
 use mojito_ast::ast::{ArgConvention, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
@@ -988,34 +988,71 @@ fn build_collector(
         prelude.extend(built.ended);
         postlude.extend(built.after);
         built.list
+    } else if shape.variadic_convention != Some(ArgConvention::Var) {
+        let element_types = match ty.kind() {
+            TyKind::Tuple(types) => types.clone(),
+            _ => return,
+        };
+        let pack_ty = mojito_types::types::bound_variadic_pack_type(element, &element_types, false);
+        let mutable = shape.variadic_convention == Some(ArgConvention::Mut);
+        // A value read shallowly (a reference result's referent) belongs to
+        // its owner, which the slot the pack binds it to must not destroy,
+        // and which the call keeps live as upstream's reference into it
+        // does.
+        let shallow: Vec<Reg> = elements
+            .iter()
+            .copied()
+            .filter(|&register| !owned_in(prelude, register))
+            .collect();
+        let element_owners: Vec<Vec<MirPlace>> = elements
+            .iter()
+            .map(|register| {
+                if shallow.contains(register) {
+                    element_owners(prelude, *register, &function.var_tys)
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
+        let elements: Vec<ListElement> = elements
+            .into_iter()
+            .zip(&element_types)
+            .map(|(register, element)| {
+                pack_reference(prelude, register, element, mutable, function, location)
+                    .unwrap_or(ListElement::Value(register))
+            })
+            .collect();
+        // Where a borrowed element lies, and the owner a value element was
+        // read out of, live through the call.
+        let kept = elements
+            .iter()
+            .zip(element_owners)
+            .flat_map(|(element, owners)| match element {
+                ListElement::Borrowed { pointer, .. } => {
+                    referenced_place(prelude, *pointer).into_iter().collect()
+                }
+                ListElement::Value(_) => owners,
+            })
+            .collect();
+        let built = build_variadic_pack(
+            &mut CallFrame { function, location },
+            pack_ty,
+            &element_types,
+            mutable,
+            elements,
+            (kept, shallow),
+        );
+        prelude.extend(built.before);
+        prelude.extend(built.ended);
+        postlude.extend(built.after);
+        built.list
     } else {
-        // A collector over the caller's own pack leaves its elements' types
-        // to the elaborator.
+        // An owned collector over the caller's own pack leaves its
+        // elements' types to the elaborator.
         let element_types = match ty.kind() {
             TyKind::Tuple(types) => Some(types.clone()),
             _ => None,
         };
-        // A `read` pack refers to its elements where they lie, as upstream's
-        // `VariadicPack` of references does: each place it reads is
-        // referenced again once the call returns, so the place stays live
-        // through the call. The latest-declared owner is referenced first,
-        // so owners the call last reads die in reverse declaration order,
-        // as at any one instruction.
-        if shape.variadic_convention != Some(ArgConvention::Var) {
-            let mut places: Vec<MirPlace> = elements
-                .iter()
-                .filter_map(|&register| loaded_place(prelude, register))
-                .cloned()
-                .collect();
-            places.sort_by_key(|place| std::cmp::Reverse(place.root));
-            for place in places {
-                let Some(ty) = place.ty.clone() else {
-                    continue;
-                };
-                let dest = fresh_register(function, element_pointer_type(&ty, false), location);
-                postlude.push(MirInstr::MakeRef { dest, place });
-            }
-        }
         let storage = fresh_register(function, ty, location);
         prelude.push(MirInstr::MakeTuple {
             dest: storage,
@@ -1041,24 +1078,334 @@ fn build_collector(
     });
 }
 
-/// The place the last `place.load` in `prelude` defining `register` reads,
-/// unless an instruction after it destroys the place's root: a temporary
-/// the call's setup materialized and released.
-fn loaded_place(prelude: &[MirInstr], register: Reg) -> Option<&MirPlace> {
+/// Whether `register` holds a value of its own: the last instruction of
+/// `prelude` defining it gives an owned result
+/// ([`crate::mir::owned_result_regs`]), or none there defines it.
+fn owned_in(prelude: &[MirInstr], register: Reg) -> bool {
+    prelude
+        .iter()
+        .rev()
+        .find(|instruction| {
+            let mut results = Vec::new();
+            instruction_result_regs(instruction, &mut results);
+            results.contains(&register)
+        })
+        .is_none_or(|instruction| {
+            let mut owned = Vec::new();
+            crate::mir::owned_result_regs(instruction, &mut owned);
+            owned.contains(&register)
+        })
+}
+
+/// The slots a value element `register` was read out of, which the call
+/// keeps live as upstream's reference into them does: a loaded or
+/// borrowed variable, or the receiver of a subscript or method call
+/// returning a reference, seen through a copy, a field read, or a read
+/// through a reference. A place reached through a `ref` slot names no
+/// owner.
+fn element_owners(
+    prelude: &[MirInstr],
+    register: Reg,
+    var_tys: &HashMap<VarId, Ty>,
+) -> Vec<MirPlace> {
+    let Some(at) = prelude.iter().rposition(|instruction| {
+        let mut results = Vec::new();
+        instruction_result_regs(instruction, &mut results);
+        results.contains(&register)
+    }) else {
+        return Vec::new();
+    };
+    // A temporary the call's setup materialized and released owns nothing
+    // the call reads.
+    let released = |var: VarId| {
+        prelude[at + 1..]
+            .iter()
+            .any(|instruction| match instruction {
+                MirInstr::DropVar { var: dropped, .. } | MirInstr::ConsumeVar { var: dropped } => {
+                    *dropped == var
+                }
+                MirInstr::DropPlace { place, .. } | MirInstr::MarkDestroyed { place } => {
+                    place.root == var
+                }
+                _ => false,
+            })
+    };
+    let owned = |place: &MirPlace| -> Vec<MirPlace> {
+        if place.through.is_some() || released(place.root) {
+            return Vec::new();
+        }
+        vec![MirPlace::root(
+            place.root,
+            var_tys.get(&place.root).cloned(),
+        )]
+    };
+    match &prelude[at] {
+        MirInstr::LoadPlace { place, .. } | MirInstr::MakeRef { place, .. } => owned(place),
+        MirInstr::UseVar { var, mode, .. } if *mode != UseMode::Move && !released(*var) => {
+            vec![MirPlace::root(*var, var_tys.get(var).cloned())]
+        }
+        MirInstr::CopyValue { value, .. }
+        | MirInstr::ReadRef {
+            reference: value, ..
+        }
+        | MirInstr::GetField { base: value, .. } => element_owners(prelude, *value, var_tys),
+        MirInstr::Index {
+            base_place: Some(place),
+            ..
+        }
+        | MirInstr::MethodCall {
+            recv_place: Some(place),
+            reference_result: Some(_),
+            ..
+        } => owned(place),
+        MirInstr::Index { base, .. } => element_owners(prelude, *base, var_tys),
+        MirInstr::MethodCall {
+            recv,
+            reference_result: Some(_),
+            ..
+        } => element_owners(prelude, *recv, var_tys),
+        _ => Vec::new(),
+    }
+}
+
+/// The place the `ref.make` in `prelude` defining `pointer` addresses,
+/// unless it goes through a `ref` slot, whose loan on its origin a later
+/// read of that origin would conflict with.
+fn referenced_place(prelude: &[MirInstr], pointer: Reg) -> Option<MirPlace> {
+    prelude
+        .iter()
+        .rev()
+        .find_map(|instruction| match instruction {
+            MirInstr::MakeRef { dest, place } if *dest == pointer && place.through.is_none() => {
+                Some(place.clone())
+            }
+            _ => None,
+        })
+}
+
+/// The reference a `VariadicPack` holds to its element `register`, as
+/// upstream's call addresses each argument where it lies: a loaded place
+/// ([`borrowed_element`], or [`shared_load`] when something else reads the
+/// load too), a field read out of one ([`borrowed_field`]), the reference
+/// a read goes through ([`read_reference`]), or the variable or read value
+/// a copy copies ([`copied_variable`], [`copied_read`]). `None` for a value
+/// with no place, which the pack binds to a slot of its own.
+fn pack_reference(
+    prelude: &mut Vec<MirInstr>,
+    register: Reg,
+    element: &Ty,
+    mutable: bool,
+    function: &mut MirFunction,
+    location: Option<&SourceSpan>,
+) -> Option<ListElement> {
+    borrowed_element(prelude, register, element, function, location)
+        .or_else(|| borrowed_field(prelude, register, element, mutable, function, location))
+        .or_else(|| read_reference(prelude, register))
+        .or_else(|| copied_variable(prelude, register, element, mutable, function, location))
+        .or_else(|| copied_read(prelude, register, element, mutable, function, location))
+        .or_else(|| shared_load(prelude, register, element, mutable, function, location))
+}
+
+/// An element `register` reads through a reference (`ref.read`, a `ref`
+/// binding's referent), held by that reference.
+fn read_reference(prelude: &[MirInstr], register: Reg) -> Option<ListElement> {
     let at = prelude.iter().rposition(
-        |instruction| matches!(instruction, MirInstr::LoadPlace { dest, .. } if *dest == register),
+        |instruction| matches!(instruction, MirInstr::ReadRef { dest, .. } if *dest == register),
     )?;
+    let MirInstr::ReadRef { reference, .. } = prelude[at] else {
+        return None;
+    };
+    let roots = prelude[..at]
+        .iter()
+        .rev()
+        .find_map(|instruction| match instruction {
+            MirInstr::MakeRef { dest, place } if *dest == reference => {
+                Some(std::iter::once(place.root).chain(place.through).collect())
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    Some(ListElement::Borrowed {
+        pointer: reference,
+        roots,
+    })
+}
+
+/// An element `register` copies out of a variable (`var.use copy`), which
+/// nothing else in `prelude` reads: the variable is addressed instead,
+/// as upstream's call addresses a borrowed argument rather than copying it.
+fn copied_variable(
+    prelude: &mut [MirInstr],
+    register: Reg,
+    element: &Ty,
+    mutable: bool,
+    function: &mut MirFunction,
+    location: Option<&SourceSpan>,
+) -> Option<ListElement> {
+    let at = prelude.iter().rposition(|instruction| {
+        matches!(instruction, MirInstr::UseVar { dest, mode: UseMode::Copy, .. } if *dest == register)
+    })?;
+    let MirInstr::UseVar { var, .. } = prelude[at] else {
+        return None;
+    };
+    let ty = function
+        .var_tys
+        .get(&var)
+        .filter(|ty| *ty == element)?
+        .clone();
+    let mut operands = Vec::new();
+    for instruction in prelude.iter() {
+        crate::mir::verify::instruction_operand_regs(instruction, &mut operands);
+    }
+    if operands.contains(&register) {
+        return None;
+    }
+    let pointer = fresh_register(function, element_pointer_type(element, mutable), location);
+    prelude[at] = MirInstr::MakeRef {
+        dest: pointer,
+        place: MirPlace::root(var, Some(ty)),
+    };
+    orphan(function, register);
+    Some(ListElement::Borrowed {
+        pointer,
+        roots: vec![var],
+    })
+}
+
+/// An element `register` copies out of a value read where it lies (a
+/// reference result's referent), which nothing else in `prelude` reads:
+/// the copy goes and the read value is addressed instead, as upstream's
+/// call passes the reference rather than a copy.
+fn copied_read(
+    prelude: &mut Vec<MirInstr>,
+    register: Reg,
+    element: &Ty,
+    mutable: bool,
+    function: &mut MirFunction,
+    location: Option<&SourceSpan>,
+) -> Option<ListElement> {
+    let at = prelude.iter().rposition(
+        |instruction| matches!(instruction, MirInstr::CopyValue { dest, .. } if *dest == register),
+    )?;
+    let mut operands = Vec::new();
+    for instruction in prelude.iter() {
+        crate::mir::verify::instruction_operand_regs(instruction, &mut operands);
+    }
+    let MirInstr::CopyValue { value, .. } = prelude[at] else {
+        return None;
+    };
+    if operands.contains(&register) || owned_in(prelude, value) {
+        return None;
+    }
+    let copy = prelude.remove(at);
+    let addressed = pack_reference(prelude, value, element, mutable, function, location);
+    if addressed.is_some() {
+        orphan(function, register);
+    } else {
+        prelude.insert(at, copy);
+    }
+    addressed
+}
+
+/// An element `register` loads shallowly from a place something else in
+/// `prelude` reads it from too: the place is addressed beside the load.
+fn shared_load(
+    prelude: &mut Vec<MirInstr>,
+    register: Reg,
+    element: &Ty,
+    mutable: bool,
+    function: &mut MirFunction,
+    location: Option<&SourceSpan>,
+) -> Option<ListElement> {
+    let at = prelude.iter().rposition(|instruction| {
+        matches!(instruction, MirInstr::LoadPlace { dest, place }
+            if *dest == register && place.ty.as_ref() == Some(element))
+    })?;
     let MirInstr::LoadPlace { place, .. } = &prelude[at] else {
         return None;
     };
-    let released = prelude[at + 1..]
-        .iter()
-        .any(|instruction| match instruction {
-            MirInstr::DropVar { var, .. } => *var == place.root,
-            MirInstr::DropPlace { place: dropped, .. } => dropped.root == place.root,
-            _ => false,
-        });
-    (!released).then_some(place)
+    let place = place.clone();
+    let roots = std::iter::once(place.root).chain(place.through).collect();
+    let pointer = fresh_register(function, element_pointer_type(element, mutable), location);
+    prelude.insert(
+        at + 1,
+        MirInstr::MakeRef {
+            dest: pointer,
+            place,
+        },
+    );
+    Some(ListElement::Borrowed { pointer, roots })
+}
+
+/// A field `register` reads out of a value loaded from a place (`t[0].v`
+/// through a reference result), addressed where it lies instead: the
+/// load becomes the `ref.make` of the field's place and the `field.get`
+/// goes, as upstream's call addresses the field it passes. Each load and
+/// read in the chain must be read by nothing else in `prelude`.
+fn borrowed_field(
+    prelude: &mut Vec<MirInstr>,
+    register: Reg,
+    element: &Ty,
+    mutable: bool,
+    function: &mut MirFunction,
+    location: Option<&SourceSpan>,
+) -> Option<ListElement> {
+    let mut operands = Vec::new();
+    for instruction in prelude.iter() {
+        crate::mir::verify::instruction_operand_regs(instruction, &mut operands);
+    }
+    let reads = |reg: Reg| operands.iter().filter(|&&operand| operand == reg).count();
+    if reads(register) != 0 {
+        return None;
+    }
+    let mut fields = Vec::new();
+    let mut extracts = Vec::new();
+    let mut current = register;
+    let load = loop {
+        let at = prelude.iter().rposition(|instruction| {
+            matches!(instruction,
+                MirInstr::GetField { dest, .. } | MirInstr::LoadPlace { dest, .. }
+                    if *dest == current)
+        })?;
+        match &prelude[at] {
+            MirInstr::GetField { base, field, .. } if reads(*base) == 1 => {
+                fields.push((field.clone(), function.reg_types.get(&current.0)?.clone()));
+                extracts.push(at);
+                current = *base;
+            }
+            MirInstr::LoadPlace { .. } if !fields.is_empty() => break at,
+            _ => return None,
+        }
+    };
+    let MirInstr::LoadPlace { place, .. } = &prelude[load] else {
+        return None;
+    };
+    let mut place = place.clone();
+    for (field, ty) in fields.into_iter().rev() {
+        place.project(Proj::Field(field), ty);
+    }
+    if place.ty.as_ref() != Some(element) {
+        return None;
+    }
+    let roots = Vec::new();
+    let pointer = fresh_register(function, element_pointer_type(element, mutable), location);
+    let loaded = std::mem::replace(
+        &mut prelude[load],
+        MirInstr::MakeRef {
+            dest: pointer,
+            place,
+        },
+    );
+    if let MirInstr::LoadPlace { dest, .. } = loaded {
+        orphan(function, dest);
+    }
+    extracts.sort_unstable_by(|left, right| right.cmp(left));
+    for at in extracts {
+        if let MirInstr::GetField { dest, .. } = prelude.remove(at) {
+            orphan(function, dest);
+        }
+    }
+    Some(ListElement::Borrowed { pointer, roots })
 }
 
 /// The element of a `read` collector the call borrows where it lies: the
@@ -1095,7 +1442,16 @@ fn borrowed_element(
         dest: pointer,
         place,
     };
+    orphan(function, register);
     Some(ListElement::Borrowed { pointer, roots })
+}
+
+/// Retype `register`, whose defining instruction a collector's
+/// construction replaced, as `None`: every register keeps a type, and one
+/// no instruction defines must not name a binder only an unrolled
+/// `comptime for` body closes.
+fn orphan(function: &mut MirFunction, register: Reg) {
+    function.reg_types.insert(register.0, Ty::none());
 }
 
 /// The caller's tables, which a `VariadicList` a call builds extends, its

@@ -5073,10 +5073,8 @@ impl Checker {
         let ExprKind::Identifier(binding) = &source.kind else {
             return None;
         };
-        let Some(TyKind::VariadicPack(element)) = self.lookup(binding).map(Ty::kind) else {
-            return None;
-        };
-        let element = mojito_types::types::pack_spread(std::slice::from_ref(element))?;
+        let binding_ty = self.lookup(binding)?;
+        let element = mojito_types::types::collector_pack_spread(binding_ty)?;
         let TyKind::Param { binder, .. } = element.kind() else {
             return None;
         };

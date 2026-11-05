@@ -383,6 +383,11 @@ impl FnLowering<'_> {
             } => self.lower_make_tuple(ctx, *dest, elems, element_types.as_deref()),
             MirInstr::MakeStruct { dest, fields } => self.lower_struct_create(ctx, *dest, fields),
             MirInstr::MakeArray { dest, elems } => self.lower_array_create(ctx, *dest, elems),
+            MirInstr::MakeRefPack { dest, elems } => self.lower_ref_pack_create(ctx, *dest, elems),
+            MirInstr::LoadIndirect { dest, .. } => Err(self.unsupported_reg(
+                "a `kgen.struct.load_indirect` the elaborator left".into(),
+                *dest,
+            )),
             MirInstr::ArrayRepeat { dest, value } => self.lower_array_repeat(ctx, *dest, *value),
             MirInstr::ArrayGet { dest, array, index } => {
                 self.lower_array_get(ctx, *dest, *array, index)

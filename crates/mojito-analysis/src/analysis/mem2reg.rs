@@ -60,7 +60,7 @@ use mojito_mir::mir::{
     region_exit, renumber_block_slots, retire_slots, try_raises_mut,
 };
 use mojito_symbol::symbol::is_initializer_symbol;
-use mojito_types::types::Ty;
+use mojito_types::types::{Ty, TyKind, erase_origins};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -362,16 +362,26 @@ impl Facts {
                     .iter()
                     .any(|(_, mention)| matches!(mention, Mention::Store(_)));
         let identity = typed.is_some_and(|ty| declarations.copy_is_identity(ty));
+        // A reference pack's origin is erased in the slot a split
+        // `VariadicPack` leaves, so its values match the slot modulo it.
+        let slot_typed = |register: &Reg| {
+            let found = function.reg_types.get(&register.0);
+            found == typed
+                || found.zip(typed).is_some_and(|(found, typed)| {
+                    matches!(typed.kind(), TyKind::LitRefPack { .. })
+                        && erase_origins(found) == erase_origins(typed)
+                })
+        };
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
             && (function_typed || stores_closures || identity)
             && entry.mentions.iter().all(|(_, mention)| match *mention {
                 Mention::Store(src) => {
-                    function.reg_types.get(&src.0) == typed
+                    slot_typed(&src)
                         && self.definitions.get(src.0 as usize) == Some(&1)
                         && (identity || self.reads.get(src.0 as usize) == Some(&1))
                 }
-                Mention::Read { dest } => function.reg_types.get(&dest.0) == typed,
+                Mention::Read { dest } => slot_typed(&dest),
                 Mention::CalleeRead { dest } => {
                     callable_value && function.reg_types.get(&dest.0) == typed
                 }

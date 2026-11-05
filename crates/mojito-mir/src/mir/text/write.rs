@@ -789,6 +789,10 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("reference", reg_value(*reference)),
             ],
         ),
+        MirInstr::LoadIndirect { dest, pack } => record(
+            tag,
+            &[("dest", reg_value(*dest)), ("pack", reg_value(*pack))],
+        ),
         MirInstr::CopyValue {
             dest,
             value,
@@ -1356,7 +1360,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::MakeStruct { dest, fields } => {
             record(tag, &[("dest", reg_value(*dest)), ("fields", regs(fields))])
         }
-        MirInstr::MakeArray { dest, elems } => {
+        MirInstr::MakeArray { dest, elems } | MirInstr::MakeRefPack { dest, elems } => {
             record(tag, &[("dest", reg_value(*dest)), ("elems", regs(elems))])
         }
         MirInstr::ArrayRepeat { dest, value } => record(

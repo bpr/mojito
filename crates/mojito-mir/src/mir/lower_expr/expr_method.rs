@@ -449,14 +449,50 @@ impl<'a> Flatten<'a> {
             let storage = self.simd_storage_operand(value, call.location());
             return Some(self.builtin_cast(call.location(), storage, Ty::index()));
         }
-        // A heterogeneous collector's `get_loaded_kgen_pack()` is the
-        // collector itself.
+        // A heterogeneous collector's `get_loaded_kgen_pack()` loads a
+        // `VariadicPack`'s elements through its references
+        // (`kgen.struct.load_indirect`), and is an owned collector's storage
+        // itself.
+        let collector = object
+            .ty()
+            .filter(mojito_types::types::is_heterogeneous_collector);
         if method == "get_loaded_kgen_pack"
-            && object
-                .ty()
-                .is_some_and(|ty| mojito_types::types::is_heterogeneous_collector(&ty))
+            && let Some(collector) = collector
         {
-            return Some(self.expr(object));
+            let Some(loaded) = mojito_types::types::loaded_pack_type(&collector) else {
+                return Some(self.expr(object));
+            };
+            let TyKind::Tuple(elements) = loaded.kind() else {
+                return Some(self.expr(object));
+            };
+            let references_ty: Ty = TyKind::LitRefPack {
+                elements: elements.clone(),
+                origin: mojito_types::origin::PointerOrigin::Untracked { mutable: false },
+            }
+            .into();
+            // The pack's references are read where the collector lies,
+            // without copying the pack.
+            let references = self.fresh_typed(call.location(), None, references_ty.clone());
+            if let Some(mut place) = self.simple_place(object) {
+                place.project(Proj::Field("_value".to_string()), references_ty);
+                self.emit(MirInstr::LoadPlace {
+                    dest: references,
+                    place,
+                });
+            } else {
+                let pack = self.expr(object);
+                self.emit(MirInstr::GetField {
+                    dest: references,
+                    base: pack,
+                    field: "_value".to_string(),
+                });
+            }
+            let dest = self.fresh_typed(call.location(), None, loaded);
+            self.emit(MirInstr::LoadIndirect {
+                dest,
+                pack: references,
+            });
+            return Some(dest);
         }
         None
     }

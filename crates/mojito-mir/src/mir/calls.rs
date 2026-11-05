@@ -994,10 +994,10 @@ impl<'a> Flatten<'a> {
             return (self.transfer(operand, moved), None);
         }
         let Some(place) = self.simple_place(operand).filter(|place| {
-            matches!(
-                place.ty.as_ref().map(Ty::kind),
-                Some(TyKind::VariadicPack(_))
-            )
+            place.ty.as_ref().is_some_and(|ty| {
+                matches!(ty.kind(), TyKind::VariadicPack(_))
+                    || mojito_types::types::variadic_pack_owned(ty.kind()).is_some()
+            })
         }) else {
             return (self.expr(expression), None);
         };

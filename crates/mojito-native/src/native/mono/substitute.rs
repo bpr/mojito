@@ -6,7 +6,7 @@ use super::*;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_checked::declaration::AssociatedParameter;
 use mojito_hir::hir::VarId;
-use mojito_mir::mir::variadic_list::FrameTables;
+use mojito_mir::mir::variadics::FrameTables;
 use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
     walk_instruction_mut,
@@ -763,6 +763,14 @@ fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
     }
     match arg {
         TyArg::Ty(ty) => names_outside_structs(ty, &bindings.removed),
+        // A pack bound as one list of types (`VariadicPack`'s) is never
+        // erased whole: each type substitutes as a tuple's element does.
+        TyArg::Val(CtValue::Tuple(values))
+            if !values.is_empty()
+                && values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
+        {
+            false
+        }
         TyArg::Val(_) => {
             let holder = TyKind::Struct(String::new(), vec![arg.clone()]).into();
             bindings
@@ -1219,13 +1227,13 @@ fn array_literal_construction(
     length: i64,
     frame: &mut FrameSlots<'_>,
 ) -> Vec<MirInstr> {
-    let built = mojito_mir::mir::variadic_list::build_variadic_list(
+    let built = mojito_mir::mir::variadics::build_variadic_list(
         frame,
         element,
         owned,
         elements
             .into_iter()
-            .map(mojito_mir::mir::variadic_list::ListElement::Value)
+            .map(mojito_mir::mir::variadics::ListElement::Value)
             .collect(),
     );
     let none = frame.fresh_register(Ty::none());

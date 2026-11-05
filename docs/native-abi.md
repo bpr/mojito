@@ -211,6 +211,11 @@ Rules:
   iterator narrows its copy of the span past each element it moves out,
   and the list's `__deinit__` destroys the elements the span still covers,
   last to first, through their addresses.
+- A `read` heterogeneous collector is the bundled `VariadicPack`, an
+  ordinary struct whose one field is upstream's `!lit.ref.pack`: one
+  target pointer per element, in order (`8 × n`/8). The call builds it
+  in MIR over the caller's own places, or caller slots it binds an rvalue
+  element to and destroys after the call.
 - `Variant[T1..Tn]` is a `u32` tag at offset 0 (the alternative's index in
   the type — the ordering is part of the type) with every payload overlaid at
   the first offset aligned to the widest alternative; size pads to

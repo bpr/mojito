@@ -244,6 +244,9 @@ impl FnLowering<'_> {
         }
         let elements = match self.func.reg_types.get(&base.0).map(Ty::kind) {
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) => elements.clone(),
+            Some(TyKind::LitRefPack { elements, origin }) => {
+                super::places::ref_pack_pointers(elements, origin)
+            }
             other => {
                 return Err(self.unsupported_reg(
                     format!(

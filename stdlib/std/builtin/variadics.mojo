@@ -45,11 +45,12 @@
 # `VariadicList`'s `write_repr_to` write the text upstream's `FormatStruct`
 # builder writes, directly.
 #
-# `VariadicPack`, the heterogeneous collector, is upstream's declaration
-# over its `!lit.ref.pack` field, but no call builds one yet: a
-# `*args: *Ts` collector is still the tuple of its elements (roadmap
-# R1921), and `get_as_kgen_pack`/`get_loaded_kgen_pack` and the members
-# they read are not declared (R1922). Otherwise it differs from upstream's:
+# `VariadicPack`, the heterogeneous collector a `read` `*args: *Ts` is in
+# its body, is upstream's declaration over its `!lit.ref.pack` field, which
+# the call builds over its arguments' references; an owned `var *args: *Ts`
+# collector is still the tuple of its elements (roadmap R1927), and
+# `get_as_kgen_pack`/`get_loaded_kgen_pack` and the members they read are
+# not declared (R1922). Otherwise it differs from upstream's:
 # - the `Copyable` conformance has no `else` message (R1115), and the copy
 #   constructor is not declared, so `copy` is the field-wise copy (R1832);
 # - `element_types` has no `@deprecated(use=Ts)` (R1925);

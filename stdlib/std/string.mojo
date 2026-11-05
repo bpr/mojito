@@ -699,18 +699,13 @@ struct String(
         self.data = unsafe_alloc[Byte](self.cap)
 
     # Upstream's sequence of `Writable` arguments. Its body sizes the buffer
-    # first and writes through `VariadicPack._write_to`, which the
-    # compiler's pack does not declare; this writes each element in turn.
+    # first; this writes through `VariadicPack._write_to` alone.
     # A single positional argument is the compiler's stringify conversion.
     def __init__[
         *Ts: Writable,
     ](out self, *args: *Ts, sep: StaticString = "", end: StaticString = ""):
         self = String()
-        comptime for i in range(args.__len__()):
-            comptime if i > 0:
-                self.write(sep)
-            args[i].write_to(self)
-        self.write(end)
+        args._write_to(self, end=end, sep=sep)
 
     # 2026-08 stabilization: pre-sized construction. Capacity is a real byte
     # buffer here (the VM's literal/copy bridges manage their own storage).

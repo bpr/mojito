@@ -247,6 +247,7 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     let mut closures = HashSet::new();
     let mut creates = HashMap::new();
     let mut extracts = HashMap::new();
+    let mut reference_packs = HashMap::new();
     let mut host_comparisons = HashSet::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
@@ -279,6 +280,9 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 MirInstr::GetField { dest, base, field } => {
                     extracts.insert(dest.0, (*base, field.clone()));
                 }
+                MirInstr::MakeRefPack { dest, elems } => {
+                    reference_packs.insert(dest.0, elems.clone());
+                }
                 _ => {}
             }
         }
@@ -288,6 +292,21 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
         declarations,
         creates,
         extracts,
+    };
+    // An element read out of a `lit.ref.pack.create` at a constant index
+    // is that element's reference: upstream's `lit.ref.pack.extract` fold.
+    let extracted_reference = |instruction: &MirInstr| match instruction {
+        MirInstr::Index {
+            base,
+            index,
+            call: None,
+            intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
+            ..
+        } => {
+            let at = usize::try_from(constant(*index)?.index_attribute()?).ok()?;
+            reference_packs.get(&base.0)?.get(at).copied()
+        }
+        _ => None,
     };
     // A copy of a closure copies its pointers.
     let copied_closure = |instruction: &MirInstr| match instruction {
@@ -336,7 +355,8 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 instruction
                     .forwarded_operand(&constant, reg_types, declarations)
                     .or_else(|| copied_closure(instruction))
-                    .or_else(|| structs.extracted(instruction)),
+                    .or_else(|| structs.extracted(instruction))
+                    .or_else(|| extracted_reference(instruction)),
                 results.as_slice(),
             ) {
                 folds.insert(dest.0, operand);

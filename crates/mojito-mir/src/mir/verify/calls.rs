@@ -298,7 +298,9 @@ fn verify_pack_spread(
     };
     match function.reg_types.get(&argument.0).map(Ty::kind) {
         Some(TyKind::VariadicPack(_) | TyKind::Tuple(_) | TyKind::RuntimePack(_)) => {}
-        Some(found) if mojito_types::types::variadic_list_element(found).is_some() => {}
+        Some(found)
+            if mojito_types::types::variadic_list_element(found).is_some()
+                || mojito_types::types::variadic_pack_owned(found).is_some() => {}
         Some(found) => errors.push(format!(
             "{prefix}: spread argument {position} has type {found}, not a pack collector"
         )),

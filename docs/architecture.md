@@ -1286,12 +1286,18 @@ construction in each unrolled copy. A type pack crosses the waist the same way: 
 pack-keyed `def` keeps its body, as upstream's does
 (`is_specializable_declaration` never names one, so no type-pack `def` is
 cloned); the checker
-types it with the collector the compiler's `TyKind::VariadicPack` of the
-symbolic pack (not yet the bundled nominal `VariadicPack`, declared over
-its `!lit.ref.pack` field `TyKind::LitRefPack` but built by no call, R1921), each
-`args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
-length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
-compile time — a `PackQuery::Length` the loop header carries as its bound.
+types a `read` collector (`*args: *Ts`) as the bundled `VariadicPack`
+(`mojito_types::types::variadic_pack_type`, over its `!lit.ref.pack` field
+`TyKind::LitRefPack`), and an owned one (`var *args: *Ts`) as the
+compiler's `TyKind::VariadicPack` of the symbolic pack, each `args[i]` the
+dependent `Ts[i]` (`ParamKind::ListGet`; the nominal pack's
+`__getitem_param__`), and the pack's length — `args.__len__()`,
+`Ts.length`, `len(Ts)`, as the pin reads them at compile time — a
+`PackQuery::Length` the loop header carries as its bound. A
+`VariadicPack`'s `__len__()` is that query wherever it is spelled, as the
+pin resolves the register-passable receiver's call in a parameter context
+to its static overload (`Checker::collector_pack`); the general rule for
+any register-passable struct is not modelled.
 A type pack is the bundled `TypeList` the pin's pack is: `Ts.length` and
 `Ts[i]` are its `length` and `__getitem_param__` members applied at the
 pack, which the check folds to that query and element;
@@ -1311,8 +1317,15 @@ moved, at the position `MirInstr::Call::spread` names; the ownership
 analysis sees the whole collector lent or moved, and the call passes
 that pack itself, as upstream's call passes the `VariadicPack`: the
 elaborator (`expand_pack_spreads`) checks that the bindings close the pack,
-the argument typed its elements' tuple, and expands only a spread into an
-LLVM intrinsic call into its elements; a spread `inline-parametric` leaves in an
+the argument typed its `VariadicPack` or its elements' tuple, and expands
+only a spread into an LLVM intrinsic call into its elements (the bundled
+`llvm_intrinsic` spreads `args.get_loaded_kgen_pack()`, which lowers to a
+`kgen.struct.load_indirect`, `MirInstr::LoadIndirect`, of the pack's
+references; the elaborator expands it into one `index{TupleStorage}` and
+`ref.read` per element and their `tuple.make`, and `canonicalize` folds an
+extract of a `lit.ref.pack.create` to the element's reference, so the
+post-elaboration pipeline promotes a constant operand to the `immarg` the
+intrinsic needs); a spread `inline-parametric` leaves in an
 inlined body, its collector already bound, is passed the same way. A method
 call carries the same position (`MirInstr::MethodCall::spread`, schema
 1.24). The checker types the spread against the
@@ -2224,27 +2237,39 @@ its call-result slot, argument-anchor slot, or a capturing lambda's
 storage slot (`Flatten::temporary_operand`), so the rewrite passes that
 slot's address, and copy elision's read lend renames the retained place
 to the dying source with the load. A method call, an indirect call, and a
-subscript keep the load (R1918, R1919); so do a read collector's elements
-(R1921), a reference result's copy, which upstream passes as the
-reference itself (R701), and the `divmod` builtin's operands (R1458).
+subscript keep the load (R1918, R1919); so do a reference result's copy,
+which upstream passes as the reference itself (R701), and the `divmod`
+builtin's operands (R1458).
 
 The same pass builds every call's positional collector, as upstream's call
 builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes
 (R1102): once the omitted arguments are written, a call of a callee
-declaring one passes, as its last positional operand, a heterogeneous
-collector's `tuple.make` of its overflow operands, typed a bound type
-pack's elements' tuple under the call's bindings (a binder the call records
-no argument for is read off the operands), or a homogeneous collector's
+declaring one passes, as its last positional operand, a `read`
+heterogeneous collector's `VariadicPack` over references to its overflow
+operands, an owned one's `tuple.make` of them, each typed by a bound type
+pack's elements under the call's bindings (a binder the call records no
+argument for is read off the operands), or a homogeneous collector's
 `VariadicList[T, is_owned]` over pointers to them, and `spread` names that
 operand's position (`mir/call_defaults.rs`'s private `build_collector`).
-A `read` heterogeneous collector holds its elements' values where
-upstream's `VariadicPack` refers to them, so each place an element loads is
-referenced again after the call (`ref.make`), latest-declared owner first:
-the place lives through the call, and owners whose last use that is die
-together in descending `VarId`, as at any one instruction. A call that
+The `VariadicPack` is built as upstream's call builds it
+(`mir::variadics::build_variadic_pack`): a reference per element, their
+`!lit.ref.pack` (`lit.ref.pack.create`, `MirInstr::MakeRefPack`), and the
+`struct.create` of the pack over it, standing for the inlined
+`VariadicPack.__init__`, whose type is
+`mojito_types::types::bound_variadic_pack_type` (the pack's list of
+element types in place of `*Ts`). An element is addressed where it lies
+(the private `pack_reference`): a loaded place or a field read out of one
+becomes the `ref.make` of that place, a read through a reference passes
+the reference, and a variable read by copy is addressed instead. Any other
+element is a value the call binds to a slot of its own, which it destroys
+after the call, as the pin's caller destroys an rvalue element; a value
+read out of a place the call cannot address (a reference result of a
+subscript or method call) keeps that place's owners live through the call.
+Every place an element lies in is kept live past the call, latest-declared
+first, as at any one instruction. A call that
 already spreads the caller's pack (`print(*args)`) passes it as the
 collector and is filled like any other. The list is built as upstream's call and inlined constructor build it
-(`mir::variadic_list::build_variadic_list`, which the elaborator's
+(`mir::variadics::build_variadic_list`, which the elaborator's
 display construction shares): a `ref.make` per element, their
 `!pop.array` (`array.create`, MIR's `TyKind::PopArray`) stored in the
 caller's `__passed_varargs__` slot, as upstream's call stores its
@@ -7419,8 +7444,11 @@ function whose signature, call whose result, or other value has no LLVM
 type, with `LowerKGENToLLVM`'s "failed to convert func signature" and
 "failed to convert call result type"; a function only an elaborator
 request reaches is gone by then. The index reaches the call as an
-element of the intrinsic's loaded pack, so it folds only because `sroa`
-splits a heterogeneous collector of trivial elements and `sccp` folds
+element of the intrinsic's loaded pack, so it folds only because
+`canonicalize` forwards the `lit.ref.pack.create` element reference the
+loaded pack reads, `sroa` splits the `VariadicPack`, `mem-2-reg` promotes
+its reference pack (a slot whose stored value differs from its type only
+in that pack's erased origin) and then the element's slot, and `sccp` folds
 `Int64(n)`, or `is.fpclass`'s class test `a | b` over two typed `comptime`
 bindings, each read as its declared type's constant
 (`Flatten::param_value_register_at`). With the pipeline off, nothing
