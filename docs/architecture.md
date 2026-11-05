@@ -1886,8 +1886,14 @@ bound to a `ref` parameter (`materialized_reference_actual`; when the
 expression already carries `BorrowRefArguments` or a view result's
 `BorrowViewResult`, the owner rides on that adjustment's `materialized` slot,
 and `materialized_borrow_owner` is the one reader), and `lower_call_receiver`
-stores it in its `$mat_r` slot so the result handle roots at real frame
-storage. The `$mat_r` slot establishes the temporary's own loans
+stores it in its storage so the result handle roots at real frame
+storage. Every anchor binds the storage `Flatten::temporary_storage`
+(`mir/call_results.rs`) picks: a memory-only temporary's one call-result slot,
+as upstream's borrowers all sit on its `__call_result_tmp__`, and a
+register-passable one's own hidden slot (`$mat_r`, `$arg_loan_r`,
+`$view_recv_r`, `$conv_view_r`), upstream's `anonymous` materialization; the
+anchor's `EstablishLoans` goes on that storage. The slot establishes the
+temporary's own loans
 (`aggregate_borrows_unmaterialized`, the loan funnel without the slot's
 self-loan), so storage a materialized view borrows outlives every borrower of
 the slot (`it.peek_next().value()`). The slot is lent with the capability the
@@ -5702,10 +5708,12 @@ current Mojo:
   `deinit self` receiver owning droppable storage is copied into a slot
   of its own whose place the call consumes
   (`Flatten::copy_consuming_receiver`), as upstream's `DeinitMem` operand
-  is the copy's temporary. A loan-carrying temporary
-  keeps its `$arg_loan_r` anchor, a materialized borrow source its `$mat_r`
-  slot, and an origin-bearing view at an argument its register, whose
-  provenance keeps the viewed storage live.
+  is the copy's temporary. A loan-carrying memory-only temporary is bound
+  to its call-result slot with its loans on that slot: by its argument
+  anchor where the call lets arguments anchor, and otherwise by
+  `Flatten::loaned_call_result`, so a construction's argument, a condition,
+  a subscript base, or a discarded view destroys it through that slot. A
+  register-passable one keeps its `$arg_loan_r` anchor or `$mat_r` slot.
 - A named place bound to a read parameter (`BorrowReadArgument`) is read
   where it lies, and a memory-only one is passed by address, as upstream
   passes a memory-only `read` argument: `lower_call_operand`

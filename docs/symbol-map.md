@@ -1436,7 +1436,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `read_conversion_source`, the source of an implicit conversion the
   checker marked `ConversionReadsSource` (`read_in_place` for a named
   place, which an index normalization's `__mlir_index__` receiver uses
-  too, else the source's own slot); a taken slot's `UseVar Forward` moves to its call's
+  too, else the source's own slot). `Flatten::temporary_storage` is the
+  storage every borrower of a temporary binds — the call-result slot of a
+  memory-only one, else a hidden slot of the anchor's prefix — and
+  `establish_storage_loans` puts the anchor's loans on it: the argument
+  anchor (`anchor_borrowing_argument`, `$arg_loan_r`), the chained receiver
+  anchor (`anchor_borrowing_temporary`, `$view_recv_r`), a view
+  conversion's (`$conv_view_r`), and every materialized borrow source
+  (`materialize_borrow_slot` and its kin in `mir.rs` and `lower_stmt.rs`,
+  `$mat_r`) use it, and `loaned_call_result` binds a loan-carrying
+  memory-only result no anchor took (`expr_c`, and `temporary_operand`
+  after its anchor); a taken slot's `UseVar Forward` moves to its call's
   setup (`defer_to_setup`). `calls.rs`'s `temporary_operand`,
   `lower_method_receiver` (with `materialize_receiver` for a `ref self`
   over a register result), `load_temporary_field`, and `discard_result`
@@ -3206,8 +3216,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `CtValue::StoreToMem`, which `thaw` stores again; a reference to frame
   storage is rejected. `MirInstr::StoreToMem` (schema 1.56) is emitted by
   `bind_comptime_memory` (`mir/calls.rs`) in a lifted function's own body,
-  for a local `comptime` binding (`bind_comptime_register`) and a `$mat_r`
-  borrow slot (`materialize_borrow_slot`, the reference-context path in
+  for a local `comptime` binding (`bind_comptime_register`) and a lifted
+  `$mat_r` borrow slot (`materialize_borrow_slot`, the reference-context path in
   `mir.rs`); `hidden_slot_place` reads such a slot through its reference.
   Pliron's `store_parameter_value` (`lower/consts.rs`) writes frozen pointer
   memory using checked element layouts and reconstructs nested strings.

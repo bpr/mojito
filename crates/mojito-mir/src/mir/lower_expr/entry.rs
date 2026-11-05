@@ -247,7 +247,8 @@ impl<'a> Flatten<'a> {
             // A temporary source (`f(String("abc"))` at a `StringSpan`
             // parameter) has no place: the checker minted an anonymous owner,
             // and the unconverted value is stored in that owner's hidden
-            // `$mat_r` slot whose place the constructor borrows.
+            // storage (its call-result slot, or a `$mat_r` slot for a
+            // register-passable one) whose place the constructor borrows.
             let adjustments = e.adjustments();
             let mut read_place = None;
             let (argument, source_place) = if let Some(owner) =
@@ -260,7 +261,8 @@ impl<'a> Flatten<'a> {
                     self.f.reg_types.entry(value.0).or_insert(ty);
                 }
                 let value = self.nominal_string_view_source(e, value, &target);
-                self.materialize_borrow_slot(e, owner, value)
+                let indirect = e.unconverted_indirect_result();
+                self.materialize_borrow_slot(e, owner, value, indirect)
             } else {
                 let borrows_source = adjustments.iter().any(|adjustment| {
                     matches!(
@@ -355,30 +357,13 @@ impl<'a> Flatten<'a> {
                 // representation an explicit `var sp = Span(xs)` binding gets.
                 let loans = self.conversion_source_loans(e, source_place);
                 if !loans.is_empty() {
-                    let view_ty = self.f.reg_types.get(&dest.0).cloned();
-                    let variable = self.var(&format!("$conv_view_r{}", dest.0));
-                    if let Some(ty) = view_ty.clone() {
-                        self.var_types.insert(variable, ty);
-                    }
-                    self.emit(MirInstr::DefVar {
-                        var: variable,
-                        src: dest,
-                        binding_ty: view_ty.clone(),
-                        in_place: false,
-                    });
-                    let marker =
-                        self.fresh_typed(e.location(), Some(loans[0].place.root), Ty::none());
-                    self.emit(MirInstr::EstablishLoans {
-                        reference: variable,
-                        loans: loans.clone(),
-                        marker,
-                        dest_interior: None,
-                    });
+                    let variable =
+                        self.temporary_storage(e, dest, e.indirect_result(), "$conv_view_r");
+                    let view_ty = self.var_types.get(&variable).cloned();
+                    self.establish_storage_loans(e, variable, loans.clone());
                     if self.simple_place(e).is_none() {
-                        self.conversion_view_loans
-                            .insert(e.address(), loans.clone());
+                        self.conversion_view_loans.insert(e.address(), loans);
                     }
-                    self.aggregate_loans.insert(variable, loans);
                     let read = match view_ty {
                         Some(ty) => self.fresh_typed(e.location(), Some(variable), ty),
                         None => self.fresh(e.location(), Some(variable)),

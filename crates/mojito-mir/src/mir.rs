@@ -3236,7 +3236,7 @@ struct Flatten<'a> {
     /// copied such a pointer). Loans say what a pointer keeps alive; this
     /// says where it points.
     pointer_addresses: HashMap<VarId, MirPlace>,
-    /// The loans a view-constructor conversion's `$conv_view_r` slot holds
+    /// The loans a view-constructor conversion's storage (`$conv_view_r` or its call-result slot) holds
     /// on a source that is not a named place (an accessor's reference result,
     /// an intrinsic subscript element), keyed by the converted expression's
     /// HIR address: a binding of the converted value inherits them. An entry
@@ -3739,9 +3739,9 @@ impl<'a> Flatten<'a> {
                         .entry(value.0)
                         .or_insert_with(|| ty.clone());
                 }
-                let variable = self.var(&format!("$mat_r{}", value.0));
-                match ty {
+                let variable = match ty {
                     Some(ty) if self.enclosing_binders.lifted => {
+                        let variable = self.var(&format!("$mat_r{}", value.0));
                         self.bind_comptime_memory(
                             expression.location(),
                             variable,
@@ -3749,19 +3749,13 @@ impl<'a> Flatten<'a> {
                             ty,
                             mojito_types::origin::Mutability::Mutable,
                         );
+                        variable
                     }
-                    ty => {
-                        if let Some(ty) = ty.clone() {
-                            self.var_types.insert(variable, ty);
-                        }
-                        self.emit(MirInstr::DefVar {
-                            var: variable,
-                            src: value,
-                            binding_ty: ty,
-                            in_place: false,
-                        });
+                    _ => {
+                        let indirect = !constant && expression.unconverted_indirect_result();
+                        self.temporary_storage(expression, value, indirect, "$mat_r")
                     }
-                }
+                };
                 self.owner_vars.insert(owner, variable);
                 variable
             };
@@ -4244,7 +4238,8 @@ impl<'a> Flatten<'a> {
             && let Some(owner) = binding
         {
             let value = self.param_value_register(expression, value);
-            if let (_, Some(place)) = self.materialize_borrow_slot(expression, owner, value) {
+            if let (_, Some(place)) = self.materialize_borrow_slot(expression, owner, value, false)
+            {
                 return place;
             }
         }

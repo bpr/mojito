@@ -2314,22 +2314,12 @@ impl<'a> Flatten<'a> {
                     // materialized the slot through `reference_handle`; only
                     // store the value if this is its first materialization.
                     if !self.owner_vars.contains_key(&owner) {
-                        let ty = self
-                            .f
-                            .reg_types
-                            .get(&source.0)
-                            .cloned()
-                            .or_else(|| value.ty());
-                        let hidden = self.var(&format!("$mat_r{}", source.0));
-                        if let Some(ty) = ty.clone() {
-                            self.var_types.insert(hidden, ty);
-                        }
-                        self.emit(MirInstr::DefVar {
-                            var: hidden,
-                            src: source,
-                            binding_ty: ty,
-                            in_place: false,
-                        });
+                        let hidden = self.temporary_storage(
+                            value,
+                            source,
+                            value.indirect_result(),
+                            "$mat_r",
+                        );
                         self.owner_vars.insert(owner, hidden);
                     }
                 }
@@ -2947,22 +2937,8 @@ impl<'a> Flatten<'a> {
             && let Some(owner) = plan.first().and_then(|element| element.temporary)
             && !self.owner_vars.contains_key(&owner)
         {
-            let ty = self
-                .f
-                .reg_types
-                .get(&tuple.0)
-                .cloned()
-                .or_else(|| value.ty());
-            let hidden = self.var(&format!("$mat_r{}", tuple.0));
-            if let Some(ty) = ty.clone() {
-                self.var_types.insert(hidden, ty);
-            }
-            self.emit(MirInstr::DefVar {
-                var: hidden,
-                src: tuple,
-                binding_ty: ty.clone(),
-                in_place: false,
-            });
+            let hidden = self.temporary_storage(value, tuple, value.indirect_result(), "$mat_r");
+            let ty = self.var_types.get(&hidden).cloned();
             self.owner_vars.insert(owner, hidden);
             // The slot now owns the tuple, so its elements are read from
             // the slot, not from the register the store consumed.

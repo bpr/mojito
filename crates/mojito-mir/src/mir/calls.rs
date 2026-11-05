@@ -1567,7 +1567,7 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
             )
         });
-        match self.call_result(receiver, value, !owned && !read) {
+        match self.call_result(receiver, value) {
             CValue::Value(value) if owned || read || !receiver.is_fresh_temporary() => {
                 (value, None)
             }
@@ -1695,8 +1695,9 @@ impl<'a> Flatten<'a> {
         self.materialize_borrow_source(identifier, owner).1
     }
 
-    /// Store a materialized borrow-source temporary in its hidden slot
-    /// (`$mat_r`, registered under the checker-minted owner) and return the
+    /// Store a materialized borrow-source temporary in its storage
+    /// ([`Self::materialize_borrow_slot`], registered under the
+    /// checker-minted owner) and return the
     /// value plus the slot's place: a temporary bound to a `ref [origin]`
     /// parameter, or the temporary receiver of a `ref[self]`-returning method
     /// (`FormatStruct(writer, "P").params(...)`), borrows real frame storage
@@ -1709,32 +1710,33 @@ impl<'a> Flatten<'a> {
         owner: mojito_types::origin::OwnerId,
     ) -> (Reg, Option<MirPlace>) {
         let value = self.expr(expression);
-        self.materialize_borrow_slot(expression, owner, value)
+        self.materialize_borrow_slot(expression, owner, value, expression.indirect_result())
     }
 
-    /// Bind an already-lowered temporary `value` into its owner's hidden
-    /// `$mat_r` slot (once per owner) and return the value plus the slot's
-    /// place. The conversion lowering uses this with the *unconverted* source
+    /// Bind an already-lowered temporary `value` into its owner's storage
+    /// (once per owner) and return the value plus the slot's place: its
+    /// call-result slot when its producer returned it through memory
+    /// (`indirect`), else a `$mat_r` slot ([`Self::temporary_storage`]). The conversion lowering uses this with the *unconverted* source
     /// so the slot holds what the view constructor borrows, not the view.
     pub(super) fn materialize_borrow_slot(
         &mut self,
         expression: Node<'a>,
         owner: mojito_types::origin::OwnerId,
         value: Reg,
+        indirect: bool,
     ) -> (Reg, Option<MirPlace>) {
         let variable = if let Some(variable) = self.owner_vars.get(&owner).copied() {
             variable
         } else {
-            let ty = self
-                .f
-                .reg_types
-                .get(&value.0)
-                .cloned()
-                .or_else(|| expression.ty());
-            let variable = self.var(&format!("$mat_r{}", value.0));
             if self.enclosing_binders.lifted
-                && let Some(ty) = ty.clone()
+                && let Some(ty) = self
+                    .f
+                    .reg_types
+                    .get(&value.0)
+                    .cloned()
+                    .or_else(|| expression.ty())
             {
+                let variable = self.var(&format!("$mat_r{}", value.0));
                 self.bind_comptime_memory(
                     expression.location(),
                     variable,
@@ -1745,32 +1747,14 @@ impl<'a> Flatten<'a> {
                 self.owner_vars.insert(owner, variable);
                 return self.read_borrow_slot(expression, value, variable);
             }
-            if let Some(ty) = ty.clone() {
-                self.var_types.insert(variable, ty);
-            }
-            self.emit(MirInstr::DefVar {
-                var: variable,
-                src: value,
-                binding_ty: ty,
-                in_place: false,
-            });
+            let variable = self.temporary_storage(expression, value, indirect, "$mat_r");
             self.owner_vars.insert(owner, variable);
             // The slot owns the temporary, and the temporary may itself view
             // other storage (`StringSpan(s)`, a view-returning call): the
             // slot carries those loans, so the viewed storage outlives every
             // borrower of the slot rather than dying at the temporary's call.
             let loans = self.aggregate_borrows_unmaterialized(expression);
-            if let Some(first) = loans.first() {
-                let marker =
-                    self.fresh_typed(expression.location(), Some(first.place.root), Ty::none());
-                self.aggregate_loans.insert(variable, loans.clone());
-                self.emit(MirInstr::EstablishLoans {
-                    reference: variable,
-                    loans,
-                    marker,
-                    dest_interior: None,
-                });
-            }
+            self.establish_storage_loans(expression, variable, loans);
             variable
         };
         self.read_borrow_slot(expression, value, variable)
@@ -1907,15 +1891,17 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// Anchor a loan-carrying temporary *argument* in a hidden retained slot
-    /// (`$arg_loan_r`) whose loans keep its borrowed sources alive through the
-    /// consuming call, and read it back out of that slot, as upstream
-    /// materializes a temporary in memory and the call borrows it: the slot
-    /// owns the value, so the argument is a shallow read of it rather than
-    /// the register the slot consumed, and the statement-end `KeepAlive`
-    /// flush (the temporary's upstream lifetime is the full statement)
-    /// extends the slot's — and so the loans' — liveness across the call.
-    /// Returns that read, or `None` when the temporary needs no anchor.
+    /// Anchor a loan-carrying temporary *argument* in storage whose loans
+    /// keep its borrowed sources alive through the consuming call. A
+    /// temporary returned through memory is anchored in its call-result
+    /// slot, which the call reads or takes by the operand's convention
+    /// ([`Self::operand_c`]), as upstream's call borrows or consumes its
+    /// `__call_result_tmp__`: the slot dies when the call returns, or is the
+    /// callee's. A register-passable one is materialized in a `$arg_loan_r`
+    /// slot and read back out of it, the argument a shallow read of the
+    /// slot, whose statement-end `KeepAlive` flush extends the slot's — and
+    /// so the loans' — liveness across the call. Returns the operand, or
+    /// `None` when the temporary needs no anchor.
     /// Anchor a temporary argument that borrows caller storage (a
     /// constructor or call result holding references/pointers into live
     /// places) in a hidden slot, as a chained view receiver is, or its
@@ -1940,6 +1926,7 @@ impl<'a> Flatten<'a> {
         value: Reg,
         adjustments: &[mojito_checked::checked::SemanticAdjustment],
         converted: bool,
+        reads: bool,
     ) -> Option<Reg> {
         let subscript_view = matches!(
             expression.op(),
@@ -1967,7 +1954,7 @@ impl<'a> Flatten<'a> {
         {
             let loans = self.aggregate_borrows(expression);
             if !loans.is_empty() {
-                return Some(self.anchor_borrowing_argument(expression, value, loans));
+                return Some(self.anchor_borrowing_argument(expression, value, loans, reads));
             }
         }
         None
@@ -1978,46 +1965,26 @@ impl<'a> Flatten<'a> {
         expression: Node<'a>,
         value: Reg,
         loans: Vec<MirLoan>,
+        reads: bool,
     ) -> Reg {
-        let view_ty = self
-            .f
-            .reg_types
-            .get(&value.0)
-            .cloned()
-            .or_else(|| expression.ty());
-        let variable = self.var(&format!("$arg_loan_r{}", value.0));
-        if let Some(ty) = view_ty.clone() {
-            self.var_types.insert(variable, ty);
+        if expression.indirect_result() {
+            let slot = self.temporary_storage(expression, value, true, "$arg_loan_r");
+            self.establish_storage_loans(expression, slot, loans);
+            return self.operand_c(expression, CValue::Slot(slot), reads);
         }
-        self.emit(MirInstr::DefVar {
-            var: variable,
-            src: value,
-            binding_ty: view_ty.clone(),
-            in_place: false,
-        });
-        let marker = self.fresh_typed(expression.location(), Some(loans[0].place.root), Ty::none());
-        self.emit(MirInstr::EstablishLoans {
-            reference: variable,
-            loans: loans.clone(),
-            marker,
-            dest_interior: None,
-        });
-        self.aggregate_loans.insert(variable, loans);
-        self.pending_argument_anchors.push(variable);
-        let place = MirPlace::root(variable, view_ty);
-        let read = self.fresh_typed(
-            expression.location(),
-            Some(variable),
-            place.ty.clone().unwrap_or_else(Ty::error),
-        );
-        self.emit(MirInstr::LoadPlace { dest: read, place });
+        let (read, place) =
+            self.anchor_borrowing_temporary(expression, value, loans, "$arg_loan_r");
+        self.pending_argument_anchors
+            .extend(place.map(|place| place.root));
         read
     }
 
     /// Bind a loan-carrying temporary into a hidden retained slot whose loans
     /// keep its borrowed sources alive and conflict-checked for the slot's
     /// lifetime, and read the value back out of that slot: the chained view
-    /// receiver anchor (`$view_recv_r`). Without the anchor, ownership sees
+    /// receiver anchor, the temporary's call-result slot when returned
+    /// through memory and otherwise `prefix`'s
+    /// ([`Self::temporary_storage`]). Without the anchor, ownership sees
     /// the borrowed source dead immediately after the producing expression and
     /// drop elaboration frees it before the consuming call runs.
     fn anchor_borrowing_temporary(
@@ -2027,30 +1994,10 @@ impl<'a> Flatten<'a> {
         loans: Vec<MirLoan>,
         prefix: &str,
     ) -> (Reg, Option<MirPlace>) {
-        let view_ty = self
-            .f
-            .reg_types
-            .get(&value.0)
-            .cloned()
-            .or_else(|| expression.ty());
-        let variable = self.var(&format!("{prefix}{}", value.0));
-        if let Some(ty) = view_ty.clone() {
-            self.var_types.insert(variable, ty);
-        }
-        self.emit(MirInstr::DefVar {
-            var: variable,
-            src: value,
-            binding_ty: view_ty.clone(),
-            in_place: false,
-        });
-        let marker = self.fresh_typed(expression.location(), Some(loans[0].place.root), Ty::none());
-        self.emit(MirInstr::EstablishLoans {
-            reference: variable,
-            loans: loans.clone(),
-            marker,
-            dest_interior: None,
-        });
-        self.aggregate_loans.insert(variable, loans);
+        let variable =
+            self.temporary_storage(expression, value, expression.indirect_result(), prefix);
+        self.establish_storage_loans(expression, variable, loans);
+        let view_ty = self.var_types.get(&variable).cloned();
         let place = MirPlace::root(variable, view_ty);
         let read = self.fresh_typed(
             expression.location(),
@@ -2341,12 +2288,25 @@ impl<'a> Flatten<'a> {
     /// its call-result slot, and a loan-carrying temporary anchors its loans
     /// through the call ([`Self::anchor_temporary_argument`]).
     fn temporary_operand(&mut self, expression: Node<'a>, converted: bool, reads: bool) -> Reg {
-        match self.operand_expr_c(expression) {
-            CValue::Value(value) => self
-                .anchor_temporary_argument(expression, value, expression.adjustments(), converted)
-                .unwrap_or(value),
-            slot @ CValue::Slot(_) => self.operand_c(expression, slot, reads),
-        }
+        let value = match self.operand_expr_c(expression) {
+            CValue::Value(value) => {
+                if let Some(read) = self.anchor_temporary_argument(
+                    expression,
+                    value,
+                    expression.adjustments(),
+                    converted,
+                    reads,
+                ) {
+                    return read;
+                }
+                match self.loaned_call_result(expression, value) {
+                    Some(slot) => CValue::Slot(slot),
+                    None => return value,
+                }
+            }
+            slot @ CValue::Slot(_) => slot,
+        };
+        self.operand_c(expression, value, reads)
     }
 
     /// Materialize `value`, a fresh temporary its call returned in

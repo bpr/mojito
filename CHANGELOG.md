@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A memory-only temporary that carries a loan keeps it on its one
+  call-result slot, as upstream's borrowers sit on its
+  `__call_result_tmp__`: the argument, receiver, view-conversion, and
+  materialized-borrow anchors bind that slot (`Flatten::temporary_storage`)
+  instead of a second hidden binding, and a loan-carrying result no anchor
+  took gets it too (`Flatten::loaned_call_result`), so
+  `Bool(String("").codepoint_slices().peek_next())` destroys its
+  `Optional[StringSpan]` through the slot (R1418). An anchored read
+  argument now dies when its call returns, as at the pin, and an owning
+  parameter takes the slot instead of sharing it, so a loan-carrying
+  `Maybe(Span(xs))` is no longer destroyed twice (R1331, R123); the
+  unpack-assign probe `a, b = pair(a.rstrip())` runs (R166). The three
+  probes are now `assets/ok` fixtures. A register-passable temporary keeps
+  its own hidden slot.
+
 - A `ref` binding of a `Span` rvalue (`ref r = values[1:]`, the starred
   `case [f, *ref rr]`) is rejected for lacking a memory origin, as at the
   pin, now that the bundled `Span` is `TrivialRegisterPassable`; the probe

@@ -3734,8 +3734,10 @@ fn method_call_temporary_view_argument_anchors_its_source_loan() {
 fn short_circuit_argument_anchor_dies_in_its_arm() {
     // A temporary an `or`'s right operand makes for a call argument is
     // defined in the `or`'s else region and dies there, as upstream's
-    // does: its anchor's `KeepAlive` ends that region, and none follows
-    // the `or`, where the temporary is defined on one path only.
+    // does: its anchor, the memory-only temporary's call-result slot, is
+    // named only inside that region, so it dies at its call there, and no
+    // statement-end `KeepAlive` follows the `or`, where the temporary is
+    // defined on one path only.
     let source = r#"
 def check(p: String, n: Int) -> Bool:
     var separator = String("/")
@@ -3747,19 +3749,29 @@ def main():
     print(check(String("/a"), 2))
 "#;
     let (_, check) = checked_function(source, "check");
-    let anchors: Vec<u32> = check
-        .var_names
-        .iter()
-        .enumerate()
-        .filter(|(_, name)| name.starts_with("$arg_loan"))
-        .map(|(var, _)| var as u32)
+    let anchors: Vec<u32> = nested_instructions(&check.blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::EstablishLoans { reference, .. }
+                if check.var_names[*reference as usize]
+                    .starts_with(mojito::mir::CALL_RESULT_SLOT) =>
+            {
+                Some(*reference)
+            }
+            _ => None,
+        })
         .collect();
     assert!(!anchors.is_empty(), "the `or` operand anchors a temporary");
-    let keep_alives = |instructions: Vec<&MirInstr>| {
+    let uses = |instructions: Vec<&MirInstr>| {
         instructions
             .into_iter()
-            .filter(|instruction| {
-                matches!(instruction, MirInstr::KeepAlive { var } if anchors.contains(var))
+            .filter(|instruction| match instruction {
+                MirInstr::DefVar { var, .. }
+                | MirInstr::UseVar { var, .. }
+                | MirInstr::KeepAlive { var } => anchors.contains(var),
+                MirInstr::EstablishLoans { reference, .. } => anchors.contains(reference),
+                MirInstr::LoadPlace { place, .. } => anchors.contains(&place.root),
+                _ => false,
             })
             .count()
     };
@@ -3768,15 +3780,21 @@ def main():
         .filter_map(|instruction| match instruction {
             MirInstr::If {
                 results, orelse, ..
-            } if !results.is_empty() => Some(keep_alives(nested_instructions(orelse))),
+            } if !results.is_empty() => Some(uses(nested_instructions(orelse))),
             _ => None,
         })
         .sum();
-    assert_eq!(in_arm, anchors.len(), "each anchor ends in the `or`'s arm");
+    assert!(in_arm > 0, "each anchor lives in the `or`'s arm");
     assert_eq!(
-        keep_alives(nested_instructions(&check.blocks)),
+        uses(nested_instructions(&check.blocks)),
         in_arm,
-        "no anchor's KeepAlive follows the `or`"
+        "no use of an anchor follows the `or`"
+    );
+    assert!(
+        !nested_instructions(&check.blocks).into_iter().any(
+            |instruction| matches!(instruction, MirInstr::KeepAlive { var } if anchors.contains(var))
+        ),
+        "a memory-only anchor dies at its call, not at the statement's end"
     );
 }
 

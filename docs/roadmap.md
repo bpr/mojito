@@ -1693,24 +1693,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1331 A loan-carrying temporary at a read parameter is destroyed at
-  the statement's end, where the pin destroys it after the call**
-
-  Problem: `print(look(Holder(Pointer(to=local))))` with `def look(h:
-  Holder) -> Int` and a `Holder.__deinit__` that prints prints `7`, then
-  `del 7`, on both backends, where the pin prints `del 7`, then `7`.
-  - MIR anchors the temporary in a hidden `$arg_loan_r` slot to keep
-    `local` borrowed through the call (`anchor_borrowing_argument`,
-    `mir/calls.rs`).
-  - The slot lives to the statement's `KeepAlive`
-    (`flush_argument_anchors`, `mir/lower_stmt.rs`), so the temporary dies
-    after `print`, where upstream destroys it once `look` returns.
-  - Related: R123 (the same anchor at an owned parameter has two owners)
-    and R691 (its loan conflicts until the statement's end).
-  - Found while planning R1325 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R689 A direct call's keyword arguments are set up in source order,
   not parameter order**
 
@@ -2417,24 +2399,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     body records no transfer, and the caller's aggregate path does not see a
     copied pointer.
   - Probe: `conformance/probes/pointer_copied_into_struct_keeps_loan.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R123 A heap-owning temporary that carries a loan is destroyed twice
-  when an owning parameter takes it**
-
-  Problem: `take(Maybe(Span(xs)))` with `def take[T](var m: Maybe[T])` prints
-  1 at the pin and stops in Mojito with "use after Pointer deallocation".
-  - MIR lowering anchors the temporary in a hidden `$arg_loan_r` slot to keep
-    `xs` alive through the call (`anchor_borrowing_argument`,
-    `mir/calls.rs`).
-  - The slot and the callee's parameter both own the value, and both destroy
-    the list inside it.
-  - A temporary with no destructor (`Span(xs)`) is unaffected.
-  - Probe: `conformance/probes/loan_carrying_temporary_owned_argument.mojo`.
-  - Probe: `print(take(Holder(Pointer(to=local))))` with `def take(var h:
-    Holder) -> Int` and a `Holder.__deinit__` that prints prints `del 7`
-    twice on both backends, where the pin prints it once.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8754,21 +8718,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R166 Unpack-assigning a call over a view of the assigned local is
-  rejected as a conflict the pin does not see**
-
-  Problem: `a, b = pair(a.rstrip())` runs upstream (`ab 1`), while Mojito
-  rejects it with "access to 'a' conflicts with live reference
-  '$arg_loan_r5'".
-  - Cause: the argument's view anchor outlives the call into the unpacking
-    store.
-  - The anchor's statement-end keep-alive is what every other call argument
-    relies on.
-  - Shortening it for unpacking needs its fallout checked first.
-  - Ledger name: `unpack-assign-call-over-viewed-local`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R167 Moving a `var` parameter into a local collection in a generic
   method is rejected as a use of an uninitialized value**
 
@@ -9938,29 +9887,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1418 A loan anchor or borrow slot binds a memory-only call
-  result a second time, where upstream borrows its call-result slot**
-
-  Upstream gives a memory-only call result one `__call_result_tmp__` at the
-  call, and every borrower's loans sit on that storage.
-  - Mojito's `$arg_loan_r` (`anchor_borrowing_argument`), `$view_recv_r`
-    (`anchor_borrowing_temporary`), `$conv_view_r`, and `$mat_r`
-    (`materialize_borrow_slot` and its copies in `mir.rs` and
-    `lower_stmt.rs`) each bind the temporary afresh, so
-    `Flatten::call_result` (`mir/call_results.rs`) skips a temporary one of
-    them carries loans for.
-  - An origin-bearing view at a call argument stays in its register
-    (`Flatten::operand_expr_c`), whose provenance keeps the viewed storage
-    live, so it gets no slot at all.
-  - Probe (from R1873): `Bool(String("").codepoint_slices().peek_next())`
-    destroys its `Optional[StringSpan]` result as a register
-    (`nominal_string_bytes_peek_split.mojo`).
-  - Fix: register the call-result slot as the owner's var and put the
-    anchor's `EstablishLoans` on it. A register-passable source keeps its
-    own `$mat_r`, upstream's `anonymous` materialization.
-  - Depends on R1226.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1419 MIR reads a call operand's convention off the checker's
   argument markers, where upstream reads the callee's signature**
 
@@ -10125,8 +10051,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     storage handed over, the form `lower_drops` gives every slot drop.
   - A 2026-11-03 census of `assets/ok` and `assets/ownership_ok` with the
     rule on found 10 fixtures (35 with `MOJITO_PRE_ELABORATION=0`, the rest
-    `llvm_intrinsic`'s pack spread), each a probe now filed on R1917 or
-    R1418.
+    `llvm_intrinsic`'s pack spread), each a probe filed on R1917 or on
+    R1418, which has landed.
   - Re-run the census, both ways, before landing it: the rule runs after
     every pass in a debug build.
   - Depends on R1425, R1418, R1917.

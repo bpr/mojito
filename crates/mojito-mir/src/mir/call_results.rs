@@ -25,25 +25,38 @@ impl<'a> Flatten<'a> {
     /// base, a condition, or a discarded statement. A value returned through
     /// memory ([`Node::indirect_result`]) lands in its call-result slot; a
     /// conditional expression's lands in the result slot its arms move into.
+    /// A loan-carrying one holds its loans on that slot
+    /// ([`Self::loaned_call_result`]).
     pub(super) fn expr_c(&mut self, e: Node<'a>) -> CValue {
-        self.expr_c_holding(e, true)
+        match self.operand_expr_c(e) {
+            CValue::Value(value) => self
+                .loaned_call_result(e, value)
+                .map_or(CValue::Value(value), CValue::Slot),
+            slot @ CValue::Slot(_) => slot,
+        }
     }
 
-    /// [`Self::expr_c`] for a call operand, which leaves an origin-bearing
-    /// view in its register ([`Self::call_result`]).
+    /// [`Self::expr_c`] for a call operand, which leaves a loan-carrying
+    /// result in its register for an argument anchor to bind first
+    /// ([`Self::anchor_temporary_argument`]).
     pub(super) fn operand_expr_c(&mut self, e: Node<'a>) -> CValue {
-        self.expr_c_holding(e, false)
+        if let Some(slot) = self
+            .conditional_result_slot(e)
+            .or_else(|| self.lambda_storage_variable(e))
+        {
+            return CValue::Slot(slot);
+        }
+        let value = self.expr(e);
+        self.call_result(e, value)
     }
 
     /// `value`, the lowered `e`, as [`Self::expr_c`] holds it: bound to its
     /// call-result slot right after its producer when `e` returns through
     /// memory, its value is an owned temporary of its own (no reference, no
     /// loan a binding must carry, no materialized borrow source), and it is
-    /// not already a slot's forward. Unless `views`, an origin-bearing view
-    /// stays in its register, whose provenance keeps the storage it views
-    /// live through the call that reads it.
-    pub(super) fn call_result(&mut self, e: Node<'a>, value: Reg, views: bool) -> CValue {
-        self.result_storage(e, value, views, e.indirect_result())
+    /// not already a slot's forward.
+    pub(super) fn call_result(&mut self, e: Node<'a>, value: Reg) -> CValue {
+        self.result_storage(e, value, e.indirect_result())
     }
 
     /// The source of an implicit conversion whose constructor reads it
@@ -59,7 +72,7 @@ impl<'a> Flatten<'a> {
         if let Some(ty) = e.ty() {
             self.f.reg_types.entry(value.0).or_insert(ty);
         }
-        let value = self.result_storage(e, value, true, e.unconverted_indirect_result());
+        let value = self.result_storage(e, value, e.unconverted_indirect_result());
         self.read_c(e, value)
     }
 
@@ -90,6 +103,93 @@ impl<'a> Flatten<'a> {
         });
         self.call_result_slots.insert(value.0, slot);
         slot
+    }
+
+    /// The storage a borrower of `value`, the lowered `e`, lends: the
+    /// call-result slot when its producer returned it through memory
+    /// (`indirect`), as upstream's borrowers all sit on the one
+    /// `__call_result_tmp__` the call wrote, and otherwise a hidden slot
+    /// named `prefix`, upstream's `anonymous` materialization of a
+    /// register-passable value.
+    pub(super) fn temporary_storage(
+        &mut self,
+        e: Node<'a>,
+        value: Reg,
+        indirect: bool,
+        prefix: &str,
+    ) -> VarId {
+        if let Some(&slot) = self.call_result_slots.get(&value.0) {
+            return slot;
+        }
+        let ty = self.f.reg_types.get(&value.0).cloned().or_else(|| e.ty());
+        if indirect && let Some(ty) = ty.clone() {
+            return self.call_result_slot(value, ty, e.raises().is_none());
+        }
+        let variable = self.var(&format!("{prefix}{}", value.0));
+        if let Some(ty) = ty.clone() {
+            self.var_types.insert(variable, ty);
+        }
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: ty,
+            in_place: false,
+        });
+        variable
+    }
+
+    /// The call-result slot of `value`, the lowered call operand `e`, when
+    /// its producer returned it through memory and it carries loans no
+    /// argument anchor took ([`Self::anchor_temporary_argument`]): the slot
+    /// holds those loans, as upstream's `__call_result_tmp__` is the storage
+    /// every borrower of the result sits on, so the consuming call uses the
+    /// result where its callee wrote it.
+    pub(super) fn loaned_call_result(&mut self, e: Node<'a>, value: Reg) -> Option<VarId> {
+        if !e.indirect_result()
+            || mojito_checked::checked::materialized_borrow_owner(e.adjustments()).is_some()
+            || matches!(
+                self.f.blocks[self.cur].instrs.last(),
+                Some(MirInstr::UseVar { dest, mode: UseMode::Forward, .. }) if *dest == value
+            )
+        {
+            return None;
+        }
+        let ty = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| e.ty())
+            .filter(owns_droppable_storage)?;
+        let loans = self.aggregate_borrows(e);
+        if loans.is_empty() {
+            return None;
+        }
+        let slot = self.call_result_slot(value, ty, e.raises().is_none());
+        self.establish_storage_loans(e, slot, loans);
+        Some(slot)
+    }
+
+    /// Put `loans`, the borrows the temporary `e` holds, on `variable`, the
+    /// storage it was bound to, so the viewed storage outlives every
+    /// borrower of that storage.
+    pub(super) fn establish_storage_loans(
+        &mut self,
+        e: Node<'a>,
+        variable: VarId,
+        loans: Vec<MirLoan>,
+    ) {
+        let Some(first) = loans.first() else {
+            return;
+        };
+        let marker = self.fresh_typed(e.location(), Some(first.place.root), Ty::none());
+        self.aggregate_loans.insert(variable, loans.clone());
+        self.emit(MirInstr::EstablishLoans {
+            reference: variable,
+            loans,
+            marker,
+            dest_interior: None,
+        });
     }
 
     /// `value` read by a consumer that reads it, with the storage it read:
@@ -182,7 +282,7 @@ impl<'a> Flatten<'a> {
 
     /// `value`, the lowered `e`, as [`Self::call_result`] holds it, its
     /// producer returning it through memory when `indirect`.
-    fn result_storage(&mut self, e: Node<'a>, value: Reg, views: bool, indirect: bool) -> CValue {
+    fn result_storage(&mut self, e: Node<'a>, value: Reg, indirect: bool) -> CValue {
         if let Some(&slot) = self.call_result_slots.get(&value.0) {
             return CValue::Slot(slot);
         }
@@ -192,9 +292,8 @@ impl<'a> Flatten<'a> {
         );
         let ty = self.f.reg_types.get(&value.0).cloned().or_else(|| e.ty());
         let Some(ty) = ty.filter(|ty| {
-            (owns_droppable_storage(ty)
-                || mojito_types::types::trivially_register_passable_leaf(ty.kind()))
-                && (views || mojito_types::types::erase_origin_arguments(ty) == *ty)
+            owns_droppable_storage(ty)
+                || mojito_types::types::trivially_register_passable_leaf(ty.kind())
         }) else {
             return CValue::Value(value);
         };
@@ -206,17 +305,6 @@ impl<'a> Flatten<'a> {
             return CValue::Value(value);
         }
         CValue::Slot(self.call_result_slot(value, ty, e.raises().is_none()))
-    }
-
-    fn expr_c_holding(&mut self, e: Node<'a>, views: bool) -> CValue {
-        if let Some(slot) = self
-            .conditional_result_slot(e)
-            .or_else(|| self.lambda_storage_variable(e))
-        {
-            return CValue::Slot(slot);
-        }
-        let value = self.expr(e);
-        self.call_result(e, value, views)
     }
 
     /// The storage variable of capturing lambda `e`: its storage struct

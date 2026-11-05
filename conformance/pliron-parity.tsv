@@ -553,6 +553,8 @@ assets/ok/llvm_intrinsic.mojo	main	exe-differential	sanitized
 assets/ok/llvm_intrinsic_deinterleave.mojo	main	exe-differential	sanitized
 assets/ok/llvm_intrinsic_shuffles.mojo	main	exe-differential	sanitized
 assets/ok/loan_carrying_instance_clone.mojo	main	exe-differential	sanitized
+assets/ok/loan_carrying_temporary_destroyed_after_call.mojo	main	exe-differential	sanitized
+assets/ok/loan_carrying_temporary_owned_argument.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_closed_binding.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_float.mojo	main	exe-differential	sanitized
 assets/ok/local_type_alias_construction.mojo	main	exe-differential	sanitized
@@ -1486,6 +1488,7 @@ assets/ok/uint_and_scalar_value_parameters.mojo	main	exe-differential	sanitized
 assets/ok/uint_floordiv_zero_divisor.mojo	main	exe-differential	sanitized
 assets/ok/unary_plus.mojo	main	exe-differential	sanitized
 assets/ok/unbound_struct_member_read.mojo	main	exe-differential	sanitized
+assets/ok/unpack_assign_call_over_viewed_local.mojo	main	exe-differential	sanitized
 assets/ok/unread_callable_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized
 assets/ok/unspelled_loan_carrying_type_argument.mojo	main	exe-differential	sanitized
