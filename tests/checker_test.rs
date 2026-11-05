@@ -2936,7 +2936,9 @@ fn rejects_min_mixing_concrete_types() {
 
 #[test]
 fn rejects_round_of_an_int() {
-    let e = err("var r: Float64 = round(5)\n");
+    // `std.math.round[T: Roundable]` returns `Int` for an integer, which
+    // does not convert implicitly to `Float64`, as at the pin.
+    let e = err_std("var r: Float64 = round(5)\n");
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
@@ -6606,8 +6608,8 @@ fn numeric_operation_traits_permit_their_operation() {
     );
     ok_std("def to_int[T: Intable](x: T) -> Int:\n    return Int(x)\n");
     ok_std("def to_flt[T: Floatable](x: T) -> Float64:\n    return Float64(x)\n");
-    // `Boolable` -> `Bool(x)`, and `DivModable` -> `divmod(a, b)` (prelude
-    // builtins), plus the `std.math` rounding requirements on their bounds.
+    // `Boolable` -> `Bool(x)`, and `DivModable` -> the prelude's library
+    // `divmod(a, b)`, plus the `std.math` rounding requirements on their bounds.
     ok_std("def to_bool[T: Boolable](x: T) -> Bool:\n    return Bool(x)\n");
     ok_std(
         "from std.math import DivModable\n\ndef dm[T: DivModable](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n",
@@ -6660,7 +6662,7 @@ fn any_type_bound_does_not_permit_numeric_operations() {
     ));
     assert!(matches!(
         err_std("def dm[T: AnyType](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n"),
-        TypeError::BadOperator { .. }
+        TypeError::TraitNotSatisfied { .. }
     ));
     assert!(matches!(
         err_std("def flr[T: AnyType](x: T) -> T:\n    return x.__floor__()\n"),

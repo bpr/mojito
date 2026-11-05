@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `divmod` and `pow` are upstream's library functions in the bundled
+  `std.math`, exported from the prelude: `divmod[T: DivModable]` and
+  `pow`'s two `SIMD` overloads over `__pow__` (R1458). `pow(2, 10)` now
+  prints `1024`, `divmod(UInt8(7), 3)` binds `T` from `UInt8` and prints
+  `(2, 1)`, and a generic or struct operand is read in place as the pin
+  reads it. The `divmod` and `round` compiler builtins are gone from the
+  checker, the elaborator, the VM, and the Pliron backend.
+
 - A reference result passed to a `mut` or `ref` parameter binds its
   referent, as the pin does, instead of being rejected as an implicit copy:
   `c4(l[0])` over `ref x: S`, `bump(ps[0])` over `mut p: P`, and

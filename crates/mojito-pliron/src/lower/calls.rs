@@ -32,22 +32,14 @@ impl FnLowering<'_> {
                 return self.lower_error_builtin(ctx, dest, args, kwargs);
             }
             // The numeric/IO builtins the VM's `call_named` implements
-            // directly. Nominal-receiver `len`/`abs`/`round` were rewritten
-            // to `__len__`/`__abs__`/`__round__` method calls during
-            // monomorphization; only the scalar/pack forms arrive here.
+            // directly. Nominal-receiver `len`/`abs` were rewritten to
+            // `__len__`/`__abs__` method calls during monomorphization; only
+            // the scalar/pack forms arrive here.
             match name {
                 "len" => return self.lower_len_builtin(ctx, dest, args, kwargs),
                 "abs" => return self.lower_abs_builtin(ctx, dest, args, kwargs),
                 "min" | "max" => {
                     return self.lower_min_max_builtin(ctx, dest, name == "min", args, kwargs);
-                }
-                "round" => return self.lower_round_builtin(ctx, dest, args, kwargs),
-                // The elaborator rewrites every non-struct operand's
-                // `divmod` into its declared `__divmod__`.
-                "divmod" => {
-                    return Err(
-                        self.unsupported_reg("`divmod` of a non-struct operand".into(), dest)
-                    );
                 }
                 "repr" if args.len() == 1 && kwargs.is_empty() => {
                     self.lower_repr_builtin(ctx, dest, args[0])?;

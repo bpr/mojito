@@ -491,14 +491,6 @@ impl VmBackend {
                 let (a, b) = arg2(name, args)?;
                 builtin_min_max(false, a, b)
             }
-            "round" => {
-                let value = arg1(name, args)?;
-                if let Value::Struct { name: sname, .. } = &value {
-                    let sname = sname.clone();
-                    return self.call_dunder(prog, &sname, "__round__", vec![value]);
-                }
-                builtin_round(&value)
-            }
             "input" => {
                 let mut prompt = arg1(name, args)?;
                 // A nominal String prompt reads back through the bridge.
@@ -520,19 +512,6 @@ impl VmBackend {
                     }
                     line => Ok(line),
                 }
-            }
-            "divmod" => {
-                let (a, b) = arg2(name, args)?;
-                if let Value::Struct { name: sname, .. } = &a {
-                    let sname = sname.clone();
-                    return self.call_dunder(prog, &sname, "__divmod__", vec![a, b]);
-                }
-                // The elaborator rewrites every other operand's `divmod`
-                // into its declared `__divmod__`.
-                Err(RuntimeError::Unsupported(format!(
-                    "divmod of a non-struct operand ({}) is not elaborated",
-                    crate::runtime::type_name(&a)
-                )))
             }
             "Error" => {
                 let mut argument = arg1(name, args)?;

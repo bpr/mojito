@@ -85,7 +85,7 @@ domain-specific libraries for machine learning and scientific computing.
 
 import std.math
 
-# `abs`, `all`, `max`, and `min` are upstream's prelude names, which
+# `abs`, `all`, `divmod`, `max`, and `min` are upstream's prelude names, which
 # `std.simd` cannot see while the prelude bootstraps (R894).
 from std.math import (
     Ceilable,
@@ -95,6 +95,7 @@ from std.math import (
     Roundable,
     Truncable,
     abs,
+    divmod,
     max,
     min,
     trunc,

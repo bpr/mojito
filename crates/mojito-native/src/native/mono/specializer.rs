@@ -2793,12 +2793,11 @@ impl<'a> Specializer<'a> {
                 {
                     *in_place = false;
                 }
-                // `abs`/`round`/`divmod` on a nominal receiver are
-                // checker-typed dunder dispatches the VM performs by name
-                // (`call_dunder`); rewrite them into ordinary method calls so
-                // the shared resolver and the `MethodCall` arm below
-                // monomorphize the dunder instance like any other method.
-                // A `SIMD` operand's `divmod` is its declared `__divmod__`.
+                // `abs` on a nominal receiver is a checker-typed dunder
+                // dispatch the VM performs by name (`call_dunder`); rewrite
+                // it into an ordinary method call so the shared resolver and
+                // the `MethodCall` arm below monomorphize the dunder instance
+                // like any other method.
                 // MIR's truthiness conversion `Bool(x)` (a spelled `Bool(x)`
                 // calls its declared initializer) over a scalar operand is its
                 // `scalar.cast`; other non-struct operands pass through for
@@ -2814,8 +2813,6 @@ impl<'a> Specializer<'a> {
                 {
                     let dunder = match func.0.as_str() {
                         "abs" => Some("__abs__"),
-                        "round" => Some("__round__"),
-                        "divmod" => Some("__divmod__"),
                         // A truthiness `Bool(x)` over a nominal receiver
                         // is the dunder's call.
                         "Bool" => Some("__bool__"),
@@ -2838,12 +2835,11 @@ impl<'a> Specializer<'a> {
                     if let Some(method) = dunder
                         && builtin
                         && kwargs.is_empty()
-                        && args.len() == 1 + usize::from(method == "__divmod__")
+                        && args.len() == 1
                         && operand.is_some_and(|operand| {
                             operand.is_non_simd_struct()
                                 || operand.kind().string_literal_value().is_some()
                                 || vector(operand)
-                                || (method == "__divmod__" && operand.is_simd())
                         })
                     {
                         *instruction = dunder_method_call(

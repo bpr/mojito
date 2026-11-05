@@ -41,6 +41,7 @@ from .math import (
     ceildiv,
     clamp,
     copysign,
+    divmod,
     exp,
     floor,
     fma,
@@ -51,6 +52,7 @@ from .math import (
     max,
     min,
     modf,
+    pow,
     round,
     trunc,
 )

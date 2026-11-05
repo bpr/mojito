@@ -316,11 +316,9 @@ impl Checker {
             }
             "abs" => self.infer_abs(args),
             "min" | "max" => self.infer_min_max(name, args),
-            "round" => self.infer_round(args),
             "input" => self.infer_input(span, args),
             "len" => self.infer_len(args),
             "range" => self.infer_range(args),
-            "divmod" => self.infer_divmod(args),
             "SIMD" => self.infer_simd_construction(&span, param_args, args),
             "List" => self.infer_list_construction(&span, param_args, args),
             "Set" => {

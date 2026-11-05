@@ -1,4 +1,4 @@
-//! Scalar builtin calls: `len`, `abs`, `min`/`max`, rounding, `divmod`,
+//! Scalar builtin calls: `len`, `abs`, `min`/`max`, rounding methods,
 //! `input`, and pointer methods.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -231,57 +231,6 @@ impl FnLowering<'_> {
         let (on_le, on_gt) = if is_min { (x, y) } else { (y, x) };
         let select = SelectOp::new(ctx, le, on_le, on_gt);
         self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
-    }
-
-    /// `round(x)` — the VM's `builtin_round`: nearest `Float64`, ties to
-    /// even (`llvm.roundeven.f64`); an integer is returned unchanged.
-    pub(super) fn lower_round_builtin(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        args: &[Reg],
-        kwargs: &[(String, Reg)],
-    ) -> Result<(), PlironError> {
-        if !kwargs.is_empty() || args.len() != 1 {
-            return Err(self.unsupported_reg("`round` call contract".into(), dest));
-        }
-        let arg = args[0];
-        let value = match (self.func.reg_types.get(&arg.0).cloned())
-            .as_ref()
-            .map(Ty::kind)
-        {
-            Some(kind) if kind.is_int() => {
-                let value = self.reg_value(ctx, arg, ScalarTy::Int)?;
-                self.reg_values.insert(dest.0, value);
-                return Ok(());
-            }
-            Some(kind) if kind.is_uint() => {
-                let value = self.reg_value(ctx, arg, ScalarTy::UInt)?;
-                self.reg_values.insert(dest.0, value);
-                return Ok(());
-            }
-            Some(kind)
-                if kind.is_float64()
-                    || matches!(kind, TyKind::FloatLiteral(_) | TyKind::IntLiteral(_)) =>
-            {
-                self.reg_value(ctx, arg, ScalarTy::Float64)?
-            }
-            other => {
-                return Err(self.unsupported_reg(
-                    format!(
-                        "`round` over `{}`",
-                        other.map_or_else(
-                            || "an untyped value".to_string(),
-                            std::string::ToString::to_string
-                        )
-                    ),
-                    dest,
-                ));
-            }
-        };
-        let result = self.float_unary(ctx, "llvm.roundeven.f64", value, dest);
-        self.reg_values.insert(dest.0, result);
-        Ok(())
     }
 
     /// `input(prompt)` — the VM's `builtin_input`: write the prompt bytes

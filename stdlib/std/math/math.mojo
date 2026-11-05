@@ -5,7 +5,8 @@
 # AVX-512 `scalef` arm), `_exp_taylor`, the `SIMD` overload of `exp` (the
 # `ComplexSIMD` one is omitted), `_exp_impl`, `copysign`, the `SIMD` overload of `iota`,
 # `fma`, `modf` over `std.simd`'s `_modf`, `clamp`, both overloads each of
-# `max` and `min`, `abs`, both overloads of `round`, and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
+# `max` and `min`, `abs`, `divmod`, both overloads each of `pow` and
+# `round`, and the libm constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and `_LN2_LO_F64`,
 # `_frexp_mask1`, `_frexp_mask2`, `frexp`, `_log_base`, `log`, and their
 # kernels `_assert_float64_supported`, `_log_kernel`, `_is_zero_bits`,
 # `_is_subnormal_bits`, `_frexp_bits`, `_log_reduce`, `_log_combine`, and
@@ -16,9 +17,8 @@
 # arm through `exp2`, which are not ported (R1760). The
 # `std.string` import is explicit, as bundled modules' are. Upstream's
 # `from . import` line omits `nextafter`, which the package does not yet
-# re-export. The prelude exports `Absable`, `Roundable`, `abs`, `max`, `min`,
-# and `round`, as upstream's does; `divmod` is still a compiler builtin
-# (R1458), and `pow` is not declared yet.
+# re-export. The prelude exports `Absable`, `Roundable`, `abs`, `divmod`,
+# `max`, `min`, `pow`, and `round`, as upstream's does.
 #
 # Each helper is generic over the trait that supplies its dunder. `SIMD`
 # declares `Absable`, `Ceilable`, `CeilDivable`, `DivModable`, `Floorable`,
@@ -75,6 +75,22 @@ trait Absable:
 trait DivModable(ImplicitlyCopyable):
     def __divmod__(self, denominator: Self) -> Tuple[Self, Self]:
         ...
+
+
+def divmod[T: DivModable](numerator: T, denominator: T) -> Tuple[T, T]:
+    """Performs division and returns the quotient and the remainder.
+
+    Parameters:
+        T: A type conforming to the `DivModable` trait.
+
+    Args:
+        numerator: The dividend.
+        denominator: The divisor.
+
+    Returns:
+        A `Tuple` containing the quotient and the remainder.
+    """
+    return numerator.__divmod__(denominator)
 
 
 trait Roundable:
@@ -799,6 +815,46 @@ def min[T: Copyable & Comparable & Deinitable](x: T, *ys: T) -> T:
         if y < res:
             res = y.copy()
     return res.copy()
+
+
+# ===----------------------------------------------------------------------=== #
+# pow
+# ===----------------------------------------------------------------------=== #
+
+
+def pow(base: SIMD, exp: SIMD[_, _]) -> type_of(base):
+    """Computes the `base` raised elementwise to the power of the `exp`.
+
+    For an integral `base`, a negative exponent aborts.
+
+    Constraints:
+        The `exp` must have the same dtype and width as the `base`, or be a
+        scalar. An integral `base` requires an integral `exp`.
+
+    Args:
+        base: The base of the power operation.
+        exp: The exponent of the power operation.
+
+    Returns:
+        The `base` raised elementwise to the power of the `exp`.
+    """
+    return base.__pow__(exp)
+
+
+def pow(base: SIMD, exp: FloatLiteral) -> type_of(base):
+    """Computes the `base` raised elementwise to the power of a float literal.
+
+    Constraints:
+        The `base` must be floating point.
+
+    Args:
+        base: The base of the power operation.
+        exp: The exponent, converted to the dtype of `base`.
+
+    Returns:
+        The `base` raised elementwise to the power of the `exp`.
+    """
+    return base.__pow__(exp)
 
 
 # ===----------------------------------------------------------------------=== #

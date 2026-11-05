@@ -2237,9 +2237,8 @@ its call-result slot, argument-anchor slot, or a capturing lambda's
 storage slot (`Flatten::temporary_operand`), so the rewrite passes that
 slot's address, and copy elision's read lend renames the retained place
 to the dying source with the load. A method call, an indirect call, and a
-subscript keep the load (R1918, R1919); so do a reference result's
-referent, which upstream passes as the reference itself (R1930), and the
-`divmod` builtin's operands (R1458).
+subscript keep the load (R1918, R1919); so does a reference result's
+referent, which upstream passes as the reference itself (R1930).
 
 The same pass builds every call's positional collector, as upstream's call
 builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes

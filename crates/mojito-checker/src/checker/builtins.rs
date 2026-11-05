@@ -213,7 +213,7 @@ fn common_literal(a: &Ty, b: &Ty) -> Option<Ty> {
 }
 
 /// Type inference for compiler-known builtin free functions
-/// (`print`, `len`, `range`, conversions, `divmod`, …). Moved from `checker.rs`.
+/// (`print`, `len`, `range`, conversions, …). Moved from `checker.rs`.
 impl Checker {
     /// Whether `ty` is an opaque type parameter conforming to the named trait
     /// `bound`, by a bound that is or refines it, or an assumed conformance.
@@ -501,30 +501,6 @@ impl Checker {
         })
     }
 
-    /// Type `round(x)`: a `Float64` argument returning `Float64`, or an opaque
-    /// `T: Roundable` returning the same type (`__round__(self) -> Self`; the
-    /// concrete impl runs after type erasure). A call reaches this rule only
-    /// where no `round` binding exists — a module loaded while the prelude
-    /// bootstraps, or a program linked without the prelude; elsewhere it
-    /// calls `std.math.round`.
-    pub(super) fn infer_round(&self, args: &[Expr]) -> Result<Ty, TypeError> {
-        let tys = self.builtin_args("round", 1, args)?;
-        if tys[0].is_float64() || matches!(tys[0].kind(), TyKind::FloatLiteral(_)) {
-            Ok(Ty::float64())
-        } else if self.param_has_bound(&tys[0], "Roundable") {
-            Ok(tys[0].clone())
-        } else if let Some(result) = self.struct_operation(&tys[0], "Roundable", "__round__", &[]) {
-            // A concrete struct routes through `__round__(self) -> Self`.
-            result
-        } else {
-            Err(TypeError::TypeMismatch {
-                expected: "Float64".to_string(),
-                found: tys[0].to_string(),
-                context: "argument to 'round'".to_string(),
-            })
-        }
-    }
-
     pub(super) fn len_result_for_type(&self, ty: &Ty) -> Result<Option<Ty>, TypeError> {
         if let TyKind::Dependent(dependent) = ty.kind()
             && let Some((elements, _)) = dependent.selection()
@@ -778,48 +754,6 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::ConvertedArgument,
         ));
         Ok(true)
-    }
-
-    /// Type the prelude built-in `divmod(a, b)` (`DivModable`) → `Tuple[T, T]`:
-    /// two numeric arguments of a common type (like an operator), a literal
-    /// one materialized to its default (`Int`, `Float64`) as upstream's `T`
-    /// binds it, or two equal `SIMD` types or opaque type parameters bounded
-    /// by `DivModable`. The elaborator makes each its operand's `__divmod__`.
-    pub(super) fn infer_divmod(&self, args: &[Expr]) -> Result<Ty, TypeError> {
-        let tys = self.builtin_args("divmod", 2, args)?;
-        if let Some(common) = common_numeric(&tys[0], &tys[1]) {
-            let common = mojito_types::types::default_literal(&common);
-            for (arg, ty) in args.iter().zip(&tys) {
-                if *ty != common {
-                    self.record_literal_materializations(arg, ty, &common)?;
-                }
-            }
-            return Ok(mojito_types::types::tuple_type(vec![
-                common.clone(),
-                common,
-            ]));
-        }
-        if tys[0] == tys[1]
-            && (tys[0].is_simd() || self.param_has_bound(&tys[0], &super::math_trait("DivModable")))
-        {
-            return Ok(mojito_types::types::tuple_type(vec![
-                tys[0].clone(),
-                tys[0].clone(),
-            ]));
-        }
-        // A concrete struct routes through `__divmod__(self, Self)`.
-        if let Some(result) = self.struct_operation(
-            &tys[0],
-            &super::math_trait("DivModable"),
-            "__divmod__",
-            &[&tys[1]],
-        ) {
-            return result;
-        }
-        Err(TypeError::BadOperator {
-            op: "divmod".to_string(),
-            operands: format!("{} and {}", tys[0], tys[1]),
-        })
     }
 
     /// The result of the `std.math` operation `method` on a concrete struct

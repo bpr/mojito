@@ -54,7 +54,16 @@ from std.simd import (
 from std.builtin.string_literal import StringLiteral
 from std.builtin.int_literal import IntLiteral
 from std.builtin.float_literal import FloatLiteral
-from std.math import Absable, Roundable, abs, max, min, round
+from std.math import (
+    Absable,
+    Roundable,
+    abs,
+    divmod,
+    max,
+    min,
+    pow,
+    round,
+)
 from std.builtin.enum_like import EnumLike
 from std.builtin.tuple import Tuple
 from std.builtin.variadics import (

@@ -233,7 +233,8 @@ point, as upstream's toolchain does.
   it), and `math.mojo` holds upstream's seven operation traits (`Absable`,
   `Roundable`, `DivModable`, `Ceilable`, `Floorable`, `Truncable`, and
   `CeilDivable`), the rounding helpers
-  `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait, `copysign`,
+  `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait, `divmod`
+  over `DivModable`, `pow`'s two `SIMD` overloads, `copysign`,
   `ldexp` over `_ldexp_impl` (with its AVX-512 `scalef` arm), `exp` over
   `_exp_impl` and `_exp_taylor`'s `polynomial_evaluate`, and the libm
   constants `_SQRT2`, `_LN2`, `_LN2_HI_F64`, and
@@ -243,10 +244,9 @@ point, as upstream's toolchain does.
   not re-export it). The package also re-exports `std.utils.numerics`' `inf`,
   `nan`, `isnan`, `isinf`, and `isfinite`, whose classifiers call
   `llvm.is.fpclass`. The prelude
-  exports `Absable`, `Roundable`, `abs`, `max`, `min`, and
-  `round`, as upstream's does; the rest must be imported
-  (`from std.math import floor`). `divmod` is still a compiler builtin
-  (R1458). Every `SIMD` declares `Absable`, `Ceilable`, `CeilDivable`,
+  exports `Absable`, `Roundable`, `abs`, `divmod`, `max`, `min`, `pow`,
+  and `round`, as upstream's does; the rest must be imported
+  (`from std.math import floor`). Every `SIMD` declares `Absable`, `Ceilable`, `CeilDivable`,
   `DivModable`, `Floorable`, `Roundable`, and `Truncable` in
   `std/simd.mojo`, with upstream's `__ceildiv__`, `__divmod__`, `__mod__`,
   `__rmod__`, and `__imod__` bodies.

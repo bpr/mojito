@@ -84,7 +84,7 @@ impl VmBackend {
     /// Materialize an intrinsic result at its checked MIR type boundary. Public
     /// `Tuple` is a nominal library struct even when a primitive operation can
     /// compute its elements most conveniently in private `Value::Tuple` pack
-    /// storage (currently `divmod` and `Slice.indices`). The checked destination
+    /// storage (currently `Slice.indices`). The checked destination
     /// type selects the exact concrete Tuple specialization; no runtime element
     /// guessing or source-AST reconstruction is involved.
     #[allow(

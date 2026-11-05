@@ -9,7 +9,7 @@
 use crate::runtime::RuntimeError;
 use crate::runtime::{
     RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_error, builtin_input,
-    builtin_min_max, builtin_round, simd_from_values, value_as_index,
+    builtin_min_max, simd_from_values, value_as_index,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use calls::*;

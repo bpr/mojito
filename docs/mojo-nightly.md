@@ -118,8 +118,7 @@ leniencies (R176) are withdrawn.
 `FileDescriptor`, `BorrowedFileDescriptor`, and a consuming
 `FileHandle.close` (R1824); `OwnedPointer(init_with=)` and `deinit_with`
 (R1825); `Layout(length=)` and `Sized` (R1826); the plugin hooks' `__enum`
-math ops (R1828); `pow` as two `SIMD` overloads (R1458); and the
-`OptionalPointer` aliases' deprecation (R230).
+math ops (R1828); and the `OptionalPointer` aliases' deprecation (R230).
 
 ### 8. One upstream regression, recorded rather than matched
 

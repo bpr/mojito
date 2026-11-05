@@ -257,8 +257,7 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// The flooring quotient as a bare value (shared with `divmod`, which
-    /// computes both halves for one destination).
+    /// The flooring quotient as a bare value.
     pub(super) fn floor_div_value(
         &mut self,
         ctx: &mut Context,
@@ -297,7 +296,7 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// The flooring remainder as a bare value (shared with `divmod`).
+    /// The flooring remainder as a bare value.
     pub(super) fn floor_mod_value(
         &mut self,
         ctx: &mut Context,
