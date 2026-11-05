@@ -13,8 +13,6 @@ pub const BUILTIN_CALLEES: &[&str] = &[
     "external_call",
     "_mojito_abort",
     "_mojito_float_text",
-    "String",
-    "repr",
     "len",
     "abs",
     "min",
@@ -41,6 +39,7 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "__trunc__",
     "write_string",
     mojito_symbol::symbol::WRITE_FORMATTED,
+    mojito_symbol::symbol::WRITE_REPR_FORMATTED,
     "__len__",
     "copy",
     "free",
@@ -80,8 +79,8 @@ mod tests {
             let implemented = quoted(INVOKE, name)
                 || quoted(EXEC, name)
                 || quoted(RUNTIME, name)
-                || (*name == mojito_symbol::symbol::WRITE_FORMATTED
-                    && INVOKE.contains("mojito_symbol::symbol::WRITE_FORMATTED"))
+                || (mojito_symbol::symbol::is_formatted_write(name)
+                    && INVOKE.contains("mojito_symbol::symbol::is_formatted_write"))
                 || mojito_ast::ast::Dtype::Int.predicate(name).is_some();
             assert!(
                 implemented,

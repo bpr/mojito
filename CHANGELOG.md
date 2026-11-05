@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `String(x)` and `repr(x)` are now upstream's library code rather than
+  compiler builtins (R1882): `String(x)` resolves among the bundled
+  `String` initializers, the `*Ts: Writable` pack initializer for any
+  `Writable` but a `StringLiteral` or `StaticString`, and `repr` is
+  upstream's `std/format/repr.mojo`, re-exported by `std.format` and the
+  prelude (`assets/ok/repr_library_function.mojo`,
+  `assets/ok/string_single_writable_argument.mojo`). A non-`Writable`
+  argument is an ordinary overload failure. `DType`'s and `Error`'s
+  `write_repr_to` write through the writer's new `$write_repr_formatted`
+  primitive (MIR text 1.165, `mojito-package 190`), and a struct's
+  `write_to`/`write_repr_to` is no longer reached from its type, so its
+  unused arguments are removed as at any call. Natively, `repr` of an
+  `Error` now runs. Fixes found on the way: an initializer assigned back
+  over the storage its argument views is rejected as at the pin
+  (`assets/type_error/assign_interior_view_user_initializer_over_source.mojo`),
+  and a comprehension's body now sees a library name the link qualifies
+  (`[String(i) for i in range(3)]`).
+
 - The MLIR layer under upstream's `DType` now runs: the type
   ``__mlir_type.`!kgen.dtype` ``, its `#kgen.dtype.constant<…>`
   attributes, the builtin `__mlir_type.ui8`, `pop.dtype.to_ui8` and

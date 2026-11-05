@@ -1948,8 +1948,9 @@ gives every loan-carrying element (`CheckedTupleUnpackElement::carries_loans`)
 the unpacked value's loans, as binding the whole value would. A discarded
 reference result (an expression statement, `_ = e`) is
 recorded in `discarded_reference_results` and is not a value read. On the
-VM, the `$write_formatted` primitive formats its arguments with the caller frame mirrored so a nested
-`write_to` can read a pointer into the caller. The empty-subscript
+VM, the `$write_formatted` and `$write_repr_formatted` primitives call the
+writer's `write_string` with the caller frame mirrored so a nested frame
+can read a pointer into the caller. The empty-subscript
 store `p[] = v` types the pointer as a value read and gates on the pointer
 origin's mutability alone, so a plain `self` method writes through a
 `Pointer[T, Origin[mut=True]]` field as upstream does.
@@ -2024,8 +2025,8 @@ no dispatch name is composed. The checker still records every closed
 application it reaches as a constructor target or method-call receiver
 (`StructInstantiation`), a checked fact nothing above the waist turns into a
 request. Copying, moving, destruction, and the by-name dispatches the
-backends perform on a runtime struct name (`String(x)`/`repr(x)`/
-`Writer.write` through `write_to`/`write_repr_to`, and `len`/`abs`/`Bool`/
+backends perform on a runtime struct name (a writer's `write_string`
+under `$write_formatted`, and `len`/`abs`/`Bool`/
 `Int` and the prefix operators through their dunders) select the method by
 the instance struct `native::mono` built on concrete MIR.
 
@@ -2870,10 +2871,18 @@ its error region before the store.
 Printing and `String()` require `Writable`. A custom `write_to` or
 `write_repr_to` receives `Some[Writer]`; `Writer` and `Writable` are the
 bundled traits (`std/format/__init__.mojo`). `Writer`'s default `write` writes
-each heterogeneous Writable argument through its `write_to`, and a builtin's
-`write_to` feeds its host-formatted UTF-8 text to `write_string`
-(`$write_formatted`). The VM's buffer writer uses `String` as the `StringSlice`
-representation. A conformer without a `Writer`-fed `write_to` or
+each heterogeneous Writable argument through its `write_to`, and an
+intrinsic value with no declared `write_to` or `write_repr_to` (`DType`,
+`Error`) feeds its host-formatted UTF-8 text to `write_string`
+(`$write_formatted`, `$write_repr_formatted`): the checker's
+`InvertedWrite`/`InvertedReprWrite` adjustment swaps a concrete call into
+that shape, and the elaborator swaps one reached through a `Writable`
+bound. `String(x)` is upstream's overload resolution over the bundled
+initializers (the `*Ts: Writable` pack initializer for anything but a
+`StringLiteral` or `StaticString`), and `repr` is upstream's library
+function (`std/format/repr.mojo`), which writes the value's
+`write_repr_to` into a `String()`; no phase special-cases either. The VM's
+buffer writer uses `String` as the `StringSlice` representation. A conformer without a `Writer`-fed `write_to` or
 `write_repr_to` inherits `Writable`'s own default bodies, as upstream: each a
 trait member forwarded to by the conformer's wrapper, over
 `_reflection_write_to`, which writes `Name(` and each field through
@@ -2881,13 +2890,9 @@ trait member forwarded to by the conformer's wrapper, over
 conformance where the default is instantiated. So
 every `Writable` struct has both members, and neither backend formats a
 struct's fields itself: a struct reaching display without its instance is an
-invariant violation. The VM displays a `SIMD` value (`Int`, `Float32`, a
-vector) the same way, through `SIMD.write_to`/`write_repr_to` instantiated at the
-`String` writer and found from the value's dtype and width through
-its instance's member table (`symbol::member_table_name`), so it formats no
-lane itself, and so does the native backend: its `String`, `repr`,
-and `Writer.write` expansions call those instances, and its reachable set
-takes them from the same table.
+invariant violation. A `SIMD` value (`Int`, `Float32`, a vector) writes
+itself the same way, through its declared `SIMD.write_to`/`write_repr_to`,
+which a call names, so neither backend formats a lane itself.
 `String.format` supports automatic/manual fields, repr selection, escaped braces,
 and accepts format-spec syntax; the scalar width/alignment mini-language remains
 representation-level work rather than a return to deprecated `__str__` hooks.
@@ -4142,8 +4147,8 @@ borrowing-view constructor, `Named`) — is a shared read. A single-`__init__`
 construction calls its bare struct name and resolves to the
 `<name>.__init__` declaration; a callee without a declaration falls back to
 its function's `ref_params` mask. An indirect call reads its callee's
-function type for the slot's convention, and the `$write_formatted`
-pseudo-method reads its argument. A place whose slot's convention is
+function type for the slot's convention, and the `$write_formatted` and
+`$write_repr_formatted` pseudo-methods read their argument. A place whose slot's convention is
 recorded nowhere (a trait-dispatched or unresolved method, a keyword slot,
 an untyped indirect callee) is `LoanAccess::Unclassified`: it excludes every
 other live loan of its storage, as a write does, but reaching it through a
@@ -5153,13 +5158,11 @@ the nominal String is expected through the ordinary implicit-conversion
 engine (the `@implicit` literal constructor), including operator operands
 (mixed literal/nominal comparisons and concatenation normalize onto the
 struct's dunders), tuple-display and fieldwise-construction elements, and
-specialized-pack constructor arguments. The builtin string producers
-`String(x)` stringify (routed to the `"String"` conversion builtin by a
-`ResolveCallable` adjustment), `input()`, and `repr(x)` return the nominal
-String itself, as upstream's initializer and functions do: MIR types the
-call's register as the struct, so drop elaboration destroys the buffer it
-owns, and each backend builds the struct directly (the VM's
-`nominal_string_value`, Pliron's `own_string_result`). `Error(msg)`/`raise` and the Writer
+specialized-pack constructor arguments. The builtin string producer
+`input()` returns the nominal String itself, as upstream's function does:
+MIR types the call's register as the struct, so drop elaboration destroys
+the buffer it owns, and each backend builds the struct directly (the VM's
+`nominal_string_value`). `Error(msg)`/`raise` and the Writer
 `write_string` contract accept either spelling; the VM bridges read a
 nominal message back and materialize a nominal payload for a
 nominally-declared `write_string`. Overload symbols spell the two types
@@ -5167,8 +5170,8 @@ distinctly (`String` and `StringLiteral`), so `def f(x: StringLiteral)`
 beside `def f(x: String)` is a legal overload set and a literal argument
 selects the exact `StringLiteral` member (exact matches rank above
 conversions), as upstream. In unlinked
-seam programs (no prelude) a bare `String` annotation fails explicitly as an
-unknown type, and the bare `String(...)` builtin keeps the literal result.
+seam programs (no prelude) a bare `String` annotation or construction fails
+explicitly as an unknown name.
 
 Keyword subscripts are the general feature the String's explicit index forms
 ride on: a named bracket argument over a lowercase (value) base parses as a
@@ -7090,7 +7093,7 @@ point where a slot declared in a loop is uninitialized again.
   one `DBox.__deinit__$mono`, as upstream's struct nests its member
   generators. The table names each member a backend reaches from a
   value's type rather than from the instance a call names, too
-  (`mir::TYPE_REACHED_MEMBERS`: display, a writer's `write_string`, the
+  (`mir::TYPE_REACHED_MEMBERS`: a writer's `write_string`, the
   hash leaf, the `__int__` a scalar construction converts through), each
   a full instance: the generator a
   call names without its unused arguments is no entry

@@ -141,7 +141,7 @@ impl FnLowering<'_> {
         owned: bool,
         dest: Reg,
     ) -> Result<Value, PlironError> {
-        let (mut data, len) = self.writer_argument_text(ctx, reg, dest)?;
+        let (mut data, len) = self.writer_argument_text(ctx, reg, false, dest)?;
         if owned {
             let copy = self.emit_alloc(ctx, len, 1, dest);
             self.mem_copy_dynamic(ctx, copy, data, len, dest);

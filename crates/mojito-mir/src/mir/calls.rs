@@ -681,9 +681,8 @@ impl<'a> Flatten<'a> {
             return (value, Some(place));
         }
 
-        // A temporary at a place-retaining slot (the builtin `String(x)`
-        // conversion retains its argument's place) has no place to retain,
-        // so it anchors like any other temporary argument. The checker
+        // A temporary at a place-retaining slot has no place to retain, so
+        // it anchors like any other temporary argument. The checker
         // rejects a non-place actual for a place-requiring parameter; lowering
         // stays total so the verifier can diagnose corrupt checked input
         // without manufacturing a caller place.

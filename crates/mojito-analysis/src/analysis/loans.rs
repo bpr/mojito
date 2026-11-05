@@ -561,12 +561,12 @@ pub(super) fn loan_accesses(
             capture_accesses,
             ..
         } => {
-            // Formatting intrinsics borrow their retained caller places only
-            // to keep pointer-backed values alive through `write_to`. Other
+            // `external_call` borrows its retained caller places only to
+            // keep pointer-backed values alive through the call. Other
             // retained places are classified by the callee's convention at
             // that slot; a keyword place stays exclusive (its slot is not
             // known positionally here).
-            let intrinsic_read = matches!(func.0.as_str(), "String" | "repr" | "external_call");
+            let intrinsic_read = func.0 == "external_call";
             let access = |parameter: Option<usize>| match parameter {
                 _ if intrinsic_read => LoanAccess::Read,
                 Some(parameter) => retained_access(&func.0, parameter),
@@ -665,7 +665,7 @@ pub(super) fn loan_accesses(
             };
             let argument_access = |argument: usize| match resolved {
                 Some(callee) => callees.retained_access(callee, argument, true),
-                None if method == mojito_symbol::symbol::WRITE_FORMATTED => LoanAccess::Read,
+                None if mojito_symbol::symbol::is_formatted_write(method) => LoanAccess::Read,
                 None => LoanAccess::Unclassified,
             };
             let mut accesses = recv_place

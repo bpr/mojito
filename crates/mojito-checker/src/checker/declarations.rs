@@ -2341,12 +2341,78 @@ impl Checker {
             None,
         );
         self.record_constructor_reference_borrows(span, binding.ref_params, binding.slots);
+        self.record_constructor_parameters(span, binding, &effective, args, kwargs);
         if binding.raises {
             let error = binding.error.cloned().unwrap_or_else(Ty::error);
             self.record_call_effect(span.clone(), error.clone());
             self.require_error(format!("call to raising constructor '{name}'"), error)?;
         }
         Ok(())
+    }
+
+    /// Record the parameter each argument of the construction at `span`
+    /// binds, as a free call records its callee's: one per positional
+    /// argument in order (a gathered one binds the collector), then one per
+    /// keyword argument, so the call-result aliasing rule judges an
+    /// initializer call as any call.
+    fn record_constructor_parameters(
+        &self,
+        span: &SourceSpan,
+        binding: &ConstructorBinding<'_>,
+        effective: &[Option<ArgConvention>],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) {
+        let exclusivity = &binding.exclusivity;
+        let slot_parameter = |index: usize| {
+            Some(super::CallParameter {
+                name: exclusivity.parameter_names.get(index)?.clone(),
+                convention: effective.get(index).copied().flatten(),
+                ty: exclusivity.bound.get(index)?.clone(),
+            })
+        };
+        let gathered = &exclusivity.gathered;
+        let positional = (0..args.len()).map(|position| {
+            binding
+                .slots
+                .iter()
+                .position(|slot| matches!(slot, ArgSlot::Positional(p) if *p == position))
+                .map_or_else(
+                    || {
+                        gathered
+                            .elements
+                            .iter()
+                            .find(|(argument, _)| {
+                                std::ptr::eq(*argument, std::ptr::from_ref(&args[position]))
+                            })
+                            .and_then(|(_, types)| {
+                                Some(super::CallParameter {
+                                    name: gathered.name.to_string(),
+                                    convention: gathered.convention,
+                                    ty: types.last()?.clone(),
+                                })
+                            })
+                    },
+                    slot_parameter,
+                )
+        });
+        let keywords = binding
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                matches!(slot, ArgSlot::Keyword(position) if *position < kwargs.len())
+                    .then(|| slot_parameter(index))
+                    .flatten()
+            });
+        if let Some(parameters) = positional
+            .chain(keywords.map(Some))
+            .collect::<Option<Vec<_>>>()
+        {
+            self.call_parameters
+                .borrow_mut()
+                .insert(span.clone(), parameters);
+        }
     }
 
     /// Each method parameter default fits its parameter's type and names no

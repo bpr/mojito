@@ -1,37 +1,11 @@
-//! Display and hashing: `write_to` bridging, stdout writes (the `input`
-//! prompt), hash leaves, scalar formatting, and string comparison
-//! operators.
+//! Display and hashing: stdout writes (the `input` prompt), hash leaves,
+//! intrinsic scalar formatting, and string comparison operators.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
 
 impl<'a> FnLowering<'a> {
-    /// Append one nominal struct's display text into the `String` writer
-    /// stored at `writer`, the VM's `format_value` recursion when a
-    /// `Writer.write` argument is itself a struct.
-    pub(super) fn append_struct_via_write_to(
-        &mut self,
-        ctx: &mut Context,
-        arg: Reg,
-        name: &str,
-        writer: Value,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        let receiver = self.reg_ptr(ctx, arg)?;
-        self.append_struct_display(ctx, receiver, name, writer, dest)
-    }
-
-    /// A fresh empty `String`, the writer a displayed value's `write_to`
-    /// writes into, as upstream's `repr` and `String(x)` construct one: its
-    /// `{data, size, cap}` zeroed, which its first write grows.
-    pub(super) fn display_writer(&mut self, ctx: &mut Context) -> Value {
-        let layout = self.layout.mj_string();
-        let writer = self.entry_alloca(ctx, layout.size, layout.align);
-        self.mem_zero(ctx, writer, layout.size);
-        writer
-    }
-
     /// Contribute one `DType` Hashable leaf to a caller-owned hasher — the
     /// VM's non-struct `__hash__` intrinsic: the value `hash_leaf_ty` names
     /// passes to the hasher's `_update_with_simd` instance at that type. A
@@ -73,39 +47,6 @@ impl<'a> FnLowering<'a> {
             _ => self.arg_value(ctx, recv, &expected, false, dest)?,
         };
         self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, operand])
-    }
-
-    /// The string literal `recv` as an owned nominal `String` in fresh
-    /// storage, whose buffer the caller releases.
-    pub(super) fn owned_string_of_literal(
-        &mut self,
-        ctx: &mut Context,
-        recv: Reg,
-        dest: Reg,
-    ) -> Result<Value, PlironError> {
-        let storage = self.entry_alloca(ctx, 24, 8);
-        if let Some(bytes) = self.str_consts.get(&recv.0).cloned() {
-            let len = bytes.len() as u64;
-            let global = self.shared.intern_string(ctx, &bytes);
-            let len_value = self.uint_constant(ctx, len);
-            let data = self.emit_alloc(ctx, len_value, 1, dest);
-            if len > 0 {
-                let literal = self.global_address(ctx, &global, dest);
-                self.mem_copy(ctx, data, literal, len, dest);
-            }
-            self.store_string_fields(ctx, storage, data, len_value, len_value, dest);
-        } else if let Some(descriptor) = self.str_runtime.get(&recv.0).copied() {
-            let data = self.emit_alloc(ctx, descriptor.len, 1, dest);
-            self.mem_copy_dynamic(ctx, data, descriptor.data, descriptor.len, dest);
-            self.store_string_fields(ctx, storage, data, descriptor.len, descriptor.len, dest);
-        } else {
-            let ptr = self.reg_ptr(ctx, recv)?;
-            let (src_data, len) = self.string_parts(ctx, ptr, dest);
-            let data = self.emit_alloc(ctx, len, 1, dest);
-            self.mem_copy_dynamic(ctx, data, src_data, len, dest);
-            self.store_string_fields(ctx, storage, data, len, len, dest);
-        }
-        Ok(storage)
     }
 
     /// The `hasher`'s `_update_with_simd` instance the elaborator minted at
@@ -184,8 +125,8 @@ impl<'a> FnLowering<'a> {
         Ok(false)
     }
 
-    /// The display bytes of one `DType` value as a `(data, len)` pair over
-    /// interned constants. A numeric value is a `SIMD` one and a `Bool` the
+    /// The display bytes of one `DType` value, or with `repr` its
+    /// representation bytes, as a `(data, len)` pair over interned constants. A numeric value is a `SIMD` one and a `Bool` the
     /// declared struct, which display through their declared members
     /// ([`Self::declared_display_text`]).
     pub(super) fn format_scalar(
@@ -193,10 +134,11 @@ impl<'a> FnLowering<'a> {
         ctx: &mut Context,
         ty: ScalarTy,
         value: Value,
+        repr: bool,
         dest: Reg,
     ) -> Result<(Value, Value), PlironError> {
         match ty {
-            ScalarTy::Dtype => Ok(self.dtype_text(ctx, value, false, dest)),
+            ScalarTy::Dtype => Ok(self.dtype_text(ctx, value, repr, dest)),
             ScalarTy::Ptr => Err(self.unsupported_reg("display of a Pointer".into(), dest)),
             ScalarTy::Bool => {
                 Err(self.unsupported_reg("display of a `Bool` value without its type".into(), dest))
@@ -466,181 +408,6 @@ impl<'a> FnLowering<'a> {
                 dest,
             )),
         }
-    }
-
-    /// Append the display text of the struct stored at `receiver`: its
-    /// unique compiled `write_to` instance, its own or the synthesized
-    /// `Writable` default.
-    fn append_struct_display(
-        &mut self,
-        ctx: &mut Context,
-        receiver: Value,
-        name: &str,
-        writer: Value,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        let Some(symbol) = self.display_member(name, "write_to", dest)? else {
-            return Err(self.unsupported_reg(
-                format!("display of `{name}` without a compiled `write_to`"),
-                dest,
-            ));
-        };
-        let signature = &self.signatures[symbol];
-        if signature.outcome.is_some() {
-            return Err(self.unsupported_reg(format!("raising `{symbol}`"), dest));
-        }
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let func_ty = signature.func_ty;
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(callee),
-            func_ty,
-            vec![receiver, writer],
-        );
-        self.append(ctx, call.get_operation(), Some(dest));
-        Ok(())
-    }
-
-    /// The display member `method` (`write_to`, `write_repr_to`) of the
-    /// struct `name`: its member table's one compiled instance of the
-    /// `Writable` witness at the `String` writer; one at another writer is
-    /// a call's. `None` when it has none.
-    pub(super) fn display_member(
-        &self,
-        name: &str,
-        method: &str,
-        dest: Reg,
-    ) -> Result<Option<&'a str>, PlironError> {
-        let candidates: Vec<&str> = self
-            .struct_member_symbols(name, method)
-            .map(|(_, symbol)| symbol)
-            .filter(|symbol| {
-                self.signatures.contains_key(*symbol)
-                    && self.declarations.get(*symbol).is_none_or(|declaration| {
-                        declaration
-                            .param_types
-                            .first()
-                            .is_some_and(mojito_types::types::is_nominal_string)
-                    })
-            })
-            .collect();
-        match candidates.as_slice() {
-            [] => Ok(None),
-            [symbol] => Ok(Some(symbol)),
-            _ => Err(self.unsupported_reg(
-                format!("display of `{name}` with ambiguous `{method}` instances"),
-                dest,
-            )),
-        }
-    }
-
-    /// The display text of a `SIMD` or `Bool` value through its declared
-    /// member `method` (`write_to`, `write_repr_to`), written into a fresh
-    /// `String` writer: the writer and its owned `(data, len)`
-    /// bytes. `None` when `arg` is neither ([`Self::append_declared_display`]).
-    pub(super) fn declared_display_text(
-        &mut self,
-        ctx: &mut Context,
-        arg: Reg,
-        method: &str,
-        dest: Reg,
-    ) -> Result<Option<(Value, Value, Value)>, PlironError> {
-        if self.declared_display_ty(arg).is_none() {
-            return Ok(None);
-        }
-        let writer = self.display_writer(ctx);
-        self.append_declared_display(ctx, arg, method, writer, dest)?;
-        let (data, len) = self.string_parts(ctx, writer, dest);
-        Ok(Some((writer, data, len)))
-    }
-
-    /// Append the display text of a `SIMD` or `Bool` value into the
-    /// `String` `writer` through its declared member `method`: the instance the
-    /// member table of its type names, which the elaborator declares and
-    /// fills. A reference displays its referent, and an `IntLiteral` or
-    /// `FloatLiteral` displays as the `Int` or `Float64` it materializes
-    /// to, as upstream's literal `write_to` and `write_repr_to` do.
-    /// `Ok(false)` when `arg` is none of these.
-    pub(super) fn append_declared_display(
-        &mut self,
-        ctx: &mut Context,
-        arg: Reg,
-        method: &str,
-        writer: Value,
-        dest: Reg,
-    ) -> Result<bool, PlironError> {
-        let Some(ty) = self.declared_display_ty(arg) else {
-            return Ok(false);
-        };
-        let Some(table) = mojito_symbol::symbol::member_table_name(&ty) else {
-            return Err(self.unsupported_reg(format!("display of the open type `{ty}`"), dest));
-        };
-        let Some(symbol) = self.display_member(&table, method, dest)? else {
-            return Err(self.unsupported_reg(
-                format!("display of `{ty}` without a compiled `{method}`"),
-                dest,
-            ));
-        };
-        let signature = &self.signatures[symbol];
-        if signature.outcome.is_some() {
-            return Err(self.unsupported_reg(format!("raising `{symbol}`"), dest));
-        }
-        let Some(receiver_ty) = signature.params.first().cloned() else {
-            return Err(self.unsupported_reg(format!("`{symbol}` takes no receiver"), dest));
-        };
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let func_ty = signature.func_ty;
-        let arg_ty = self.func.reg_types.get(&arg.0).cloned();
-        let receiver = match (arg_ty.as_ref().map(Ty::kind), &receiver_ty) {
-            (Some(TyKind::Ref(_)), LowerTy::Scalar(scalar)) => {
-                let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
-                let handle = scalar.handle(ctx);
-                let load = LoadOp::new(ctx, pointer, handle);
-                self.append(ctx, load.get_operation(), Some(dest));
-                load.get_result(ctx)
-            }
-            (Some(TyKind::Ref(_)), _) => self.reg_value(ctx, arg, ScalarTy::Ptr)?,
-            // A runtime FloatLiteral value rejects: the VM displays its
-            // exact rational (`1/10`), which f64 storage cannot reproduce.
-            (Some(TyKind::FloatLiteral(_)), _) if !self.pending_literals.contains_key(&arg.0) => {
-                return Err(
-                    self.unsupported_reg("display of a runtime FloatLiteral value".into(), dest)
-                );
-            }
-            (Some(TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)), LowerTy::Scalar(scalar)) => {
-                self.reg_value(ctx, arg, *scalar)?
-            }
-            _ => self.arg_value(ctx, arg, &receiver_ty, false, dest)?,
-        };
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(callee),
-            func_ty,
-            vec![receiver, writer],
-        );
-        self.append(ctx, call.get_operation(), Some(dest));
-        Ok(true)
-    }
-
-    /// The closed `SIMD` type or `Bool` whose display members display
-    /// `arg`: its own, its referent's, or the type a literal materializes
-    /// to.
-    fn declared_display_ty(&self, arg: Reg) -> Option<Ty> {
-        let ty = self.func.reg_types.get(&arg.0)?;
-        let ty = match ty.kind() {
-            TyKind::Ref(reference) => &reference.referent,
-            _ => ty,
-        };
-        let ty = mojito_types::types::default_literal(ty);
-        (ty.kind().is_simd() || ty.kind().is_bool()).then_some(ty)
     }
 }
 

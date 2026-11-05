@@ -1004,38 +1004,6 @@ impl<'p> CallEdges<'p, '_> {
         }
     }
 
-    /// The display member `method` a lowered expansion calls for a value
-    /// of type `ty`: a nominal struct's, the nominal String's excepted,
-    /// or a `SIMD` or `Bool` value's ([`Self::push_declared_members`]).
-    fn push_display_members(&mut self, ty: &Ty, method: &str) {
-        match ty.kind() {
-            struct_ty
-                if let Some((name, _)) = struct_ty.as_non_simd_struct()
-                    && !mojito_symbol::symbol::is_stdlib_string_struct(name) =>
-            {
-                self.push_members(name, method);
-            }
-            struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {}
-            _ => self.push_declared_members(ty, method),
-        }
-    }
-
-    /// The display member `method` of the `SIMD` type or `Bool` that
-    /// displays a value of type `ty`: its own, its referent's, or the type a
-    /// literal materializes to, found in that type's member table.
-    fn push_declared_members(&mut self, ty: &Ty, method: &str) {
-        let ty = match ty.kind() {
-            TyKind::Ref(reference) => &reference.referent,
-            _ => ty,
-        };
-        let ty = mojito_types::types::default_literal(ty);
-        if (ty.kind().is_simd() || ty.kind().is_bool())
-            && let Some(table) = mojito_symbol::symbol::member_table_name(&ty)
-        {
-            self.push_members(&table, method);
-        }
-    }
-
     /// The edges of a call, a method call, or an operator: the callee it
     /// names, and the members its lowered expansion dispatches to.
     fn dispatch_edges(&mut self, instr: &'p MirInstr) {
@@ -1044,39 +1012,6 @@ impl<'p> CallEdges<'p, '_> {
             // intrinsics; their element-erased stdlib bodies must not
             // be declared.
             MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => {}
-            // `String(...)` of a nominal struct or a `SIMD` value calls its
-            // `write_to` instance in the lowered expansion. The nominal
-            // String displays through its own bytes instead: its `write_to`
-            // is there for the VM, never an edge here.
-            MirInstr::Call { func, args, .. } if func.0 == "String" => {
-                for arg in args {
-                    if let Some(ty) = self.function.reg_types.get(&arg.0) {
-                        self.push_display_members(ty, "write_to");
-                    }
-                }
-            }
-            // `repr` of a nominal struct or a `SIMD` value calls its
-            // `write_repr_to` instance in the lowered expansion.
-            MirInstr::Call { func, args, .. } if func.0 == "repr" => {
-                for arg in args {
-                    match self.function.reg_types.get(&arg.0).map(Ty::kind) {
-                        Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                            self.push_members(name, "write_repr_to");
-                        }
-                        // A literal's repr writes through the nominal
-                        // `String`'s member.
-                        Some(kind) if kind.is_string_literal() => self.push_members(
-                            mojito_symbol::symbol::STDLIB_STRING_STRUCT,
-                            "write_repr_to",
-                        ),
-                        _ => {
-                            if let Some(ty) = self.function.reg_types.get(&arg.0) {
-                                self.push_declared_members(ty, "write_repr_to");
-                            }
-                        }
-                    }
-                }
-            }
             MirInstr::Call { func, .. } => {
                 if let Some((callee, _)) = self.functions.get_key_value(func.0.as_str()) {
                     self.targets.push(*callee);
@@ -1111,21 +1046,14 @@ impl<'p> CallEdges<'p, '_> {
                     self.push_named(constructor);
                 }
             }
-            // The VM-synthesized `Writer.write` dispatch lowers to
-            // `write_string` calls that exist only in the expansion, and
-            // displays each nominal argument through its `write_to`
-            // instance first, whatever the writer.
+            // A writer's host-formatted write lowers to `write_string`
+            // calls that exist only in the expansion.
             MirInstr::MethodCall {
                 recv,
                 method,
                 resolved: None,
-                args,
                 ..
-            } if matches!(
-                method.as_str(),
-                "write" | mojito_symbol::symbol::WRITE_FORMATTED
-            ) =>
-            {
+            } if mojito_symbol::symbol::is_formatted_write(method) => {
                 if let Some((name, _)) = self
                     .function
                     .reg_types
@@ -1133,11 +1061,6 @@ impl<'p> CallEdges<'p, '_> {
                     .and_then(|ty| ty.kind().as_non_simd_struct())
                 {
                     self.push_members(name, "write_string");
-                }
-                for arg in args {
-                    if let Some(ty) = self.function.reg_types.get(&arg.0) {
-                        self.push_display_members(ty, "write_to");
-                    }
                 }
             }
             // A `DType` Hashable leaf lowers to the hasher's compiled

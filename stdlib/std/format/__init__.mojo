@@ -11,6 +11,8 @@ from std.reflection.type_info import _unqualified_type_name
 from std.string import StaticString, StringSpan
 from std.range import range
 
+from .repr import repr
+
 
 trait Writer:
     """A destination for formatted text output: `write_string` is the core

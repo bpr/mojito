@@ -811,9 +811,9 @@ impl VmBackend {
                     // frame identity reachable even without direct ref
                     // parameters because by-value arguments may contain
                     // nested reference handles.
-                    // A builtin (`print`, `String`, `repr`) dispatches its
-                    // operands by runtime shape, so a held struct operand
-                    // passes as its box; a function's frame entry unboxes it.
+                    // A builtin (`abs`, `input`) dispatches its operands by
+                    // runtime shape, so a held struct operand passes as its
+                    // box; a function's frame entry unboxes it.
                     let reg_types = &prog.mir.functions[function].1.reg_types;
                     let argv: Vec<Value> = argv
                         .into_iter()

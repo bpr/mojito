@@ -11,7 +11,9 @@
 use crate::package::{
     ModuleIdentity, ModuleRecords, PackageModule, PackageModules, PackagedModule,
 };
-use mojito_ast::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
+use mojito_ast::ast::{
+    ComprehensionClause, Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type,
+};
 use mojito_ast::visit::{Visitor, walk_block};
 use mojito_common::error::ParseError;
 use mojito_common::timing;
@@ -470,6 +472,27 @@ fn rewrite_expr(
             }
         }
         ExprKind::TypeValue(ty) => rewrite_type(ty, names, namespaces),
+        ExprKind::Comprehension {
+            key,
+            value,
+            clauses,
+            ..
+        } => {
+            for clause in clauses {
+                match clause {
+                    ComprehensionClause::For { iter, .. } => {
+                        rewrite_expr(iter, names, namespaces);
+                    }
+                    ComprehensionClause::If(condition) => {
+                        rewrite_expr(condition, names, namespaces);
+                    }
+                }
+            }
+            if let Some(key) = key {
+                rewrite_expr(key, names, namespaces);
+            }
+            rewrite_expr(value, names, namespaces);
+        }
         _ => {}
     }
 }
@@ -2314,6 +2337,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "TString",
     "Writable",
     "Writer",
+    "repr",
     "alloc",
     "hash",
     "atol",
@@ -2851,6 +2875,7 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.format", "Writable") => Some("Writable"),
         ("std.format", "Writer") => Some("Writer"),
         ("std.format.tstring", "TString") => Some("TString"),
+        ("std.format.repr", "repr") => Some("repr"),
         ("std.io.io", "print") => Some("print"),
         ("std.range", "range") => Some("range"),
         ("std.builtin.builtin_slice", "Slice") => Some("Slice"),

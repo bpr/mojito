@@ -608,35 +608,20 @@ impl<'a> Flatten<'a> {
         // Retain only checker-selected `mut`/`ref` caller places. A
         // syntactically simple copied argument remains eligible for
         // ASAP destruction after its value has been evaluated.
-        // The prelude rewrite renames every use of `String`, including
-        // the builtin Writable conversion the checker typed as the
-        // compile-time string; route those back to the VM's
-        // conversion builtin instead of the nominal constructor.
-        // A retargeted `String(x)` stringify carries a
-        // `ResolveCallable("String")` adjustment and its checked nominal
-        // `String` result (production path), or keeps the compile-time
-        // string checked type (the unlinked seam): both route to the
-        // `"String"` conversion builtin, typed as checked.
-        let stringify = mojito_symbol::symbol::is_stdlib_string_struct(name)
-            && (callable_target(&node.adjustments).as_deref() == Some("String")
-                || node.ty.as_ref().is_some_and(Ty::is_string_literal));
         // A call's argument list anchors nested loan-carrying
         // temporaries unless another channel already carries their
         // loans (see `call_anchors_arguments`). A construction's
         // aggregate result additionally carries its arguments' loans
         // forward instead (its binding — or its own anchor one call
-        // level up — installs them). The stringify conversion is the
-        // exception: its result is a fresh owned string that carries
-        // no loans, so a view argument anchors as in a plain call.
+        // level up — installs them).
         let lends_reads = call.lends_read_arguments();
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = (stringify
-            || node
-                .ty
-                .clone()
-                .as_ref()
-                .and_then(|ty| ty.kind().as_non_simd_struct())
-                .is_none_or(|(constructed, _)| *constructed != *name))
+        self.allow_argument_anchors = node
+            .ty
+            .clone()
+            .as_ref()
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .is_none_or(|(constructed, _)| *constructed != *name)
             && call.call_anchors_arguments();
         self.open_call_setup();
         let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
@@ -655,12 +640,8 @@ impl<'a> Flatten<'a> {
                 .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
             _ => (regs, arg_places, kw, kwarg_places),
         };
-        let target = if stringify {
-            "String".to_string()
-        } else {
-            callable_target(&node.adjustments)
-                .unwrap_or_else(|| self.overloaded_name(name, args.len()))
-        };
+        let target = callable_target(&node.adjustments)
+            .unwrap_or_else(|| self.overloaded_name(name, args.len()));
         let d = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         let capture_accesses = self.call_capture_accesses(call);

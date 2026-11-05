@@ -142,23 +142,6 @@ impl Checker {
     ) -> Option<(String, bool, Vec<AliasCandidate<'a>>)> {
         let span = call.source_span();
         match &call.kind {
-            // The stringify intrinsic: upstream's `String(*args)` initializer.
-            ExprKind::Call { name, args, .. }
-                if !args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
-            {
-                Some((
-                    "String".to_string(),
-                    true,
-                    args.iter()
-                        .map(|expression| AliasCandidate {
-                            parameter: "args".to_string(),
-                            expression,
-                            convention: None,
-                            parameter_ty: None,
-                        })
-                        .collect(),
-                ))
-            }
             ExprKind::Call {
                 name, args, kwargs, ..
             } => Some((

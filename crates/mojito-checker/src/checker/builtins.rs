@@ -382,30 +382,6 @@ impl Checker {
         }
     }
 
-    /// Type `String(x)`: stringify a numeric, `Bool`, or `String` value.
-    pub(super) fn infer_stringify(&self, args: &[Expr]) -> Result<Ty, TypeError> {
-        let tys = self.builtin_args("String", 1, args)?;
-        if is_numeric(&tys[0]) || tys[0].is_bool() || tys[0].is_string_literal() {
-            let runtime_ty = default_literal(&tys[0]);
-            if runtime_ty != tys[0] {
-                self.record_literal_materializations(&args[0], &tys[0], &runtime_ty)?;
-            }
-            return Ok(self.builtin_string_result());
-        }
-        if self.conforms_to(&tys[0], "Writable") {
-            // Like `print`, nominal String conversion formats through a
-            // borrowed `Writable` receiver and must retain its caller storage
-            // until that synchronous formatter returns.
-            self.record_at(args[0].source_span()).call_place_use = true;
-            return Ok(self.builtin_string_result());
-        }
-        Err(TypeError::TypeMismatch {
-            expected: "Writable".to_string(),
-            found: tys[0].to_string(),
-            context: "argument to 'String'".to_string(),
-        })
-    }
-
     /// Type `abs(x)`: a numeric argument, returning the same numeric type.
     /// A call reaches this rule only where no `abs` binding exists — a
     /// module loaded while the prelude bootstraps, or a program linked

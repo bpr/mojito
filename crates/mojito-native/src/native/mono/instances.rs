@@ -251,15 +251,14 @@ impl Specializer<'_> {
             .is_some_and(|target| self.functions.contains_key(target))
     }
 
-    /// A `writer.$write_formatted(x)` call reaches the writer's
-    /// `write_string` and formats each argument through its own `write_to`
-    /// first: enqueue those instances for the lowered expansion.
+    /// A writer's host-formatted write (`writer.$write_formatted(x)`)
+    /// reaches the writer's `write_string`: enqueue its instance for the
+    /// lowered expansion.
     pub(super) fn enqueue_formatted_write(
         &mut self,
         owner: &str,
         function: &MirFunction,
         writer: Reg,
-        args: &[Reg],
     ) -> Result<(), MonoError> {
         let Some(writer_ty) = function
             .reg_types
@@ -282,196 +281,11 @@ impl Specializer<'_> {
         let (bindings, arguments, _) =
             self.infer_receiver_call(owner, &write_string, &writer_ty, ReceiverCall::default())?;
         self.enqueue(&write_string, bindings, arguments)?;
-        for &arg in args {
-            self.enqueue_display_instance(owner, function, arg)?;
-        }
         Ok(())
-    }
-
-    pub(super) fn enqueue_display_instance(
-        &mut self,
-        owner: &str,
-        function: &MirFunction,
-        arg: Reg,
-    ) -> Result<(), MonoError> {
-        self.enqueue_format_instance(owner, function, arg, "write_to")
-    }
-
-    pub(super) fn enqueue_repr_instance(
-        &mut self,
-        owner: &str,
-        function: &MirFunction,
-        arg: Reg,
-    ) -> Result<(), MonoError> {
-        // A string literal's repr is its `as_string_slice()`'s, which the
-        // backends write through the nominal `String`'s member (R1863).
-        if function
-            .reg_types
-            .get(&arg.0)
-            .is_some_and(|ty| peel_refs(ty).is_string_literal())
-        {
-            return self.enqueue_format_ty_instance(owner, &nominal_string(), "write_repr_to");
-        }
-        self.enqueue_format_instance(owner, function, arg, "write_repr_to")
-    }
-
-    fn enqueue_format_instance(
-        &mut self,
-        owner: &str,
-        function: &MirFunction,
-        arg: Reg,
-        method: &str,
-    ) -> Result<(), MonoError> {
-        let Some(ty) = function.reg_types.get(&arg.0) else {
-            return Ok(());
-        };
-        self.enqueue_format_ty_instance(owner, peel_refs(ty), method)
-    }
-
-    fn enqueue_format_ty_instance(
-        &mut self,
-        owner: &str,
-        ty: &Ty,
-        method: &str,
-    ) -> Result<(), MonoError> {
-        // A literal displays as the type it materializes to, as upstream's
-        // `IntLiteral` and `FloatLiteral` members call `Int`'s and
-        // `Float64`'s.
-        let ty = &mojito_types::types::default_literal(ty);
-        if mojito_types::types::simd_shape(ty.kind()).is_some() && ty.is_simd() {
-            return self.enqueue_simd_format_instance(owner, ty, method);
-        }
-        let Some((name, arguments)) = struct_receiver(ty) else {
-            return Ok(());
-        };
-        let exact = format!("{name}.{method}");
-        if self.functions.contains_key(exact.as_str()) {
-            if self.writes_protocol(&exact) {
-                self.nominal_method_instance(owner, ty, method, 1, &[], &[nominal_string()])?;
-            }
-            return Ok(());
-        }
-        // The template's `write_to` is instantiated for the receiver.
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            &self.functions,
-            nominal_template(name),
-            method,
-            None,
-            1,
-        );
-        // Beside a rival of the same arity (`write_to[U](self, mut writer:
-        // List[U])`), no symbol answers by arity; the overload whose first
-        // parameter is a `Writer` is the protocol's witness.
-        let target = if self.functions.contains_key(target.as_str()) {
-            target
-        } else {
-            self.protocol_overload(nominal_template(name), method)
-                .unwrap_or(target)
-        };
-        if !self.functions.contains_key(target.as_str()) || !self.writes_protocol(&target) {
-            return Ok(());
-        }
-        let Some(declaration) = self.declarations.get(target.as_str()) else {
-            return Ok(());
-        };
-        let mut bindings = self.base_bindings();
-        let mut owner_covered = 0;
-        if let Some(struct_decl) = self.structs.get(nominal_template(name)) {
-            bind_ty_args(&struct_decl.param_decls, &arguments, &mut bindings).map_err(|e| {
-                self.error(
-                    Some(owner),
-                    format!("monomorphizing receiver for `{target}`: {e}"),
-                )
-            })?;
-            if nominal_template(name) != name {
-                bindings.self_instance = Some((nominal_template(name).to_string(), ty.clone()));
-                owner_covered =
-                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
-            }
-        }
-        // The writer is the `String` upstream's `String(x)` and `repr(x)`
-        // write into, solving the `Some[Writer]` binder as a call's argument.
-        if let Some(writer) = declaration.param_types.first() {
-            unify(writer, &nominal_string(), &mut bindings)
-                .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
-        }
-        let mut arguments =
-            self.own_arguments(&declaration.param_decls, &bindings, &target, owner_covered)?;
-        push_sugar_arguments(declaration, &bindings, &mut arguments);
-        self.enqueue(&target, bindings, arguments)?;
-        Ok(())
-    }
-
-    /// Enqueue the display member `method` of the closed `SIMD` type `ty`,
-    /// instantiated at the `String` writer, and declare the `SIMD` instance
-    /// whose member table a backend finds it in from the value's type.
-    fn enqueue_simd_format_instance(
-        &mut self,
-        owner: &str,
-        ty: &Ty,
-        method: &str,
-    ) -> Result<(), MonoError> {
-        let template = mojito_types::types::SIMD_TYPE_NAME;
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            &self.functions,
-            template,
-            method,
-            None,
-            1,
-        );
-        let target = if self.functions.contains_key(target.as_str()) {
-            target
-        } else {
-            self.protocol_overload(template, method).unwrap_or(target)
-        };
-        if !self.functions.contains_key(target.as_str()) || !self.writes_protocol(&target) {
-            return Ok(());
-        }
-        let writer = nominal_string();
-        let (mut bindings, mut arguments, _) = self.infer_receiver_call(
-            owner,
-            &target,
-            ty,
-            ReceiverCall {
-                parameters: &[&writer],
-                ..ReceiverCall::default()
-            },
-        )?;
-        let Some(declaration) = self.declarations.get(target.as_str()) else {
-            return Ok(());
-        };
-        // The `Some[Writer]` sugar parameter is infer-only (absent from
-        // `param_decls`); bind its spelling from the declared type.
-        for ty in &declaration.param_types {
-            if let TyKind::Param { binder, .. } = ty.kind()
-                && !bindings.types.contains_key(binder)
-            {
-                bindings.types.insert(binder.clone(), writer.clone());
-            }
-        }
-        push_sugar_arguments(declaration, &bindings, &mut arguments);
-        self.enqueue(&target, bindings, arguments)?;
-        self.declare_simd_instance(owner, ty)
     }
 
     /// Whether a display method takes the `Writable` protocol's writer; any
     /// other `write_to` is an ordinary overload and never serves display.
-    /// The one overload of `template.method` whose first parameter is a
-    /// `Writer`.
-    fn protocol_overload(&self, template: &str, method: &str) -> Option<String> {
-        let family = format!("{template}.{method}{}", mojito_symbol::symbol::OV_SEP);
-        let mut overloads = self.declarations.prefixed(&family).filter(|name| {
-            self.declarations.get(name).is_some_and(|declaration| {
-                declaration
-                    .param_types
-                    .first()
-                    .is_some_and(mojito_types::types::is_writer_parameter)
-            })
-        });
-        let overload = overloads.next()?;
-        overloads.next().is_none().then(|| overload.to_string())
-    }
-
     pub(super) fn writes_protocol(&self, target: &str) -> bool {
         self.declarations.get(target).is_none_or(|declaration| {
             declaration
@@ -480,15 +294,6 @@ impl Specializer<'_> {
                 .is_some_and(mojito_types::types::is_writer_parameter)
         })
     }
-}
-
-/// The bundled `String`, the writer a displayed value's `write_to` and
-/// `write_repr_to` are instantiated at.
-fn nominal_string() -> Ty {
-    Ty::new(TyKind::Struct(
-        mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-        Vec::new(),
-    ))
 }
 
 /// The struct and arguments whose member table a receiver of type `ty`

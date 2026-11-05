@@ -36,15 +36,8 @@ impl Checker {
             initializer_list::spelled_node(expression, ordinal, kind, span)
         };
         // The linked `String`, so each segment is the construction a user's
-        // `String(…)` is; a seam without the stdlib struct keeps the builtin.
-        let string = if self
-            .structs
-            .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
-        {
-            mojito_symbol::symbol::STDLIB_STRING_STRUCT
-        } else {
-            "String"
-        };
+        // `String(…)` is.
+        let string = mojito_symbol::symbol::STDLIB_STRING_STRUCT;
         let mut args = Vec::with_capacity(parts.len());
         for part in parts {
             match part {

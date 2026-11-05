@@ -69,6 +69,16 @@ pub const TRAIT_DISPATCH: &str = "__trait_dispatch";
 /// writer's own `write`; the `$` keeps any source method from naming it.
 pub const WRITE_FORMATTED: &str = "$write_formatted";
 
+/// The representation twin of [`WRITE_FORMATTED`]: the method a writer
+/// receives for `x.write_repr_to(writer)` on the same host-formatted
+/// receivers, writing the value's `repr` text.
+pub const WRITE_REPR_FORMATTED: &str = "$write_repr_formatted";
+
+/// Whether `method` is one of the writer's host-formatted write primitives.
+pub fn is_formatted_write(method: &str) -> bool {
+    method == WRITE_FORMATTED || method == WRITE_REPR_FORMATTED
+}
+
 /// The implicit-conversion target that splats a scalar across a vector.
 ///
 /// It stands for `std.simd`'s declared `@implicit
@@ -654,7 +664,7 @@ pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
 }
 
 /// The nominal String's `StringLiteral` constructor symbol — the wrap that
-/// materializes a compile-time string result (`String("abc")`, `repr(x)`,
+/// materializes a compile-time string result (`String("abc")`,
 /// `input(...)`) as the nominal struct.
 pub fn nominal_string_literal_ctor_symbol() -> String {
     format!("{STDLIB_STRING_STRUCT}.__init__$ov$StringLiteral")

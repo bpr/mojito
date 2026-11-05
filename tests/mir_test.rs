@@ -1890,10 +1890,11 @@ fn converted_memory_only_subscript_key_reads_its_source_in_place() {
 }
 
 #[test]
-fn repr_text_and_transferred_temporary_receiver_use_call_result_slots() {
-    // The `repr(x)` text an intrinsic `DType`'s `write_repr_to` writes is read in its
-    // call-result slot, and `^` over a temporary owned receiver hands the
-    // `deinit` method that temporary's slot.
+fn intrinsic_repr_write_and_transferred_temporary_receiver() {
+    // An intrinsic `DType`'s `write_repr_to` is the writer's
+    // `$write_repr_formatted` over the receiver itself, and `^` over a
+    // temporary owned receiver hands the `deinit` method that temporary's
+    // call-result slot.
     let source = "trait Rel:\n    def release(deinit self): ...\n\nstruct H(Movable, Rel):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def release(deinit self):\n        print(self.id)\n\ndef pk[T: Rel & Movable](var x: T) -> T:\n    return x^\n\ndef through[T: Rel & Movable](var x: T):\n    pk(x^)^.release()\n\ndef first(d: DType) -> String:\n    var text = String()\n    d.write_repr_to(text)\n    return text\n\ndef main():\n    through(H(4))\n    print(first(DType.int8))\n";
     let compiled = Compiler::default()
         .with_pre_elaboration(false)
@@ -1925,21 +1926,16 @@ fn repr_text_and_transferred_temporary_receiver_use_call_result_slots() {
         .expect("the release call");
     assert!(slot_backed(through, receiver), "{through:#?}");
     let first = mir_function(compiled.elaborated_mir(), "first");
-    let (text, place) = nested_instructions(&first.blocks)
-        .into_iter()
-        .find_map(|instruction| match instruction {
-            MirInstr::MethodCall {
-                method,
-                args,
-                arg_places,
-                ..
-            } if method == mojito::symbol::WRITE_FORMATTED => {
-                Some((args[0], arg_places[0].clone()))
-            }
-            _ => None,
-        })
-        .expect("the repr write");
-    assert!(slot_backed(first, text) && place.is_some(), "{first:#?}");
+    assert!(
+        nested_instructions(&first.blocks)
+            .into_iter()
+            .any(|instruction| matches!(
+                instruction,
+                MirInstr::MethodCall { method, args, .. }
+                    if method == mojito::symbol::WRITE_REPR_FORMATTED && args.len() == 1
+            )),
+        "{first:#?}"
+    );
 }
 
 #[test]
@@ -2853,7 +2849,7 @@ fn production_tstrings_call_the_bundled_entry_point() {
             .iter()
             .filter(|instruction| matches!(
                 instruction,
-                MirInstr::Call { func, .. } if func.0 == "String" || func.0.starts_with(&string_init)
+                MirInstr::Call { func, .. } if func.0.starts_with(&string_init)
             ))
             .count(),
         1,

@@ -116,24 +116,6 @@ impl Checker {
                 constructed
             }
             _ if self.structs.contains_key(name) && name != mojito_types::types::SIMD_TYPE_NAME => {
-                // `String(x)` on a non-literal argument stringifies through
-                // the builtin conversion, which builds the nominal struct
-                // itself: the call routes to the `"String"` builtin (a
-                // `ResolveCallable` adjustment) and yields an owned
-                // `String`, as upstream's `String.__init__[T: Writable]`
-                // does. A single string-literal argument, a keyword
-                // construction such as `String(copy: s)`, and a sequence of
-                // `Writable` arguments are the ordinary constructor path.
-                if mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    && args.len() == 1
-                    && kwargs.is_empty()
-                    && param_args.is_empty()
-                    && !(args.len() == 1 && self.infer(&args[0])?.is_string_literal())
-                {
-                    self.infer_stringify(args)?;
-                    self.record_at(span).overload_target = Some("String".to_string());
-                    return Ok(Ty::new(TyKind::Struct(name.to_string(), Vec::new())));
-                }
                 let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
                 self.type_runtime_param_args(param_args)?;
                 Ok(constructed)
@@ -297,22 +279,6 @@ impl Checker {
                         context: "argument to '_mojito_abort'".to_string(),
                     }),
                 }
-            }
-            // Positional `String(x)` is the stringify intrinsic; the
-            // zero-argument form is the nominal empty constructor
-            // (2026-08 stabilization) and falls through to it.
-            "String" if !args.is_empty() => self.infer_stringify(args),
-            "repr" => {
-                let tys = self.builtin_args("repr", 1, args)?;
-                if self.conforms_to(&tys[0], "Writable") {
-                    self.record_at(args[0].source_span()).call_place_use = true;
-                    return Ok(self.builtin_string_result());
-                }
-                Err(TypeError::TypeMismatch {
-                    expected: "Writable".to_string(),
-                    found: tys[0].to_string(),
-                    context: "argument to 'repr'".to_string(),
-                })
             }
             "abs" => self.infer_abs(args),
             "min" | "max" => self.infer_min_max(name, args),
@@ -704,7 +670,7 @@ impl Checker {
     }
 
     /// The result of a builtin that builds the nominal `String` itself
-    /// (`repr`, `input`), as upstream's functions return one: the stdlib
+    /// (`input`), as upstream's function returns one: the stdlib
     /// struct, or the compile-time string on an unlinked seam without it.
     pub(super) fn builtin_string_result(&self) -> Ty {
         if self

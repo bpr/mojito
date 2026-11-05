@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.164
+mojito-mir 1.165
 ```
 
-The writer emits 1.164. The reader accepts 1.0 through 1.164; *Schema 1.0*
+The writer emits 1.165. The reader accepts 1.0 through 1.165; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1137,6 +1137,12 @@ Schema 1.163 removes the instructions `variant.set_init_with` and
 and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
+
+Schema 1.165 adds the method `$write_repr_formatted`, the representation
+twin of `$write_formatted`, which an intrinsic receiver's `write_repr_to`
+(`DType`, `Error`) lowers to; the builtin callees `String` and `repr` are
+gone, since both are library code. The package format moves to
+`mojito-package 190`.
 
 Schema 1.164 adds the types `ui8`, upstream's MLIR builtin `ui8`, and
 `kgen_dtype`, upstream's `!kgen.dtype`, and the `pop` ops `dtype.to_ui8`

@@ -700,7 +700,6 @@ struct String(
 
     # Upstream's sequence of `Writable` arguments. Its body sizes the buffer
     # first; this writes through `VariadicPack._write_to` alone.
-    # A single positional argument is the compiler's stringify conversion.
     def __init__[
         *Ts: Writable,
     ](out self, *args: *Ts, sep: StaticString = "", end: StaticString = ""):

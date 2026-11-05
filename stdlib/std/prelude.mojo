@@ -7,7 +7,7 @@
 
 from std.collections.array import Array
 from std.collections.list import List
-from std.format import Writable, Writer
+from std.format import Writable, Writer, repr
 from std.format.tstring import TString
 from std.string import (
     Codepoint,

@@ -423,35 +423,6 @@ impl VmBackend {
                 };
                 Err(RuntimeError::Abort(message))
             }
-            // The stringify conversion: a nominal `String` result owns a
-            // fresh buffer, as upstream's `String.__init__[T: Writable]`
-            // builds; the unlinked seam keeps the builtin string.
-            "String" => {
-                let text = match args.into_iter().next() {
-                    Some(value) => self.format_value(prog, value, false)?,
-                    None => String::new(),
-                };
-                if constructed == Some(mojito_symbol::symbol::STDLIB_STRING_STRUCT) {
-                    self.nominal_string_value(prog, &text)
-                } else {
-                    Ok(Value::Str(text))
-                }
-            }
-            "repr" => match args.into_iter().next() {
-                Some(value) => {
-                    let text = self.format_value(prog, value, true)?;
-                    if constructed == Some(mojito_symbol::symbol::STDLIB_STRING_STRUCT) {
-                        self.nominal_string_value(prog, &text)
-                    } else {
-                        Ok(Value::Str(text))
-                    }
-                }
-                None => Err(RuntimeError::ArityMismatch {
-                    name: "repr".to_string(),
-                    expected: 1,
-                    got: 0,
-                }),
-            },
             // The compiler's own `len`: a pack cursor's length, and CTFE's
             // over a compile-time list. A program's `len` is the library's.
             "len" => match args.into_iter().next() {
@@ -580,80 +551,6 @@ impl VmBackend {
         }
     }
 
-    /// Format one value as `print`/`String`/`repr`/`Writer.write` do. A
-    /// nominal value writes itself, through the `write_to`/`write_repr_to`
-    /// instance at the `String` writer that the member table of its type
-    /// names, into an empty `String`, as upstream's `repr` and `String(x)`
-    /// do ([`mojito_symbol::symbol::member_table_name`]): a
-    /// struct's own or inherited `Writable` member, by its runtime name,
-    /// a `Bool`'s declared member, and a `SIMD` value's, by its runtime
-    /// dtype and width, which are its type. Only the literals, `DType`,
-    /// strings, and the VM's internal values keep host text. A moved-out
-    /// tombstone (an unsafe take of never-written storage) traps as any
-    /// use of it does.
-    pub(super) fn format_value(
-        &mut self,
-        prog: &Prog,
-        value: Value,
-        repr: bool,
-    ) -> Result<String, RuntimeError> {
-        if matches!(value, Value::Moved) {
-            return Err(RuntimeError::TypeError(
-                "vm: display of a value after it was moved".to_string(),
-            ));
-        }
-        let Some(name) = display_table(&value) else {
-            if repr {
-                return Ok(scalar_repr(&value));
-            }
-            return Ok(value.to_string());
-        };
-        let method = if repr { "write_repr_to" } else { "write_to" };
-        // The display member is the member-table instance of the `Writable`
-        // witness at the `String` writer; one at another writer is a call's.
-        let mut witnesses = prog
-            .struct_member_instances(&name, method)
-            .filter(|(_, symbol)| {
-                prog.sigs.get(*symbol).is_none_or(|sig| {
-                    sig.param_types
-                        .first()
-                        .is_some_and(mojito_types::types::is_nominal_string)
-                })
-            });
-        let witness = witnesses.next();
-        if witnesses.next().is_some() {
-            return Err(RuntimeError::Unsupported(format!(
-                "vm: display of `{name}` with ambiguous `{method}` instances"
-            )));
-        }
-        if let Some((index, symbol)) = witness {
-            // The builtin display calls no `String()` the dead-symbol pass
-            // keeps, so the empty writer is built as that constructor's.
-            let writer = self.nominal_string_value(prog, "")?;
-            let (_, variables) = self.call_frame(prog, index, vec![value, writer])?;
-            return match variables.get(1) {
-                Some(writer @ Value::Struct { fields, .. }) => {
-                    let Value::Str(text) = self.string_struct_literal(writer)? else {
-                        unreachable!("a nominal String's text is a string");
-                    };
-                    if let Some((_, Value::Pointer { allocation, offset })) =
-                        fields.iter().find(|(field, _)| field == "data")
-                    {
-                        self.heap_free(*allocation, *offset)?;
-                    }
-                    Ok(text)
-                }
-                other => Err(RuntimeError::TypeError(format!(
-                    "{symbol} did not leave a Writer value, got {}",
-                    other.map_or_else(|| "missing".to_string(), crate::runtime::type_name)
-                ))),
-            };
-        }
-        Err(RuntimeError::TypeError(format!(
-            "vm: `{name}` has no `{method}` instance to display it, though the check proved it `Writable`"
-        )))
-    }
-
     /// Run the copy or move constructor `constructor` a copy or move names
     /// on `source`, a struct value, and return the value it initializes.
     fn run_constructor(
@@ -673,6 +570,33 @@ impl VmBackend {
         let skeleton = Self::struct_skeleton(prog, name);
         let (_, frame_vars) = self.call_frame(prog, index, vec![skeleton, source])?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
+    }
+}
+
+/// The host text a writer's `$write_formatted` (or, with `repr`,
+/// `$write_repr_formatted`) writes for an intrinsic value with no
+/// declared `write_to`: `DType`, `Error`, `None`, and the VM's internal
+/// values. A declared value writes itself through its own member, so a
+/// struct or `SIMD` value here is an unsupported boundary. A moved-out
+/// tombstone (an unsafe take of never-written storage) traps as any use
+/// of it does.
+pub(super) fn format_value(value: &Value, repr: bool) -> Result<String, RuntimeError> {
+    match value {
+        Value::Moved => Err(RuntimeError::TypeError(
+            "vm: display of a value after it was moved".to_string(),
+        )),
+        Value::Struct { name, .. } => Err(RuntimeError::Unsupported(format!(
+            "vm: host-formatted write of the declared struct `{name}`"
+        ))),
+        Value::Int(_)
+        | Value::UInt(_)
+        | Value::Float64(_)
+        | Value::Bool(_)
+        | Value::Simd { .. } => Err(RuntimeError::Unsupported(
+            "vm: host-formatted write of a declared `SIMD` or `Bool` value".to_string(),
+        )),
+        _ if repr => Ok(scalar_repr(value)),
+        _ => Ok(value.to_string()),
     }
 }
 
@@ -772,26 +696,5 @@ fn scalar_repr(value: &Value) -> String {
             out
         }
         other => other.to_string(),
-    }
-}
-
-/// The member table that displays `value` ([`VmBackend::format_value`]): a
-/// struct's, by its runtime name, a held one's by the box its operand's
-/// type gives it ([`Prog::boxed`]), and a `SIMD` value's, by its dtype and
-/// width. `None` for a value with host text.
-fn display_table(value: &Value) -> Option<std::borrow::Cow<'_, str>> {
-    match value {
-        Value::Struct { name, .. } => Some(std::borrow::Cow::Borrowed(name)),
-        Value::Int(_)
-        | Value::UInt(_)
-        | Value::Float64(_)
-        | Value::Bool(_)
-        | Value::Simd { .. } => {
-            let (dtype, lanes) = crate::runtime::simd_parts(value)?;
-            let ty = mojito_types::types::canonical_simd_ty(dtype, lanes.width() as i64);
-            mojito_symbol::symbol::member_table_name(&ty)
-                .map(|name| std::borrow::Cow::Owned(name.into_owned()))
-        }
-        _ => None,
     }
 }

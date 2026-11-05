@@ -2,7 +2,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::call_results::CValue;
 use mojito_checked::checked::{CheckedExpr, CheckedOp};
 
 impl<'a> Flatten<'a> {
@@ -243,16 +242,23 @@ impl<'a> Flatten<'a> {
         {
             return Some(self.expr(object));
         }
-        // `x.write_to(writer)` on an intrinsic receiver without a
-        // declared `write_to` (checker-marked): receiver and argument
-        // swap into the `writer.write(x)` shape, the writer's place
-        // retained for the accumulator write-back.
-        if node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::InvertedWrite
-            )
-        }) {
+        // `x.write_to(writer)` or `x.write_repr_to(writer)` on an
+        // intrinsic receiver without the declared member (checker-marked):
+        // receiver and argument swap into the writer's host primitive, the
+        // writer's place retained for the accumulator write-back.
+        if let Some(primitive) = node
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::InvertedWrite => {
+                    Some(mojito_symbol::symbol::WRITE_FORMATTED)
+                }
+                mojito_checked::checked::SemanticAdjustment::InvertedReprWrite => {
+                    Some(mojito_symbol::symbol::WRITE_REPR_FORMATTED)
+                }
+                _ => None,
+            })
+        {
             let writer = *args.first().expect("checked write_to has one writer");
             let (recv, recv_place) = self.lower_call_receiver(writer);
             let saved_anchor_permission = self.allow_argument_anchors;
@@ -264,7 +270,7 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::MethodCall {
                 dest: d,
                 recv,
-                method: mojito_symbol::symbol::WRITE_FORMATTED.to_string(),
+                method: primitive.to_string(),
                 resolved: None,
                 raises: None,
                 reference_result: None,
@@ -275,69 +281,6 @@ impl<'a> Flatten<'a> {
                 recv_writes: true,
                 receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
                 arg_places,
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                param_decls: Vec::new(),
-                instantiated_args: Vec::new(),
-                spread: None,
-                refined_bound: None,
-            });
-            return Some(d);
-        }
-        // `write_repr_to` on an intrinsic Writable has no declared
-        // receiver body. Produce `repr(receiver)` once, typed
-        // as the checked `repr` result, and feed the text through the
-        // supplied Writer's ordinary `write` path.
-        if let Some(repr_ty) = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::InvertedReprWrite { repr } => {
-                    Some(repr.clone())
-                }
-                _ => None,
-            })
-        {
-            let writer = *args.first().expect("checked write_repr_to has one writer");
-            let value = self.read_operand(object);
-            let repr = self.fresh_typed(object.location(), None, repr_ty.clone());
-            let value_place = self.simple_place(object);
-            self.emit(MirInstr::Call {
-                dest: repr,
-                func: FuncRef::named("repr"),
-                raises: None,
-                args: vec![value],
-                kwargs: Vec::new(),
-                arg_places: vec![value_place],
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                receiver: None,
-                instantiated_args: Vec::new(),
-                spread: None,
-            });
-            // `repr` returns its `String` through memory, so the write
-            // reads it in its call-result slot.
-            let slot = self.call_result_slot(repr, repr_ty, true);
-            let (text, text_place) = self.read_c(object, CValue::Slot(slot));
-            let (recv, recv_place) = self.lower_call_receiver(writer);
-            let d = self.fresh_typed(call.location(), None, Ty::none());
-            self.emit_interior_invalidations(writer, None);
-            self.emit(MirInstr::MethodCall {
-                dest: d,
-                recv,
-                method: mojito_symbol::symbol::WRITE_FORMATTED.to_string(),
-                resolved: None,
-                raises: None,
-                reference_result: None,
-                result_adapter: None,
-                args: vec![text],
-                kwargs: Vec::new(),
-                recv_place: recv_place.map(Box::new),
-                recv_writes: true,
-                receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
-                arg_places: vec![text_place],
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),

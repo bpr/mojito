@@ -387,21 +387,22 @@ impl VmBackend {
                 ))),
             },
             Value::Struct { name, .. }
-                if method == mojito_symbol::symbol::WRITE_FORMATTED
+                if mojito_symbol::symbol::is_formatted_write(method)
                     && let Some(index) = prog.struct_member(name, "write_string", 1) =>
             {
                 let place = recv_place.as_ref().ok_or_else(|| {
                     RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
                 })?;
                 let mut writer = recv.clone();
-                // A formatted argument's `write_to` runs in a nested frame
-                // that may read references into this caller (a temporary
-                // holding `Pointer(to=local)`): keep the caller reachable as
-                // a synchronous call does.
+                // The writer's `write_string` runs in a nested frame that may
+                // read references into this caller (a writer holding
+                // `Pointer(to=local)`): keep the caller reachable as a
+                // synchronous call does.
+                let repr = method == mojito_symbol::symbol::WRITE_REPR_FORMATTED;
                 let stack_base = self.push_caller_mirror(frame_id, regs, vars);
                 let written = (|| {
                     for argument in args {
-                        let text = self.format_value(prog, argument, false)?;
+                        let text = super::dispatch::format_value(&argument, repr)?;
                         // `write_string` borrows a view over a temporary buffer
                         // that lives exactly as long as the call.
                         let (payload, allocation) = self.temporary_string_span(prog, &text)?;

@@ -257,9 +257,7 @@ impl Checker {
             .borrowed_read_call_place = true;
         self.infer_written_operand(object)?;
         self.record_at(span.clone()).adjustment = Some(Box::new(if method == "write_repr_to" {
-            mojito_checked::checked::SemanticAdjustment::InvertedReprWrite {
-                repr: self.builtin_string_result(),
-            }
+            mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
         } else {
             mojito_checked::checked::SemanticAdjustment::InvertedWrite
         }));

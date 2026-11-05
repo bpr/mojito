@@ -2993,26 +2993,11 @@ impl<'a> Specializer<'a> {
                             func.0.clone_from(template);
                         }
                         if !self.functions.contains_key(func.0.as_str()) {
-                            // `String` of a nominal struct displays through
-                            // `write_to` over the `String` writer (the VM's
-                            // `format_value` dispatch); enqueue the
-                            // instances the lowered expansion calls.
-                            if func.0 == "String" {
-                                for arg in args.clone() {
-                                    self.enqueue_display_instance(owner, function, arg)?;
-                                }
-                            }
-                            if func.0 == "repr" {
-                                for arg in args.clone() {
-                                    self.enqueue_repr_instance(owner, function, arg)?;
-                                }
-                            }
                             // Every construction names the `__init__` its
                             // check selected, as upstream's call names the
                             // constructor's symbol; a call naming a struct
                             // was never resolved.
-                            if func.0 != "String"
-                                && self.structs.contains_key(nominal_template(&func.0))
+                            if self.structs.contains_key(nominal_template(&func.0))
                                 && !self.instance_names.contains_key(func.0.as_str())
                             {
                                 return Err(self.error(
@@ -3129,23 +3114,29 @@ impl<'a> Specializer<'a> {
                             instantiated_args.clear();
                             param_arg_regs.clear();
                             // An intrinsic receiver with no declared
-                            // `write_to` (`Error`, `DType`) is written by
-                            // its writer's host primitive, `writer.write(x)`.
-                            if method == "write_to" && args.len() == 1 && arg_places.len() == 1 {
+                            // `write_to` or `write_repr_to` (`Error`,
+                            // `DType`) is written by its writer's host
+                            // primitive.
+                            let primitive = match method.as_str() {
+                                "write_to" => Some(mojito_symbol::symbol::WRITE_FORMATTED),
+                                "write_repr_to" => {
+                                    Some(mojito_symbol::symbol::WRITE_REPR_FORMATTED)
+                                }
+                                _ => None,
+                            };
+                            if let Some(primitive) = primitive
+                                && args.len() == 1
+                                && arg_places.len() == 1
+                            {
                                 std::mem::swap(recv, &mut args[0]);
                                 let writer_place = arg_places[0].take();
                                 arg_places[0] = recv_place.take().map(|place| *place);
                                 *recv_place = writer_place.map(Box::new);
-                                *method = mojito_symbol::symbol::WRITE_FORMATTED.to_string();
+                                *method = primitive.to_string();
                                 *recv_writes = true;
                                 *receiver_convention = Some(mojito_ast::ast::ArgConvention::Mut);
                                 *result_adapter = None;
-                                self.enqueue_formatted_write(
-                                    owner,
-                                    function,
-                                    *recv,
-                                    &args.clone(),
-                                )?;
+                                self.enqueue_formatted_write(owner, function, *recv)?;
                             }
                             continue;
                         }
@@ -3176,13 +3167,8 @@ impl<'a> Specializer<'a> {
                             // The VM-synthesized `Writer.write` dispatch calls
                             // the receiver's `write_string`; enqueue its
                             // instance for the lowered expansion.
-                            if method == mojito_symbol::symbol::WRITE_FORMATTED {
-                                self.enqueue_formatted_write(
-                                    owner,
-                                    function,
-                                    *recv,
-                                    &args.clone(),
-                                )?;
+                            if mojito_symbol::symbol::is_formatted_write(method) {
+                                self.enqueue_formatted_write(owner, function, *recv)?;
                             }
                             continue;
                         }

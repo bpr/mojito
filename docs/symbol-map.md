@@ -53,6 +53,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
 | Phase timing (`--timings`) | `timing::{enable, enabled, span, round, count, report}` (crate `mojito-common`) | Every phase crate records spans; the CLI enables collection and prints the report; `scripts/bench-compile`, `scripts/instantiation-report`, and `tools/bench` parse it. Disabled, a span is one relaxed atomic load. |
 | `print` | `stdlib/std/io/io.mojo` (`print`, linked as the bare `print`: `implicit_public_identity`), over `stdlib/std/format/_utils.mojo`'s `_FlushingWriteBuffer` and `RawFileDescriptor.write_bytes`'s `external_call["write"]` | An ordinary library call on every phase; the prelude re-exports it as upstream's does. The elaborator's `effectful_callee` (`mono/specializer.rs`) refuses a compile-time application reaching its template. |
+| `repr` and `String(x)` | `stdlib/std/format/repr.mojo` (`repr[T: Writable]`, `repr(None)`, linked as the bare `repr`: `implicit_public_identity`); `stdlib/std/string.mojo` (`String.__init__[*Ts: Writable]` and the `StringLiteral`/`StaticString` initializers) | Ordinary library calls and constructions on every phase; `std.format` and the prelude re-export `repr` as upstream's do. An intrinsic receiver's `write_to`/`write_repr_to` (`DType`, `Error`) is the writer's `$write_formatted`/`$write_repr_formatted` (`mojito-symbol`'s `WRITE_FORMATTED`, `WRITE_REPR_FORMATTED`). |
 | Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
 | Evaluated defaults (`s: String = String("a")`) | `mir::lower_default` lowers the default as the zero-parameter function `$default$<owner>$<parameter>` recorded as `CheckedConst::Evaluate`; the checker's `dynamic_default_reference` rejects one naming runtime storage | Every omitted argument is the call's: the lowering of each checked call records its callee (`MirFunction::lowered_calls`, `mir::LoweredCall`, written by `Flatten::record_call` at every call emitter) and `mir::fill_omitted_arguments` (`crates/mojito-mir/src/mir/call_defaults.rs`) writes each omitted argument into the recorded call once every declaration is lowered, before ownership analysis: a literal materialized at the parameter type, a conversion's constructor, or a call of the default function under the call's `instantiated_args`, receiver struct arguments, and enclosing binders, through a read-temporary or forwarding slot; a subscript becomes a `MultiIndex`, a bound call resolves to the trait member body through the requirement's dispatch symbol, and a function value's call to the function its register holds (`mir::callable_targets`). The callee evaluates none: `native::mono` enqueues no default function from a declaration, and the VM's `bind_for_call` and pliron's `default_argument_value` error on an `Evaluate` slot a call left out. A call of a generator without the argument passes none, and the private `erase_unpassed_defaults` (same file) erases a left-out default's `$default$` call and its read temporary, destruction included, from the view `mir::without_removed_argument_forwards`/`with_removed_argument_forwards_erased` build, which `Specializer::materialize_body` takes for every caller of such a callee. The same pass builds each call's positional collector (R1102): the private `build_collector` emits a `read` heterogeneous one's `VariadicPack` (`mojito_types::types::bound_variadic_pack_type`, the body's type `variadic_pack_type`) over the `!lit.ref.pack` (`MirInstr::MakeRefPack`, `lit.ref.pack.create`) of references to the elements through `mojito_mir::mir::variadics::build_variadic_pack` (each element addressed where it lies by the private `pack_reference`), an owned one's `tuple.make` of the overflow typed by `collector_type`, or a homogeneous one's `VariadicList` (`mojito_types::types::variadic_list_type`) over the `!pop.array` (`MirInstr::MakeArray`, `array.create`, typed `TyKind::PopArray`) of pointers to the elements through `mojito_mir::mir::variadics::build_variadic_list` (a `read` element the caller's place, `borrowed_element`), and passes it as the call's `spread` operand (the elaborator's `array_display_construction` builds an `Array` literal's through the same builder, its slots in `FrameSlots`), `collect_through_requirement` builds a call through a bodiless requirement's from `TraitRequirement`'s call shape (`MirDeclarations::trait_declarations` finds it, a package's included), `collect_subscript_store` an `index.multi_set`'s, and `collect_contract_arguments` names the collector in a subscript's contract; `verify_collector_passed` (`verify/calls.rs`) rejects a call of a declared collecting callee that passes none. |
 | Keyword-pack collectors (`var **kwargs: T`) | The callee declaration's `kw_variadic`, collected into the `StringDict` instance `instance_symbol("StringDict", [T])` | The call builds the collector, as upstream's call emission does: `mir::fill_omitted_arguments`'s private `build_keyword_collector` (`mir/call_defaults.rs`, with `collect_through_requirement` for a call through a bound and `collect_through_contract` for one through a function value) emits `symbol::keyword_collector_constructor_symbol()` into a forwarding slot and one `symbol::keyword_collector_insert_symbol()` (`StringDict._insert` over a `StringLiteral` key, `stdlib/std/collections/string_dict.mojo`) per collected keyword, passing the slot as the call's one `**` keyword operand (`ast::FORWARDED_KWARGS_NAME`), the shape a forwarded `**kwargs^` has; `call::bind_keyword_forward` (`mojito-ast`) rejects a keyword beside a forward, and the verifier (`verify/calls.rs`) a call passing no collector. The VM's `bind_args`, Pliron's `bind_call_slots` and `bind_contract_slots` (through `lower/calls.rs`'s `keyword_collector_operand`), and `inline-parametric` bind that operand to the collector slot whole. |
@@ -537,16 +538,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `comptime_validation::called_application` the construction a call of
   a type member spells (`g[T.four()]()`). Together they own method-call inference (including the inverted write:
   `x.write_to(writer)` on an intrinsic receiver with no declared
-  `write_to` — `DType` until R1936 — records
+  `write_to` — `DType` until R1936, `Error` until R1938 — records
   `SemanticAdjustment::InvertedWrite`, while a struct, `SIMD` value,
   literal, or `Writable`-bounded parameter calls its member or the
   requirement's witness; `InvertedWrite` is what
   `mir/lower_expr/expr_method.rs` lowers as the writer's host primitive
   `mojito-symbol`'s `WRITE_FORMATTED` (`$write_formatted`, the formatted
   text through `write_string`), and `x.write_repr_to(writer)` records
-  `InvertedReprWrite { repr }`, lowered as the same primitive over
-  `repr(x)`, whose register takes the checked `repr` type (the nominal
-  `String`) so drop elaboration destroys it; a
+  `InvertedReprWrite`, lowered as its twin `WRITE_REPR_FORMATTED`
+  (`$write_repr_formatted`, the representation text), which the
+  elaborator's swap in `native/mono/specializer.rs` (`rewrite_blocks`)
+  also produces for one reached through a `Writable` bound; a
   plain `writer.write(...)` resolves to the bundled `Writer` trait's
   declared `write` like any method; an instance method called through its type with
   the receiver as the first argument — `infer_type_receiver_instance_call`
@@ -1877,13 +1879,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   reflective `write_to` and `write_repr_to` are the bundled trait's own
   default bodies (`std/format/__init__.mojo`), over `_reflection_write_to`
   and `std.builtin.constrained._field_conforms_to_error`. Neither backend
-  formats a struct's fields itself: the VM's `format_value`
-  (`backend/vm/dispatch.rs`), which reaches a struct's or a `SIMD`'s
-  instance through `symbol::member_table_name`, and Pliron's
-  `append_struct_display` and `append_declared_display` (`lower/print.rs`)
-  call the struct's or the `SIMD`'s `write_to`/`write_repr_to` instance,
-  which Pliron's `dispatch_edges` (`lib.rs`) makes reachable for every
-  `String`, `repr`, `write`, and `$write_formatted` argument.
+  formats a struct's fields itself: `String(x)` is overload resolution
+  over the bundled `String` initializers, and `repr` is upstream's library
+  function (`stdlib/std/format/repr.mojo`, re-exported by `std.format`
+  and the prelude), so a struct's or a `SIMD`'s `write_to`/`write_repr_to`
+  is a call. The VM's `format_value` (`backend/vm/dispatch.rs`) and
+  Pliron's `lower_writer_write`/`writer_argument_text`
+  (`lower/methods.rs`) format only the intrinsic arguments of
+  `$write_formatted` and `$write_repr_formatted`.
 - `comptime/auto_parameterize.rs` owns upstream's automatic
   parameterization (`parameterize_unbound_arguments`, upstream's
   `addImplicitTypeParams`): an infer-only `$<param>_<argument>` binder
@@ -1951,13 +1954,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   display's `ConstructCollection`, or the empty constructor for an empty
   `{}` the literal cannot build), and
   `materialized_instantiation_argument`, the spelling an instance's
-  argument takes (the native monomorphizer's `enqueue_display_instance` in
-  `native/mono/instances.rs` instantiates a printed instance's `write_to`,
-  and `Specializer::witness` reads the member a call or subscript through a
+  argument takes (`Specializer::witness` reads the member a call or subscript through a
   bound names from the receiver template's witness table, failing where
   the struct records none, as upstream's `#kgen.get_witness` fold does;
-  and `enqueue_display_instance`'s `protocol_overload`, which picks the
-  `Writer`-taking `write_to` beside a same-arity rival;
   `mono/infer.rs:bind_static_receiver` binds a struct's parameters
   from the receiver type a static call records, which
   `checker/method_calls/statics.rs:record_static_receiver` types and MIR

@@ -9614,6 +9614,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   trait 'Writable'".
   - `mojito_types::conformance::modelled_conformance` lists `Writable` for
     every modelled leaf but a callable, `TyKind::None` among them.
+  - Probe: `String(None)` prints `None`, where the pin rejects it: "an
+    element of 'args' with type 'None' does not conform to trait
+    'Writable'".
   - Found while planning R1287 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11208,7 +11211,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Specializer::enqueue_hash_leaf_instances`.
   - `__hash__` and `_update_with_simd` then leave
     `mir::TYPE_REACHED_MEMBERS`, and Pliron's type-reached `__hash__` push
-    (`lib.rs`) goes with them; the three display members stay.
+    (`lib.rs`) goes with them; `write_string` stays.
   - First confirm their `TyKind::Variant` alternative is dead: `Variant`
     declares `__hash__`, so `hash(Variant[Int, String](…))` must still run.
   - Parameter predicates: `ParamContext::dtype_predicate`,
@@ -11237,8 +11240,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     swap (`rewrite_blocks`, `mono/specializer.rs`), once `DType` is the
     library struct.
   - Lever: bundle upstream's `Error`, then retire both adjustments, their
-    MIR arms in `lower_expr/expr_method.rs`, and the `$write_formatted`
-    primitive.
+    MIR arm in `lower_expr/expr_method.rs`, the `$write_formatted` and
+    `$write_repr_formatted` primitives, the VM's `format_value`, Pliron's
+    `lower_writer_write`, and `write_string` in
+    `mir::TYPE_REACHED_MEMBERS`.
+  - Probe: `repr(Error("boom"))` prints `boom`, where the pin prints
+    `Error('boom')`.
   - Probe: `e.write_repr_to(w)` over `Error("boom")` writes `|boom|boom`
     for `write_to` then `write_repr_to` into a marking writer, where the pin
     writes `|boom|Error|(|'|b|o|o|m|'|)` (R1352's shape).
@@ -12117,36 +12124,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Pinned by `conformance/probes/equatable_by_value_operand_overloads.mojo`.
   - Depends on R1481 (the reflective `__eq__` default).
   - Model: Opus, Not Planned.
-
-- [ ] **R1882 `String(x)` and `repr(x)` are compiler builtins where
-  upstream's are library code**
-
-  `String(x)` of one `Writable` and `repr(x)` are checked, run, and lowered
-  as builtin calls (the VM's `format_value`, Pliron's `lower_stringify`
-  and `lower/methods.rs` repr arms), where upstream's `String.__init__[*Ts:
-  Writable]` and `format/repr.mojo`'s `repr` construct a `String()` and
-  call the value's `write_to` or `write_repr_to` into it.
-  - The bundled `String.__init__[*Ts: Writable]` (`stdlib/std/string.mojo`)
-    already has upstream's shape, but a single positional argument is
-    routed to the builtin conversion.
-  - Probe: the display writer is built by rule, not by a `String()` call:
-    the VM's `format_value` takes `nominal_string_value(prog, "")`, and
-    Pliron's `display_writer` zeroes a `String` slot, since the builtin
-    calls no `String()` instance the dead-symbol pass keeps.
-  - Probe: Pliron's `String(x)` moves the writer's buffer into a fresh
-    result slot (`own_string_result`), where upstream's writer is the
-    result.
-  - Probe (from R1109): `W[n].write_to(self, mut writer: Some[Writer])`
-    ignoring `self`, over a field reading `n`, keeps one instance per `n`
-    where the pin keeps one: display reaches `write_to`, `write_repr_to`,
-    and a writer's `write_string` from the value's type
-    (`mir::TYPE_REACHED_MEMBERS`), so they keep every argument.
-  - The VM reboxes a held struct operand from its static type at the
-    builtin call (`Prog::boxed`), which now serves `String` and `repr`
-    alone, since `print` is library code (R1287).
-  - Found while landing R422 (2026-11-03).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1883 `print(flush=True)` does not call upstream's `_flush`**
 

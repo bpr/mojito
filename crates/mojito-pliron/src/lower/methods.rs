@@ -1,4 +1,4 @@
-//! Method-call lowering plus `repr`, `abort`, and writer builtins.
+//! Method-call lowering plus `abort` and writer builtins.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -128,15 +128,16 @@ impl FnLowering<'_> {
         {
             return Err(self.unsupported_reg("String struct-to-literal bridge".into(), dest));
         }
-        // The VM-synthesized `Writer.write` dispatch: format each argument
+        // A writer's host-formatted write: format each intrinsic argument
         // and feed it through the receiver's compiled `write_string`.
         if resolved.is_none()
-            && method == mojito_symbol::symbol::WRITE_FORMATTED
+            && mojito_symbol::symbol::is_formatted_write(method)
             && let Some((writer, _)) = ((self.func.reg_types.get(&recv.0).cloned()).as_ref())
                 .and_then(|ty| ty.kind().as_non_simd_struct())
             && let Some(write_string) = self.struct_member(writer, "write_string", 1)
         {
-            return self.lower_writer_write(ctx, dest, write_string, args, recv_place);
+            let repr = method == mojito_symbol::symbol::WRITE_REPR_FORMATTED;
+            return self.lower_writer_write(ctx, dest, write_string, args, recv_place, repr);
         }
         // `Sized` spelled on a specialized pack's storage: it has no nominal
         // struct to resolve the method onto, so the static count answers it
@@ -296,179 +297,6 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// `repr(value)`: an owned runtime `StringLiteral` matching the VM's scalar
-    /// vocabulary or a nominal value's compiled `write_repr_to` — the nominal
-    /// String included, whose single-quoted escaping loop is stdlib Mojo.
-    pub(super) fn lower_repr_builtin(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        arg: Reg,
-    ) -> Result<(), PlironError> {
-        // A string literal's repr is its `as_string_slice()`'s: the owned
-        // `String` of its bytes through the nominal member (R1863).
-        if self
-            .func
-            .reg_types
-            .get(&arg.0)
-            .is_some_and(Ty::is_string_literal)
-        {
-            let string = mojito_symbol::symbol::STDLIB_STRING_STRUCT;
-            let Some(symbol) = self.display_member(string, "write_repr_to", dest)? else {
-                return Err(self.unsupported_reg(
-                    "repr of a literal without a compiled `String.write_repr_to`".into(),
-                    dest,
-                ));
-            };
-            let storage = self.owned_string_of_literal(ctx, arg, dest)?;
-            let writer = self.display_writer(ctx);
-            let signature = &self.signatures[symbol];
-            let callee: Identifier = signature
-                .mangled
-                .as_str()
-                .try_into()
-                .expect("mangled names are identifier-safe");
-            let call = CallOp::new(
-                ctx,
-                CallOpCallable::Direct(callee),
-                signature.func_ty,
-                vec![storage, writer],
-            );
-            self.append(ctx, call.get_operation(), Some(dest));
-            let (copy, _) = self.string_parts(ctx, storage, dest);
-            self.emit_free(ctx, copy);
-            let (data, len) = self.string_parts(ctx, writer, dest);
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: true,
-                },
-            );
-            return Ok(());
-        }
-        if matches!(
-            self.func.reg_types.get(&arg.0).map(Ty::kind),
-            Some(TyKind::None)
-        ) {
-            let global = self.shared.intern_string(ctx, b"None");
-            let source = self.global_address(ctx, &global, dest);
-            let len = self.uint_constant(ctx, 4);
-            let data = self.emit_alloc(ctx, len, 1, dest);
-            self.mem_copy_dynamic(ctx, data, source, len, dest);
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: true,
-                },
-            );
-            return Ok(());
-        }
-        // A `SIMD` or `Bool` value's repr is its declared `write_repr_to`'s.
-        if let Some((_, data, len)) = self.declared_display_text(ctx, arg, "write_repr_to", dest)? {
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: true,
-                },
-            );
-            return Ok(());
-        }
-        if !self
-            .func
-            .reg_types
-            .get(&arg.0)
-            .is_some_and(|ty| ty.is_non_simd_struct() || matches!(ty.kind(), TyKind::Ref(..)))
-            && let Some(scalar) = self.concrete_scalar_ty(arg)?
-        {
-            let value = self.reg_value(ctx, arg, scalar)?;
-            let (source, len) = if scalar == ScalarTy::Dtype {
-                self.dtype_text(ctx, value, true, dest)
-            } else {
-                self.format_scalar(ctx, scalar, value, dest)?
-            };
-            let (data, len) = self.owned_copy(ctx, source, len, dest);
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: true,
-                },
-            );
-            return Ok(());
-        }
-        if let Some(TyKind::Ref(reference)) = (self.func.reg_types.get(&arg.0).cloned())
-            .as_ref()
-            .map(Ty::kind)
-            && let LowerTy::Scalar(scalar) = lower_ty(
-                self.name,
-                &reference.referent,
-                &self.layout,
-                self.mir_declarations,
-                self.reg_span(arg),
-            )?
-        {
-            let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
-            let handle = scalar.handle(ctx);
-            let value = LoadOp::new(ctx, pointer, handle);
-            self.append(ctx, value.get_operation(), Some(dest));
-            let (source, len) = self.format_scalar(ctx, scalar, value.get_result(ctx), dest)?;
-            let data = self.emit_alloc(ctx, len, 1, dest);
-            self.mem_copy_dynamic(ctx, data, source, len, dest);
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: true,
-                },
-            );
-            return Ok(());
-        }
-        if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned()).as_ref())
-            .and_then(|ty| ty.kind().as_non_simd_struct())
-        {
-            if let Some(symbol) = self.display_member(name, "write_repr_to", dest)? {
-                let signature = &self.signatures[symbol];
-                let writer = self.display_writer(ctx);
-                let receiver = self.reg_ptr(ctx, arg)?;
-                let callee: Identifier = signature
-                    .mangled
-                    .as_str()
-                    .try_into()
-                    .expect("mangled names are identifier-safe");
-                let call = CallOp::new(
-                    ctx,
-                    CallOpCallable::Direct(callee),
-                    signature.func_ty,
-                    vec![receiver, writer],
-                );
-                self.append(ctx, call.get_operation(), Some(dest));
-                let (data, len) = self.string_parts(ctx, writer, dest);
-                self.str_runtime.insert(
-                    dest.0,
-                    RuntimeStr {
-                        data,
-                        len,
-                        owned: true,
-                    },
-                );
-                return Ok(());
-            }
-            return Err(self.unsupported_reg(
-                format!("repr of `{name}` without compiled write_repr_to"),
-                dest,
-            ));
-        }
-        Err(self.unsupported_reg("repr over a non-String value".into(), dest))
-    }
-
     /// `DType`'s `Bool` queries over the code byte, spelled as upstream's
     /// mask tests: bit 64 marks a float, bit 128 a sized integer, bit 1 a
     /// signed type, and `DType.int` and `DType.uint` are the unsized
@@ -546,19 +374,6 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// A fresh allocation holding the `len` bytes at `source`.
-    fn owned_copy(
-        &mut self,
-        ctx: &mut Context,
-        source: Value,
-        len: Value,
-        dest: Reg,
-    ) -> (Value, Value) {
-        let data = self.emit_alloc(ctx, len, 1, dest);
-        self.mem_copy_dynamic(ctx, data, source, len, dest);
-        (data, len)
-    }
-
     /// `_mojito_abort(message)` — the `std.os.abort` crossing: report the
     /// dynamic message with the distinct uncatchable abort category.
     pub(super) fn lower_abort_builtin(
@@ -567,7 +382,7 @@ impl FnLowering<'_> {
         dest: Reg,
         message: Reg,
     ) -> Result<(), PlironError> {
-        let (data, len) = self.writer_argument_text(ctx, message, dest)?;
+        let (data, len) = self.writer_argument_text(ctx, message, false, dest)?;
         let abort_ty = self.shared.ensure_rt(ctx, "mjrt_abort");
         let call = CallOp::new(
             ctx,
@@ -588,8 +403,10 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// The VM-synthesized `Writer.write` dispatch: each argument's display
-    /// text feeds one `write_string` call on the aliased `mut self` receiver.
+    /// A writer's host-formatted write (`$write_formatted`,
+    /// `$write_repr_formatted`): each intrinsic argument's display text, or
+    /// with `repr` its representation text, feeds one `write_string` call
+    /// on the aliased `mut self` receiver.
     /// The payload `String` borrows the text bytes (`cap == len`); the callee
     /// reads it and never takes ownership.
     pub(super) fn lower_writer_write(
@@ -599,6 +416,7 @@ impl FnLowering<'_> {
         write_string: &str,
         args: &[Reg],
         recv_place: Option<&MirPlace>,
+        repr: bool,
     ) -> Result<(), PlironError> {
         let signature = &self.signatures[write_string];
         if signature.outcome.is_some() {
@@ -631,30 +449,7 @@ impl FnLowering<'_> {
         let place = place.clone();
         let writer_address = self.place_address(ctx, &place, dest)?.0;
         for arg in args {
-            let mut temporary = None;
-            let (data, len) = if let Some((name, _)) = ((self.func.reg_types.get(&arg.0).cloned())
-                .as_ref())
-            .and_then(|ty| ty.kind().as_non_simd_struct())
-                && !mojito_symbol::symbol::is_stdlib_string_struct(name)
-            {
-                if mojito_symbol::symbol::is_stdlib_string_span_struct(name) {
-                    let span = self.reg_ptr(ctx, *arg)?;
-                    self.string_parts(ctx, span, dest)
-                } else {
-                    let writer = self.display_writer(ctx);
-                    self.append_struct_via_write_to(ctx, *arg, name, writer, dest)?;
-                    let parts = self.string_parts(ctx, writer, dest);
-                    temporary = Some(parts.0);
-                    parts
-                }
-            } else if let Some((_, data, len)) =
-                self.declared_display_text(ctx, *arg, "write_to", dest)?
-            {
-                temporary = Some(data);
-                (data, len)
-            } else {
-                self.writer_argument_text(ctx, *arg, dest)?
-            };
+            let (data, len) = self.writer_argument_text(ctx, *arg, repr, dest)?;
             let payload = self.entry_alloca(ctx, 16, 8);
             self.store_string_span_fields(ctx, payload, data, len, dest);
             let call = CallOp::new(
@@ -664,22 +459,33 @@ impl FnLowering<'_> {
                 vec![writer_address, payload],
             );
             self.append(ctx, call.get_operation(), Some(dest));
-            if let Some(allocation) = temporary {
-                self.emit_free(ctx, allocation);
-            }
         }
         self.erased.insert(dest.0);
         Ok(())
     }
 
     /// The display bytes of one `Writer.write` argument as a `(data, len)`
-    /// pair — the VM's `format_value` over the supported argument shapes.
+    /// pair, or with `repr` its representation bytes — the VM's host text
+    /// (`format_value`) over the supported argument shapes.
     pub(super) fn writer_argument_text(
         &mut self,
         ctx: &mut Context,
         arg: Reg,
+        repr: bool,
         dest: Reg,
     ) -> Result<(Value, Value), PlironError> {
+        let quoted =
+            self.str_consts.contains_key(&arg.0)
+                || self.str_runtime.contains_key(&arg.0)
+                || self.func.reg_types.get(&arg.0).is_some_and(|ty| {
+                    !matches!(ty.kind(), TyKind::Error) && ty.is_non_simd_struct()
+                });
+        if repr && quoted {
+            return Err(self.unsupported_reg(
+                "representation of a string through a formatted write".into(),
+                dest,
+            ));
+        }
         if let Some(bytes) = self.str_consts.get(&arg.0).cloned() {
             let global = self.shared.intern_string(ctx, &bytes);
             let data = self.global_address(ctx, &global, dest);
@@ -721,7 +527,7 @@ impl FnLowering<'_> {
                     let handle = scalar.handle(ctx);
                     let load = LoadOp::new(ctx, pointer, handle);
                     self.append(ctx, load.get_operation(), Some(dest));
-                    return self.format_scalar(ctx, scalar, load.get_result(ctx), dest);
+                    return self.format_scalar(ctx, scalar, load.get_result(ctx), repr, dest);
                 }
             }
             _ => {}
@@ -730,7 +536,7 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("formatted write argument".into(), dest));
         };
         let value = self.reg_value(ctx, arg, ty)?;
-        self.format_scalar(ctx, ty, value, dest)
+        self.format_scalar(ctx, ty, value, repr, dest)
     }
 
     /// The storage a `mut`/`ref` receiver aliases: the place's address,

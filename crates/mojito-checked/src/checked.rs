@@ -889,19 +889,14 @@ pub enum SemanticAdjustment {
     /// in link order: MIR lowers every link as its lone operator's call.
     CompareLinks(Vec<CheckedCompareLink>),
     /// `x.write_to(writer)` on an intrinsic Writable receiver with no
-    /// declared `write_to` (`DType`): receiver and argument swap, so MIR lowers the call as
-    /// `writer.write(x)` — the same `Writer.write` shape both backends
-    /// already format through the argument's `write_to` conformance.
+    /// declared `write_to` (`DType`, `Error`): receiver and argument swap,
+    /// so MIR lowers the call as `writer.$write_formatted(x)`, the writer's
+    /// host-formatting primitive.
     InvertedWrite,
-    /// `x.write_repr_to(writer)` on the same intrinsic receivers: format the
-    /// receiver through `repr(x)`, then feed that text to `writer.write`.
-    /// This is the representation twin of [`Self::InvertedWrite`]. `repr` is
-    /// the checked type of the `repr(x)` text — the nominal `String` upstream's
-    /// `repr` returns, so drop elaboration destroys it, or the compile-time
-    /// string on an unlinked seam without the stdlib.
-    InvertedReprWrite {
-        repr: Ty,
-    },
+    /// `x.write_repr_to(writer)` on the same intrinsic receivers: the
+    /// representation twin of [`Self::InvertedWrite`], lowered as
+    /// `writer.$write_repr_formatted(x)`.
+    InvertedReprWrite,
     /// An instance method called through its type with the receiver as the
     /// first argument (`List[Int].__len__(xs)`, current Mojo's
     /// `T.method(value, …)` spelling): the checker typed it as

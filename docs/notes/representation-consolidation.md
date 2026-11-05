@@ -33,9 +33,9 @@ command cannot use both.
      `call.indirect`; its witness tables landed with R1877 on 11-05,
      and its probe waits on R1934's `emit-mir`) and R1868 (`Variant`'s
      `init_with` handlers).
-   - Display (`write_to`, `write_repr_to`, `write_string`): R1882
-     (`String(x)` and `repr(x)` are builtins) and R1462 (a `write_to`
-     through a bound is host-formatted).
+   - Display: `write_to` and `write_repr_to` left with R1882 (11-05;
+     `String(x)` and `repr(x)` are library code). `write_string`, which
+     the intrinsic receivers' `$write_formatted` reaches, goes with R1938.
    - The hash leaves (`__hash__`, `_update_with_simd`): R1937 (once `DType` is
      the library struct). Planned.
    - `__int__`: R1544 (`SIMD[dt, _](v)` binds no width from a vector).
@@ -48,8 +48,8 @@ command cannot use both.
    calls `__mojito_fieldwise_copy`) is the first piece.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1933 --task R1868 --task R1882 \
-     --task R1462 --task R1936 --task R1937 --task R1544 --task R579 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1933 --task R1868 \
+     --task R1936 --task R1937 --task R1544 --task R579 -n 0
    ```
 
 3. **Gap G's residues** (size, and conformance). R1436 landed 11-03: the
@@ -188,8 +188,8 @@ command cannot use both.
   `StringLiteral[value]` are the declared structs. The value-less literal
   types and their run-time registers remain (step 6).
 - `print` is the bundled library function, and `Writable`'s members are
-  the trait's own default bodies (R1287). `String(x)` and `repr(x)` are
-  still builtins (R1882).
+  the trait's own default bodies (R1287). `String(x)` resolves to the
+  bundled initializers and `repr` is the library function (R1882).
 - The differential pin is `1.3.0.dev2026110105` (11-01 re-pin). Its
   legacy-closure removal is implemented (R1823). Its other unimplemented
   changes, R1817–R1830, sit outside the gaps.
@@ -229,7 +229,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 
 ### F. Members reached by name, not called as the requirement
 
-- **Mojito**: the backends dispatch display, the hash leaves, a scalar
+- **Mojito**: the backends dispatch a writer's `write_string`, the hash leaves, a scalar
   construction's `__int__`, and a `__call__` through a `def(...)` bound
   from the value's type, through `mir::TYPE_REACHED_MEMBERS`. Each such
   member keeps every argument, so it keeps one instance per `n`.
@@ -305,7 +305,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 | block | core | members |
 |---|---|---|
 | Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 6 (R1835 → R1843, R1837, R1840, R1841, R1845 → R1851, R1858–R1860 → R1862), R1936 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
-| `Writable`, `repr`, and `print` are builtins each backend re-implements | R1882, R1462 | R1463, R1409, R18, R159, R1883, R1884 |
+| `Writable`'s intrinsic receivers (`DType`, `Error`) are host-formatted by each backend | R1936, R1938 | R1463, R1409, R18, R159, R1883, R1884 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
 | The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768 |

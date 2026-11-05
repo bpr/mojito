@@ -25,9 +25,6 @@ impl FnLowering<'_> {
             return self.lower_unsafe_alloc(ctx, dest, args, kwargs);
         }
         if !self.signatures.contains_key(name) {
-            if name == "String" {
-                return self.lower_string_builtin(ctx, dest, args, kwargs);
-            }
             if name == "Error" {
                 return self.lower_error_builtin(ctx, dest, args, kwargs);
             }
@@ -40,10 +37,6 @@ impl FnLowering<'_> {
                 "abs" => return self.lower_abs_builtin(ctx, dest, args, kwargs),
                 "min" | "max" => {
                     return self.lower_min_max_builtin(ctx, dest, name == "min", args, kwargs);
-                }
-                "repr" if args.len() == 1 && kwargs.is_empty() => {
-                    self.lower_repr_builtin(ctx, dest, args[0])?;
-                    return self.own_string_result(ctx, dest);
                 }
                 "input" => return self.lower_input_builtin(ctx, dest, args, kwargs),
                 "UnsafePointer.alloc" if kwargs.is_empty() && args.len() == 1 => {
