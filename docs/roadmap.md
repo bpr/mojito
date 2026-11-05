@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1931**.
+Next free ID: **R1932**.
 
 ## Ordered Work
 
@@ -9977,20 +9977,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1930 A reference result at a memory-only `read` parameter is
-  passed as its loaded referent, not as the reference**
+- [ ] **R1931 The loan check reconstructs a call argument's convention
+  from declaration tables, so a trait-dispatched method's and a keyword
+  slot's retained places are unclassified**
 
-  `show(pick(a))` and `show(h.get())` read the referent through the
-  hidden `$call_ref` handle slot and pass the load with no place, where
-  upstream's `lit.call` passes the returned `!lit.ref` itself.
-  - Retaining the handle's place (`lower_borrowed_reference_result`,
-    `mir/calls.rs`) for `mir::address_call_operands` makes the ownership
-    analysis reject the bundled library: "access to '$call_ref_r37'
-    conflicts with live reference '$call_ref_r37'", the `ref.make` of a
-    place `through` the handle conflicting with the handle's own loan.
-  - Fix: let a shared read through a handle slot coexist with that
-    slot's loan in the conflict check, then retain the place.
-  - Found while landing R701 (2026-11-05).
+  `loan_accesses` (`analysis/loans.rs`) asks `CalleeRefParams` for the
+  slot's `param_writes`, which a `__trait_dispatch` symbol, an unresolved
+  `call.method`, and a keyword place never answer, so their places are
+  `LoanAccess::Unclassified` and exclude a shared live loan as a write
+  would; upstream's `lit.call` carries each operand's convention in its
+  callee's type.
+  - Probe: `writer.write_string(span[i])` over a live shared `Span`
+    reference of the same storage (`__trait_dispatch.write_string$ov$…`).
+  - Probe: a keyword argument `f(x=a)` at a `read` slot beside a live
+    shared reference to `a`.
+  - Fix: record each argument's convention on `call`/`call.method` at
+    lowering (the checker binds it), and classify by that record.
+  - Found while landing R1930 (2026-11-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

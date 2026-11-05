@@ -153,7 +153,7 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
 /// convention, or an immutable, parametric, or bare `ref` (a borrowing-view
 /// constructor, `Named`) — is a shared read. A callee without a declaration
 /// falls back to its function's `ref_params` mask (receiver at slot zero), and
-/// an unknown callee stays exclusive. A construction calls its `__init__`,
+/// an unknown callee's access is unclassified (`LoanAccess::Unclassified`). A construction calls its `__init__`,
 /// whose declaration it names. `ref_params` and `param_writes` cover the
 /// program's own functions and declarations; a name they miss is looked up
 /// in the package it imports.
@@ -182,7 +182,8 @@ impl CalleeRefParams<'_> {
         if let Some(mask) = mask {
             return match mask.get(argument) {
                 Some(false) => LoanAccess::Read,
-                _ => LoanAccess::Write,
+                Some(true) => LoanAccess::Write,
+                None => LoanAccess::Unclassified,
             };
         }
         let slot = if receiver { argument + 1 } else { argument };
@@ -192,7 +193,8 @@ impl CalleeRefParams<'_> {
         );
         match reference {
             Some(false) => LoanAccess::Read,
-            _ => LoanAccess::Write,
+            Some(true) => LoanAccess::Write,
+            None => LoanAccess::Unclassified,
         }
     }
 }
@@ -778,6 +780,65 @@ mod interior_origin_tests {
             &[],
         );
         assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
+    }
+
+    fn through_reference(reference: VarId) -> MirPlace {
+        MirPlace {
+            through: Some(reference),
+            ..MirPlace::root(reference, None)
+        }
+    }
+
+    #[test]
+    fn an_unclassified_call_place_through_a_shared_reference_is_not_a_write() {
+        // `show(pick(a))`: the reference result's handle passes to a slot
+        // whose convention the MIR does not record, which the checker bound
+        // to the shared reference.
+        let call = MirInstr::Call {
+            dest: Reg(3),
+            func: mojito_mir::mir::FuncRef::named("unknown"),
+            raises: None,
+            args: vec![Reg(2)],
+            kwargs: Vec::new(),
+            arg_places: vec![Some(through_reference(1))],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        };
+        let f = function(
+            vec![block(
+                vec![establish_with(1, 0, false, None), call, use_reference(1, 4)],
+                MirTerm::Return(None),
+            )],
+            &[],
+        );
+        assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
+    }
+
+    #[test]
+    fn a_store_through_a_shared_reference_conflicts() {
+        let store = MirInstr::Store {
+            place: through_reference(1),
+            src: Reg(2),
+        };
+        let f = function(
+            vec![block(
+                vec![
+                    establish_with(1, 0, false, None),
+                    store,
+                    use_reference(1, 4),
+                ],
+                MirTerm::Return(None),
+            )],
+            &[],
+        );
+        assert!(matches!(
+            analyze_loans(&f, &CalleeRefParams::new()),
+            Err(OwnershipError::LoanConflict { .. })
+        ));
     }
 
     #[test]

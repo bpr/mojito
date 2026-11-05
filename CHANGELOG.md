@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A reference result at a memory-only `read` parameter (`show(pick(a))`,
+  `show(h.get())`, `show(l[0])`) is passed as the reference the call
+  returned, as upstream's `lit.call` passes it, instead of a load of its
+  referent (R1930). The loan check now reads an indirect call's argument
+  conventions from its callee's type, reads `$write_formatted`'s argument,
+  and no longer counts a call place of unknown convention reached through a
+  shared reference as a write through that reference.
+
 - `divmod` and `pow` are upstream's library functions in the bundled
   `std.math`, exported from the prelude: `divmod[T: DivModable]` and
   `pow`'s two `SIMD` overloads over `__pow__` (R1458). `pow(2, 10)` now

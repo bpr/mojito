@@ -549,11 +549,11 @@ impl<'a> Flatten<'a> {
                     mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
                 )
             }) && !converted
-                && let Some(register) = match setup.filter(|_| !lends_reads) {
+                && let Some((register, reference_place)) = match setup.filter(|_| !lends_reads) {
                     Some(source) => self.defer_to_setup(expression, Some(source), true, |this| {
-                        this.lower_borrowed_read_argument(expression)
+                        this.lower_borrowed_read_operand(expression)
                     }),
-                    None => self.lower_borrowed_read_argument(expression),
+                    None => self.lower_borrowed_read_operand(expression),
                 }
             {
                 // A memory-only read is passed by address, as upstream
@@ -565,7 +565,10 @@ impl<'a> Flatten<'a> {
                 // place unless the call's result borrows it, so a view's
                 // reference fields root in caller storage.
                 if lends_reads || !expression.register_passable_read() {
-                    return (register, self.simple_place(expression));
+                    return (
+                        register,
+                        reference_place.or_else(|| self.simple_place(expression)),
+                    );
                 }
                 return (register, None);
             }
@@ -2158,12 +2161,32 @@ impl<'a> Flatten<'a> {
     /// ASAP destruction, which aggregate `LoadPlace` results deliberately
     /// trade for owner retention through the call.
     pub(super) fn lower_borrowed_read_argument(&mut self, expression: Node<'a>) -> Option<Reg> {
+        self.lower_borrowed_read_operand(expression)
+            .map(|(register, _)| register)
+    }
+
+    /// [`Self::lower_borrowed_read_argument`] with the place a reference
+    /// result's referent is read through: its hidden handle slot, which a
+    /// call passes as the returned reference itself, as upstream's
+    /// `lit.call` passes the `!lit.ref` the accessor returned. Any other
+    /// read has no place here; its caller derives the simple place.
+    fn lower_borrowed_read_operand(
+        &mut self,
+        expression: Node<'a>,
+    ) -> Option<(Reg, Option<MirPlace>)> {
         if let Some((object, _)) = expression.index_operands() {
             return self.lower_borrowed_element_read(expression, object);
         }
         if expression.call_contract().is_some() || expression.reference_result().is_some() {
             return self.lower_borrowed_reference_result(expression);
         }
+        self.lower_borrowed_name_read(expression)
+            .map(|register| (register, None))
+    }
+
+    /// A borrowed read of a bare aggregate-typed variable
+    /// ([`Self::lower_borrowed_read_argument`]).
+    fn lower_borrowed_name_read(&mut self, expression: Node<'a>) -> Option<Reg> {
         let name = self.name_spelled(expression)?;
         // A closure's storage value is the declaration's slot, lent as any
         // local is; a body without storage is a value with no slot to lend.
@@ -2235,7 +2258,7 @@ impl<'a> Flatten<'a> {
         &mut self,
         expression: Node<'a>,
         object: Node<'a>,
-    ) -> Option<Reg> {
+    ) -> Option<(Reg, Option<MirPlace>)> {
         if expression.adjustments().iter().any(|adjustment| {
             matches!(
                 adjustment,
@@ -2266,7 +2289,7 @@ impl<'a> Flatten<'a> {
                 .unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace { dest, place });
-        Some(dest)
+        Some((dest, None))
     }
 
     /// A borrowed reference result (`show(o.value())`, `show(pick(a))`,
@@ -2274,11 +2297,14 @@ impl<'a> Flatten<'a> {
     /// upstream binds the `read` parameter to it, so its `__copyinit__`
     /// never runs for the pass. A referent owning no droppable storage is
     /// an ordinary value read.
-    fn lower_borrowed_reference_result(&mut self, expression: Node<'a>) -> Option<Reg> {
+    fn lower_borrowed_reference_result(
+        &mut self,
+        expression: Node<'a>,
+    ) -> Option<(Reg, Option<MirPlace>)> {
         let reference = expression.reference_result()?;
         (owns_droppable_storage(&reference.referent)
             || matches!(reference.referent.kind(), TyKind::Dependent(_)))
-        .then(|| self.lower_call_receiver(expression).0)
+        .then(|| self.lower_call_receiver(expression))
     }
 
     /// Lower call operand `expression`, a value no place holds, for a call

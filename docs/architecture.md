@@ -2236,9 +2236,12 @@ when an implicit conversion made it) retains its storage as its place:
 its call-result slot, argument-anchor slot, or a capturing lambda's
 storage slot (`Flatten::temporary_operand`), so the rewrite passes that
 slot's address, and copy elision's read lend renames the retained place
-to the dying source with the load. A method call, an indirect call, and a
-subscript keep the load (R1918, R1919); so does a reference result's
-referent, which upstream passes as the reference itself (R1930).
+to the dying source with the load. A reference result at such a parameter
+retains its hidden handle slot's place, `through` that handle
+(`Flatten::lower_borrowed_read_operand`), so the rewrite passes the
+reference the call returned, as upstream passes the `!lit.ref` itself. A
+method call, an indirect call, and a subscript keep the load (R1918,
+R1919).
 
 The same pass builds every call's positional collector, as upstream's call
 builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes
@@ -4132,7 +4135,14 @@ parametric, or bare contract, which no body can write through (a
 borrowing-view constructor, `Named`) — is a shared read. A single-`__init__`
 construction calls its bare struct name and resolves to the
 `<name>.__init__` declaration; a callee without a declaration falls back to
-its function's `ref_params` mask, and an unknown callee stays exclusive.
+its function's `ref_params` mask. An indirect call reads its callee's
+function type for the slot's convention, and the `$write_formatted`
+pseudo-method reads its argument. A place whose slot's convention is
+recorded nowhere (a trait-dispatched or unresolved method, a keyword slot,
+an untyped indirect callee) is `LoanAccess::Unclassified`: it excludes every
+other live loan of its storage, as a write does, but reaching it through a
+shared reference is no write through that reference, since the checker
+bound the reference to the parameter.
 
 A place's storage type is distinct from its expression value type. For a field
 declared `ref[origin] T`, the place stores `TyKind::Ref`, while an ordinary load

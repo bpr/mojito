@@ -166,6 +166,13 @@ pub(super) fn reaching_loans<'a>(
 pub(super) enum LoanAccess {
     Read,
     Write,
+    /// A retained call place whose callee convention the MIR does not
+    /// record (a trait-dispatched or unresolved method, a keyword slot, an
+    /// untyped indirect callee). It excludes every other live loan of the
+    /// storage, as a write does, but a place reached through a reference
+    /// is not a write through it: the checker bound that reference to the
+    /// parameter, so an immutable one reaches only a reading slot.
+    Unclassified,
 }
 
 /// Persistent local-loan checking. Reference variables participate in ordinary
@@ -566,7 +573,7 @@ pub(super) fn loan_accesses(
             let access = |parameter: Option<usize>| match parameter {
                 _ if intrinsic_read => LoanAccess::Read,
                 Some(parameter) => retained_access(&func.0, parameter),
-                None => LoanAccess::Write,
+                None => LoanAccess::Unclassified,
             };
             let mut accesses = arg_places
                 .iter()
@@ -593,19 +600,43 @@ pub(super) fn loan_accesses(
         }
         MirInstr::CallIndirect {
             dest,
+            callee,
             callee_place,
             arg_places,
             kwarg_places,
             capture_accesses,
             ..
         } => {
+            // A retained positional place is classified by the convention
+            // the callee's function type declares at that slot; the callee's
+            // own place, a keyword place, and a slot the type does not
+            // declare stay exclusive.
+            let conventions = f
+                .reg_types
+                .get(&callee.0)
+                .and_then(mojito_types::types::Ty::callable)
+                .map(|func| func.conventions.as_slice());
+            let argument_access = |parameter: usize| {
+                conventions
+                    .and_then(|conventions| conventions.get(parameter).copied())
+                    .map_or(LoanAccess::Unclassified, access_for_convention)
+            };
             let mut accesses = callee_place
                 .as_deref()
                 .into_iter()
-                .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
                 .cloned()
                 .map(|place| (place, LoanAccess::Write, span_for(*dest)))
+                .chain(
+                    arg_places
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(parameter, place)| {
+                            place
+                                .clone()
+                                .map(|place| (place, argument_access(parameter), span_for(*dest)))
+                        }),
+                )
                 .collect::<Vec<_>>();
             accesses.extend(
                 capture_accesses
@@ -616,6 +647,7 @@ pub(super) fn loan_accesses(
         }
         MirInstr::MethodCall {
             dest,
+            method,
             resolved,
             recv_place,
             recv_writes,
@@ -636,7 +668,8 @@ pub(super) fn loan_accesses(
             };
             let argument_access = |argument: usize| match resolved {
                 Some(callee) => callees.retained_access(callee, argument, true),
-                None => LoanAccess::Write,
+                None if method == mojito_symbol::symbol::WRITE_FORMATTED => LoanAccess::Read,
+                None => LoanAccess::Unclassified,
             };
             let mut accesses = recv_place
                 .as_deref()
@@ -755,7 +788,7 @@ fn check_loans_at(
                     && !loan.setup
                     && !(loan.shared && through_shared)
                     && mir_places_overlap(&place, &loan.place)
-                    && (access == LoanAccess::Write || excludes_reads(*loan))
+                    && (access != LoanAccess::Read || excludes_reads(*loan))
             }) {
                 return Err(loan_error(f, &place, *reference, span));
             }
