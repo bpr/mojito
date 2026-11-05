@@ -323,7 +323,7 @@ impl<'a> Flatten<'a> {
         }
         let callee = self.load_nested_closure(name, info, call.location());
         let callable_ty = info
-            .callable_ty
+            .contract
             .clone()
             .or_else(|| self.f.reg_types.get(&callee.0).cloned());
         let param_arg_regs = self.param_arg_regs(call);
@@ -527,7 +527,7 @@ impl<'a> Flatten<'a> {
                 capture_accesses,
                 param_arg_regs,
                 param_decls: info
-                    .callable_ty
+                    .contract
                     .as_ref()
                     .map(generic_callable_param_decls)
                     .unwrap_or_default(),
@@ -751,7 +751,7 @@ impl<'a> Flatten<'a> {
                 place: self.capture_place(capture),
             })
             .collect();
-        let dest = match Self::closure_value_ty(info) {
+        let dest = match info.contract.clone() {
             Some(ty) => self.fresh_typed(at, None, ty),
             None => self.fresh(at, None),
         };
@@ -777,7 +777,7 @@ impl<'a> Flatten<'a> {
             if !self.pending_argument_anchors.contains(&place.root) {
                 self.pending_argument_anchors.push(place.root);
             }
-            let dest = match Self::closure_value_ty(info) {
+            let dest = match info.contract.clone() {
                 Some(ty) => self.fresh_typed(at, None, ty),
                 None => self.fresh(at, None),
             };
@@ -1153,22 +1153,5 @@ impl<'a> Flatten<'a> {
             self.emit(instruction);
         }
         dest
-    }
-
-    /// The type of the closure of the body `info` as a function value: its
-    /// checked type, a storage value's environment read as the storage's
-    /// captures.
-    fn closure_value_ty(info: &NestedInfo) -> Option<Ty> {
-        let mut ty = info.callable_ty.clone()?;
-        ty.update(|kind| {
-            if let Some(func) = kind.callable_mut()
-                && let mojito_types::origin::CallableEnvironment::Storage(storage) =
-                    &func.environment
-            {
-                func.environment =
-                    mojito_types::origin::CallableEnvironment::Capturing(storage.captures.clone());
-            }
-        });
-        Some(ty)
     }
 }

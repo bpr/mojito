@@ -2210,14 +2210,7 @@ impl<'a> Flatten<'a> {
             return None;
         }
         let ty = expression.ty()?;
-        // A closure's value is its storage struct, whatever binding holds
-        // it.
-        let storage_value = matches!(
-            ty.callable().map(|func| &func.environment),
-            Some(mojito_types::origin::CallableEnvironment::Storage(_))
-        );
         if closure_storage != Some(true)
-            && !storage_value
             && !ty.is_non_simd_struct()
             && !matches!(
                 ty.kind(),

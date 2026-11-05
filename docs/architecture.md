@@ -808,11 +808,15 @@ policy or data-model responsibilities to focused children:
   upstream's `emitClosure` returns it: the check types the value as a
   `def(...)` whose environment is `CallableEnvironment::Storage` (the
   closure's declaration site, its captures, copyability, and
-  passability), MIR reads the declaration's slot as any local
-  (`Flatten::closure_storage_read`), and `nested::resolve_closure_types`
-  replaces every such type in the functions and declarations one body
-  lowers by the storage struct its site maps to, retargeting an indirect
-  call through one to the witness (`retarget_storage_calls`). A
+  passability), and the check's last step, as `liftClosure` replaces
+  every reference to the nested struct, replaces every such type the
+  checked program records by the storage struct its site maps to and
+  points each call through one at the witness
+  (`CheckedProgram::type_closures_by_storage`, over the
+  `checked/rewrite_types.rs` walk). MIR therefore lowers struct-typed
+  closure values, reading the declaration's slot as any local
+  (`Flatten::closure_storage_read`) and a call's signature from the
+  closure trait the check records (`CheckedClosureStorage::contract`). A
   `F: def(...)` binder is therefore instantiated at the struct, and
   `native::mono` devirtualizes a call through `f` to the witness. The
   storage is the closure's only value: the `capturing` effect is a parse

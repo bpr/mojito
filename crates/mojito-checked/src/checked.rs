@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod encoding;
+mod rewrite_types;
 
 /// Stable identity within one checked program. Unlike a source span this remains
 /// unique for synthesized nodes and for multiple semantic nodes at one location.
@@ -3785,6 +3786,10 @@ pub struct CheckedClosureStorage {
     /// names with its closure ([`CheckedProgram::collect_closure_uses`]).
     pub name: String,
     pub fields: Vec<CheckedStorageField>,
+    /// The closure trait the struct conforms to, as upstream's
+    /// `emitClosure` declares the conformance: the closure's function
+    /// type, its captures a `Capturing` environment.
+    pub contract: Ty,
     /// Whether a call of the body may write the storage: it owns a field,
     /// or a field is a mutable reference.
     pub writes: bool,
@@ -5211,6 +5216,29 @@ impl CheckedProgram {
 
     pub fn expressions(&self) -> &[CheckedExpr] {
         &self.tables.expressions
+    }
+
+    /// Point the call at node `id` at `target`, the callable its callee
+    /// selects. The check's tables must be unshared.
+    pub(crate) fn retarget_call(&mut self, id: CheckedNodeId, target: String) {
+        let node = &mut Arc::get_mut(&mut self.tables)
+            .expect("the check's tables are unshared while it retargets a call")
+            .expressions[id.0 as usize];
+        let mut retargeted = false;
+        for adjustment in &mut node.adjustments {
+            match adjustment {
+                SemanticAdjustment::ResolveCallable(resolved) => resolved.clone_from(&target),
+                SemanticAdjustment::SelectedCall(call) => call.target.clone_from(&target),
+                _ => continue,
+            }
+            retargeted = true;
+        }
+        if !retargeted {
+            node.adjustments
+                .push(SemanticAdjustment::ResolveCallable(target.clone()));
+        }
+        self.compatibility_overload_targets
+            .insert(node.location(), target);
     }
 
     pub(crate) const fn tables_mut(&mut self) -> &mut Arc<CheckedTables> {

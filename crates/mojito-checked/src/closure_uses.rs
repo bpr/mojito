@@ -12,6 +12,9 @@
 //! declaration and storage struct as it goes ([`CheckedDef::symbol`],
 //! [`CheckedClosureStorage::name`]), under the symbol of the body declaring
 //! it, as upstream's front end names a lifted closure where it lifts it.
+//! Last, as `liftClosure` replaces every reference to the nested storage
+//! struct, it types each closure by its storage struct throughout the
+//! program and points each call through one at the struct's `__call__`.
 
 use crate::checked::{
     CheckedClosureStorage, CheckedClosureUses, CheckedDef, CheckedNodeId, CheckedOp,
@@ -20,7 +23,7 @@ use crate::checked::{
 };
 use crate::unit::LoweringUnit;
 use mojito_types::ct::CtValue;
-use mojito_types::origin::OwnerId;
+use mojito_types::origin::{CallableEnvironment, ClosureSite, OwnerId};
 use mojito_types::param_expr::{ParamExpr, ParamId, ParamRef};
 use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
 use std::collections::{HashMap, HashSet};
@@ -167,6 +170,41 @@ impl CheckedTables {
         }
     }
 
+    /// Each call through a closure one of `storages` types, with the
+    /// `__call__` of its storage: a call naming a binding the closure
+    /// types, or invoking an expression it types.
+    fn storage_calls(&self, storages: &HashMap<ClosureSite, Ty>) -> Vec<(CheckedNodeId, String)> {
+        let mut bindings: HashMap<OwnerId, &Ty> = HashMap::new();
+        for statement in &self.statements {
+            if let (Some(binding), Some(ty)) = (statement.binding, &statement.binding_ty) {
+                bindings.insert(binding, ty);
+            }
+        }
+        for declaration in &self.declarations {
+            if let (Some(binding), Some(ty)) = (declaration.binding, &declaration.ty) {
+                bindings.entry(binding).or_insert(ty);
+            }
+        }
+        self.expressions
+            .iter()
+            .filter_map(|node| {
+                let callee = match &node.op {
+                    CheckedOp::Call { .. } => *bindings.get(&node.binding?)?,
+                    CheckedOp::Invoke { callee, .. } => self.expression(*callee)?.ty.as_ref()?,
+                    _ => return None,
+                };
+                let (name, _) = storages
+                    .get(closure_site(callee)?)?
+                    .kind()
+                    .as_non_simd_struct()?;
+                Some((
+                    node.id,
+                    mojito_symbol::symbol::qualified_method_symbol(name, "__call__", None),
+                ))
+            })
+            .collect()
+    }
+
     /// Find the declarations of the scope whose statement nodes are `ids`
     /// ([`Self::nested_defs`]) into `out`, and the expressions of its
     /// statements the check lifted to functions of their own into
@@ -305,6 +343,55 @@ impl CheckedProgram {
         for (id, lifted) in found {
             tables.set_lifted(id, lifted);
         }
+        self.type_closures_by_storage();
+    }
+
+    /// Type each closure by its storage struct, applied to the binders
+    /// its closure names, and point each call through one at the struct's
+    /// `__call__`, as upstream's `liftClosure` replaces every reference to
+    /// the nested storage struct by the lifted one and a call through a
+    /// value of a struct conforming to a closure trait selects its
+    /// `__call__`. A closure whose storage names no uses keeps its type.
+    fn type_closures_by_storage(&mut self) {
+        let storages = self.closure_storage_types();
+        if storages.is_empty() {
+            return;
+        }
+        for (id, target) in self.tables().storage_calls(&storages) {
+            self.retarget_call(id, target);
+        }
+        self.rewrite_types(&mut ClosureStorageTypes(&storages));
+    }
+
+    /// The storage struct of each closure whose storage names its uses,
+    /// by the declaration site its checked type names.
+    fn closure_storage_types(&self) -> HashMap<ClosureSite, Ty> {
+        self.tables()
+            .statements
+            .iter()
+            .filter_map(|statement| {
+                let CheckedStmtOp::Def(def) = &statement.op else {
+                    return None;
+                };
+                let storage = def.storage.as_ref()?;
+                let uses = storage.uses.as_ref()?;
+                let site = closure_site(self.checked_type_at(
+                    &crate::checked::AnnotationSite::FunctionType {
+                        module: statement.module.clone(),
+                        declaration: statement.span,
+                        syntax: statement.syntax_id,
+                    },
+                )?)?;
+                Some((
+                    site.clone(),
+                    TyKind::Struct(
+                        storage.name.clone(),
+                        uses.binders.iter().map(ParamDecl::own_argument).collect(),
+                    )
+                    .into(),
+                ))
+            })
+            .collect()
     }
 
     fn collect_unit<'t>(&'t self, unit: LoweringUnit<'_>, collector: &mut Collector<'t>) {
@@ -864,4 +951,35 @@ fn binder_uses(tables: &CheckedTables, def: &CheckedDef, in_scope: &BinderScope)
         names.remove(own.trim_start_matches('*'));
     }
     BinderUses { ids, names }
+}
+
+/// The declaration site a closure's own value type names, `None` for any
+/// other type.
+fn closure_site(ty: &Ty) -> Option<&ClosureSite> {
+    match &ty.callable()?.environment {
+        CallableEnvironment::Storage(storage) => Some(&storage.site),
+        _ => None,
+    }
+}
+
+/// The rewrite [`CheckedProgram::type_closures_by_storage`] applies at
+/// every type the program records: a closure's type becomes the storage
+/// struct its site maps to.
+struct ClosureStorageTypes<'a>(&'a HashMap<ClosureSite, Ty>);
+
+impl mojito_types::types::TyRewrite for ClosureStorageTypes<'_> {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        closure_site(ty).and_then(|site| self.0.get(site).cloned())
+    }
+
+    fn expr(
+        &mut self,
+        expr: &ParamExpr,
+    ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+        Ok(expr.clone())
+    }
+
+    fn visits_closed(&self) -> bool {
+        true
+    }
 }

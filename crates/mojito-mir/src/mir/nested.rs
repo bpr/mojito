@@ -77,7 +77,7 @@ pub(super) fn lower_fn_nested(
     let starts = LoweredFrom::at(out, declarations);
     let closures = ClosureLowering::default();
     let children = analyze_root_children(checked, statements, returned);
-    let registry = scope_registry(&children, callables, &closures.types, invariant_errors);
+    let registry = scope_registry(&children, callables, invariant_errors);
 
     let cfg = returned.map_or_else(
         || Cfg::build_checked_fn(checked, param_names, statements),
@@ -150,7 +150,6 @@ pub(super) fn lower_fn_nested(
             },
         );
     }
-    resolve_closure_types(&closures.types.into_inner(), &starts, out, declarations);
     let moved: HashSet<String> = closures
         .storage_scopes
         .into_inner()
@@ -214,16 +213,10 @@ struct StorageScope {
     to: LoweredFrom,
 }
 
-/// The storage struct each closure declared in one lowered body names,
-/// by the closure's declaration site, which its checked type carries
-/// ([`mojito_types::origin::CallableEnvironment::Storage`]).
-type ClosureTypes = std::cell::RefCell<HashMap<mojito_types::origin::ClosureSite, Ty>>;
-
 /// What lowering the closures declared in one [`lower_fn_nested`]
 /// collects for it to resolve once they are all lowered.
 #[derive(Default)]
 struct ClosureLowering {
-    types: ClosureTypes,
     /// The storage scopes it lowered, innermost first.
     storage_scopes: std::cell::RefCell<Vec<StorageScope>>,
 }
@@ -238,92 +231,6 @@ impl ClosureLowering {
                 scope.to = end;
             }
             self.storage_scopes.borrow_mut().push(scope);
-        }
-    }
-}
-
-/// The declaration site a closure's own value type names, `None` for any
-/// other type.
-fn closure_site(ty: &Ty) -> Option<&mojito_types::origin::ClosureSite> {
-    match &ty.callable()?.environment {
-        mojito_types::origin::CallableEnvironment::Storage(storage) => Some(&storage.site),
-        _ => None,
-    }
-}
-
-/// Replace each closure's checked type in what one [`lower_fn_nested`]
-/// lowered (`starts` on) by the storage struct `types` maps its site to,
-/// as upstream's front end types a closure's value by its storage. A type
-/// whose site has no storage stays for the verifier to report.
-fn resolve_closure_types(
-    types: &HashMap<mojito_types::origin::ClosureSite, Ty>,
-    starts: &LoweredFrom,
-    out: &mut [(String, MirFunction)],
-    declarations: &mut MirDeclarations,
-) {
-    if types.is_empty() {
-        return;
-    }
-    let mut resolver = ClosureStorageTypes(types);
-    let storages: HashSet<&str> = types
-        .values()
-        .filter_map(|ty| match ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                Some(name.as_str())
-            }
-            _ => None,
-        })
-        .collect();
-    for (_, function) in &mut out[starts.functions..] {
-        let Ok(()) = crate::mir::visit::walk_function_mut(&mut resolver, function);
-        retarget_storage_calls(&mut function.blocks, &function.reg_types, &storages);
-    }
-    for declaration in &mut declarations.functions[starts.declarations..] {
-        for ty in declaration
-            .param_types
-            .iter_mut()
-            .chain(std::iter::once(&mut declaration.ret_ty))
-            .chain(declaration.variadic.as_mut())
-            .chain(declaration.kw_variadic.as_mut())
-            .chain(declaration.error_ty.as_mut())
-        {
-            *ty = resolver.resolve(ty);
-        }
-    }
-    for declaration in &mut declarations.structs[starts.structs..] {
-        for (_, ty) in &mut declaration.fields {
-            *ty = resolver.resolve(ty);
-        }
-    }
-}
-
-/// Retarget each indirect call in `blocks` through a closure's storage
-/// (one of `storages`, by the callee's type in `reg_types` or its
-/// place's) from the closure trait's dispatch to the storage's `__call__`
-/// witness, as a call through a value of a struct conforming to a closure
-/// trait selects its `__call__`.
-fn retarget_storage_calls(
-    blocks: &mut [MirBlock],
-    reg_types: &HashMap<u32, Ty>,
-    storages: &HashSet<&str>,
-) {
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
-        if let MirInstr::CallIndirect {
-            callee,
-            resolved,
-            callee_place,
-            ..
-        } = instruction
-            && let Some((name, _)) = (reg_types
-                .get(&callee.0)
-                .or_else(|| callee_place.as_ref().and_then(|place| place.ty.as_ref())))
-            .and_then(|ty| ty.kind().as_non_simd_struct())
-            && storages.contains(name.as_str())
-        {
-            *resolved = Some(format!("{name}.__call__"));
-        }
-        for region in instruction_regions_mut(instruction) {
-            retarget_storage_calls(region, reg_types, storages);
         }
     }
 }
@@ -653,121 +560,6 @@ impl crate::mir::visit::MutTypeVisitor for StorageBinders {
     }
 }
 
-/// The rewrite [`resolve_closure_types`] applies at every type site.
-struct ClosureStorageTypes<'a>(&'a HashMap<mojito_types::origin::ClosureSite, Ty>);
-
-impl ClosureStorageTypes<'_> {
-    fn resolve(&mut self, ty: &Ty) -> Ty {
-        mojito_types::types::rewrite_ty(ty, self).unwrap_or_else(|_| ty.clone())
-    }
-}
-
-impl mojito_types::types::TyRewrite for ClosureStorageTypes<'_> {
-    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-        closure_site(ty).and_then(|site| self.0.get(site).cloned())
-    }
-
-    fn expr(
-        &mut self,
-        expr: &ParamExpr,
-    ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
-        Ok(expr.clone())
-    }
-
-    fn visits_closed(&self) -> bool {
-        true
-    }
-}
-
-impl crate::mir::visit::MutTypeVisitor for ClosureStorageTypes<'_> {
-    type Error = std::convert::Infallible;
-
-    fn visit_ty(&mut self, ty: &mut Ty, _: crate::mir::visit::TySite) -> Result<(), Self::Error> {
-        *ty = self.resolve(ty);
-        Ok(())
-    }
-
-    fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), Self::Error> {
-        if let Ok(resolved) = mojito_types::types::rewrite_tyargs(std::slice::from_ref(arg), self)
-            && let Some(resolved) = resolved.into_iter().next()
-        {
-            *arg = resolved;
-        }
-        Ok(())
-    }
-
-    fn visit_variant_alternatives(
-        &mut self,
-        alternatives: &mut Vec<Ty>,
-    ) -> Result<(), Self::Error> {
-        for ty in alternatives {
-            *ty = self.resolve(ty);
-        }
-        Ok(())
-    }
-
-    fn visit_variant_index(
-        &mut self,
-        _: &mut mojito_types::types::VariantIndex,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_field_step(&mut self, _: &mut Proj, _: Option<&Ty>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_lane_mask(
-        &mut self,
-        _: &mut mojito_types::types::LaneMask,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_param_arg(
-        &mut self,
-        _: &mut MirParamArg,
-        _: crate::mir::visit::ParamArgSite,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_param_decls(
-        &mut self,
-        _: &mut [ParamDecl],
-        _: crate::mir::visit::ParamDeclSite,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_constant(&mut self, constant: &mut Const) -> Result<(), Self::Error> {
-        if let Const::Value(value) = constant
-            && let Ok(resolved) = mojito_types::types::rewrite_value(value, self)
-        {
-            *value = resolved;
-        }
-        Ok(())
-    }
-
-    fn visit_param_ref(
-        &mut self,
-        _: &mut mojito_types::param_expr::ParamRef,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_sequence(
-        &mut self,
-        _: &mut mojito_checked::checked::ComptimeSequence,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
 /// One declaration in the lexical closure tree. Checked capture facts already
 /// include any ancestor forwarding required across intermediate functions.
 struct NestedNode {
@@ -782,6 +574,8 @@ struct NestedNode {
     mangled: String,
     captures: Vec<NestedCapture>,
     callable_ty: Option<Ty>,
+    /// The closure's function type ([`NestedInfo::contract`]).
+    contract: Option<Ty>,
     /// The storage struct the check declared for its closure
     /// ([`CheckedDef::storage`]).
     ///
@@ -825,6 +619,14 @@ fn analyze_node(
 
     let captures = analyze_captures(def);
     let children = analyze_root_children(checked, &def.body, None);
+    let callable_ty = checked
+        .checked_type_at(&AnnotationSite::FunctionType {
+            module: statement.module.clone(),
+            declaration: statement.span,
+            syntax: statement.syntax_id,
+        })
+        .cloned()
+        .map(mir_nested_callable_ty);
 
     NestedNode {
         node,
@@ -836,14 +638,12 @@ fn analyze_node(
         source_name: name.clone(),
         mangled: def.symbol.clone(),
         captures,
-        callable_ty: checked
-            .checked_type_at(&AnnotationSite::FunctionType {
-                module: statement.module.clone(),
-                declaration: statement.span,
-                syntax: statement.syntax_id,
-            })
-            .cloned()
-            .map(mir_nested_callable_ty),
+        contract: def
+            .storage
+            .as_ref()
+            .map(|storage| mir_nested_callable_ty(storage.contract.clone()))
+            .or_else(|| callable_ty.clone()),
+        callable_ty,
         storage: def.storage.clone(),
         defaults: def.params.iter().map(|param| param.default).collect(),
         children,
@@ -868,7 +668,6 @@ fn analyze_node(
 fn scope_registry(
     children: &[NestedNode],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    closure_types: &ClosureTypes,
     invariant_errors: &mut Vec<String>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
     let mut registry = inherited.clone();
@@ -895,13 +694,6 @@ fn scope_registry(
                 child.source_name
             ));
         }
-        if let (Some(storage), Some(site)) =
-            (&storage, child.callable_ty.as_ref().and_then(closure_site))
-        {
-            closure_types
-                .borrow_mut()
-                .insert(site.clone(), storage.ty.clone());
-        }
         let mangled = storage
             .as_ref()
             .and_then(|storage| storage.method.clone())
@@ -917,6 +709,7 @@ fn scope_registry(
                 storage,
                 captures: child.captures.clone(),
                 callable_ty: child.callable_ty.clone(),
+                contract: child.contract.clone(),
             },
         );
     }
@@ -1460,12 +1253,7 @@ fn lower_nested_node(
         .binders
         .with_loops(&node.loop_indices)
         .with(&param_decls);
-    let registry = scope_registry(
-        &node.children,
-        enclosing.registry,
-        &enclosing.closures.types,
-        invariant_errors,
-    );
+    let registry = scope_registry(&node.children, enclosing.registry, invariant_errors);
     let captures = &node.captures;
     let mangled = &symbol;
     let storage_scope = lower_closure_storage(storage.as_ref(), &node, out, declarations);

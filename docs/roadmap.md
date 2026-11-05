@@ -12217,46 +12217,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1941 MIR rewrites each closure's checked type to its storage
-  struct, where upstream's `liftClosure` does it in the front end**
-
-  `nested::resolve_closure_types` replaces each `CallableEnvironment::Storage`
-  type by the storage struct while lowering, and `retarget_storage_calls`
-  points calls through it at `<storage>.__call__`, where upstream's
-  `liftClosure` rewrites every reference to the nested struct before
-  anything is emitted.
-  - Record the closure trait as `CheckedClosureStorage::contract` (what
-    `closure_value_ty` rebuilds today) so MIR no longer reads it through
-    the site.
-  - At the end of `collect_closure_uses`, rewrite every `Ty` the checked
-    program records (expressions, adjustments, bindings, def signatures
-    and captures, `declaration_types`, `generic_instantiations`) from site
-    to `Struct(storage.name, uses.binders.own_argument())`, and set each
-    call through a storage to `<storage>.__call__`.
-  - Delete `resolve_closure_types`, `retarget_storage_calls`,
-    `ClosureStorageTypes`, `ClosureTypes`, and the verifier's
-    `unresolved_closure`.
-  - Probe: `rg 'resolve_closure_types|retarget_storage_calls|unresolved_closure' crates`
-    is empty, and `closure_storage_values`, `closure_storage_method_binders`,
-    `capturing_lambda_storage`, and `comptime_lambda_initializer` run
-    unchanged on both backends.
-  - Plan: `R1893-a-closure-s-checked-type-names-plan.md`, Stage A.
-  - Found while planning R1893 (2026-11-05).
-  - Depends on R1940.
-  - Model: Opus, Planned.
-
 - [ ] **R1893 A closure's checked type names its declaration site, where
   upstream types the value by its storage struct**
 
   A capture-list closure's or capturing lambda's checked type is a
   `def(...)` whose environment is `CallableEnvironment::Storage`, where
   upstream's `emitClosure` returns a value typed by a struct nested in the
-  closure's declaration, which `liftClosure` (R1941) later renames.
+  closure's declaration, which `liftClosure` later renames.
   - The checker cannot register the storage under its lifted name: the
     ordinal and method-flag parts of the name and the binders it is
     applied to exist only after `collect_closure_uses`. Give it a
     check-time name ending in `$__storage`, typed `Struct(nested, [])`,
-    and key R1941's rewrite by that name.
+    and key the lift step's rewrite
+    (`CheckedProgram::type_closures_by_storage`) by that name.
   - Register that name as a checker `StructInfo` with the closure trait as
     `callable_conformance`, `<nested>.__call__` as `callable_target`, a
     `__call__` method carrying the closure's full signature (defaults,

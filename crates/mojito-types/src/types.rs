@@ -6747,7 +6747,12 @@ fn bind_constraints(constraints: &mut [GenericConstraint], scopes: &[&[ParamDecl
     }
 }
 
-fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDecl, ParamError> {
+/// [`rewrite_ty`] over a binder declaration: its type, callable bound,
+/// and defaults. Its constraints pass through.
+pub fn rewrite_decl(
+    decl: &ParamDecl,
+    rewrite: &mut dyn TyRewrite,
+) -> Result<ParamDecl, ParamError> {
     let optional = |ty: &Option<Ty>, rewrite: &mut dyn TyRewrite| {
         ty.as_ref().map(|ty| rewrite_ty(ty, rewrite)).transpose()
     };

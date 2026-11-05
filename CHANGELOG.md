@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check's last step now types each capturing closure's value by its
+  storage struct wherever the checked program records it, and points
+  each call through the value at the struct's `__call__`, as upstream's
+  `liftClosure` replaces every reference to the nested struct in the
+  front end (R1941). It walks the program through the new exhaustive
+  `RewriteTypes` walk (`checked/rewrite_types.rs`), and records the
+  closure trait as `CheckedClosureStorage::contract`; MIR lowers
+  struct-typed closure values and no longer rewrites them
+  (`resolve_closure_types`, `retarget_storage_calls`, and the verifier's
+  unresolved-closure check are gone).
 - The check's last step now names each lifted closure, its storage
   struct, and the declarations nested in it (`CheckedDef::symbol`,
   `CheckedClosureStorage::name`), and declares the binders the storage is

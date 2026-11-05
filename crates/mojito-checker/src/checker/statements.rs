@@ -3397,7 +3397,13 @@ impl Checker {
             // storage.
             let storage_backed = (lambda || captures_list) && !captures.is_empty();
             let environment = if storage_backed {
-                let storage = self.closure_storage(&captures);
+                let storage = self.closure_storage(
+                    &captures,
+                    with_callable_environment(
+                        fn_ty.clone(),
+                        mojito_types::origin::CallableEnvironment::Capturing(concrete.clone()),
+                    ),
+                );
                 let environment = mojito_types::origin::CallableEnvironment::Storage(Box::new(
                     mojito_types::origin::ClosureStorageEnvironment {
                         site: mojito_types::origin::ClosureSite {
@@ -3477,10 +3483,11 @@ impl Checker {
     /// referent, which is a captured sibling closure's own storage, written
     /// through when the sibling's call writes it. Its copyability and
     /// passabilities meet its captures', a reference capture contributing
-    /// its referent's.
+    /// its referent's. It conforms to `contract`, the closure trait.
     fn closure_storage(
         &self,
         captures: &[mojito_checked::checked::CheckedCapture],
+        contract: Ty,
     ) -> mojito_checked::checked::CheckedClosureStorage {
         use mojito_ast::ast::CaptureKind;
         use mojito_checked::checked::StoragePassability;
@@ -3530,6 +3537,7 @@ impl Checker {
             },
             name: String::new(),
             fields,
+            contract,
             uses: None,
         }
     }

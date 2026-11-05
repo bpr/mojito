@@ -592,12 +592,7 @@ impl MirDeclarations {
             | TyKind::KgenTarget
             | TyKind::PopIntLiteral
             | TyKind::PopFloatLiteral => true,
-            TyKind::Func(_) | TyKind::GenericFunc(_) => ty.callable().is_some_and(|function| {
-                !matches!(
-                    function.environment,
-                    mojito_types::origin::CallableEnvironment::Storage(_)
-                )
-            }),
+            TyKind::Func(_) | TyKind::GenericFunc(_) => true,
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 items.iter().all(|item| self.register_passable(item))
             }
@@ -4721,9 +4716,14 @@ struct NestedInfo {
     /// Captured enclosing-local names, in a deterministic (sorted) order shared by
     /// the lifted function's parameter list and every rewritten call site.
     captures: Vec<NestedCapture>,
-    /// The checker's exact callable type for the nested `def`, used to type
-    /// synthetic closure-value registers. `None` only on unchecked paths.
+    /// The checker's exact type for the nested `def`'s value, used to type
+    /// its slot and closure-value registers: its storage struct when it
+    /// has one. `None` only on unchecked paths.
     callable_ty: Option<Ty>,
+    /// The closure's function type, whose signature a call binds: the
+    /// closure trait its storage conforms to
+    /// (`CheckedClosureStorage::contract`), else `callable_ty`.
+    contract: Option<Ty>,
 }
 
 /// The `__storage` struct of a capture-list closure: one field per
