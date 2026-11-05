@@ -18,18 +18,11 @@ command cannot use both.
 
 ## Recommended order
 
-1. **Finish gap D′** (size). R1440–R1444 landed 11-03. The verifier rule
-   that was R1445 is now R1873, and it waits on one core:
-   - R1425: a call passes a by-address argument as a loaded value beside
-     its place. Planned.
-   - R1418 landed 11-04: every loan anchor and borrow slot binds a
-     memory-only result's call-result slot.
-   - R1873's 11-03 census found 10 fixtures, each a probe on R1425's
-     residues or R1418's (landed).
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1873 -n 0
-   ```
+1. **Finish gap D′** (size). R1440–R1444 landed 11-03, and the verifier
+   rule (R1873, once R1445) landed 11-05 for a named `drop.reg` and a
+   `deinit`-receiver call. Its unnamed `drop.reg` half is R1932, behind
+   R359: the compiler's tuple storage, upstream's trivially destructible
+   `!kgen.struct`, still destroys its elements through one.
 
 2. **Gap E: compile-time values are slots** (size, small). A callable
    binder's read is its parameter constant (R1449), and
@@ -191,7 +184,8 @@ command cannot use both.
 - Gaps A, B, and C have fully landed. Gap B's residues are conformance
   and cleanup: R1414 (a display's elements bind as call arguments), R695
   after it, R1415 (fieldwise keywords), and R1416 (hand-written MIR).
-- Gap D′ has its verifier rule left (R1873), behind R1425.
+- Gap D′ has its verifier rule's unnamed `drop.reg` half left (R1932),
+  behind R359.
 - Of the 10-25 gaps, E, F, G, H, and I have their cores in. Each has
   residues, steps 2–6.
 - Of the 10-25 conformance blocks, five have landed: type versus value
@@ -217,7 +211,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 
 | gap | upstream's shape | open core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
-| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1425, then R1873 | about 15 (below) | yes |
+| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932, behind R359 | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1874, R1880 | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1877, R1868, R1882, R1462, R160, R1544 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1891, R1892 → R1893 → R1894 | R1349, R1870, R1888 | yes |
@@ -232,9 +226,8 @@ R1411 and R1413 under *Entries outside the gaps*.
   Only register-passable values are SSA registers (`CheckLifetimes`).
 - **Mojito**: R1355, R1356, and R1440–R1444 moved the consumers onto the
   call-result slot, and R1418 (11-04) put every loan anchor and borrow
-  slot's loans on it, closing R1331, R123, and R166. R1425 (a by-address
-  call argument) is the shape left, and R1873 then rejects the class in
-  the verifier.
+  slot's loans on it, closing R1331, R123, and R166. The verifier rejects
+  the class (R1873), but for an unnamed `drop.reg` (R1932).
 - **Still open from R1355's list**: R715 (a `^` argument), R1212
   (`$mat_r`), and R406 (a forwarded call-result subscript). Re-probe each.
 - **Shrinks** R691, R1234, R118, R54, and R718.

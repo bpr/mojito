@@ -2654,6 +2654,80 @@ fn verifier_accepts_a_drop_of_an_element_a_borrowed_pack_holds() {
     );
 }
 
+/// The `deinit`-receiver call of `S.__del__` on `recv`, its result `dest`.
+fn deinit_call(dest: u32, recv: u32) -> MirInstr {
+    MirInstr::MethodCall {
+        dest: Reg(dest),
+        recv: Reg(recv),
+        method: "__deinit__".into(),
+        resolved: Some("S.__del__".into()),
+        raises: None,
+        reference_result: None,
+        result_adapter: None,
+        args: Vec::new(),
+        kwargs: Vec::new(),
+        recv_place: None,
+        recv_writes: true,
+        receiver_convention: Some(mojito::ast::ArgConvention::Deinit),
+        arg_places: Vec::new(),
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        param_decls: Vec::new(),
+        instantiated_args: Vec::new(),
+        spread: None,
+        refined_bound: None,
+    }
+}
+
+/// A memory-only value is destroyed through its storage, as upstream's
+/// `CheckLifetimes` tracks only a register-passable value as an SSA value:
+/// a named `drop.reg` or a `deinit`-receiver call of a memory-only
+/// register is rejected, while one of a register-passable register, or a
+/// `deinit` call on a slot's storage a forwarding `var.use` hands over, is
+/// accepted.
+#[test]
+fn verifier_rejects_a_destroy_of_a_memory_only_register() {
+    let findings = |instrs: Vec<MirInstr>| -> Vec<String> {
+        owned_register_findings(
+            vec![block(instrs, MirTerm::Return(None))],
+            &[(2, Ty::int()), (3, Ty::none())],
+            MirDeclarations::default(),
+        )
+        .into_iter()
+        .filter(|finding| finding.contains("memory-only type"))
+        .collect()
+    };
+    let named_drop = |reg| MirInstr::Drop {
+        reg: Reg(reg),
+        destructor: Some("S.__del__".into()),
+    };
+    assert_eq!(
+        findings([copy_x_and_condition(), vec![named_drop(0)]].concat()),
+        [
+            "MIR function 'test' block 0: drop.reg destroys %r0 of memory-only type S, which upstream destroys through its storage"
+        ]
+    );
+    assert_eq!(
+        findings([copy_x_and_condition(), vec![deinit_call(3, 0)]].concat()),
+        [
+            "MIR function 'test' block 0: call.method deinit receiver destroys %r0 of memory-only type S, which upstream destroys through its storage"
+        ]
+    );
+    let int = MirInstr::Const {
+        dest: Reg(2),
+        k: Const::Int(1),
+    };
+    assert!(findings(vec![int, named_drop(2)]).is_empty());
+    let forwarded = MirInstr::UseVar {
+        dest: Reg(0),
+        var: 0,
+        mode: UseMode::Forward,
+        constructor: None,
+    };
+    assert!(findings(vec![forwarded, deinit_call(3, 0)]).is_empty());
+}
+
 /// `x` stored from r0.
 fn store_x() -> Vec<MirInstr> {
     vec![MirInstr::DefVar {

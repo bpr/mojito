@@ -46,10 +46,10 @@ use super::{
 };
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{
-    MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds, VarId,
+    MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds, UseMode, VarId,
     instruction_regions, instruction_slots, region_exit, terminator_regs,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Report every slot end in `function` (a `drop.var`, a `var.consume`, or
 /// a `deinit`-receiver call) whose slot some path reaching it does not
@@ -78,6 +78,35 @@ pub(super) fn verify_slot_ends(
     };
     walk.region(&entry, &function.blocks, true);
     errors.extend(walk.findings);
+}
+
+/// Report every destroy of a memory-only register in `function`: a
+/// `drop.reg` naming its destructor, or a `deinit`-receiver call with no
+/// receiver place, of a register whose type
+/// [`MirDeclarations::register_passable`] answers no for. Upstream's
+/// `CheckLifetimes` tracks only a register-passable value as an SSA value
+/// (`ValueSet::addValue`'s `numValueBits = 1`) and destroys a memory-only
+/// one through its storage. A receiver a forwarding `var.use` defines is
+/// that storage handed over, the form `lower_drops` gives every slot drop.
+/// An unnamed `drop.reg`, which drops its value's fields by their types,
+/// is not judged yet: the compiler's tuple storage, which upstream's
+/// trivially destructible `!kgen.struct` is, still destroys its elements
+/// through one.
+pub(super) fn verify_register_destroys(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    errors: &mut Vec<String>,
+) {
+    let mut forwarded = HashSet::new();
+    collect_forwarded(&function.blocks, &mut forwarded);
+    let check = RegisterDestroys {
+        name,
+        function,
+        declarations,
+        forwarded,
+    };
+    check.blocks(&function.blocks, errors);
 }
 
 /// What every path reaching a point holds.
@@ -789,6 +818,71 @@ fn collect_refills<'a>(blocks: &'a [MirBlock], refills: &mut HashMap<u32, &'a Mi
         }
         for region in instruction_regions(instruction) {
             collect_refills(region, refills);
+        }
+    }
+}
+
+/// The memory-only register destroys of one function, reported by
+/// [`verify_register_destroys`].
+struct RegisterDestroys<'a> {
+    name: &'a str,
+    function: &'a MirFunction,
+    declarations: &'a MirDeclarations,
+    /// The registers a forwarding `var.use` defines.
+    forwarded: HashSet<u32>,
+}
+
+impl RegisterDestroys<'_> {
+    /// Report the destroys of `blocks`, a function's or a region's block
+    /// list, and of their regions.
+    fn blocks(&self, blocks: &[MirBlock], errors: &mut Vec<String>) {
+        for (index, block) in blocks.iter().enumerate() {
+            for instruction in &block.instrs {
+                for region in instruction_regions(instruction) {
+                    self.blocks(region, errors);
+                }
+                let (reg, what) = match instruction {
+                    MirInstr::Drop {
+                        reg,
+                        destructor: Some(_),
+                    } => (*reg, "drop.reg"),
+                    MirInstr::MethodCall {
+                        recv,
+                        recv_place: None,
+                        ..
+                    } if instruction.deinit_receiver() && !self.forwarded.contains(&recv.0) => {
+                        (*recv, "call.method deinit receiver")
+                    }
+                    _ => continue,
+                };
+                let Some(ty) = self.function.reg_types.get(&reg.0) else {
+                    continue;
+                };
+                if !self.declarations.register_passable(ty) {
+                    errors.push(format!(
+                        "MIR function '{}' block {index}: {what} destroys %r{} of memory-only type {ty}, which upstream destroys through its storage",
+                        self.name, reg.0
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// The registers a forwarding `var.use` of `blocks`, at any depth,
+/// defines: a slot's storage handed over.
+fn collect_forwarded(blocks: &[MirBlock], forwarded: &mut HashSet<u32>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        if let MirInstr::UseVar {
+            dest,
+            mode: UseMode::Forward,
+            ..
+        } = instruction
+        {
+            forwarded.insert(dest.0);
+        }
+        for region in instruction_regions(instruction) {
+            collect_forwarded(region, forwarded);
         }
     }
 }

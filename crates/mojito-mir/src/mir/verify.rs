@@ -28,7 +28,9 @@
 //!   declared write-back parameter receives a caller place.
 //! - slot ends: a `drop.var` or `var.consume` of a slot every path reaching
 //!   it already dropped, consumed, or moved, and a destroy of a value a
-//!   field or tuple element of which some path reaching it has ended.
+//!   field or tuple element of which some path reaching it has ended;
+//! - register destroys: a named `drop.reg` or a `deinit`-receiver call of
+//!   a memory-only register, which upstream destroys through its storage.
 
 use super::{
     FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
@@ -127,7 +129,7 @@ mod types;
 use calls::*;
 use concrete::verify_concrete_program;
 pub use concrete::{concrete_function_findings, llvm_translation_findings};
-use drops::verify_slot_ends;
+use drops::{verify_register_destroys, verify_slot_ends};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use instr::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

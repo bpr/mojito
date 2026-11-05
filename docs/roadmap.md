@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1932**.
+Next free ID: **R1933**.
 
 ## Ordered Work
 
@@ -10075,28 +10075,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1873 The MIR verifier does not reject a destroy of a memory-only
-  register**
+- [ ] **R1932 The MIR verifier does not reject an unnamed `drop.reg` of a
+  memory-only register**
 
-  `verify/drops.rs` accepts a `drop.reg`, or the `deinit`-receiver call
-  `lower_drops` turns it into, of any owned register, where upstream's
-  `CheckLifetimes` tracks only register-passable values as SSA values
-  (`numValueBits = 1` in `ValueSet::addValue`) and destroys a memory-only
-  one through its storage.
-  - The rule: reject a `drop.reg`, and a `deinit`-receiver call with no
-    receiver place, whose register type
-    `MirDeclarations::register_passable` answers no for.
-  - Exempt a receiver a forwarding `var.use` defines: that is the slot's
-    storage handed over, the form `lower_drops` gives every slot drop.
-  - A 2026-11-03 census of `assets/ok` and `assets/ownership_ok` with the
-    rule on found 10 fixtures (35 with `MOJITO_PRE_ELABORATION=0`, the rest
-    `llvm_intrinsic`'s pack spread), each a probe then filed on R1921
-    (landed 2026-11-05: a `read` collector's elements are addresses now),
-    R701 (landed 2026-11-05; its loaded reference results are R1930), or
-    R1458 (R1418 and R1917 have landed).
-  - Re-run the census, both ways, before landing it: the rule runs after
-    every pass in a debug build.
-  - Depends on R1425, R1418, R1921, R701, R1458, R1930.
+  `verify/drops.rs`'s `verify_register_destroys` rejects a `drop.reg`
+  naming its destructor and a `deinit`-receiver call on a memory-only
+  register, but not an unnamed `drop.reg`, which drops its value's fields
+  by their types, where upstream's `CheckLifetimes` destroys every
+  memory-only value through its storage.
+  - The compiler's tuple storage (`TyKind::Tuple`, upstream's
+    `!kgen.struct`) still destroys its elements whole through one (R359),
+    so judging the unnamed form rejects the bundled `llvm_intrinsic`.
+  - Then drop the `destructor: Some(_)` filter in
+    `RegisterDestroys::blocks`.
+  - Probe: with the filter off, `assets/ok/llvm_intrinsic.mojo` (and 54
+    fixtures with `MOJITO_PRE_ELABORATION=0`) report `drop.reg destroys
+    %r2 of memory-only type Tuple[*types]`; re-run that census of
+    `assets/ok` and `assets/ownership_ok`, both ways, before landing.
+  - Split from R1873 (2026-11-05).
+  - Depends on R359.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
@@ -12053,6 +12050,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     with a destructor is admitted only in the bundled storage modules
     (`checker/method_calls/builtin_types.rs`), because user code cannot end
     the owner's storage.
+  - Probe: `llvm_intrinsic`'s `loaded_pack`, a `Tuple[*types]` from
+    `kgen.struct.load_indirect`, is moved into a register and
+    `drop.reg`'d after `pop.call_llvm_intrinsic` reads it, where
+    upstream's loaded `!kgen.struct` is never destroyed (R1932).
   - Depends on R341.
   - Model: Fable, Planned.
 

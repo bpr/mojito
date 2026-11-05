@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier rejects a destroy of a memory-only register — a
+  `drop.reg` naming its destructor, or a `deinit`-receiver call on a
+  register that is not a slot's storage handed over — as upstream's
+  `CheckLifetimes` destroys a memory-only value through its storage
+  (R1873). An unnamed `drop.reg` is left to R1932.
 - A reference result at a memory-only `read` parameter (`show(pick(a))`,
   `show(h.get())`, `show(l[0])`) is passed as the reference the call
   returned, as upstream's `lit.call` passes it, instead of a load of its
