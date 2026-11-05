@@ -365,7 +365,25 @@ pub(super) fn verify_direct_call(
         return;
     }
     for (index, (argument, expected)) in args.iter().zip(&declaration.param_types).enumerate() {
-        if let Some(found) = function.reg_types.get(&argument.0)
+        // A parameter received by address takes a reference to the
+        // caller's storage (`crate::mir::address_call_operands`); an owned
+        // or `deinit` one takes the value itself.
+        let borrowed = !matches!(
+            declaration.param_conventions.get(index).copied().flatten(),
+            Some(
+                mojito_ast::ast::ArgConvention::Var
+                    | mojito_ast::ast::ArgConvention::Deinit
+                    | mojito_ast::ast::ArgConvention::Out
+            )
+        );
+        let found = function.reg_types.get(&argument.0).map(|found| {
+            if borrowed && !matches!(expected.kind(), TyKind::Ref(_)) {
+                crate::mir::operand_value_ty(found)
+            } else {
+                found
+            }
+        });
+        if let Some(found) = found
             && !types_compatible(found, expected)
         {
             errors.push(format!(

@@ -368,7 +368,10 @@ impl Specializer<'_> {
                 ArgSlot::Default => None,
             };
             if let Some(actual_reg) = actual_reg {
-                let actual = reg_ty(caller, actual_reg, owner)?;
+                let actual = bound_value_ty(
+                    reg_ty(caller, actual_reg, owner)?,
+                    &declaration.param_types[index],
+                );
                 // A callable-bounded method parameter is represented by its
                 // structural callable contract in the runtime signature, so
                 // ordinary `TyKind::Param` unification has no binder spelling to
@@ -1005,5 +1008,16 @@ fn collector_element(pattern: &Ty) -> Option<&Ty> {
     match pattern.kind() {
         TyKind::VariadicPack(element) => Some(element),
         list => mojito_types::types::variadic_list_element(list),
+    }
+}
+
+/// The type a parameter declared `declared` binds from an operand of type
+/// `operand`: a by-address operand's referent, unless the parameter is
+/// itself a reference.
+fn bound_value_ty<'a>(operand: &'a Ty, declared: &Ty) -> &'a Ty {
+    if matches!(declared.kind(), TyKind::Ref(_)) {
+        operand
+    } else {
+        mojito_mir::mir::operand_value_ty(operand)
     }
 }

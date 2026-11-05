@@ -56,8 +56,8 @@ use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     Const, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirPlace, MirTerm,
     Reg, RegionFrame, UseMode, count_register_reads, instruction_regions, instruction_regions_mut,
-    instruction_slots, loop_continues_mut, match_nexts_mut, region_exit, renumber_block_slots,
-    retire_slots, try_raises_mut,
+    instruction_slots, load_register_passable_operands, loop_continues_mut, match_nexts_mut,
+    region_exit, renumber_block_slots, retire_slots, try_raises_mut,
 };
 use mojito_symbol::symbol::is_initializer_symbol;
 use mojito_types::types::Ty;
@@ -114,7 +114,11 @@ pub fn mem_2_reg(_name: &str, function: &mut MirFunction, declarations: &MirDecl
 /// [`sroa`](super::sroa::sroa) split, into a fresh local at the entry.
 ///
 /// Every mention of the argument then names the local; returns whether
-/// any was stored. The argument is a `read` or owned parameter of a
+/// any was stored, or any call's operand loaded. A call's operand that
+/// passes a reference where the instance's callee takes the parameter by
+/// value — a `read x: T` at `T = Int` — is read through it first, as the
+/// caller half of upstream's pass loads it
+/// ([`load_register_passable_operands`]). The argument is a `read` or owned parameter of a
 /// register-passable type ([`MirDeclarations::register_passable`]), as
 /// upstream's `lowerPointerType` lowers one and leaves a memory-only
 /// struct behind its address; a `mut` or `deinit` one is never stored, nor
@@ -126,7 +130,8 @@ pub fn lower_arg_conventions(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> bool {
-    store_arguments(name, function, declarations, |_| true)
+    let loaded = load_register_passable_operands(function, declarations);
+    store_arguments(name, function, declarations, |_| true) || loaded
 }
 
 /// Store each `read` argument of `function` that [`mem_2_reg`] would

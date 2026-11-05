@@ -43,7 +43,9 @@
 //! an address user of a memory-only slot, as `getRegisterPassability`
 //! passes a memory-only value to and from a call by address
 //! ([`MirDeclarations::register_passable`]): a store of a call's result, a
-//! whole read a call takes, such as a destructor's `deinit self`, which
+//! whole-slot `ref.make` a direct call takes as a by-address operand
+//! (`mojito_mir::mir::address_call_operands`), a whole read a call takes,
+//! such as a destructor's `deinit self`, which
 //! upstream's `emitDestructorCall` passes by reference, so the slot splits
 //! once `inline-parametric` has inlined the destructor. Each field
 //! slot is typed at the slot type's arguments, as upstream's element

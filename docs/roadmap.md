@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1917**.
+Next free ID: **R1921**.
 
 ## Ordered Work
 
@@ -9978,31 +9978,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1425 A MIR call passes a by-address argument as a loaded value
-  beside its place, where upstream's call takes the address and loads
-  nothing**
+- [ ] **R1917 A memory-only value with no caller place at a `read`
+  argument is passed as a loaded value, where upstream passes the address
+  of a temporary**
 
-  `MirInstr::Call` takes every operand as a value register, so a memory-only
-  `read` argument or a `mut`/`ref` one is a whole load of its place, with
-  the place itself retained in `arg_places`.
-  - The VM replaces the loaded value with a handle to the place, and
-    Pliron recovers the address from the place
-    (`place_backed_arg_value`, `crates/mojito-pliron/src/lower/abi.rs`), so
-    the load reads nothing a backend uses.
-  - `cse` cannot merge two such loads, because their memory-only result
-    may own what a consuming reader takes.
-  - Probe: `def twin(p: Pt) -> Bool: return same(p, p)` over
-    `@fieldwise_init struct Pt(Copyable, Movable): var x: Int; var y: Int`
-    keeps two adjacent whole `place.load`s of `p` in concrete `twin`
-    (with `@no_inline` on both), where upstream passes `p`'s address twice.
-  - Probe: `bump(p)` over `def bump(mut a: Pt)` spells a `ref.make` and a
-    whole `ref.read` of `p` before the call.
-  - Probe: a memory-only temporary at a `read` parameter has no place at
-    all, so a write through the callee's `read self` lands on the callee's
-    copy: `twice(lambda {var s^} -> Int: (s.__iadd__("!"),
-    s.byte_length())[1])` over a `String`, with `F: def() -> Int`, prints
-    the pin's `34`, but stops on "double free of Pointer allocation" on the
-    VM with `AUTOMATIC_INLINE` removed from `post_elaboration.rs`.
+  A direct `call` passes a by-address argument as a `ref.make` of its
+  retained place (`mir::address_call_operands`), but an operand whose
+  lowering retains no place keeps its value.
+  - Upstream stores such an rvalue in a stack temporary, passes its
+    address, and destroys the temporary after the call.
+  - Probe: `twice[F: def() -> Int](f: F) -> Int: return f() * 10 + f()`
+    over `lambda {var s^} -> Int: (s.__iadd__("!"), s.byte_length())[1]`
+    with `s = String("ab")` stops on "double free of Pointer allocation"
+    on the VM, where the pin prints `34`. `main` passes a `place.load` of
+    the lambda's storage slot with no `arg_places` entry.
   - Probe (from R1873): a named memory-only value at a `read` argument is
     a register the call's end destroys: `divmod(y, d)` over `T:
     DivModable & Deinitable` moves `y` and copies `d`
@@ -10018,10 +10007,71 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `print(names[0] := String("zz"))` (`walrus_place_targets.mojo`), and
     a call result of pack-element type in `print(first([v, v], v))`
     (`pack_element_list_display.mojo`).
-  - Fix: pass the address as the operand, a `ref.make` of the place, and
-    teach the inliner's parameter binding, `sroa`, and `mem-2-reg` to read
-    it as an address.
+  - Fix: in `lower_call_operand` (`mir/calls.rs`), bind the rvalue to a
+    call-result slot (`CALL_RESULT_SLOT`) and retain that slot as the
+    operand's place, so the address rewrite reaches it.
   - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1918 A method call passes its receiver and by-address arguments
+  as loaded values beside their places**
+
+  `mir::address_call_operands` rewrites only `MirInstr::Call`, so
+  `call.method` still passes a whole load of a `read` receiver or
+  argument of a memory-only type, and of a `mut`/`ref` one, with the place
+  in `recv_place` and `arg_places`.
+  - A `call` naming a receiver-bearing method by its symbol
+    (`Pt.method(p)`) is skipped too
+    (`mir::call_operand_parameters` answers `None` for it).
+  - Upstream has one call operation, whose receiver operand is a
+    `!lit.ref` like any other by-address argument.
+  - Fix: apply the same rewrite to `call.method`'s receiver and
+    arguments, and teach the VM's method binding (`vm/frames.rs`,
+    `vm/invoke.rs`) and Pliron's `lower/methods.rs` to read an addressed
+    operand.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1919 An indirect call, a subscript, and a type-parameter
+  construction pass by-address operands as loaded values beside their
+  places**
+
+  `call.indirect`, `index`, `index.multi`, `index.multi_set`, and
+  `construct_type_param` keep the value-plus-place operand shape that a
+  direct `call` no longer has.
+  - Their `arg_places`, `base_place`, `index_place`, and `kwarg_places`
+    tables are each read by the VM and Pliron to recover the address.
+  - Fix: extend `mir::address_call_operands` to each instruction in turn,
+    with the VM's and Pliron's binding for it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1920 A call keeps `arg_places` beside its address operand, and
+  the backends recover the address from the place**
+
+  Upstream's `lit.call` has no side table of places: the operand is the
+  address.
+  - The VM loads an addressed operand's place back into a value
+    (`addressed_by`, `vm/exec.rs`) and rebinds a reference parameter from
+    the place (`reference_argument`), and Pliron reads the place
+    (`place_backed_arg_value`, `lower/abi.rs`).
+  - The verifier accepts either a reference or a value at a non-owned
+    slot (`verify_direct_call`), so an artifact written before the
+    rewrite still runs.
+  - The rewrite runs after lowering (`mir::address_call_operands`, called
+    from `lower_program` and the package's unit lowering), where upstream
+    emits the address as the operand is lowered.
+  - A place ending in a `ref` field keeps its load, which reads the stored
+    handle's referent.
+  - The inliner's lookbacks (`loaded_place`, `read_through_register`,
+    `inline_parametric.rs`) still reverse-engineer a place for an operand
+    with none.
+  - Fix: emit the `ref.make` in `lower_call_operand`, derive each place
+    from the operand's `ref.make`, keep only a per-operand "lends to the
+    result" bit for `loans.rs`, delete the place-based argument paths, make
+    the verifier require a reference at a by-address slot, and move the MIR
+    text version with an upgrade of older calls.
+  - Depends on R1917, R1918, R1919.
   - Model: Fable, Planned.
 
 - [ ] **R1420 A raising call's register-passable result stays a register,
@@ -10075,11 +10125,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     storage handed over, the form `lower_drops` gives every slot drop.
   - A 2026-11-03 census of `assets/ok` and `assets/ownership_ok` with the
     rule on found 10 fixtures (35 with `MOJITO_PRE_ELABORATION=0`, the rest
-    `llvm_intrinsic`'s pack spread), each a probe now filed on R1425 or
+    `llvm_intrinsic`'s pack spread), each a probe now filed on R1917 or
     R1418.
   - Re-run the census, both ways, before landing it: the rule runs after
     every pass in a debug build.
-  - Depends on R1425, R1418.
+  - Depends on R1425, R1418, R1917.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler

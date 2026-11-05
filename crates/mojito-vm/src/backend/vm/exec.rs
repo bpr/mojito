@@ -9,6 +9,93 @@ use mojito_types::types::TyKind;
 use mojito_types::types::storage_value_ty;
 
 impl VmBackend {
+    /// The value a `place.load` of `place` reads in the frame `frame_id` of
+    /// `function`.
+    pub(super) fn load_place_value(
+        &mut self,
+        prog: &Prog,
+        function: usize,
+        frame_id: FrameId,
+        regs: &[Value],
+        vars: &mut [Value],
+        place: &MirPlace,
+    ) -> Result<Value, RuntimeError> {
+        // The read half of `c[i] += e` on a user struct goes through
+        // `c.__getitem__(i)`; any other place reads its slot / SIMD lane.
+        // A pointer-typed variable holding a place handle is the
+        // handle itself, as `UseVar` reads it: the whole slot is
+        // the pointer, not its pointee.
+        let pointer_slot = place.is_whole_root()
+            && place.through.is_none()
+            && matches!(
+                (prog.mir.functions[function].1.var_tys.get(&place.root)).map(Ty::kind),
+                Some(TyKind::Pointer { .. })
+            );
+        Ok(if pointer_slot {
+            vars[place.root as usize].clone()
+        } else if let Some((element, suffix)) =
+            super::references::pointer_element(&vars[place.root as usize], place, regs)?
+        {
+            // A place projected from a pointer slot addresses its
+            // pointee: the element the leading index selects, then
+            // the rest of the projection within it.
+            let referent = self.read_reference(&element, frame_id, vars)?;
+            self.read_reference_projection(frame_id, vars, &referent, &suffix)?
+        } else if place.through == Some(place.root)
+            && let pointer @ Value::Pointer { .. } = &vars[place.root as usize]
+        {
+            // A reference binding of a static-origin call result holds
+            // the element's heap pointer (`heap_reference_result`).
+            let referent = self.read_reference(pointer, frame_id, vars)?;
+            let projection = super::references::place_projection_segments(place, regs)?;
+            self.read_reference_projection(frame_id, vars, &referent, &projection)?
+        } else if let Some(reference) =
+            self.extend_reference(&vars[place.root as usize], place, regs)?
+        {
+            // Reading through a reference-alias root (a `mut`/`ref self`
+            // receiver) reaches the referent in one handle read. A
+            // `ref[origin]`-typed field stored behind that alias yields
+            // *another* handle, which needs the same second dereference the
+            // plain-root branch applies — but only then: an alias that
+            // already reaches its referent (a directly aliased value) must
+            // keep it, so gate on the loaded value still being a handle.
+            let value = self.read_reference(&reference, frame_id, vars)?;
+            if matches!(value, Value::Ref { .. })
+                && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+            {
+                self.read_reference(&value, frame_id, vars)?
+            } else {
+                value
+            }
+        } else if let Some(v) = self.load_index_dunder(prog, place, regs, vars, frame_id)? {
+            v
+        } else {
+            // A place reaching a stored handle below its root
+            // (`self.value.items` through a `ref` field,
+            // `self.src[]` on `Pointer[List[T], o]` storage) cannot
+            // walk raw storage — route it through the reference walk,
+            // which chases stored handles mid-projection.
+            if super::references::place_crosses_reference(place) {
+                let composed = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
+                let value = self.read_reference(&composed, frame_id, vars)?;
+                if matches!(value, Value::Ref { .. })
+                    && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+                {
+                    self.read_reference(&value, frame_id, vars)?
+                } else {
+                    value
+                }
+            } else {
+                let value = load_place(vars, regs, place)?;
+                if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
+                    self.read_reference(&value, frame_id, vars)?
+                } else {
+                    value
+                }
+            }
+        })
+    }
+
     /// Execute one straight-line MIR instruction against the current frame.
     #[allow(
         clippy::cognitive_complexity,
@@ -554,6 +641,35 @@ impl VmBackend {
                     .iter()
                     .map(|(n, r)| (n.clone(), regs[r.0 as usize].clone()))
                     .collect();
+                // A by-address operand enters the call as the value its
+                // place holds; a parameter that binds the caller's storage
+                // takes the place's handle below, as every call does.
+                let operands = args
+                    .iter()
+                    .zip(arg_places)
+                    .chain(
+                        kwargs
+                            .iter()
+                            .map(|(_, register)| register)
+                            .zip(kwarg_places),
+                    )
+                    .enumerate();
+                for (operand, (register, place)) in operands {
+                    let Some(place) = place.as_ref().filter(|place| {
+                        addressed_by(
+                            prog.mir.functions[function].1.reg_types.get(&register.0),
+                            place,
+                        )
+                    }) else {
+                        continue;
+                    };
+                    let value =
+                        self.load_place_value(prog, function, frame_id, regs, vars, place)?;
+                    match operand.checked_sub(argv.len()) {
+                        None => argv[operand] = value,
+                        Some(keyword) => kw[keyword].1 = value,
+                    }
+                }
                 // A handwritten constructor receives reference arguments as
                 // caller-frame handles, just like an ordinary ref-parameter call.
                 // Its synthetic `self` occupies parameter slot zero.
@@ -1797,80 +1913,8 @@ impl VmBackend {
                 self.store_at_place(frame_id, place, handle, regs, vars)?;
             }
             MirInstr::LoadPlace { dest, place } => {
-                // The read half of `c[i] += e` on a user struct goes through
-                // `c.__getitem__(i)`; any other place reads its slot / SIMD lane.
-                // A pointer-typed variable holding a place handle is the
-                // handle itself, as `UseVar` reads it: the whole slot is
-                // the pointer, not its pointee.
-                let pointer_slot = place.is_whole_root()
-                    && place.through.is_none()
-                    && matches!(
-                        (prog.mir.functions[function].1.var_tys.get(&place.root)).map(Ty::kind),
-                        Some(TyKind::Pointer { .. })
-                    );
-                regs[dest.0 as usize] = if pointer_slot {
-                    vars[place.root as usize].clone()
-                } else if let Some((element, suffix)) =
-                    super::references::pointer_element(&vars[place.root as usize], place, regs)?
-                {
-                    // A place projected from a pointer slot addresses its
-                    // pointee: the element the leading index selects, then
-                    // the rest of the projection within it.
-                    let referent = self.read_reference(&element, frame_id, vars)?;
-                    self.read_reference_projection(frame_id, vars, &referent, &suffix)?
-                } else if place.through == Some(place.root)
-                    && let pointer @ Value::Pointer { .. } = &vars[place.root as usize]
-                {
-                    // A reference binding of a static-origin call result holds
-                    // the element's heap pointer (`heap_reference_result`).
-                    let referent = self.read_reference(pointer, frame_id, vars)?;
-                    let projection = super::references::place_projection_segments(place, regs)?;
-                    self.read_reference_projection(frame_id, vars, &referent, &projection)?
-                } else if let Some(reference) =
-                    self.extend_reference(&vars[place.root as usize], place, regs)?
-                {
-                    // Reading through a reference-alias root (a `mut`/`ref self`
-                    // receiver) reaches the referent in one handle read. A
-                    // `ref[origin]`-typed field stored behind that alias yields
-                    // *another* handle, which needs the same second dereference the
-                    // plain-root branch applies — but only then: an alias that
-                    // already reaches its referent (a directly aliased value) must
-                    // keep it, so gate on the loaded value still being a handle.
-                    let value = self.read_reference(&reference, frame_id, vars)?;
-                    if matches!(value, Value::Ref { .. })
-                        && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                    {
-                        self.read_reference(&value, frame_id, vars)?
-                    } else {
-                        value
-                    }
-                } else if let Some(v) = self.load_index_dunder(prog, place, regs, vars, frame_id)? {
-                    v
-                } else {
-                    // A place reaching a stored handle below its root
-                    // (`self.value.items` through a `ref` field,
-                    // `self.src[]` on `Pointer[List[T], o]` storage) cannot
-                    // walk raw storage — route it through the reference walk,
-                    // which chases stored handles mid-projection.
-                    if super::references::place_crosses_reference(place) {
-                        let composed = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
-                        let value = self.read_reference(&composed, frame_id, vars)?;
-                        if matches!(value, Value::Ref { .. })
-                            && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                        {
-                            self.read_reference(&value, frame_id, vars)?
-                        } else {
-                            value
-                        }
-                    } else {
-                        let value = load_place(vars, regs, place)?;
-                        if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
-                            self.read_reference(&value, frame_id, vars)?
-                        } else {
-                            value
-                        }
-                    }
-                };
+                regs[dest.0 as usize] =
+                    self.load_place_value(prog, function, frame_id, regs, vars, place)?;
             }
             MirInstr::MovePlace { dest, place } => {
                 // A partial move `p.a^`: transfer the field's value out, leaving a
@@ -2195,4 +2239,15 @@ fn array_index(index: &Const) -> Option<usize> {
     index
         .index_attribute()
         .and_then(|index| usize::try_from(index).ok())
+}
+
+/// Whether a call operand of type `operand` passes `place` by address: a
+/// reference to the place's own storage (`mojito_mir::mir::address_call_operands`).
+fn addressed_by(operand: Option<&Ty>, place: &MirPlace) -> bool {
+    match (operand.map(Ty::kind), place.ty.as_ref()) {
+        (Some(TyKind::Ref(reference)), Some(stored)) => {
+            !matches!(stored.kind(), TyKind::Ref(_)) && &reference.referent == stored
+        }
+        _ => false,
+    }
 }

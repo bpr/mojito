@@ -225,8 +225,10 @@ fn dying_copy(instrs: &[MirInstr], at: usize, elision: &Elision) -> Option<Dying
     if !elision.elidable(elision.reg_types.get(&dest.0)) {
         return None;
     }
-    // A load through a handle reads a referent the slot does not own.
-    let MirInstr::LoadPlace {
+    // A load through a handle reads a referent the slot does not own. The
+    // copy initializer's `copy` operand is the source's address, or a load
+    // of it where a builtin's construction takes the value.
+    let (MirInstr::LoadPlace {
         dest: loaded,
         place:
             MirPlace {
@@ -235,7 +237,17 @@ fn dying_copy(instrs: &[MirInstr], at: usize, elision: &Elision) -> Option<Dying
                 through: None,
                 ..
             },
-    } = &instrs[at - 1]
+    }
+    | MirInstr::MakeRef {
+        dest: loaded,
+        place:
+            MirPlace {
+                root,
+                proj,
+                through: None,
+                ..
+            },
+    }) = &instrs[at - 1]
     else {
         return None;
     };
@@ -395,7 +407,9 @@ fn lending_use(
         .enumerate()
         .skip(binding_at + 1)
         .find_map(|(load_at, instruction)| match instruction {
-            MirInstr::LoadPlace { dest, place } if place.root == slot => {
+            MirInstr::LoadPlace { dest, place } | MirInstr::MakeRef { dest, place }
+                if place.root == slot =>
+            {
                 (place.proj.is_empty() && place.through.is_none()).then_some((load_at, *dest))
             }
             _ => None,
@@ -431,7 +445,9 @@ fn lending_use(
 /// binding go, and the slot's load reads the source instead. The slot's
 /// deaths become the source's once the whole function is rewritten.
 fn lend(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, lending: Lending) -> Loan {
-    if let MirInstr::LoadPlace { place, .. } = &mut instrs[lending.load_at] {
+    if let MirInstr::LoadPlace { place, .. } | MirInstr::MakeRef { place, .. } =
+        &mut instrs[lending.load_at]
+    {
         place.root = source.var;
     }
     let mut removed = [lending.binding_at, source.drop_at, at, at - 1];

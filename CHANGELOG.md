@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A direct call passes a `mut`/`ref` argument, or a `read` argument of a
+  memory-only type, as a `ref.make` of the caller's place, upstream's
+  `lit.call` address operand, instead of a whole load of the place beside
+  it (R1425, `mir::address_call_operands`). `same(p, p)` passes one
+  address twice once `cse` runs, and `bump(p)` from a `mut` parameter no
+  longer reads `p` whole first. `lower-arg-conventions` reads the
+  reference at a parameter an instance makes register-passable. The MIR
+  text version does not move: the verifier and the VM still accept the
+  loaded form, so older artifacts run. Method calls (R1918), indirect
+  calls and subscripts (R1919), and operands with no place (R1917) keep
+  the load, and the `arg_places` side table stays (R1920).
+
 - A variadic type parameter `*Ts: Tr` declares upstream's two binders:
   the implicit infer-only `Ts.values` list, placed after the leading
   infer-only binders, and the visible `Ts: TypeList[Tr, Ts.values]`,

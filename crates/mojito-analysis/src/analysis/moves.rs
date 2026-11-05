@@ -359,6 +359,8 @@ pub(super) struct MoveContext {
     /// storage, which a move through the local must refill by every exit,
     /// as a reference parameter's.
     caller_aliases: HashSet<VarId>,
+    /// Each register a direct call takes as an operand.
+    call_operands: HashSet<u32>,
 }
 
 /// How an instruction touches a place: a whole-value *read* (using the subtree),
@@ -422,6 +424,11 @@ pub(super) fn place_uses(
             .collect(),
         MirInstr::DropPlace { place, .. } | MirInstr::MarkDestroyed { place } => {
             vec![(place.root, place_path(place), Touch::Read, Reg(0))]
+        }
+        // A call's by-address operand reads the storage it addresses, as
+        // upstream's call checks a `read` or `mut` argument initialized.
+        MirInstr::MakeRef { dest, place } if context.call_operands.contains(&dest.0) => {
+            vec![(place.root, place_path(place), Touch::Read, *dest)]
         }
         MirInstr::MakeClosure { dest, captures, .. } => captures
             .iter()
@@ -784,9 +791,17 @@ fn move_context(f: &MirFunction) -> MoveContext {
         refills: HashMap::new(),
         setup_owners: HashMap::new(),
         caller_aliases: HashSet::new(),
+        call_operands: HashSet::new(),
     };
     let mut parameter_references = HashSet::new();
     for_each_instr_deep(&f.blocks, &mut |instr| match instr {
+        MirInstr::Call { args, kwargs, .. } => {
+            context.call_operands.extend(
+                args.iter()
+                    .chain(kwargs.iter().map(|(_, register)| register))
+                    .map(|register| register.0),
+            );
+        }
         MirInstr::MakeRef { dest, place }
             if place.through.is_none()
                 && (place.root as usize) < f.n_params

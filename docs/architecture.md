@@ -2191,6 +2191,27 @@ default reading an enclosing value parameter reads it as a parameter, as
 its body does. The checker rejects a default naming runtime storage, as the
 pin does.
 
+Once the omitted arguments are written, `mir::address_call_operands`
+(`mir/call_addresses.rs`, R1425) passes each by-address argument of a
+direct `call` as its address, as upstream's `lit.call` takes a `!lit.ref`
+operand and loads nothing: a `mut`/`ref` parameter, or a `read` one of a
+memory-only declared type (`mir::by_address_parameter`), whose operand is
+a whole load of the place the call's `arg_places` entry retains (or a
+`ref.read` of a `ref.make` of it) becomes a `ref.make` of that place,
+typed a reference to it. `mir::call_operand_parameters` maps each operand
+to its parameter. The package's unit lowering runs the same rewrite. The
+elaborator infers from a by-address operand's referent, the move check
+reads the addressed storage at the `ref.make`, copy elision reads a
+`ref.make` copy operand as it reads the load, and `lower-arg-conventions`
+reads through the reference (`mir::load_register_passable_operands`)
+where an instance's substitution makes the parameter register-passable
+(`read x: T` at `T = Int`), as upstream's pass loads such an argument at
+the call. The place stays in `arg_places`, which the VM and Pliron still
+bind a parameter from, and the VM loads an addressed operand's place for
+a callee taking the value (R1920). A method call, an indirect call, a
+subscript, and an operand with no place keep the load (R1917, R1918,
+R1919).
+
 The same pass builds every call's positional collector, as upstream's call
 builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes
 (R1102): once the omitted arguments are written, a call of a callee
