@@ -2733,8 +2733,9 @@ impl CheckedStmtOp {
 pub struct CheckedDef {
     pub name: String,
     /// The symbol it lowers to: signature-qualified when a module `def`'s
-    /// name is overloaded, and a nested `def`'s own name, which its
-    /// enclosing function's lowering qualifies.
+    /// name is overloaded; a nested `def`'s lifted name under the symbol
+    /// of the body declaring it, which the check's last step gives it
+    /// ([`CheckedProgram::collect_closure_uses`]).
     pub symbol: String,
     pub signature: CheckedSignature,
     pub params: Vec<CheckedFnParam>,
@@ -3779,6 +3780,10 @@ pub struct CheckedDeclaration {
 /// and the conformances upstream's `liftClosure` gives it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedClosureStorage {
+    /// The struct's symbol, `<lifted>$__storage` as upstream's
+    /// `ClosureEmitter` names `fn::__storage`, which the check's last step
+    /// names with its closure ([`CheckedProgram::collect_closure_uses`]).
+    pub name: String,
     pub fields: Vec<CheckedStorageField>,
     /// Whether a call of the body may write the storage: it owns a field,
     /// or a field is a mutable reference.
@@ -3813,9 +3818,12 @@ impl CheckedClosureStorage {
 /// collects them after its body is emitted.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedClosureUses {
-    /// In scope order: the arguments its storage type is applied to,
-    /// which lowering declares as the struct's own parameters.
+    /// In scope order: the arguments its storage type is applied to.
     pub binders: Vec<mojito_types::types::ParamDecl>,
+    /// `binders` declared as the storage struct's own parameters, position
+    /// for position, as upstream's `liftClosure` declares them, reusing
+    /// their spellings.
+    pub parameters: Vec<mojito_types::types::ParamDecl>,
     /// Whether its body becomes the storage's method; not when the body
     /// names an enclosing callable binder.
     pub method: bool,

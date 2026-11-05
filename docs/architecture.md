@@ -741,8 +741,17 @@ policy or data-model responsibilities to focused children:
   when it finalizes the closure's type (`Checker::closure_storage`,
   `CheckedDef::storage`, a `CheckedClosureStorage`), as upstream's
   `liftClosure` declares the struct in the front end; MIR's
-  `nested::closure_storage` lowers that declaration, naming the struct
-  and pointing a sibling's reference field at its lowered storage. The
+  `nested::closure_storage` lowers that declaration under the name the
+  check gave it (`CheckedClosureStorage::name`), pointing a sibling's
+  reference field at its lowered storage. The check's last step names
+  every nested declaration (`CheckedDef::symbol`) under the symbol of
+  the body declaring it: the lowering unit's root, the module
+  initializer at module scope, a default's lifted function for a lambda
+  in it, the storage's method for a body that is one, and an ordinal
+  for a spelling one body declares twice (`outer$choose$decl1`). A
+  lifted compile-time expression lowers its lambdas a second time,
+  qualifying each checked name with its own
+  (`FunctionLowering::namespace`, R1940). The
   struct's parameters are its own,
   declared for the enclosing binders the closure names, in its fields,
   its signature, or its body, nested declarations included, which the
@@ -754,9 +763,10 @@ policy or data-model responsibilities to focused children:
   body is the storage's method, which it is not when it names an
   enclosing callable binder); a storage with no uses recorded is a
   broken invariant MIR reports. `emitClosureInstance` applies the struct
-  to them and `liftClosure` declares them, reusing their spellings;
-  MIR still makes that declaration until the check names the struct
-  (R1892): once the closure is lowered, `nested::own_storage_binders`
+  to them and `liftClosure` declares them, reusing their spellings,
+  which the check does too (`CheckedClosureUses::parameters`, over
+  `reown_as_own_parameters`): once the closure is lowered,
+  `nested::own_storage_binders`
   moves every reference in its fields, its members, and its method's
   body (with the bodies nested in it) to the struct's binders, while the
   declaration names the storage at the enclosing binders and passes them

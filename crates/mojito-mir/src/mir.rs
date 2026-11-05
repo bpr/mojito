@@ -163,7 +163,7 @@ pub struct MirProgram {
 }
 
 /// The synthetic module initializer, whose slots are the module's bindings.
-pub const MODULE_INITIALIZER: &str = "__toplevel__";
+pub const MODULE_INITIALIZER: &str = mojito_symbol::symbol::MODULE_INITIALIZER;
 
 /// The entry roots of a whole program.
 ///
@@ -2139,6 +2139,7 @@ fn lower_function(
             returned: None,
             overloads,
             callables: &HashMap::new(),
+            namespace: None,
         },
         functions,
         declarations,
@@ -2389,6 +2390,7 @@ fn lower_struct_member<P: DeclaredParam>(
             returned: None,
             overloads,
             callables: &HashMap::new(),
+            namespace: None,
         },
         functions,
         declarations,
@@ -2502,6 +2504,7 @@ fn lower_default<P: DeclaredParam>(
             binders: &binders,
             ty,
             callables: &HashMap::new(),
+            namespace: None,
         },
         functions,
         declarations,
@@ -2530,6 +2533,9 @@ struct ExpressionThunk<'a> {
     ty: &'a Ty,
     /// The nested `def`s the expression calls directly.
     callables: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
+    /// The namespace of the closures it lowers again
+    /// ([`FunctionLowering::namespace`]).
+    namespace: Option<&'a str>,
 }
 
 /// Lower `<prologue>; return <node>` as the function `name`, whose
@@ -2550,6 +2556,7 @@ fn lower_expression_thunk(
         binders,
         ty,
         callables,
+        namespace,
     } = thunk;
     lower_fn_nested(
         FunctionLowering {
@@ -2571,6 +2578,7 @@ fn lower_expression_thunk(
             returned: Some(node),
             overloads,
             callables,
+            namespace,
         },
         functions,
         declarations,
@@ -2928,6 +2936,9 @@ impl ComptimeThunks {
                     binders: &request.binders,
                     ty: &request.ty,
                     callables: &self.callables,
+                    // The owner lowers the closures of the expression
+                    // too, under the names the check gave them.
+                    namespace: Some(&request.name),
                 },
                 functions,
                 declarations,
@@ -4732,7 +4743,8 @@ struct NestedInfo {
 /// sibling's storage is when it has one.
 #[derive(Clone)]
 struct ClosureStorage {
-    /// `Struct(<lifted>$__storage, binders)`.
+    /// `Struct(<lifted>$__storage, binders)`, the name the check gave it
+    /// (`CheckedClosureStorage::name`).
     ty: Ty,
     fields: Vec<(String, Ty)>,
     /// The enclosing binders the closure names, in its fields, its
@@ -4741,6 +4753,9 @@ struct ClosureStorage {
     /// parameters once `own_storage_binders` (`mir/nested.rs`) declares
     /// them as its own.
     param_decls: Vec<ParamDecl>,
+    /// `param_decls` declared as the struct's own
+    /// (`CheckedClosureUses::parameters`).
+    parameters: Vec<ParamDecl>,
     /// The body as the struct's `read`-self method
     /// ([`mojito_symbol::symbol::closure_method_name`]), as upstream's
     /// `liftClosureIntoMethod` makes it (`CheckedClosureUses::method`).

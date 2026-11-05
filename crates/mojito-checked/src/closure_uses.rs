@@ -8,7 +8,10 @@
 //!
 //! The pass runs as the check's last step, over the checked tables
 //! ([`CheckedProgram::collect_closure_uses`]), and records its outcome on
-//! each storage ([`CheckedClosureStorage::uses`]).
+//! each storage ([`CheckedClosureStorage::uses`]). It names each nested
+//! declaration and storage struct as it goes ([`CheckedDef::symbol`],
+//! [`CheckedClosureStorage::name`]), under the symbol of the body declaring
+//! it, as upstream's front end names a lifted closure where it lifts it.
 
 use crate::checked::{
     CheckedClosureStorage, CheckedClosureUses, CheckedDef, CheckedNodeId, CheckedOp,
@@ -97,15 +100,19 @@ impl CheckedTables {
         Some(LoopIndex::of(iteration, node.binding))
     }
 
-    /// Record `uses` on the storage of the closure declared at `id`.
-    pub(crate) fn set_closure_uses(&mut self, id: CheckedStmtId, uses: CheckedClosureUses) {
+    /// Name the declaration at `id` as `lifted` says: its symbol, and its
+    /// storage's name and uses.
+    fn set_lifted(&mut self, id: CheckedStmtId, lifted: Lifted) {
         if let Some(CheckedStmt {
             op: CheckedStmtOp::Def(def),
             ..
         }) = self.statements.get_mut(id.0 as usize)
-            && let Some(storage) = &mut def.storage
         {
-            storage.uses = Some(uses);
+            if let Some(storage) = &mut def.storage {
+                storage.name = mojito_symbol::symbol::closure_storage_name(&lifted.symbol);
+                storage.uses = lifted.uses;
+            }
+            def.symbol = lifted.symbol;
         }
     }
 
@@ -180,6 +187,11 @@ impl CheckedProgram {
     /// then its own, none at module scope. A closure's scope adds the
     /// indices of the `comptime for` loops around it, and the parameters of
     /// each declaration it is nested in.
+    ///
+    /// Each nested declaration is named under the symbol of the body
+    /// declaring it ([`CheckedDef::symbol`]): the unit's root, the module
+    /// initializer at module scope, a parameter default's lifted function
+    /// for a lambda in it, and a storage's method for a body that is one.
     pub(crate) fn collect_closure_uses(&mut self) {
         let found = {
             let mut collector = Collector {
@@ -208,6 +220,7 @@ impl CheckedProgram {
                 .collect();
             collector.scope(
                 self.tables().nested_defs(&toplevel),
+                mojito_symbol::symbol::MODULE_INITIALIZER,
                 &BinderScope::default(),
                 &HashMap::new(),
             );
@@ -215,8 +228,8 @@ impl CheckedProgram {
         };
         let tables = std::sync::Arc::get_mut(self.tables_mut())
             .expect("the check's tables are unshared while it records closure uses");
-        for (id, uses) in found {
-            tables.set_closure_uses(id, uses);
+        for (id, lifted) in found {
+            tables.set_lifted(id, lifted);
         }
     }
 
@@ -234,7 +247,8 @@ impl CheckedProgram {
                 if let Some(def) = tables.def(root) {
                     collector.declaration(
                         &def.body,
-                        def.params.iter().filter_map(|param| param.default),
+                        defaults(&def.params),
+                        &def.symbol,
                         &BinderScope::of(&def.signature.parameters),
                         &HashMap::new(),
                     );
@@ -252,7 +266,8 @@ impl CheckedProgram {
                 };
                 collector.declaration(
                     &method.body,
-                    method.params.iter().filter_map(|param| param.default),
+                    defaults(&method.params),
+                    &method.symbol,
                     &BinderScope::of(
                         struct_parameters(&node.module, &declaration.name)
                             .iter()
@@ -263,7 +278,8 @@ impl CheckedProgram {
             }
             LoweringUnit::Wrapper { wrapper, index, .. } => collector.declaration(
                 tables.wrapper_roots(index),
-                std::iter::empty(),
+                Vec::new(),
+                &wrapper.lowered_name,
                 &BinderScope::of(
                     struct_parameters(&wrapper.module, &wrapper.declaration)
                         .iter()
@@ -273,6 +289,7 @@ impl CheckedProgram {
             ),
             LoweringUnit::Constant { root } => collector.scope(
                 tables.nested_defs(&[root]),
+                mojito_symbol::symbol::MODULE_INITIALIZER,
                 &BinderScope::default(),
                 &HashMap::new(),
             ),
@@ -328,29 +345,40 @@ impl BinderScope {
     }
 }
 
-/// The closure uses one [`CheckedProgram::collect_closure_uses`] found, by
-/// the statement node of each closure's declaration.
+/// What one [`CheckedProgram::collect_closure_uses`] found, by the
+/// statement node of each nested declaration.
 struct Collector<'t> {
     tables: &'t CheckedTables,
-    found: Vec<(CheckedStmtId, CheckedClosureUses)>,
+    found: Vec<(CheckedStmtId, Lifted)>,
+}
+
+/// A nested declaration as the check lifts it: its symbol, and its
+/// storage's uses, `None` for one without storage or whose storage names a
+/// binder its scope does not declare.
+struct Lifted {
+    symbol: String,
+    uses: Option<CheckedClosureUses>,
 }
 
 impl Collector<'_> {
-    /// Collect the uses of the closures of a declaration whose body is
-    /// `body` and whose parameter defaults are `defaults`, declared where
-    /// `scope` is in scope, with `registry` the storage type of each
-    /// closure registered around it.
+    /// Collect the uses of the closures of a declaration lowered as
+    /// `symbol`, whose body is `body` and whose parameter defaults are
+    /// `defaults` (by parameter name), declared where `scope` is in scope,
+    /// with `registry` the storage type of each closure registered around
+    /// it.
     fn declaration(
         &mut self,
         body: &[CheckedStmtId],
-        defaults: impl Iterator<Item = CheckedNodeId>,
+        defaults: Vec<(&str, CheckedNodeId)>,
+        symbol: &str,
         scope: &BinderScope,
         registry: &HashMap<OwnerId, Ty>,
     ) {
-        self.scope(self.tables.nested_defs(body), scope, registry);
-        // A default's lambdas are a scope of their own, which registers
-        // none of the body's closures.
-        for default in defaults {
+        self.scope(self.tables.nested_defs(body), symbol, scope, registry);
+        // A default's lambdas are a scope of their own, the function its
+        // default is lifted to, which registers none of the body's
+        // closures.
+        for (parameter, default) in defaults {
             let sites = self
                 .tables
                 .expression_lambda_defs(default)
@@ -360,18 +388,26 @@ impl Collector<'_> {
                     loops: Vec::new(),
                 })
                 .collect();
-            self.scope(sites, scope, &HashMap::new());
+            self.scope(
+                sites,
+                &mojito_symbol::symbol::lifted_default_name(symbol, parameter),
+                scope,
+                &HashMap::new(),
+            );
         }
     }
 
-    /// Collect the uses of the declarations `sites` one lexical scope
-    /// makes, where `scope` is in scope and `inherited` registers the
-    /// enclosing scopes' closures, then those nested in each: every
-    /// declaration of the scope is registered before any body is entered,
-    /// and a closure's storage refers only to those registered before it.
+    /// Collect the uses of the declarations `sites` one lexical scope of
+    /// the body lowered as `parent` makes, where `scope` is in scope and
+    /// `inherited` registers the enclosing scopes' closures, then those
+    /// nested in each: every declaration of the scope is registered before
+    /// any body is entered, and a closure's storage refers only to those
+    /// registered before it. Each is named under `parent`, a spelling the
+    /// scope declares more than once by its ordinal among them.
     fn scope(
         &mut self,
         sites: Vec<NestedDefSite>,
+        parent: &str,
         scope: &BinderScope,
         inherited: &HashMap<OwnerId, Ty>,
     ) {
@@ -389,40 +425,76 @@ impl Collector<'_> {
                 Some((def, loops, site.node))
             })
             .collect();
+        let mut spellings = HashMap::<&str, usize>::new();
+        for (def, _, _) in &sites {
+            *spellings.entry(def.name.as_str()).or_default() += 1;
+        }
+        let mut ordinals = HashMap::<&str, usize>::new();
+        let mut bodies = Vec::with_capacity(sites.len());
         for (def, loops, node) in &sites {
-            let Some(storage) = &def.storage else {
-                continue;
+            let name = def.name.as_str();
+            let symbol = if spellings[name] > 1 {
+                let ordinal = ordinals.entry(name).or_default();
+                *ordinal += 1;
+                mojito_symbol::symbol::nested_lifted_declaration_name(parent, name, *ordinal - 1)
+            } else {
+                mojito_symbol::symbol::nested_lifted_name(parent, name)
             };
             let in_scope = scope.with(loops.iter().map(|index| &index.declaration));
-            let Some(uses) = closure_uses(tables, def, storage, &in_scope, &registry) else {
-                continue;
-            };
-            if let Some(binding) = tables
-                .statement(*node)
-                .and_then(|statement| statement.declaration)
-                .and_then(|id| tables.declaration(id))
-                .and_then(|declaration| declaration.binding)
+            let uses = def.storage.as_ref().and_then(|storage| {
+                closure_uses(
+                    tables,
+                    def,
+                    storage,
+                    &mojito_symbol::symbol::closure_storage_name(&symbol),
+                    &in_scope,
+                    &registry,
+                )
+            });
+            if let Some(uses) = &uses
+                && let Some(binding) = tables
+                    .statement(*node)
+                    .and_then(|statement| statement.declaration)
+                    .and_then(|id| tables.declaration(id))
+                    .and_then(|declaration| declaration.binding)
             {
                 registry.insert(
                     binding,
                     TyKind::Struct(
-                        def.name.clone(),
+                        mojito_symbol::symbol::closure_storage_name(&symbol),
                         uses.binders.iter().map(ParamDecl::own_argument).collect(),
                     )
                     .into(),
                 );
             }
-            self.found.push((*node, uses));
+            // A body that is its storage's method declares what is nested
+            // in it under the method's symbol, as an ordinary method does.
+            let body = if uses.as_ref().is_some_and(|uses| uses.method) {
+                mojito_symbol::symbol::closure_method_name(&symbol, name)
+            } else {
+                symbol.clone()
+            };
+            bodies.push(body);
+            self.found.push((*node, Lifted { symbol, uses }));
         }
-        for (def, loops, _) in sites {
+        for ((def, loops, _), body) in sites.into_iter().zip(bodies) {
             self.declaration(
                 &def.body,
-                def.params.iter().filter_map(|param| param.default),
+                defaults(&def.params),
+                &body,
                 &scope.with_loops(&loops).with(&def.signature.parameters),
                 &registry,
             );
         }
     }
+}
+
+/// The parameter defaults of `params`, by parameter name.
+fn defaults(params: &[crate::checked::CheckedFnParam]) -> Vec<(&str, CheckedNodeId)> {
+    params
+        .iter()
+        .filter_map(|param| Some((param.name.as_str(), param.default?)))
+        .collect()
 }
 
 /// The expressions of statement `op` whose lambdas declare nested
@@ -438,17 +510,19 @@ fn statement_lambda_operands(op: &CheckedStmtOp) -> Vec<CheckedNodeId> {
 }
 
 /// The uses of the closure `def`, whose storage the check declared as
-/// `storage`, declared where `in_scope` is in scope, with `registry` the
-/// storage type of each closure registered before it: the binders its
-/// fields, its signature, and its body name ([`binder_uses`]), in scope
-/// order, and whether its body is the storage's method. A reference field
-/// to a registered closure names the binders that closure's storage is
-/// applied to. `None` for one whose fields name a binder the scope does not
+/// `storage` and names `name`, declared where `in_scope` is in scope, with
+/// `registry` the storage type of each closure registered before it: the
+/// binders its fields, its signature, and its body name ([`binder_uses`]),
+/// in scope order, declared as the struct's own parameters too, and
+/// whether its body is the storage's method. A reference field to a
+/// registered closure names the binders that closure's storage is applied
+/// to. `None` for one whose fields name a binder the scope does not
 /// declare.
 fn closure_uses(
     tables: &CheckedTables,
     def: &CheckedDef,
     storage: &CheckedClosureStorage,
+    name: &str,
     in_scope: &BinderScope,
     registry: &HashMap<OwnerId, Ty>,
 ) -> Option<CheckedClosureUses> {
@@ -515,6 +589,7 @@ fn closure_uses(
     });
     (!unbound).then(|| CheckedClosureUses {
         method: !in_scope.callables.iter().any(named),
+        parameters: mojito_types::types::reown_as_own_parameters(&binders, name).0,
         binders,
     })
 }

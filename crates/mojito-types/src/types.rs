@@ -5165,6 +5165,17 @@ pub fn reown_as_own_parameters(
     reown_parameters(decls, owner, |position, _| position)
 }
 
+/// The bindings moving a reference to each of `decls` to the binder of the
+/// same position in `own`, the declarations [`reown_as_own_parameters`]
+/// gave them as another declaration's own.
+pub fn own_parameter_bindings(decls: &[ParamDecl], own: &[ParamDecl]) -> ParamBindings {
+    let mut bindings = ParamBindings::new();
+    for (decl, own) in decls.iter().zip(own) {
+        bind_reowned(&mut bindings, decl, &own.binder());
+    }
+    bindings
+}
+
 /// The substitution mapping a struct's type-parameter names to an instance's
 /// type arguments (`[T] @ [Int]` ⟹ `{T: Int}`), for [`substitute`].
 ///
@@ -7471,33 +7482,8 @@ fn reown_parameters(
             id: ParamId::new(owner, slot(position, decl)),
             name: declared.name.clone(),
         };
-        match decl {
-            ParamDecl::Type {
-                bounds,
-                callable_bound,
-                ..
-            } => {
-                let ty = Ty::new(TyKind::Param {
-                    binder: reowned.clone(),
-                    bounds: bounds.clone(),
-                    callable_bound: callable_bound.clone(),
-                });
-                bindings.bind_type(declared.id.clone(), ty.clone());
-                subst.insert(declared.id.clone(), ty);
-                // A type pack's list binder is read as a list too
-                // (`TypeList[Tr, Ts.values]`).
-                if let ParamDecl::Type { variadic: true, .. } = decl {
-                    bindings.bind(declared.id.clone(), decl.list_reference(&reowned.id));
-                }
-            }
-            ParamDecl::Value { name, ty, .. } => bindings.bind(
-                declared.id.clone(),
-                ParamContext::detached().decl_ref(
-                    reowned.id.clone(),
-                    name.trim_start_matches('*'),
-                    crate::param_expr::MetaTy::value((*ty).clone()),
-                ),
-            ),
+        if let Some(ty) = bind_reowned(&mut bindings, decl, &reowned) {
+            subst.insert(declared.id.clone(), ty);
         }
         binders.insert(declared.id, reowned);
     }
@@ -7552,6 +7538,45 @@ fn reown_parameters(
         })
         .collect();
     (reowned, bindings)
+}
+
+/// Bind `decl`'s binder to `reowned`, the binder declaring it as another
+/// declaration's own, in `bindings`: a type binder to the parameter type
+/// over `reowned` (returned), and a type pack's list binder or a value
+/// binder to a reference to it.
+fn bind_reowned(bindings: &mut ParamBindings, decl: &ParamDecl, reowned: &ParamRef) -> Option<Ty> {
+    let declared = decl.binder();
+    match decl {
+        ParamDecl::Type {
+            bounds,
+            callable_bound,
+            ..
+        } => {
+            let ty = Ty::new(TyKind::Param {
+                binder: reowned.clone(),
+                bounds: bounds.clone(),
+                callable_bound: callable_bound.clone(),
+            });
+            bindings.bind_type(declared.id.clone(), ty.clone());
+            // A type pack's list binder is read as a list too
+            // (`TypeList[Tr, Ts.values]`).
+            if let ParamDecl::Type { variadic: true, .. } = decl {
+                bindings.bind(declared.id, decl.list_reference(&reowned.id));
+            }
+            Some(ty)
+        }
+        ParamDecl::Value { name, ty, .. } => {
+            bindings.bind(
+                declared.id,
+                ParamContext::detached().decl_ref(
+                    reowned.id.clone(),
+                    name.trim_start_matches('*'),
+                    crate::param_expr::MetaTy::value((*ty).clone()),
+                ),
+            );
+            None
+        }
+    }
 }
 
 /// The `VariadicPack` with the element trait `traits` over `pack`, the

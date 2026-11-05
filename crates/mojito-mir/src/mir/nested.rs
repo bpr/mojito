@@ -9,8 +9,9 @@ use mojito_types::types::TyKind;
 
 /// Lower a function body (`name` its registered/mangled name) plus every nested
 /// `def` it defines, pushing the function and each lifted nested function into
-/// `out`. A liftable nested `def` becomes `name$inner`, taking its closure's
-/// storage struct as its leading parameter, or, for a `@parameter`
+/// `out`. A liftable nested `def` takes the symbol the check gave it
+/// (`name$inner` for one `name` declares), and its closure's storage
+/// struct as its leading parameter, or, for a `@parameter`
 /// closure, its captured enclosing locals as leading reference
 /// parameters; a nested `def` we can't lift stays a clean `Unsupported` at
 /// execution.
@@ -45,6 +46,11 @@ pub(super) struct FunctionLowering<'a> {
     /// names `outer::inner` over the enclosing parameters
     /// ([`ComptimeThunks::callables`]). Empty for any other body.
     pub(super) callables: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
+    /// The name the closures it lowers are qualified with, for a function
+    /// lowering again the closures its owner lowers, a lifted compile-time
+    /// expression's; `None` for any other, whose closures take the names
+    /// the check gave them.
+    pub(super) namespace: Option<&'a str>,
 }
 
 pub(super) fn lower_fn_nested(
@@ -72,10 +78,11 @@ pub(super) fn lower_fn_nested(
         returned,
         overloads,
         callables,
+        namespace,
     } = request;
     let starts = LoweredFrom::at(out, declarations);
     let closures = ClosureLowering::default();
-    let children = analyze_root_children(checked, name, statements, returned);
+    let children = analyze_root_children(checked, namespace, statements, returned);
     let registry = scope_registry(&children, callables, &closures.types, invariant_errors);
 
     let cfg = returned.map_or_else(
@@ -206,6 +213,9 @@ impl LoweredFrom {
 /// it. [`own_storage_binders`] declares them as the struct's own.
 struct StorageScope {
     storage: String,
+    /// The struct's own parameters, as the check declared them
+    /// ([`mojito_checked::checked::CheckedClosureUses::parameters`]).
+    parameters: Vec<ParamDecl>,
     from: LoweredFrom,
     to: LoweredFrom,
 }
@@ -349,8 +359,8 @@ fn own_storage_binders(
     if storage.param_decls.is_empty() {
         return Vec::new();
     }
-    let (decls, bindings) =
-        mojito_types::types::reown_as_own_parameters(&storage.param_decls, &scope.storage);
+    let decls = scope.parameters.clone();
+    let bindings = mojito_types::types::own_parameter_bindings(&storage.param_decls, &decls);
     let mut binders = StorageBinders {
         context: ParamContext::detached(),
         owned: storage
@@ -774,7 +784,11 @@ struct NestedNode {
     loop_indices: Vec<LoopIndex>,
     binding: mojito_types::origin::OwnerId,
     source_name: String,
+    /// The checked symbol, within `namespace`.
     mangled: String,
+    /// The namespace its lowering qualifies the check's names with
+    /// ([`FunctionLowering::namespace`]).
+    namespace: Option<String>,
     captures: Vec<NestedCapture>,
     callable_ty: Option<Ty>,
     /// The storage struct the check declared for its closure
@@ -802,11 +816,13 @@ impl NestedNode {
     }
 }
 
+/// The declaration at `site`, named as the check named it, within
+/// `namespace` when it is lowered again under another function's name
+/// ([`FunctionLowering::namespace`]).
 fn analyze_node(
     checked: &mojito_checked::checked::CheckedProgram,
     site: NestedDefSite,
-    parent_mangled: &str,
-    duplicate_name: bool,
+    namespace: Option<&str>,
 ) -> NestedNode {
     let NestedDefSite { node, loops } = site;
     let statement = checked
@@ -819,14 +835,9 @@ fn analyze_node(
         .binding
         .expect("checked nested function has no value binding");
 
-    let mangled = if duplicate_name {
-        mojito_symbol::symbol::nested_lifted_declaration_name(parent_mangled, name, declaration.id)
-    } else {
-        mojito_symbol::symbol::nested_lifted_name(parent_mangled, name)
-    };
+    let mangled = within(namespace, &def.symbol);
     let captures = analyze_captures(def);
-
-    let children = analyze_root_children(checked, &mangled, &def.body, None);
+    let children = analyze_root_children(checked, namespace, &def.body, None);
 
     NestedNode {
         node,
@@ -837,6 +848,7 @@ fn analyze_node(
         binding,
         source_name: name.clone(),
         mangled,
+        namespace: namespace.map(str::to_string),
         captures,
         callable_ty: checked
             .checked_type_at(&AnnotationSite::FunctionType {
@@ -965,14 +977,22 @@ fn closure_storage(
             (field.name.clone(), ty)
         })
         .collect();
+    let name = within(child.namespace.as_deref(), &declared.name);
+    // A copy lowered within a namespace declares the binders as its own
+    // struct's.
+    let parameters = match &child.namespace {
+        None => uses.parameters.clone(),
+        Some(_) => mojito_types::types::reown_as_own_parameters(&uses.binders, &name).0,
+    };
     Some(ClosureStorage {
         ty: TyKind::Struct(
-            mojito_symbol::symbol::closure_storage_name(&child.mangled),
+            name,
             uses.binders.iter().map(ParamDecl::own_argument).collect(),
         )
         .into(),
         fields,
         param_decls: uses.binders.clone(),
+        parameters,
         method: uses.method.then(|| {
             mojito_symbol::symbol::closure_method_name(&child.mangled, &child.source_name)
         }),
@@ -1183,6 +1203,7 @@ fn lower_closure_storage(
     });
     Some(StorageScope {
         storage: name.clone(),
+        parameters: storage.parameters.clone(),
         from,
         to: LoweredFrom::at(functions, declarations),
     })
@@ -1435,7 +1456,7 @@ struct Enclosing<'a> {
 
 fn lower_nested_node(
     checked: &mojito_checked::checked::CheckedProgram,
-    mut node: NestedNode,
+    node: NestedNode,
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     out: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
@@ -1456,7 +1477,6 @@ fn lower_nested_node(
         .as_ref()
         .is_some_and(|storage| storage.method.is_some());
     let symbol = info.map_or_else(|| node.mangled.clone(), |info| info.mangled.clone());
-    rename_nested(&mut node.children, &node.mangled, &symbol);
     let enclosing_binders = &enclosing
         .binders
         .with_loops(&node.loop_indices)
@@ -1741,24 +1761,6 @@ fn lower_nested_node(
         .push_storage_scope(storage_scope, method_end);
 }
 
-/// Rename the declarations `children` nested in the body lowered as
-/// `from`, and those nested in them, as nested in the body lowered as `to`.
-fn rename_nested(children: &mut [NestedNode], from: &str, to: &str) {
-    if from == to {
-        return;
-    }
-    for child in children {
-        let renamed = child
-            .mangled
-            .strip_prefix(from)
-            .map(|rest| format!("{to}{rest}"));
-        if let Some(renamed) = renamed {
-            let old = std::mem::replace(&mut child.mangled, renamed);
-            rename_nested(&mut child.children, &old, &child.mangled);
-        }
-    }
-}
-
 /// The leading parameter of a body taking its closure's `storage`, whose
 /// `captures` its fields hold: its name, `self` as upstream's lifted
 /// method spells it unless a capture is, its type, and whether a call
@@ -1973,7 +1975,7 @@ fn def_of(
 
 fn analyze_root_children(
     checked: &mojito_checked::checked::CheckedProgram,
-    parent_mangled: &str,
+    namespace: Option<&str>,
     ids: &[CheckedStmtId],
     returned: Option<CheckedNodeId>,
 ) -> Vec<NestedNode> {
@@ -1992,21 +1994,17 @@ fn analyze_root_children(
                 }),
         );
     }
-    let mut totals = HashMap::<&str, usize>::new();
-    for site in &direct {
-        *totals
-            .entry(def_of(checked, site.node).name.as_str())
-            .or_default() += 1;
-    }
     direct
         .into_iter()
-        .map(|site| {
-            let duplicate = totals
-                .get(def_of(checked, site.node).name.as_str())
-                .copied()
-                .unwrap_or_default()
-                > 1;
-            analyze_node(checked, site, parent_mangled, duplicate)
-        })
+        .map(|site| analyze_node(checked, site, namespace))
         .collect()
+}
+
+/// `symbol`, the check's name for a nested declaration or its storage,
+/// within `namespace` ([`FunctionLowering::namespace`]).
+fn within(namespace: Option<&str>, symbol: &str) -> String {
+    namespace.map_or_else(
+        || symbol.to_string(),
+        |namespace| mojito_symbol::symbol::nested_lifted_name(namespace, symbol),
+    )
 }

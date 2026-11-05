@@ -3528,6 +3528,7 @@ impl Checker {
             } else {
                 StoragePassability::RegisterPassable
             },
+            name: String::new(),
             fields,
             uses: None,
         }

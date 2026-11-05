@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check's last step now names each lifted closure, its storage
+  struct, and the declarations nested in it (`CheckedDef::symbol`,
+  `CheckedClosureStorage::name`), and declares the binders the storage is
+  applied to as the struct's own (`CheckedClosureUses::parameters`), as
+  upstream's front end names and declares a closure where it lifts it
+  (R1892). MIR reads those names instead of qualifying and renaming them
+  while lowering. Two same-spelled declarations of one body are told
+  apart by their ordinal (`outer$choose$decl1`) rather than a declaration
+  id, and a lambda in a lifted compile-time expression's second lowering
+  is named under the checked name (R1940).
+
 - The enclosing binders a closure's storage struct is applied to, and
   whether its body becomes the struct's method, are now collected by the
   check's last step (`CheckedClosureStorage::uses`), as upstream's

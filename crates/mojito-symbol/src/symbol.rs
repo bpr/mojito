@@ -100,6 +100,11 @@ pub const SIMD_LENGTH_CONVERSION: &str = "SIMD.__init__$simd_length";
 /// spells the length a vector's `Int` width converts to.
 pub const SIMD_LENGTH_FROM_INT: &str = "SIMDLength.__init__$ov$Int";
 
+/// The synthetic module initializer, whose slots are the module's bindings,
+/// and under whose name the check names the closures declared at module
+/// scope.
+pub const MODULE_INITIALIZER: &str = "__toplevel__";
+
 /// One declaration visible to phase-neutral runtime/backend dispatch.
 #[derive(Debug, Clone, Copy)]
 pub struct CallableCandidate<'a> {
@@ -1243,15 +1248,11 @@ pub fn nested_lifted_name(outer: &str, inner: &str) -> String {
 
 /// A same-spelled nested declaration's lifted name.
 ///
-/// Declaration identity, not a source offset, provides the disambiguator so
-/// cloned/synthesized syntax and ordinary block shadowing follow one stable
-/// scheme.
-pub fn nested_lifted_declaration_name(
-    outer: &str,
-    inner: &str,
-    declaration: mojito_types::types::CheckedDeclId,
-) -> String {
-    format!("{outer}${inner}$decl{}", declaration.0)
+/// `ordinal` counts the declarations of the same spelling its enclosing
+/// body makes before it, which the check knows; block shadowing and
+/// synthesized syntax follow the one scheme.
+pub fn nested_lifted_declaration_name(outer: &str, inner: &str, ordinal: usize) -> String {
+    format!("{outer}${inner}$decl{ordinal}")
 }
 
 /// The storage struct of the capture-list closure lifted as `lifted`, one

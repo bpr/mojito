@@ -309,18 +309,15 @@ fn same_named_nested_defs_in_distinct_blocks_receive_distinct_lifted_symbols() {
          \x20           return value + 1\n\
          \x20       return choose(1)\n",
     );
-    let lifted = names
-        .iter()
-        .filter(|name| name.starts_with("outer$choose$decl"))
-        .count();
-    assert_eq!(lifted, 2, "{names:?}");
+    assert!(names.contains("outer$choose$decl0"), "{names:?}");
+    assert!(names.contains("outer$choose$decl1"), "{names:?}");
 }
 
 #[test]
-fn nested_declaration_symbols_are_derived_from_checked_ids() {
+fn nested_declaration_symbols_count_same_spelled_declarations() {
     assert_eq!(
-        mojito::symbol::nested_lifted_declaration_name("outer", "choose", mojito::CheckedDeclId(7),),
-        "outer$choose$decl7"
+        mojito::symbol::nested_lifted_declaration_name("outer", "choose", 1),
+        "outer$choose$decl1"
     );
 }
 

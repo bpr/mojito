@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1940**.
+Next free ID: **R1941**.
 
 ## Ordered Work
 
@@ -4921,9 +4921,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   check lifts whose body calls `outer$mk`, where the pin applies
   `outer.mk`'s generator to the enclosing parameters.
   - Cause: a parameter expression's application names its function by
-    lowered symbol, and the checker cannot spell a nested `def`'s: MIR's
-    `analyze_node` (`mir/nested.rs`) picks `nested_lifted_name` or the
-    `$decl` form when siblings share the name.
+    lowered symbol, and a nested `def`'s symbol (`CheckedDef::symbol`) is
+    named only by the check's last step (`collect_closure_uses`), after
+    the application is selected.
   - `Checker::selected_application` skips a local callee
     (`binding_scope == 0`), and `applicable_functions` lists module
     declarations only.
@@ -12197,26 +12197,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1892 MIR names each lifted closure, where upstream's front end
-  names it**
+- [ ] **R1940 A closure in a lifted compile-time expression is lowered
+  twice, where upstream emits it once**
 
-  `CheckedDef::symbol` holds only a nested def's own name. MIR's
-  `analyze_node` qualifies it (`parent$inner`, or
-  `parent$inner$decl<CheckedDeclId>` for two same-spelled declarations)
-  and `rename_nested` renames children of a storage method, so the check
-  cannot name a closure's storage struct.
-  - The disambiguator must be one the check knows, such as the
-    declaration's ordinal in its enclosing body, since `CheckedDeclId` is
-    assigned after the check. `tests/symbol_test.rs` pins the spelling.
-  - Add the storage's name to `CheckedClosureStorage`, then delete
-    `rename_nested` and the duplicate counting in `analyze_root_children`.
-  - With the name in the check, declare `CheckedClosureUses::binders` as
-    the struct's own there (`reown_as_own_parameters`), as upstream's
-    `liftClosure` does, and let `own_storage_binders` read them.
-  - Probe: assert MIR's name equals the checked one over
-    `assets/ok/nested_def_*` and `generic_nested_def_*` before deleting
-    MIR's naming.
-  - Found while landing R1436 (2026-11-03).
+  A lambda inside an expression the check lifts to a `$comptime$…`
+  function is lowered by its owner under the name the check gave it and
+  again by the lifted function, which qualifies every name the check gave
+  with its own (`FunctionLowering::namespace`, `mir/nested.rs`).
+  - Cause: the owner's `nested_defs` and the thunk's
+    `expression_lambda_defs` both reach the lambda, so MIR still names one
+    copy itself, and that copy re-owns its storage's binders under the
+    namespaced name instead of reading `CheckedClosureUses::parameters`.
+  - Lever: give the lambda to one lowering, the lifted function, as the
+    check already names it there, and drop `namespace`.
+  - Probe: `assets/ok/comptime_lambda_initializer.mojo` lowers both
+    `main$$lambda$<n>` and `$comptime$main$c0$main$$lambda$<n>`.
+  - A module `comptime` initializer's lambda is lowered only by its thunk,
+    yet takes the namespaced name too
+    (`$comptime$<constant>$module$__toplevel__$…`).
+  - Found while landing R1892 (2026-11-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
