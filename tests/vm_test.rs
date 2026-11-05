@@ -735,6 +735,21 @@ fn first_class_owned_closure_uses_its_stored_snapshot() {
 }
 
 #[test]
+fn named_closure_at_its_last_use_moves_into_an_owned_parameter() {
+    // The storage slot dies at the argument, so the owned parameter takes
+    // it with no copy; a later use keeps the copy.
+    let tracked = "@fieldwise_init\nstruct Tracked(ImplicitlyCopyable):\n    var v: Int\n\n    def __init__(out self, *, copy: Self):\n        print(\"copy\", copy.v)\n        self.v = copy.v\n\n    def __del__(deinit self):\n        print(\"del\", self.v)\n\ndef own[F: def() -> Int](var f: F) -> Int:\n    return f()\n\n";
+    let last = format!(
+        "{tracked}def main():\n    var u = Tracked(4)\n    def h() {{var u}} -> Int:\n        return u.v\n    print(own(h))\n"
+    );
+    assert_eq!(vm(&last), "copy 4\ndel 4\ndel 4\n4\n");
+    let reused = format!(
+        "{tracked}def main():\n    var u = Tracked(4)\n    def h() {{var u}} -> Int:\n        return u.v\n    print(own(h))\n    print(h())\n"
+    );
+    assert_eq!(vm(&reused), "copy 4\ndel 4\ncopy 4\ndel 4\n4\ndel 4\n4\n");
+}
+
+#[test]
 fn stored_lambda_reference_capture_keeps_its_owner_alive() {
     // A lambda bound straight into storage loans its reference captures'
     // owners, so the captured slot is not ASAP-dropped after its last

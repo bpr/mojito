@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A capture-list `def` passed by name to an owned parameter at its last
+  use now moves its storage into the parameter instead of copying it and
+  destroying the original, as at the pin (R1870): `own(h)` over `def
+  own[F: def() -> Int](var f: F)` and `def h() {var u} -> Int` runs no
+  copy initializer and destroys `u` once. The storage slot no longer gets
+  a keepalive through the call, so copy elision sees it die at the
+  argument.
+
 - A direct call of an undecorated capturing nested `def` (`def get()
   {imm y} -> Int`, `def bump() {mut c}`) is confirmed inlined by
   `automatic-inline` below upstream's threshold, as it has been since a

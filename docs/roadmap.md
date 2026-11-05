@@ -1519,22 +1519,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1870 A named closure passed to an owned parameter at its last
-  use is copied, where the pin moves its storage**
-
-  `own(h)`, over `def own[F: def() -> Int](var f: F)` and `def h() {var
-  u} -> Int` with `h` dead after the call, prints `copy 4` where the pin
-  prints nothing, and `u` is destroyed once more.
-  - The read of `h` is `closure_storage_read` (`mir/lower_expr/calls.rs`),
-    a slot read the owned parameter copies; copy elision
-    (`analysis/copy_elision.rs`) does not turn that copy into the dying
-    slot's move, as it does for `take(v)` over a plain local.
-  - Probe: the `own(h)` call above, over an `ImplicitlyCopyable`
-    `Tracked` printing its copy initializer.
-  - Found while landing R1435 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1888 A call through a closure's storage value conflicts with the
   loan that storage holds on its `mut` capture**
 

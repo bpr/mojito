@@ -647,6 +647,12 @@ impl<'a> Flatten<'a> {
                 continue;
             };
             let mut seen = HashSet::new();
+            // A storage-backed closure is passed as its storage's value,
+            // which the argument copies or takes, so its slot needs no
+            // keepalive: it dies at its last read, as any local does.
+            if info.storage.is_some() {
+                seen.insert(info.binding);
+            }
             let callable_capture = NestedCapture {
                 name: info.source_name.clone(),
                 binding: info.binding,
