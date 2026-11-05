@@ -23,7 +23,21 @@ pub(super) fn verify_intrinsic_index(
         ));
     }
 
+    let references: Vec<Ty>;
     let result_candidates = match (intrinsic, base.map(Ty::kind)) {
+        (MirIntrinsicSubscript::TupleStorage, Some(TyKind::LitRefPack { elements, origin })) => {
+            references = elements
+                .iter()
+                .map(|element| {
+                    TyKind::LitRef {
+                        element: element.clone(),
+                        origin: origin.clone(),
+                    }
+                    .into()
+                })
+                .collect();
+            Some(references.iter().collect::<Vec<_>>())
+        }
         (
             MirIntrinsicSubscript::TupleStorage,
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)),

@@ -166,6 +166,16 @@ pub(super) fn unify(
             TyKind::LitRef { element, .. } => unify(pattern_element, element, subst, deduce),
             _ => Ok(()),
         },
+        TyKind::LitRefPack {
+            elements: pattern_elements,
+            ..
+        } => match actual.kind() {
+            TyKind::LitRefPack { elements, .. } => pattern_elements
+                .iter()
+                .zip(elements)
+                .try_for_each(|(pattern, element)| unify(pattern, element, subst, deduce)),
+            _ => Ok(()),
+        },
         // A non-parameter pattern contributes no solution; coercion is checked
         // separately by the caller.
         _ => Ok(()),
@@ -564,6 +574,14 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             origin: origin.clone(),
         }
         .into(),
+        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            elements: elements
+                .iter()
+                .map(|element| substitute_self(element, replacement))
+                .collect(),
+            origin: origin.clone(),
+        }
+        .into(),
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
             base: substitute_self(base, replacement),
             name: name.clone(),
@@ -692,6 +710,11 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
         TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: recur(element),
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            elements: elements.iter().map(recur).collect(),
             origin: origin.clone(),
         }
         .into(),
@@ -1909,39 +1932,47 @@ fn bind_pointer_origin_tails(
 ) -> Ty {
     use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
     let recur = |ty: &Ty| bind_pointer_origin_tails(ty, tails);
+    let bind = |origin: &PointerOrigin| {
+        let bound = match origin {
+            PointerOrigin::Param {
+                id,
+                mutability,
+                interior,
+                subtree,
+            } => match (tails.get(id), mutability) {
+                (Some(Origin::Place(place)), Mutability::Mutable | Mutability::Immutable) => {
+                    let mut place = place.clone();
+                    place.path.extend(
+                        interior
+                            .iter()
+                            .map(|tag| OriginSeg::Interior(tag.clone()))
+                            .chain(subtree.then_some(OriginSeg::Subtree)),
+                    );
+                    Some(PointerOrigin::Place {
+                        place,
+                        mutable: *mutability == Mutability::Mutable,
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        bound.unwrap_or_else(|| origin.clone())
+    };
     match ty.kind() {
         TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
-            let bound = match origin {
-                PointerOrigin::Param {
-                    id,
-                    mutability,
-                    interior,
-                    subtree,
-                } => match (tails.get(id), mutability) {
-                    (Some(Origin::Place(place)), Mutability::Mutable | Mutability::Immutable) => {
-                        let mut place = place.clone();
-                        place.path.extend(
-                            interior
-                                .iter()
-                                .map(|tag| OriginSeg::Interior(tag.clone()))
-                                .chain(subtree.then_some(OriginSeg::Subtree)),
-                        );
-                        Some(PointerOrigin::Place {
-                            place,
-                            mutable: *mutability == Mutability::Mutable,
-                        })
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
-            let (element, origin) = (recur(element), bound.unwrap_or_else(|| origin.clone()));
+            let (element, origin) = (recur(element), bind(origin));
             if matches!(ty.kind(), TyKind::LitRef { .. }) {
                 TyKind::LitRef { element, origin }.into()
             } else {
                 TyKind::Pointer { element, origin }.into()
             }
         }
+        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            elements: elements.iter().map(recur).collect(),
+            origin: bind(origin),
+        }
+        .into(),
         struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
             ty.reusing(TyKind::Struct(
                 name.clone(),

@@ -596,6 +596,14 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             TyKind::LitRef { element: a, .. } => unify(p, a, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
+        TyKind::LitRefPack { elements: p, .. } => match actual.kind() {
+            TyKind::LitRefPack { elements: a, .. } => unify(
+                &TyKind::Tuple(p.clone()).into(),
+                &TyKind::Tuple(a.clone()).into(),
+                bindings,
+            ),
+            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+        },
         TyKind::Ref(p) => match actual.kind() {
             TyKind::Ref(a) if p.mutability == a.mutability => {
                 unify(&p.referent, &a.referent, bindings)

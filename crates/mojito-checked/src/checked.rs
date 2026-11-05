@@ -1181,7 +1181,9 @@ pub enum SemanticAdjustment {
     /// element `index` (the compile-time `Int` the attribute casts) of the
     /// literal struct `s`, upstream's `!kgen.struct`, which Mojito holds as
     /// compiler-private tuple storage. MIR reads it as that storage's
-    /// element.
+    /// element. ``__mlir_op.`lit.ref.pack.extract`[index=…](p)`` records
+    /// it too: element reference `index` of the reference pack `p`,
+    /// upstream's `!lit.ref.pack`, read the same way.
     KgenStructExtract {
         index: mojito_types::param_expr::ParamExpr,
     },

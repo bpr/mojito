@@ -1219,6 +1219,9 @@ impl Checker {
                 Ok(mojito_types::types::simd_storage(&vector).unwrap_or(vector))
             }
             ("!kgen.struct<{}isParamPack>", [elements]) => self.mlir_param_pack_struct(elements),
+            ("!lit.ref.pack<:param_list<{}>{},{}>", [element_trait, elements, origin]) => {
+                self.mlir_ref_pack_type(element_trait, elements, origin)
+            }
             ("!kgen.pointer<{}>", [element]) => {
                 Ok(TyKind::KgenPointer(self.mlir_type_operand(element)?).into())
             }
@@ -1269,15 +1272,55 @@ impl Checker {
         elements: &mojito_ast::ast::ParamArg,
     ) -> Result<Ty, TypeError> {
         use mojito_ast::ast::{ParamArg, PrefixOp};
-        let ParamArg::Value(
-            invert @ Expr {
-                kind: ExprKind::Prefix(PrefixOp::Invert, values),
-                ..
-            },
-        ) = elements
+        let ParamArg::Value(Expr {
+            kind: ExprKind::Prefix(PrefixOp::Invert, values),
+            ..
+        }) = elements
         else {
             return Err(unsupported_mlir_type());
         };
+        Ok(TyKind::Tuple(self.mlir_type_list_elements(values)?).into())
+    }
+
+    /// The reference pack `!lit.ref.pack<:param_list<Trait> Ts.values,
+    /// origin._mlir_origin>`, upstream's `VariadicPack._mlir_type`: one
+    /// `!lit.ref` under `origin` to each element of the type list `Ts`.
+    fn mlir_ref_pack_type(
+        &self,
+        element_trait: &mojito_ast::ast::ParamArg,
+        elements: &mojito_ast::ast::ParamArg,
+        origin: &mojito_ast::ast::ParamArg,
+    ) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        if let Some(element_trait) = self.trait_type_arg(element_trait) {
+            element_trait?;
+        }
+        let ParamArg::Value(values) = elements else {
+            return Err(unsupported_mlir_type());
+        };
+        let elements = self.mlir_type_list_elements(values)?;
+        let origin = match origin {
+            ParamArg::Value(Expr {
+                kind: ExprKind::Member { object, field },
+                ..
+            }) if field == "_mlir_origin" => {
+                self.pointer_origin_arg(&ParamArg::Value((**object).clone()))?
+            }
+            ParamArg::Type(SourceType::Assoc { base, name, args })
+                if name == "_mlir_origin" && args.is_empty() =>
+            {
+                self.pointer_origin_arg(&ParamArg::Type((**base).clone()))?
+            }
+            _ => return Err(unsupported_mlir_type()),
+        };
+        Ok(TyKind::LitRefPack { elements, origin }.into())
+    }
+
+    /// The elements of a type list's raw `values` (`Self.Ts.values`,
+    /// `Ts.values`, any other list's) as tuple elements: an enclosing
+    /// pack spreads as `*Self.Ts` does.
+    fn mlir_type_list_elements(&self, values: &Expr) -> Result<Vec<Ty>, TypeError> {
+        use mojito_ast::ast::ParamArg;
         let ExprKind::Member { object, field } = &values.kind else {
             return Err(unsupported_mlir_type());
         };
@@ -1303,11 +1346,11 @@ impl Checker {
         let spread = pack.unwrap_or_else(|| {
             ParamArg::Value(Expr {
                 kind: ExprKind::Spread(object.clone()),
-                ..invert.clone()
+                ..values.clone()
             })
         });
         let (elements, _) = self.tuple_element_types(std::slice::from_ref(&spread))?;
-        Ok(TyKind::Tuple(elements).into())
+        Ok(elements)
     }
 
     /// The raw parameter list `!kgen.param_list<element>` holds.
@@ -4798,6 +4841,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         TyKind::Pointer { element, .. }
         | TyKind::KgenPointer(element)
         | TyKind::LitRef { element, .. } => type_is_symbolic(element),
+        TyKind::LitRefPack { elements, .. } => elements.iter().any(type_is_symbolic),
         TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }
 }

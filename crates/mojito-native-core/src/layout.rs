@@ -148,6 +148,11 @@ impl LayoutCx<'_> {
             | TyKind::KgenPointer(_)
             | TyKind::LitRef { .. }
             | TyKind::Ref(_) => Ok(self.pointer()),
+            // One address per element, the `!kgen.struct` of pointers
+            // upstream lowers a `!lit.ref.pack` to.
+            TyKind::LitRefPack { elements, .. } => {
+                Ok(compose(&vec![self.pointer(); elements.len()]).layout)
+            }
             // A retained callable is the two-word `{ invoke: ptr, env: ptr }`
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.
@@ -407,6 +412,12 @@ mod tests {
             origin: PointerOrigin::Static,
         });
         assert_eq!(layout_of(&pointer), Ok(Layout::new(8, 8)));
+        // A reference pack is one address per element, whatever each holds.
+        let pack = Ty::new(TyKind::LitRefPack {
+            elements: vec![Ty::bool(), Ty::string_literal(), Ty::int()],
+            origin: PointerOrigin::Static,
+        });
+        assert_eq!(layout_of(&pack), Ok(Layout::new(24, 8)));
     }
 
     #[test]

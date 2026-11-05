@@ -273,6 +273,16 @@ fn type_families_reprint_byte_identically() {
                     },
                 }
                 .into(),
+                TyKind::LitRefPack {
+                    elements: vec![Ty::int(), Ty::float64()],
+                    origin: PointerOrigin::Param {
+                        id: OriginParamId(1),
+                        mutability: Mutability::Param(OriginParamId(0)),
+                        interior: Vec::new(),
+                        subtree: false,
+                    },
+                }
+                .into(),
                 TyKind::Ref(RefTy {
                     referent: TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]).into(),
                     origin: Origin::Untracked { mutable: true },

@@ -409,6 +409,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             origin: origin.clone(),
         }
         .into(),
+        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            elements: sub_spread_types(elements, bindings)?,
+            origin: origin.clone(),
+        }
+        .into(),
         TyKind::Ref(value) => {
             let mut value = value.clone();
             value.referent = substitute_ty(&value.referent, bindings)?;
@@ -742,11 +747,12 @@ fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
             | TyKind::LitRef { element, .. }
             | TyKind::PopArray { element, .. } => names_outside_structs(element, removed),
             TyKind::Ref(reference) => names_outside_structs(&reference.referent, removed),
-            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
-                elements
-                    .iter()
-                    .any(|element| names_outside_structs(element, removed))
-            }
+            TyKind::Tuple(elements)
+            | TyKind::RuntimePack(elements)
+            | TyKind::Variant(elements)
+            | TyKind::LitRefPack { elements, .. } => elements
+                .iter()
+                .any(|element| names_outside_structs(element, removed)),
             _ => removed
                 .iter()
                 .any(|binder| mojito_types::types::names_binder(ty, binder)),

@@ -1519,7 +1519,8 @@ pub enum MirSubscriptArg {
 /// compiler/runtime storage family selected by the checked base type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MirIntrinsicSubscript {
-    /// Compiler-private heterogeneous Tuple/RuntimePack storage.
+    /// Compiler-private heterogeneous Tuple/RuntimePack storage, or the
+    /// element references of a `!lit.ref.pack`.
     TupleStorage,
     /// Compiler-private homogeneous `*args` storage.
     VariadicStorage,

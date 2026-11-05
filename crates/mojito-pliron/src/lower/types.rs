@@ -176,6 +176,7 @@ pub fn lower_ty(
         | TyKind::Tuple(_)
         | TyKind::PopArray { .. }
         | TyKind::RuntimePack(_)
+        | TyKind::LitRefPack { .. }
         | TyKind::Variant(_)
         | TyKind::StringLiteral
         | TyKind::KgenString

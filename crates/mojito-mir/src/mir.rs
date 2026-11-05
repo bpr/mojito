@@ -718,6 +718,7 @@ impl MirDeclarations {
             TyKind::Pointer { .. }
             | TyKind::KgenPointer(_)
             | TyKind::LitRef { .. }
+            | TyKind::LitRefPack { .. }
             | TyKind::Ref(_) => true,
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => items
                 .iter()

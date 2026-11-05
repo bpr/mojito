@@ -8691,6 +8691,34 @@ fn mlir_op_outside_the_bundled_library_is_rejected() {
 }
 
 #[test]
+fn reference_pack_type_and_extract_resolve() {
+    // Upstream's `VariadicPack._mlir_type` spelling is a reference pack over
+    // the struct's type pack and origin, and `lit.ref.pack.extract` reads an
+    // element reference out of it; the bundled `VariadicPack` can be named,
+    // its length and elements read.
+    ok_std(
+        "struct P[mut: Bool, //, o: Origin[mut=mut], *Ts: Writable]:\n    var v: __mlir_type[`!lit.ref.pack<:param_list<`, Writable, `> `, Self.Ts.values, `, `, Self.o._mlir_origin, `>`]\n\n    def first(self) -> ref[Self.o] Self.Ts[0]:\n        var r = __mlir_op.`lit.ref.pack.extract`[index=Int(0).__mlir_index__()](self.v)\n        return Pointer(_mlir_value=r)[]\n\ndef count[*Ts: Writable](p: VariadicPack[element_trait=Writable, False, *Ts]) -> Int:\n    return len(p)\n\ndef first[*Ts: Writable](p: VariadicPack[element_trait=Writable, False, *Ts]) -> String:\n    return String(p[0])\n\ndef main():\n    print(1)\n",
+    );
+}
+
+#[test]
+fn reference_pack_extract_rejects_other_operands() {
+    let error = err_std(
+        "struct P[*Ts: Writable]:\n    var v: __mlir_type[`!kgen.struct<`, ~Self.Ts.values, ` isParamPack>`]\n\n    def first(self) -> Int:\n        var r = __mlir_op.`lit.ref.pack.extract`[index=Int(0).__mlir_index__()](self.v)\n        return 0\n\ndef main():\n    print(1)\n",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("operand #0 must be a '!lit.ref.pack'"),
+        "{error}"
+    );
+    let error = err_std(
+        "struct P[*Ts: Writable]:\n    var v: __mlir_type[`!lit.ref.pack<:param_list<`, Writable, `> `, Self.Ts.values, `, `, Int, `>`]\n\ndef main():\n    print(1)\n",
+    );
+    assert!(error.to_string().contains("MLIR type"), "{error}");
+}
+
+#[test]
 fn pop_and_index_ops_type_as_their_verifiers_do() {
     // `pop` arithmetic keeps its operands' `!kgen.simd` storage type, which
     // `mlir_value=` takes back, `pop.cmp` gives the mask's, `pop.cast` (to and from `bool` lanes too) and

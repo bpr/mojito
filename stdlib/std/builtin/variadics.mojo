@@ -44,12 +44,30 @@
 # `global_constant` over `#pop.variadic_to_array`. `ParameterList`'s and
 # `VariadicList`'s `write_repr_to` write the text upstream's `FormatStruct`
 # builder writes, directly.
+#
+# `VariadicPack`, the heterogeneous collector, is upstream's declaration
+# over its `!lit.ref.pack` field, but no call builds one yet: a
+# `*args: *Ts` collector is still the tuple of its elements (roadmap
+# R1921), and `get_as_kgen_pack`/`get_loaded_kgen_pack` and the members
+# they read are not declared (R1922). Otherwise it differs from upstream's:
+# - the `Copyable` conformance has no `else` message (R1115), and the copy
+#   constructor is not declared, so `copy` is the field-wise copy (R1832);
+# - `element_types` has no `@deprecated(use=Ts)` (R1925);
+# - `__len__(self)`, `__deinit__`, and `_write_to` read `Self.Ts.length`
+#   where upstream calls `Self.__len__()` (R1923);
+# - `__deinit__` omits `_constrained_conforms_to` (R1881);
+# - `__getitem_param__` returns `Pointer(_mlir_value=litref_elt)[]` where
+#   upstream returns `__get_litref_as_mvalue(litref_elt)`, and
+#   `consume_elements` is not declared (R1924);
+# - `_write_to`'s delimiters are `StaticString`s where upstream's are
+#   origin-parametric `StringSlice`s (R1926).
 from std.builtin.reversed import reversed
 from std.collections.optional import Optional
 from std.iter import Iterable, Iterator, StopIteration
 from std.range import range
 from std.reflection.type_info import _unqualified_type_name
 from std.span import Span
+from std.string import StaticString
 
 
 struct _MLIR:
@@ -543,3 +561,201 @@ struct VariadicList[
             An iterator to the start of the list.
         """
         return {0, self}
+
+
+# ===-----------------------------------------------------------------------===#
+# VariadicPack
+# ===-----------------------------------------------------------------------===#
+
+
+struct VariadicPack[
+    elt_is_mutable: Bool,
+    origin: Origin[mut=elt_is_mutable],
+    element_trait: type_of(AnyType),
+    //,
+    is_owned: Bool,
+    *Ts: element_trait,
+](
+    Copyable where not is_owned,
+    RegisterPassable,
+    Sized,
+):
+    """A utility class to access heterogeneous variadic function arguments.
+
+    `VariadicPack` is used when you need to accept variadic arguments where each
+    argument can have a different type, but all types conform to a common trait.
+    Unlike `ParameterList` (which is homogeneous), `VariadicPack` allows each
+    element to have a different concrete type.
+
+    Indexing into `VariadicPack` requires compile-time indices using
+    `comptime for` loops, whereas indexing into `ParameterList` uses runtime
+    indices.
+
+    Parameters:
+        elt_is_mutable: True if the elements of the list are mutable for an
+                        mut or owned argument pack.
+        origin: The origin of the underlying elements.
+        element_trait: The trait that each element of the pack conforms to.
+        is_owned: Whether the elements are owned by the pack. If so, the pack
+                  will release the elements when it is destroyed.
+        Ts: The list of types held by the argument pack.
+    """
+
+    comptime element_types = Self.Ts
+    """The list of types held by the argument pack. Deprecated alias for `Ts`.
+    """
+
+    comptime _mlir_type = __mlir_type[
+        `!lit.ref.pack<:param_list<`,
+        Self.element_trait,
+        `> `,
+        Self.Ts.values,
+        `, `,
+        Self.origin._mlir_origin,
+        `>`,
+    ]
+
+    var _value: Self._mlir_type
+
+    # ===-------------------------------------------------------------------===#
+    # Life cycle methods
+    # ===-------------------------------------------------------------------===#
+
+    @doc_hidden
+    @inline(.nodebug)
+    # This disables nested origin exclusivity checking because it is taking a
+    # raw variadic pack which can have nested origins in it (which this does not
+    # dereference).
+    @__unsafe_nested_origins_read_only
+    def __init__(out self, value: Self._mlir_type):
+        """Constructs a VariadicPack from the internal representation.
+
+        Args:
+            value: The argument to construct the pack with.
+        """
+        self._value = value
+
+    # The destructor for this type is trivial if not an "owned" pack.
+    comptime __del__is_trivial: Bool = not Self.is_owned
+
+    @inline(.nodebug)
+    def __deinit__(deinit self):
+        """Destructor that releases elements if owned."""
+
+        comptime if Self.is_owned:
+            comptime for i in reversed(range(Self.Ts.length)):
+                comptime element_type = Self.Ts[i]
+                comptime assert conforms_to(element_type, Deinitable)
+
+                # Safety: We own the elements in this pack.
+                Pointer(to=self[i]).unsafe_mut_cast[
+                    True
+                ]().unsafe_deinit_pointee()
+
+    # ===-------------------------------------------------------------------===#
+    # Trait implementations
+    # ===-------------------------------------------------------------------===#
+
+    @always_inline("builtin")
+    @staticmethod
+    def __len__() -> Int:
+        """Return the VariadicPack length.
+
+        Returns:
+            The number of elements in the variadic pack.
+        """
+        return Self.Ts.length
+
+    @inline(.always)
+    def __len__(self) -> Int:
+        """Return the VariadicPack length.
+
+        Returns:
+            The number of elements in the variadic pack.
+        """
+        return Self.Ts.length
+
+    # ===-------------------------------------------------------------------===#
+    # Operator dunders
+    # ===-------------------------------------------------------------------===#
+
+    @inline(.always)
+    def __getitem_param__[index: Int](self) -> ref[Self.origin] Self.Ts[index]:
+        """Return a reference to an element of the pack.
+
+        Parameters:
+            index: The element of the pack to return.
+
+        Returns:
+            A reference to the element.  The Pointer's mutability follows the
+            mutability of the pack argument convention.
+        """
+        var litref_elt = __mlir_op.`lit.ref.pack.extract`[
+            index=index.__mlir_index__()
+        ](self._value)
+        return Pointer(_mlir_value=litref_elt)[]
+
+    def _write_to[
+        *, is_repr: Bool = False
+    ](
+        self,
+        mut writer: Some[Writer],
+        start: StaticString = StaticString(""),
+        end: StaticString = StaticString(""),
+        sep: StaticString = StaticString(", "),
+    ) where Self.Ts.all_conforms_to[Writable]():
+        """Writes a sequence of writable values from a pack to a writer with
+        delimiters.
+
+        Parameters:
+            is_repr: Whether to use repr formatting for elements.
+
+        Args:
+            writer: The writer to write to.
+            start: The starting delimiter.
+            end: The ending delimiter.
+            sep: The separator between items.
+        """
+        writer.write_string(start)
+
+        comptime for i in range(Self.Ts.length):
+            comptime if i != 0:
+                writer.write_string(sep)
+
+            comptime if is_repr:
+                self[i].write_repr_to(writer)
+            else:
+                self[i].write_to(writer)
+        writer.write_string(end)
+
+    @inline(.never)
+    def write_to(
+        self,
+        mut writer: Some[Writer],
+    ) where Self.Ts.all_conforms_to[Writable]():
+        """Writes the elements of this pack to a writer.
+
+        Args:
+            writer: The object to write to.
+        """
+        self._write_to(
+            writer,
+            start=StaticString("("),
+            end=StaticString(")"),
+        )
+
+    @inline(.never)
+    def write_repr_to(
+        self,
+        mut writer: Some[Writer],
+    ) where Self.Ts.all_conforms_to[Writable]():
+        """Writes the repr of the elements of this pack to a writer.
+
+        Args:
+            writer: The object to write to.
+        """
+        self._write_to[is_repr=True](
+            writer,
+            start=StaticString("("),
+            end=StaticString(")"),
+        )

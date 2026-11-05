@@ -705,6 +705,11 @@ impl ScopeCx<'_> {
             | TyKind::LitRef { element, .. } => {
                 self.walk_in(role, element, nested);
             }
+            TyKind::LitRefPack { elements, .. } => {
+                for element in elements {
+                    self.walk_in(role, element, nested);
+                }
+            }
             TyKind::PopArray { size, element } => {
                 if let mojito_types::types::ArraySize::Expr(expr) = size {
                     self.expr(

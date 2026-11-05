@@ -192,9 +192,11 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         struct_ty if let Some((_, args)) = struct_ty.as_non_simd_struct() => {
             !ty.is_closed() && args.iter().any(arg_has_symbolic)
         }
-        TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
-            v.iter().any(is_symbolic)
-        }
+        TyKind::Tuple(v)
+        | TyKind::RuntimePack(v)
+        | TyKind::Variant(v)
+        | TyKind::Overload(v)
+        | TyKind::LitRefPack { elements: v, .. } => v.iter().any(is_symbolic),
         TyKind::ComptimeList(v)
         | TyKind::ParamList(v)
         | TyKind::VariadicPack(v)
@@ -385,7 +387,11 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
                 }
             }));
         }
-        TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
+        TyKind::Tuple(v)
+        | TyKind::RuntimePack(v)
+        | TyKind::Variant(v)
+        | TyKind::Overload(v)
+        | TyKind::LitRefPack { elements: v, .. } => {
             output.extend(v.iter().cloned());
         }
         TyKind::ComptimeList(v)

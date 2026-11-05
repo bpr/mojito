@@ -2359,6 +2359,13 @@ fn ty_value(ty: &Ty) -> String {
                 ("origin", pointer_origin(origin)),
             ],
         ),
+        TyKind::LitRefPack { elements, origin } => record(
+            "lit_ref_pack",
+            &[
+                ("elements", list(elements.iter().map(ty_value))),
+                ("origin", pointer_origin(origin)),
+            ],
+        ),
         TyKind::Ref(value) => ref_ty(value),
     }
 }

@@ -1286,7 +1286,9 @@ construction in each unrolled copy. A type pack crosses the waist the same way: 
 pack-keyed `def` keeps its body, as upstream's does
 (`is_specializable_declaration` never names one, so no type-pack `def` is
 cloned); the checker
-types it with the collector a `VariadicPack` of the symbolic pack, each
+types it with the collector the compiler's `TyKind::VariadicPack` of the
+symbolic pack (not yet the bundled nominal `VariadicPack`, declared over
+its `!lit.ref.pack` field `TyKind::LitRefPack` but built by no call, R1921), each
 `args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
 length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
 compile time — a `PackQuery::Length` the loop header carries as its bound.
@@ -2223,7 +2225,7 @@ storage slot (`Flatten::temporary_operand`), so the rewrite passes that
 slot's address, and copy elision's read lend renames the retained place
 to the dying source with the load. A method call, an indirect call, and a
 subscript keep the load (R1918, R1919); so do a read collector's elements
-(R1302), a reference result's copy, which upstream passes as the
+(R1921), a reference result's copy, which upstream passes as the
 reference itself (R701), and the `divmod` builtin's operands (R1458).
 
 The same pass builds every call's positional collector, as upstream's call

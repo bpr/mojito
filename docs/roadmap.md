@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1921**.
+Next free ID: **R1927**.
 
 ## Ordered Work
 
@@ -4680,6 +4680,48 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1923 `Self` spelled as a value in a struct with an origin
+  parameter does not bind**
+
+  `Self.size()` and `Self(copy=self)` inside such a struct stop with
+  "generic 'VP' has no parameter named 'elt_is_mutable'" or "type 'W'
+  expects 0 type argument(s), got 2", where the pin calls the static
+  method and constructs the receiver's own type.
+  - `self_instance_spelling` (`checker/initializer_list.rs`) spells `Self`
+    as the template applied to every source parameter, infer-only ones by
+    keyword, but the application binder sees the origin-erased parameter
+    list, which knows neither the origin parameter nor, for a struct whose
+    origin is `Origin[mut=m]`, every infer-only slot.
+  - Probe: `struct W[mut: Bool, //, o: Origin[mut=mut]]` with a static
+    `size()` that `__len__` returns as `Self.size()`.
+  - Probe: the bundled `VariadicPack` reads `Self.Ts.length` in
+    `__len__(self)`, `__deinit__`, and `_write_to`, where upstream calls
+    `Self.__len__()`.
+  - Probe: `VariadicPack[origin=_, element_trait=AnyType, False, *Ts]`,
+    as the pin's own tests spell it, stops with "no parameter named
+    'origin'".
+  - Found while landing R1302 (2026-11-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1926 A default value cannot bind an origin parameter of its
+  parameter's type**
+
+  `def f[O: ImmOrigin](s: StringSpan[O] = StaticString("d"))` is rejected
+  at its declaration with "type mismatch for default value of 's':
+  expected StringSpan, found StringSpan", where the pin binds `O` to the
+  default's static origin when the call leaves `s` out.
+  - The default is checked against the declared type with `O` still a
+    parameter, which no concrete origin coerces to.
+  - Probe: the same on a method, and `f()` and `f(StaticString("x"))`
+    printing `d` and `x`.
+  - Probe: the bundled `VariadicPack._write_to` takes `start`, `end`, and
+    `sep` as `StaticString` where upstream takes `StringSlice[O1]` (and
+    `O2`, `O3`) defaulted to `StaticString("")`.
+  - Found while landing R1302 (2026-11-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -4927,6 +4969,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     tuple-form ones.
   - Probe: the bundled `MaybeUninit` spells its three conditional
     conformances in the tuple form, where upstream's use `where ... else`.
+  - Probe: the bundled `VariadicPack` declares `Copyable where not
+    is_owned` without upstream's `else "Cannot copy an owned variadic
+    pack."`.
   - Found at the 2026-09-21 re-pin and left unfiled; refiled at the
     2026-10-17 re-pin.
   - At `1.3.0.dev2026110105` `@explicit_destroy("<message>")` warns as
@@ -6262,6 +6307,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: the bundled `String.__radd__` takes upstream's `other:
     StringSlice[_]` (`stdlib/std/string.mojo`), where it now takes the
     bare `StringSlice`.
+  - Probe: the bundled `VariadicPack._write_to` cannot spell upstream's
+    `start: StringSlice[O1]` (with R1926).
   - Found while landing R1653 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7868,6 +7915,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     fails the same way ("register r0 has no checked type"), where the pin
     prints `2`.
   - Found while landing R1753 (2026-11-02).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1925 A decorator before a struct's `comptime` member is a parse
+  error**
+
+  `@deprecated(use=Ts)` before `comptime element_types = Self.Ts` stops
+  with "a decorator in a struct body must precede a 'def' method", where
+  the pin accepts it and warns at each use of the member.
+  - Probe: the bundled `VariadicPack` declares `element_types` without
+    upstream's `@deprecated(use=Ts)`.
+  - Lever: the struct-body parser takes decorators before a `comptime`
+    member; the warning itself is R1164's.
+  - Found while landing R1302 (2026-11-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10021,11 +10082,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     storage handed over, the form `lower_drops` gives every slot drop.
   - A 2026-11-03 census of `assets/ok` and `assets/ownership_ok` with the
     rule on found 10 fixtures (35 with `MOJITO_PRE_ELABORATION=0`, the rest
-    `llvm_intrinsic`'s pack spread), each a probe now filed on R1302,
+    `llvm_intrinsic`'s pack spread), each a probe now filed on R1921,
     R701, or R1458 (R1418 and R1917 have landed).
   - Re-run the census, both ways, before landing it: the rule runs after
     every pass in a debug build.
-  - Depends on R1425, R1418, R1302, R701, R1458.
+  - Depends on R1425, R1418, R1921, R701, R1458.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
@@ -10346,22 +10407,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1302 A bound heterogeneous collector is typed the tuple of its
-  elements, where upstream's is the nominal `VariadicPack`**
+- [ ] **R1921 A heterogeneous collector is a tuple of its elements'
+  values, where upstream's call builds the declared `VariadicPack` over
+  their references**
 
-  `*args: *Ts` binds `Tuple[...]` (`TyKind::Tuple`) in its specialized
-  body, and `TyKind::VariadicPack` over the pack before it, where the pin
-  types it `VariadicPack[elt_is_mutable, origin, Trait, *Ts]`, declared in
-  `std/builtin/variadics.mojo` beside `VariadicList`.
+  `*args: *Ts` binds `TyKind::VariadicPack(*Ts)` in its body, which
+  `native::mono::substitute_ty` rewrites to the `Tuple` of the bound
+  elements, and the call builds a `tuple.make` of loaded values, where the
+  pin types it `VariadicPack[elt_is_mutable, origin, Trait, is_owned, *Ts]`
+  and passes a `!lit.ref.pack` of the arguments' addresses.
+  - The bundled `std/builtin/variadics.mojo` declares `VariadicPack` over
+    `TyKind::LitRefPack` (R1302), so only the collector's construction and
+    reads are left.
+  - Lever: `variadic_collector_type`'s heterogeneous arms return the
+    `VariadicPack` instance (owned for `var`), `build_collector` builds the
+    references, a `LitRefPack` aggregate, and a `struct.create`, as
+    `build_variadic_list` builds `VariadicList`, and the mono tuple arm goes.
+  - Every `print` builds one (`*values: *Ts`), so this changes the MIR of
+    nearly every fixture; snapshots are the nightly gate's.
   - Probe: `verify_pack_spread` admits a `Tuple`-typed spread argument,
     which every bound spread passes.
-  - `mojito_types::types::variadic_collector_type` decides the body type;
-    its heterogeneous arms are the ones to make nominal.
-  - The homogeneous collector took upstream's `VariadicList` in R743.
-  - Probe: `args.get_loaded_kgen_pack()`, which the bundled `llvm_intrinsic`
-    calls, is a compiler rule typed as the collector itself
-    (`mc_infer.rs`), where upstream's `VariadicPack` method loads its
-    elements into a `!kgen.pack`.
   - Probe: a `read` collector holds its elements' values where upstream's
     `VariadicPack` refers to them, so `build_collector` references each
     loaded place again after the call to keep its owner live. An element
@@ -10381,9 +10446,54 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe (from R1873, via R1917): `llvm_intrinsic`'s `*args` spread
     (`lower_pack_spread_argument`, `mir/calls.rs`) moves the whole
     `$variadic[*types]` pack into the call.
-  - Found while planning R743 (2026-10-23).
+  - The VM and Pliron read a `LitRefPack` element (`index` with
+    `TupleStorage`) as a tuple element; neither has run one yet.
+  - Found while planning R743 (2026-10-23); split from R1302.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1922 `get_loaded_kgen_pack` is a compiler rule, where upstream's
+  `VariadicPack` declares it over `variadic_ptr_map`**
+
+  `args.get_loaded_kgen_pack()`, which the bundled `llvm_intrinsic` calls,
+  is typed as the collector itself (`mc_infer.rs`) and lowered to it
+  (`expr_method.rs`), and the elaborator expands an intrinsic's spread
+  (`mono/spread.rs`), where upstream's method is `kgen.struct.load_indirect`
+  over `get_as_kgen_pack()`.
+  - Needs the `#kgen.param.expr<variadic_ptr_map, …>` and
+    `<variadic_ptrremove_map, …>` attributes in `mlir_applied_type`, as
+    parameter expressions that fold once the pack is bound, and
+    `kgen.struct.load_indirect`.
+  - Then declare `_kgen_element_types`, `_variadic_pointer_types`,
+    `_kgen_pack_with_pointer_type`, `get_as_kgen_pack`,
+    `_variadic_with_pointers_removed`, `_loaded_kgen_pack_type`, and
+    `get_loaded_kgen_pack` in `variadics.mojo`, and delete the rule.
+  - Probe: `rg get_loaded_kgen_pack crates` finds nothing, and
+    `llvm_intrinsic_shuffles.mojo` and `bit_count_ops.mojo` run on both
+    backends.
+  - Split from R1302 (2026-11-05).
+  - Depends on R1921.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1924 Upstream's `__get_litref_as_mvalue` and
+  `__get_address_as_owned_value` are not builtins**
+
+  Both are rejected as undefined, where the pin turns a `!lit.ref` into the
+  place it refers to and a `!kgen.pointer` into the owned value it holds.
+  - Probe: the bundled `VariadicPack.__getitem_param__` returns
+    `Pointer(_mlir_value=litref_elt)[]` where upstream returns
+    `__get_litref_as_mvalue(litref_elt)`.
+  - Probe: `VariadicPack.consume_elements` is not declared: upstream's body
+    passes `__get_address_as_owned_value(ptr._get_kgen_pointer())`, and the
+    bundled `Tuple`'s `unsafe_take_pointee()` spelling is rejected for an
+    element that is not trivially destructible ("requires a trivially
+    destructible element").
+  - Lever: type each beside `__get_mvalue_as_litref`
+    (`checker/operators.rs`): the first a place through the reference, the
+    second a move out of the address.
+  - Found while landing R1302 (2026-11-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1681 `Pointer` is the compiler's `TyKind::Pointer`, where upstream
   declares `struct Pointer` in `std/memory/pointer.mojo` over a
@@ -11658,7 +11768,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     intrinsic's checker and MIR arms.
   - Probe: `x.copy()` on a `@fieldwise_init` struct, an `Int32`, a
     `SIMD[DType.float32, 4]`, and a generic struct, on both backends.
-  - Depends on nothing.
+  - The copy constructor's case spells the template's name, not `Self`
+    (`S(copy=self)`), which re-infers the struct's parameters from the
+    argument: a struct with a type pack and a copy constructor fails
+    ("expected VP[*Ts], found VP[()]"). Spelling `Self` fails for a struct
+    with an origin parameter until R1923 lands.
+  - Probe: the bundled `VariadicPack` omits upstream's `__init__(out self,
+    *, copy: Self)` and takes the field-wise copy.
+  - Depends on R1923.
   - Model: Opus, Not Planned.
 
 - [ ] **R1833 `struct_field_types` answers no fields for a struct
@@ -12199,8 +12316,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     if hook:`) until `comptime if case` lands.
   - Probe: upstream's `comptime assert Ts.all_conforms_to[Writable]()` and
     `values._write_to(buffer, sep=sep, end=end)` are respelled as a
-    `comptime for` over the pack, which R1302's nominal `VariadicPack`
-    would declare.
+    `comptime for` over the pack, where the bundled `VariadicPack` now
+    declares `_write_to`, once R1921 makes `*values` one.
   - Found while landing R1287 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.

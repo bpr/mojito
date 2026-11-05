@@ -57,7 +57,12 @@ from std.builtin.float_literal import FloatLiteral
 from std.math import Absable, Roundable, abs, max, min, round
 from std.builtin.enum_like import EnumLike
 from std.builtin.tuple import Tuple
-from std.builtin.variadics import ParameterList, TypeList, VariadicList
+from std.builtin.variadics import (
+    ParameterList,
+    TypeList,
+    VariadicList,
+    VariadicPack,
+)
 from std.range import range
 from std.builtin.builtin_slice import Slice, slice
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration, next

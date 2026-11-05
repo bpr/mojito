@@ -1587,6 +1587,14 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::LitRef { element, .. } => {
             format!("LitRef${}", ty_raw_in(element, self_ty, mode))
         }
+        TyKind::LitRefPack { elements, .. } => format!(
+            "LitRefPack${}",
+            elements
+                .iter()
+                .map(|element| ty_raw_in(element, self_ty, mode))
+                .collect::<Vec<_>>()
+                .join("$")
+        ),
         // Application arguments participate in the mangled identity (so
         // `IteratorType[a]` and `IteratorType[b]` are distinct), except origins,
         // which erase from the runtime ABI like `TyKind::Pointer` origins above.
@@ -2694,6 +2702,16 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         TyKind::KgenPointer(element) => TyKind::KgenPointer(respell(element)).into(),
         TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: respell(element),
+            origin: origin.clone_bindable_place().map_or_else(
+                || origin.clone(),
+                |projection| {
+                    projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
+                },
+            ),
+        }
+        .into(),
+        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            elements: elements.iter().map(respell).collect(),
             origin: origin.clone_bindable_place().map_or_else(
                 || origin.clone(),
                 |projection| {

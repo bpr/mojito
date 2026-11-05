@@ -52,6 +52,9 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
         (TyKind::Pointer { .. }, TyKind::Pointer { .. })
         | (TyKind::KgenPointer(_), TyKind::KgenPointer(_))
         | (TyKind::LitRef { .. }, TyKind::LitRef { .. }) => true,
+        (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
+            a.len() == b.len()
+        }
         // A reference is one target word whatever its origin.
         (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability && ty_equivalent(&a.referent, &b.referent)
@@ -158,6 +161,9 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
         | (TyKind::KgenPointer(a), TyKind::KgenPointer(b))
         | (TyKind::LitRef { element: a, .. }, TyKind::LitRef { element: b, .. }) => {
             ty_equal_modulo_origins(a, b)
+        }
+        (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equal_modulo_origins(a, b))
         }
         (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args))
             if !a.is_simd() && !b.is_simd() =>
@@ -292,6 +298,7 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::Pointer { .. }
         | TyKind::KgenPointer(_)
         | TyKind::LitRef { .. }
+        | TyKind::LitRefPack { .. }
         | TyKind::Ref(_) => true,
         struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => !ty.is_closed(),
         _ => false,
@@ -348,6 +355,9 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         TyKind::Pointer { element, .. }
         | TyKind::KgenPointer(element)
         | TyKind::LitRef { element, .. } => erase_callable_environments(element),
+        TyKind::LitRefPack { elements, .. } => {
+            elements.iter_mut().for_each(erase_callable_environments);
+        }
         TyKind::Ref(reference) => erase_callable_environments(&mut reference.referent),
         _ => {}
     });

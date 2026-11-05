@@ -4,6 +4,7 @@
 //! storage through pointers or lane by lane and after moving it out through
 //! them,
 //! `kgen.struct.extract` of an element of a literal struct,
+//! `lit.ref.pack.extract` of an element reference of a reference pack,
 //! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the
 //! `pop.array` ops of `pop_array_ops.rs`, the
 //! `pop` and `index` ops of `pop_ops.rs` with its `pop.simd.shuffle`, and the LLVM
@@ -40,13 +41,14 @@ impl Checker {
         const DESTROYED: &str = "lit.ownership.mark_destroyed";
         const LLVM_INTRINSIC: &str = "pop.call_llvm_intrinsic";
         const STRUCT_EXTRACT: &str = "kgen.struct.extract";
+        const REF_PACK_EXTRACT: &str = "lit.ref.pack.extract";
         const SIMD_SHUFFLE: &str = "pop.simd.shuffle";
         const STRING_SIZE: &str = "pop.string.size";
         const STRING_ADDRESS: &str = "pop.string.address";
         if method == LLVM_INTRINSIC {
             return self.infer_llvm_intrinsic_op(span, method, call);
         }
-        if method == STRUCT_EXTRACT {
+        if matches!(method, STRUCT_EXTRACT | REF_PACK_EXTRACT) {
             return self.infer_kgen_struct_extract_op(span, method, call);
         }
         if method == SIMD_SHUFFLE {
@@ -134,6 +136,11 @@ impl Checker {
     /// typed as a compile-time subscript of that storage types it. The
     /// `index` attribute is a compile-time `Int`'s `__mlir_index__()`, as
     /// upstream's `_RegisterPackType.__getitem_param__` spells it.
+    ///
+    /// ``__mlir_op.`lit.ref.pack.extract`[index=…](p)`` reads the same way
+    /// from a reference pack `p` (`!lit.ref.pack`, `TyKind::LitRefPack`):
+    /// its `i`th element reference, a `!lit.ref` under the pack's origin,
+    /// as `VariadicPack.__getitem_param__` spells it.
     fn infer_kgen_struct_extract_op(
         &self,
         span: &SourceSpan,
@@ -196,16 +203,35 @@ impl Checker {
             )));
         };
         let operand_ty = self.infer(operand)?;
-        let TyKind::Tuple(elements) = operand_ty.kind() else {
-            return Err(invalid(&format!(
-                "operand #0 must be a '!kgen.struct', but got '{operand_ty}'"
-            )));
+        let (elements, origin) = match (name, operand_ty.kind()) {
+            ("lit.ref.pack.extract", TyKind::LitRefPack { elements, origin }) => {
+                (elements, Some(origin))
+            }
+            ("lit.ref.pack.extract", _) => {
+                return Err(invalid(&format!(
+                    "operand #0 must be a '!lit.ref.pack', but got '{operand_ty}'"
+                )));
+            }
+            (_, TyKind::Tuple(elements)) => (elements, None),
+            _ => {
+                return Err(invalid(&format!(
+                    "operand #0 must be a '!kgen.struct', but got '{operand_ty}'"
+                )));
+            }
         };
         let built = self.compile_dependent_ct_expr(index)?;
         if !built.meta().as_value().is_some_and(|ty| ty.is_int()) {
             return Err(invalid("attribute 'index' takes a compile-time 'Int'"));
         }
-        let result = self.tuple_storage_element(&elements.iter().collect::<Vec<_>>(), index)?;
+        let element = self.tuple_storage_element(&elements.iter().collect::<Vec<_>>(), index)?;
+        let result = match origin {
+            Some(origin) => TyKind::LitRef {
+                element,
+                origin: origin.clone(),
+            }
+            .into(),
+            None => element,
+        };
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::KgenStructExtract { index: built },
         ));

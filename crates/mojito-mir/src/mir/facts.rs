@@ -1672,6 +1672,7 @@ fn carries_references(ty: &Ty) -> bool {
         TyKind::Ref(reference) => carries_references(&reference.referent),
         TyKind::Pointer { .. }
         | TyKind::LitRef { .. }
+        | TyKind::LitRefPack { .. }
         | TyKind::Func(_)
         | TyKind::GenericFunc(_)
         | TyKind::Overload(_)

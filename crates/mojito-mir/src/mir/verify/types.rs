@@ -162,8 +162,17 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     }
     // So do a tuple's elements' origins, element by element.
     if let (TyKind::Tuple(found_elements), TyKind::Tuple(expected_elements))
-    | (TyKind::RuntimePack(found_elements), TyKind::RuntimePack(expected_elements)) =
-        (found.kind(), expected.kind())
+    | (TyKind::RuntimePack(found_elements), TyKind::RuntimePack(expected_elements))
+    | (
+        TyKind::LitRefPack {
+            elements: found_elements,
+            ..
+        },
+        TyKind::LitRefPack {
+            elements: expected_elements,
+            ..
+        },
+    ) = (found.kind(), expected.kind())
         && found_elements.len() == expected_elements.len()
         && found_elements
             .iter()
@@ -330,9 +339,10 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
         | TyKind::Pointer { element: inner, .. }
         | TyKind::KgenPointer(inner)
         | TyKind::LitRef { element: inner, .. } => contains_runtime_pack(inner),
-        TyKind::Tuple(elements) | TyKind::Variant(elements) | TyKind::Overload(elements) => {
-            elements.iter().any(contains_runtime_pack)
-        }
+        TyKind::Tuple(elements)
+        | TyKind::Variant(elements)
+        | TyKind::Overload(elements)
+        | TyKind::LitRefPack { elements, .. } => elements.iter().any(contains_runtime_pack),
         TyKind::Ref(reference) => contains_runtime_pack(&reference.referent),
         struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
             arguments.iter().any(|argument| match argument {
@@ -473,6 +483,16 @@ pub(super) fn instantiate_checked_type(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         )
+        .into(),
+        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            elements: elements
+                .iter()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            origin: origin.clone(),
+        }
         .into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
             size: size
@@ -684,9 +704,10 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         | TyKind::Pointer { element: inner, .. }
         | TyKind::KgenPointer(inner)
         | TyKind::LitRef { element: inner, .. } => contains_type_param(inner),
-        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
-            elements.iter().any(contains_type_param)
-        }
+        TyKind::Tuple(elements)
+        | TyKind::RuntimePack(elements)
+        | TyKind::Variant(elements)
+        | TyKind::LitRefPack { elements, .. } => elements.iter().any(contains_type_param),
         TyKind::Ref(reference) => contains_type_param(&reference.referent),
         kind if let Some(value) = kind.string_literal_value() => matches!(value, CtValue::Expr(_)),
         TyKind::IntLiteral(Some(value)) | TyKind::FloatLiteral(Some(value)) => {

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.160
+mojito-mir 1.161
 ```
 
-The writer emits 1.160. The reader accepts 1.0 through 1.160; *Schema 1.0*
+The writer emits 1.161. The reader accepts 1.0 through 1.161; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1115,6 +1115,12 @@ A 1.159 or older artifact that declares a type pack is rejected with a
 request to re-emit it (roadmap R1911). The package format moves to
 `mojito-package 185`.
 
+Schema 1.161 adds the type `lit_ref_pack { elements, origin }`, upstream's
+reference pack `!lit.ref.pack<:param_list<Trait> Ts, origin>`, the field
+the bundled `VariadicPack` holds: one `lit_ref` to each element of a type
+list, its `elements` a `tuple`'s (a type-pack spread standing for the pack
+until it is bound). The package format moves to `mojito-package 186`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1666,6 +1672,7 @@ pop_array { size, element } variadic_pack(type) variant([type...])
 pointer { element, origin }
 kgen_pointer { element }
 lit_ref { element, origin }
+lit_ref_pack { elements, origin }
 ref { referent, origin, mutability }
 ```
 
@@ -1745,6 +1752,11 @@ wraps (`Pointer[T, o]._mlir_type`), and `lit_ref { element, origin }`
 Both backends hold either as a `pointer`. The verifier compares two of a
 kind by element, erasing origins as it does for a `pointer`, and takes a
 `lit_ref` as a reference capability, as `ref.make` builds one.
+
+`lit_ref_pack { elements, origin }` (schema 1.161) is upstream's
+`!lit.ref.pack`, one `lit_ref` to each of `elements` under the one origin.
+Both backends hold it as an aggregate of the elements' addresses, the
+`!kgen.struct` of `!kgen.pointer`s upstream lowers it to.
 
 `index` (schema 1.123) is upstream's MLIR builtin `__mlir_type.index`, what
 `Indexer.__mlir_index__` returns and an `index` op computes over. Both

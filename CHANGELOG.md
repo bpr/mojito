@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled `std.builtin.variadics` declares upstream's `VariadicPack`
+  over its `!lit.ref.pack` field, now a type of its own
+  (`TyKind::LitRefPack`, MIR schema 1.161 `lit_ref_pack`, package format
+  186), and the prelude re-exports it. A signature can name it and read
+  `len(p)` and `p[i]` through `lit.ref.pack.extract` (R1302). No call
+  builds one yet: a `*args: *Ts` collector is still the tuple of its
+  elements (R1921), and `get_loaded_kgen_pack` is still the compiler's
+  (R1922).
+
 - A direct call passes a memory-only `read` temporary by the address of
   its storage, its call-result, argument-anchor, or capturing lambda's
   storage slot, as upstream's `lit.call` takes a `!lit.ref` of the rvalue

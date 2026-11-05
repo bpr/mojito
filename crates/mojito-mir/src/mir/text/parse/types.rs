@@ -169,6 +169,13 @@ impl Decoder {
                     self.unknown(fields, &["element", "origin"]);
                     TyKind::LitRef { element, origin }.into()
                 }
+                "lit_ref_pack" => {
+                    let elements =
+                        self.req(value, fields, "elements", |reader, v| Some(reader.types(v)))?;
+                    let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
+                    self.unknown(fields, &["elements", "origin"]);
+                    TyKind::LitRefPack { elements, origin }.into()
+                }
                 "pop_array" => {
                     let size = self.req(value, fields, "size", Self::array_size_slot)?;
                     let element = self.req(value, fields, "element", Self::ty)?;
