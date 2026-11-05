@@ -64,6 +64,16 @@ impl Checker {
             }
         };
         let collected = gathered.read();
+        // A reference result at a `mut` or `ref` parameter binds its
+        // referent, as upstream binds the returned reference to the
+        // parameter: it is never read out as a value.
+        for span in exclusive_reference_arguments(slots, conventions, args, kwargs)
+            .into_iter()
+            .filter(|arg| self.infer_reference_value(arg).is_some())
+            .map(Expr::source_span)
+        {
+            self.borrowed_reference_receivers.borrow_mut().insert(span);
+        }
         for span in borrowable_read_arguments(
             slots,
             conventions,
@@ -922,4 +932,28 @@ fn field_chain_root(expr: &Expr) -> Option<&str> {
         ExprKind::Member { object, .. } => field_chain_root(object),
         _ => None,
     }
+}
+
+/// The arguments a call binds to its `mut` and `ref` parameters.
+fn exclusive_reference_arguments<'a>(
+    slots: &[ArgSlot],
+    conventions: &[Option<ArgConvention>],
+    args: &'a [Expr],
+    kwargs: &'a [mojito_ast::ast::KwArg],
+) -> Vec<&'a Expr> {
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            matches!(
+                conventions.get(*index),
+                Some(Some(ArgConvention::Mut | ArgConvention::Ref))
+            )
+        })
+        .filter_map(|(_, slot)| match slot {
+            ArgSlot::Positional(position) => Some(&args[*position]),
+            ArgSlot::Keyword(position) => Some(&kwargs[*position].value),
+            ArgSlot::Default => None,
+        })
+        .collect()
 }

@@ -916,9 +916,10 @@ pub struct Checker {
     /// statement, `_ = f.params(1)`): no value is read, so no copy is
     /// required (upstream only warns that the value is unused).
     discarded_reference_results: RefCell<FactSet<SourceSpan>>,
-    /// Reference-result expressions used as method-call receivers. The call
-    /// borrows the referent for its `self` convention (consuming receivers
-    /// are gated separately), so the result is never read out as a value.
+    /// Reference-result expressions used as method-call receivers or bound
+    /// to a `mut` or `ref` parameter. The call borrows the referent for the
+    /// convention (consuming receivers are gated separately), so the result
+    /// is never read out as a value.
     borrowed_reference_receivers: RefCell<FactSet<SourceSpan>>,
     /// Each slice literal's operands (lower, upper, stride), by the
     /// checker-only argument standing for it while its subscript's overload

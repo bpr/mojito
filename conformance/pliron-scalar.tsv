@@ -991,6 +991,7 @@ assets/ok/reference_call_assignment_target.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_iteration_temporary_list.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reference_result_binds_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_result_view_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_return_forwarded_accessor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/refined_out_self_initializer.mojo	-	ineligible	no-scalar-entry-shape

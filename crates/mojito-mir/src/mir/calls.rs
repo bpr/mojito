@@ -2161,7 +2161,7 @@ impl<'a> Flatten<'a> {
         if let Some((object, _)) = expression.index_operands() {
             return self.lower_borrowed_element_read(expression, object);
         }
-        if expression.call_contract().is_some() {
+        if expression.call_contract().is_some() || expression.reference_result().is_some() {
             return self.lower_borrowed_reference_result(expression);
         }
         let name = self.name_spelled(expression)?;
@@ -2269,8 +2269,8 @@ impl<'a> Flatten<'a> {
         Some(dest)
     }
 
-    /// A borrowed reference result (`show(o.value())`, `f(d[k])` at a read
-    /// slot): the referent is read through the returned reference, as
+    /// A borrowed reference result (`show(o.value())`, `show(pick(a))`,
+    /// `f(d[k])` at a read slot): the referent is read through the returned reference, as
     /// upstream binds the `read` parameter to it, so its `__copyinit__`
     /// never runs for the pass. A referent owning no droppable storage is
     /// an ordinary value read.

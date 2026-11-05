@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A reference result passed to a `mut` or `ref` parameter binds its
+  referent, as the pin does, instead of being rejected as an implicit copy:
+  `c4(l[0])` over `ref x: S`, `bump(ps[0])` over `mut p: P`, and
+  `bump(pick(a))` with `S`/`P` only `Copyable` now compile and write in
+  place (R701). A free function's reference result at a `read` parameter
+  (`show(pick(a))`) is read through the returned reference rather than
+  copied.
+
 - A `read` heterogeneous collector (`*args: *Ts`, every `print`'s) is the
   bundled `VariadicPack`: the call builds the reference pack over its
   arguments' addresses (`lit.ref.pack.create`, MIR schema 1.162, package

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1930**.
+Next free ID: **R1931**.
 
 ## Ordered Work
 
@@ -2680,42 +2680,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - `two(lst[0], bl(lst))` over a `List` is rejected at the pin too, so
     the difference is specific to how the pin's `Dict` lookup reads.
   - Found while landing R686 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R701 A collection element passed to a `ref` parameter is rejected**
-
-  Problem: `def c4(ref x: S) -> Int` called as `c4(l[0])` over `List[S]`,
-  `S` only `Copyable`, fails with "value of type 'S' cannot be implicitly
-  copied ... (ordinary value read through a reference result)", where the
-  pin binds the element by reference.
-  - The generic `ref x: T` form fails the same way.
-  - Probe: a `read` parameter too: `value(pick(r))` over a `Movable`
-    `Res`, `pick(ref r: Res) -> ref [r] Res`, is rejected, where the pin
-    borrows the referent and prints its value.
-  - Probe: a conversion's read operand too: `Bool(os[0])` and `Bool(t[0])`
-    over a `List[Optional[T]]` and a tuple, `T` only `Copyable`, are
-    rejected, while the condition `if os[0]:` runs. `expect_bool` marks
-    such an element `borrowed_read_call_place`, but
-    `borrow_nominal_place_argument` admits only a bare name.
-  - Probe: a `mut` parameter too: `bump(ps[0])` over `List[P]`, `def
-    bump(mut p: P)`, `P` only `Copyable`, is rejected the same way, where
-    the pin writes the element in place (found landing R117, 2026-10-25).
-  - Probe: a call's reference result read by a read consumer.
-    `print(l.unsafe_get(0))` and `items.unsafe_get(0).write_repr_to(s)`
-    over `List[T]` copy the element, and `show(l.unsafe_get(0))` is
-    rejected even over a concrete `List[C]`, where the pin borrows both.
-    `lower_borrowed_read_argument` returns `None` for a call, which spells
-    no name (found landing R1354, 2026-10-25).
-  - Probe: a direct call's reference result at a `read` parameter of a
-    `Copyable` type is copied: `show(pick(a))`, `pick(ref m: M) -> ref[m]
-    M`, prints `copy 101` then `show 101`, where the pin binds the
-    parameter to the returned reference and prints `show 1` (found
-    landing R1917, 2026-11-04).
-  - The rejection is the checker's implicit-copy test on a reference
-    result (`crates/mojito-checker/src/checker.rs`), which treats the
-    `ref` slot as a consuming read.
-  - Found while landing R700 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10013,6 +9977,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R1930 A reference result at a memory-only `read` parameter is
+  passed as its loaded referent, not as the reference**
+
+  `show(pick(a))` and `show(h.get())` read the referent through the
+  hidden `$call_ref` handle slot and pass the load with no place, where
+  upstream's `lit.call` passes the returned `!lit.ref` itself.
+  - Retaining the handle's place (`lower_borrowed_reference_result`,
+    `mir/calls.rs`) for `mir::address_call_operands` makes the ownership
+    analysis reject the bundled library: "access to '$call_ref_r37'
+    conflicts with live reference '$call_ref_r37'", the `ref.make` of a
+    place `through` the handle conflicting with the handle's own loan.
+  - Fix: let a shared read through a handle slot coexist with that
+    slot's loan in the conflict check, then retain the place.
+  - Found while landing R701 (2026-11-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1919 An indirect call, a subscript, and a type-parameter
   construction pass by-address operands as loaded values beside their
   places**
@@ -10108,10 +10089,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     rule on found 10 fixtures (35 with `MOJITO_PRE_ELABORATION=0`, the rest
     `llvm_intrinsic`'s pack spread), each a probe then filed on R1921
     (landed 2026-11-05: a `read` collector's elements are addresses now),
-    R701, or R1458 (R1418 and R1917 have landed).
+    R701 (landed 2026-11-05; its loaded reference results are R1930), or
+    R1458 (R1418 and R1917 have landed).
   - Re-run the census, both ways, before landing it: the rule runs after
     every pass in a debug build.
-  - Depends on R1425, R1418, R1921, R701, R1458.
+  - Depends on R1425, R1418, R1921, R701, R1458, R1930.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
