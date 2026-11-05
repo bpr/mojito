@@ -361,6 +361,7 @@ assets/ok/dunder_vec2.mojo	main	exe-differential	sanitized
 assets/ok/dying_slot_copy_moves.mojo	main	exe-differential	sanitized
 assets/ok/element_store_from_same_list.mojo	main	exe-differential	sanitized
 assets/ok/entry_redeclares_library_names.mojo	main	exe-differential	sanitized
+assets/ok/enum_like_callable_binder_cases.mojo	main	exe-differential	sanitized
 assets/ok/enum_like_protocol.mojo	main	exe-differential	sanitized
 assets/ok/env_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/errno_strerror.mojo	main	exe-differential	sanitized

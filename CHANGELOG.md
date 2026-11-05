@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A hand-written `EnumLike` conformer now prints through `Writable`'s
+  default `_enum_reflection_write_to` (`Shape.Square(2)`), and a body
+  over a callable binder whose `comptime for` ranges over
+  `ParameterList[T._enum_case_names]()` runs, as do `IndexList`'s `+`
+  and comparisons over `_int_tuple_binary_apply`, `_int_tuple_compare`,
+  and `_bool_tuple_reduce` (R1880, R1879). The 2026-11-04 gate repair
+  fixed both; `assets/ok/enum_like_callable_binder_cases.mojo` pins them.
 - The MIR verifier rejects a destroy of a memory-only register — a
   `drop.reg` naming its destructor, or a `deinit`-receiver call on a
   register that is not a slot's storage handed over — as upstream's

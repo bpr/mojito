@@ -29,11 +29,9 @@ command cannot use both.
    `remove-unused-params` counts slot reads only for callables and packs
    (R1451). What is left:
    - R1874: a pack of callables is still a frame slot.
-   - R1880: a lifted compile-time application over a callable binder has
-     no MIR declaration.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1874 --task R1880 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1874 -n 0
    ```
 
 3. **Gap F: members reached by name, not called** (size, the largest
@@ -92,7 +90,7 @@ command cannot use both.
      application recompiles its callable's `where` clauses) and R1899 (a
      bare pack receiver bound by spelling) sit beside them.
    - The elaborator: R1875 → R1876 (a struct's origin parameters and its
-     associated-type rows), R1867, R1879, R1886, R1887, and R1872.
+     associated-type rows), R1867, R1886, R1887, and R1872.
    - The check: R1842, R1871, R1856, R1881, and the generator follow-ups
      of R1486: R1907, R1908, R1909.
    - The members under *H* below were filed against `Elab`'s arms or the
@@ -100,7 +98,7 @@ command cannot use both.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1905 --task R1898 --task R1899 -n 0
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1876 --task R1867 --task R1879 \
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1876 --task R1867 \
      --task R1886 --task R1887 --task R1872 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1842 --only R1871 --only R1856 \
      --only R1881 --only R1907 --only R1908 --only R1909 -n 0
@@ -212,7 +210,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 | gap | upstream's shape | open core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932, behind R359 | about 15 (below) | yes |
-| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1874, R1880 | R788, R378, R472, R508, R602 | yes |
+| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1874 | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1877, R1868, R1882, R1462, R160, R1544 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1891, R1892 → R1893 → R1894 | R1349, R1870, R1888 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1901–R1904 → R1905, R1898 | about 25 (below) | partial |

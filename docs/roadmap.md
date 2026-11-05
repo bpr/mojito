@@ -4879,49 +4879,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1880 A lifted compile-time application over every binder in
-  scope has no MIR declaration when one of them is a callable binder**
-
-  `h[T: EnumLike, //, f: def(Int) thin -> Int](this: T)` holding `comptime
-  names = ParameterList[T._enum_case_names]()` and `comptime for i in
-  range(names.length)` fails, "unsupported compile-time application of
-  `$comptime$h$c0`, which has no MIR declaration", where the pin runs it.
-  - Cause: `binders_read` (`checker/comptime_validation.rs`) does not know
-    the binders of a type-shaped value (`T._enum_case_names`), so the
-    application is over every binder in scope, `f` included, and
-    `request_applications` (`mir.rs`) finds no scope declaring `f`:
-    `EnclosingBinders::with` keeps a callable binder out of
-    `declarations`.
-  - Upstream has no lifted function; the binding is a parameter
-    expression, and a callable binder is a parameter reference (R1449).
-  - Probe: `print` of a hand-written `EnumLike & Writable` conformer
-    without `write_to`, through `Writable`'s default, once R1879 lands.
-  - Probe: `_int_tuple_binary_apply`, `_int_tuple_compare`, and
-    `_bool_tuple_reduce` (`std/utils/index.mojo`) request such an
-    application.
-  - Found while landing R1461 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1879 An instance substitutes the register types of the tail after
-  a taken `comptime if` arm that returns**
-
-  `def g[T: AnyType](this: T)` holding `comptime if conforms_to(T,
-  EnumLike): print("enum"); return`, then a `comptime for` over
-  `reflect[T].field_types()` that binds `ref field = r.field_ref[i](this)`,
-  fails for an `EnumLike` struct, "unsupported dependent type
-  `reflect[T].field_types()[…($iter)]` has no concrete MIR declaration
-  fact", where the pin prints `enum`.
-  - Lead: `splice_comptime_arm` (`native/mono/select.rs`) discards the
-    tail's blocks, but its registers keep their dependent types over the
-    unrolled loop's `$iter`, which substitution then cannot close.
-  - Probe: `print` of a hand-written `EnumLike & Writable` conformer
-    without `write_to` fails the same way inside `_reflection_write_to`,
-    where the pin prints `Flag.On(3)`.
-  - Found while landing R1461 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1881 A `comptime assert` message built as a `StaticString` of a
   `_get_kgen_string` concatenation does not check**
 
@@ -12002,8 +11959,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the text matches.
   - `Writable`'s defaults are now the trait's own bodies, so deleting the
     generation leaves an enum to `_enum_reflection_write_to`, which a
-    hand-written `EnumLike` conformer reaches today and fails (R1879,
-    R1880).
+    hand-written `EnumLike` conformer already runs
+    (`assets/ok/enum_like_callable_binder_cases.mojo`).
   - Found while landing `enum` (2026-10-25).
   - Depends on R1879 and R1880.
   - Model: Opus, Not Planned.
