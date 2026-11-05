@@ -936,7 +936,11 @@ impl Prog {
     /// other value, a boxed one included, is returned as it is.
     fn boxed(&self, value: Value, ty: Option<&Ty>) -> Value {
         match self.held_field(ty) {
-            Some((name, _)) if matches!(&value, Value::Struct { name: held, .. } if held == name) => {
+            Some((name, _))
+                if matches!(&value, Value::Struct { name: held, .. }
+                    if mojito_types::types::struct_template(held)
+                        == mojito_types::types::struct_template(name)) =>
+            {
                 value
             }
             Some((name, field)) => Value::Struct {
@@ -958,8 +962,11 @@ impl Prog {
 
     /// `value`, a value of `ty`, as the field it is held as where `ty` is a
     /// held struct and `value` is its box: [`Self::boxed`]'s inverse, which
-    /// a frame's entry and a call's result apply.
+    /// a frame's entry and a call's result apply. A box of another instance
+    /// of the template unboxes too: an erased instance (`_REMOVED_ARG`)
+    /// takes every instance agreeing on its kept arguments.
     fn unboxed(&self, value: Value, ty: Option<&Ty>) -> Value {
+        use mojito_types::types::struct_template;
         match (self.held_field(ty), value) {
             (
                 Some((name, _)),
@@ -967,7 +974,7 @@ impl Prog {
                     name: held,
                     mut fields,
                 },
-            ) if held == name && fields.len() == 1 => {
+            ) if struct_template(&held) == struct_template(name) && fields.len() == 1 => {
                 fields.pop().map_or(Value::None, |(_, value)| value)
             }
             (_, value) => value,

@@ -56,12 +56,29 @@ fn callable_value_parameter_is_a_hidden_typed_mir_local() {
         invoke.n_params, 1,
         "only `value` is an ordinary ABI parameter"
     );
-    assert!(invoke.var_names.iter().any(|name| name == "callback"));
-    assert!(
-        nested_instructions(&invoke.blocks)
-            .into_iter()
-            .any(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
-    );
+    // The binder is read as its parameter reference, upstream's
+    // `kgen.param.constant`, not from a frame slot.
+    assert!(!invoke.var_names.iter().any(|name| name == "callback"));
+    let instructions = nested_instructions(&invoke.blocks);
+    let callback = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Const {
+                dest,
+                k: mojito::mir::Const::Param(expr),
+            } if expr
+                .as_decl_ref()
+                .is_some_and(|reference| &*reference.name == "callback") =>
+            {
+                Some(*dest)
+            }
+            _ => None,
+        })
+        .expect("callback parameter reference");
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::CallIndirect { callee, .. } if *callee == callback
+    )));
 }
 
 #[test]

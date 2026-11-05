@@ -2850,6 +2850,8 @@ impl ComptimeThunks {
             let Some(ty) = application.meta().as_value().or(node.ty.as_ref()).cloned() else {
                 continue;
             };
+            // A callable binder is an argument like any other value binder:
+            // the thunk takes it as a parameter and calls its constant.
             let declared = |scope: &EnclosingBinders| {
                 args.iter()
                     .map(|arg| {
@@ -2857,6 +2859,7 @@ impl ComptimeThunks {
                         scope
                             .declarations
                             .iter()
+                            .chain(&scope.callables)
                             .find(|declaration| declaration.binder().id == reference.id)
                             .cloned()
                     })

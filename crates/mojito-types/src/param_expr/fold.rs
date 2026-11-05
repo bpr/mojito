@@ -955,7 +955,7 @@ mod tests {
         let CtValue::Simd { lanes, .. } = fold_infix(InfixOp::Ne, &nan, &nan).unwrap() else {
             panic!("an elementwise `pop.cmp ne` is a mask");
         };
-        assert_eq!(lanes, vec![CtLane::Bool(false); 2]);
+        assert_eq!(lanes, vec![CtLane::Bool(true); 2]);
     }
 
     #[test]

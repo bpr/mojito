@@ -6,10 +6,19 @@
 //! Negative coverage here (hand-built malformed MIR) pins each verifier check
 //! class.
 
+use mojito::check_program;
 use mojito::mir::verify::verify;
 use mojito::types::TyKind;
-use mojito::{check_program, parse};
 use std::path::Path;
+
+/// Parse `source` with the bundled library linked and elaborated, since
+/// `print`, `Bool`, and `StringLiteral` are its declarations, as upstream's
+/// prelude's are.
+fn parse(source: &str) -> Result<Vec<mojito::ast::Stmt>, String> {
+    let linked = mojito::link_source(source, std::path::Path::new("snippet.mojo"))
+        .map_err(|error| format!("{error:?}"))?;
+    mojito::elaborate(linked).map_err(|error| format!("{error:?}"))
+}
 
 // --- Negative coverage: hand-built malformed MIR per verifier check class ---
 
@@ -1981,6 +1990,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
     let reference_result = erased
         .functions
         .iter_mut()
+        .filter(|(name, _)| name == "main")
         .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -1999,6 +2009,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
     let reference_result = fabricated
         .functions
         .iter_mut()
+        .filter(|(name, _)| name == "main")
         .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -2023,7 +2034,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
 fn verifier_rejects_a_loan_destination_domain_with_a_foreign_root() {
     // The destination domain of a transferred-loan generation must root at
     // the generation's own reference slot.
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n@fieldwise_init\nstruct Two[origin: Origin[mut=True]]:\n    var a: Carrier[Self.origin]\n    var b: List[Int]\n\ndef stash_into_a(mut t: Two, var box: RefBox):\n    t.a.slot = box^\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var t = Two(Carrier(RefBox(whole)), List[Int](1))\n    var local: List[Int] = [9]\n    ref alias = local\n    stash_into_a(t, RefBox(alias))\n    print(1)\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n@fieldwise_init\nstruct Two[origin: Origin[mut=True]]:\n    var a: Carrier[Self.origin]\n    var b: List[Int]\n\ndef stash_into_a(mut t: Two, var box: RefBox):\n    t.a.slot = box^\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var t = Two(Carrier(RefBox(whole)), List[Int]())\n    var local: List[Int] = [9]\n    ref alias = local\n    stash_into_a(t, RefBox(alias))\n    print(1)\n";
     let mut prog = lower_source(source);
     let domain = prog
         .functions

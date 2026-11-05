@@ -561,6 +561,15 @@ pub fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeError> {
         (PrefixOp::Neg, Value::FloatLiteral(value)) => Ok(Value::FloatLiteral(value.neg())),
         (PrefixOp::Pos, value @ (Value::IntLiteral(_) | Value::FloatLiteral(_))) => Ok(value),
         (PrefixOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
+        // A `Bool` is held as its `!kgen.scalar<bool>` storage, a one-lane
+        // `bool` vector, which `Bool(x)` of a struct returns.
+        (
+            PrefixOp::Not,
+            Value::Simd {
+                dtype: Dtype::Bool,
+                lanes: SimdLanes::Bool(bits),
+            },
+        ) if bits.len() == 1 => Ok(Value::Bool(!bits[0])),
         // Bitwise inversion: two's complement on integers, logical on `Bool`.
         (PrefixOp::Invert, Value::Int(n)) => Ok(Value::Int(!n)),
         (PrefixOp::Invert, Value::UInt(n)) => Ok(Value::UInt(!n)),
@@ -2596,7 +2605,8 @@ mod tests {
             simd_bitcast(Dtype::UInt32, 1, &bytes).unwrap(),
             ints(Dtype::UInt32, &[4631])
         );
-        assert_eq!(hash_leaf_ty(&Value::Bool(true)), Some(Ty::bool()));
+        // A `Bool` hashes through its declared `__hash__`, so it is no leaf.
+        assert_eq!(hash_leaf_ty(&Value::Bool(true)), None);
         assert_eq!(
             hash_leaf_value(Value::Dtype(Dtype::Int8)),
             ints(Dtype::UInt8, &[i128::from(Dtype::Int8.code())])

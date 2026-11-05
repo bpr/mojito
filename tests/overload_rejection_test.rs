@@ -12,7 +12,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mojito::mir::lower_program;
-use mojito::{Compiler, ComptimeError, ModuleError, TypeError, check, elaborate, link, parse};
+use mojito::{Compiler, ComptimeError, ModuleError, TypeError, check, elaborate, link};
+
+/// Parse `source` with the bundled library linked, since `print`, `Bool`,
+/// and `StringLiteral` are its declarations, as upstream's prelude's are.
+fn parse(source: &str) -> Result<Vec<mojito::ast::Stmt>, mojito::module::ModuleError> {
+    mojito::link_source(source, std::path::Path::new("snippet.mojo"))
+}
 
 /// Parse + elaborate + type-check, returning the checker's verdict.
 fn check_source(source: &str) -> Result<(), TypeError> {

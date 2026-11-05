@@ -70,6 +70,14 @@ fn binding(bindings: &[(String, Value)], name: &str) -> Value {
         .clone()
 }
 
+/// A `Bool` value: the declared struct over its `_mlir_value` storage.
+fn boolean(value: bool) -> Value {
+    Value::Struct {
+        name: "Bool".to_string(),
+        fields: vec![("_mlir_value".to_string(), Value::Bool(value))],
+    }
+}
+
 fn assert_nominal(value: &Value, expected: &str) {
     match value {
         Value::Struct { name, .. }
@@ -92,8 +100,8 @@ fn evaluates_operator_precedence() {
 fn evaluates_unary_and_boolean_logic() {
     let e = run("var x: Int = -5\nvar y: Bool = not False\nvar z: Bool = 1 < 2 and 2 <= 2\n");
     assert_eq!(binding(&e, "x"), Value::Int(-5));
-    assert_eq!(binding(&e, "y"), Value::Bool(true));
-    assert_eq!(binding(&e, "z"), Value::Bool(true));
+    assert_eq!(binding(&e, "y"), boolean(true));
+    assert_eq!(binding(&e, "z"), boolean(true));
 }
 
 #[test]
@@ -105,7 +113,7 @@ fn string_concatenation_and_equality() {
         "var s: String = \"foo\" + \"bar\"\nvar eq: Bool = s == \"foobar\"\nvar lit: String = \"foo\" + \"bar\"\n",
     );
     assert!(matches!(binding(&e, "s"), Value::Struct { .. }));
-    assert_eq!(binding(&e, "eq"), Value::Bool(true));
+    assert_eq!(binding(&e, "eq"), boolean(true));
     assert_nominal(&binding(&e, "lit"), "String");
     assert_eq!(
         output("var lit: String = \"foo\" + \"bar\"\nprint(lit)\n"),
@@ -117,8 +125,8 @@ fn string_concatenation_and_equality() {
 fn and_or_short_circuit() {
     // Division by zero would fail at runtime if either right-hand side ran.
     let e = run("var a: Bool = False and (1 // 0 == 0)\nvar b: Bool = True or (1 // 0 == 0)\n");
-    assert_eq!(binding(&e, "a"), Value::Bool(false));
-    assert_eq!(binding(&e, "b"), Value::Bool(true));
+    assert_eq!(binding(&e, "a"), boolean(false));
+    assert_eq!(binding(&e, "b"), boolean(true));
 }
 
 #[test]
@@ -488,7 +496,7 @@ fn arbitrary_precision_literals_stay_exact_until_scalar_materialization() {
 #[test]
 fn exact_float_signed_zero_uses_numeric_equality_and_abs() {
     let e = run("var equal: Bool = -0.0 == 0.0\nvar magnitude: Float64 = abs(-0.0)\n");
-    assert_eq!(binding(&e, "equal"), Value::Bool(true));
+    assert_eq!(binding(&e, "equal"), boolean(true));
     let Value::Float64(magnitude) = binding(&e, "magnitude") else {
         panic!("abs(-0.0) did not materialize as Float64");
     };
@@ -507,15 +515,12 @@ fn exact_literals_materialize_at_collection_and_range_boundaries() {
 }
 
 #[test]
-fn integer_division_by_zero_is_a_runtime_error() {
-    assert!(matches!(
-        run_err("var x: Int = 1 // 0\n"),
-        RuntimeError::TypeError(_)
-    ));
-    assert!(matches!(
-        run_err("var x: Int = 1 % 0\n"),
-        RuntimeError::TypeError(_)
-    ));
+fn integer_division_by_zero_is_zero() {
+    // `SIMD.__floordiv__` and `__mod__` are upstream's bodies, which select
+    // `0` for an integral zero divisor rather than trapping.
+    let e = run("var x: Int = 1 // 0\nvar y: Int = 1 % 0\n");
+    assert_eq!(binding(&e, "x"), Value::Int(0));
+    assert_eq!(binding(&e, "y"), Value::Int(0));
 }
 
 #[test]
@@ -548,7 +553,7 @@ fn float_arithmetic_and_division() {
 fn uint_arithmetic_via_conversions() {
     let e = run("var u: UInt = UInt(10)\nu = u - UInt(3)\nvar t: Bool = u == UInt(7)\n");
     assert_eq!(binding(&e, "u"), Value::UInt(7));
-    assert_eq!(binding(&e, "t"), Value::Bool(true));
+    assert_eq!(binding(&e, "t"), boolean(true));
 }
 
 #[test]
@@ -801,8 +806,8 @@ fn self_typed_trait_method_runs() {
     let e = run(
         "trait Eq2:\n    def same(self, other: Self) -> Bool:\n        ...\n\n@fieldwise_init\nstruct P(Eq2):\n    var x: Int\n\n    def same(self, other: Self) -> Bool:\n        return self.x == other.x\n\nvar r: Bool = P(1).same(P(1))\nvar q: Bool = P(1).same(P(2))\n",
     );
-    assert_eq!(binding(&e, "r"), Value::Bool(true));
-    assert_eq!(binding(&e, "q"), Value::Bool(false));
+    assert_eq!(binding(&e, "r"), boolean(true));
+    assert_eq!(binding(&e, "q"), boolean(false));
 }
 
 // --- Value parameters + comptime (Phase 2) ---
@@ -1355,9 +1360,9 @@ fn list_membership_and_not_in() {
     let e = run(
         "var xs: List[Int] = [1, 2, 3]\nvar a: Bool = 2 in xs\nvar b: Bool = 5 in xs\nvar c: Bool = 5 not in xs\n",
     );
-    assert_eq!(binding(&e, "a"), Value::Bool(true));
-    assert_eq!(binding(&e, "b"), Value::Bool(false));
-    assert_eq!(binding(&e, "c"), Value::Bool(true));
+    assert_eq!(binding(&e, "a"), boolean(true));
+    assert_eq!(binding(&e, "b"), boolean(false));
+    assert_eq!(binding(&e, "c"), boolean(true));
 }
 
 #[test]
@@ -1365,14 +1370,14 @@ fn string_substring_membership() {
     let e = run(
         "var s: String = \"hello\"\nvar a: Bool = \"ell\" in s\nvar b: Bool = \"z\" not in s\n",
     );
-    assert_eq!(binding(&e, "a"), Value::Bool(true));
-    assert_eq!(binding(&e, "b"), Value::Bool(true));
+    assert_eq!(binding(&e, "a"), boolean(true));
+    assert_eq!(binding(&e, "b"), boolean(true));
 }
 
 #[test]
 fn membership_coerces_numeric_search_value() {
     let e = run("var xs: List[Float64] = [1.0, 2.0, 3.0]\nvar a: Bool = 2 in xs\n");
-    assert_eq!(binding(&e, "a"), Value::Bool(true));
+    assert_eq!(binding(&e, "a"), boolean(true));
 }
 
 #[test]
@@ -1586,7 +1591,7 @@ fn float64_keeps_full_precision_unlike_float32() {
     let e = run(
         "var a: Float64 = 0.1\nvar big: SIMD[DType.float64, 1] = SIMD[DType.float64, 1](0.1)\nvar eq: Bool = big == a\n",
     );
-    assert_eq!(binding(&e, "eq"), Value::Bool(true));
+    assert_eq!(binding(&e, "eq"), boolean(true));
     let f32 = run("var s: SIMD[DType.float32, 1] = SIMD[DType.float32, 1](0.1)\n");
     // The float32 lane is rounded, so it differs from the exact f64 0.1.
     assert_ne!(
@@ -1628,7 +1633,7 @@ fn inferred_var_takes_the_values_natural_type() {
     assert_eq!(binding(&e, "f"), Value::Float64(3.5));
     // An un-annotated string binding materializes the nominal String.
     assert_nominal(&binding(&e, "s"), "String");
-    assert_eq!(binding(&e, "b"), Value::Bool(true));
+    assert_eq!(binding(&e, "b"), boolean(true));
     assert_eq!(binding(&e, "g"), Value::Int(3));
 }
 

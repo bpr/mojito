@@ -1525,9 +1525,17 @@ fn dispatched_copy_of_builtin_instance_is_value_copy() {
             } if method == "copy" => Some(resolved.as_deref()),
             _ => None,
         });
-        if matches!(instance.param_types[0].kind(), TyKind::Struct(..)) {
+        // A `SIMD` (`Int`, `UInt8`) is the declared struct, whose `copy` is
+        // its own member, as a `String`'s is.
+        let param = &instance.param_types[0];
+        let owner = if param.is_simd() {
+            Some("SIMD.copy")
+        } else {
+            matches!(param.kind(), TyKind::Struct(..)).then_some("String.copy")
+        };
+        if let Some(owner) = owner {
             assert!(
-                copy_call.is_some_and(|target| target.is_some_and(|t| t.contains("String.copy"))),
+                copy_call.is_some_and(|target| target.is_some_and(|t| t.contains(owner))),
                 "{name}: a struct's copy stays its `copy` call"
             );
             continue;
@@ -1574,9 +1582,16 @@ fn dispatched_copy_through_reference_binding_is_value_copy() {
             } if method == "copy" => Some(resolved.as_deref()),
             _ => None,
         });
-        if name.contains("String") {
+        // An `Int` is the declared `SIMD` struct, whose `copy` is its own
+        // member, as a `String`'s is.
+        let owner = if name.contains("String") {
+            Some("String.copy")
+        } else {
+            name.contains("TInt").then_some("SIMD.copy")
+        };
+        if let Some(owner) = owner {
             assert!(
-                copy_call.is_some_and(|target| target.is_some_and(|t| t.contains("String.copy"))),
+                copy_call.is_some_and(|target| target.is_some_and(|t| t.contains(owner))),
                 "{name}: a struct's copy stays its `copy` call"
             );
             continue;
@@ -2589,7 +2604,14 @@ const WBOX_SOURCE: &str = "@fieldwise_init\n\
 
 #[test]
 fn a_display_member_that_reads_no_struct_parameter_is_one_instance() {
-    assert_one_member_instance(WBOX_SOURCE, "WBox", "write_to", "WBox.write_to$mono");
+    // `print` hands `write_to` a `String` writer, whose type keys the
+    // instance; the struct's parameter does not.
+    assert_one_member_instance(
+        WBOX_SOURCE,
+        "WBox",
+        "write_to",
+        "WBox.write_to$mono$TString",
+    );
 }
 
 #[test]
@@ -3168,7 +3190,12 @@ fn a_removed_argument_left_out_evaluates_no_default() {
     let defaults = instructions(&function(&specialized, "main").blocks)
         .into_iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::Call { func, .. } if func.0.starts_with("$default$") => Some(func.0.clone()),
+            // `print`'s own `file` default is the library call's.
+            MirInstr::Call { func, .. }
+                if func.0.starts_with("$default$") && !func.0.starts_with("$default$print$") =>
+            {
+                Some(func.0.clone())
+            }
             _ => None,
         })
         .collect::<Vec<_>>();

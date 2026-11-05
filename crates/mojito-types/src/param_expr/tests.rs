@@ -1160,11 +1160,24 @@ fn answered_type_member_closes_its_enclosing_expression() {
 #[test]
 fn frozen_collection_parameter_projection() {
     let context = ParamContext::detached();
+    // `List` stores an `Allocation` whose `ThinAllocation` holds the buffer.
     let list = |memory, size| CtValue::Struct {
         name: "List$mono$Int".into(),
         fields: vec![
-            ("data".into(), CtValue::Pointer { memory, offset: 0 }),
-            ("size".into(), CtValue::Int(size)),
+            (
+                "_storage".into(),
+                CtValue::Struct {
+                    name: "Allocation$mono$TInt".into(),
+                    fields: vec![(
+                        "_alloc".into(),
+                        CtValue::Struct {
+                            name: "ThinAllocation$mono$TInt".into(),
+                            fields: vec![("_ptr".into(), CtValue::Pointer { memory, offset: 0 })],
+                        },
+                    )],
+                },
+            ),
+            ("_len".into(), CtValue::Int(size)),
         ],
     };
     let value = list(Some(vec![Some(CtValue::Int(4)), None]), 1);

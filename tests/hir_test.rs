@@ -21,8 +21,8 @@ fn checked_function_cfg(src: &str, function: &str) -> Cfg {
     Cfg::build_checked_fn(&checked, &params, &body)
 }
 
-/// [`checked_function_cfg`] with the bundled library linked, which a
-/// `comptime for` over a `range` steps through.
+/// [`checked_function_cfg`] with the bundled library linked and elaborated,
+/// for a snippet naming its declarations (`print`, `Bool`, `range`).
 fn linked_function_cfg(src: &str, function: &str) -> Cfg {
     let linked = mojito::link_source(src, std::path::Path::new("hir_test.mojo")).expect("link");
     let program = mojito::elaborate(linked).expect("elaborate");
@@ -468,7 +468,7 @@ fn nested_loop_in_try_part_takes_a_fresh_label() {
 
 #[test]
 fn dead_region_op_is_erased() {
-    let cfg = checked_function_cfg(
+    let cfg = linked_function_cfg(
         "def f(x: Int) -> Int:\n    return 1\n    if x > 0:\n        var y = x\n        print(y)\n    return 3\n",
         "f",
     );
@@ -649,13 +649,10 @@ fn checked_hir_carries_nested_declaration_and_call_binding_identity() {
 
 #[test]
 fn checked_hir_next_retains_a_shadowed_loop_binder_identity() {
-    let program = mojito::parse(
+    let cfg = linked_function_cfg(
         "def main():\n    var item = 1\n    var items: List[Int] = [40]\n    for item in items:\n        def read() {item} -> Int:\n            return item\n        print(read())\n",
-    )
-    .expect("parse");
-    let checked = mojito::check_program(&program).expect("check");
-    let body = root_def_body(&checked, 0);
-    let cfg = Cfg::build_checked_fn(&checked, &[], &body);
+        "main",
+    );
     let outer = cfg
         .g
         .node_weights()
@@ -715,7 +712,7 @@ fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
 #[test]
 fn checked_hir_reference_yielding_call_next_retains_a_reference_result() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
-    let cfg = checked_function_cfg(source, "main");
+    let cfg = linked_function_cfg(source, "main");
     let instructions: Vec<_> = cfg
         .g
         .node_weights()
@@ -890,7 +887,7 @@ fn region_bind_dests(cfg: &Cfg, region: &HirRegion) -> Vec<u32> {
 #[test]
 fn try_region_resolves_a_name_by_its_binding() {
     let src = "def main():\n    var h = 1\n    if True:\n        var h = 2\n        try:\n            h = 5\n            print(h)\n        except e:\n            print(e)\n";
-    let cfg = checked_function_cfg(src, "main");
+    let cfg = linked_function_cfg(src, "main");
     let (body, _) = try_ops(&cfg)[0];
     let dests = region_bind_dests(&cfg, body);
     assert_eq!(dests.len(), 1);
@@ -906,7 +903,7 @@ fn try_region_resolves_a_name_by_its_binding() {
 #[test]
 fn sequential_except_names_get_distinct_slots() {
     let src = "def main():\n    try:\n        raise Error(\"a\")\n    except e:\n        print(e)\n    try:\n        raise Error(\"b\")\n    except e:\n        print(e)\n";
-    let cfg = checked_function_cfg(src, "main");
+    let cfg = linked_function_cfg(src, "main");
     let handlers: Vec<u32> = try_ops(&cfg)
         .into_iter()
         .map(|(_, except)| {

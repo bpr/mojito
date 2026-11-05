@@ -969,7 +969,8 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .any(|finding| finding.contains("attribute constant is read at `Int`")),
+                .any(|finding| finding
+                    .contains("attribute constant `#pop.fmf<fast>` is read at `Int`")),
             "{findings:?}"
         );
         let findings = super::super::verify_function_in(

@@ -5,7 +5,13 @@
 //! `comptime for` unrolls with the loop variable substituted as a literal.
 
 use mojito::types::{Ty, TyKind};
-use mojito::{Compiler, CtValue, elaborate, parse};
+use mojito::{Compiler, CtValue, elaborate};
+
+/// Parse `source` with the bundled library linked, since `print`, `Bool`,
+/// and `StringLiteral` are its declarations, as upstream's prelude's are.
+fn parse(source: &str) -> Result<Vec<mojito::ast::Stmt>, mojito::module::ModuleError> {
+    mojito::link_source(source, std::path::Path::new("snippet.mojo"))
+}
 
 fn run(src: &str) -> Result<String, String> {
     run_compiled(src)

@@ -126,9 +126,6 @@ struct ArgumentAccess {
     carried: Vec<(OriginPlace, bool)>,
     /// The callee only reads the places the argument's type carries.
     carried_read_only: bool,
-    /// A type pack's element, which binds a type of its own: two elements
-    /// share no binder their carried origins could meet in.
-    pack_element: bool,
 }
 
 impl ArgumentAccess {
@@ -139,7 +136,6 @@ impl ArgumentAccess {
             own_judged: false,
             carried: Vec::new(),
             carried_read_only,
-            pack_element: false,
         }
     }
 
@@ -150,19 +146,6 @@ impl ArgumentAccess {
             Some((_, known_mutable)) => *known_mutable |= mutable,
             None => self.carried.push((place, mutable)),
         }
-    }
-
-    /// Whether `self`'s own place is mutable and overlaps `other`'s own.
-    fn own_overlaps(&self, other: &Self) -> bool {
-        self.own
-            .iter()
-            .filter(|(_, mutable)| *mutable)
-            .any(|(place, _)| {
-                other
-                    .own
-                    .iter()
-                    .any(|(theirs, _)| places_overlap(place, theirs))
-            })
     }
 
     /// Whether a mutable path of `self` overlaps any path of `other`,
@@ -419,7 +402,6 @@ impl Checker {
                     callee.nested_origins.read_only(),
                 );
                 access.own_judged = true;
-                access.pack_element = types.first().is_some_and(is_pack_element);
                 access.own = self.own_place(
                     argument,
                     collected.convention,
@@ -434,14 +416,8 @@ impl Checker {
         }
         for (left, first) in accesses.iter().enumerate() {
             for second in &accesses[left + 1..] {
-                let (first_mutable, second_mutable) = if first.pack_element && second.pack_element {
-                    (first.own_overlaps(second), second.own_overlaps(first))
-                } else {
-                    (
-                        first.mutably_overlaps(second),
-                        second.mutably_overlaps(first),
-                    )
-                };
+                let first_mutable = first.mutably_overlaps(second);
+                let second_mutable = second.mutably_overlaps(first);
                 if !first_mutable && !second_mutable {
                     continue;
                 }
@@ -509,6 +485,10 @@ impl Checker {
                 let Some(info) = self.structs.get(name) else {
                     return;
                 };
+                // Upstream's `StringSpan[origin: ImmOrigin]` only ever reads
+                // what it views, where the bundled one keeps a `mut`
+                // parameter (R1916).
+                let read_only = mojito_types::types::is_stdlib_string_span_struct(name);
                 for ((_, param), argument) in info
                     .origin_slots()
                     .into_iter()
@@ -518,6 +498,7 @@ impl Checker {
                         continue;
                     };
                     let mutable = match param.origin_mutability.as_ref().map(|e| &e.kind) {
+                        _ if read_only => Some(false),
                         Some(ExprKind::Bool(true)) => Some(true),
                         Some(ExprKind::Bool(false)) => Some(false),
                         _ => None,

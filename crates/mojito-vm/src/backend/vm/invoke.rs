@@ -166,6 +166,17 @@ impl VmBackend {
         // left to the callee by a call shape the fill does not name.
         let make_default = |i: usize| -> Result<Value, RuntimeError> {
             match &sig.defaults[i] {
+                // A literal-filled `String` default reads as its text, as
+                // the native backend's does: its constructor is a generator
+                // over the literal, whose instance no call names.
+                Some(CheckedConst::Construct { arg, .. })
+                    if let CheckedConst::String(text) = &**arg
+                        && prog
+                            .declared_struct(sig.param_types.get(i))
+                            .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct) =>
+                {
+                    self.nominal_string_value(prog, text)
+                }
                 Some(CheckedConst::Construct { target, arg }) => self.call_named(
                     prog,
                     target,

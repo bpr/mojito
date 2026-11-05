@@ -304,25 +304,28 @@ impl Checker {
         if self.is_parameter_read(source) {
             return Err(TypeError::ParameterTransfer);
         }
-        // A call's reference result is an lvalue no tracked root holds.
-        if self
-            .node_facts
-            .borrow()
-            .get(&source.source_span())
-            .and_then(|facts| facts.adjustment.as_deref())
-            .is_some_and(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                )
-            })
+        // A call's reference result is an lvalue no tracked root holds; a
+        // trivial register value read through it is still copied.
+        let trivial = self.is_trivial_register_passable(ty);
+        if !trivial
+            && self
+                .node_facts
+                .borrow()
+                .get(&source.source_span())
+                .and_then(|facts| facts.adjustment.as_deref())
+                .is_some_and(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                    )
+                })
         {
             return Err(TypeError::UntrackedTransfer);
         }
         if !self.designates_place(source) {
             return Ok(TransferVerdict::PassThrough);
         }
-        if self.is_trivial_register_passable(ty) {
+        if trivial {
             return Ok(TransferVerdict::TrivialCopy);
         }
         let root = match self.transfer_root(source)? {

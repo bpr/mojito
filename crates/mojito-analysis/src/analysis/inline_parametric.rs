@@ -1695,8 +1695,12 @@ impl<'c> Inliner<'_, 'c> {
             };
             if let Some(forward) = caller.instrs[run..].iter().rposition(|instruction| {
                 matches!(instruction, MirInstr::UseVar { var, mode: UseMode::Forward, .. } if var == slot)
-            }) {
-                caller.instrs.remove(run + forward);
+            }) && let MirInstr::UseVar { dest: forwarded, .. } = caller.instrs.remove(run + forward)
+            {
+                // The forward's register goes with it, as an erased op's
+                // result does.
+                function.reg_types.remove(&forwarded.0);
+                function.spans.0.remove(&forwarded.0);
             }
         }
         let var_base = function.n_vars as VarId;

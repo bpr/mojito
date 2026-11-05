@@ -9,9 +9,18 @@ use mojito::mir::{
     nested_instructions,
 };
 use mojito::types::TyKind;
-use mojito::{Compiler, SemanticAdjustment, Ty, parse};
+use mojito::{Compiler, SemanticAdjustment, Ty};
 use std::collections::HashMap;
 use std::path::Path;
+
+/// Parse `source` with the bundled library linked and elaborated, since
+/// `print`, `Bool`, and `StringLiteral` are its declarations, as upstream's
+/// prelude's are.
+fn parse(source: &str) -> Result<Vec<mojito::ast::Stmt>, String> {
+    let linked = mojito::link_source(source, std::path::Path::new("snippet.mojo"))
+        .map_err(|error| format!("{error:?}"))?;
+    mojito::elaborate(linked).map_err(|error| format!("{error:?}"))
+}
 
 /// `source` linked against the bundled standard library and elaborated:
 /// `Int`'s operators are `SIMD`'s library dunders, which only a linked
@@ -362,7 +371,8 @@ fn conversion_temporary_argument_binds_a_read_temporary() {
     // `Bool(make())`, the inlined `Bool.__init__[T: Boolable]`, reads its
     // temporary argument from its call-result slot, which dies after the
     // conversion; `Bool(o)` over a named `o` reads `o` where it lies and
-    // binds none.
+    // binds none. Only an `Optional` slot is the conversion's: `print`'s
+    // omitted `sep` and `end` defaults bind call-result slots of their own.
     let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef make() -> Optional[M]:\n    return Optional(M(1))\n\ndef main():\n    print(Bool(make()))\n";
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -375,7 +385,11 @@ fn conversion_temporary_argument_binds_a_read_temporary() {
             .flat_map(|block| &block.instrs)
             .any(|instr| {
                 matches!(instr, MirInstr::DropVar { var, .. }
-                if function.var_names[*var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT))
+                if function.var_names[*var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
+                    && function.var_tys.get(var).is_some_and(|ty| matches!(
+                        ty.kind(),
+                        TyKind::Struct(name, _) if name == "Optional"
+                    )))
             })
     };
     assert!(drops_a_call_result(main), "{main:#?}");
@@ -743,12 +757,14 @@ fn verify_rejects_an_untyped_used_slot() {
     assert!(errors.is_empty(), "{errors:?}");
 }
 
-/// Compile `source` and lower its checked program to MIR.
+/// Compile `source` and return its checked program's MIR, lowered as the
+/// driver lowers it: beside the imported std package's declarations, which
+/// declare `SIMD` and `Bool` for its `struct.create`s.
 fn checked_program_mir(source: &str) -> mojito::mir::MirProgram {
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -1623,7 +1639,7 @@ fn augmented_mutating_index_reloads_typed_source_before_setter() {
 }
 
 #[test]
-fn implicitly_copied_tuple_transform_receivers_do_not_retain_a_consuming_place() {
+fn implicitly_copied_tuple_transform_receivers_consume_a_call_result_slot() {
     let source = "def main():\n    var pair = Tuple(1, 2)\n    var suffix = Tuple(3)\n    var reversed = pair.reverse()\n    var joined = pair.concat(suffix)\n    print(pair, suffix, reversed, joined)\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -1675,7 +1691,18 @@ fn implicitly_copied_tuple_transform_receivers_do_not_retain_a_consuming_place()
         })
         .collect::<Vec<_>>();
     assert_eq!(calls.len(), 2, "{calls:#?}");
-    assert!(calls.iter().all(|(_, place)| place.is_none()), "{calls:#?}");
+    // The copy lives in a call-result slot the `deinit` receiver consumes,
+    // never in the source's place.
+    assert!(
+        calls
+            .iter()
+            .all(|(_, place)| place.as_ref().is_some_and(|place| {
+                place.is_whole_root()
+                    && main.var_names[place.root as usize]
+                        .starts_with(mojito::mir::CALL_RESULT_SLOT)
+            })),
+        "{calls:#?}"
+    );
     let pair = main
         .var_names
         .iter()
@@ -1980,7 +2007,7 @@ fn memory_only_slice_subscript_result_is_read_from_its_call_result_slot() {
 }
 
 #[test]
-fn parameterized_implicit_receiver_copy_drops_the_source_place_metadata() {
+fn parameterized_implicit_receiver_copy_consumes_a_call_result_slot() {
     let source = "@fieldwise_init\nstruct Counter(ImplicitlyCopyable):\n    var value: Int\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter.take_param[2]())\n    print(counter.value)\n";
     let mir = lower_program(&linked(source)).expect("checked lowering");
     let main = &mir
@@ -2003,7 +2030,15 @@ fn parameterized_implicit_receiver_copy_drops_the_source_place_metadata() {
             _ => None,
         })
         .expect("parameterized method call");
-    assert!(call.0.is_none());
+    // The copy lives in a call-result slot the `deinit` receiver consumes,
+    // never in `counter`'s place.
+    assert!(
+        call.0.as_ref().is_some_and(|place| {
+            place.is_whole_root()
+                && main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
+        }),
+        "{main:#?}"
+    );
     assert_eq!(call.1.len(), 1);
     let counter = main
         .var_names
@@ -2163,13 +2198,15 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
         .find(|(name, _)| name == "main")
         .expect("main MIR")
         .1;
+    // `range` is the library's nominal iterator: its element is the result
+    // of its raising `__next__`.
     let element = nested_instructions(&main.blocks)
         .into_iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Next { dest, .. } => Some(*dest),
+            MirInstr::MethodCall { dest, method, .. } if method == "__next__" => Some(*dest),
             _ => None,
         })
-        .expect("bounded iterator Next");
+        .expect("bounded iterator __next__");
     assert_eq!(main.reg_types.get(&element.0), Some(&Ty::int()));
     assert!(
         nested_instructions(&main.blocks)
@@ -2199,7 +2236,8 @@ fn lowers_a_simple_function_body() {
         matches!(mir.blocks[0].term, MirTerm::Return(Some(_))),
         "returns a value"
     );
-    // The sum is one `BinOp` over the two constants, bound by one `DefVar`.
+    // The sum is one call of `IntLiteral`'s declared `__add__` over the two
+    // constants, bound by one `DefVar`.
     let ops = |matches: fn(&MirInstr) -> bool| {
         mir.blocks[0]
             .instrs
@@ -2207,7 +2245,15 @@ fn lowers_a_simple_function_body() {
             .filter(|instruction| matches(instruction))
             .count()
     };
-    assert_eq!(ops(|i| matches!(i, MirInstr::BinOp { .. })), 1);
+    assert_eq!(
+        ops(|i| matches!(
+            i,
+            MirInstr::MethodCall { resolved: Some(target), .. } if target == "IntLiteral.__add__"
+        )),
+        1,
+        "{:#?}",
+        mir.blocks[0].instrs
+    );
     assert_eq!(ops(|i| matches!(i, MirInstr::DefVar { .. })), 1);
 
     // VarId consistency: the `DefVar` and the returned `UseVar` name the same var.
@@ -2514,7 +2560,8 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
             && args.is_empty()
     }));
     // Each `index` casts to the `Int` the subscript takes, as upstream's
-    // `index(idx)` does.
+    // `index(idx)` does: a cast to `Int`'s `!kgen.simd` storage, which the
+    // declared `SIMD` struct wraps.
     let casts = main
         .blocks
         .iter()
@@ -2524,11 +2571,28 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(calls.iter().all(|(call, ..)| {
-        casts
+    let wrapped = |storage: &Reg| {
+        main.blocks
             .iter()
-            .any(|(dest, value)| value == call && main.reg_types.get(&dest.0) == Some(&Ty::int()))
-    }));
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| {
+                matches!(
+                    instruction,
+                    MirInstr::MakeStruct { dest, fields }
+                        if fields.as_slice() == [*storage]
+                            && main.reg_types.get(&dest.0) == Some(&Ty::int())
+                )
+            })
+    };
+    assert!(
+        calls.iter().all(|(call, ..)| {
+            casts
+                .iter()
+                .any(|(dest, value)| value == call && wrapped(dest))
+        }),
+        "{:#?}",
+        main.blocks
+    );
 }
 
 #[test]
@@ -3195,17 +3259,18 @@ fn break_crossing_try_is_a_labelled_break_in_the_try_body() {
         })
         .expect("the for loop");
     assert!(label.is_some(), "{main:#?}");
-    let try_body = nested_instructions(body)
-        .into_iter()
-        .find_map(|instruction| match instruction {
-            MirInstr::Try { body, .. } => Some(body),
-            _ => None,
-        })
-        .expect("the try in the loop");
+    // The loop's raising `__next__` call sits in a `try` of its own; the
+    // source `try` is the one whose body breaks out of the loop.
     assert!(
-        try_body.iter().any(
-            |block| matches!(block.term, MirTerm::Break { label: found, .. } if found == label)
-        ),
+        nested_instructions(body)
+            .into_iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::Try { body, .. } => Some(body),
+                _ => None,
+            })
+            .any(|try_body| try_body.iter().any(
+                |block| matches!(block.term, MirTerm::Break { label: found, .. } if found == label)
+            )),
         "{main:#?}"
     );
     assert!(
@@ -3341,7 +3406,13 @@ fn list_element_references_lower_with_interior_generation_metadata() {
         .iter()
         .enumerate()
         .find_map(|(index, instruction)| match instruction {
-            MirInstr::LoadPlace { place, .. } if place.through == Some(reference) => Some(index),
+            // `print`'s pack element is read through a reference to the
+            // place, which observes the stale generation as a load would.
+            MirInstr::LoadPlace { place, .. } | MirInstr::MakeRef { place, .. }
+                if place.through == Some(reference) =>
+            {
+                Some(index)
+            }
             _ => None,
         })
         .expect("the final print reads through the local reference");
@@ -4413,23 +4484,52 @@ fn pack_element_read_argument_retains_its_place() {
         .position(|name| name == "value")
         .expect("slot value") as u32;
     let instructions = nested_instructions(&build.blocks);
-    for callee in ["print", "show"] {
-        let places = instructions
+    let places = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func, arg_places, ..
+            } if func.0 == "show" => Some(arg_places.clone()),
+            _ => None,
+        })
+        .expect("call of show");
+    assert!(
+        places
             .iter()
-            .find_map(|instruction| match instruction {
-                MirInstr::Call {
-                    func, arg_places, ..
-                } if func.0 == callee => Some(arg_places.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("call of {callee}"));
-        assert!(
-            places
+            .all(|place| place.as_ref().map(|place| place.root) == Some(value)),
+        "show: {places:?}"
+    );
+    // `print`'s read pack `*values: *Ts` is spread from a tuple whose one
+    // element is loaded from the slot where it lies.
+    let pack = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                args,
+                spread: Some(spread),
+                ..
+            } if func.0 == "print" => args.get(*spread).copied(),
+            _ => None,
+        })
+        .expect("spread call of print");
+    let elements = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MakeTuple { dest, elems, .. } if *dest == pack => Some(elems.clone()),
+            _ => None,
+        })
+        .expect("print's pack tuple");
+    assert!(
+        !elements.is_empty()
+            && elements
                 .iter()
-                .all(|place| place.as_ref().map(|place| place.root) == Some(value)),
-            "{callee}: {places:?}"
-        );
-    }
+                .all(|element| instructions.iter().any(|instruction| matches!(
+                    instruction,
+                    MirInstr::LoadPlace { dest, place } if dest == element && place.root == value
+                ))),
+        "print: {elements:?}"
+    );
     assert!(
         !instructions.iter().any(|instruction| matches!(
             instruction,
@@ -5419,6 +5519,28 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
 
 #[test]
 fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
+    /// The selected target of `main`'s `__call__` method call: a call on a
+    /// struct value is that method call, as upstream's `CallNode` resolves
+    /// it; only the `def(...)` value goes indirect.
+    fn nominal(program: &mut mojito::mir::MirProgram) -> &mut Option<String> {
+        program
+            .functions
+            .iter_mut()
+            .find(|(name, _)| name == "main")
+            .expect("main lowered")
+            .1
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instrs)
+            .find_map(|instruction| match instruction {
+                MirInstr::MethodCall {
+                    method, resolved, ..
+                } if method == "__call__" => Some(resolved),
+                _ => None,
+            })
+            .expect("nominal __call__ method call lowered")
+    }
+
     fn indirect_target<'a>(
         program: &'a mut mojito::mir::MirProgram,
         function_name: &str,
@@ -5447,12 +5569,13 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
         mir.invariant_errors
     );
     let target = |program: &mojito::mir::MirProgram, function_name: &str| {
-        program
+        let function = &program
             .functions
             .iter()
             .find(|(name, _)| name == function_name)
             .expect("function lowered")
-            .1
+            .1;
+        function
             .blocks
             .iter()
             .flat_map(|block| &block.instrs)
@@ -5460,10 +5583,15 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
                 MirInstr::CallIndirect { resolved, .. } => resolved.as_deref(),
                 _ => None,
             })
-            .expect("indirect call has a selected target")
+            .unwrap_or_else(|| {
+                panic!(
+                    "indirect call has a selected target: {:#?}",
+                    function.blocks
+                )
+            })
             .to_string()
     };
-    assert_eq!(target(&mir, "main"), "Choose.__call__$ov$Int");
+    assert_eq!(nominal(&mut mir).as_deref(), Some("Choose.__call__$ov$Int"));
     assert_eq!(target(&mir, "invoke"), "__trait_dispatch.__call__$ov$Int");
 
     *indirect_target(&mut mir, "invoke") = Some("__trait_dispatch.__call__$ov$Bool".to_string());
@@ -5476,21 +5604,7 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
     );
     *indirect_target(&mut mir, "invoke") = Some("__trait_dispatch.__call__$ov$Int".to_string());
 
-    let call = mir
-        .functions
-        .iter_mut()
-        .find(|(name, _)| name == "main")
-        .expect("main lowered")
-        .1
-        .blocks
-        .iter_mut()
-        .flat_map(|block| &mut block.instrs)
-        .find(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
-        .expect("nominal indirect call lowered");
-    let MirInstr::CallIndirect { resolved, .. } = call else {
-        unreachable!("filtered to indirect call")
-    };
-    *resolved = Some("Choose.__call__$ov$Bool".to_string());
+    *nominal(&mut mir) = Some("Choose.__call__$ov$Bool".to_string());
     let errors = mojito::mir::verify::verify(&mir);
     assert!(
         errors
@@ -5558,14 +5672,13 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
 
 #[test]
 fn pack_keyed_def_is_template_served_without_the_runtime_pack_marker() {
-    use mojito::{TyKind, check_program, elaborate};
+    use mojito::{TyKind, check_program};
 
     // A pack-keyed `def` that reads its collector is served by its template:
     // its declaration keeps the symbolic pack, and the ABI-only
     // `RuntimePack` marker a per-call clone used to carry never appears.
     let src = "def count[*Types: Copyable](*args: *Types) -> Int:\n    return len(args)\n\ndef main():\n    print(count(1, \"two\"))\n";
     let program = parse(src).expect("parse");
-    let program = elaborate(program).expect("elaborate heterogeneous pack");
     let checked = check_program(&program).expect("check template");
     let mir = mojito::mir::lower_checked_program(&checked);
     assert!(
@@ -6233,6 +6346,7 @@ def main():
 ",
     );
     let main = mir_function(&mir, "main");
+    // `print`'s own omitted `file` default is the library's, not `Box`'s.
     let defaults: Vec<(&str, usize)> = main.blocks[0]
         .instrs
         .iter()
@@ -6241,7 +6355,7 @@ def main():
                 func,
                 instantiated_args,
                 ..
-            } if func.0.starts_with("$default$") => {
+            } if func.0.starts_with("$default$Box.") => {
                 Some((func.0.as_str(), instantiated_args.len()))
             }
             _ => None,

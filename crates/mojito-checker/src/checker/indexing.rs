@@ -1514,9 +1514,12 @@ impl Checker {
             self.record_borrowed_view_result(&span, &result);
             return Ok(result);
         }
-        if list_element(obj_ty).is_some() {
+        // An owned result (a `StridedSlice` copy) is no interior of the
+        // receiver.
+        let element = matches!(result.kind(), TyKind::Ref(_));
+        if element && list_element(obj_ty).is_some() {
             self.record_interior_reference(span, object, "element");
-        } else if dict_elements(obj_ty).is_some() {
+        } else if element && dict_elements(obj_ty).is_some() {
             self.record_interior_reference(span, object, "value");
         }
         Ok(result)

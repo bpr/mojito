@@ -16,7 +16,7 @@
 //! and `vm_refuses_mut_ref_via_non_place_argument`: the VM must error cleanly, never
 //! diverge.
 
-use mojito::{Compiler, check, parse};
+use mojito::Compiler;
 use std::path::Path;
 
 /// Run `src` through the whole-program `Compiler` and the VM backend (the
@@ -37,10 +37,13 @@ fn run_compiled(src: &str) -> Result<String, String> {
         .map_err(|error| format!("runtime error: {error}"))
 }
 
-/// Whether `src` is a statically valid program (parses + type-checks) — used to
+/// Whether `src` is a statically valid program (it compiles against the
+/// bundled library, which declares `print`) — used to
 /// show a program is well-formed but exercises a VM coverage gap.
 fn checks_ok(src: &str) -> bool {
-    parse(src).is_ok_and(|p| check(&p).is_ok())
+    Compiler::default()
+        .compile_source(src, Path::new("vm_test.mojo"))
+        .is_ok()
 }
 
 /// The VM's output for a program that must succeed (exact-output assertions).

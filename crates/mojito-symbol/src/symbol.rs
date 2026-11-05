@@ -278,6 +278,11 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
             // a 16-byte borrowed descriptor versus a 24-byte owning value.
             InstanceArg::Ty(ty) if ty.is_string_literal() => "TStringLiteral".to_string(),
             InstanceArg::Ty(ty) => format!("T{}", ty_raw_in(ty, None, KeyMode::Instance)),
+            // A string spells each byte `sanitize` would collapse, so two
+            // strings (`"["`, `" "`) never name one instance.
+            InstanceArg::Value(CtValue::Str(text) | CtValue::KgenString(text)) => {
+                format!("Vs{}", escape_bytes(text))
+            }
             InstanceArg::Value(value) => format!("V{value}"),
         };
         spelling.push_str(&sanitize(&raw));
@@ -2206,6 +2211,20 @@ fn eval_comptime_int(expr: &Expr, comptimes: &dyn ModuleNames) -> Option<IntLite
 /// `pick$ov$Int`, `Box.__init__$ov$String`. The native monomorphizer reads it
 /// to tell such an overload from a per-instantiation clone.
 pub const OV_SEP: &str = "$ov$";
+
+/// `text` with its alphanumerics kept and every other byte spelled `$` and
+/// two hex digits, which `sanitize` keeps and no two texts share.
+fn escape_bytes(text: &str) -> String {
+    text.bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() {
+                char::from(byte).to_string()
+            } else {
+                format!("${byte:02x}")
+            }
+        })
+        .collect()
+}
 
 fn sanitize(raw: &str) -> String {
     raw.chars()

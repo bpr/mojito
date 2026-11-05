@@ -3085,7 +3085,13 @@ impl Checker {
                         // A struct parameter converts its argument through
                         // the `@implicit` constructor a run-time argument's
                         // own type selects (a literal its `IntLiteral` one).
-                        let source = self.argument_source_type(expr, &value, &actual);
+                        // An annotated constant (`comptime T: StaticString =
+                        // "x"`) whose value folds to a literal converts from
+                        // that literal, as its binding did.
+                        let source = match self.argument_source_type(expr, &value, &actual) {
+                            declared if coerces(&declared, ty) => actual.clone(),
+                            declared => declared,
+                        };
                         let mut slot = None;
                         let converted =
                             self.implicit_parameter_application(&source, ty, |slot_ty| {

@@ -119,21 +119,20 @@ fn accepts_lexical_capture_downward_funarg() {
 #[test]
 fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities() {
     let source = "def main():\n    var values: List[Int] = [40]\n    var marker = 1\n    if True:\n        def choose() -> Int:\n            return 1\n        print(choose())\n    if True:\n        def choose() -> Int:\n            return 42\n        print(choose())\n    def inspect() {var marker}:\n        pass\n    def take() {var values^}:\n        pass\n";
-    let program = parse(source).expect("parse");
-    let checked = check_program(&program).expect("check");
+    let checked = checked_with_std(source).expect("check");
 
     let choices: Vec<_> = checked
         .declarations()
         .iter()
-        .filter(|declaration| declaration.name == "choose")
+        .filter(|declaration| {
+            declaration.name == "choose" && !from_library(declaration.location.source.as_deref())
+        })
         .collect();
     assert_eq!(choices.len(), 2);
     assert_ne!(choices[0].id, choices[1].id);
     assert_ne!(choices[0].binding, choices[1].binding);
 
-    let call_bindings: Vec<_> = checked
-        .expressions()
-        .iter()
+    let call_bindings: Vec<_> = own_expressions(&checked)
         .filter_map(|expression| match &expression.op {
             mojito::checked::CheckedOp::Call { name, .. } if name == "choose" => expression.binding,
             _ => None,
@@ -145,7 +144,9 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
     let values = checked
         .declarations()
         .iter()
-        .find(|declaration| declaration.name == "values")
+        .find(|declaration| {
+            declaration.name == "values" && !from_library(declaration.location.source.as_deref())
+        })
         .and_then(|declaration| declaration.binding)
         .expect("values binding");
     let def_named = |name: &str| {
@@ -154,7 +155,11 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
             .statements
             .iter()
             .find_map(|node| match &node.op {
-                mojito::checked::CheckedStmtOp::Def(def) if def.name == name => Some(def),
+                mojito::checked::CheckedStmtOp::Def(def)
+                    if def.name == name && !from_library(node.module.as_deref()) =>
+                {
+                    Some(def)
+                }
                 _ => None,
             })
             .expect("nested def")
@@ -170,7 +175,9 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
     let marker = checked
         .declarations()
         .iter()
-        .find(|declaration| declaration.name == "marker")
+        .find(|declaration| {
+            declaration.name == "marker" && !from_library(declaration.location.source.as_deref())
+        })
         .and_then(|declaration| declaration.binding)
         .expect("marker binding");
     let inspect = def_named("inspect");
@@ -226,21 +233,27 @@ fn checked_boundary_keys_template_source_provenance_by_occurrence() {
 
 #[test]
 fn occurrence_keys_preserve_public_lookup_from_unique_input_syntax() {
-    let program = parse(
+    let program = mojito::link_source(
         "def pick(value: Int) -> Int:\n    return value\ndef pick(value: StringLiteral) -> Int:\n    return 0\ndef main():\n    print(pick(1))\n",
+        std::path::Path::new("occurrence.mojo"),
     )
-    .expect("parse");
-    let call = match &program[2].kind {
-        mojito::ast::StmtKind::Def { body, .. } => match &body[0].kind {
-            mojito::ast::StmtKind::Expr(expression) => match &expression.kind {
-                mojito::ast::ExprKind::Call { args, .. } => &args[0],
-                _ => panic!("expected print call"),
-            },
-            _ => panic!("expected expression statement"),
+    .expect("link");
+    let body = program
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, body, .. } if name == "main" => Some(body),
+            _ => None,
+        })
+        .expect("expected main");
+    let call = match &body[0].kind {
+        mojito::ast::StmtKind::Expr(expression) => match &expression.kind {
+            mojito::ast::ExprKind::Call { args, .. } => &args[0],
+            _ => panic!("expected print call"),
         },
-        _ => panic!("expected main"),
+        _ => panic!("expected expression statement"),
     };
-    let checked = check_program(&program).expect("check");
+    let elaborated = mojito::elaborate(program.clone()).expect("elaborate");
+    let checked = check_program(&elaborated).expect("check");
     assert_eq!(
         checked.overload_targets().get(&call.source_span()),
         Some(&"pick$ov$Int".to_string())
@@ -552,7 +565,7 @@ fn rejects_unknown_type_annotation() {
 
 #[test]
 fn rejects_member_access_on_non_struct() {
-    let e = err("var x: Int = 1\nvar y: Int = x.field\n");
+    let e = err_std("var x: Int = 1\nvar y: Int = x.field\n");
     assert!(matches!(e, TypeError::NoSuchField { .. }), "got {e:?}");
 }
 
@@ -1705,11 +1718,11 @@ fn trait_method_requirements_preserve_and_enforce_raises_effects() {
 fn bounded_trait_overloads_select_the_matching_effect_contract() {
     let declarations = "trait Picks:\n    def pick(self, value: Int) -> Int: ...\n    def pick(self, value: StringLiteral) raises -> Int: ...\n";
 
-    ok(&format!(
+    ok_std(&format!(
         "{declarations}\ndef safe[T: Picks](value: T) -> Int:\n    return value.pick(7)\n\ndef fallible[T: Picks](value: T) raises -> Int:\n    return value.pick(\"boom\")\n"
     ));
     assert!(matches!(
-        err(&format!(
+        err_std(&format!(
             "{declarations}\ndef unsafe[T: Picks](value: T) -> Int:\n    return value.pick(\"boom\")\n"
         )),
         TypeError::UnhandledRaise(_)
@@ -2771,11 +2784,11 @@ fn enforces_raises_effect_at_instance_and_static_method_calls() {
 #[test]
 fn enforces_effects_after_free_overload_and_callable_selection() {
     let overloads = "def select(value: Int) -> Int:\n    return value\n\ndef select(value: StringLiteral) raises -> Int:\n    raise value\n    return 0\n";
-    ok(&format!(
+    ok_std(&format!(
         "{overloads}\ndef safe() -> Int:\n    return select(7)\n"
     ));
     assert!(matches!(
-        err(&format!(
+        err_std(&format!(
             "{overloads}\ndef unsafe() -> Int:\n    return select(\"boom\")\n"
         )),
         TypeError::UnhandledRaise(_)
@@ -3249,8 +3262,10 @@ fn accepts_augmented_assignment_forms() {
 
 #[test]
 fn rejects_augmented_assignment_with_no_matching_inplace_dunder() {
-    // `Int.__iadd__` takes an `Int`, which a `FloatLiteral` does not become.
-    let e = err_std("def main():\n    var i: Int = 10\n    i += 2.5\n");
+    // `Int.__iadd__` takes an `Int`, which a `StringLiteral` does not become.
+    // (A `FloatLiteral` does, through `SIMD`'s `@implicit` initializer whose
+    // `comptime assert` rejects it only at elaboration.)
+    let e = err_std("def main():\n    var i: Int = 10\n    i += \"a\"\n");
     assert!(e.to_string().contains("__iadd__"), "got {e:?}");
 }
 
@@ -3649,10 +3664,11 @@ fn transferred_string_dict_can_forward_keyword_arguments() {
         "def target(prefix: Int, var **options: Int):\n    pass\n\ndef relay(var **options: Int):\n    target(prefix=7, **options^)\n\nrelay(left=20, right=22)\n",
     );
     assert!(matches!(
-        err(
+        err_std(
             "def target(var **options: StringLiteral):\n    pass\n\ndef relay(var **options: Int):\n    target(**options^)\n"
         ),
-        TypeError::TypeMismatch { .. }
+        TypeError::UnresolvedArgumentParameter { callee, from, .. }
+            if callee == "target" && from == "Int"
     ));
 }
 
@@ -3668,7 +3684,7 @@ fn generic_and_method_kwargs_share_collection_and_forwarding_checks() {
         TypeError::TypeMismatch { .. }
     ));
     assert!(matches!(
-        err(
+        err_std(
             "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size(self, var **options: StringLiteral) -> Int:\n        return self.bias\n\nvar counter = Counter(0)\nvar value = counter.size(first=1)\n"
         ),
         TypeError::BadCall { .. } | TypeError::TypeMismatch { .. }
@@ -3807,7 +3823,7 @@ fn accepts_a_heterogeneous_variadic_type_pack() {
 
 #[test]
 fn accepts_string_compile_time_value_parameters() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Named[label: StringLiteral]:\n    var value: Int\n\nvar item: Named[\"answer\"] = Named[\"answer\"](42)\n",
     );
 }
@@ -4061,7 +4077,11 @@ fn checks_each_heterogeneous_pack_element_against_its_bound() {
     let error = err_std(
         "def count[*ArgTypes: Intable](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    var n: Int = count(1, \"two\")\n",
     );
-    assert!(matches!(error, TypeError::TraitNotSatisfied { .. }));
+    assert!(
+        matches!(&error, TypeError::BadCall { func, reason }
+            if func == "count" && reason.contains("does not conform to trait 'Intable'")),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -4585,7 +4605,7 @@ fn checks_callable_parameters_and_indirect_invocation() {
         err_std(
             "def wrong(x: StringLiteral) -> Int:\n    return 0\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    print(apply(wrong, 41))\n"
         ),
-        TypeError::TypeMismatch { .. }
+        TypeError::BadCall { func, .. } if func == "apply"
     ));
 }
 
@@ -4845,8 +4865,9 @@ fn contextually_selects_an_overloaded_callable_value() {
 #[test]
 fn rejects_a_tstring_without_the_bundled_module() {
     // A raw parse links no prelude, so the entry point a t-string calls,
-    // found by module path, is absent: the check says so explicitly.
-    let error = err("def main():\n    var value: Int = 42\n    print(t\"answer={value}\")\n");
+    // found by module path, is absent: the check says so explicitly. (No
+    // `print`, which would link the prelude.)
+    let error = err("def main():\n    var value: Int = 42\n    var s = t\"answer={value}\"\n");
     assert!(
         matches!(error, TypeError::Unsupported(ref message)
             if message.contains("needs the bundled 'std.format.tstring' module")),
@@ -6176,11 +6197,11 @@ fn unsafe_pointer_method_vocabulary_typechecks() {
     // The public unsafe_* vocabulary round-trips on a heap pointer, chaining
     // through unsafe_offset receivers.
     ok(
-        "def main():\n    var p = UnsafePointer[Int].alloc(3)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[])\n    var taken = p.unsafe_offset(1).unsafe_take_pointee()\n    print(taken)\n    p.unsafe_deinit_pointee()\n    p.unsafe_free()\n",
+        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](3)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[])\n    var taken = p.unsafe_offset(1).unsafe_take_pointee()\n    print(taken)\n    p.unsafe_deinit_pointee()\n    p.unsafe_free()\n",
     );
     // `copy=` leaves the source usable; a mutable place origin writes through.
     ok(
-        "def main():\n    var p = UnsafePointer[Int].alloc(1)\n    var x = 3\n    p.unsafe_write(copy=x)\n    print(x, p[])\n    p.unsafe_free()\n",
+        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    var x = 3\n    p.unsafe_write(copy=x)\n    print(x, p[])\n    p.unsafe_free()\n",
     );
     ok(
         "def main():\n    var x = 1\n    var q = Pointer(to=x)\n    q.unsafe_write(9)\n    print(x)\n",
@@ -6331,7 +6352,7 @@ fn generic_hand_written_init() {
     );
     // A UnsafePointer field of the type parameter, allocated with `Self.T`.
     ok(
-        "struct Buf[T: Copyable & Movable]:\n    var data: UnsafePointer[Self.T]\n    def __init__(out self):\n        self.data = UnsafePointer[Self.T].alloc(4)\n    def set0(mut self, v: Self.T):\n        self.data[0] = v.copy()\n    def get0(self) -> Self.T:\n        return self.data[0].copy()\n\ndef main():\n    var b: Buf[Int] = Buf[Int]()\n    b.set0(9)\n    print(b.get0())\n",
+        "from std.memory.alloc import unsafe_alloc\n\nstruct Buf[T: Copyable & Movable]:\n    var data: UnsafePointer[Self.T]\n    def __init__(out self):\n        self.data = unsafe_alloc[Self.T](4)\n    def set0(mut self, v: Self.T):\n        self.data[0] = v.copy()\n    def get0(self) -> Self.T:\n        return self.data[0].copy()\n\ndef main():\n    var b: Buf[Int] = Buf[Int]()\n    b.set0(9)\n    print(b.get0())\n",
     );
     // A wrong-typed constructor argument is still rejected (solved T = Int here).
     assert!(matches!(
@@ -6391,7 +6412,8 @@ fn any_type_bound_does_not_permit_len() {
 #[test]
 fn hashable_bound_permits_hasher_contribution() {
     // `x.__hash__(hasher)` type-checks on an opaque `K: Hashable` and on
-    // concrete hashable built-ins: the value contributes to a caller-owned
+    // concrete hashable built-ins (not `StringLiteral`, which is not
+    // `Hashable` at the pin): the value contributes to a caller-owned
     // `Hasher` (current Mojo's protocol), so a key struct can feed its fields.
     ok_std(
         "from std.hash import Hasher\n\ndef h[K: Hashable](k: K, mut hasher: Some[Hasher]):\n    k.__hash__(hasher)\n",
@@ -6400,7 +6422,7 @@ fn hashable_bound_permits_hasher_contribution() {
         "from std.hash import Hasher\n\ndef hi(n: Int, mut hasher: Some[Hasher]):\n    n.__hash__(hasher)\n",
     );
     ok_std(
-        "from std.hash import Hasher\n\ndef hs(s: StringLiteral, mut hasher: Some[Hasher]):\n    s.__hash__(hasher)\n",
+        "from std.hash import Hasher\n\ndef hs(s: String, mut hasher: Some[Hasher]):\n    s.__hash__(hasher)\n",
     );
     ok_std(
         "from std.hash import Hasher\n\ndef hf(x: Float64, mut hasher: Some[Hasher]):\n    x.__hash__(hasher)\n",
@@ -6598,7 +6620,7 @@ fn any_type_bound_does_not_permit_numeric_operations() {
     // `Bool(x)`/`divmod` and the rounding dunders are likewise gated.
     assert!(matches!(
         err_std("def to_bool[T: AnyType](x: T) -> Bool:\n    return Bool(x)\n"),
-        TypeError::TypeMismatch { .. }
+        TypeError::BadCall { func, .. } if func == "Bool"
     ));
     assert!(matches!(
         err_std("def dm[T: AnyType](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n"),
@@ -6965,19 +6987,19 @@ fn storage_annotations_require_bound_origin_slots() {
     let initialized_bare = format!(
         "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v: Holder = Holder(r)\n    print(v.value[0])\n"
     );
-    assert!(check(&parse(&initialized_bare).expect("parse")).is_ok());
+    assert!(check_with_std(&initialized_bare).is_ok());
 
     // The inference positions stay lenient: a constructor expression with a
     // value argument, and a bare origin-slotted generic function parameter.
     let ctor = format!(
         "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v = Holder(r)\n    print(v.value[0])\n"
     );
-    assert!(check(&parse(&ctor).expect("parse")).is_ok());
+    assert!(check_with_std(&ctor).is_ok());
 
     let bare_param = format!(
         "{holder}def read(h: Holder) -> Int:\n    return h.value[0]\n\ndef main():\n    var data: List[Int] = [7]\n    ref r = data\n    print(read(Holder(r)))\n"
     );
-    assert!(check(&parse(&bare_param).expect("parse")).is_ok());
+    assert!(check_with_std(&bare_param).is_ok());
 }
 
 #[test]
@@ -7652,14 +7674,9 @@ fn bool_bodied_comptime_aliases_are_predicates() {
 
     // A body referencing an undeclared name rejects at declaration rather
     // than evaluating false at some application.
-    let TypeError::Unsupported(message) =
-        err("comptime IsCopy[T: AnyType] = conforms_to(U, Copyable)\n")
-    else {
-        panic!("expected a dangling-parameter rejection");
-    };
     assert_eq!(
-        message,
-        "a Bool-bodied comptime alias may reference only its own parameters ('U' is not declared)"
+        err("comptime IsCopy[T: AnyType] = conforms_to(U, Copyable)\n"),
+        TypeError::NotComptime("U".into())
     );
 
     // Pack projections cannot substitute through the param-only pack form.
@@ -8046,8 +8063,8 @@ fn rejected_overload_candidates_leave_no_place_copy_marks() {
     // rejected consuming candidate must not leave `p` marked as an implicit
     // place copy once the borrowing overload is selected.
     let source = "@fieldwise_init\nstruct P(ImplicitlyCopyable):\n    var x: Int\n\ndef f(var value: P, extra: Int) -> Int:\n    return extra\n\ndef f(value: P) -> Int:\n    return value.x\n\ndef main():\n    var p = P(1)\n    print(f(p))\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
-    let marked = checked.expressions().iter().any(|expression| {
+    let checked = checked_with_std(source).expect("check");
+    let marked = own_expressions(&checked).any(|expression| {
         matches!(&expression.op, mojito::checked::CheckedOp::Identifier(name) if name == "p")
             && expression
                 .adjustments
@@ -8725,23 +8742,19 @@ fn bracketed_mlir_attr_outside_the_subset_is_rejected() {
 }
 
 #[test]
-fn mlir_i1_is_no_condition_and_bool_storage_no_place() {
-    // An `i1` declares no `__bool__`, so it is no condition, as at the pin;
-    // a `Bool`'s `_mlir_value` is stored only by its own initializers in
-    // the subset.
-    for (source, message) in [
-        (
-            "def main():\n    var a = True.__mlir_i1__()\n    if a:\n        print(1)\n",
-            "'__mlir_type.i1' does not implement the '__bool__' method",
-        ),
-        (
-            "def main():\n    var t = True\n    t._mlir_value = False._mlir_value\n    print(t)\n",
-            "a store to a `Bool`'s `_mlir_value` storage outside its initializer",
-        ),
-    ] {
-        let error = err_std(source);
-        assert!(error.to_string().contains(message), "{error}");
-    }
+fn mlir_i1_is_no_condition_and_bool_storage_is_an_ordinary_field() {
+    // An `i1` declares no `__bool__`, so it is no condition, as at the pin.
+    let error =
+        err_std("def main():\n    var a = True.__mlir_i1__()\n    if a:\n        print(1)\n");
+    assert!(
+        error
+            .to_string()
+            .contains("'__mlir_type.i1' does not implement the '__bool__' method"),
+        "{error}"
+    );
+    // A `Bool`'s `_mlir_value` is an ordinary field of the declared struct,
+    // so a store outside its initializers checks, as at the pin.
+    ok_std("def main():\n    var t = True\n    t._mlir_value = False._mlir_value\n    print(t)\n");
 }
 
 #[test]
@@ -8775,7 +8788,7 @@ fn pop_simd_lane_ops_type_as_their_verifiers_do() {
         ),
         (
             "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(Bool(mlir_value=__mlir_op.`pop.simd.reduce_and`(a._mlir_value)))\n",
-            "argument 'mlir_value' of 'Bool'",
+            "invalid call to 'Bool': no constructor overload matches",
         ),
     ] {
         let error = err_std(source);
@@ -9047,11 +9060,9 @@ fn leading_dot_bracket_argument_takes_its_parameter_type() {
 #[test]
 fn value_parameter_field_read_is_a_parameter_value() {
     let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\n    def __deinit__(deinit self):\n        pass\n\ndef f[q: Q]():\n    print(q.a)\n\ndef main():\n    f[Q(8)]()\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let reads = |predicate: &dyn Fn(&SemanticAdjustment) -> bool| {
-        checked
-            .expressions()
-            .iter()
+        own_expressions(&checked)
             .filter(|expression| expression.adjustments.iter().any(predicate))
             .map(|expression| expression.op.clone())
             .collect::<Vec<_>>()
@@ -9607,12 +9618,9 @@ fn fieldwise_ref_field_construction_binds_as_its_synthesized_init_call() {
     // `ref` parameter retains the argument's place and lends it to the
     // constructed view, as a written `ref [Self.o]` constructor's does.
     let source = "@fieldwise_init\nstruct View[o: MutOrigin]:\n    var src: ref[Self.o] Int\n    var index: Int\n\ndef main():\n    var n = 1\n    var v = View(n, 0)\n    v.src = 2\n    print(n)\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let has = |predicate: &dyn Fn(&SemanticAdjustment) -> bool| {
-        checked
-            .expressions()
-            .iter()
-            .any(|expression| expression.adjustments.iter().any(predicate))
+        own_expressions(&checked).any(|expression| expression.adjustments.iter().any(predicate))
     };
     assert!(has(&|adjustment| matches!(
         adjustment,

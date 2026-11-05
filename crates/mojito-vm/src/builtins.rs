@@ -42,7 +42,6 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "__ceil__",
     "__trunc__",
     "write_string",
-    "write",
     mojito_symbol::symbol::WRITE_FORMATTED,
     "__len__",
     "copy",

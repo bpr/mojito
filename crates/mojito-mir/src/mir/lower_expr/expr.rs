@@ -316,11 +316,14 @@ impl<'a> Flatten<'a> {
         self.emit_nested_closure_argument_keepalives(&[value], &[]);
         self.error_region(raises);
         if matches!(op, InfixOp::NotIn) {
+            // `not` negates the scalar the declared `Bool` converts to, as
+            // `prefix_op` negates any `not x` over a struct.
+            let scalar = self.bool_conversion(node.location(), contains, Some(&Ty::bool()));
             let dest = self.fresh_typed(node.location(), None, Ty::bool());
             self.emit(MirInstr::UnOp {
                 op: PrefixOp::Not,
                 dest,
-                a: contains,
+                a: scalar,
                 raises: None,
             });
             dest

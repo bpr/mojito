@@ -354,6 +354,11 @@ pub(super) struct MoveContext {
     /// reads them, so an owner moved between the operand and its call's setup
     /// is used after its move.
     setup_owners: HashMap<VarId, Vec<MirPlace>>,
+    /// Each local bound to a reference into a borrowed parameter's place
+    /// (a closure body's capture of its storage's field): the caller's
+    /// storage, which a move through the local must refill by every exit,
+    /// as a reference parameter's.
+    caller_aliases: HashSet<VarId>,
 }
 
 /// How an instruction touches a place: a whole-value *read* (using the subtree),
@@ -626,7 +631,9 @@ pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
         (&flow.raises, true),
     ] {
         for (var, node) in (0..).zip(state.iter().flat_map(|state| &state.moves)) {
-            check_reference_parameter_refilled(node, var, f, raising)?;
+            let caller_storage =
+                is_reference_parameter(f, var) || scan.context.caller_aliases.contains(&var);
+            check_reference_parameter_refilled(node, var, f, raising, caller_storage)?;
         }
     }
     // Every variable dies at the function's exit, on each channel that
@@ -769,14 +776,33 @@ fn check_instruction_uses(
     Ok(())
 }
 
-/// The whole-referent handles of `f`'s reference parameters and the owners
-/// of its setup reference slots.
+/// The whole-referent handles of `f`'s reference parameters, the owners
+/// of its setup reference slots, and its locals aliasing a borrowed
+/// parameter's place.
 fn move_context(f: &MirFunction) -> MoveContext {
     let mut context = MoveContext {
         refills: HashMap::new(),
         setup_owners: HashMap::new(),
+        caller_aliases: HashSet::new(),
     };
+    let mut parameter_references = HashSet::new();
     for_each_instr_deep(&f.blocks, &mut |instr| match instr {
+        MirInstr::MakeRef { dest, place }
+            if place.through.is_none()
+                && (place.root as usize) < f.n_params
+                && !f
+                    .owned_params
+                    .get(place.root as usize)
+                    .copied()
+                    .unwrap_or(false) =>
+        {
+            parameter_references.insert(dest.0);
+        }
+        MirInstr::DefVar { var, src, .. }
+            if *var as usize >= f.n_params && parameter_references.contains(&src.0) =>
+        {
+            context.caller_aliases.insert(*var);
+        }
         MirInstr::MakeRef { dest, place }
             if place.is_whole_root()
                 && place.through == Some(place.root)
@@ -807,15 +833,18 @@ fn is_reference_parameter(f: &MirFunction, var: VarId) -> bool {
     (var as usize) < f.n_params && f.ref_params.get(var as usize).copied().unwrap_or(false)
 }
 
-/// Reject leaving the function with reference parameter `var` — or a field
-/// of it — transferred away and not written back.
+/// Reject leaving the function with `var`, holding the caller's storage
+/// (`caller_storage`: a reference parameter or a local aliasing a borrowed
+/// parameter's place) — or a field of it — transferred away and not
+/// written back.
 fn check_reference_parameter_refilled(
     node: &Node,
     var: VarId,
     f: &MirFunction,
     raising: bool,
+    caller_storage: bool,
 ) -> Result<(), OwnershipError> {
-    if !is_reference_parameter(f, var) {
+    if !caller_storage {
         return Ok(());
     }
     let (own, path) = node.whole();

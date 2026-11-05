@@ -144,7 +144,8 @@ impl Checker {
             ExprKind::Identifier(name)
                 if self.traits.contains_key(name)
                     && !self.structs.contains_key(name)
-                    && self.lookup(name).is_none() =>
+                    && self.lookup(name).is_none()
+                    && self.lookup_tparam(name).is_none() =>
             {
                 Err(TypeError::DirectTraitMemberAccess)
             }

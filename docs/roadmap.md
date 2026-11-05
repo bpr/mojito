@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1915**.
+Next free ID: **R1917**.
 
 ## Ordered Work
 
@@ -7948,6 +7948,36 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1916 The bundled `StringSpan` keeps a `mut` parameter where
+  upstream's origin is always immutable**
+
+  Upstream declares `struct StringSpan[origin: ImmOrigin]`, but the bundled
+  one is `StringSpan[mut: Bool, //, origin: Origin[mut=mut]]`, so a view of
+  a `var` carries a mutable origin.
+  - The argument-exclusivity check (`record_carried_places`,
+    `checker/origins/exclusivity.rs`) reads a `StringSpan`'s origin as
+    read-only by name, so `print(s.strip(), s.lstrip())` is accepted, as at
+    the pin; that special case goes with the port.
+  - Done when the bundled declaration is upstream's and the name check is
+    gone.
+  - Found while repairing the 2026-11-04 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1915 Unpacking a non-implicitly-copyable value into a subscript
+  or field target is accepted**
+
+  Mojito accepts `outer[0], count = (fresh^, 2)` with `fresh: List[Int]`,
+  where the pin rejects it as "List[Int] cannot be implicitly copied".
+  - `destructure_into_place` checks the implicit copy only for a name
+    target, never a subscript or field target.
+  - `ownership_test`'s
+    `indexed_and_variant_payload_replacement_invalidate_nested_interiors`
+    relies on the acceptance and needs respelling with the fix.
+  - Found while repairing the 2026-11-04 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1900 A refining trait may restate its parent's parameterized
   `comptime` requirement**
 
@@ -11369,15 +11399,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R1860 An untyped compile-time string is typed by the value-less
   `StringLiteral`**
 
-  `MetaTy::of_value` types an untyped `CtValue::Str` as the value-less
-  literal (`param_expr.rs`), where upstream's is `StringLiteral[text]`.
-  - Probe: typing it as `Ty::string_literal_of(text)` makes a
-    `subarch: StaticString = _ANY` default a `StringSpan` construction the
-    elaborator cannot read, so `comptime if is_nvidia_gpu():` fails with
-    "compile-time application `is_nvidia_gpu` reads an unresolved value
-    `StringSpan("<any>", "<any>")`" (`Specializer`'s `argument_value`,
-    `mono/specializer.rs`).
-  - Probe: the checker's other producers are the same gap: `+` over
+  The checker still types some untyped compile-time strings as the
+  value-less literal, where upstream's is `StringLiteral[text]`
+  (`MetaTy::of_value` in `param_expr.rs` already types a `CtValue::Str` by
+  its text).
+  - Probe: its producers are `+` over
     literals whose text is not closed (`checker/operators.rs`), the
     nominal-`String` fallback in `call_inference.rs`, and the element
     `select` in `checker.rs`.

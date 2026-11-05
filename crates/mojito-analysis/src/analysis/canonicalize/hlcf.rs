@@ -1198,16 +1198,36 @@ fn constant_condition(cond: &GenericConstraint) -> Option<bool> {
 }
 
 /// Collect the registers of `blocks`, at any depth, defined once by a
-/// `const bool`.
+/// `const bool`, a constant one-lane `bool` storage, or a `struct.create`
+/// of a `Bool` over such storage.
 fn bool_constants(blocks: &[MirBlock], definitions: &[u32], out: &mut HashMap<u32, bool>) {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        if let MirInstr::Const {
-            dest,
-            k: Const::Bool(value),
-        } = instruction
+        let known = match instruction {
+            MirInstr::Const {
+                dest,
+                k: Const::Bool(value),
+            } => Some((dest, *value)),
+            MirInstr::Const {
+                dest,
+                k:
+                    Const::Value(mojito_types::ct::CtValue::Simd {
+                        dtype: mojito_ast::ast::Dtype::Bool,
+                        lanes,
+                    }),
+            } => match lanes.as_slice() {
+                [mojito_types::ct::CtLane::Bool(value)] => Some((dest, *value)),
+                _ => None,
+            },
+            MirInstr::MakeStruct { dest, fields } => match fields.as_slice() {
+                [field] => out.get(&field.0).map(|value| (dest, *value)),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((dest, value)) = known
             && definitions.get(dest.0 as usize) == Some(&1)
         {
-            out.insert(dest.0, *value);
+            out.insert(dest.0, value);
         }
         for region in instruction_regions(instruction) {
             bool_constants(region, definitions, out);

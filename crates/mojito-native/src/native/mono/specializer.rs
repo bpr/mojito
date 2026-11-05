@@ -2754,6 +2754,14 @@ impl<'a> Specializer<'a> {
             .then_some(resolved)
     }
 
+    /// Whether the instance `name` is of a method taking a receiver.
+    fn takes_receiver(&self, name: &str) -> bool {
+        self.instance_names
+            .get(name)
+            .and_then(|&index| self.declarations.get(&self.instances[index].0.template))
+            .is_some_and(|declaration| declaration.has_receiver)
+    }
+
     #[allow(
         clippy::cognitive_complexity,
         clippy::too_many_lines,
@@ -3741,10 +3749,12 @@ impl<'a> Specializer<'a> {
             // has run. A struct whose field types are closed lays out now,
             // for the method to construct it. A method that removed its
             // struct's parameters is named off the template. An `__init__`
-            // being run constructs the struct, which is declared for it.
+            // being run constructs the struct, which is declared for it, and
+            // a method taking `self` reads a value of it, which is laid out.
             if template.fields.iter().any(|(_, ty)| is_symbolic(ty))
                 && self.demand_stack.iter().any(|demanded| {
                     !mojito_symbol::symbol::is_initializer_symbol(demanded)
+                        && !self.takes_receiver(demanded)
                         && mojito_symbol::symbol::split_method_symbol(demanded).is_some_and(
                             |(instance, _)| instance == name || instance == template_name,
                         )

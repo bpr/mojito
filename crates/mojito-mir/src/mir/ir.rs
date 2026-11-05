@@ -4845,7 +4845,6 @@ mod tests {
         use mojito_types::ct::CtLane;
         let none = MirDeclarations::default();
         let ty = |kind| Ty::new(kind);
-        let binary = fold_binary;
         let literal = int_literal;
         let materialize = |target: TyKind| {
             let reg_types =
@@ -4947,7 +4946,23 @@ mod tests {
             )
             .is_none()
         );
+    }
 
+    #[test]
+    fn folded_arithmetic_computes_only_what_the_vm_computes_alike() {
+        use mojito_common::literal::IntLiteral;
+        use mojito_types::ct::CtLane;
+        let none = MirDeclarations::default();
+        let ty = |kind| Ty::new(kind);
+        let binary = fold_binary;
+        let literal = int_literal;
+        let lane = |dtype| mojito_types::types::canonical_simd_ty(dtype, 1);
+        let simd = |dtype, lane| {
+            Const::Value(CtValue::Simd {
+                dtype,
+                lanes: vec![lane],
+            })
+        };
         let uint = Const::Value(CtValue::UInt(1));
         assert!(matches!(
             binary(

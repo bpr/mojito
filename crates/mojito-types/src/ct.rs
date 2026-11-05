@@ -2141,7 +2141,7 @@ mod tests {
         assert_eq!(fold(float(1e30), To::Int), None);
         assert_eq!(fold(float(f64::NAN), To::Int), None);
         assert_eq!(fold(float(-1.0), To::UInt), None);
-        assert_eq!(fold(float(f64::NAN), To::Bool), Some(CtValue::Bool(false)));
+        assert_eq!(fold(float(f64::NAN), To::Bool), Some(CtValue::Bool(true)));
         let lane = |dtype, lane| CtValue::Simd {
             dtype,
             lanes: vec![lane],

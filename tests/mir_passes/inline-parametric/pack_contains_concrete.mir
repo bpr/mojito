@@ -1,4 +1,4 @@
-mojito-mir 1.111
+mojito-mir 1.160
 artifact {
   features: [],
   files: [
@@ -8,7 +8,7 @@ artifact {
   structs: [
   ],
   decls: [
-    decl { lowered_name: has_int, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "has_int", slot: 0, name: "*Ts", bounds: [AnyType], trait_param: absent, callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: has_int, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "has_int", slot: 0, name: "Ts.values", bounds: [AnyType], trait_param: absent, callable_bound: absent, default: absent, infer_only: true, variadic: true, constraints: [] }, value_param { owner: "has_int", slot: 1, name: "*Ts", type: struct_type { name: TypeList, arguments: [value_arg(ct_trait([AnyType])), value_arg(ct_expr(param_decl_ref { owner: "has_int", slot: 0, name: Ts, type: meta_param_list(meta_type) }))] }, default: absent, callable_default: absent, infer_only: false, variadic: true, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
     decl { lowered_name: pack_contains_concrete, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
   ],
   functions: [
@@ -59,7 +59,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: has_int, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }, param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_tuple([ct_type(Int), ct_type(Bool)]))], spread: absent }
+              call { dest: %r0, func: has_int, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }, param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_tuple([ct_type(Int), ct_type(Bool)])), value_arg(ct_struct { name: TypeList, fields: [] })], spread: absent }
             ],
             terminator: return { value: present(%r0) }
           }

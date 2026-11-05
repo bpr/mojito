@@ -1130,13 +1130,21 @@ fn closure_storage(
                 .names
                 .contains(declaration.name().trim_start_matches('*'))
     };
+    let used = |declaration: &ParamDecl| {
+        values.contains(declaration.name().trim_start_matches('*'))
+            || contents.iter().any(|ty| names_binder(ty, declaration.id()))
+            || named(declaration)
+    };
+    // A pack's implicit list binder (`Ts.values`) is a parameter wherever
+    // its pack is: the pack's declared type and every element read name it.
     let param_decls: Vec<ParamDecl> = in_scope
         .declarations
         .iter()
         .filter(|declaration| {
-            values.contains(declaration.name().trim_start_matches('*'))
-                || contents.iter().any(|ty| names_binder(ty, declaration.id()))
-                || named(declaration)
+            used(declaration)
+                || declaration
+                    .list_pack(&in_scope.declarations)
+                    .is_some_and(used)
         })
         .cloned()
         .collect();

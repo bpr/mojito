@@ -234,8 +234,12 @@ impl Checker {
                 dest: dest.clone(),
                 by_value: self.rebinds_by_value(ty),
             });
+        // A body over compile-time parameters is judged per instance, as
+        // upstream reports a rebind mismatch only when it instantiates the
+        // function: a dependent target (`TypeList[...]()[id]`) may fold
+        // closed here in a body no call ever instantiates.
         let closed = !is_symbolic(ty) && !is_symbolic(&dest);
-        if closed && *ty != dest {
+        if closed && *ty != dest && !self.checking_parametric_body() {
             return Err(TypeError::TypeMismatch {
                 expected: dest.to_string(),
                 found: ty.to_string(),
@@ -243,6 +247,15 @@ impl Checker {
             });
         }
         Ok(dest)
+    }
+
+    /// Whether the body being checked has compile-time parameters of its
+    /// own or of its struct in scope.
+    fn checking_parametric_body(&self) -> bool {
+        !self.self_decls.is_empty()
+            || self.tparams.iter().any(|scope| !scope.is_empty())
+            || self.vparams.iter().any(|scope| !scope.is_empty())
+            || self.pack_params.iter().any(|scope| !scope.is_empty())
     }
 
     fn rebind_target_ty(&self, target: &ParamArg) -> Result<Ty, TypeError> {

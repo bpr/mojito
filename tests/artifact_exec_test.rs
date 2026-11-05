@@ -25,6 +25,8 @@ fn canonical_snapshots_execute_to_empty_output() {
 }
 
 /// A frozen executable artifact runs without any Mojo source or recompile.
+/// It holds no library `print`: it writes its bytes to stdout through the
+/// libc `write` the VM answers.
 #[test]
 fn frozen_artifact_prints_through_the_vm() {
     let execution =

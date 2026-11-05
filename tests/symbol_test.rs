@@ -38,7 +38,12 @@ fn free_function_overloads_get_signature_qualified_names() {
     );
     assert!(names.contains("pick$ov$"), "zero-arg overload: {names:?}");
     assert!(names.contains("pick$ov$Int"), "{names:?}");
-    assert!(names.contains("pick$ov$StringLiteral"), "{names:?}");
+    // `StringLiteral` is the declared `StringLiteral[value]`; its unbound
+    // `value` keys as a binder of the parameter `s`.
+    assert!(
+        names.contains("pick$ov$StringLiteral$V$value$s"),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -48,7 +53,7 @@ fn keyword_variadic_role_is_part_of_callable_identity() {
     assert!(names.contains("route$ov$Int"), "{names:?}");
     assert!(names.contains("route$ov$$kwv$Int"), "{names:?}");
 
-    let program = parse(source).expect("parse error");
+    let program = linked_program(source);
     let targets = resolve_overload_targets(&program).expect("check error");
     for target in targets
         .values()
@@ -76,7 +81,7 @@ fn generic_keyword_variadic_role_is_part_of_callable_identity() {
         "{route_names:?}"
     );
 
-    let program = parse(source).expect("parse error");
+    let program = linked_program(source);
     let targets = resolve_overload_targets(&program).expect("check error");
     let route_targets: HashSet<_> = targets
         .values()
@@ -100,7 +105,7 @@ fn parameterized_annotation_type_parameters_spell_their_bounds() {
         "{names:?}"
     );
 
-    let program = parse(source).expect("parse error");
+    let program = linked_program(source);
     let targets = resolve_overload_targets(&program).expect("check error");
     let pick_targets: HashSet<_> = targets
         .values()
@@ -689,7 +694,7 @@ fn type_of_parameter_overload_keys_agree_between_declaration_and_call() {
          def pick(x: Bool, y: Bool) -> Bool:\n    return x\n\
          def main():\n\
          \x20   print(pick(1, 2), pick(True, False))\n";
-    let program = parse(src).expect("parse error");
+    let program = linked_program(src);
     let targets = resolve_overload_targets(&program).expect("check error");
     let names: HashSet<String> = lower_program(&program)
         .expect("type error")
@@ -769,7 +774,7 @@ fn scan_rs_files(dir: &std::path::Path, offenders: &mut Vec<String>) {
 fn collector_position_is_part_of_callable_identity() {
     let source = "def route(a: Int, *rest: Int) -> Int:\n    return 1\n\ndef route(*rest: Int, a: Int) -> Int:\n    return 2\n\ndef main():\n    print(route(1, 2))\n    print(route(2, a=1))\n";
     let names = lowered_names(source);
-    let program = parse(source).expect("parse error");
+    let program = linked_program(source);
     let targets = resolve_overload_targets(&program).expect("check error");
     let route_targets: HashSet<_> = targets
         .values()

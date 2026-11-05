@@ -8,7 +8,13 @@
 //! run per-file in `tests/corpus_test.rs` (`ownership_error::*` /
 //! `ownership_ok::*`).
 
-use mojito::{Compiler, CompilerError, OwnershipError, check, check_ownership, elaborate, parse};
+use mojito::{Compiler, CompilerError, OwnershipError, check, check_ownership, elaborate};
+
+/// Parse `source` with the bundled library linked, since `print`, `Bool`,
+/// and `StringLiteral` are its declarations, as upstream's prelude's are.
+fn parse(source: &str) -> Result<Vec<mojito::ast::Stmt>, mojito::module::ModuleError> {
+    mojito::link_source(source, std::path::Path::new("snippet.mojo"))
+}
 
 /// Elaborate and type-check `src` (the production stage order), then run the
 /// ownership analysis.
@@ -34,10 +40,15 @@ fn own_linked(src: &str) -> Result<(), OwnershipError> {
 #[test]
 fn ownership_reports_invalid_unchecked_input_instead_of_panicking() {
     let program = parse("def main():\n    print(missing)\n").expect("parse error");
-    assert!(matches!(
-        check_ownership(&program),
-        Err(OwnershipError::InvalidInput(message)) if message.contains("missing")
-    ));
+    let program = elaborate(program).expect("comptime error");
+    let result = check_ownership(&program);
+    assert!(
+        matches!(
+            &result,
+            Err(OwnershipError::InvalidInput(message)) if message.contains("missing")
+        ),
+        "got {result:?}"
+    );
 }
 
 #[test]
@@ -243,12 +254,18 @@ fn whole_replacement_through_reference_invalidates_nested_interiors() {
 }
 
 #[test]
-fn unpack_replacement_invalidates_old_collection_interiors() {
-    let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    var count = 0\n    ref first = values[0]\n    values, count = (List[Int](40, 50), 2)\n    print(first, count)\n";
-    assert!(matches!(
-        own(src),
-        Err(OwnershipError::InvalidatedInteriorReference { .. })
-    ));
+fn unpack_replacement_of_a_collection_is_an_implicit_copy() {
+    // Unpacking copies each element out of the tuple, so a `List` element
+    // cannot replace a collection through a tuple target, as at the pin;
+    // `replacing_a_collection_invalidates_its_old_interiors` covers the
+    // whole replacement itself.
+    let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    var count = 0\n    var fresh: List[Int] = [40, 50]\n    ref first = values[0]\n    values, count = (fresh^, 2)\n    print(first, count)\n";
+    let program = elaborate(parse(src).expect("parse error")).expect("comptime error");
+    let result = check(&program);
+    assert!(
+        matches!(&result, Err(mojito::TypeError::ImplicitCopy { ty, .. }) if ty == "List[Int]"),
+        "got {result:?}"
+    );
 }
 
 #[test]
@@ -259,7 +276,7 @@ fn indexed_and_variant_payload_replacement_invalidate_nested_interiors() {
         Err(OwnershipError::InvalidatedInteriorReference { .. })
     ));
 
-    let unpacked = "def main():\n    var outer: List[List[Int]] = [[1, 2]]\n    var count = 0\n    ref first = outer[0][0]\n    outer[0], count = (List[Int](3, 4), 2)\n    print(first, count)\n";
+    let unpacked = "def main():\n    var outer: List[List[Int]] = [[1, 2]]\n    var count = 0\n    var fresh: List[Int] = [3, 4]\n    ref first = outer[0][0]\n    outer[0], count = (fresh^, 2)\n    print(first, count)\n";
     assert!(matches!(
         own(unpacked),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -438,14 +455,14 @@ fn immutable_ref_subscript_argument_retains_a_read_place() {
 fn dict_lookup_keeps_an_earlier_lookup_reference() {
     // A second lookup reads the dictionary; it invalidates no reference an
     // earlier lookup returned, as on the pin.
-    let src = "def main():\n    var values = {\"a\": 10}\n    ref first = values[\"a\"]\n    print(values[\"a\"])\n    print(first)\n";
+    let src = "def main() raises:\n    var values: Dict[String, Int] = {\"a\": 10}\n    ref first = values[\"a\"]\n    print(values[\"a\"])\n    print(first)\n";
     let result = own(src);
     assert!(result.is_ok(), "got {result:?}");
 }
 
 #[test]
 fn dict_lookup_keeps_an_earlier_lookup_field_reference() {
-    let src = "@fieldwise_init\nstruct Item(Copyable, Movable):\n    var value: Int\n\ndef main():\n    var values = {\"a\": Item(10)}\n    ref field = values[\"a\"].value\n    print(values[\"a\"].value)\n    print(field)\n";
+    let src = "@fieldwise_init\nstruct Item(Copyable, Movable):\n    var value: Int\n\ndef main() raises:\n    var values: Dict[String, Item] = {\"a\": Item(10)}\n    ref field = values[\"a\"].value\n    print(values[\"a\"].value)\n    print(field)\n";
     let result = own(src);
     assert!(result.is_ok(), "got {result:?}");
 }

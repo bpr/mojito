@@ -30,9 +30,7 @@ def main():
     print(Int8(3), True)
     print("err", 1, file=stderr)
     print("flushed", flush=True)
-    var big = String()
-    for _ in range(5000):
-        big += "z"
+    var big = String("z") * 5000
     print(big.byte_length(), big[byte=0:3])
     print(big)
     forward(1, "two", Q(3))

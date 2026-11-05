@@ -379,8 +379,7 @@ impl<'a> Flatten<'a> {
                         | mojito_checked::checked::SemanticAdjustment::BorrowMutable
                 )
             })
-            && mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
-                .is_none()
+            && !self.reads_materialized_temporary(expression)
             && self
                 .place_chain(expression)
                 .last()
@@ -401,6 +400,24 @@ impl<'a> Flatten<'a> {
         .collect()
     }
 
+    /// Whether `expression` is a temporary the checker materialized into a
+    /// hidden slot, or reads through a compile-time constant so
+    /// materialized (a struct value read as `g.s`). Such a chain is read
+    /// where written, and its place is never probed: probing a materialized
+    /// constant root stores it in its slot, so a probe whose instructions
+    /// the setup then moves would leave later reads of the slot ahead of
+    /// its definition.
+    fn reads_materialized_temporary(&self, expression: Node<'a>) -> bool {
+        let materialized = |node: Node<'a>| {
+            mojito_checked::checked::materialized_borrow_owner(node.adjustments()).is_some()
+        };
+        materialized(expression)
+            || self.place_chain(expression).into_iter().any(|node| {
+                materialized(node)
+                    && (node.constant_param_value() || node.recorded_value().is_some())
+            })
+    }
+
     /// Whether `expression` is a by-value place whose read belongs to call
     /// setup: a direct root or field chain with no lvalue work, no reference
     /// alias between it and its owner, and none of the identifier lowerings
@@ -411,8 +428,7 @@ impl<'a> Flatten<'a> {
             || self.nested_info(expression).is_some()
             || expression.is_origin_bearing_pointer()
             || expression.constant_param_value()
-            || mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
-                .is_some()
+            || self.reads_materialized_temporary(expression)
             || matches!(
                 expression.ty().as_ref().map(Ty::kind),
                 Some(

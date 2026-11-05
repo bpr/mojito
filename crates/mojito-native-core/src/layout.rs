@@ -280,14 +280,22 @@ mod tests {
     use super::*;
     use crate::target::{NativeTarget, Triple};
     use mojito_types::origin::PointerOrigin;
-    use mojito_types::types::{SimdDtype, SimdWidth, canonical_simd_ty};
+    use mojito_types::types::{SimdDtype, SimdWidth, canonical_simd_ty, kgen_simd_ty};
+
+    /// The field index every program holds: `Bool` is the declared struct
+    /// over its `!kgen.scalar<bool>` storage.
+    fn declared() -> StructFieldIndex {
+        let mut structs = StructFieldIndex::default();
+        structs.insert("Bool".to_string(), vec![kgen_simd_ty(Dtype::Bool, 1)]);
+        structs
+    }
 
     fn cx(structs: &StructFieldIndex) -> (NativeTarget, &StructFieldIndex) {
         (NativeTarget::new(Triple::X86_64UnknownLinuxGnu), structs)
     }
 
     fn layout_of(ty: &Ty) -> Result<Layout, LayoutError> {
-        let structs = StructFieldIndex::default();
+        let structs = declared();
         let (target, structs) = cx(&structs);
         LayoutCx {
             target: &target,
@@ -321,7 +329,7 @@ mod tests {
         assert_eq!(layout_of(&scalar(Dtype::Int)), Ok(Layout::new(8, 8)));
         assert_eq!(layout_of(&scalar(Dtype::Float64)), Ok(Layout::new(8, 8)));
         // Narrow fields pad C-style like any other member.
-        let structs = StructFieldIndex::default();
+        let structs = declared();
         let (target, structs) = cx(&structs);
         let cx = LayoutCx {
             target: &target,
@@ -377,7 +385,7 @@ mod tests {
             Ok(Layout::new(16, 8))
         );
         // The wrapper's presence bit remains part of enclosing storage.
-        let structs = StructFieldIndex::default();
+        let structs = declared();
         let (target, structs) = cx(&structs);
         let cx = LayoutCx {
             target: &target,
@@ -404,7 +412,7 @@ mod tests {
     #[test]
     fn tuples_pad_c_style_in_declaration_order() {
         // { i1, i64, i1 }: offsets 0, 8, 16; size pads to 24.
-        let structs = StructFieldIndex::default();
+        let structs = declared();
         let (target, structs) = cx(&structs);
         let cx = LayoutCx {
             target: &target,
@@ -448,7 +456,7 @@ mod tests {
 
     #[test]
     fn nominal_structs_resolve_through_the_field_index() {
-        let mut structs = StructFieldIndex::default();
+        let mut structs = declared();
         structs.insert("Pair".to_string(), vec![Ty::int(), Ty::bool()]);
         let (target, structs) = cx(&structs);
         let cx = LayoutCx {
@@ -465,7 +473,7 @@ mod tests {
 
     #[test]
     fn outcome_is_tag_ok_err_by_ordinary_aggregate_rules() {
-        let structs = StructFieldIndex::default();
+        let structs = declared();
         let (target, structs) = cx(&structs);
         let cx = LayoutCx {
             target: &target,
@@ -493,7 +501,7 @@ mod tests {
 
     #[test]
     fn variant_is_tag_plus_aligned_payload_overlay() {
-        let structs = StructFieldIndex::default();
+        let structs = declared();
         let (target, structs) = cx(&structs);
         let cx = LayoutCx {
             target: &target,

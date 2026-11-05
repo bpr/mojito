@@ -336,7 +336,7 @@ fn simd_lowering_emits_vector_code() {
 /// by address and returned through an sret out-pointer.
 #[test]
 fn held_struct_lowers_as_its_field() {
-    const HELD: &str = r#"
+    const HELD: &str = r"
 @fieldwise_init
 struct One(TrivialRegisterPassable):
     var v: Int
@@ -364,8 +364,8 @@ def scaleboxed(x: Boxed) -> Boxed:
 
 def main():
     print(scaleone(One(3)).v, scaletwo(Two(3, 4)).v, scaleboxed(Boxed(3)).v)
-"#;
-    let mut module = native_compile(HELD, &["main"]);
+";
+    let module = native_compile(HELD, &["main"]);
     let ir = module.llvm_ir(OptLevel::O0).expect("LLVM conversion");
     let held = llvm_function(&ir, "scaleone");
     assert!(
@@ -1293,7 +1293,7 @@ mod native_abi_cross_checks {
                     TyKind::Pointer { .. } | TyKind::Ref(_) => {
                         LLVMPointerTypeInContext(self.ctx, 0)
                     }
-                    TyKind::StringLiteral(_) => {
+                    TyKind::StringLiteral => {
                         let ptr = LLVMPointerTypeInContext(self.ctx, 0);
                         let len = LLVMInt64TypeInContext(self.ctx);
                         self.strukt(&[ptr, len])

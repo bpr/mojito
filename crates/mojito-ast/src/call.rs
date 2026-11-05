@@ -591,7 +591,7 @@ mod tests {
             .collect()
     }
 
-    fn unbound(listed: usize, kept: &[usize], open: &str) -> Result<UnboundSlots, ParamMatchError> {
+    fn unbound(listed: usize, kept: &[usize], open: &str) -> UnboundSlots {
         let open = open
             .chars()
             .map(|slot| match slot {
@@ -600,11 +600,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        Ok(UnboundSlots {
+        UnboundSlots {
             listed,
             kept: kept.to_vec(),
             open,
-        })
+        }
     }
 
     #[test]
@@ -615,11 +615,14 @@ mod tests {
             Param("c", false, false),
         ];
         let slots = |source: &[&str]| bracket_unbound_slots(&params, &bracket(source));
-        assert_eq!(slots(&["x", "_", "y"]), unbound(3, &[0, 2], "x_x"));
-        assert_eq!(slots(&["b=x", "..."]), unbound(1, &[0], ".x."));
-        assert_eq!(slots(&["..."]), unbound(0, &[], "..."));
-        assert_eq!(slots(&["_", "x", "..."]), unbound(2, &[1], "_x."));
-        assert_eq!(slots(&["a=_", "b=x", "c=y"]), unbound(3, &[1, 2], "_xx"));
+        assert_eq!(slots(&["x", "_", "y"]), Ok(unbound(3, &[0, 2], "x_x")));
+        assert_eq!(slots(&["b=x", "..."]), Ok(unbound(1, &[0], ".x.")));
+        assert_eq!(slots(&["..."]), Ok(unbound(0, &[], "...")));
+        assert_eq!(slots(&["_", "x", "..."]), Ok(unbound(2, &[1], "_x.")));
+        assert_eq!(
+            slots(&["a=_", "b=x", "c=y"]),
+            Ok(unbound(3, &[1, 2], "_xx"))
+        );
         assert_eq!(slots(&["...", "x"]), Err(ParamMatchError::MisplacedRest));
         assert_eq!(slots(&["b=..."]), Err(ParamMatchError::MisplacedRest));
     }
@@ -629,7 +632,7 @@ mod tests {
         let params = [Param("T", true, false), Param("a", false, false)];
         assert_eq!(
             bracket_unbound_slots(&params, &bracket(&["..."])),
-            unbound(0, &[], "x.")
+            Ok(unbound(0, &[], "x."))
         );
     }
 

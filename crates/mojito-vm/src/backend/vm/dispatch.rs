@@ -609,13 +609,20 @@ impl VmBackend {
     /// struct's own or inherited `Writable` member, by its runtime name,
     /// a `Bool`'s declared member, and a `SIMD` value's, by its runtime
     /// dtype and width, which are its type. Only the literals, `DType`,
-    /// strings, and the VM's internal values keep host text.
+    /// strings, and the VM's internal values keep host text. A moved-out
+    /// tombstone (an unsafe take of never-written storage) traps as any
+    /// use of it does.
     pub(super) fn format_value(
         &mut self,
         prog: &Prog,
         value: Value,
         repr: bool,
     ) -> Result<String, RuntimeError> {
+        if matches!(value, Value::Moved) {
+            return Err(RuntimeError::TypeError(
+                "vm: display of a value after it was moved".to_string(),
+            ));
+        }
         let Some(name) = display_table(&value) else {
             if repr {
                 return Ok(scalar_repr(&value));

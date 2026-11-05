@@ -338,6 +338,7 @@ pub fn modelled_conformance(
             | TyKind::Overload(_)
             | TyKind::Index
             | TyKind::I1
+            | TyKind::KgenString
             | TyKind::KgenSimd { .. }
             | TyKind::KgenPointer(_)
             | TyKind::LitRef { .. }

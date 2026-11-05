@@ -5957,12 +5957,13 @@ fn struct_comparison_rejection() -> TypeError {
     TypeError::Unsupported("a comparison of struct values is no generic proposition".to_string())
 }
 
-/// Whether `value` is a struct-typed compile-time value.
+/// Whether `value` is a struct-typed compile-time value. A `Bool` is not:
+/// its compile-time value is the scalar its storage holds.
 fn struct_valued(value: &ParamExpr) -> bool {
     value
         .meta()
         .as_value()
-        .is_some_and(|ty| ty.kind().is_non_simd_struct())
+        .is_some_and(|ty| ty.kind().is_non_simd_struct() && !ty.kind().is_bool())
 }
 
 fn is_simd_length_value(value: &ParamExpr) -> bool {
@@ -6454,7 +6455,7 @@ fn struct_valued_operand(operand: &ConstraintOperand) -> bool {
         | ConstraintOperand::Value(CtValue::Expr(expression)) => expression
             .meta()
             .as_value()
-            .is_some_and(|ty| ty.kind().is_non_simd_struct()),
+            .is_some_and(|ty| ty.kind().is_non_simd_struct() && !ty.kind().is_bool()),
         _ => false,
     }
 }

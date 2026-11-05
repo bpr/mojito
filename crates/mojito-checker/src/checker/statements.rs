@@ -3782,7 +3782,26 @@ impl Checker {
             }
             // Upstream's `Signatures.cpp` emits the `where` clauses after the
             // arguments, so a clause reads them (`where base.dtype ==
-            // DType.float32`) as the result annotation does.
+            // DType.float32`) as the result annotation does. An erased origin
+            // mutability binder (`m: Bool, //, o: Origin[mut=m]`) occupies no
+            // slot, so a clause reads it by name and a call binds it to the
+            // mutability inferred for its origin.
+            if let Some(scope) = this.vparams.last_mut() {
+                for parameter in type_params
+                    .iter()
+                    .filter(|parameter| parameter.is_origin_mutability_binder(type_params))
+                {
+                    let reference = ParamRef::unbound(&parameter.name);
+                    scope.insert(
+                        parameter.name.clone(),
+                        ParamContext::detached().decl_ref(
+                            reference.id,
+                            &parameter.name,
+                            MetaTy::Value(Ty::bool()),
+                        ),
+                    );
+                }
+            }
             let compiled = where_clauses
                 .iter()
                 .map(|condition| {
