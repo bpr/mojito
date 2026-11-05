@@ -2782,11 +2782,10 @@ does not rediscover the conversion from the runtime value. The VM uses `Int` for
 that result because it has no distinct MLIR index representation.
 
 Scalar operators, comparisons, conversions, and rounding are typed through
-checked operation traits, not ad-hoc numeric rules. Each binary/prefix operator
-names a trait (`Addable`/`Subtractable`/…/`Comparable`/`Equatable`/`Negatable`,
-the bitwise and shift ones integer-only) whose dunder the checker resolves; the
-same traits serve as generic bounds, so `def f[T: Addable]` type-checks and a
-struct declaring an operation trait must define its dunder. Conversions
+their dunders, not ad-hoc numeric rules. An operator over a type parameter is
+the call of the requirement its bounds declare (`Comparable`, `Equatable`, or
+a user trait declaring `__add__`); as at the pin, no library trait names the
+arithmetic, bitwise, or shift operators, so the compiler knows none. Conversions
 (`Int`/`Float64`/`Bool` via `__int__`/`__float__`/`__bool__`) and `abs`/`round`
 (`__abs__`/`__round__`) route the same way for concrete structs, matching the
 paths opaque parameters already used. Builtin scalars keep primitive execution
@@ -2795,8 +2794,7 @@ paths opaque parameters already used. Builtin scalars keep primitive execution
 through `>>=`, which are `SIMD`'s declared dunders, called as a struct's are
 and spliced by `inline-parametric`, their `pop` ops the `binary` and `unary`
 the backends run. `~` is `__invert__`, upstream's `self ^ -1`, so no `unary
-invert` reaches a backend from a `SIMD` but through the erased operation
-traits (R712); a struct operand dispatches
+invert` reaches a backend from a `SIMD`; a struct operand dispatches
 through its dunder (`apply_binop`/`apply_prefix`, and the `abs`/`round`/`Int`
 builtins). The checker checks a struct operator as its dunder's method call,
 as upstream's `emitBinOpCall` and `UnaryOpNode::emitArith` resolve it: `a op

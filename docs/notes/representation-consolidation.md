@@ -39,7 +39,8 @@ command cannot use both.
    - The hash leaves (`__hash__`, `_update_with_simd`): R160 (`DType` as
      the library struct). Planned.
    - `__int__`: R1544 (`SIMD[dt, _](v)` binds no width from a vector).
-   - R712 and R579 (traits the pin does not declare) close with it.
+   - R579 (a trait the pin does not declare) closes with it; R712
+     landed 11-05.
 
    The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
    filed. The checker's copy and move synthesis is tied to them, and
@@ -48,7 +49,7 @@ command cannot use both.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1933 --task R1868 --task R1882 \
-     --task R1462 --task R160 --task R1544 --task R712 --task R579 -n 0
+     --task R1462 --task R160 --task R1544 --task R579 -n 0
    ```
 
 3. **Gap G's residues** (size, and conformance). R1436 landed 11-03: the
@@ -237,7 +238,7 @@ R1411 and R1413 under *Entries outside the gaps*.
   requirement, which substitution folds to the member.
 - **Size**: R987 counts 868 `List.__len__` and 523 `Span.__len__`
   instances reached through trait-bound calls.
-- **Closes**: R1933, R1868, R712, R579.
+- **Closes**: R1933, R1868, R579 (R712 landed 11-05).
 - **Shrinks** R987, R1291, R113, R1119, R25, R817, and R860.
 
 ### G. A capture-list closure is a capture list

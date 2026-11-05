@@ -552,12 +552,6 @@ impl FnLowering<'_> {
                 self.append(ctx, neg.get_operation(), Some(dest));
                 neg.get_result(ctx)
             }
-            (PrefixOp::Invert, _) if lane_ty.int_shape().is_some() => {
-                let ones = self.lane_constant(ctx, dtype, u64::MAX, Some(width), dest);
-                let inverted = XorOp::new(ctx, vector, ones);
-                self.append(ctx, inverted.get_operation(), Some(dest));
-                inverted.get_result(ctx)
-            }
             (PrefixOp::Invert, ScalarTy::Bool) => {
                 let one = self.bool_constant(ctx, true);
                 let ones = self.simd_splat_value(ctx, one, width, dest);

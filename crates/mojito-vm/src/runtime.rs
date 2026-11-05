@@ -570,28 +570,23 @@ pub fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeError> {
                 lanes: SimdLanes::Bool(bits),
             },
         ) if bits.len() == 1 => Ok(Value::Bool(!bits[0])),
-        // Bitwise inversion: two's complement on integers, logical on `Bool`.
-        (PrefixOp::Invert, Value::Int(n)) => Ok(Value::Int(!n)),
-        (PrefixOp::Invert, Value::UInt(n)) => Ok(Value::UInt(!n)),
+        // Bitwise inversion: logical on `Bool`.
         (PrefixOp::Invert, Value::Bool(b)) => Ok(Value::Bool(!b)),
         (PrefixOp::Invert, Value::IntLiteral(value)) => Ok(Value::IntLiteral(
             value
                 .neg()
                 .sub(&mojito_common::literal::IntLiteral::from(1i64)),
         )),
-        (PrefixOp::Invert, Value::Simd { dtype, lanes }) => match lanes {
-            SimdLanes::Int(v) => Ok(simd_value(
+        (
+            PrefixOp::Invert,
+            Value::Simd {
                 dtype,
-                SimdLanes::Int(v.into_iter().map(|x| wrap_lane(dtype, !x)).collect()),
-            )),
-            SimdLanes::Bool(v) => Ok(simd_value(
-                dtype,
-                SimdLanes::Bool(v.into_iter().map(|x| !x).collect()),
-            )),
-            SimdLanes::Float(_) => Err(RuntimeError::TypeError(
-                "cannot invert a float SIMD value".to_string(),
-            )),
-        },
+                lanes: SimdLanes::Bool(v),
+            },
+        ) => Ok(simd_value(
+            dtype,
+            SimdLanes::Bool(v.into_iter().map(|x| !x).collect()),
+        )),
         // Elementwise negation wraps integer lanes at the element width;
         // float lanes negate exactly (a sign flip never re-rounds).
         (PrefixOp::Neg, Value::Simd { dtype, lanes }) => match lanes {

@@ -24,66 +24,6 @@ pub(super) fn float_literal_conversion_error(target: &impl std::fmt::Display) ->
     }
 }
 
-pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> {
-    match trait_name {
-        // Binary-operator traits: each names the dunder its operator dispatches
-        // through, returning `Self`.
-        "Addable" => Some("__add__(Self) -> Self"),
-        "Subtractable" => Some("__sub__(Self) -> Self"),
-        "Multipliable" => Some("__mul__(Self) -> Self"),
-        "Divisible" => Some("__truediv__(Self) -> Self"),
-        "FloorDivisible" => Some("__floordiv__(Self) -> Self"),
-        "Modable" => Some("__mod__(Self) -> Self"),
-        "ShiftLeftable" => Some("__lshift__(Self) -> Self"),
-        "ShiftRightable" => Some("__rshift__(Self) -> Self"),
-        "Andable" => Some("__and__(Self) -> Self"),
-        "Orable" => Some("__or__(Self) -> Self"),
-        "Xorable" => Some("__xor__(Self) -> Self"),
-        "Negatable" => Some("__neg__() -> Self"),
-        _ => None,
-    }
-}
-
-/// The operation trait a binary operator dispatches through, for both builtin
-/// scalars and user structs. `None` for operators that do not route this way:
-/// `and`/`or` (Bool short-circuit), `in`/`not in` (`__contains__` on the right
-/// operand), `is`/`is not` (identity — `__is__`/`__isnot__` struct dunders
-/// only, no scalar meaning), `@`/matmul (struct dunder only), and `**`, which
-/// upstream declares no trait for since it removed `Powable`.
-pub(super) const fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Option<&'static str> {
-    use mojito_ast::ast::InfixOp::{
-        Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, MatMul,
-        Mod, Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
-    };
-    Some(match op {
-        Add => "Addable",
-        Sub => "Subtractable",
-        Mul => "Multipliable",
-        Div => "Divisible",
-        FloorDiv => "FloorDivisible",
-        Mod => "Modable",
-        Shl => "ShiftLeftable",
-        Shr => "ShiftRightable",
-        BitAnd => "Andable",
-        BitOr => "Orable",
-        BitXor => "Xorable",
-        Lt | Gt | Le | Ge => "Comparable",
-        Eq | Ne => "Equatable",
-        Pow | MatMul | And | Or | In | NotIn | Is | IsNot => return None,
-    })
-}
-
-/// The operation trait a prefix operator dispatches through; unary `+` has
-/// none, as upstream declares no trait requiring `__pos__`.
-pub(super) const fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> Option<&'static str> {
-    match op {
-        mojito_ast::ast::PrefixOp::Neg => Some("Negatable"),
-        mojito_ast::ast::PrefixOp::Not => Some("Boolable"),
-        mojito_ast::ast::PrefixOp::Invert => Some("Invertable"),
-        mojito_ast::ast::PrefixOp::Pos => None,
-    }
-}
-
 /// Enforce that a builtin-driven dunder (`__len__`/`__str__`/`__contains__`)
 /// returns its Mojo-mandated type, so `len`/`String`/`in` on a user struct stay
 /// well-typed.

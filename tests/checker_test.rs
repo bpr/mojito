@@ -6707,36 +6707,39 @@ fn bool_members_and_conformances_are_its_declaration() {
 }
 
 #[test]
-fn operator_traits_gate_generic_numeric_code() {
-    // Generic arithmetic bounded by an operation trait type-checks.
-    ok(
-        "def sum3[T: Addable](a: T, b: T, c: T) -> T:\n    return a + b + c\n\ndef main():\n    print(sum3(1, 2, 3))\n    print(sum3(1.5, 2.5, 3.0))\n",
+fn scalar_operation_traits_are_not_declared() {
+    // The pin's library declares no `Addable` and kin: a bound or a
+    // conformance naming one is an unknown declaration.
+    for name in [
+        "Addable",
+        "Subtractable",
+        "Multipliable",
+        "Divisible",
+        "FloorDivisible",
+        "Modable",
+        "ShiftLeftable",
+        "ShiftRightable",
+        "Andable",
+        "Orable",
+        "Xorable",
+        "Negatable",
+    ] {
+        assert_eq!(
+            err(&format!(
+                "def g[T: {name}](a: T):\n    pass\n\ndef main():\n    g(1)\n"
+            )),
+            TypeError::UnknownTrait(name.into())
+        );
+    }
+    assert_eq!(
+        check_source("struct Bad(Addable):\n    pass\n"),
+        Err(TypeError::UnknownTrait("Addable".into()))
     );
-    // Shift/bitwise operation traits are integer-only.
-    assert!(matches!(
-        err(
-            "def f[T: ShiftLeftable](a: T, b: T) -> T:\n    return a << b\n\ndef main():\n    print(f(1.5, 2.0))\n"
-        ),
-        TypeError::TraitNotSatisfied { .. }
-    ));
-    // Bool does not conform to an arithmetic trait.
-    assert!(matches!(
-        err("def g[T: Addable](a: T) -> T:\n    return a + a\n\ndef main():\n    print(g(True))\n"),
-        TypeError::TraitNotSatisfied { .. }
-    ));
 }
 
 #[test]
-fn operation_trait_conformance_requires_the_dunder() {
-    // Declaring an operation trait without its dunder is rejected.
-    assert!(matches!(
-        check_source("struct Bad(Addable):\n    pass\n"),
-        Err(TypeError::TraitNotSatisfied { .. })
-    ));
-    // Defining the dunder satisfies the declared conformance.
-    ok_std(
-        "@fieldwise_init\nstruct Good(Addable):\n    var n: Int\n    def __add__(self, other: Good) -> Good:\n        return Good(self.n + other.n)\n",
-    );
+fn boolable_bound_not_type_checks() {
+    ok_std("def f[T: Boolable](x: T) -> Bool:\n    return not x\n\ndef main():\n    print(f(0))\n");
 }
 
 #[test]

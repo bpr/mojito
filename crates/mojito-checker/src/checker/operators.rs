@@ -54,16 +54,11 @@ impl Checker {
         {
             return Ok(ty);
         }
-        // A type parameter bounded by a compiler-known operation trait that
-        // declares no requirement (`Negatable`, `Invertable`) or by
-        // `Boolable` for `not x` dispatches after erasure; the concrete
-        // impl runs on the erased type.
-        if prefix_operation_trait(op).is_some_and(|bound| self.param_has_bound(&t, bound)) {
+        // `not x` over a type parameter bounded by `Boolable` is
+        // `not Bool(x)`, its `__bool__` requirement's conversion.
+        if op == PrefixOp::Not && self.param_has_bound(&t, "Boolable") {
             self.record_read_temporary_argument(operand);
-            return Ok(match op {
-                PrefixOp::Neg | PrefixOp::Invert | PrefixOp::Pos => t,
-                PrefixOp::Not => Ty::bool(),
-            });
+            return Ok(Ty::bool());
         }
         // A user struct's `-x`, `~x`, and `+x` are its dunder calls
         // `x.__neg__()`, `x.__invert__()`, and `x.__pos__()`, as upstream's
@@ -263,20 +258,6 @@ impl Checker {
             && let Some(ty) = self.infer_operator_call(span, op, left, right, &lt, Some(&rt))?
         {
             return Ok(ty);
-        }
-        // Two equal type parameters bounded by a compiler-known arithmetic,
-        // bitwise, or shift operation trait, which declares no requirement
-        // (`def f[T: Addable](a: T, b: T) -> T: return a + b`), dispatch
-        // after erasure.
-        if lt == rt
-            && matches!(
-                op,
-                Add | Sub | Mul | FloorDiv | Mod | Div | Shl | Shr | BitAnd | BitOr | BitXor
-            )
-            && let Some(trait_name) = infix_operation_trait(op)
-            && self.param_has_bound(&lt, trait_name)
-        {
-            return Ok(lt);
         }
 
         // `common` is the unified numeric type when both operands are numeric

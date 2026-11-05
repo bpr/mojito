@@ -73,6 +73,7 @@ assets/ok/bool_declared_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_declared_writable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_storage_primitives.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/boolable_bound_not.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_generic_write_to.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_member_list_generic_conformer.mojo	-	ineligible	no-scalar-entry-shape

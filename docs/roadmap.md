@@ -8490,37 +8490,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R712 The scalar operation traits `Addable`, `Negatable`, and kin
-  are accepted as bounds the pin does not declare**
-
-  Problem: `def g[T: Addable](a: T)` compiles in Mojito, where the pin
-  rejects it with `use of unknown declaration 'Addable'`.
-  - The same holds for `Subtractable`, `Multipliable`, `Negatable`, and
-    `Andable`, probed at the pin; `Powable`, `Intable`, `Boolable`,
-    `Comparable`, and `Equatable` are the pin's own.
-  - Cause: the compiler-known operation traits
-    (`mojito_types::conformance`, `infix_operation_trait` and
-    `prefix_operation_trait` in `checker/builtins.rs`) are declared
-    whether or not upstream's library has them.
-  - Each Mojito-only name should leave the compiler-known list, keeping
-    only the traits the pin's stdlib declares.
-  - Since R1358 an operator through a bound is its requirement's call, so
-    the erased arithmetic arm of `infer_infix` and the `param_has_bound`
-    arm of `infer_prefix` (`checker/operators.rs`) serve only these traits
-    (and `not x` through `Boolable`); they go with them.
-  - `docs/features.md`'s scalar-operation-traits row names them as
-    supported bounds.
-  - Since R1552 the VM's and Pliron's `unary invert` arms over `Int`,
-    `UInt`, and integer `SIMD` lanes (`runtime.rs` `apply_prefix`,
-    `lower/simd.rs`, `lower/consts.rs`) serve only these erased bounds:
-    they go with them. The `binary` arms stay, since `pop` ops lower to
-    them.
-  - `Divisible` declares `__truediv__(Self) -> Self`, matching `SIMD`'s,
-    and leaves with the others.
-  - Found while landing R709 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R860 A `TrivialRegisterPassable` struct may define a copy
   constructor or `__del__`, or hold a non-trivial field**
 

@@ -339,7 +339,6 @@ impl Specializer<'_> {
                     })
                     .flat_map(|declared| &declared.conditions)
                     .collect(),
-                StructTraitRule::Never => return Some(false),
                 StructTraitRule::Always => return Some(true),
             };
         let mut bindings = self.base_bindings();

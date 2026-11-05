@@ -872,13 +872,14 @@ impl<'a> Flatten<'a> {
             return self.ordinary_method_call(node, value, op.dunder(), &[], &[]);
         }
         let ra = self.lower_operator_operand(node, value);
-        // `not x` on a struct, a string literal, a numeric scalar, or a
-        // vector is `not x.__bool__()`: convert through the explicit
-        // `Bool(x)` call so the negation is scalar on both backends.
+        // `not x` on a struct, a string literal, a numeric scalar, a
+        // vector, or a `Boolable` type parameter is `not x.__bool__()`:
+        // convert through the explicit `Bool(x)` call so the negation is
+        // scalar on both backends.
         let ra = if op == PrefixOp::Not
             && value.ty().is_some_and(|ty| {
                 ty.is_simd()
-                    || matches!(ty.kind(), TyKind::Struct(..))
+                    || matches!(ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })
                     || mojito_types::conformance::is_numeric(&ty)
             }) {
             self.bool_conversion(value.location(), ra, value.ty().as_ref())

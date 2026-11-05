@@ -3101,11 +3101,37 @@ fn template_method_reflected_operator_runs() {
 
 #[test]
 fn template_method_bounded_arithmetic_runs() {
-    // `a + b` and `a / b` under arithmetic bounds: the template's result is
-    // the operand's own type, so the operator is a
-    // temporary where the body puts it, and each instance owes that its
-    // scalar has the operation and gives the type the bound promised.
-    let source = r"struct Acc[T: Addable & Copyable & Deinitable & Divisible & Movable](Movable):
+    // `a + b` and `a / b` under bounds declaring them: the template's
+    // result is the operand's own type, so the operator is a temporary
+    // where the body puts it, and each instance calls its own dunder.
+    let source = r"trait Arith(Copyable, Deinitable, Movable):
+    def __add__(self, other: Self) -> Self: ...
+    def __truediv__(self, other: Self) -> Self: ...
+
+
+@fieldwise_init
+struct Q(Arith, ImplicitlyCopyable, Writable):
+    var n: Int
+
+    def __add__(self, other: Self) -> Self:
+        return Q(self.n + other.n)
+
+    def __truediv__(self, other: Self) -> Self:
+        return Q(self.n // other.n)
+
+
+@fieldwise_init
+struct R(Arith, ImplicitlyCopyable, Writable):
+    var x: Float64
+
+    def __add__(self, other: Self) -> Self:
+        return R(self.x + other.x)
+
+    def __truediv__(self, other: Self) -> Self:
+        return R(self.x / other.x)
+
+
+struct Acc[T: Arith](Movable):
     var first: Self.T
     var second: Self.T
 
@@ -3124,11 +3150,11 @@ fn template_method_bounded_arithmetic_runs() {
         return self.first / self.second
 
 def main():
-    var a = Acc[Int](1, 2)
-    var b = Acc[Float64](1.5, 0.5)
-    print(a.total(), b.total())
-    print(a.bound(), b.bound())
-    print(a.ratio(), b.ratio())
+    var a = Acc[Q](Q(1), Q(2))
+    var b = Acc[R](R(1.5), R(0.5))
+    print(a.total().n, b.total().x)
+    print(a.bound().n, b.bound().x)
+    print(a.ratio().n, b.ratio().x)
 ";
     assert_entry_output(source, "3 2.0\n3 2.0\n0 3.0\n");
 }

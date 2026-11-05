@@ -1891,25 +1891,11 @@ impl Checker {
             "ImplicitlyCopyable" => {
                 self.struct_implicitly_copyable_conformance_ok(name, assumption)
             }
-            // A declared narrowing conformance (`Movable where False`) must
-            // verify at declaration like `Deinitable where False`;
+            // A declared narrowing conformance (`Movable where False`)
+            // verifies at declaration like `Deinitable where False`;
             // effectiveness is enforced at the transfer/consuming use sites.
-            "Movable" => true,
-            "Deinitable" => true,
-            // An operation trait with a known dunder signature requires the
-            // struct to define that dunder (`Addable` needs `__add__`, etc.).
-            // Layout/backend markers without a dunder remain accepted-but-shallow.
-            _ => match builtin_trait_operation(tr) {
-                Some(signature) => {
-                    let dunder = signature.split('(').next().unwrap_or(signature);
-                    self.structs.get(name).is_some_and(|info| {
-                        info.methods
-                            .get(dunder)
-                            .is_some_and(|methods| methods.iter().any(|method| method.has_self))
-                    })
-                }
-                None => true,
-            },
+            // Layout/backend markers remain accepted-but-shallow.
+            _ => true,
         };
         if ok {
             Ok(())
@@ -2595,7 +2581,6 @@ impl Checker {
         let lifecycle = match struct_trait_rule(required, self.traits.contains_key(required)) {
             StructTraitRule::Lifecycle => required,
             StructTraitRule::Declared => return Some(declared(&refining)),
-            StructTraitRule::Never => return Some(Vec::new()),
             StructTraitRule::Always => return Some(always()),
         };
         Some(match lifecycle {
@@ -2849,10 +2834,7 @@ impl Checker {
     /// prevents fieldwise synthesis, while operation traits name the operation
     /// promised by the bound.
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
-        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
-            return builtin_trait_operation(tr)
-                .map(|operation| format!("missing required operation '{operation}'"));
-        };
+        let (name, arguments) = ty.kind().as_non_simd_struct()?;
         let info = self.structs.get(name)?;
         for declared in &info.conforms {
             if declared != tr && !self.trait_refines(declared, tr) {
@@ -2909,8 +2891,7 @@ impl Checker {
                 .then(|| {
                     "its declared 'Movable' conformance condition evaluates to false".to_string()
                 }),
-            _ => builtin_trait_operation(tr)
-                .map(|operation| format!("missing required operation '{operation}'")),
+            _ => None,
         }
     }
 
@@ -3676,7 +3657,6 @@ impl Checker {
     ) -> Conformance {
         match struct_trait_rule(tr, self.traits.contains_key(tr)) {
             StructTraitRule::Always => Conformance::Proven,
-            StructTraitRule::Never => Conformance::Refuted,
             StructTraitRule::Declared => self.struct_conformance(name, args, tr),
             // A struct not registered here (the focused checker's unlinked
             // nominal spelling) keeps the compatibility answer.

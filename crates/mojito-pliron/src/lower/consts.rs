@@ -759,27 +759,6 @@ impl FnLowering<'_> {
                 let not = XorOp::new(ctx, value, one);
                 self.define(ctx, dest, not.get_operation(), not.get_result(ctx))
             }
-            // Bitwise inversion is xor with all ones at the operand width.
-            (PrefixOp::Invert, ScalarTy::Int) => {
-                let ones = self.int_constant(ctx, -1);
-                let inverted = XorOp::new(ctx, value, ones);
-                self.define(
-                    ctx,
-                    dest,
-                    inverted.get_operation(),
-                    inverted.get_result(ctx),
-                )
-            }
-            (PrefixOp::Invert, ScalarTy::Sized(dtype)) if !dtype.is_float() => {
-                let ones = self.sized_int_constant(ctx, dtype, u64::MAX);
-                let inverted = XorOp::new(ctx, value, ones);
-                self.define(
-                    ctx,
-                    dest,
-                    inverted.get_operation(),
-                    inverted.get_result(ctx),
-                )
-            }
             // Sized-lane negation: `0 - x` wraps at the lane width for
             // integers; narrow float negation is exact, so no widen/round
             // dance.

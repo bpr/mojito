@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Addable`, `Subtractable`, `Multipliable`, `Divisible`,
+  `FloorDivisible`, `Modable`, `ShiftLeftable`, `ShiftRightable`,
+  `Andable`, `Orable`, `Xorable`, and `Negatable` are no longer
+  compiler-known traits, so a bound or conformance naming one is an
+  unknown declaration, as at the pin (R712). The erased operator arms
+  they served, and the VM's and Pliron's `~` over `Int`, `UInt`, and
+  integer `SIMD` lanes, are gone. `not x` over a `T: Boolable` now
+  converts through `Bool(x)`, where the VM rejected an `Int` operand
+  (`assets/ok/boolable_bound_not.mojo`).
 - A `_` in a construction's bracket now leaves its slot to the selected
   initializer, which binds it from the arguments or its refined `out
   self`, as at the pin: `SIMD[DType.int32, _](v)` casts a four-lane `v`,

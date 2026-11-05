@@ -21,18 +21,6 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Iterable",
     "IterableOwned",
     "Iterator",
-    "Addable",
-    "Subtractable",
-    "Multipliable",
-    "Divisible",
-    "FloorDivisible",
-    "Modable",
-    "ShiftLeftable",
-    "ShiftRightable",
-    "Andable",
-    "Orable",
-    "Xorable",
-    "Negatable",
 ];
 
 /// A conformance query's answer, upstream's `TriBool`: an archetype whose
@@ -98,8 +86,6 @@ pub enum StructTraitRule {
     /// By its declared conformances: a declared trait that is the trait or
     /// refines it, under that declaration's condition.
     Declared,
-    /// Never: an operation trait no struct conforms to.
-    Never,
     /// Always: `AnyType`, which every type conforms to.
     Always,
 }
@@ -116,9 +102,6 @@ pub fn struct_trait_rule(trait_name: &str, declared_by_program: bool) -> StructT
     match trait_name {
         "AnyType" => StructTraitRule::Always,
         "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => StructTraitRule::Lifecycle,
-        "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
-        | "Modable" | "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable"
-        | "Negatable" => StructTraitRule::Never,
         _ => StructTraitRule::Declared,
     }
 }
@@ -241,13 +224,7 @@ pub fn leaf_conformance(
             }
         }
         "Writer" => Conformance::Refuted,
-        "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
-        | "Modable" => is_numeric_like(ty).into(),
-        "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
-            is_integer_like(ty).into()
-        }
-        "Negatable" => is_signed_numeric_like(ty).into(),
-        // `AnyType`, and the layout and operation markers that stay shallow.
+        // `AnyType`, and the layout markers that stay shallow.
         _ => Conformance::Proven,
     })
 }
@@ -402,20 +379,6 @@ pub fn is_numeric(ty: &Ty) -> bool {
 
 pub fn is_numeric_like(ty: &Ty) -> bool {
     is_numeric(&default_literal(ty))
-}
-
-/// Integer-kind scalars — the operands of bitwise and shift operators
-/// (`IntLiteral` materializes to `Int`).
-pub fn is_integer_like(ty: &Ty) -> bool {
-    let ty = default_literal(ty);
-    ty.kind().is_int() || ty.kind().is_uint()
-}
-
-/// Signed numeric scalars — the operands of arithmetic negation (`-x`); `UInt`
-/// is excluded.
-pub fn is_signed_numeric_like(ty: &Ty) -> bool {
-    let ty = default_literal(ty);
-    ty.kind().is_int() || ty.kind().is_float64()
 }
 
 pub fn builtin_hashable_ty(ty: &Ty) -> bool {
