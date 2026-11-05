@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `ref` binding of a `Span` rvalue (`ref r = values[1:]`, the starred
+  `case [f, *ref rr]`) is rejected for lacking a memory origin, as at the
+  pin, now that the bundled `Span` is `TrivialRegisterPassable`; the probe
+  is the `assets/type_error/span_ref_binding_register_passable.mojo`
+  fixture (R1226).
 - A direct call passes a `mut`/`ref` argument, or a `read` argument of a
   memory-only type, as a `ref.make` of the caller's place, upstream's
   `lit.call` address operand, instead of a whole load of the place beside

@@ -8638,7 +8638,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     the native ABI rows in `docs/native-abi.md` must follow, and the
     checker does not yet enforce `TrivialRegisterPassable`'s rules at a
     declaration (R860).
-  - `Span`'s is R1226.
+  - `Span` already declares `TrivialRegisterPassable`.
   - Found while landing R578 (2026-10-26).
   - Depends on R860 and R1226.
   - Model: Opus, Not Planned.
@@ -12986,26 +12986,6 @@ residue found inside a task moves to the task that owns its fix.
     len(mid))`. So is `var xs = [7, 8]; var s = xs[1:]`. Found while
     landing R1137.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1226 `Span` does not declare `TrivialRegisterPassable`**
-
-  Problem: `ref r = values[1:]` over a `List[Int]` runs, where the pin
-  rejects it with "value of type 'Span[...]' doesn't have a memory origin
-  in 'ref' binding", because upstream's `Span` is
-  `TrivialRegisterPassable` (`Mojo/stdlib/std/collections/span.mojo`).
-  - The bundled `Span` (`stdlib/std/span.mojo`) declares only
-    `ImplicitlyCopyable` and `Movable`, so the checker's register-passable
-    `ref` rejection never fires for it.
-  - Declaring it changes how a `Span` passes natively, so the native ABI
-    rows in `docs/native-abi.md` must follow.
-  - Probe: `conformance/probes/span_ref_binding_register_passable.mojo`,
-    which also holds the starred `case [f, *ref rr]` the pin rejects the
-    same way.
-  - Watch R860: the checker does not yet enforce
-    `TrivialRegisterPassable`'s rules at a declaration.
-  - Found while planning R1137 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

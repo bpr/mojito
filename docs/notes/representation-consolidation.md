@@ -23,7 +23,7 @@ command cannot use both.
    - R1425: a call passes a by-address argument as a loaded value beside
      its place. Planned.
    - R1418: a loan anchor or borrow slot binds a memory-only call result a
-     second time. It depends on R1226 (`Span` is `TrivialRegisterPassable`).
+     second time. `Span` is now `TrivialRegisterPassable` (R1226 landed).
    - R1873's 11-03 census found 10 fixtures, each now a probe on R1425 or
      R1418.
 
