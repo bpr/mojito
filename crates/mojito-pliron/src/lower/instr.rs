@@ -934,25 +934,6 @@ impl FnLowering<'_> {
                 };
                 self.lower_variant_set(ctx, *dest, place, index, *value, members)
             }
-            MirInstr::VariantSetInitWith {
-                dest,
-                place,
-                index,
-                factory,
-                destructors,
-            } => {
-                let index = self.known_variant_index(index)?;
-                self.lower_variant_set_init_with(ctx, *dest, place, index, *factory, destructors)
-            }
-            MirInstr::VariantDeinitWith {
-                dest,
-                variant,
-                handler,
-                index,
-            } => {
-                let index = self.known_variant_index(index)?;
-                self.lower_variant_deinit_with(ctx, *dest, *variant, *handler, index)
-            }
             MirInstr::Unsupported(message) => {
                 Err(self.unsupported(format!("lowering-marked construct: {message}"), None))
             }

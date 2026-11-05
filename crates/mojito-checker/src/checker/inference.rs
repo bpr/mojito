@@ -1748,7 +1748,7 @@ impl Checker {
     /// `infer_method_call` from both the parameterized `Invoke(Member)`
     /// spelling (`self._storage.unwrap[T]()`) and the ordinary method-call
     /// spelling for parameterless operations
-    /// (`self._storage.deinit_with(handler)`). Only a `TyKind::Variant`-typed
+    /// (`self._storage.get_discriminant()`). Only a `TyKind::Variant`-typed
     /// receiver — the storage field of the bundled `Variant` struct — reaches
     /// it; every other receiver is `None`.
     pub(super) fn infer_variant_storage_method(
@@ -1800,57 +1800,10 @@ impl Checker {
                 | "unsafe_get"
                 | "replace"
                 | "unsafe_replace"
-                | "deinit_with"
         ) {
             return None;
         }
         Some((|| {
-            // `set(init_with=…)` is the keyword-selected placement form: the
-            // zero-parameter factory's result replaces the payload in place.
-            // Upstream declares the alternative infer-only, so it comes from
-            // the factory's return type; an explicit parameter rejects.
-            if field == "set"
-                && let [kwarg] = kwargs
-                && kwarg.name == "init_with"
-            {
-                if !args.is_empty() {
-                    return Err(TypeError::ArityMismatch {
-                        name: "Variant.set".to_string(),
-                        expected: 0,
-                        got: args.len(),
-                    });
-                }
-                if !param_args.is_empty() {
-                    return Err(TypeError::BadCall {
-                        func: "Variant.set".to_string(),
-                        reason: "the 'init_with' form infers its alternative from the \
-                                 factory result; do not pass an explicit type parameter"
-                            .to_string(),
-                    });
-                }
-                self.require_variant_set_deinitable(alternatives)?;
-                self.check_place(object)?;
-                let factory = self.infer(&kwarg.value)?;
-                let factory_ret = placement_factory_result(&factory);
-                let index = factory_ret.and_then(|ret| {
-                    self.variant_index(alternatives, ret, |alternative| coerces(ret, alternative))
-                });
-                let Some(index) = index else {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "def() -> T for one alternative T".to_string(),
-                        found: factory.to_string(),
-                        context: "'init_with' factory for 'Variant.set'".to_string(),
-                    });
-                };
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::VariantSetInitWith {
-                        alternatives: alternatives.clone(),
-                        index,
-                    },
-                ));
-                self.record_interior_invalidation(span, object);
-                return Ok(Ty::none());
-            }
             if !kwargs.is_empty() {
                 return Err(TypeError::BadCall {
                     func: format!("Variant.{field}"),
@@ -1962,37 +1915,6 @@ impl Checker {
                     ));
                     self.record_interior_invalidation(span, object);
                     Ok(alternative)
-                }
-                "deinit_with" => {
-                    if !param_args.is_empty() {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: "Variant.deinit_with".to_string(),
-                            expected: 0,
-                            got: param_args.len(),
-                        });
-                    }
-                    if args.len() != 1 {
-                        return Err(TypeError::ArityMismatch {
-                            name: "Variant.deinit_with".to_string(),
-                            expected: 1,
-                            got: args.len(),
-                        });
-                    }
-                    if !is_place_expr(object) {
-                        return Err(TypeError::BadCall {
-                            func: "Variant.deinit_with".to_string(),
-                            reason: "consuming receiver must be an owned place".to_string(),
-                        });
-                    }
-                    let index = self.check_variant_deinit_handler(alternatives, &args[0])?;
-                    self.record_at(span.clone()).adjustment = Some(Box::new(
-                        mojito_checked::checked::SemanticAdjustment::VariantDeinitWith {
-                            alternatives: alternatives.clone(),
-                            index,
-                        },
-                    ));
-                    self.record_interior_invalidation(span, object);
-                    Ok(Ty::none())
                 }
                 "replace" | "unsafe_replace" => {
                     if param_args.len() != 2 {
@@ -2110,62 +2032,6 @@ impl Checker {
             }
         }
         Ok(())
-    }
-
-    /// Validate a `Variant.deinit_with` handler: one non-raising monomorphic
-    /// callable consuming a single `var` payload parameter for exactly one
-    /// alternative and returning `None` (upstream's
-    /// `deinit_with[T: AnyType, F: def(var T)]` contract — generic handlers
-    /// reject). Returns the handled alternative's index; the VM aborts on a
-    /// runtime tag mismatch.
-    fn check_variant_deinit_handler(
-        &self,
-        alternatives: &[Ty],
-        handler: &Expr,
-    ) -> Result<VariantIndex, TypeError> {
-        let handler_ty = self.infer(handler)?;
-        let reject = |found: &Ty| TypeError::TypeMismatch {
-            expected: "def(var element: T) for one alternative T".to_string(),
-            found: found.to_string(),
-            context: "'Variant.deinit_with' handler".to_string(),
-        };
-        // A handler typed by a callable-bounded parameter has its bound's
-        // contract.
-        let contract = match handler_ty.kind() {
-            TyKind::Param {
-                callable_bound: Some(bound),
-                ..
-            } => bound,
-            _ => &handler_ty,
-        };
-        match contract.kind() {
-            TyKind::Func(func)
-                if let FuncTy {
-                    params,
-                    conventions,
-                    raises: false,
-                    ret,
-                    ..
-                } = &**func
-                    && params.len() == 1
-                    && **ret == TyKind::None =>
-            {
-                if !matches!(
-                    conventions.first(),
-                    Some(Some(
-                        mojito_ast::ast::ArgConvention::Deinit
-                            | mojito_ast::ast::ArgConvention::Var
-                    ))
-                ) {
-                    return Err(reject(&handler_ty));
-                }
-                self.variant_index(alternatives, &params[0], |alternative| {
-                    alternative == &params[0]
-                })
-                .ok_or_else(|| reject(&handler_ty))
-            }
-            _ => Err(reject(&handler_ty)),
-        }
     }
 
     pub(super) fn variant_alternative(

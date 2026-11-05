@@ -9872,25 +9872,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1868 `Variant.set(init_with=)` and `Variant.deinit_with` hand
-  their callable to a storage operation that calls it**
-
-  `variant.set_init_with` and `variant.deinit_with` invoke their factory
-  or handler operand inside the instruction, where upstream's `Variant`
-  bodies call the callable themselves, an ordinary call over the storage's
-  payload.
-  - Probe (from R1109): the handler operand runs a struct handler's
-    `__call__` from its type (`mir::TYPE_REACHED_MEMBERS`), so a
-    `__call__` ignoring an argument keeps it; upstream's is a call
-    `RemoveUnusedParams` rewrites.
-  - The Pliron push of `__call__` (`lib.rs`) and the specializer's
-    `enqueue_struct_call` for these two instructions go with it.
-  - `Variant.__init__(init_with=)` already lowers to a `call.indirect`
-    and a `variant.make`.
-  - Found while landing R1444 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1932 The MIR verifier does not reject an unnamed `drop.reg` of a
   memory-only register**
 
@@ -11799,6 +11780,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port upstream's struct, with its conditional conformances and lifecycle
     bodies, once `__mlir_type` and `__mlir_op` accept the variant type and
     ops, and delete the intrinsic's checker arms.
+  - Probe (from R1868): the bundled `Variant.set(init_with=)` stores the
+    factory's result through `self._storage.set[T](init_with())` and
+    `deinit_with` hands its handler `self._storage.unsafe_unwrap[T]()`,
+    where upstream's `_DefaultVariantStorage` writes in place through
+    `unsafe_ptr[T]().unsafe_write(init_with=)` and destroys through
+    `unsafe_ptr[T]().unsafe_deinit_pointee_with(deinit_func)`.
   - Found while landing `enum` (2026-10-25).
   - Depends on R1392 (`pop` ops in `__mlir_op`), R221
     (`Pointer.unsafe_bitcast`), and R1316 (`!kgen.pointer` values).

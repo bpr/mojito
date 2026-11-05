@@ -207,9 +207,6 @@ pub(super) fn verify_instruction(
             );
             verify_variant_destructors(&cx, place, destructors, errors);
         }
-        MirInstr::VariantSetInitWith {
-            place, destructors, ..
-        } => verify_variant_destructors(&cx, place, destructors, errors),
         MirInstr::VariantReplace {
             place,
             input_index: index,

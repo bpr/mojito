@@ -810,19 +810,6 @@ impl Decoder {
                 index: self.req(value, fields, "index", Self::variant_index)?,
                 checked: self.req(value, fields, "checked", Self::boolean)?,
             }),
-            "variant.set_init_with" => Some(MirInstr::VariantSetInitWith {
-                dest: self.req(value, fields, "dest", Self::reg)?,
-                place: self.req(value, fields, "place", Self::place)?,
-                index: self.req(value, fields, "index", Self::variant_index)?,
-                factory: self.req(value, fields, "factory", Self::reg)?,
-                destructors: self.lifecycle_symbols(fields, "destructors"),
-            }),
-            "variant.deinit_with" => Some(MirInstr::VariantDeinitWith {
-                dest: self.req(value, fields, "dest", Self::reg)?,
-                variant: self.req(value, fields, "variant", Self::reg)?,
-                handler: self.req(value, fields, "handler", Self::reg)?,
-                index: self.req(value, fields, "index", Self::variant_index)?,
-            }),
             "variant.replace" => Some(MirInstr::VariantReplace {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 place: self.req(value, fields, "place", Self::place)?,

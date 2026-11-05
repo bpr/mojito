@@ -538,9 +538,6 @@ pub(super) fn loan_accesses(
         MirInstr::VariantSet { place, value, .. } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*value))]
         }
-        MirInstr::VariantSetInitWith { place, factory, .. } => {
-            vec![(place.clone(), LoanAccess::Write, span_for(*factory))]
-        }
         MirInstr::VariantReplace { place, value, .. } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*value))]
         }

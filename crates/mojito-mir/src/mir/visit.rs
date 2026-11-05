@@ -183,11 +183,10 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visitor.visit_variant_index(index)?;
             visitor.visit_variant_alternatives(alternatives)
         }
-        I::VariantIs { index, .. }
-        | I::VariantGet { index, .. }
-        | I::VariantTake { index, .. }
-        | I::VariantDeinitWith { index, .. } => visitor.visit_variant_index(index),
-        I::VariantSet { place, index, .. } | I::VariantSetInitWith { place, index, .. } => {
+        I::VariantIs { index, .. } | I::VariantGet { index, .. } | I::VariantTake { index, .. } => {
+            visitor.visit_variant_index(index)
+        }
+        I::VariantSet { place, index, .. } => {
             visitor.visit_variant_index(index)?;
             visitor.visit_place(place)
         }

@@ -311,16 +311,6 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "checked and unchecked consuming payload extraction",
     ),
     (
-        "variant.set_init_with",
-        CapabilityStatus::Supported,
-        "indirect factory invocation followed by owning replacement",
-    ),
-    (
-        "variant.deinit_with",
-        CapabilityStatus::Supported,
-        "tag-checked consuming handler invocation",
-    ),
-    (
         "variant.replace",
         CapabilityStatus::Supported,
         "owning replacement returning the previous payload",

@@ -1317,35 +1317,6 @@ impl<'p> CallEdges<'p, '_> {
                     self.push_named(destructor);
                 }
             }
-            // A struct handler (a closure's storage) is called through its
-            // `__call__`.
-            MirInstr::VariantSetInitWith {
-                destructors,
-                factory,
-                ..
-            } => {
-                for destructor in destructors.iter().flatten() {
-                    self.push_named(destructor);
-                }
-                if let Some((name, _)) = self
-                    .function
-                    .reg_types
-                    .get(&factory.0)
-                    .and_then(|ty| ty.kind().as_non_simd_struct())
-                {
-                    self.push_members(name, "__call__");
-                }
-            }
-            MirInstr::VariantDeinitWith { handler, .. } => {
-                if let Some((name, _)) = self
-                    .function
-                    .reg_types
-                    .get(&handler.0)
-                    .and_then(|ty| ty.kind().as_non_simd_struct())
-                {
-                    self.push_members(name, "__call__");
-                }
-            }
             MirInstr::VariantReplace {
                 place,
                 input_index: index,

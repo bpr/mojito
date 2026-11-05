@@ -93,7 +93,6 @@ impl<'f> RegisterEnds<'f> {
             | MirInstr::UninitStorageTake { storage: src, .. }
             | MirInstr::UninitStorageDestroy { storage: src, .. }
             | MirInstr::VariantTake { variant: src, .. }
-            | MirInstr::VariantDeinitWith { variant: src, .. }
             | MirInstr::MakeVariant { value: src, .. }
             | MirInstr::VariantSet { value: src, .. }
             | MirInstr::VariantReplace { value: src, .. }

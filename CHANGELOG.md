@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Variant.set(init_with=)` and `Variant.deinit_with` now call their
+  callable in the bundled body, as upstream's do: `set` stores the
+  factory's result through the storage's `set[T]`, and `deinit_with`
+  aborts on a wrong tag and hands the handler the payload
+  `unsafe_unwrap[T]()` takes (R1868). The `variant.set_init_with` and
+  `variant.deinit_with` MIR instructions are removed (MIR text 1.163,
+  `mojito-package 188`), and a closure handler's `__call__` is no longer
+  a type-reached member, so unused-argument removal rewrites it as any
+  other call. A native wrong-tag `deinit_with` now traps through `abort`.
 - `x.write_to(w)` and `x.write_repr_to(w)` through a `Writable` bound,
   including a pack's `args[i].write_to(self)`, now call the conformer's
   witness instead of writing host-formatted text, so a writer overriding

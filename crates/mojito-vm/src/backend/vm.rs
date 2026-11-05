@@ -1097,25 +1097,6 @@ impl Prog {
         self.index_of(candidates.resolve(method, argc)?)
     }
 
-    /// The function index of the type-reached member `method` a value of the
-    /// struct `name` runs for a call whose checker selection is `resolved`:
-    /// the instance it names, else the table instance under the method
-    /// spelling it selects (a `__trait_dispatch` contract's), else
-    /// [`Self::struct_member`]'s.
-    fn selected_struct_member(
-        &self,
-        name: &str,
-        method: &str,
-        resolved: Option<&str>,
-        argc: usize,
-    ) -> Option<usize> {
-        let selected = resolved.and_then(|resolved| {
-            self.index_of(resolved)
-                .or_else(|| self.keyed_struct_member(name, resolved))
-        });
-        selected.or_else(|| self.struct_member(name, method, argc))
-    }
-
     /// The function index of the one instance the struct `name`'s member
     /// table records under the method spelling of the selected symbol
     /// `selected` (`__eq__$ov$Self` for `__trait_dispatch.__eq__$ov$Self`),

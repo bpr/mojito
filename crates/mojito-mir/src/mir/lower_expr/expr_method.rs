@@ -348,40 +348,6 @@ impl<'a> Flatten<'a> {
             });
             return Some(d);
         }
-        // `v.set(init_with=…)` infers its alternative from the factory
-        // (no explicit type parameter), so it arrives as an ordinary
-        // method call rather than a parameterized invoke.
-        if let Some(index) = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::VariantSetInitWith {
-                    index, ..
-                } => Some(index.clone()),
-                _ => None,
-            })
-        {
-            let place = self
-                .try_place(object)
-                .expect("checked Variant.set receiver is a writable place");
-            let factory = self.callable_operand(
-                kwargs
-                    .first()
-                    .expect("checked Variant.set(init_with=) has one factory")
-                    .1,
-            );
-            let dest = self.fresh(call.location(), None);
-            self.emit_interior_invalidations(call, None);
-            self.emit(MirInstr::VariantSetInitWith {
-                dest,
-                place,
-                index,
-                factory,
-                destructors: Vec::new(),
-            });
-            self.emit_nested_closure_argument_keepalives(args, kwargs);
-            return Some(dest);
-        }
         // An `enum` storage's discriminant (`storage.get_discriminant()`)
         // reads the tag, as `isa[T]()` tests it.
         if node.adjustments.iter().any(|adjustment| {
@@ -393,43 +359,6 @@ impl<'a> Flatten<'a> {
             let variant = self.expr(object);
             let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::VariantTag { dest, variant });
-            return Some(dest);
-        }
-        // The parameterless Variant owning operation
-        // (`v^.deinit_with(handler)`) is spelled as an ordinary method
-        // call rather than a parameterized invoke.
-        if let Some(index) = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::VariantDeinitWith {
-                    index, ..
-                } => Some(index.clone()),
-                _ => None,
-            })
-        {
-            let place = self
-                .try_place(object)
-                .expect("checked Variant.deinit_with receiver is an owned place");
-            let variant = self.fresh(object.location(), None);
-            self.emit(MirInstr::MovePlace {
-                dest: variant,
-                place,
-            });
-            let handler = self.callable_operand(
-                *args
-                    .first()
-                    .expect("checked Variant.deinit_with has one handler"),
-            );
-            let dest = self.fresh(call.location(), None);
-            self.emit_interior_invalidations(call, None);
-            self.emit(MirInstr::VariantDeinitWith {
-                dest,
-                variant,
-                handler,
-                index,
-            });
-            self.emit_nested_closure_argument_keepalives(args, kwargs);
             return Some(dest);
         }
         None

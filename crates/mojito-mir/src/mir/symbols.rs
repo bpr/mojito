@@ -294,9 +294,6 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                         .chain(destructors.iter_mut().flatten())
                         .for_each(&mut *replace);
                 }
-                MirInstr::VariantSetInitWith { destructors, .. } => {
-                    destructors.iter_mut().flatten().for_each(&mut *replace);
-                }
                 _ => {}
             }
             for region in instruction_regions_mut(instruction) {

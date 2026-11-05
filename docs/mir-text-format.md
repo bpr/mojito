@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.162
+mojito-mir 1.163
 ```
 
-The writer emits 1.162. The reader accepts 1.0 through 1.162; *Schema 1.0*
+The writer emits 1.163. The reader accepts 1.0 through 1.163; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1131,6 +1131,13 @@ one reference per element (a `pointer`, `lit_ref`, or `ref` to it), and
 the pack is bound, so concrete MIR holds none. The package format moves
 to `mojito-package 187`.
 
+Schema 1.163 removes the instructions `variant.set_init_with` and
+`variant.deinit_with`: the bundled `Variant.set(init_with=)` and
+`Variant.deinit_with` call their callable in the body, as upstream's do,
+and hand the storage the produced value (`variant.set`) or take the
+payload out of it (`variant.take`). The checked adjustments go with
+them, so the package format moves to `mojito-package 188`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1285,7 +1292,7 @@ its member table, sorted by name, then symbol, naming the function that
 is its `__deinit__`, `__copyinit__`, or `__moveinit__`. A concrete struct's
 table also names each full instance of a member a backend reaches from a
 value's type (`mir::TYPE_REACHED_MEMBERS`: `write_to`, `write_repr_to`,
-`write_string`, `__hash__`, `_update_with_simd`, `__int__`, `__call__`),
+`write_string`, `__hash__`, `_update_with_simd`, `__int__`),
 never the generator a call names without its unused arguments, and of
 every other special method
 or trait requirement its type reaches
@@ -1961,7 +1968,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `ArrayGep` | `array.gep { dest, array, index }` (schema 1.141): upstream's `pop.array.gep`, the `kgen_pointer` to element `index` (an `index` register) of the `pop_array` the `kgen_pointer` `array` addresses; it reads nothing and checks no bound, and the verifier checks the operand, index, and result types |
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` (schema 1.71: `variant.make` and `variant.set` carry `constructor: "<symbol>"` after their operands when the payload names the constructor it runs, the `__copyinit__` through schema 1.100 and the `__moveinit__` from 1.101, which takes `value` by move; schema 1.73: `variant.set` carries `destructors: [present("<symbol>") | absent, ...]`, one entry per alternative, naming the `__deinit__` the replaced payload runs under that tag, omitted while it names none) |
 | `VariantTag` | `variant.tag { dest, variant }` (schema 1.103: the active alternative's index as an `Int`, an `enum` storage's discriminant) |
-| `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |
+| `VariantTake` / `VariantReplace` | `variant.take` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.163 removes `variant.set_init_with` and `variant.deinit_with`) |
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bitcast` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `pop.simd.shuffle` `lane_attribute { value: <param_expr> }` (schema 1.142), which elaboration closes (schema 1.26; schema 1.149 removes `lane_shuffle` and `lane_join`, schema 1.150 `lane_slice`) |
 | `Select` | `select { dest, condition, on_true, on_false }` (schema 1.125): upstream's `pop.select`, `on_true` where the one-lane `bool` `condition` is set, else `on_false`; both cases are of `dest`'s trivially register-passable type |
 | `SimdSelect` / `SimdExtract` / `SimdInsert` / `SimdReduce` | `simd.select { dest, mask, on_true, on_false }` / `simd.extract { dest, value, index }` / `simd.insert { dest, value, element, index }` / `simd.reduce { dest, value, op }` (schema 1.120): upstream's `pop.simd.select`, `extractelement`, `insertelement`, and `reduce_and`/`reduce_or` (`op` is `and` or `or`); a lane is a width-one vector of the vector's dtype, and an index outside the lanes traps |

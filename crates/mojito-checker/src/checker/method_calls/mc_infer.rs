@@ -78,7 +78,7 @@ impl Checker {
             return Ok(ty);
         }
         // Parameterless `__VariantStorage` operations
-        // (`self._storage.deinit_with(handler)`) arrive as ordinary method
+        // (`self._storage.get_discriminant()`) arrive as ordinary method
         // calls rather than parameterized invokes.
         if let Some(result) = self.infer_variant_storage_method(
             span.clone(),

@@ -150,9 +150,6 @@ impl Walk<'_> {
             // none, or a store naming none yet, tears down by type.
             MirInstr::VariantSet {
                 place, destructors, ..
-            }
-            | MirInstr::VariantSetInitWith {
-                place, destructors, ..
             } => match variant_place_alternatives(place, self.var_tys) {
                 Some(alternatives) => {
                     for (position, alternative) in alternatives.iter().enumerate() {

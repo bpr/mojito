@@ -1306,19 +1306,6 @@ fn instruction_families_reprint_byte_identically() {
             index: VariantIndex::Known(1),
             checked: true,
         },
-        MirInstr::VariantSetInitWith {
-            dest: Reg(32),
-            place: place(0),
-            index: VariantIndex::Known(0),
-            factory: Reg(5),
-            destructors: Vec::new(),
-        },
-        MirInstr::VariantDeinitWith {
-            dest: Reg(33),
-            variant: Reg(27),
-            handler: Reg(5),
-            index: VariantIndex::Known(1),
-        },
         MirInstr::VariantReplace {
             dest: Reg(34),
             place: place(0),

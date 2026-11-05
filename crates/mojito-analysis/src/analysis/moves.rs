@@ -497,14 +497,6 @@ pub(super) fn place_uses(
             }
             vec![(place.root, path, Touch::Write { parent }, *value)]
         }
-        MirInstr::VariantSetInitWith { place, factory, .. } => {
-            let path = place_path(place);
-            let mut parent = path.clone();
-            if matches!(place.steps().next_back(), Some(Proj::Field(_))) {
-                parent.pop();
-            }
-            vec![(place.root, path, Touch::Write { parent }, *factory)]
-        }
         MirInstr::VariantReplace { place, value, .. } => {
             let path = place_path(place);
             let mut parent = path.clone();
@@ -557,7 +549,6 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, context: &MoveCont
         MirInstr::Store { place, .. }
         | MirInstr::StoreRef { place, .. }
         | MirInstr::VariantSet { place, .. }
-        | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
             if matches!(
                 place.steps().next_back(),

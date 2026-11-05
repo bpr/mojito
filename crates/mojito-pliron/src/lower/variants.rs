@@ -491,68 +491,6 @@ impl FnLowering<'_> {
         self.move_reg_into(ctx, payload, &input, value, Reg(u32::MAX - 3), constructor)
     }
 
-    pub(super) fn lower_variant_set_init_with(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        place: &MirPlace,
-        index: usize,
-        factory: Reg,
-        destructors: &[Option<String>],
-    ) -> Result<(), PlironError> {
-        let produced = Reg(u32::MAX - 1);
-        self.lower_call_indirect(ctx, produced, factory, &[], &[], &[], &[], None)?;
-        // The factory's result is a fresh temporary; its store names no
-        // constructor.
-        let members = VariantStoreMembers {
-            constructor: None,
-            destructors,
-        };
-        self.lower_variant_set(ctx, dest, place, index, produced, members)
-    }
-
-    pub(super) fn lower_variant_deinit_with(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        variant: Reg,
-        handler: Reg,
-        index: usize,
-    ) -> Result<(), PlironError> {
-        let (ptr, alternatives, layout) = self.variant_parts(ctx, variant, dest)?;
-        let Some(selected) = alternatives.get(index).cloned() else {
-            return Err(self.unsupported_reg("Variant.deinit_with checked tag".into(), dest));
-        };
-        self.emit_variant_tag_guard(ctx, ptr, index, dest)?;
-        let payload_address = self.offset_address(ctx, ptr, layout.payload_offset);
-        let payload = Reg(u32::MAX - 2);
-        match lower_ty(
-            self.name,
-            &selected,
-            &self.layout,
-            self.mir_declarations,
-            self.reg_span(dest),
-        )? {
-            LowerTy::Scalar(scalar) => {
-                let handle = scalar.handle(ctx);
-                let load = LoadOp::new(ctx, payload_address, handle);
-                self.append(ctx, load.get_operation(), Some(dest));
-                self.reg_values.insert(payload.0, load.get_result(ctx));
-            }
-            LowerTy::Aggregate { .. } => {
-                self.reg_values.insert(payload.0, payload_address);
-            }
-            LowerTy::ZeroSized => {
-                self.erased.insert(payload.0);
-            }
-        }
-        self.lower_call_indirect(ctx, dest, handler, &[payload], &[], &[None], &[], None)?;
-        self.reg_values.remove(&payload.0);
-        self.erased.remove(&payload.0);
-        self.erased.insert(dest.0);
-        Ok(())
-    }
-
     /// Drop the active payload of the variant at `ptr` under a tag switch,
     /// each alternative by the destructor `destructors` names for it, as
     /// upstream's `Variant.__del__` calls each alternative's `__del__` under

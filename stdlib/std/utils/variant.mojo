@@ -12,6 +12,7 @@
 from std.reflection.type_info import _unqualified_type_name
 from std.range import range
 from std.hash.hasher import Hasher
+from std.os import abort
 
 comptime _InvalidTypeIndex: Int = -1
 
@@ -132,7 +133,7 @@ struct Variant[*Ts: AnyType](
         mut self, *, init_with: F
     ) where Self.Ts.all_conforms_to[Deinitable]():
         Self._check[T]()
-        self._storage.set(init_with=init_with)
+        self._storage.set[T](init_with())
 
     def isa[T: AnyType](self) -> Bool:
         Self._check[T]()
@@ -148,4 +149,6 @@ struct Variant[*Ts: AnyType](
 
     def deinit_with[T: AnyType, F: def(var T)](deinit self, deinit_func: F, /):
         Self._check[T]()
-        self._storage.deinit_with(deinit_func)
+        if not self._storage.isa[T]():
+            abort("Variant.deinit_with: wrong variant type")
+        deinit_func(self._storage.unsafe_unwrap[T]())

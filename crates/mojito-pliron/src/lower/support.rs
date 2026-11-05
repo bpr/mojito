@@ -334,8 +334,6 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::VariantGet { .. } => "VariantGet",
         MirInstr::VariantSet { .. } => "VariantSet",
         MirInstr::VariantTake { .. } => "VariantTake",
-        MirInstr::VariantSetInitWith { .. } => "VariantSetInitWith",
-        MirInstr::VariantDeinitWith { .. } => "VariantDeinitWith",
         MirInstr::VariantReplace { .. } => "VariantReplace",
         MirInstr::MakeSimd { .. } => "MakeSimd",
         MirInstr::SimdCast { .. } => "SimdCast",

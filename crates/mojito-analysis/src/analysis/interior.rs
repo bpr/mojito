@@ -426,9 +426,6 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::VariantReplace { place, value, .. } => {
             add_place(&mut uses, place, *value);
         }
-        MirInstr::VariantSetInitWith { place, factory, .. } => {
-            add_place(&mut uses, place, *factory);
-        }
         MirInstr::DropPlace { place, .. } => add_place(&mut uses, place, Reg(0)),
         MirInstr::HasNext { dest, iter, .. } | MirInstr::Next { dest, iter, .. } => {
             uses.push((*iter, *dest));
@@ -498,7 +495,6 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::VariantTag { .. }
         | MirInstr::VariantGet { .. }
         | MirInstr::VariantTake { .. }
-        | MirInstr::VariantDeinitWith { .. }
         | MirInstr::PointerStorageTake { .. }
         | MirInstr::PointerStorageDestroy { .. }
         | MirInstr::UninitStorage { .. }

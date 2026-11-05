@@ -63,7 +63,6 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
         | MirInstr::StoreRef { place, .. }
         | MirInstr::LoadPlace { place, .. }
         | MirInstr::VariantSet { place, .. }
-        | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
         | MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
@@ -153,7 +152,6 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
         | MirInstr::StoreRef { place, .. }
         | MirInstr::LoadPlace { place, .. }
         | MirInstr::VariantSet { place, .. }
-        | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
         | MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }

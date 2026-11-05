@@ -64,9 +64,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::VariantTag { dest, .. }
         | MirInstr::VariantGet { dest, .. }
         | MirInstr::VariantSet { dest, .. }
-        | MirInstr::VariantSetInitWith { dest, .. }
         | MirInstr::VariantTake { dest, .. }
-        | MirInstr::VariantDeinitWith { dest, .. }
         | MirInstr::VariantReplace { dest, .. }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(*dest),
@@ -367,15 +365,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::VariantTag { variant, .. }
         | MirInstr::VariantGet { variant, .. }
         | MirInstr::VariantTake { variant, .. } => out.push(*variant),
-        MirInstr::VariantDeinitWith {
-            variant, handler, ..
-        } => out.extend([*variant, *handler]),
-        MirInstr::VariantSetInitWith {
-            place: p,
-            factory: value,
-            ..
-        }
-        | MirInstr::VariantSet {
+        MirInstr::VariantSet {
             place: p, value, ..
         }
         | MirInstr::VariantReplace {

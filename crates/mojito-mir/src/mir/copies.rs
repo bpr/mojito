@@ -10,8 +10,7 @@
 //! move of a struct without the member may reach.
 
 use crate::mir::{
-    MirBlock, MirFunction, MirInstr, MirPlace, MirStructDeclaration, Reg, UseMode,
-    instruction_regions,
+    MirBlock, MirFunction, MirInstr, MirStructDeclaration, Reg, UseMode, instruction_regions,
 };
 use mojito_hir::hir::VarId;
 use mojito_types::types::{Ty, TyKind};
@@ -182,7 +181,6 @@ impl Walk<'_> {
             MirInstr::MakeVariant { value, .. }
             | MirInstr::VariantSet { value, .. }
             | MirInstr::VariantReplace { value, .. } => self.register(*value),
-            MirInstr::VariantSetInitWith { place, .. } => self.place(place, false),
             MirInstr::MethodCall {
                 dest,
                 result_adapter: Some(_),
@@ -210,19 +208,6 @@ impl Walk<'_> {
     fn var(&mut self, var: VarId, moved: bool) {
         if let Some(ty) = self.function.var_tys.get(&var) {
             self.push(ty.clone(), moved);
-        }
-    }
-
-    fn place(&mut self, place: &MirPlace, moved: bool) {
-        match place
-            .ty
-            .as_ref()
-            .or_else(|| place.projection_tys.last())
-            .or_else(|| place.root_ty.as_ref().filter(|_| place.proj.is_empty()))
-        {
-            Some(ty) => self.push(ty.clone(), moved),
-            None if place.proj.is_empty() => self.var(place.root, moved),
-            None => {}
         }
     }
 

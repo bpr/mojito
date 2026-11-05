@@ -439,15 +439,13 @@ impl<'a> Flatten<'a> {
                         | mojito_checked::checked::SemanticAdjustment::VariantTag { .. }
                         | mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
                         | mojito_checked::checked::SemanticAdjustment::VariantSet { .. }
-                        | mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { .. }
                         | mojito_checked::checked::SemanticAdjustment::VariantTake { .. }
-                        | mojito_checked::checked::SemanticAdjustment::VariantDeinitWith { .. }
                         | mojito_checked::checked::SemanticAdjustment::VariantReplace { .. }
                 )
             })
             .cloned()
         {
-            return self.variant_operation(call, callee, &operation, args, kwargs);
+            return self.variant_operation(call, callee, &operation, args);
         }
         // `a.b[i](x)`: the member-base element call re-dispatched by
         // the checker — the callee expression is the subscripted
@@ -697,7 +695,6 @@ impl<'a> Flatten<'a> {
         callee: Node<'a>,
         operation: &mojito_checked::checked::SemanticAdjustment,
         args: &[Node<'a>],
-        kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
         let Some(object) = callee.member_object() else {
             unreachable!("checked Variant operation has a member callee")
@@ -746,53 +743,6 @@ impl<'a> Flatten<'a> {
                     constructor: None,
                     destructors: Vec::new(),
                 });
-                dest
-            }
-            mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { index, .. } => {
-                let place = self
-                    .try_place(object)
-                    .expect("checked Variant.set receiver is a writable place");
-                let factory = self.callable_operand(
-                    kwargs
-                        .first()
-                        .expect("checked Variant.set(init_with=) has one factory")
-                        .1,
-                );
-                let dest = self.fresh(call.location(), None);
-                self.emit_interior_invalidations(call, None);
-                self.emit(MirInstr::VariantSetInitWith {
-                    dest,
-                    place,
-                    index,
-                    factory,
-                    destructors: Vec::new(),
-                });
-                self.emit_nested_closure_argument_keepalives(args, kwargs);
-                dest
-            }
-            mojito_checked::checked::SemanticAdjustment::VariantDeinitWith { index, .. } => {
-                let place = self
-                    .try_place(object)
-                    .expect("checked Variant.deinit_with receiver is an owned place");
-                let variant = self.fresh(object.location(), None);
-                self.emit(MirInstr::MovePlace {
-                    dest: variant,
-                    place,
-                });
-                let handler = self.callable_operand(
-                    *args
-                        .first()
-                        .expect("checked Variant.deinit_with has one handler"),
-                );
-                let dest = self.fresh(call.location(), None);
-                self.emit_interior_invalidations(call, None);
-                self.emit(MirInstr::VariantDeinitWith {
-                    dest,
-                    variant,
-                    handler,
-                    index,
-                });
-                self.emit_nested_closure_argument_keepalives(args, kwargs);
                 dest
             }
             mojito_checked::checked::SemanticAdjustment::VariantTake { index, checked, .. } => {

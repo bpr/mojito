@@ -378,20 +378,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the literal's, with the snapshot capture policy (a place that is not
   `ImplicitlyCopyable` wrapped in `String(...)`), and records
   `SemanticAdjustment::SpelledConstruction`. `infer_variant_storage_method`
-  is the `__VariantStorage` primitive's operation dispatch (`isa`/`set` — both
-  value and `init_with=` placement forms — `unwrap`/`unsafe_unwrap`,
-  `replace`/`unsafe_replace`, and the consuming `deinit_with`), reachable only
+  is the `__VariantStorage` primitive's operation dispatch (`isa`, `set`,
+  `unwrap`/`unsafe_unwrap`, `replace`/`unsafe_replace`, and an `enum`'s
+  `get_discriminant`), reachable only
   on a `TyKind::Variant` receiver (the bundled `Variant`'s `_storage` field)
   through `infer_method_call`, which the parameterized `Invoke(Member)`
   spelling and the ordinary method call both dispatch to after the static
   receiver arms (a type-name receiver is never inferred as a value); the
   public API is
   `stdlib/std/utils/variant.mojo`, whose type-keyed methods `native::mono`
-  instantiates at each call's type argument (a struct handler of
-  `init_with=` or `deinit_with`, a closure's storage, is called through its
-  `__call__`: `Specializer::enqueue_struct_call` reaches it, the VM's
-  `invoke_callable_value` and Pliron's `lower_call_indirect` call it, and
-  Pliron's reachability walk follows it), and `type_keyed_projection`
+  instantiates at each call's type argument (`set(init_with=)` and
+  `deinit_with` call their callable in the body, as upstream's do, so a
+  closure's `__call__` is an ordinary call), and `type_keyed_projection`
   routes a `v[T]` subscript to the struct's type-keyed
   `__getitem_param__[T]` accessor in value and place positions (the
   `type_keyed_accessor_call` lowering in MIR, which reads the subscript's

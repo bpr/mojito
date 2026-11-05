@@ -67,7 +67,6 @@ pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
             uses
         }
         MirInstr::VariantSet { place, value, .. } => vec![(Used::Place(place), *value)],
-        MirInstr::VariantSetInitWith { place, factory, .. } => vec![(Used::Place(place), *factory)],
         MirInstr::VariantReplace { place, value, .. } => vec![(Used::Place(place), *value)],
         MirInstr::LoadPlace { dest, place } => vec![(Used::Place(place), *dest)],
         MirInstr::DropPlace { place, .. }

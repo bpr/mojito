@@ -53,9 +53,6 @@ fn name_in_blocks(
                 } => *destructor = named(Some(element)),
                 MirInstr::VariantSet {
                     place, destructors, ..
-                }
-                | MirInstr::VariantSetInitWith {
-                    place, destructors, ..
                 } => {
                     *destructors = variant_place_alternatives(place, var_tys)
                         .into_iter()

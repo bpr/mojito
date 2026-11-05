@@ -1286,21 +1286,6 @@ pub enum SemanticAdjustment {
     UninitStorageWrite {
         element: Ty,
     },
-    /// `variant.set[T](init_with=factory)`: in-place placement replacement —
-    /// the zero-parameter factory's result becomes the new payload and the
-    /// previous payload is destroyed (all alternatives checked `Deinitable`).
-    VariantSetInitWith {
-        alternatives: Vec<Ty>,
-        index: mojito_types::types::VariantIndex,
-    },
-    /// `variant.deinit_with(handler)`: consume the variant, handing the
-    /// active payload to the single-parameter consuming handler. The handler
-    /// is monomorphic for exactly one alternative (`index`); a runtime tag
-    /// mismatch aborts, matching upstream's contract.
-    VariantDeinitWith {
-        alternatives: Vec<Ty>,
-        index: mojito_types::types::VariantIndex,
-    },
     /// `storage^.take()`: move the payload out of consumed inline uninit
     /// storage; traps at the VM if the storage is uninitialized.
     UninitStorageTake {

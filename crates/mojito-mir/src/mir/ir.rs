@@ -1018,21 +1018,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.extend([dest, value]);
             place_regs_mut(target, &mut out);
         }
-        MirInstr::VariantSetInitWith {
-            dest,
-            place: target,
-            factory,
-            ..
-        } => {
-            out.extend([dest, factory]);
-            place_regs_mut(target, &mut out);
-        }
-        MirInstr::VariantDeinitWith {
-            dest,
-            variant,
-            handler,
-            ..
-        } => out.extend([dest, variant, handler]),
         MirInstr::SimdCast { dest, value, .. } | MirInstr::SimdBitcast { dest, value, .. } => {
             out.extend([dest, value]);
         }
@@ -2674,28 +2659,6 @@ pub enum MirInstr {
         index: mojito_types::types::VariantIndex,
         checked: bool,
     },
-    /// In-place placement replacement (`set(init_with=…)`): invoke the
-    /// zero-parameter `factory` callable value, store its result as the
-    /// payload selected by `index`, and destroy the previous payload by the
-    /// per-alternative `destructors` a [`MirInstr::VariantSet`] names.
-    VariantSetInitWith {
-        dest: Reg,
-        place: MirPlace,
-        index: mojito_types::types::VariantIndex,
-        factory: Reg,
-        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option_seq")]
-        destructors: Vec<Option<String>>,
-    },
-    /// Consuming teardown (`deinit_with`): destructure the moved variant
-    /// value and invoke the single-parameter consuming `handler` callable
-    /// value with the active payload. The handler covers exactly the
-    /// alternative at `index`; any other runtime tag aborts.
-    VariantDeinitWith {
-        dest: Reg,
-        variant: Reg,
-        handler: Reg,
-        index: mojito_types::types::VariantIndex,
-    },
     /// Replace the active payload without destroying it, returning ownership of
     /// that previous payload to the caller. The new payload takes `value` by
     /// move, naming its `__moveinit__` as [`MirInstr::MakeVariant`] does.
@@ -3219,8 +3182,6 @@ impl MirInstr {
             | Self::VariantGet { .. }
             | Self::VariantSet { .. }
             | Self::VariantTake { .. }
-            | Self::VariantSetInitWith { .. }
-            | Self::VariantDeinitWith { .. }
             | Self::VariantReplace { .. }
             | Self::Try { .. }
             | Self::If { .. }

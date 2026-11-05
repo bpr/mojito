@@ -3531,17 +3531,6 @@ impl<'a> Specializer<'a> {
                             }
                         }
                     }
-                    // A struct handler of a `Variant` owning operation (a
-                    // closure's storage) is called through its `__call__`,
-                    // which the instance reaches here.
-                    MirInstr::VariantSetInitWith { factory, .. } => {
-                        let factory = *factory;
-                        self.enqueue_struct_call(owner, function.reg_types.get(&factory.0), 0)?;
-                    }
-                    MirInstr::VariantDeinitWith { handler, .. } => {
-                        let handler = *handler;
-                        self.enqueue_struct_call(owner, function.reg_types.get(&handler.0), 1)?;
-                    }
                     // A value-parameter read (`Self.length`) resolves to
                     // the bound constant carried by the receiver instance's
                     // type arguments — the VM's `get_field` value-parameter
@@ -4143,24 +4132,6 @@ impl<'a> Specializer<'a> {
                 })
     }
 
-    /// Enqueue the `__call__` a callable of type `callable` (a closure's
-    /// storage, a struct conforming to a closure trait) runs when called
-    /// with `argc` arguments; nothing for any other type.
-    fn enqueue_struct_call(
-        &mut self,
-        owner: &str,
-        callable: Option<&Ty>,
-        argc: usize,
-    ) -> Result<(), MonoError> {
-        match callable.filter(|ty| ty.kind().is_non_simd_struct()) {
-            Some(receiver) => {
-                let receiver = receiver.clone();
-                self.enqueue_nominal_method_instance(owner, &receiver, "__call__", argc, &[])
-            }
-            None => Ok(()),
-        }
-    }
-
     /// The bindings of the struct instance `ty`, `None` when it names no
     /// struct template or applies too few of its parameters.
     fn struct_bindings(&self, owner: &str, ty: &Ty) -> Result<Option<Bindings>, MonoError> {
@@ -4735,12 +4706,6 @@ fn for_each_lifecycle_site_mut(
                     {
                         name(ty, "__moveinit__", constructor)?;
                     }
-                    name_variant_destructors(place, destructors, var_tys, name)?;
-                    None
-                }
-                MirInstr::VariantSetInitWith {
-                    place, destructors, ..
-                } => {
                     name_variant_destructors(place, destructors, var_tys, name)?;
                     None
                 }

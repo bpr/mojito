@@ -4188,9 +4188,7 @@ MakeVariant
 VariantIs
 VariantGet
 VariantSet
-VariantSetInitWith
 VariantTake
-VariantDeinitWith
 VariantReplace
 MakeSimd
 Try
@@ -7093,8 +7091,8 @@ point where a slot declared in a loop is uninitialized again.
   generators. The table names each member a backend reaches from a
   value's type rather than from the instance a call names, too
   (`mir::TYPE_REACHED_MEMBERS`: display, a writer's `write_string`, the
-  hash leaf, the `__int__` a scalar construction converts through, a
-  `Variant` handler's `__call__`), each a full instance: the generator a
+  hash leaf, the `__int__` a scalar construction converts through), each
+  a full instance: the generator a
   call names without its unused arguments is no entry
   (`Specializer::enqueue`),
   keyed by the template's method spelling, overload qualifier included,

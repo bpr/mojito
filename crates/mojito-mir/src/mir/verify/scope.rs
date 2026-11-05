@@ -284,9 +284,7 @@ pub fn instruction_variant_indices(
         | MirInstr::VariantIs { index, .. }
         | MirInstr::VariantGet { index, .. }
         | MirInstr::VariantSet { index, .. }
-        | MirInstr::VariantTake { index, .. }
-        | MirInstr::VariantSetInitWith { index, .. }
-        | MirInstr::VariantDeinitWith { index, .. } => vec![index],
+        | MirInstr::VariantTake { index, .. } => vec![index],
         MirInstr::VariantReplace {
             input_index,
             output_index,

@@ -555,57 +555,6 @@ impl VmBackend {
         Ok(Value::Struct { name, fields })
     }
 
-    /// Invoke a callable *value* (a plain function or a closure) with owned
-    /// positional arguments — the narrow synchronous channel used by the
-    /// Variant owning operations (`set(init_with=…)`, `deinit_with`), whose
-    /// handlers were checked to be non-raising with owned parameters only.
-    /// Nominal callable structs are not accepted here: their `__call__`
-    /// dispatch needs the full indirect-call contract.
-    pub(super) fn invoke_callable_value(
-        &mut self,
-        prog: &Prog,
-        callable: &Value,
-        arguments: Vec<Value>,
-        caller: (FrameId, usize, &mut Vec<Value>),
-    ) -> Result<Value, RuntimeError> {
-        let (function, captures) = match &callable {
-            Value::Function(function) => (function.clone(), Vec::new()),
-            Value::Closure {
-                function, captures, ..
-            } => (function.clone(), captures.clone()),
-            // A closure's storage, or any struct conforming to a closure
-            // trait, is called through its `__call__`, the struct its
-            // receiver.
-            Value::Struct { name, .. } => {
-                let index = prog
-                    .selected_struct_member(name, "__call__", None, arguments.len())
-                    .ok_or_else(|| RuntimeError::NotCallable(format!("{name}.__call__")))?;
-                (prog.mir.functions[index].0.clone(), vec![callable.clone()])
-            }
-            value => {
-                return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
-            }
-        };
-        let mut positional = captures;
-        positional.extend(arguments);
-        let index = prog
-            .index_of(&function)
-            .ok_or_else(|| RuntimeError::NotCallable(function.clone()))?;
-        // The caller-reachable channel keeps captured references into the
-        // invoking frame valid for the child call, exactly like the checked
-        // iterator calls.
-        let (frame_id, function_index, variables) = caller;
-        let (value, _, _) = self.call_frame_caller_reachable(
-            prog,
-            index,
-            positional,
-            frame_id,
-            function_index,
-            variables,
-        )?;
-        Ok(value)
-    }
-
     /// Produce a semantically-correct **copy** of a value (a `UseVar { Copy }` read,
     /// a by-value argument, or a return). For a struct that defines `__copyinit__`,
     /// run it (so a pointer-owning type deep-copies its storage instead of aliasing);

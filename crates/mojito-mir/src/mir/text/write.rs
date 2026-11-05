@@ -1475,39 +1475,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("checked", checked.to_string()),
             ],
         ),
-        MirInstr::VariantSetInitWith {
-            dest,
-            place,
-            index,
-            factory,
-            destructors,
-        } => record(
-            tag,
-            &with_symbols(
-                vec![
-                    ("dest", reg_value(*dest)),
-                    ("place", place_value(place)),
-                    ("index", variant_index(index)),
-                    ("factory", reg_value(*factory)),
-                ],
-                "destructors",
-                destructors,
-            ),
-        ),
-        MirInstr::VariantDeinitWith {
-            dest,
-            variant,
-            handler,
-            index,
-        } => record(
-            tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("variant", reg_value(*variant)),
-                ("handler", reg_value(*handler)),
-                ("index", variant_index(index)),
-            ],
-        ),
         MirInstr::VariantReplace {
             dest,
             place,

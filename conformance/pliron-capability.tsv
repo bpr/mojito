@@ -56,8 +56,6 @@ instruction	variant.is	supported	checked tag comparison
 instruction	variant.get	supported	checked payload projection
 instruction	variant.set	supported	drop-active-payload then replace through a checked place
 instruction	variant.take	supported	checked and unchecked consuming payload extraction
-instruction	variant.set_init_with	supported	indirect factory invocation followed by owning replacement
-instruction	variant.deinit_with	supported	tag-checked consuming handler invocation
 instruction	variant.replace	supported	owning replacement returning the previous payload
 instruction	simd.make	supported	width-1 scalar aliases; multi-lane values assemble a fixed vector (insertelement/splat) with VM-exact lane conversion into lane-aligned storage
 instruction	simd.cast	partial	vector int rewrap and f64-mediated float conversion; float-to-int converts the whole vector inside the exactly-convertible range and saturates at i128 lane by lane outside it; bool casts reject in the checker
