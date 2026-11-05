@@ -488,6 +488,8 @@ fn source_type_from_ty_with_origins(
         TyKind::KgenTarget => mlir_source_type("!kgen.target"),
         TyKind::Index => mlir_source_type("index"),
         TyKind::I1 => mlir_source_type("i1"),
+        TyKind::Ui8 => mlir_source_type("ui8"),
+        TyKind::KgenDtype => mlir_source_type("!kgen.dtype"),
         // A callable has no source spelling a clone could carry.
         TyKind::Func(_) | TyKind::GenericFunc(_) => return None,
         TyKind::ComptimeList(element) => Type::Named(

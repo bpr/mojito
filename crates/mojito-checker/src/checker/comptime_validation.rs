@@ -478,7 +478,9 @@ pub(super) fn value_less_literal_value() -> TypeError {
 /// constant of the storage type, held as its vector, and an
 /// `` `7 : index` `` builtin `index`, and a
 /// `` `#pop.array<i, …> : !pop.array<n, index>` `` array of `n` indices,
-/// a typed [`CtValue::PopArray`]. Any other typed attribute is outside the subset.
+/// a typed [`CtValue::PopArray`], and a
+/// `` `#kgen.dtype.constant<si64> : !kgen.dtype` `` dtype constant, a
+/// [`CtValue::Dtype`]. Any other typed attribute is outside the subset.
 pub(super) fn mlir_attribute(text: &str) -> Result<(CtValue, Ty), TypeError> {
     let mut depth = 0_usize;
     let colon = text.char_indices().find_map(|(at, c)| {
@@ -499,12 +501,16 @@ pub(super) fn mlir_attribute(text: &str) -> Result<(CtValue, Ty), TypeError> {
     if let Some(array) = index_array_attribute(body, ty) {
         return array;
     }
+    if let Some(dtype) = dtype_attribute(body, ty) {
+        return dtype;
+    }
     typed_mlir_attribute(body, ty).ok_or_else(|| {
         TypeError::Unsupported(format!(
             "the typed attribute '__mlir_attr.`{text}`' is outside the subset; only an untyped \
              '{}' attribute, a '#kgen.simd<...>' constant of a '!kgen.scalar<dtype>' or \
              '!kgen.simd<width, dtype>' type, an integer of type 'index', a \
-             '#pop.array<...>' of type '!pop.array<size, index>', and a \
+             '#pop.array<...>' of type '!pop.array<size, index>', a \
+             '#kgen.dtype.constant<...>' of type '!kgen.dtype', and a \
              '#kgen.target<...>' or '#kgen.param.expr<current_target>' of type \
              '!kgen.target' are read",
             mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING
@@ -1563,7 +1569,9 @@ impl Checker {
                         | TyKind::None
                         | TyKind::Index
                         | TyKind::I1
+                        | TyKind::Ui8
                         | TyKind::Dtype
+                        | TyKind::KgenDtype
                         | TyKind::KgenDeferred
                         | TyKind::KgenTarget
                 ) && (called.is_some() || self.calls_compile_time_callee(expr)) =>
@@ -2681,8 +2689,10 @@ impl Checker {
                     ty.kind(),
                     TyKind::Index
                         | TyKind::I1
+                        | TyKind::Ui8
                         | TyKind::None
                         | TyKind::Dtype
+                        | TyKind::KgenDtype
                         | TyKind::Struct(..)
                         | TyKind::KgenDeferred
                         | TyKind::KgenTarget
@@ -5855,10 +5865,12 @@ fn parameter_value_type(ty: &Ty) -> bool {
             TyKind::None
                 | TyKind::Index
                 | TyKind::I1
+                | TyKind::Ui8
                 | TyKind::IntLiteral(_)
                 | TyKind::FloatLiteral(_)
                 | TyKind::StringLiteral
                 | TyKind::Dtype
+                | TyKind::KgenDtype
                 | TyKind::Struct(..)
         )
 }
@@ -6463,6 +6475,27 @@ fn index_array_attribute(body: &str, ty: &str) -> Option<Result<(CtValue, Ty), T
 
 /// The constant `` `body : ty` `` spells and its type, for the typed
 /// attributes the subset reads ([`mlir_attribute`]).
+/// `` `#kgen.dtype.constant<mnemonic> : !kgen.dtype` ``, upstream's spelling
+/// of a `DType` member's code: the dtype the mnemonic names. A mnemonic
+/// upstream has and Mojito does not (`ui128`) is rejected, as its `DType`
+/// member is (R65). `None` for any other attribute.
+fn dtype_attribute(body: &str, ty: &str) -> Option<Result<(CtValue, Ty), TypeError>> {
+    let mnemonic = body
+        .strip_prefix("#kgen.dtype.constant<")?
+        .strip_suffix('>')?
+        .trim();
+    if ty != "!kgen.dtype" {
+        return None;
+    }
+    Some(
+        mojito_ast::ast::Dtype::from_kgen_mnemonic(mnemonic)
+            .map(|dtype| (CtValue::Dtype(dtype), Ty::kgen_dtype()))
+            .ok_or_else(|| {
+                TypeError::Unsupported(format!("DType {mnemonic} is not supported yet"))
+            }),
+    )
+}
+
 fn typed_mlir_attribute(body: &str, ty: &str) -> Option<(CtValue, Ty)> {
     if ty == "index" {
         return Some((CtValue::Index(body.parse().ok()?), Ty::index()));

@@ -612,6 +612,12 @@ impl Dtype {
         }
     }
 
+    /// The dtype whose [`Self::code`] is `code`, as upstream's
+    /// `pop.dtype.from_ui8` reads it; `None` for a code no Mojito dtype has.
+    pub fn from_code(code: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|dtype| dtype.code() == code)
+    }
+
     /// Every dtype, in declaration order.
     pub const ALL: [Self; 14] = [
         Self::Int,

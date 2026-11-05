@@ -113,7 +113,7 @@ impl LayoutCx<'_> {
         match ty.kind() {
             TyKind::Index => Ok(Layout::new(8, 8)),
             // A `DType` is its one-byte upstream code.
-            TyKind::I1 | TyKind::Dtype => Ok(Layout::new(1, 1)),
+            TyKind::I1 | TyKind::Ui8 | TyKind::Dtype | TyKind::KgenDtype => Ok(Layout::new(1, 1)),
             TyKind::None => Ok(Layout::ZERO),
             // The borrowed string-literal descriptor: `{ data: ptr, len: u64 }`
             // (`MjStrDesc` in the runtime contract), which a `!kgen.string`

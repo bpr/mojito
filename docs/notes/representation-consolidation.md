@@ -36,7 +36,7 @@ command cannot use both.
    - Display (`write_to`, `write_repr_to`, `write_string`): R1882
      (`String(x)` and `repr(x)` are builtins) and R1462 (a `write_to`
      through a bound is host-formatted).
-   - The hash leaves (`__hash__`, `_update_with_simd`): R160 (`DType` as
+   - The hash leaves (`__hash__`, `_update_with_simd`): R1937 (once `DType` is
      the library struct). Planned.
    - `__int__`: R1544 (`SIMD[dt, _](v)` binds no width from a vector).
    - R579 (a trait the pin does not declare) closes with it; R712
@@ -49,7 +49,7 @@ command cannot use both.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1933 --task R1868 --task R1882 \
-     --task R1462 --task R160 --task R1544 --task R579 -n 0
+     --task R1462 --task R1936 --task R1937 --task R1544 --task R579 -n 0
    ```
 
 3. **Gap G's residues** (size, and conformance). R1436 landed 11-03: the
@@ -204,7 +204,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932, behind R359 | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none (R1874 landed 11-05) | R788, R378, R472, R508, R602 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1933, R1868, R1882, R1462, R160, R1544 | about 20 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1933, R1868, R1882, R1462, R1936, R1937, R1544 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1891, R1892 → R1893 → R1894 | R1349, R1870, R1888 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1901–R1904 → R1905, R1898 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1910 → R1912 | about 20 (below) | slight |
@@ -304,7 +304,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 6 (R1835 → R1843, R1837, R1840, R1841, R1845 → R1851, R1858–R1860 → R1862), R160 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
+| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 6 (R1835 → R1843, R1837, R1840, R1841, R1845 → R1851, R1858–R1860 → R1862), R1936 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R1882, R1462 | R1463, R1409, R18, R159, R1883, R1884 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |

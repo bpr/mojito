@@ -60,6 +60,8 @@ pub enum MlirOp {
     IndexCmp(CmpPredicate),
     PopStringSize,
     PopStringAddress,
+    PopDtypeToUi8,
+    PopDtypeFromUi8,
 }
 
 /// Why an `__mlir_op` spelling names no admitted operation.
@@ -121,6 +123,8 @@ impl MlirOp {
             "pop.cast_to_builtin" => Self::PopCastToBuiltin,
             "pop.string.size" => Self::PopStringSize,
             "pop.string.address" => Self::PopStringAddress,
+            "pop.dtype.to_ui8" => Self::PopDtypeToUi8,
+            "pop.dtype.from_ui8" => Self::PopDtypeFromUi8,
             "index.add" => Self::IndexAdd,
             "index.sub" => Self::IndexSub,
             "index.mul" => Self::IndexMul,
@@ -179,6 +183,8 @@ impl MlirOp {
             Self::IndexCmp(_) => "index.cmp",
             Self::PopStringSize => "pop.string.size",
             Self::PopStringAddress => "pop.string.address",
+            Self::PopDtypeToUi8 => "pop.dtype.to_ui8",
+            Self::PopDtypeFromUi8 => "pop.dtype.from_ui8",
         }
     }
 
@@ -214,6 +220,12 @@ impl MlirOp {
     /// storage.
     pub const fn is_builtin_cast(self) -> bool {
         matches!(self, Self::PopCastFromBuiltin | Self::PopCastToBuiltin)
+    }
+
+    /// Whether this is `pop.dtype.to_ui8` or `pop.dtype.from_ui8`, which
+    /// convert between a `!kgen.dtype` and its `ui8` code.
+    pub const fn is_dtype_code(self) -> bool {
+        matches!(self, Self::PopDtypeToUi8 | Self::PopDtypeFromUi8)
     }
 
     /// Whether the op names its result type with a `_type` attribute.
@@ -299,6 +311,8 @@ impl MlirOp {
             Self::PopMin => MlirLowering::Pop(PopOp::Min),
             Self::PopStringSize => MlirLowering::Pop(PopOp::StringSize),
             Self::PopStringAddress => MlirLowering::Pop(PopOp::StringAddress),
+            Self::PopDtypeToUi8 => MlirLowering::Pop(PopOp::DtypeToUi8),
+            Self::PopDtypeFromUi8 => MlirLowering::Pop(PopOp::DtypeFromUi8),
             Self::PopSelect => MlirLowering::Select,
             Self::PopSimdSelect => MlirLowering::SimdSelect,
             Self::PopSimdExtractElement => MlirLowering::Extract,
@@ -497,9 +511,11 @@ impl CmpPredicate {
 ///
 /// These are the `pop` lane ops whose semantics no built-in operator has
 /// (`div` and `rem` truncate, `abs` wraps, the rounding ops, `fma`, and
-/// `max` and `min`), `index.cmp`'s unsigned compares, and the reads of a
+/// `max` and `min`), `index.cmp`'s unsigned compares, the reads of a
 /// run-time `!kgen.string`: `pop.string.size`, its byte length as an
-/// `index`, and `pop.string.address`, the address of its bytes.
+/// `index`, and `pop.string.address`, the address of its bytes, and the
+/// conversions of a `!kgen.dtype` to and from its `ui8` code,
+/// `pop.dtype.to_ui8` and `pop.dtype.from_ui8`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PopOp {
     Div,
@@ -518,11 +534,13 @@ pub enum PopOp {
     Uge,
     StringSize,
     StringAddress,
+    DtypeToUi8,
+    DtypeFromUi8,
 }
 
 impl PopOp {
     /// Every operation, in declaration order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 18] = [
         Self::Div,
         Self::Rem,
         Self::Abs,
@@ -539,6 +557,8 @@ impl PopOp {
         Self::Uge,
         Self::StringSize,
         Self::StringAddress,
+        Self::DtypeToUi8,
+        Self::DtypeFromUi8,
     ];
 
     /// The number of operands.
@@ -550,7 +570,9 @@ impl PopOp {
             | Self::Ceil
             | Self::Trunc
             | Self::StringSize
-            | Self::StringAddress => 1,
+            | Self::StringAddress
+            | Self::DtypeToUi8
+            | Self::DtypeFromUi8 => 1,
             Self::Fma => 3,
             _ => 2,
         }
@@ -566,6 +588,11 @@ impl PopOp {
     /// `index` or a pointer rather than lanes of the operand's type.
     pub const fn is_string_read(self) -> bool {
         matches!(self, Self::StringSize | Self::StringAddress)
+    }
+
+    /// Whether this converts a `!kgen.dtype` to or from its `ui8` code.
+    pub const fn is_dtype_code(self) -> bool {
+        matches!(self, Self::DtypeToUi8 | Self::DtypeFromUi8)
     }
 
     /// The op's name after `pop.`, its MIR text spelling.
@@ -587,6 +614,8 @@ impl PopOp {
             Self::Uge => "uge",
             Self::StringSize => "string.size",
             Self::StringAddress => "string.address",
+            Self::DtypeToUi8 => "dtype.to_ui8",
+            Self::DtypeFromUi8 => "dtype.from_ui8",
         }
     }
 

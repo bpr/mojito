@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MLIR layer under upstream's `DType` now runs: the type
+  ``__mlir_type.`!kgen.dtype` ``, its `#kgen.dtype.constant<…>`
+  attributes, the builtin `__mlir_type.ui8`, `pop.dtype.to_ui8` and
+  `pop.dtype.from_ui8` between a dtype and its one-byte code, and the
+  builtin casts between `ui8` and a `UInt8`'s `!kgen.scalar<ui8>`
+  storage, on the VM and natively (`assets/ok/mlir_kgen_dtype_layer.mojo`;
+  MIR text 1.164, `mojito-package 189`). It is the first slice of porting
+  `DType` as upstream's library struct (R160); the swap itself is R1936.
+
 - `Variant.set(init_with=)` and `Variant.deinit_with` now call their
   callable in the bundled body, as upstream's do: `set` stores the
   factory's result through the storage's `set[T]`, and `deinit_with`

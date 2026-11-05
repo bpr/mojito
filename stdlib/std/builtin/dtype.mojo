@@ -1,6 +1,6 @@
 # Upstream's `std/builtin/dtype.mojo`, in part: `_int_type_of_width`,
 # `_uint_type_of_width`, `_integral_type_of`, and
-# `_unsigned_integral_type_of`. `DType` itself stays a compiler type (R160).
+# `_unsigned_integral_type_of`. `DType` itself stays a compiler type (R1936).
 # The `int128`, `int256`, `_uint1`, `_uint2`, `_uint4`, `uint128`, and
 # `uint256` arms are omitted until R65 admits those dtypes; a second assert
 # rejects their widths explicitly.

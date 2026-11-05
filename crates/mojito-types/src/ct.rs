@@ -1311,7 +1311,15 @@ impl CtValue {
             {
                 Some(value)
             }
-            (value @ Self::Dtype(_), TyKind::Dtype) => Some(value),
+            (value @ Self::Dtype(_), TyKind::Dtype | TyKind::KgenDtype) => Some(value),
+            // An `ui8` holds its `UInt8` lane, as the VM and LLVM do.
+            (
+                value @ Self::Simd {
+                    dtype: mojito_ast::ast::Dtype::UInt8,
+                    ..
+                },
+                TyKind::Ui8,
+            ) => Some(value),
             // A trait converts to a metatype over a trait it implies, which
             // the checker proved, and stays the trait it is.
             (value @ Self::Trait(_), TyKind::AnyTrait(_)) => Some(value),

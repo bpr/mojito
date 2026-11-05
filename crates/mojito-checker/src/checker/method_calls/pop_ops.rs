@@ -1,8 +1,9 @@
 //! The `pop` and `index` `__mlir_op` expressions: upstream's elementwise
 //! ops over `!kgen.simd` storage, its `pop.select` of one of two
 //! register-passable values, its `pop.simd` lane ops, its `index` ops,
-//! and its `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between
-//! `index` and `!kgen.scalar<index>`, typed as their MLIR verifiers type
+//! its `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between a
+//! builtin and its `!kgen.scalar` storage, and its `pop.dtype.to_ui8` and
+//! `pop.dtype.from_ui8` between a `!kgen.dtype` and its code, typed as their MLIR verifiers type
 //! them, with the `pred`, `fastmathFlags`, and `_type` attributes they
 //! take. The admitted set is `mojito_types::mlir::MlirOp`, beside
 //! `pop.simd.shuffle`, whose `mask` attribute is a lane list rather than a
@@ -116,6 +117,8 @@ impl Checker {
         } else if op.is_builtin_cast() {
             let result_type = result_type.expect("a builtin cast names its result type");
             builtin_cast_result(op, &operands, result_type).map_err(subset_error)?
+        } else if op.is_dtype_code() {
+            dtype_code_result(op, &operands).map_err(invalid)?
         } else if op.is_index() {
             index_op_result(op, &operands).map_err(invalid)?
         } else if op.is_lane() {
@@ -258,6 +261,7 @@ impl Checker {
         if self.comptime_positions.get() != 0
             || op == MlirOp::PopSelect
             || op.is_builtin_cast()
+            || op.is_dtype_code()
             || op.is_index()
             || op.is_lane()
         {
@@ -371,6 +375,8 @@ fn mlir_spelling(ty: &Ty) -> String {
     match ty.kind() {
         TyKind::Index => "index".to_string(),
         TyKind::I1 => "i1".to_string(),
+        TyKind::Ui8 => "ui8".to_string(),
+        TyKind::KgenDtype => "!kgen.dtype".to_string(),
         TyKind::KgenSimd { .. } => ty
             .to_string()
             .trim_start_matches("__mlir_type.`")
@@ -390,6 +396,24 @@ fn storage_of(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, String> {
     simd_of(dtype, width)
         .map(|vector| mojito_types::types::simd_storage(&vector).unwrap_or(vector))
         .map_err(|error| error.to_string())
+}
+
+/// The result of `pop.dtype.to_ui8` (a `!kgen.dtype` to its `ui8` code)
+/// or `pop.dtype.from_ui8` (a code to its `!kgen.dtype`), as upstream's
+/// verifier types them.
+fn dtype_code_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
+    let (operand, described, result) = if op == MlirOp::PopDtypeToUi8 {
+        (Ty::kgen_dtype(), "8-bit integer DType type", Ty::ui8())
+    } else {
+        (Ty::ui8(), "8-bit unsigned integer", Ty::kgen_dtype())
+    };
+    if operands[0] != operand {
+        return Err(format!(
+            "op operand #0 must be {described}, but got '{}'",
+            mlir_spelling(&operands[0])
+        ));
+    }
+    Ok(result)
 }
 
 /// The result of an `index` op: every operand is an `index`; the compare
@@ -498,9 +522,9 @@ fn select_result(
     Ok(case.clone())
 }
 
-/// The result of `pop.cast_from_builtin` (a builtin `index` or `i1` to
-/// the `_type` storage `!kgen.scalar<index>` or `!kgen.scalar<bool>`, an
-/// `Int`'s or a `Bool`'s) or `pop.cast_to_builtin` (that storage to the
+/// The result of `pop.cast_from_builtin` (a builtin `index`, `i1`, or
+/// `ui8` to the `_type` storage `!kgen.scalar<index>`, `!kgen.scalar<bool>`,
+/// or `!kgen.scalar<ui8>`, an `Int`'s, a `Bool`'s, or a `UInt8`'s) or `pop.cast_to_builtin` (that storage to the
 /// `_type` builtin), as upstream's verifier types them. The pin's other
 /// builtin pairs are outside the subset.
 fn builtin_cast_result(op: MlirOp, operands: &[Ty], target: Ty) -> Result<Ty, PopTypeError> {
@@ -508,13 +532,18 @@ fn builtin_cast_result(op: MlirOp, operands: &[Ty], target: Ty) -> Result<Ty, Po
     let outside = || {
         PopTypeError::Subset(format!(
             "from '{}' to '{}' is outside the subset: Mojito admits the casts between \
-             'index' and '!kgen.scalar<index>', and between 'i1' and '!kgen.scalar<bool>'",
+             'index' and '!kgen.scalar<index>', 'i1' and '!kgen.scalar<bool>', and 'ui8' \
+             and '!kgen.scalar<ui8>'",
             mlir_spelling(operand),
             mlir_spelling(&target)
         ))
     };
-    let pairs = [(Ty::index(), Dtype::Int), (Ty::i1(), Dtype::Bool)]
-        .map(|(builtin, dtype)| (builtin, dtype, mojito_types::types::kgen_simd_ty(dtype, 1)));
+    let pairs = [
+        (Ty::index(), Dtype::Int),
+        (Ty::i1(), Dtype::Bool),
+        (Ty::ui8(), Dtype::UInt8),
+    ]
+    .map(|(builtin, dtype)| (builtin, dtype, mojito_types::types::kgen_simd_ty(dtype, 1)));
     if op == MlirOp::PopCastFromBuiltin {
         let Some((builtin, dtype, _)) = pairs.iter().find(|(_, _, storage)| *storage == target)
         else {

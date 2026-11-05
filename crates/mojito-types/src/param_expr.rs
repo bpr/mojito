@@ -112,10 +112,14 @@ impl ParamContext {
 
     /// A constant of the type `ty`: a closed value of a `!kgen.simd`
     /// storage type is an attribute of that storage, which holds its
-    /// vector's constants, and any other closed value is [`Self::constant`].
+    /// vector's constants, as a `#kgen.dtype.constant` is an attribute of
+    /// `!kgen.dtype` and an `ui8` one of its builtin type; any other closed
+    /// value is [`Self::constant`].
     pub fn typed_constant(&self, value: CtValue, ty: &Ty) -> Result<ParamExpr, ParamError> {
-        if matches!(ty.kind(), TyKind::KgenSimd { .. })
-            && !crate::types::ct_value_is_symbolic(&value)
+        if matches!(
+            ty.kind(),
+            TyKind::KgenSimd { .. } | TyKind::KgenDtype | TyKind::Ui8
+        ) && !crate::types::ct_value_is_symbolic(&value)
         {
             return Ok(self.make(MetaTy::value(ty.clone()), ParamKind::Constant(value)));
         }
@@ -148,7 +152,11 @@ impl ParamContext {
         // closed struct type it materialized at. A trait bound to a
         // trait-valued parameter is a value of the metatype it upcast to.
         // A string at the nominal `String` is a `String`, and a function's
-        // symbol at a function type that function.
+        // symbol at a function type that function. A closed value of an MLIR
+        // type is that type's attribute ([`Self::typed_constant`]).
+        if matches!(ty.kind(), TyKind::KgenDtype | TyKind::Ui8) {
+            return self.typed_constant(value, ty);
+        }
         if (crate::types::tuple_elements(ty).is_some()
             || crate::types::is_nominal_string(ty)
             || matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
@@ -4811,7 +4819,9 @@ fn is_scalar_domain(ty: &Ty) -> bool {
             | TyKind::IntLiteral(_)
             | TyKind::FloatLiteral(_)
             | TyKind::I1
+            | TyKind::Ui8
             | TyKind::Dtype
+            | TyKind::KgenDtype
     ) || ty.kind().is_simd()
         || ty.is_string_literal()
         || ty.is_bool()

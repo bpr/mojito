@@ -710,9 +710,15 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
             mojito_ast::ast::ParamArg::Named { name, value } if name == "pred" => {
                 predicate = Some(super::method_calls::mlir_attribute(value)?);
             }
+            // The `ui8` pair has no operator sugar to fold through.
+            mojito_ast::ast::ParamArg::Named { name, value }
+                if name == "_type" && names_builtin_pair(value, &["ui8", "!kgen.scalar<ui8>"]) =>
+            {
+                return None;
+            }
             mojito_ast::ast::ParamArg::Named { name, value } if name == "_type" => {
                 typed = true;
-                boolean = names_bool_builtin_pair(value);
+                boolean = names_builtin_pair(value, &["i1", "!kgen.scalar<bool>"]);
             }
             _ => return None,
         }
@@ -821,10 +827,10 @@ pub(super) fn typed_lane_op(expr: &Expr) -> Option<(ParamOp, &mojito_ast::ast::P
     }
 }
 
-/// Whether a builtin cast's `_type=` names one side of the `bool` pair:
-/// `__mlir_type.i1` or ``__mlir_type.`!kgen.scalar<bool>` ``.
-fn names_bool_builtin_pair(argument: &mojito_ast::ast::ParamArg) -> bool {
-    let named = |name: &str| matches!(name, "i1" | "!kgen.scalar<bool>");
+/// Whether a builtin cast's `_type=` names one side of `pair`, the MLIR
+/// spellings of a builtin and its storage (`i1` and `!kgen.scalar<bool>`).
+fn names_builtin_pair(argument: &mojito_ast::ast::ParamArg, pair: &[&str]) -> bool {
+    let named = |name: &str| pair.contains(&name);
     match argument {
         mojito_ast::ast::ParamArg::Type(ty) => {
             super::comptime_validation::mlir_source_name(ty).is_some_and(named)

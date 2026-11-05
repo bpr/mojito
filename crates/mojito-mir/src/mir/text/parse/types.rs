@@ -29,6 +29,8 @@ impl Decoder {
                 "KgenTarget" => TyKind::KgenTarget.into(),
                 "index" => Ty::index(),
                 "i1" => Ty::i1(),
+                "ui8" => Ty::ui8(),
+                "kgen_dtype" => Ty::kgen_dtype(),
                 "Self" => Ty::self_type(),
                 "Error" => Ty::error(),
                 other => {

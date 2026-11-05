@@ -1271,6 +1271,28 @@ fn verify_pop(
         }
         return;
     }
+    if op.is_dtype_code() {
+        let (operand, expected) = if op == mojito_types::mlir::PopOp::DtypeToUi8 {
+            (Ty::kgen_dtype(), Ty::ui8())
+        } else {
+            (Ty::ui8(), Ty::kgen_dtype())
+        };
+        if *result != expected {
+            errors.push(format!(
+                "{prefix}: pop.{} defines a register of type {result}, not {expected}",
+                op.mnemonic()
+            ));
+        }
+        if let Some(found) = operands.first().and_then(|reg| cx.reg_ty(*reg))
+            && *found != operand
+        {
+            errors.push(format!(
+                "{prefix}: pop.{} reads an operand of type {found}, not {operand}",
+                op.mnemonic()
+            ));
+        }
+        return;
+    }
     if op.is_compare() {
         if *result != Ty::i1() {
             errors.push(format!(
@@ -1580,13 +1602,17 @@ fn verify_builtin_cast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec
             Ty::bool(),
             mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1),
         ),
+        (
+            Ty::ui8(),
+            mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::UInt8, 1),
+        ),
     ];
     if !pairs.iter().any(|(builtin, storage)| {
         (from == builtin && to == storage) || (from == storage && to == builtin)
     }) {
         errors.push(format!(
-            "{}: builtin cast from {from} to {to} is not between `index` and `Int` \
-             or `i1` and `Scalar[DType.bool]`",
+            "{}: builtin cast from {from} to {to} is not between `index` and `Int`, \
+             `i1` and `Scalar[DType.bool]`, or `ui8` and `Scalar[DType.uint8]`",
             cx.prefix
         ));
     }

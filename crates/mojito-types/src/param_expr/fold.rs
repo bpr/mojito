@@ -344,6 +344,25 @@ pub fn fold_target_has_feature(target: &CtValue, name: &CtValue) -> Result<CtVal
     Ok(CtValue::Bool(target.has_feature(name)))
 }
 
+/// `pop.dtype.from_ui8` over a concrete `ui8` code: the dtype it names.
+/// A code no Mojito dtype has is unsupported.
+pub fn fold_dtype_from_ui8(code: &CtValue) -> Result<CtValue, ParamError> {
+    let lane = match code {
+        CtValue::Simd {
+            dtype: Dtype::UInt8,
+            lanes,
+        } => match lanes.as_slice() {
+            [CtLane::Int(lane)] => u8::try_from(*lane).ok(),
+            _ => None,
+        },
+        _ => None,
+    }
+    .ok_or_else(|| unsupported("'pop.dtype.from_ui8' expects a compile-time 'ui8'"))?;
+    Dtype::from_code(lane)
+        .map(CtValue::Dtype)
+        .ok_or_else(|| unsupported(&format!("DType code {lane} is not supported yet")))
+}
+
 /// `pop.dtype.to_ui8` over a concrete `DType`: its code, a `UInt8`.
 pub fn fold_dtype_to_ui8(dtype: &CtValue) -> Result<CtValue, ParamError> {
     match dtype {

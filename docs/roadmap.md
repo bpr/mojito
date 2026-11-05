@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1936**.
+Next free ID: **R1939**.
 
 ## Ordered Work
 
@@ -6612,8 +6612,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Dtype::float_literal_lane`, and let the build's exhaustiveness errors
     list the rest. The native lowering matches with wildcards, so its sites
     need a manual `rg` pass.
-  - The bundled `struct DType` port, R160, rewrites the same table, so this
-    lands first or folds into it.
+  - The bundled `struct DType` port, R1936, rewrites the same table, so
+    this lands first or adds the `comptime` members and `write_to` arms to
+    the bundled struct after it.
+  - Probe: `` __mlir_attr.`#kgen.dtype.constant<ui128> : !kgen.dtype` `` is
+    rejected ("DType ui128 is not supported yet",
+    `assets/type_error/mlir_kgen_dtype_unknown_mnemonic.mojo`), where the
+    pin's `pop.dtype.to_ui8` of it prints `142`.
+  - Probe: `pop.dtype.from_ui8` of a code no `Dtype` has (`200`) fails on
+    the VM ("DType code 200 is not supported yet"), whose `Value::Dtype`
+    holds only a `Dtype`, where the pin and Pliron pass the byte through and
+    `pop.dtype.to_ui8` gives `200` back.
   - Restore `_uint_type_of_width`'s `_uint1`, `_uint2`, `_uint4`,
     `uint128`, and `uint256` arms in `stdlib/std/builtin/dtype.mojo`, and
     drop its second `comptime assert`.
@@ -9450,7 +9459,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `$write_formatted` (`rewrite_blocks`, `mono/specializer.rs`), but
     `Error` has no `write_repr_to` witness for the requirement to reach.
   - Found while landing R1326 (2026-10-24).
-  - Depends on nothing.
+  - Depends on R1938, which bundles upstream's `Error`.
   - Model: Opus, Not Planned.
 
 - [ ] **R1906 The bundled owned `List` iterator holds a raw buffer, where
@@ -11141,42 +11150,102 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R65.
   - Model: Opus, Planned.
 
-- [ ] **R160 `DType` is a compiler builtin in Mojito where upstream's is a
-  stdlib struct over a one-byte code**
+- [ ] **R1936 `DType` is a compiler builtin in Mojito where upstream's is a
+  library struct over `!kgen.dtype`**
 
-  Problem: Mojito's `DType` is `Ty::Dtype`, with its `is_*` queries and
-  display built into the VM and the native lowering. Upstream's `DType` is a
-  stdlib struct over a one-byte code.
-  - A bundled `struct DType` needs struct-valued associated `comptime`
-    members, which `eval_associated_ct` rejects today.
-  - It also needs runtime reads of `StructName.NAME`.
-  - It also needs struct value parameters on defs.
-  - It also needs a bridge from a frozen struct value to `Dtype` at every
-    hard-wired `DType` site.
-  - Several checker and elaborator capabilities land before the struct can
-    replace the builtin.
+  Upstream's `DType` is `struct DType` in `std/builtin/dtype.mojo`, one
+  `_mlir_value: __mlir_type.`!kgen.dtype`` field whose `comptime` members
+  are `#kgen.dtype.constant<…>` attributes. Mojito's is `TyKind::Dtype`,
+  with `==`, the `is_*` queries, display, and `hash` built into the
+  checker, the VM, and the native lowering.
+  - The MLIR layer the struct is written in has landed: `TyKind::KgenDtype`,
+    `TyKind::Ui8`, the `#kgen.dtype.constant` attribute, and
+    `pop.dtype.to_ui8` / `pop.dtype.from_ui8`
+    (`assets/ok/mlir_kgen_dtype_layer.mojo`).
+  - The struct machinery is there too: struct-valued `comptime` members,
+    run-time `StructName.NAME` reads, and struct value parameters on a
+    `def` and a struct all run as at the pin.
+  - Lever: bundle the pin's `struct DType` and make `Ty::dtype()` that
+    struct type, as `SIMDLength` was ported (`dbf9c43d`). A `SIMD`'s dtype
+    slot then holds `CtValue::Struct { "DType", [("_mlir_value", Dtype(d))] }`,
+    read through one `types::dtype_of_value` helper beside
+    `known_simd_length`.
+  - Delete `TyKind::Dtype` and the syntactic `DType.<member>` recognisers
+    (`symbol.rs`, `checked.rs`, `comptime/params.rs`, `annotations.rs`,
+    `constraints.rs`, `indexing.rs`, `type_resolution.rs`,
+    `mir/text/parse/types.rs`); the struct's members answer them, and
+    `UPSTREAM_ONLY_DTYPE_NAMES` keeps R65's message at member lookup.
+  - Keep the display of a closed `DType` value as `DType.<name>`, so
+    instance names (`SIMD$mono$VDType$int32$…`) do not change.
+  - A `DType` and a `!kgen.dtype` constant are both `CtValue::Dtype` today,
+    so `Checker::argument_value_type` (`type_resolution.rs`) tells their
+    parameter arguments apart by compiled type; it goes once a `DType`
+    value is the struct.
+  - Leave `__mlir_type()`, which returns a `!kgen.deferred` type attribute,
+    out of the port if `__mlir_attr.ui8`-style type attributes do not read.
   - Probe: `d.__eq__(DType.int64)` over a `DType` fails with "type 'DType'
-    has no method '__eq__'", where the pin prints `True`. The `==` and `!=`
-    operators, and a leading-dot operand beside them, are a
-    `TyKind::Dtype` arm of `infer_infix` that upstream's declared
-    `DType.__eq__(self, rhs: Self)` replaces.
-  - Port `DType.__hash__` with the struct and retire its hash-leaf arms
-    (`builtin_hashable_ty`, `hash_leaf_ty`, the VM's `__hash__` arm,
-    `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
-  - It is the last hash leaf, so `__hash__` and `_update_with_simd` then
-    leave `mir::TYPE_REACHED_MEMBERS`, and Pliron's type-reached member
-    push (`lib.rs`) goes with them.
+    has no method '__eq__'", where the pin prints `True`.
   - Probe: `SIMD[DType.uint16, 2](1, 2).write_repr_to(b)`, into the
     marking writer R159's probe describes, writes `|DType.uint16` for
-    `Self.dtype.write_repr_to(writer)`, where the pin's declared `DType`
-    writes `|DType.|uint16`.
-  - `DType` is the last receiver the checker's inverted write serves
-    (`SemanticAdjustment::InvertedWrite` and `InvertedReprWrite`,
-    `intrinsic_receivers.rs`): retire both adjustments, their MIR arms in
-    `lower_expr/expr_method.rs`, and the `$write_formatted` primitive
-    they alone emit, with the builtin.
+    `Self.dtype.write_repr_to(writer)`, where the pin writes
+    `|DType.|uint16`.
+  - Probe: `DType(mlir_value=__mlir_attr.`#kgen.dtype.constant<si64> : !kgen.dtype`)`
+    is rejected, where the pin builds `DType.int64`, and
+    `DType._from_ui8(UInt8(141)._mlir_value)` prints `int64`.
+  - Plan: `R160-dtype-is-a-compiler-builtin-in-plan.md`, slice S2.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R1937 `DType`'s hash leaf and parameter-level predicates outlive the
+  library struct**
+
+  Once `DType` is the bundled struct (R1936), its declared `__hash__`,
+  `is_*`, and float queries answer every use, but the compiler's own forms
+  of them remain.
+  - Hash leaf: `conformance::builtin_hashable_ty`, `types::hash_leaf_ty`,
+    the VM's `runtime::hash_leaf_ty` / `hash_leaf_value` and its
+    `("__hash__", 1)` arm (`vm/invoke.rs`), Pliron's `lower_hash_leaf`, and
+    `Specializer::enqueue_hash_leaf_instances`.
+  - `__hash__` and `_update_with_simd` then leave
+    `mir::TYPE_REACHED_MEMBERS`, and Pliron's type-reached `__hash__` push
+    (`lib.rs`) goes with them; the three display members stay.
+  - First confirm their `TyKind::Variant` alternative is dead: `Variant`
+    declares `__hash__`, so `hash(Variant[Int, String](…))` must still run.
+  - Parameter predicates: `ParamContext::dtype_predicate`,
+    `DTYPE_PREDICATES`, `DTYPE_FLOAT_QUERIES`, `Dtype::float_query`,
+    `ParamContext::dtype_float_query`, `method_calls/dtype_receivers.rs`,
+    and Pliron's `lower_dtype_predicate`. The declared
+    `@always_inline("builtin")` bodies fold instead, which needs
+    `builtin_fold` to read `pop.dtype.to_ui8` and the `ui8` casts.
+  - Probe: `rg "hash_leaf|builtin_hashable_ty|dtype_predicate|DTYPE_PREDICATES"`
+    is empty, and `comptime if DType.float32.is_floating_point()` still
+    folds.
+  - Plan: `R160-dtype-is-a-compiler-builtin-in-plan.md`, slice S3.
+  - Depends on R1936.
+  - Model: Opus, Planned.
+
+- [ ] **R1938 `Error` is a compiler builtin in Mojito where upstream's is a
+  library struct**
+
+  Upstream's `Error` is a struct in `std/builtin/error.mojo` with declared
+  initializers, `write_to`, and `write_repr_to`. Mojito's is
+  `TyKind::Error`, which `declared_receiver_member` cannot resolve a member
+  of.
+  - It is the last receiver of the checker's inverted write
+    (`SemanticAdjustment::InvertedWrite` and `InvertedReprWrite`,
+    `intrinsic_receivers.rs`) and of the elaborator's `$write_formatted`
+    swap (`rewrite_blocks`, `mono/specializer.rs`), once `DType` is the
+    library struct.
+  - Lever: bundle upstream's `Error`, then retire both adjustments, their
+    MIR arms in `lower_expr/expr_method.rs`, and the `$write_formatted`
+    primitive.
+  - Probe: `e.write_repr_to(w)` over `Error("boom")` writes `|boom|boom`
+    for `write_to` then `write_repr_to` into a marking writer, where the pin
+    writes `|boom|Error|(|'|b|o|o|m|'|)` (R1352's shape).
+  - Probe: `Error("Index ", 3, " not in *args")` is rejected (R429's
+    shape).
+  - Depends on R1936.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1840 MIR holds the builtin `i1` as a `Bool` register, where
   upstream's `i1` is a type of its own**
@@ -13373,7 +13442,7 @@ residue found inside a task moves to the task that owns its fix.
   - `String`'s declared `__init__[*Ts: Writable]` in
     `stdlib/std/string.mojo` is the model.
   - Found while landing R421 (2026-10-06).
-  - Depends on nothing.
+  - Depends on R1938, which bundles upstream's `Error`.
   - Model: Opus, Not Planned.
 
 - [ ] **R431 `Span` has no `unsafe_get`**

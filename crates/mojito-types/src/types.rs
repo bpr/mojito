@@ -734,6 +734,21 @@ pub enum TyKind {
     /// `!kgen.scalar<bool>` storage. It has no members and conforms to no
     /// trait. Both backends hold it as they hold a `Bool`.
     I1,
+    /// Upstream's MLIR builtin `ui8` (`__mlir_type.ui8`), what
+    /// `pop.dtype.to_ui8` returns and `pop.dtype.from_ui8` takes, displayed
+    /// `__mlir_type.ui8`. `pop.cast_from_builtin` and `pop.cast_to_builtin`
+    /// convert it to and from a `UInt8`'s `!kgen.scalar<ui8>` storage. It
+    /// has no members and conforms to no trait. Both backends hold it as
+    /// they hold a `UInt8`.
+    Ui8,
+    /// Upstream's `!kgen.dtype`, the type of a `DType`'s `_mlir_value`,
+    /// displayed ``__mlir_type.`!kgen.dtype` ``. Its constants are
+    /// `#kgen.dtype.constant<mnemonic>` attributes, held as
+    /// [`CtValue::Dtype`](crate::ct::CtValue::Dtype), and
+    /// `pop.dtype.to_ui8` and `pop.dtype.from_ui8` convert it to and from
+    /// its one-byte code. It has no members and conforms to no trait. Both
+    /// backends hold it as they hold the `DType` builtin.
+    KgenDtype,
     /// Upstream's KGEN vector storage `!kgen.simd<width, dtype>`, the type
     /// of a `SIMD`'s `_mlir_value` field, displayed
     /// ``__mlir_type.`!kgen.simd<4, si32>` `` (``__mlir_type.`!kgen.scalar<index>` ``
@@ -937,6 +952,10 @@ dataless_types! {
     index => Index,
     /// The MLIR builtin `i1`.
     i1 => I1,
+    /// The MLIR builtin `ui8`.
+    ui8 => Ui8,
+    /// Upstream's `!kgen.dtype`.
+    kgen_dtype => KgenDtype,
     /// `Error`.
     error => Error,
 }
@@ -1564,6 +1583,14 @@ pub const MLIR_INDEX_TYPE_SPELLING: &str = "__mlir_type.index";
 /// the pin prints it.
 pub const MLIR_I1_TYPE_SPELLING: &str = "__mlir_type.i1";
 
+/// The spelling of upstream's MLIR builtin `ui8` type ([`TyKind::Ui8`]), as
+/// the pin prints it.
+pub const MLIR_UI8_TYPE_SPELLING: &str = "__mlir_type.ui8";
+
+/// The spelling of upstream's `!kgen.dtype` type ([`TyKind::KgenDtype`]),
+/// as the pin prints it.
+pub const KGEN_DTYPE_TYPE_SPELLING: &str = "__mlir_type.`!kgen.dtype`";
+
 pub const TSTRING_TYPE_NAME: &str = "TString";
 /// The public `Variant` struct's name.
 pub const VARIANT_TYPE_NAME: &str = "Variant";
@@ -1582,7 +1609,8 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 /// The MLIR type an `` __mlir_type.`name` `` spelling names.
 ///
 /// It is one of the types the subset reads: the builtins `index`
-/// ([`TyKind::Index`]) and `i1` ([`TyKind::I1`]), a scalar's `!kgen.scalar<dtype>` storage
+/// ([`TyKind::Index`]), `i1` ([`TyKind::I1`]), and `ui8` ([`TyKind::Ui8`]),
+/// `!kgen.dtype` ([`TyKind::KgenDtype`]), a scalar's `!kgen.scalar<dtype>` storage
 /// ([`TyKind::KgenSimd`], `!kgen.scalar<index>` for an `Int`), or the
 /// compile-time-only `!kgen.type` ([`TyKind::TypeType`]), `!kgen.string`
 /// ([`TyKind::KgenString`]), `!pop.int_literal` ([`TyKind::PopIntLiteral`]),
@@ -1592,6 +1620,8 @@ pub fn mlir_type_named(name: &str) -> Option<Ty> {
     match name {
         "index" => Some(Ty::index()),
         "i1" => Some(Ty::i1()),
+        "ui8" => Some(Ty::ui8()),
+        "!kgen.dtype" => Some(Ty::kgen_dtype()),
         "!kgen.type" => Some(TyKind::TypeType.into()),
         "!kgen.string" => Some(TyKind::KgenString.into()),
         "!pop.int_literal" => Some(TyKind::PopIntLiteral.into()),
@@ -1705,7 +1735,7 @@ pub fn mlir_attribute_spelling(
 ///
 /// `n._mlir_value` and `Self.dtype._mlir_value` read a `SIMDLength`'s
 /// `index` storage, and a `DType`'s, which is the parameter itself while
-/// `DType` is a compiler type (R160). `None` for an operand that reads no
+/// `DType` is a compiler type (R1936). `None` for an operand that reads no
 /// `_mlir_value`.
 pub fn mlir_value_operand(arg: &mojito_ast::ast::ParamArg) -> Option<mojito_ast::ast::ParamArg> {
     use mojito_ast::ast::{Expr, ExprKind, ParamArg, Type};
@@ -3574,6 +3604,8 @@ impl fmt::Display for TyKind {
             Self::KgenTarget => f.write_str(KGEN_TARGET_TYPE_SPELLING),
             Self::Index => f.write_str(MLIR_INDEX_TYPE_SPELLING),
             Self::I1 => f.write_str(MLIR_I1_TYPE_SPELLING),
+            Self::Ui8 => f.write_str(MLIR_UI8_TYPE_SPELLING),
+            Self::KgenDtype => f.write_str(KGEN_DTYPE_TYPE_SPELLING),
             Self::KgenSimd { dtype, width } => {
                 let dtype = match dtype {
                     SimdDtype::Known(dtype) => dtype.kgen_mnemonic().to_string(),
@@ -4401,7 +4433,9 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         | (TyKind::KgenDeferred, TyKind::KgenDeferred)
         | (TyKind::KgenTarget, TyKind::KgenTarget)
         | (TyKind::Index, TyKind::Index)
-        | (TyKind::I1, TyKind::I1) => true,
+        | (TyKind::I1, TyKind::I1)
+        | (TyKind::Ui8, TyKind::Ui8)
+        | (TyKind::KgenDtype, TyKind::KgenDtype) => true,
         (
             TyKind::Pointer {
                 element: a,
@@ -4676,6 +4710,8 @@ pub fn copy_is_identity(ty: &TyKind) -> bool {
         TyKind::Dtype
             | TyKind::Index
             | TyKind::I1
+            | TyKind::Ui8
+            | TyKind::KgenDtype
             | TyKind::IntLiteral(_)
             | TyKind::FloatLiteral(_)
             | TyKind::None
@@ -5653,6 +5689,8 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1
+        | TyKind::Ui8
+        | TyKind::KgenDtype
         | TyKind::SelfType
         | TyKind::Error => ty.clone(),
     })
@@ -6254,6 +6292,8 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1
+        | TyKind::Ui8
+        | TyKind::KgenDtype
         | TyKind::StringLiteral
         | TyKind::None
         | TyKind::Never
@@ -6657,6 +6697,8 @@ fn closed_kind(kind: &TyKind) -> bool {
         | TyKind::Dtype
         | TyKind::Index
         | TyKind::I1
+        | TyKind::Ui8
+        | TyKind::KgenDtype
         | TyKind::Error => true,
         TyKind::KgenSimd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         TyKind::Struct(_, arguments) => arguments.iter().all(closed_argument),

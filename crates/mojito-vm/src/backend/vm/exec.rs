@@ -420,7 +420,8 @@ impl VmBackend {
                 regs[dest.0 as usize] = regs[value.0 as usize].clone();
             }
             // An `index` and its `Int` storage are one value, as an `i1` and
-            // a `!kgen.scalar<bool>` are, as LLVM's one `i1`.
+            // a `!kgen.scalar<bool>` are, as LLVM's one `i1`, and an `ui8`
+            // and a `!kgen.scalar<ui8>`.
             MirInstr::BuiltinCast { dest, value } => {
                 regs[dest.0 as usize] = regs[value.0 as usize].clone();
             }
@@ -455,6 +456,24 @@ impl VmBackend {
                         Some(&mojito_types::types::static_string_address_ty()),
                     )?
                 };
+            }
+            // A `!kgen.dtype` is its `Dtype`, and an `ui8` its `UInt8`
+            // lane, so the conversions are the folds over the values.
+            MirInstr::Pop { dest, op, operands } if op.is_dtype_code() => {
+                let operand = operands
+                    .first()
+                    .map(|operand| regs[operand.0 as usize].clone())
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError(format!("'pop.{}' takes 1 operand", op.mnemonic()))
+                    })?;
+                let operand = crate::crossing::vm_to_ct(operand)?;
+                let folded = if *op == mojito_types::mlir::PopOp::DtypeToUi8 {
+                    mojito_types::param_expr::fold::fold_dtype_to_ui8(&operand)
+                } else {
+                    mojito_types::param_expr::fold::fold_dtype_from_ui8(&operand)
+                }
+                .map_err(|error| RuntimeError::Unsupported(error.to_string()))?;
+                regs[dest.0 as usize] = crate::crossing::ct_to_vm(&folded)?;
             }
             MirInstr::Pop { dest, op, operands } => {
                 let operands: Vec<Value> = operands

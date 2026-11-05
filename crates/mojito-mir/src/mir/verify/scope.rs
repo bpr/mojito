@@ -738,6 +738,8 @@ impl ScopeCx<'_> {
             | TyKind::KgenTarget
             | TyKind::Index
             | TyKind::I1
+            | TyKind::Ui8
+            | TyKind::KgenDtype
             | TyKind::SelfType
             | TyKind::Error => {}
         }

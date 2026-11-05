@@ -2109,8 +2109,9 @@ pub enum MirInstr {
     },
     /// Upstream's `pop.cast_from_builtin` or `pop.cast_to_builtin`: the
     /// operand's bits retyped between the MLIR builtin `index` and its
-    /// `!kgen.scalar<index>` storage, an `Int`, or between the builtin `i1`
-    /// and its `!kgen.scalar<bool>` storage. Exactly one of `dest` and
+    /// `!kgen.scalar<index>` storage, an `Int`, between the builtin `i1`
+    /// and its `!kgen.scalar<bool>` storage, or between the builtin `ui8`
+    /// and its `!kgen.scalar<ui8>` storage. Exactly one of `dest` and
     /// `value` is the builtin, which names the direction.
     BuiltinCast {
         dest: Reg,

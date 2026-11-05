@@ -202,6 +202,20 @@ impl Checker {
         self.resolve_ty_from_anno(ty)
     }
 
+    /// The type a value-parameter argument `expr` states before its value
+    /// is read: a member's declared type ([`Self::member_value_type`]), or,
+    /// bound to a `DType` or `!kgen.dtype` parameter `ty`, its compiled
+    /// expression's type. A `#kgen.dtype.constant` and a `DType` member
+    /// share their value (`CtValue::Dtype`) while `DType` is a compiler type
+    /// (R1936), so the value alone does not tell them apart.
+    fn argument_value_type(&self, expr: &Expr, ty: &Ty) -> Option<Ty> {
+        self.member_value_type(expr).or_else(|| {
+            matches!(ty.kind(), TyKind::KgenDtype | TyKind::Dtype)
+                .then(|| self.compile_dependent_ct_expr(expr).ok()?.meta().value_ty())
+                .flatten()
+        })
+    }
+
     /// The argument of a generator-typed parameter (`apply[Twice]()`,
     /// `apply[S.k]()`, `apply[G]()`): a generator that converts to the
     /// declared generator type ([`mojito_types::types::generator_converts`]),
@@ -3093,7 +3107,7 @@ impl Checker {
                         )));
                     }
                     let actual = self
-                        .member_value_type(expr)
+                        .argument_value_type(expr, ty)
                         .or_else(|| self.ct_value_ty(&value, ty))
                         .ok_or_else(|| TypeError::TypeMismatch {
                             expected: ty.to_string(),
@@ -4825,6 +4839,8 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1
+        | TyKind::Ui8
+        | TyKind::KgenDtype
         | TyKind::Error => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.163
+mojito-mir 1.164
 ```
 
-The writer emits 1.163. The reader accepts 1.0 through 1.163; *Schema 1.0*
+The writer emits 1.164. The reader accepts 1.0 through 1.164; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1138,6 +1138,13 @@ and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
 
+Schema 1.164 adds the types `ui8`, upstream's MLIR builtin `ui8`, and
+`kgen_dtype`, upstream's `!kgen.dtype`, and the `pop` ops `dtype.to_ui8`
+and `dtype.from_ui8` between them. `builtin.cast` also converts between
+`ui8` and a `UInt8`'s `!kgen.scalar<ui8>` storage, and a `kgen_dtype`
+register holds the `dtype` constant. The package format moves to
+`mojito-package 189`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1748,6 +1755,13 @@ values are `ct_kgen_target`, spelled as the attribute
 LLVM type: the VM holds one as an attribute value, and translation rejects
 one a function signature or call still carries.
 
+`ui8` (schema 1.164) is upstream's MLIR builtin `ui8`, what
+`pop.dtype.to_ui8` gives and `pop.cast_to_builtin` gives from a `UInt8`'s
+`!kgen.scalar<ui8>` storage; both backends hold it as that `UInt8`.
+`kgen_dtype` (schema 1.164) is upstream's `!kgen.dtype`, the type of a
+`#kgen.dtype.constant<…>` attribute, which both backends hold as the
+`DType` builtin's one-byte code.
+
 `i1` (schema 1.133) is upstream's MLIR builtin `i1`, what
 `Bool.__mlir_i1__` returns and `pop.cast_to_builtin` gives from a `Bool`'s
 `!kgen.scalar<bool>` storage. Both backends hold it as a `Bool`, and the
@@ -1941,10 +1955,10 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`; schema 1.157 withdraws mode `move` and with it `constructor` and `destructor`: a capture is `closure_capture { place }`, a reference to its place, and a 1.156 or older artifact's capture may spell `mode: reference`) |
 | `Const` / `MaterializeLiteral` | `const` / `literal.materialize` (schema 1.148 removes `layout.size_of`, schema 1.155 `type.name`) |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
-| `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage |
+| `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage, or (schema 1.164) one is a `ui8` and the other a `UInt8`'s `!kgen.scalar<ui8>` storage |
 | `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |
 | `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
-| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div` (before schema 1.145, which writes `binary div`), `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`; an integer division by zero traps |
+| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div` (before schema 1.145, which writes `binary div`), `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`, or `dtype.to_ui8` or `dtype.from_ui8` (schema 1.164), converting one `kgen_dtype` operand to its `ui8` code or one `ui8` code to its `kgen_dtype`; an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |

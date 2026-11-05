@@ -670,6 +670,15 @@ impl FnLowering<'_> {
             self.reg_values.insert(dest.0, value);
             return Ok(());
         }
+        // A `!kgen.dtype` is its one-byte code, the `ui8` it converts to
+        // and from; no native check rejects a code no dtype has.
+        if op.is_dtype_code() {
+            let [value] = operands else {
+                return Err(self
+                    .unsupported_reg(format!("`pop.{}` takes one operand", op.mnemonic()), dest));
+            };
+            return self.lower_copy_value(ctx, dest, *value, None);
+        }
         // `index.divs` divides `index` values, held as `Int` lanes.
         let Some((dtype, width)) = self.func.reg_types.get(&dest.0).and_then(|ty| {
             simd_dims(ty).or_else(|| (*ty == Ty::index()).then_some((Dtype::Int, 1)))
@@ -1404,7 +1413,9 @@ impl FnLowering<'_> {
                     | PopOp::Ugt
                     | PopOp::Uge
                     | PopOp::StringSize
-                    | PopOp::StringAddress => {
+                    | PopOp::StringAddress
+                    | PopOp::DtypeToUi8
+                    | PopOp::DtypeFromUi8 => {
                         return Err(self.unsupported_reg(
                             format!("`pop.{}` operand count", op.mnemonic()),
                             dest,
