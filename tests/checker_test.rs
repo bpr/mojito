@@ -6708,8 +6708,8 @@ fn bool_members_and_conformances_are_its_declaration() {
 
 #[test]
 fn scalar_operation_traits_are_not_declared() {
-    // The pin's library declares no `Addable` and kin: a bound or a
-    // conformance naming one is an unknown declaration.
+    // The pin's library declares no `Addable` and kin, nor `Representable`:
+    // a bound or a conformance naming one is an unknown declaration.
     for name in [
         "Addable",
         "Subtractable",
@@ -6723,6 +6723,7 @@ fn scalar_operation_traits_are_not_declared() {
         "Orable",
         "Xorable",
         "Negatable",
+        "Representable",
     ] {
         assert_eq!(
             err(&format!(

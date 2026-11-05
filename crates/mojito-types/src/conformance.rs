@@ -16,7 +16,6 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Movable",
     "Copyable",
     "ImplicitlyCopyable",
-    "Representable",
     "Writer",
     "Iterable",
     "IterableOwned",

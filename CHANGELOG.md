@@ -8,6 +8,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Representable`, which the pin does not declare, is no longer a
+  compiler-known trait, so a bound or `conforms_to` naming it is an
+  unknown declaration, as at the pin (R579).
 - `Addable`, `Subtractable`, `Multipliable`, `Divisible`,
   `FloorDivisible`, `Modable`, `ShiftLeftable`, `ShiftRightable`,
   `Andable`, `Orable`, `Xorable`, and `Negatable` are no longer

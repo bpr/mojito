@@ -8582,21 +8582,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R579 `Representable` resolves as a trait, where the pin does not
-  declare it**
-
-  Problem: `conforms_to(T, Representable)` compiles in Mojito with no
-  import. The pin rejects it as an unknown declaration.
-  - Cause: the checker resolves any name on its compiler-known trait list
-    (`mojito_types::conformance::COMPILER_TRAITS`) whether or not the
-    program imports it.
-  - The fix is to resolve a compiler-known trait only where upstream's
-    prelude or an import puts its name in scope.
-  - Pinned by `conformance/probes/compiler_trait_name_without_import.mojo`.
-  - Found while landing R564 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R164 A trait method with a trailing `where` clause is accepted, though
   the pin does not support `where` on trait methods**
 
