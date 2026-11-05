@@ -3396,35 +3396,31 @@ impl Checker {
             // its storage struct, as upstream's `emitClosure` returns the
             // storage.
             let storage_backed = (lambda || captures_list) && !captures.is_empty();
-            let environment = if storage_backed {
+            let finalized = if storage_backed {
                 let storage = self.closure_storage(
                     &captures,
                     with_callable_environment(
-                        fn_ty.clone(),
-                        mojito_types::origin::CallableEnvironment::Capturing(concrete.clone()),
+                        fn_ty,
+                        mojito_types::origin::CallableEnvironment::Capturing(concrete),
                     ),
                 );
-                let environment = mojito_types::origin::CallableEnvironment::Storage(Box::new(
-                    mojito_types::origin::ClosureStorageEnvironment {
-                        site: mojito_types::origin::ClosureSite {
-                            module: stmt.module.clone(),
-                            declaration: stmt.span,
-                            syntax: stmt.syntax_id,
-                        },
-                        captures: concrete,
-                        copyable: storage.copyable,
-                        register_passable: storage.register_passable(),
-                        trivially_register_passable: storage.trivially_register_passable(),
-                    },
-                ));
                 self.record_at(stmt.source_span()).closure_storage = Some(Box::new(storage));
-                environment
-            } else if lambda_forces_closure || !captures.is_empty() {
-                mojito_types::origin::CallableEnvironment::Capturing(concrete)
+                self.register_closure_storage(&stmt.source_span())
+                    .ok_or_else(|| {
+                        TypeError::InvariantViolation(format!(
+                            "closure '{name}' records no storage"
+                        ))
+                    })?
             } else {
-                mojito_types::origin::CallableEnvironment::Thin
+                with_callable_environment(
+                    fn_ty,
+                    if lambda_forces_closure || !captures.is_empty() {
+                        mojito_types::origin::CallableEnvironment::Capturing(concrete)
+                    } else {
+                        mojito_types::origin::CallableEnvironment::Thin
+                    },
+                )
             };
-            let finalized = with_callable_environment(fn_ty, environment);
             let function_scope = *self
                 .function_bases
                 .last()
@@ -3544,23 +3540,15 @@ impl Checker {
 
     /// The storage of the sibling closure `capture` captures: the
     /// declaration its binding names, when its type is that closure's
-    /// storage.
+    /// storage struct.
     fn sibling_storage(
         &self,
         capture: &mojito_checked::checked::CheckedCapture,
     ) -> Option<mojito_checked::checked::CheckedClosureStorage> {
-        let mojito_types::origin::CallableEnvironment::Storage(storage) =
-            &capture.ty.callable()?.environment
-        else {
-            return None;
-        };
-        let site = SourceSpan::syntax(
-            storage.site.module.clone(),
-            storage.site.declaration,
-            storage.site.syntax,
-        );
-        (self.fact(&site, |facts| facts.statement_binding.as_ref()) == Some(capture.binding))
-            .then(|| self.fact(&site, |facts| facts.closure_storage.as_deref()))
+        let (name, _) = capture.ty.kind().as_non_simd_struct()?;
+        let site = self.closure_sites.get(name)?;
+        (self.fact(site, |facts| facts.statement_binding.as_ref()) == Some(capture.binding))
+            .then(|| self.fact(site, |facts| facts.closure_storage.as_deref()))
             .flatten()
     }
 
@@ -4055,6 +4043,65 @@ impl Checker {
         Ok(())
     }
 
+    /// Register the storage struct of the closure declared at `site`, from
+    /// the storage the check recorded there, and return its type: a struct
+    /// nested in the declaration, as upstream's `emitClosure` declares it,
+    /// whose enclosing binders are implicit until the lift applies it to
+    /// them. It conforms to its closure trait, which a call through it binds
+    /// against and which it prints as; it is `Copyable` and
+    /// `ImplicitlyCopyable` when its captures are, and as register-passable
+    /// as they are. A carried body registers its closures again from the
+    /// storage it copies.
+    pub(super) fn register_closure_storage(&mut self, site: &SourceSpan) -> Option<Ty> {
+        use mojito_checked::checked::StoragePassability;
+        let storage = self.fact(site, |facts| facts.closure_storage.as_deref())?;
+        let name = mojito_symbol::symbol::nested_closure_storage_name(site.syntax?);
+        let contract = storage.contract.clone();
+        let mut conforms = vec!["Movable".to_string()];
+        if storage.copyable {
+            conforms.extend(["Copyable".to_string(), "ImplicitlyCopyable".to_string()]);
+        }
+        match storage.passability {
+            StoragePassability::MemoryOnly => {}
+            StoragePassability::RegisterPassable => conforms.push("RegisterPassable".to_string()),
+            StoragePassability::TriviallyRegisterPassable => {
+                conforms.extend([
+                    "RegisterPassable".to_string(),
+                    "TrivialRegisterPassable".to_string(),
+                ]);
+            }
+        }
+        mojito_types::closure_trait::declare_closure_trait(&name, &contract);
+        self.structs.insert(
+            name.clone(),
+            super::StructInfo {
+                decls: Vec::new(),
+                source_params: Vec::new(),
+                module: site.source.clone().unwrap_or_default(),
+                conforms,
+                callable_target: super::callable_contract_target(&contract),
+                callable_conformance: Some(contract),
+                witness_tables: Vec::new(),
+                conformance_conditions: HashMap::new(),
+                fields: Vec::new(),
+                declared_field_names: Vec::new(),
+                field_origin_arguments: HashMap::new(),
+                associated: HashMap::new(),
+                associated_value_types: HashMap::new(),
+                associated_spellings: HashMap::new(),
+                associated_constraints: HashMap::new(),
+                parameterized_associated: HashMap::new(),
+                methods: HashMap::new(),
+                fieldwise_init: false,
+                explicit_destroy_message: None,
+                explicit_destructors: HashMap::new(),
+                materializes_to: None,
+            },
+        );
+        self.closure_sites.insert(name.clone(), site.clone());
+        Some(TyKind::Struct(name, Vec::new()).into())
+    }
+
     /// The first runtime binding — an enclosing local or a parameter — a
     /// parameter default names, or the run-time
     /// `__is_run_in_comptime_interpreter` it reads, which current Mojo
@@ -4303,7 +4350,7 @@ pub(super) fn reject_default_lambdas(params: &[FnParam]) -> Result<(), TypeError
 }
 
 /// Whether a value of `ty` is, or stores, a closure: a callable whose
-/// environment is neither `thin` nor a closure's own storage struct,
+/// environment is not `thin` (a closure's own storage is a struct),
 /// directly or as a struct argument, tuple or variant element. A generic
 /// `def` that captures nothing is thin exactly as a plain one is, so
 /// `(identity, offset)` stores no closure. A thin
@@ -4319,7 +4366,6 @@ fn holds_closure(ty: &Ty) -> bool {
             !matches!(
                 func.environment,
                 mojito_types::origin::CallableEnvironment::Thin
-                    | mojito_types::origin::CallableEnvironment::Storage(_)
             )
         }),
         TyKind::Overload(_) => true,

@@ -806,12 +806,15 @@ policy or data-model responsibilities to focused children:
   body owning a moved capture writes back (the struct lists the method in
   `mut_self_methods`). A first-class use is the storage itself, as
   upstream's `emitClosure` returns it: the check types the value as a
-  `def(...)` whose environment is `CallableEnvironment::Storage` (the
-  closure's declaration site, its captures, copyability, and
-  passability), and the check's last step, as `liftClosure` replaces
-  every reference to the nested struct, replaces every such type the
-  checked program records by the storage struct its site maps to and
-  points each call through one at the witness
+  struct nested in the closure's declaration
+  (`symbol::nested_closure_storage_name`), registered as a checker struct
+  that conforms to the closure trait (its `callable_conformance`, which
+  a call binds against and which the type prints as, through
+  `mojito_types::closure_trait`) and to `Copyable`/`RegisterPassable` as
+  its captures allow, and the check's last step, as `liftClosure`
+  replaces every reference to the nested struct, replaces every such type
+  the checked program records by the lifted storage struct applied to its
+  uses and points each call through one at the witness
   (`CheckedProgram::type_closures_by_storage`, over the
   `checked/rewrite_types.rs` walk). MIR therefore lowers struct-typed
   closure values, reading the declaration's slot as any local

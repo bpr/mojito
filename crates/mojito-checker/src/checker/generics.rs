@@ -1035,8 +1035,10 @@ impl Checker {
         // stateless nested function as a value but rejects materializing one
         // that has a capture environment.
         if !arguments.is_empty()
-            && let Some(FuncTy { environment, .. }) = callable.callable()
-            && environment.captures().is_some()
+            && (super::is_closure_storage(&callable)
+                || callable
+                    .callable()
+                    .is_some_and(|FuncTy { environment, .. }| environment.captures().is_some()))
         {
             return Err(TypeError::Unsupported(format!(
                 "cannot materialize an explicit Origin specialization of '{name}': it has a \
@@ -1074,7 +1076,7 @@ impl Checker {
                 matches!(
                     ty.kind(),
                     TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
-                )
+                ) || super::is_closure_storage(ty)
             })
             .then(|| (name.to_string(), args.into_owned()))
     }
@@ -1743,7 +1745,8 @@ impl Checker {
                 if !matches!(
                     callable.kind(),
                     TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
-                ) {
+                ) && !super::is_closure_storage(&callable)
+                {
                     return Ok(None);
                 }
                 self.check_capture_access(name, false)?;

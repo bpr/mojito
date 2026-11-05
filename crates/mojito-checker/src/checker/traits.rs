@@ -3030,17 +3030,8 @@ impl Checker {
                 }
             }
             TyKind::Assoc { .. } | TyKind::SelfType | TyKind::Dependent(_) => Possible,
-            // A thin function is a bare pointer, and a closure's storage
-            // meets its captures' passabilities.
+            // A thin function is a bare pointer.
             _ if mojito_types::conformance::thin_callable(ty) => Proven,
-            TyKind::Func(func) => match &func.environment {
-                mojito_types::origin::CallableEnvironment::Storage(storage)
-                    if storage.register_passable =>
-                {
-                    Proven
-                }
-                _ => Excluded,
-            },
             _ => Excluded,
         }
     }
@@ -3426,12 +3417,7 @@ impl Checker {
         // A lambda's value is its storage variable, as upstream's
         // `emitClosure` returns it, so taking it copies the storage.
         if matches!(source.kind, ExprKind::Lambda { .. })
-            && ty.as_func().is_some_and(|func| {
-                matches!(
-                    func.environment,
-                    mojito_types::origin::CallableEnvironment::Storage(_)
-                )
-            })
+            && super::is_closure_storage(ty)
             && !self.is_implicitly_copyable(ty)
         {
             return Err(TypeError::ImplicitCopy {

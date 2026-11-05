@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1943**.
+Next free ID: **R1944**.
 
 ## Ordered Work
 
@@ -12217,45 +12217,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1893 A closure's checked type names its declaration site, where
-  upstream types the value by its storage struct**
-
-  A capture-list closure's or capturing lambda's checked type is a
-  `def(...)` whose environment is `CallableEnvironment::Storage`, where
-  upstream's `emitClosure` returns a value typed by a struct nested in the
-  closure's declaration, which `liftClosure` later renames.
-  - The checker cannot register the storage under its lifted name: the
-    ordinal and method-flag parts of the name and the binders it is
-    applied to exist only after `collect_closure_uses`. Give it a
-    check-time name ending in `$__storage`, typed `Struct(nested, [])`,
-    and key the lift step's rewrite
-    (`CheckedProgram::type_closures_by_storage`) by that name.
-  - Register that name as a checker `StructInfo` with the closure trait as
-    `callable_conformance`, `<nested>.__call__` as `callable_target`, a
-    `__call__` method carrying the closure's full signature (defaults,
-    type parameters), and `conforms` from the storage's copyability and
-    passability.
-  - Rewrite the `Storage` consumers to the struct path (`types.rs`
-    coercion and display, `conformance.rs`, `scopes.rs`, `checker.rs`,
-    `traits.rs`, `places.rs`, `inference.rs`, `type_resolution.rs`,
-    `statements.rs`, MIR's `closure_storage` text tag), and read captures
-    through `callable_conformance` where `ref_params.rs`, `checker.rs`,
-    `comptime_validation.rs`, and `generics.rs` read
-    `environment.captures()`.
-  - Display must keep the pin's text, the closure trait with names
-    (`cannot implicitly convert 'def(a: Int) -> Int' value to 'Int'`), as
-    upstream's printer reads the struct's declaration.
-  - Probe: `rg 'CallableEnvironment::Storage|ClosureSite' crates` is
-    empty, `assets/type_error/capturing_lambda_display_*`,
-    `closure_storage_not_trivially_register_passable.mojo`, and
-    `closure_capturing_loop_ref_escapes.mojo` keep their texts, and a
-    capture-list `def f(x: Int = 4) {k}` with `k = 3` still prints `12`
-    for `f()`.
-  - Plan: `R1893-a-closure-s-checked-type-names-plan.md`, Stage B.
-  - Found while landing R1436 (2026-11-03).
-  - Depends on R1940, R1941.
-  - Model: Fable, Planned.
-
 - [ ] **R1894 A closure storage's reference fields carry an untracked
   origin, where upstream promotes the captured origins to the struct's
   origin parameters**
@@ -12275,6 +12236,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1436 (2026-11-03).
   - Depends on R1893.
   - Model: Fable, Not Planned.
+
+- [ ] **R1943 A closure's explicit `f.__call__(x)` is rejected, where
+  upstream calls its storage struct's `__call__` method**
+
+  The checker's storage struct for a closure
+  (`Checker::register_closure_storage`) declares no `__call__` method, so
+  a method call naming it fails ("has no method '__call__'"), where
+  upstream's storage declares the method its call node resolves.
+  - Give the struct a `__call__` `MethodSig` built from the closure's own
+    signature (names, defaults, conventions, type parameters).
+  - The lift step retargets only a `Call` or `Invoke` through a closure
+    (`CheckedTables::storage_calls`); it must also retarget a method
+    call on the nested struct to the lifted struct's `__call__`.
+  - Probe: `var k = 3; def f(x: Int) {k} -> Int: return x * k;
+    print(f.__call__(2))` prints `6`, as at the pin.
+  - Found while landing R1893 (2026-11-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1889 The compile-time capturing-callable environment survives
   the removal of its only producers**

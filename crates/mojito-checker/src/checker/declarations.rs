@@ -79,6 +79,7 @@ pub(super) fn decls_are_concrete(decls: &[ParamDecl]) -> bool {
 /// declared contract `def() -> T` then unifies against that type to bind
 /// `T` (upstream's `Variant(init_with=factory)` inference).
 pub(super) fn unify_through_callable_bounds(
+    checker: &Checker,
     decls: &[ParamDecl],
     subst: &mut TySubst,
 ) -> Result<(), TypeError> {
@@ -94,6 +95,11 @@ pub(super) fn unify_through_callable_bounds(
         let Some(actual) = subst.get(id).cloned() else {
             continue;
         };
+        // A callable struct, a closure's storage among them, binds by the
+        // closure trait it declares.
+        let actual = checker
+            .declared_callable_contract(&actual)
+            .unwrap_or(actual);
         // The contract's environment class is validated separately
         // (`validate_callable_parameter_bounds`); solving reads only the
         // parameter and result shapes.
@@ -3163,7 +3169,7 @@ impl Checker {
                 {
                     return specialized;
                 }
-                unify_through_callable_bounds(&sig.decls, &mut subst)?;
+                unify_through_callable_bounds(self, &sig.decls, &mut subst)?;
                 if let Some(unavailable) =
                     self.unavailable_constructor(name, sig, &[], &decls, &tyargs)
                 {
@@ -3658,7 +3664,7 @@ impl Checker {
                     pointer_origins,
                     ..
                 } = best_matches.remove(0);
-                unify_through_callable_bounds(&sig.decls, &mut subst)?;
+                unify_through_callable_bounds(self, &sig.decls, &mut subst)?;
                 if let Some(specialized) =
                     self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
                 {
@@ -4095,7 +4101,7 @@ impl Checker {
                 .get(decls[index].name())
                 .and_then(|value| self.ct_value_ty(value, declared))
         })?;
-        unify_through_callable_bounds(decls, &mut subst)?;
+        unify_through_callable_bounds(self, decls, &mut subst)?;
         let materialize_pack_element = |ty: &Ty| self.materialize_pack_element(ty);
         let inferred_packs: HashMap<String, Vec<CtValue>> = patterns
             .iter()
@@ -4906,7 +4912,7 @@ impl Checker {
             arguments,
             ..
         } = self.resolve_use_params(&initializer, &decls, explicit, &patterns, &actuals)?;
-        unify_through_callable_bounds(&decls, &mut subst)?;
+        unify_through_callable_bounds(self, &decls, &mut subst)?;
         Ok(OwnParameters {
             values: Self::value_argument_environment(&decls, &arguments),
             subst,
@@ -5559,7 +5565,7 @@ impl Checker {
                 .map(|(_, (decl, _))| decl),
             &mut value_solutions,
         );
-        unify_through_callable_bounds(decls, &mut subst)?;
+        unify_through_callable_bounds(self, decls, &mut subst)?;
         self.solve_binders_from_values(decls, &mut subst, |index, declared| {
             self.bound_value_ty(&bound[index], declared)
         })?;

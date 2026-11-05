@@ -87,6 +87,7 @@ pub fn check_program_in(
     stmts: &[Stmt],
     context: &mut CheckContext,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
+    let _closure_traits = mojito_types::closure_trait::ClosureTraits::install();
     let discovery = check_program_carrying(stmts, context).map(PassCarry::into_result)?;
     let _arena = timing::span("arena");
     timing::count("arena_builds", 1);
@@ -382,6 +383,14 @@ pub(crate) fn builtin_stub(name: &str) -> String {
     mojito_module::module::linked_item_name(STUBS_MODULE, name)
 }
 
+/// Whether `ty` is a closure's own value: its storage struct, nested in the
+/// closure's declaration ([`mojito_symbol::symbol::nested_closure_storage_name`]).
+pub(crate) fn is_closure_storage(ty: &Ty) -> bool {
+    ty.kind()
+        .as_non_simd_struct()
+        .is_some_and(|(name, _)| mojito_symbol::symbol::is_closure_storage_name(name))
+}
+
 /// The module holding the functions the compiler calls by module path.
 pub(crate) const STUBS_MODULE: &str = "std.builtin._stubs";
 
@@ -492,6 +501,9 @@ pub struct Checker {
     capture_contexts: RefCell<Vec<CapturePolicy>>,
     /// Defined structs, by name (a separate namespace from value bindings).
     structs: declaration_table::DeclarationTable<StructInfo>,
+    /// The declaration site of each closure storage struct `structs`
+    /// registers (`register_closure_storage`), by its nested name.
+    closure_sites: HashMap<String, SourceSpan>,
     /// Top-level struct symbols in the checked program, collected before body
     /// checking. Concrete Tuple types can therefore select their generated
     /// implementation independent of declaration order.
@@ -997,12 +1009,7 @@ impl Checker {
     /// passed in registers; a closure's storage is a struct, passed as its
     /// captures allow.
     pub(crate) fn memory_only(&self, ty: &Ty) -> bool {
-        let function = ty.callable().is_some_and(|func| {
-            !matches!(
-                func.environment,
-                mojito_types::origin::CallableEnvironment::Storage(_)
-            )
-        });
+        let function = ty.callable().is_some();
         !mojito_types::types::trivially_register_passable_leaf(ty.kind())
             && !function
             && self.register_passability(ty) != traits::RegisterPassability::Proven
@@ -1047,6 +1054,7 @@ impl Checker {
             aggregate_escape_contexts: Vec::new(),
             capture_contexts: RefCell::new(Vec::new()),
             structs: declaration_table::DeclarationTable::default(),
+            closure_sites: HashMap::new(),
             declared_structs: declaration_table::DeclarationSet::default(),
             overload_sets: std::sync::Arc::default(),
             program_constants: std::sync::Arc::default(),
@@ -1548,6 +1556,14 @@ impl Checker {
             ..func.map_types(|ty| substitute(ty, &subst))
         })));
         coerces(&instantiated, to)
+    }
+
+    /// The closure trait of a closure's own value `ty`, its storage struct,
+    /// with the closure's full signature; `None` for any other type.
+    fn closure_contract(&self, ty: &Ty) -> Option<Ty> {
+        is_closure_storage(ty)
+            .then(|| self.declared_callable_contract(ty))
+            .flatten()
     }
 
     /// Checker-selected nominal target when the concrete callable type is

@@ -1331,9 +1331,10 @@ impl Checker {
             }
             _ => None,
         };
-        if indirect_target.is_some() && matches!(ty.kind(), TyKind::GenericFunc(_)) {
+        let contract = self.closure_contract(&ty).unwrap_or_else(|| ty.clone());
+        if indirect_target.is_some() && matches!(contract.kind(), TyKind::GenericFunc(_)) {
             let (contract, arguments) =
-                self.instantiate_generic_callable_value(name, ty.clone(), &ordinary_param_args)?;
+                self.instantiate_generic_callable_value(name, contract, &ordinary_param_args)?;
             self.record_at(span.clone()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::InstantiatedCallableContract {
                     contract,

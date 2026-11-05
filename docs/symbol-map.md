@@ -1566,7 +1566,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `StoragePassability`, that
   `Checker::closure_storage` derives at the closure's finalization, with
   its copyability, register passability, and triviality as the meet over
-  the captures, which its `CallableEnvironment::Storage` flags read;
+  the captures, which its checker struct's conformances read;
   `NestedNode::storage`) its storage struct (`NestedInfo::storage`, a
   `ClosureStorage` that `closure_storage` lowers from it, named as the
   check named it, `CheckedClosureStorage::name`,
@@ -1609,14 +1609,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mojito-parser/src/parser.rs`, so the storage is the value's only
   form. A capture-list `def`'s
   name read as a value is its declaration's slot
-  (`Flatten::closure_storage_read`). The check types such a value as a
-  `def(...)` whose environment is
-  `mojito_types::origin::CallableEnvironment::Storage`
-  (`ClosureStorageEnvironment`: the `ClosureSite`, captures, copyability,
-  passability; finalized in `checker/statements.rs`, which records the
-  closure trait as `CheckedClosureStorage::contract`), and the check's
-  last step replaces it throughout the checked program by the storage
-  struct its site maps to (`CheckedProgram::type_closures_by_storage` in
+  (`Flatten::closure_storage_read`). The check types such a value as its
+  storage struct nested in the declaration
+  (`symbol::nested_closure_storage_name`, `checker::is_closure_storage`),
+  which `Checker::register_closure_storage` (`checker/statements.rs`)
+  registers as a checker struct from the recorded storage, at the
+  closure's finalization and again for each closure of a carried body
+  (`Checker::carry_body`): its `callable_conformance` is the closure trait
+  (`CheckedClosureStorage::contract`, which a call binds against and
+  `unify_through_callable_bounds` solves a bound from), its conformances
+  the storage's copyability and passability, and it prints as the trait
+  (`mojito_types::closure_trait::{ClosureTraits, declare_closure_trait,
+  closure_trait}`, installed by `check_program_in`); the interface export
+  leaves it out. The check's last step replaces it throughout the checked
+  program by the lifted storage struct applied to its uses
+  (`CheckedProgram::type_closures_by_storage` in
   `closure_uses.rs`, over `ClosureStorageTypes`, a `TyRewrite`, and
   `CheckedProgram::rewrite_types`), pointing each call through a storage
   at its witness (`CheckedTables::storage_calls`,

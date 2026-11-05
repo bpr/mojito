@@ -1261,6 +1261,16 @@ pub fn closure_storage_name(lifted: &str) -> String {
     format!("{lifted}$__storage")
 }
 
+/// The check-time storage struct of the closure the node `syntax` declares.
+///
+/// It names the struct while the check types the closure, before its lift
+/// names it ([`closure_storage_name`]), as upstream's `emitClosure` nests
+/// the struct in the closure's declaration. Unique within one checked
+/// program.
+pub fn nested_closure_storage_name(syntax: mojito_common::token::SyntaxId) -> String {
+    closure_storage_name(&format!("$closure${}", syntax.0))
+}
+
 /// The method of its storage struct a closure's body is.
 ///
 /// The closure is lifted as `lifted` and declared `source`; its storage is

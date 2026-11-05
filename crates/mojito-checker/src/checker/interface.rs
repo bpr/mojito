@@ -680,7 +680,12 @@ impl Checker {
         let mut unplaced = Vec::new();
         // The declaration `name` belongs to; a name no library module
         // declares is a fresh checker's own, or reported.
+        // A closure's storage struct is nested in the body declaring the
+        // closure, which no interface carries.
         let mut place = |name: &str, builtin_has: bool| -> Option<String> {
+            if mojito_symbol::symbol::is_closure_storage_name(name) {
+                return None;
+            }
             let declaration = modules.declaration_of(name);
             if declaration.is_none() && !builtin_has {
                 unplaced.push(name.to_string());

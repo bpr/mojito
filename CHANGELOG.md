@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check now types a capture-list closure's or capturing lambda's
+  value by a struct nested in the closure's declaration, as upstream's
+  `emitClosure` returns its storage, instead of a `def(...)` whose
+  environment names the declaration site (R1893). The checker registers
+  the struct with the closure trait as its callable conformance and the
+  storage's copyability and passability as its conformances, prints it as
+  the trait, and the lift step renames it; `CallableEnvironment::Storage`
+  and `ClosureSite` are gone. A callable bound's binders
+  (`F: def() -> T`) now solve from any nominal callable struct's
+  contract.
 - The check's last step now types each capturing closure's value by its
   storage struct wherever the checked program records it, and points
   each call through the value at the struct's `__call__`, as upstream's

@@ -3553,8 +3553,8 @@ impl fmt::Display for TyKind {
             Self::Dtype => write!(f, "DType"),
             Self::None => write!(f, "None"),
             Self::Never => write!(f, "Never"),
-            Self::Func(func) => write_callable(f, None, func),
-            Self::GenericFunc(generic) => write_callable(f, Some(&generic.decls), generic),
+            Self::Func(func) => write_callable(f, None, func, false),
+            Self::GenericFunc(generic) => write_callable(f, Some(&generic.decls), generic, false),
             Self::Overload(candidates) => {
                 write!(f, "overload(")?;
                 for (i, candidate) in candidates.iter().enumerate() {
@@ -3671,6 +3671,17 @@ impl fmt::Display for TyKind {
                 write!(f, "]")
             }
             Self::Struct(name, args) => {
+                if args.is_empty()
+                    && let Some(contract) = crate::closure_trait::closure_trait(name)
+                {
+                    return match contract.kind() {
+                        Self::Func(func) => write_callable(f, None, func, true),
+                        Self::GenericFunc(generic) => {
+                            write_callable(f, Some(&generic.decls), generic, true)
+                        }
+                        contract => contract.fmt(f),
+                    };
+                }
                 // The prelude-qualified nominal String prints its public
                 // spelling rather than leaking the module-qualified symbol.
                 if args.is_empty() && is_stdlib_string_struct(name) {
@@ -4615,9 +4626,8 @@ pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
 
 /// The value-coercion policy for callable environments.
 ///
-/// A closure's value is its storage struct, which value-coerces only to
-/// itself, and a capturing callable does not bind to an unqualified
-/// `def(...)` value position, while a thin function value still binds.
+/// A capturing callable does not bind to an unqualified `def(...)` value
+/// position, while a thin function value still binds.
 ///
 /// Comptime callable *bounds* stay on the permissive
 /// `callable_environment_coerces` below.
@@ -4627,7 +4637,6 @@ pub fn callable_environment_value_coerces(
 ) -> bool {
     use crate::origin::CallableEnvironment;
     match (from, to) {
-        (CallableEnvironment::Storage(_), _) => from == to,
         (CallableEnvironment::Capturing(_), CallableEnvironment::Default) => false,
         _ => callable_environment_coerces(from, to),
     }
@@ -4640,15 +4649,6 @@ pub fn callable_environment_coerces(
     use crate::origin::{CallableEnvironment, CaptureOriginSet};
     if from == to {
         return true;
-    }
-    // A closure's storage satisfies a contract its body's signature does,
-    // with the storage's captures as the body's environment.
-    if let CallableEnvironment::Storage(storage) = from {
-        return !matches!(to, CallableEnvironment::Storage(_))
-            && callable_environment_coerces(
-                &CallableEnvironment::Capturing(storage.captures.clone()),
-                to,
-            );
     }
     match (from, to) {
         // An unqualified callable contract does not constrain the environment
@@ -7066,11 +7066,14 @@ fn expr_mentions(expr: &ParamExpr, predicate: &dyn Fn(&Ty) -> bool) -> bool {
 
 /// Render a callable signature; a generic contract (`decls`) renders its
 /// binders and trailing `where` constraints so a constrained-vs-unconstrained
-/// mismatch is visible in diagnostics.
+/// mismatch is visible in diagnostics. A closure's storage struct
+/// ([`crate::closure_trait`]) renders as its closure trait, which names its
+/// parameters and no environment.
 fn write_callable(
     f: &mut fmt::Formatter<'_>,
     decls: Option<&[ParamDecl]>,
     func: &FuncTy,
+    closure: bool,
 ) -> fmt::Result {
     let FuncTy {
         environment,
@@ -7086,22 +7089,19 @@ fn write_callable(
     } else {
         write!(f, "def(")?;
     }
-    // A closure's own value displays as its closure trait, which names
-    // its parameters.
-    let named = matches!(environment, crate::origin::CallableEnvironment::Storage(_));
     for (i, p) in params.iter().enumerate() {
         if i > 0 {
             write!(f, ", ")?;
         }
         match func.names.get(i) {
-            Some(name) if named => write!(f, "{name}: {p}")?,
+            Some(name) if closure => write!(f, "{name}: {p}")?,
             _ => write!(f, "{p}")?,
         }
     }
     write!(f, ")")?;
     match environment {
-        crate::origin::CallableEnvironment::Default
-        | crate::origin::CallableEnvironment::Storage(_) => {}
+        _ if closure => {}
+        crate::origin::CallableEnvironment::Default => {}
         crate::origin::CallableEnvironment::Thin => write!(f, " thin")?,
         crate::origin::CallableEnvironment::Capturing(origins) => {
             write!(f, " capturing[")?;

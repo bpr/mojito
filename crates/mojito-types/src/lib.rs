@@ -1,6 +1,7 @@
 //! The semantic type vocabulary: the `Ty` lattice and its pure
 //! coercion/contract predicates (`types`), origins and reference signatures
-//! (`origin`), shape-decided trait conformance (`conformance`), compile-time
+//! (`origin`), the closure traits a check's closure storage structs print as
+//! (`closure_trait`), shape-decided trait conformance (`conformance`), compile-time
 //! values (`ct`), the admitted `__mlir_op` operations (`mlir`) and LLVM
 //! intrinsics (`llvm_intrinsic`), the typed
 //! canonical parameter-expression attributes
@@ -8,6 +9,7 @@
 //! the package section that holds each type once (`type_section`). Sits above the AST and below every checking/lowering
 //! phase.
 
+pub mod closure_trait;
 pub mod conformance;
 pub mod ct;
 pub mod ffi;

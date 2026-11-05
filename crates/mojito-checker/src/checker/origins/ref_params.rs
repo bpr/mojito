@@ -184,6 +184,9 @@ impl Checker {
                         collect(checker, element, out);
                     }
                 }
+                _ if crate::checker::is_closure_storage(ty) => {
+                    out.extend(checker.concrete_callable_captures(ty));
+                }
                 struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                     let Some(info) = checker.structs.get(name) else {
                         return;
@@ -285,6 +288,16 @@ impl Checker {
                 TyKind::Variant(alternatives) => alternatives
                     .iter()
                     .any(|alternative| contains(checker, alternative, pointer_loans, seen)),
+                _ if crate::checker::is_closure_storage(ty) => checker
+                    .concrete_callable_captures(ty)
+                    .iter()
+                    .any(|capture| {
+                        matches!(
+                            capture.origin,
+                            mojito_types::origin::Origin::Place(_)
+                                | mojito_types::origin::Origin::Param(_)
+                        )
+                    }),
                 struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                     let key = ty.to_string();
                     if !seen.insert(key.clone()) {
@@ -386,6 +399,11 @@ impl Checker {
                         .unwrap_or_default(),
                     Some(TyKind::Func(_) | TyKind::GenericFunc(_)) => self
                         .capture_origins_in_type(found.expect("matched a callable"))
+                        .into_iter()
+                        .map(|capture| capture.origin)
+                        .collect(),
+                    _ if found.is_some_and(crate::checker::is_closure_storage) => self
+                        .capture_origins_in_type(found.expect("matched a closure"))
                         .into_iter()
                         .map(|capture| capture.origin)
                         .collect(),

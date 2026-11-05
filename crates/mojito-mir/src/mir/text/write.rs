@@ -3182,7 +3182,6 @@ fn environment_value(value: &CallableEnvironment) -> String {
         CallableEnvironment::Capturing(v) => positional("capturing", &capture_set(v)),
         // A closure's checked type never reaches verified MIR; an
         // unverified dump spells its captures.
-        CallableEnvironment::Storage(v) => positional("closure_storage", &capture_set(&v.captures)),
     }
 }
 fn capture_set(value: &CaptureOriginSet) -> String {

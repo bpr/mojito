@@ -343,11 +343,7 @@ impl Checker {
             TransferRoot::Binding(root) => root,
         };
         // A closure's declaration owns its storage, which moves out of it.
-        let closure_storage = matches!(
-            ty.callable().map(|func| &func.environment),
-            Some(mojito_types::origin::CallableEnvironment::Storage(_))
-        );
-        if closure_storage || self.is_compile_time_binding(root) {
+        if super::is_closure_storage(ty) || self.is_compile_time_binding(root) {
             return Ok(TransferVerdict::PlaceMove);
         }
         let Some(binding) = self.lookup(root) else {

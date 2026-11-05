@@ -853,7 +853,6 @@ impl Checker {
                 if matches!(
                     from.environment,
                     mojito_types::origin::CallableEnvironment::Capturing(_)
-                        | mojito_types::origin::CallableEnvironment::Storage(_)
                 ) && to.environment == mojito_types::origin::CallableEnvironment::Default =>
             {
                 false
@@ -3373,15 +3372,13 @@ impl Checker {
 
     /// Whether an uncontextualized display may store its callable element
     /// type. Thin function values store as a fixed-size array of that thin
-    /// type, as current Mojo does, and a closure's storage stores as any
-    /// struct value does: each closure is its own type, so two closures'
-    /// elements never unify. A `capturing[...]` callable has no run-time
-    /// value, so it is not a storable element.
+    /// type, as current Mojo does; a closure's storage is a struct, which
+    /// stores as any struct value does. A `capturing[...]` callable has no
+    /// run-time value, so it is not a storable element.
     fn check_callable_display_element(element: &Ty) -> Result<(), TypeError> {
         match element.as_func().map(|func| &func.environment) {
             Some(
-                mojito_types::origin::CallableEnvironment::Storage(_)
-                | mojito_types::origin::CallableEnvironment::Default
+                mojito_types::origin::CallableEnvironment::Default
                 | mojito_types::origin::CallableEnvironment::Thin,
             ) => Ok(()),
             Some(mojito_types::origin::CallableEnvironment::Capturing(_)) | None => {

@@ -426,6 +426,20 @@ impl Checker {
             .expect("carry_refusal proved a record");
         let start = self.enter_body_site(key);
         self.copy_recorded_facts(&previous, record);
+        for site in previous
+            .result
+            .node_facts
+            .logged(record.range(|marks| marks.node_facts))
+        {
+            if previous
+                .result
+                .node_facts
+                .get(site)
+                .is_some_and(|facts| facts.closure_storage.is_some())
+            {
+                self.register_closure_storage(site);
+            }
+        }
         for (callee, observed) in &record.reads {
             match observed {
                 ObservedEffects::Transfers(effects) => {

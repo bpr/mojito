@@ -380,9 +380,7 @@ impl Checker {
         match value_ty.kind() {
             TyKind::Func(func)
                 if let FuncTy {
-                    environment:
-                        mojito_types::origin::CallableEnvironment::Thin
-                        | mojito_types::origin::CallableEnvironment::Storage(_),
+                    environment: mojito_types::origin::CallableEnvironment::Thin,
                     ..
                 } = &**func =>
             {

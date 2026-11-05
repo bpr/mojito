@@ -3011,15 +3011,15 @@ impl Checker {
                         let actual = self.infer(expr)?;
                         // A closure's storage is a run-time value, and so is
                         // a capturing lambda's closure, as at the pin.
-                        let environment = actual.callable().map(|func| &func.environment);
-                        if matches!(expr.kind, ExprKind::Lambda { .. })
-                            && environment
-                                .and_then(CallableEnvironment::captures)
-                                .is_some()
-                        {
+                        let captures = super::is_closure_storage(&actual)
+                            || actual
+                                .callable()
+                                .and_then(|f| f.environment.captures())
+                                .is_some();
+                        if matches!(expr.kind, ExprKind::Lambda { .. }) && captures {
                             return Err(TypeError::CapturingLambdaParameter);
                         }
-                        if matches!(environment, Some(CallableEnvironment::Storage(_))) {
+                        if super::is_closure_storage(&actual) {
                             return Err(TypeError::DynamicParameterValue);
                         }
                         if !self.value_coerces(&actual, ty) {

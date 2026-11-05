@@ -203,27 +203,15 @@ pub fn leaf_conformance(
         return None;
     }
     Some(match trait_name {
-        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => {
-            match ty.kind() {
-                TyKind::ComptimeList(item) | TyKind::PopArray { element: item, .. } => {
-                    element(item, trait_name)
-                }
-                TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
-                    every(items, trait_name, element)
-                }
-                // A closure's storage is copyable exactly when each of its
-                // captures is.
-                TyKind::Func(func) if matches!(trait_name, "Copyable" | "ImplicitlyCopyable") => {
-                    match &func.environment {
-                        crate::origin::CallableEnvironment::Storage(storage) => {
-                            storage.copyable.into()
-                        }
-                        _ => Conformance::Proven,
-                    }
-                }
-                _ => Conformance::Proven,
+        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => match ty.kind() {
+            TyKind::ComptimeList(item) | TyKind::PopArray { element: item, .. } => {
+                element(item, trait_name)
             }
-        }
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
+                every(items, trait_name, element)
+            }
+            _ => Conformance::Proven,
+        },
         "Writer" => Conformance::Refuted,
         // `AnyType`, and the layout markers that stay shallow.
         _ => Conformance::Proven,
@@ -338,10 +326,6 @@ pub fn modelled_conformance(
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 return every(items, trait_name, element);
             }
-            TyKind::Func(func) if !thin_callable(ty) => matches!(
-                &func.environment,
-                crate::origin::CallableEnvironment::Storage(storage) if storage.register_passable
-            ),
             _ => modelled_trivial_register_passable(ty),
         },
         "Sized" => matches!(
@@ -405,18 +389,11 @@ pub fn thin_callable(ty: &Ty) -> bool {
 /// Whether the compiler-modelled `ty` stands in for an upstream struct
 /// declaring `TrivialRegisterPassable`, or is a type upstream gives that
 /// conformance: a `SIMD` value, `Bool`, a numeric literal, `NoneType`,
-/// `DType`, a thin function, or a closure's storage whose captures all are.
+/// `DType`, or a thin function.
 fn modelled_trivial_register_passable(ty: &Ty) -> bool {
     is_numeric_like(ty)
         || simd_valued_ty(ty)
         || thin_callable(ty)
-        || ty.kind().as_func().is_some_and(|func| {
-            matches!(
-                &func.environment,
-                crate::origin::CallableEnvironment::Storage(storage)
-                    if storage.trivially_register_passable
-            )
-        })
         || ty.is_bool()
         || matches!(
             ty.kind(),

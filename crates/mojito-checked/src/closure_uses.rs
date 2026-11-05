@@ -23,7 +23,7 @@ use crate::checked::{
 };
 use crate::unit::LoweringUnit;
 use mojito_types::ct::CtValue;
-use mojito_types::origin::{CallableEnvironment, ClosureSite, OwnerId};
+use mojito_types::origin::OwnerId;
 use mojito_types::param_expr::{ParamExpr, ParamId, ParamRef};
 use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
 use std::collections::{HashMap, HashSet};
@@ -173,7 +173,7 @@ impl CheckedTables {
     /// Each call through a closure one of `storages` types, with the
     /// `__call__` of its storage: a call naming a binding the closure
     /// types, or invoking an expression it types.
-    fn storage_calls(&self, storages: &HashMap<ClosureSite, Ty>) -> Vec<(CheckedNodeId, String)> {
+    fn storage_calls(&self, storages: &HashMap<String, Ty>) -> Vec<(CheckedNodeId, String)> {
         let mut bindings: HashMap<OwnerId, &Ty> = HashMap::new();
         for statement in &self.statements {
             if let (Some(binding), Some(ty)) = (statement.binding, &statement.binding_ty) {
@@ -194,7 +194,7 @@ impl CheckedTables {
                     _ => return None,
                 };
                 let (name, _) = storages
-                    .get(closure_site(callee)?)?
+                    .get(nested_storage(callee)?)?
                     .kind()
                     .as_non_simd_struct()?;
                 Some((
@@ -364,8 +364,8 @@ impl CheckedProgram {
     }
 
     /// The storage struct of each closure whose storage names its uses,
-    /// by the declaration site its checked type names.
-    fn closure_storage_types(&self) -> HashMap<ClosureSite, Ty> {
+    /// by the nested storage struct its checked type names.
+    fn closure_storage_types(&self) -> HashMap<String, Ty> {
         self.tables()
             .statements
             .iter()
@@ -375,7 +375,7 @@ impl CheckedProgram {
                 };
                 let storage = def.storage.as_ref()?;
                 let uses = storage.uses.as_ref()?;
-                let site = closure_site(self.checked_type_at(
+                let nested = nested_storage(self.checked_type_at(
                     &crate::checked::AnnotationSite::FunctionType {
                         module: statement.module.clone(),
                         declaration: statement.span,
@@ -383,7 +383,7 @@ impl CheckedProgram {
                     },
                 )?)?;
                 Some((
-                    site.clone(),
+                    nested.to_string(),
                     TyKind::Struct(
                         storage.name.clone(),
                         uses.binders.iter().map(ParamDecl::own_argument).collect(),
@@ -953,23 +953,29 @@ fn binder_uses(tables: &CheckedTables, def: &CheckedDef, in_scope: &BinderScope)
     BinderUses { ids, names }
 }
 
-/// The declaration site a closure's own value type names, `None` for any
+/// The storage struct nested in a closure's declaration that a closure's
+/// own value type names before the lift
+/// ([`mojito_symbol::symbol::nested_closure_storage_name`]), `None` for any
 /// other type.
-fn closure_site(ty: &Ty) -> Option<&ClosureSite> {
-    match &ty.callable()?.environment {
-        CallableEnvironment::Storage(storage) => Some(&storage.site),
+fn nested_storage(ty: &Ty) -> Option<&str> {
+    match ty.kind() {
+        TyKind::Struct(name, arguments)
+            if arguments.is_empty() && mojito_symbol::symbol::is_closure_storage_name(name) =>
+        {
+            Some(name)
+        }
         _ => None,
     }
 }
 
 /// The rewrite [`CheckedProgram::type_closures_by_storage`] applies at
-/// every type the program records: a closure's type becomes the storage
-/// struct its site maps to.
-struct ClosureStorageTypes<'a>(&'a HashMap<ClosureSite, Ty>);
+/// every type the program records: a closure's nested storage struct
+/// becomes the lifted one, applied to its uses.
+struct ClosureStorageTypes<'a>(&'a HashMap<String, Ty>);
 
 impl mojito_types::types::TyRewrite for ClosureStorageTypes<'_> {
     fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-        closure_site(ty).and_then(|site| self.0.get(site).cloned())
+        nested_storage(ty).and_then(|nested| self.0.get(nested).cloned())
     }
 
     fn expr(
