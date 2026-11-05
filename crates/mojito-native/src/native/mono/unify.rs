@@ -831,9 +831,8 @@ pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> 
     if is_symbolic(ty) {
         return Err(format!("solution for `{name}` is not concrete: `{ty}`"));
     }
-    // Solutions join instance identity: erase callable-environment spellings
-    // so `capturing[origin@N]` and `thin` variants of one contract are one
-    // instance.
+    // Solutions join instance identity: erase capture-set spellings so the
+    // `capturing[origin@N]` variants of one contract are one instance.
     let ty = &materialize_nested_literals(&canonicalize_callable(ty));
     let literal = |ty: &Ty| {
         ty.is_string_literal()

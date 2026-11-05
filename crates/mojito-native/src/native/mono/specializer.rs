@@ -3523,19 +3523,22 @@ impl<'a> Specializer<'a> {
                     | MirInstr::Const {
                         k: Const::Function(target),
                         ..
-                    } => {
-                        let Some(body) = self.functions.get(target.as_str()) else {
-                            continue;
-                        };
-                        if function_types(body).any(is_symbolic)
-                            || self
-                                .declarations
-                                .get(target.as_str())
-                                .is_some_and(|declaration| !declaration.param_decls.is_empty())
-                        {
-                            continue;
+                    } => self.enqueue_function_value(target)?,
+                    // A pack of callables' static list holds the functions
+                    // it binds, each a function value the instance reaches.
+                    MirInstr::ParamListAddress {
+                        dest,
+                        values: Const::Value(CtValue::Tuple(items)),
+                    } if function.reg_types.get(&dest.0).is_some_and(|ty| {
+                        matches!(ty.kind(), TyKind::Pointer { element, .. }
+                            if matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
+                    }) =>
+                    {
+                        for item in items {
+                            if let CtValue::Str(target) = item {
+                                self.enqueue_function_value(target)?;
+                            }
                         }
-                        *target = self.enqueue(target, self.base_bindings(), Vec::new())?;
                     }
                     // A struct handler of a `Variant` owning operation (a
                     // closure's storage) is called through its `__call__`,
@@ -3704,6 +3707,25 @@ impl<'a> Specializer<'a> {
                 block.instrs.splice(index..index, prelude);
             }
         }
+        Ok(())
+    }
+
+    /// Enqueue the instance of the function value `target` names, a
+    /// concrete body reached through no call, and name it: a generic or
+    /// still-symbolic body is left for the call sites that bind it.
+    fn enqueue_function_value(&mut self, target: &mut String) -> Result<(), MonoError> {
+        let Some(body) = self.functions.get(target.as_str()) else {
+            return Ok(());
+        };
+        if function_types(body).any(is_symbolic)
+            || self
+                .declarations
+                .get(target.as_str())
+                .is_some_and(|declaration| !declaration.param_decls.is_empty())
+        {
+            return Ok(());
+        }
+        *target = self.enqueue(target, self.base_bindings(), Vec::new())?;
         Ok(())
     }
 

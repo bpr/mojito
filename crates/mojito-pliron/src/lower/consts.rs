@@ -155,6 +155,28 @@ impl FnLowering<'_> {
             self.reg_values.insert(dest.0, address);
             return Ok(());
         }
+        // A thin callable element is the `{ invoke, env }` value of its
+        // function's thunk.
+        if matches!(element.kind(), TyKind::Func(_)) {
+            let mut thunks = Vec::with_capacity(elements.len());
+            for value in elements {
+                let target = match value {
+                    CtValue::Str(function) => self.signatures.get(function.as_str()),
+                    _ => None,
+                };
+                let Some(target) = target else {
+                    return Err(self.unsupported_reg(
+                        format!("a static parameter list of `{element}` elements (`{value}`)"),
+                        dest,
+                    ));
+                };
+                thunks.push(self.shared.ensure_thunk(ctx, target, 0));
+            }
+            let global = self.shared.intern_function_list(ctx, &thunks);
+            let address = self.global_address(ctx, &global, dest);
+            self.reg_values.insert(dest.0, address);
+            return Ok(());
+        }
         let mut bytes = Vec::new();
         for value in elements {
             let encoded = match (element.kind(), value) {

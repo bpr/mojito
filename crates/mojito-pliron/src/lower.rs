@@ -176,6 +176,9 @@ pub struct ModuleShared {
     /// Interned arrays of `!kgen.string` descriptors (`mjklist_<n>`), keyed
     /// by their strings' bytes.
     kgen_string_lists: HashMap<Vec<Vec<u8>>, Identifier>,
+    /// Interned arrays of thin callables (`mjflist_<n>`), keyed by their
+    /// functions' thunks.
+    function_lists: HashMap<Vec<Identifier>, Identifier>,
 }
 
 mod abi;

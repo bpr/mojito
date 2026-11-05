@@ -102,6 +102,7 @@ assets/ok/callable_binder_parameter_inference.mojo	main	exe-differential	sanitiz
 assets/ok/callable_bound_overload_pair.mojo	main	exe-differential	sanitized
 assets/ok/callable_contract_names_other_parameters.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
+assets/ok/callable_pack_cases.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
 assets/ok/capturing_callable_parameter_with_locals.mojo	main	exe-differential	sanitized

@@ -1995,9 +1995,7 @@ fn lower_function(
         names.push(result.name.clone());
     }
     let param_decls = signature.parameters.clone();
-    let value_parameter_locals = callable_parameter_locals(&param_decls);
     let enclosing_binders = EnclosingBinders::of(&param_decls);
-    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
     let ptys = caller_params
         .iter()
         .map(|p| {
@@ -2126,7 +2124,6 @@ fn lower_function(
             name: lowered_name,
             parameter_names: &names,
             parameter_types: ptys,
-            value_parameter_locals,
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -2236,7 +2233,6 @@ fn lower_struct_member<P: DeclaredParam>(
             .unwrap_or(&[]);
         param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
     }
-    let value_parameter_locals = callable_parameter_locals(&param_decls);
     let struct_parameters = checked
         .generic_parameters_at(&GenericSite::Struct {
             module,
@@ -2359,7 +2355,6 @@ fn lower_struct_member<P: DeclaredParam>(
     };
     names.extend(caller_params().map(|(_, p)| p.name().to_string()));
     names.extend(named_result.map(|result| result.name().to_string()));
-    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
     ptys.extend(caller_params().map(|(param, p)| {
         body_parameter_ty(
             p,
@@ -2379,7 +2374,6 @@ fn lower_struct_member<P: DeclaredParam>(
             name: &mangled,
             parameter_names: &names,
             parameter_types: ptys,
-            value_parameter_locals,
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -2556,18 +2550,12 @@ fn lower_expression_thunk(
         ty,
         callables,
     } = thunk;
-    let parameter_locals = callable_parameter_locals(&binders.declarations);
-    let parameter_names: Vec<String> = parameter_locals
-        .iter()
-        .map(|(name, _)| name.clone())
-        .collect();
     lower_fn_nested(
         FunctionLowering {
             checked,
             name,
-            parameter_names: &parameter_names,
+            parameter_names: &[],
             parameter_types: Vec::new(),
-            value_parameter_locals: parameter_locals,
             enclosing_binders: binders.clone(),
             owned_parameters: Vec::new(),
             deinit_parameters: Vec::new(),
@@ -3107,27 +3095,6 @@ fn effect_or_record(
         invariant_errors.push(format!("missing checked effect for {description}"));
         mojito_checked::checked::DeclarationEffect::default()
     })
-}
-
-/// A pack of callables has storage in the callee frame although it is not
-/// part of the ordinary argument ABI: the slot the body indexes. A callable
-/// binder's read is its parameter constant, and a type parameter, as at
-/// Mojo, has no storage.
-fn callable_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
-    decls
-        .iter()
-        .filter_map(|decl| match decl {
-            ParamDecl::Value {
-                name,
-                variadic: true,
-                ..
-            } if decl.binds_callables() => Some((
-                name.trim_start_matches('*').to_string(),
-                TyKind::VariadicPack(decl.value_element_ty()?.clone()).into(),
-            )),
-            ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
-        })
-        .collect()
 }
 
 /// Derive the executable capability produced by `MakeRef` from the complete
@@ -5695,9 +5662,8 @@ struct EnclosingBinders {
     values: Vec<(mojito_types::param_expr::ParamRef, Ty)>,
     /// The declarations of `types` and `values`, in scope order.
     declarations: Vec<ParamDecl>,
-    /// The declarations of the callable value binders: a call by name
-    /// reads one as its parameter constant ([`Self::callable`]), and a pack
-    /// of them as a frame local of its own.
+    /// The declarations of the callable value binders, which a call by
+    /// name reads as their parameter constants ([`Self::callable`]).
     callables: Vec<ParamDecl>,
     /// The enclosing `comptime for` loops' variables, each checked binding
     /// with the index binder it denotes.
@@ -5734,11 +5700,14 @@ impl EnclosingBinders {
                     binders.values.push((declaration.binder(), (*ty).clone()));
                 }
                 // A value pack, and its list binder, has no frame local; a
-                // thunk reads it through the parameter constants it binds.
+                // thunk reads it through the parameter constants it binds. A
+                // pack of callables is one too.
                 ParamDecl::Value {
                     callable_default: None,
                     ..
-                } if !declaration.binds_callables() => {}
+                } if !declaration.binds_callables()
+                    || declaration.is_value_pack()
+                    || declaration.is_pack_list() => {}
                 ParamDecl::Value { .. } => {
                     binders.callables.push(declaration.clone());
                     continue;
@@ -5916,15 +5885,11 @@ impl EnclosingBinders {
 
     /// The parameter reference a read of the callable binder `name` is,
     /// the innermost in scope, beside its declared type; `None` for a name
-    /// no callable binder declares, or a pack of callables, which is a
-    /// frame slot of its own.
+    /// no callable binder declares.
     fn callable(&self, name: &str) -> Option<(ParamExpr, Ty)> {
         self.callables.iter().rev().find_map(|decl| match decl {
             ParamDecl::Value {
-                name: declared,
-                ty,
-                variadic: false,
-                ..
+                name: declared, ty, ..
             } if declared == name => Some((
                 ParamContext::detached().decl_ref(decl.id().clone(), name, decl.binder_meta()),
                 ty.clone(),

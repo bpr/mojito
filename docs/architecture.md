@@ -1105,8 +1105,8 @@ nested list display is a frozen `Array` like any other struct. A tuple, struct, 
 parameter follows the same rule: its read is the parameter constant of its
 declaration (`Checker::value_binder_read`), with no slot, so each read is
 the value's typed constant, with nothing built at entry. A callable
-binder's read is its parameter constant too; only a pack of callables keeps
-a slot (`types::binder_read_takes_slot`). A field chain off
+binder's read is its parameter constant too, and a pack of callables, as
+any value pack, is read as its `ParameterList`. A field chain off
 either (`q.a`, `q.i.v`) is upstream's struct extract on the parameter
 attribute: the checker records it as a `SemanticAdjustment::ParamValue`
 (`Checker::infer_member` over `struct_value_field`), its root never read,
@@ -1374,9 +1374,9 @@ binding of the element under the loop takes the copy's own slot at its
 element type. `inline-parametric` runs the same rewrite on an inlined
 callee's body under the call's binding, so a construction of a bound
 binder is the bound type's own there too. A
-type parameter has no frame slot (`callable_parameter_locals`), as Mojo
+type parameter has no frame slot, as Mojo
 gives a type parameter no storage, and neither has a value binder, a
-callable one included: the check records each read of one as its parameter value
+callable one or a pack of them included: the check records each read of one as its parameter value
 (`SemanticAdjustment::ParamValue` of the binder's declaration reference,
 `Checker::value_binder_read`), which MIR lowers as `Const::Param`, upstream's
 `kgen.param.constant`, and the elaborator answers per instance. A bracket
@@ -1386,7 +1386,15 @@ call of a callable binder by name calls through its parameter constant
 (`EnclosingBinders::callable`), which the elaborator closes to the bound
 function's symbol (`CtValue::Str` at the function type, read as
 `Const::Function`); the constant owns nothing, so no drop ends it
-(`mir::owned_result_regs`). Only a pack of callables keeps a frame slot.
+(`mir::owned_result_regs`). A pack of callables is a value pack: its list
+binder binds each bound function's symbol, typed at the element by
+`ParamContext::constant_as`, a body reads an element through the
+`ParameterList`'s `__getitem__` like any pack's, and a call through one
+(`fs[i]()`) is spelled as the invocation of that subscript
+(`Checker::infer_pack_element_call`). The static list
+(`MirInstr::ParamListAddress`) lays the functions out as function values
+on both backends, and `SymbolTable::function_uses` counts each as a use of
+its function, as upstream's `#kgen.symbol.constant` elements are.
 
 **One check.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
@@ -6903,10 +6911,8 @@ point where a slot declared in a loop is uninitialized again.
   `E()`), and the native backend as `llvm.undef`. A read
   needs no carrying, so one inside a `try` part or a `comptime for` body
   of a value stored outside it is promoted (the elaborator renumbers only
-  the registers each clone of a body defines). A slot nothing stores or
-  declares is a pack of callables', which the elaborator substitutes by
-  name, and keeps its slot. The other mentions go and the slot leaves
-  the function (`mir::retire_slots`).
+  the registers each clone of a body defines). The other mentions go and
+  the slot leaves the function (`mir::retire_slots`).
   Its `--timings` counters are `promoted_slots` and
   `erased_slot_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,

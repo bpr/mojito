@@ -441,8 +441,8 @@ pub(super) fn pack_list_expr(decls: &[ParamDecl], decl: &ParamDecl) -> Option<Pa
 }
 
 /// The value-parameter scope a declaration's own binders open: a callable
-/// binder's included, which a body reads as its parameter reference too. A
-/// pack of callables is a frame slot of its own.
+/// binder's included, which a body reads as its parameter reference too,
+/// and a value pack's, a pack of callables among them, as its list.
 pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()

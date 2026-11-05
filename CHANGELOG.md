@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pack of callables (`*fs: def() thin -> None`) is now read as its
+  `ParameterList` of the bound functions, as any value pack is, instead
+  of from a frame slot nothing stores, so `fs[i]()` and `fs[i](x)` in a
+  `comptime for`, `len(fs)`, `var g = fs[i]`, and `comptime g = fs[1]`
+  run on both backends as at the pin (R1874). An instance keyed by a
+  `thin` callable type keeps `thin`, as the pin's type does.
+  `assets/ok/callable_pack_cases.mojo` pins it.
 - A hand-written `EnumLike` conformer now prints through `Writable`'s
   default `_enum_reflection_write_to` (`Shape.Square(2)`), and a body
   over a callable binder whose `comptime for` ranges over

@@ -1234,6 +1234,21 @@ impl<'p> CallEdges<'p, '_> {
             } => {
                 self.push_named(function);
             }
+            // A static list of callables holds each function's thunk.
+            MirInstr::ParamListAddress {
+                dest,
+                values: mojito_mir::mir::Const::Value(mojito_types::ct::CtValue::Tuple(items)),
+            } if self.function.reg_types.get(&dest.0).is_some_and(|ty| {
+                matches!(ty.kind(), TyKind::Pointer { element, .. }
+                    if matches!(element.kind(), TyKind::Func(_)))
+            }) =>
+            {
+                for item in items {
+                    if let mojito_types::ct::CtValue::Str(function) = item {
+                        self.push_named(function);
+                    }
+                }
+            }
             // A `SIMD[dt, _](x)` construction over a concrete Intable
             // struct (R1544) invokes its checker-selected `__int__` in the
             // lowered expansion, so retain that implicit edge.

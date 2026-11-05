@@ -18,6 +18,7 @@ impl ModuleShared {
             thunks: HashMap::new(),
             param_lists: HashMap::new(),
             kgen_string_lists: HashMap::new(),
+            function_lists: HashMap::new(),
         }
     }
 
@@ -145,6 +146,70 @@ impl ModuleShared {
         self.module.append_operation(ctx, global.get_operation(), 0);
         self.kgen_string_lists
             .insert(strings.to_vec(), name.clone());
+        name
+    }
+
+    /// Intern a closed parameter list of thin callables as a private
+    /// constant global `mjflist_<n>`: an array of the two-word `{ invoke,
+    /// env }` values, each the address of its function's thunk beside a
+    /// null environment, built by its initializer region since each holds
+    /// a function's address.
+    pub(super) fn intern_function_list(
+        &mut self,
+        ctx: &mut Context,
+        thunks: &[Identifier],
+    ) -> Identifier {
+        if let Some(name) = self.function_lists.get(thunks) {
+            return name.clone();
+        }
+        let name: Identifier = format!("mjflist_{}", self.function_lists.len())
+            .try_into()
+            .expect("constant-pool names are identifier-safe");
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let callable_ty: TypeHandle =
+            StructType::get_unnamed(ctx, (vec![ptr_ty, ptr_ty], StructLayout::Unpacked)).into();
+        let array_ty: TypeHandle = ArrayType::get(ctx, callable_ty, thunks.len() as u64).into();
+        let global = GlobalOp::new(ctx, name.clone(), array_ty);
+        global.set_attr_llvm_global_linkage(ctx, LinkageAttr::PrivateLinkage);
+        global.set_constant(ctx, true);
+        global.set_alignment(ctx, 8);
+        global.add_initializer_region(ctx);
+        let block = global
+            .get_initializer_block(ctx)
+            .expect("an initializer region has its entry block");
+        let undef = UndefOp::new(ctx, array_ty);
+        undef.get_operation().insert_at_back(block, ctx);
+        let mut array = undef.get_result(ctx);
+        for (index, thunk) in (0u32..).zip(thunks) {
+            let callable = UndefOp::new(ctx, callable_ty);
+            callable.get_operation().insert_at_back(block, ctx);
+            let invoke = AddressOfOp::new(ctx, thunk.clone(), 0);
+            invoke.get_operation().insert_at_back(block, ctx);
+            let with_invoke = InsertValueOp::new(
+                ctx,
+                callable.get_result(ctx),
+                invoke.get_result(ctx),
+                vec![0],
+            );
+            with_invoke.get_operation().insert_at_back(block, ctx);
+            let env = ZeroOp::new(ctx, ptr_ty);
+            env.get_operation().insert_at_back(block, ctx);
+            let with_env = InsertValueOp::new(
+                ctx,
+                with_invoke.get_result(ctx),
+                env.get_result(ctx),
+                vec![1],
+            );
+            with_env.get_operation().insert_at_back(block, ctx);
+            let element = InsertValueOp::new(ctx, array, with_env.get_result(ctx), vec![index]);
+            element.get_operation().insert_at_back(block, ctx);
+            array = element.get_result(ctx);
+        }
+        ReturnOp::new(ctx, Some(array))
+            .get_operation()
+            .insert_at_back(block, ctx);
+        self.module.append_operation(ctx, global.get_operation(), 0);
+        self.function_lists.insert(thunks.to_vec(), name.clone());
         name
     }
 

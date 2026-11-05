@@ -18,10 +18,6 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) name: &'a str,
     pub(super) parameter_names: &'a [String],
     pub(super) parameter_types: Vec<Ty>,
-    /// Hidden frame locals populated from compile-time value-argument registers.
-    /// They are predeclared for name/type resolution but do not increase the
-    /// function's ordinary runtime parameter count.
-    pub(super) value_parameter_locals: Vec<(String, Ty)>,
     /// The enclosing struct's binders, then the function's own.
     pub(super) enclosing_binders: EnclosingBinders,
     pub(super) owned_parameters: Vec<bool>,
@@ -61,7 +57,6 @@ pub(super) fn lower_fn_nested(
         name,
         parameter_names: param_names,
         parameter_types: param_types,
-        value_parameter_locals,
         enclosing_binders,
         owned_parameters: owned_params,
         deinit_parameters: deinit_params,
@@ -93,22 +88,14 @@ pub(super) fn lower_fn_nested(
         || Cfg::build_checked_fn(checked, param_names, statements),
         |value| Cfg::build_checked_thunk(checked, param_names, statements, value),
     );
-    // A frame's declaration types its parameter, value-parameter, and named
-    // result slots; a named result holds the declared result type whether or
-    // not the body assigns it whole.
+    // A frame's declaration types its parameter and named result slots; a
+    // named result holds the declared result type whether or not the body
+    // assigns it whole.
     let mut declared: HashMap<VarId, Ty> = param_types
         .iter()
         .enumerate()
         .map(|(slot, ty)| (slot as VarId, ty.clone()))
         .collect();
-    for (name, ty) in &value_parameter_locals {
-        let slot = cfg
-            .vars
-            .iter()
-            .position(|candidate| candidate == name)
-            .expect("value parameter was seeded into the function CFG");
-        declared.insert(slot as VarId, ty.clone());
-    }
     if let Some(slot) =
         named_result.and_then(|result| cfg.vars.iter().position(|candidate| candidate == result))
     {
@@ -134,14 +121,6 @@ pub(super) fn lower_fn_nested(
     thunks.lower(checked, overloads, out, declarations, invariant_errors);
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
-        f.var_tys.entry(slot as VarId).or_insert_with(|| ty.clone());
-    }
-    for (name, ty) in &value_parameter_locals {
-        let slot = f
-            .var_names
-            .iter()
-            .position(|candidate| candidate == name)
-            .expect("value parameter was retained in the MIR frame");
         f.var_tys.entry(slot as VarId).or_insert_with(|| ty.clone());
     }
     f.param_types = param_types;
@@ -172,7 +151,6 @@ pub(super) fn lower_fn_nested(
                 name,
                 registry: &registry,
                 binders: &enclosing_binders,
-                locals: &value_parameter_locals,
                 closures: &closures,
             },
         );
@@ -1745,32 +1723,13 @@ fn method_name(method: &mojito_checked::declaration::FunctionDeclaration) -> Str
 
 /// The declaration a nested function is lowered inside: its lowered name,
 /// the nested `def`s registered in its scope, the binders in scope there,
-/// and the frame locals of its callable and constructible type binders and
-/// of its own enclosing declarations', which the nested body reads as its
-/// own.
+/// and its closures.
 #[derive(Clone, Copy)]
 struct Enclosing<'a> {
     name: &'a str,
     registry: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &'a EnclosingBinders,
-    locals: &'a [(String, Ty)],
     closures: &'a ClosureLowering,
-}
-
-impl Enclosing<'_> {
-    /// The frame locals of a body nested here declaring `decls`: its own,
-    /// then each inherited one its own do not shadow.
-    fn frame_locals(&self, decls: &[ParamDecl]) -> Vec<(String, Ty)> {
-        let mut locals = callable_parameter_locals(decls);
-        let inherited: Vec<_> = self
-            .locals
-            .iter()
-            .filter(|(name, _)| !locals.iter().any(|(own, _)| own == name))
-            .cloned()
-            .collect();
-        locals.extend(inherited);
-        locals
-    }
 }
 
 fn lower_nested_node(
@@ -1843,8 +1802,6 @@ fn lower_nested_node(
     if let Some(result) = named_result {
         names.push(result.name.clone());
     }
-    let value_parameter_locals = enclosing.frame_locals(&param_decls);
-    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
     let capture_locals = names.len();
     if storage.is_some() {
         names.extend(capture_names);
@@ -2006,19 +1963,11 @@ fn lower_nested_node(
     // Every lifted slot takes its checker-owned storage type. In particular,
     // an intermediate closure may only forward a captured sibling closure to
     // a descendant, so no op in its body declares that callable type.
-    let mut declared: HashMap<VarId, Ty> = ptys
+    let declared: HashMap<VarId, Ty> = ptys
         .iter()
         .enumerate()
         .map(|(slot, ty)| (slot as VarId, ty.clone()))
         .collect();
-    for (name, ty) in &value_parameter_locals {
-        let slot = ncfg
-            .vars
-            .iter()
-            .position(|candidate| candidate == name)
-            .expect("nested value parameter was seeded into the function CFG");
-        declared.insert(slot as VarId, ty.clone());
-    }
     let capture_slots = capture_slots(
         captures,
         storage.as_ref(),
@@ -2055,16 +2004,6 @@ fn lower_nested_node(
             .entry(slot as VarId)
             .or_insert_with(|| ty.clone());
     }
-    for (name, ty) in &value_parameter_locals {
-        let slot = nf
-            .var_names
-            .iter()
-            .position(|candidate| candidate == name)
-            .expect("nested value parameter was retained in the MIR frame");
-        nf.var_tys
-            .entry(slot as VarId)
-            .or_insert_with(|| ty.clone());
-    }
     nf.param_types = ptys;
     nf.owned_params = owned2;
     nf.deinit_params = deinit2;
@@ -2093,7 +2032,6 @@ fn lower_nested_node(
                 name: mangled,
                 registry: &registry,
                 binders: enclosing_binders,
-                locals: &value_parameter_locals,
                 closures: enclosing.closures,
             },
         );

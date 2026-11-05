@@ -2455,8 +2455,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - Slot renumbering (`mojito-mir`'s `mir/ir.rs`): `mir::{renumber_slots,
   addressed_slots, retire_slots, retire_parameters}`, shared by the
   environment parameters (`mono/environment.rs`), unrolling, and `mem-2-reg`. A type parameter
-  has no frame slot (`callable_parameter_locals`, `mir.rs`), as Mojo gives
-  it no storage, and neither has a value binder, a callable one included
+  has no frame slot, as Mojo gives
+  it no storage, and neither has a value binder, a callable one or a pack
+  of them included
   (`EnclosingBinders::callable` for a call by name), whose read is
   the `Const::Param` of its declaration reference
   (`Checker::value_binder_read`, `checker/constraints.rs`;
@@ -2848,7 +2849,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `answer_param_constants`, the VM allocates once per list
   (`VmBackend::static_param_list`), and the native backend interns as a
   private constant global (`ModuleShared::intern_param_list`,
-  `lower_param_list_address`). A `ref[ImmStaticOrigin]` result the VM
+  `lower_param_list_address`). A pack of callables' list holds each bound
+  function's symbol (`ParamContext::constant_as` at a `ParamList` of a
+  function type): the VM thaws each as a function value, the native
+  backend interns an array of their `{ invoke, env }` values
+  (`ModuleShared::intern_function_list`), the elaborator enqueues each
+  function (`Specializer::enqueue_function_value`), and
+  `SymbolTable::function_uses` (`mir/symbols.rs`) and the native
+  `reachable_set` count each as a use. A call through an element
+  (`fs[i]()`) is spelled as the invocation of the subscript
+  (`Checker::infer_pack_element_call`, `comptime_validation.rs`). A `ref[ImmStaticOrigin]` result the VM
   reaches through such a temporary span is forwarded as its heap pointer
   (`VmBackend::heap_reference_result`); any other reference reached
   through a heap pointer is rooted at that pointer, interned in

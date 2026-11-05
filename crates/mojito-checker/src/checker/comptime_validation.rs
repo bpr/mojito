@@ -4750,6 +4750,54 @@ impl Checker {
             .filter(|raw| matches!(raw.meta(), mojito_types::param_expr::MetaTy::ParamList(_)))
     }
 
+    /// A call through an element of the value pack `name` (`fs[i]()` over
+    /// `*fs: def() thin -> None`): upstream parses the brackets on a value
+    /// as its subscript, so the call is the invocation of `fs[i]`, which
+    /// reads the pack's `ParameterList` element. It is spelled as that
+    /// invocation in the call's place. `None` for any other call.
+    pub(super) fn infer_pack_element_call(
+        &self,
+        call: &Expr,
+        name: &str,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let [ParamArg::Value(index)] = param_args else {
+            return None;
+        };
+        let pack = super::initializer_list::spelled_node(
+            call,
+            2,
+            ExprKind::Identifier(name.to_string()),
+            call.span,
+        );
+        self.value_pack_named(&pack)?;
+        let element = super::initializer_list::spelled_node(
+            call,
+            1,
+            ExprKind::Index {
+                object: Box::new(pack),
+                index: Box::new(index.clone()),
+            },
+            call.span,
+        );
+        let invocation = super::initializer_list::spelled_node(
+            call,
+            0,
+            ExprKind::Invoke {
+                callee: Box::new(element),
+                param_args: Vec::new(),
+                args: args.to_vec(),
+                kwargs: kwargs.to_vec(),
+            },
+            call.span,
+        );
+        Some(self.infer(&invocation).inspect(|ty| {
+            self.record_spelled_construction(call, invocation, ty);
+        }))
+    }
+
     /// A value pack read as a runtime value (`for v in values`, `var l =
     /// values`, `values[i]` at a runtime index): the zero-sized
     /// `ParameterList[values.values]()` the pin types the read as, spelled in

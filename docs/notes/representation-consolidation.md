@@ -24,17 +24,7 @@ command cannot use both.
    R359: the compiler's tuple storage, upstream's trivially destructible
    `!kgen.struct`, still destroys its elements through one.
 
-2. **Gap E: compile-time values are slots** (size, small). A callable
-   binder's read is its parameter constant (R1449), and
-   `remove-unused-params` counts slot reads only for callables and packs
-   (R1451). What is left:
-   - R1874: a pack of callables is still a frame slot.
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1874 -n 0
-   ```
-
-3. **Gap F: members reached by name, not called** (size, the largest
+2. **Gap F: members reached by name, not called** (size, the largest
    lever left). R1280 (the iteration step folds to the iterator's member),
    R1466 (a call on a struct value is its `__call__`), R1287 (`print` is
    library code), and R1461 landed 11-03. `mir::TYPE_REACHED_MEMBERS`
@@ -59,7 +49,7 @@ command cannot use both.
      --task R1462 --task R160 --task R1544 --task R712 --task R579 -n 0
    ```
 
-4. **Gap G's residues** (size, and conformance). R1436 landed 11-03: the
+3. **Gap G's residues** (size, and conformance). R1436 landed 11-03: the
    check declares a closure's storage struct, and MIR lowers that
    declaration. R1434 deleted owned captures, and R1823 rejects the
    `capturing` effect and `@parameter` closures as the pin does. What is
@@ -80,7 +70,7 @@ command cannot use both.
      --task R1888 --task R1349 -n 0
    ```
 
-5. **Gap H's residues** (partial size). R1474, R1475, R1895, and R1896
+4. **Gap H's residues** (partial size). R1474, R1475, R1895, and R1896
    landed 11-03: a condition compiles once with its binders in scope, and
    a `comptime if` carries its `Bool` value beside its constraint. R893
    and R1482 landed too. What is left:
@@ -104,7 +94,7 @@ command cannot use both.
      --only R1881 --only R1907 --only R1908 --only R1909 -n 0
    ```
 
-6. **Gap I: packs are binder kinds** (slight size). Its cores landed
+5. **Gap I: packs are binder kinds** (slight size). Its cores landed
    11-03 (R1491, R1492, R1485, R1486). What is left:
    - R1910, then R1912: a value pack's, then a type pack's, reads come
      from the visible binder instead of being spelled again. Planned.
@@ -116,7 +106,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1912 --task R1911 --task R1914 -n 0
    ```
 
-7. **The scalar, literal, and string structs' residues** (conformance;
+6. **The scalar, literal, and string structs' residues** (conformance;
    the old steps 1–3). `SIMD` and `Bool` are the declared structs below
    the checker (R1812–R1816, R1834, R1612), numeric literals' members and
    conversions are their declarations (R1753, R1785's first part, R1788,
@@ -142,7 +132,7 @@ command cannot use both.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1862 --task R1863 --task R1864 --task R1865 -n 0
    ```
 
-8. **Residues of the 10-27 to 10-31 `SIMD` runs** outside their work
+7. **Residues of the 10-27 to 10-31 `SIMD` runs** outside their work
    orders. Each is independent unless noted.
    - Compile-time applications: R1530 (displays and aggregates as
      parameter values), R1523 and R1527 (builtin bodies), R1574 (folding
@@ -150,7 +140,7 @@ command cannot use both.
      list in a parameter position).
    - Parameter binding and conversion: R1537, R1541, R1545, R1540, R1565,
      R1571, R1572, R1604, R1548, and R1687 (`SIMDLength` into an `Int`
-     binding). R1544 is under step 3.
+     binding). R1544 is under step 2.
    - `SIMD` storage and intrinsics: R1520, R1521, R1600, R1575, and
      R1734 (non-power-of-two widths).
    - Ownership and the VM: R1570, R1573, R1603, R1601, R1524. R1601 and
@@ -184,16 +174,16 @@ command cannot use both.
   after it, R1415 (fieldwise keywords), and R1416 (hand-written MIR).
 - Gap D′ has its verifier rule's unnamed `drop.reg` half left (R1932),
   behind R359.
-- Of the 10-25 gaps, E, F, G, H, and I have their cores in. Each has
-  residues, steps 2–6.
+- Of the 10-25 gaps, E has fully landed, and F, G, H, and I have their
+  cores in. Each of those has residues, steps 2–5.
 - Of the 10-25 conformance blocks, five have landed: type versus value
   (R1369–R1372), one subscript lvalue (R1373–R1375), conformance
   evidence (R1364, R1365), transfers (R1366, R1367), and abandonment
   (R1368). Their leftovers are under *Blocks without a size lever*. The
-  scalar block is step 7.
+  scalar block is step 6.
 - `SIMD`, `Bool`, `IntLiteral[value]`, `FloatLiteral[value]`, and
   `StringLiteral[value]` are the declared structs. The value-less literal
-  types and their run-time registers remain (step 7).
+  types and their run-time registers remain (step 6).
 - `print` is the bundled library function, and `Writable`'s members are
   the trait's own default bodies (R1287). `String(x)` and `repr(x)` are
   still builtins (R1882).
@@ -210,7 +200,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 | gap | upstream's shape | open core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932, behind R359 | about 15 (below) | yes |
-| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R1874 | R788, R378, R472, R508, R602 | yes |
+| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none (R1874 landed 11-05) | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1877, R1868, R1882, R1462, R160, R1544 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1891, R1892 → R1893 → R1894 | R1349, R1870, R1888 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1901–R1904 → R1905, R1898 | about 25 (below) | partial |
@@ -311,7 +301,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 7 (R1835 → R1843, R1837, R1840, R1841, R1845 → R1851, R1858–R1860 → R1862), R160 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
+| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 6 (R1835 → R1843, R1837, R1840, R1841, R1845 → R1851, R1858–R1860 → R1862), R160 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R1882, R1462 | R1463, R1409, R18, R159, R1883, R1884 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
@@ -436,7 +426,8 @@ Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
   R1189); literal members and conversions as declarations (R1753, R1788,
   R1789, R1738, part of R1785); `StringLiteral[value]` as the declared
   struct (R1651, R1654, R1655, R1657–R1660); gap D′'s consumers
-  (R1440–R1444); gap E's callable binder read; gap F's iteration step,
+  (R1440–R1444); gap E's callable binder read and, 11-05, its pack of
+  callables (R1874); gap F's iteration step,
   `__call__`, and `print` (R1280, R1466, R1287, R1461); gap G's storage
   struct in the check and the pin's closure removal (R1430, R1433, R1434,
   R1436, R176, R1823); gap H's conditions (R1474, R1475, R1895, R1896,

@@ -1137,15 +1137,16 @@ fn erase_unread(
 /// binds.
 ///
 /// Only a binder whose read takes a slot
-/// ([`mojito_types::types::binder_read_takes_slot`]) or a pack has one;
-/// every other value binder's read is its parameter constant, which the
-/// structural walk sees, so a slot that only shares its name is no read.
+/// ([`mojito_types::types::binder_read_takes_slot`]) has one; every other
+/// value binder's read, a pack's included, is its parameter constant,
+/// which the structural walk sees, so a slot that only shares its name is
+/// no read.
 fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<String> {
     let names: HashSet<&str> = candidates
         .iter()
         .filter(|decl| {
-            matches!(decl, ParamDecl::Value { ty, variadic, .. }
-                if *variadic || mojito_types::types::binder_read_takes_slot(ty.kind()))
+            matches!(decl, ParamDecl::Value { ty, .. }
+                if mojito_types::types::binder_read_takes_slot(ty.kind()))
         })
         .map(|decl| decl.name().trim_start_matches('*'))
         .collect();

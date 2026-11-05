@@ -126,6 +126,15 @@ impl ParamContext {
     /// literal `3` and `Int(3)` bound to `n: Int` are one node.
     pub fn constant_as(&self, value: CtValue, ty: &Ty) -> Result<ParamExpr, ParamError> {
         let rendered = value.to_string();
+        // A pack of callables' list holds each bound function's symbol,
+        // which a read of an element materializes as that function.
+        if let TyKind::ParamList(element) = ty.kind()
+            && is_function(element)
+            && let CtValue::Tuple(values) = &value
+            && values.iter().all(|value| matches!(value, CtValue::Str(_)))
+        {
+            return Ok(self.make(MetaTy::value(ty.clone()), ParamKind::Constant(value)));
+        }
         let value = value
             .materialize_as(ty)
             .ok_or_else(|| ParamError::TypeMismatch {
@@ -452,7 +461,14 @@ impl ParamContext {
                         "parameter list index {position} is out of range for {count} element(s)"
                     ))
                 })
-                .and_then(|value| self.constant(value.clone()));
+                .and_then(|value| match list.meta() {
+                    MetaTy::ParamList(element)
+                        if let Some(ty) = element.as_value().filter(|ty| is_function(ty)) =>
+                    {
+                        self.constant_as(value.clone(), ty)
+                    }
+                    _ => self.constant(value.clone()),
+                });
         }
         match list.kind() {
             ParamKind::ListTabulate { count, element } => {
@@ -2470,6 +2486,13 @@ impl ParamContext {
             }
             (MetaTy::Value(ty), Some(constant)) if *value.meta() != declared => {
                 self.constant_as(constant.clone(), ty)?
+            }
+            (MetaTy::ParamList(element), Some(constant @ CtValue::Tuple(_)))
+                if *value.meta() != declared
+                    && element.as_value().is_some_and(is_function)
+                    && let Some(ty) = declared.value_ty() =>
+            {
+                self.constant_as(constant.clone(), &ty)?
             }
             _ => value.clone(),
         };
@@ -4792,6 +4815,12 @@ fn is_scalar_domain(ty: &Ty) -> bool {
     ) || ty.kind().is_simd()
         || ty.is_string_literal()
         || ty.is_bool()
+}
+
+/// Whether `ty` is a function type, whose compile-time value is the bound
+/// function's symbol.
+fn is_function(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
 }
 
 fn carries_transfers(ty: &Ty) -> bool {

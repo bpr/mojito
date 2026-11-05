@@ -236,11 +236,6 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
     }
 }
 
-/// Erase the callable-environment spelling from every `TyKind::Func` in `ty`,
-/// recursively. Environments (`thin` vs `capturing[...]`) are semantic
-/// origin facts with no runtime ABI: instance identity and binding solutions
-/// must not split on them (`capturing[_]` vs `capturing[origin@N]` is the
-/// same closure value).
 /// Materialize literal types nested inside a solution (`Tuple[IntLiteral,
 /// IntLiteral]` → `[Int, Int]`): instance symbols spell them materialized, so
 /// two solutions differing only there are one instance, not a symbol
@@ -287,6 +282,12 @@ pub(super) fn canonicalize_callable(ty: &Ty) -> Ty {
     canonical
 }
 
+/// Erase the callable-environment spelling from every `TyKind::Func` in `ty`,
+/// recursively, but `thin`'s. A capture set is a semantic origin fact with
+/// no runtime ABI: instance identity and binding solutions must not split
+/// on it (`capturing[_]` vs `capturing[origin@N]` is the same closure
+/// value). `thin` is part of the type, as at the pin, which a struct
+/// instance's member spells as its caller does.
 pub(super) fn erase_callable_environments(ty: &mut Ty) {
     let erases = match ty.kind() {
         TyKind::Func(_)
@@ -318,7 +319,9 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
                 ..
             } = &mut **func;
 
-            *environment = mojito_types::origin::CallableEnvironment::Default;
+            if *environment != mojito_types::origin::CallableEnvironment::Thin {
+                *environment = mojito_types::origin::CallableEnvironment::Default;
+            }
             for param in params {
                 erase_callable_environments(param);
             }

@@ -18,8 +18,9 @@ use crate::mir::{
     Const, MirBlock, MirFunction, MirInstr, MirStructDeclaration, instruction_regions_mut,
 };
 use mojito_symbol::symbol::member_table_name;
+use mojito_types::ct::CtValue;
 use mojito_types::symbol_ref::SYMBOL_REF;
-use mojito_types::types::{Ty, mentions};
+use mojito_types::types::{Ty, TyKind, mentions};
 use serde::Serialize;
 use serde::ser;
 use std::cell::RefCell;
@@ -95,6 +96,7 @@ impl<'t> SymbolTable<'t> {
             lowered_calls: _,
         } = function;
         let mut uses = self.uses(blocks);
+        self.function_list_uses(blocks, reg_types, &mut uses);
         let types = param_types
             .iter()
             .chain(var_tys.values())
@@ -105,6 +107,37 @@ impl<'t> SymbolTable<'t> {
             uses.extend(self.type_uses(ty));
         }
         uses
+    }
+
+    /// The functions the static lists of `blocks`, their regions included,
+    /// hold: a list of a function type (a pack of callables' values) holds
+    /// each function's symbol, upstream's `#kgen.symbol.constant` element,
+    /// which a closed compile-time value spells as its name.
+    fn function_list_uses(
+        &self,
+        blocks: &[MirBlock],
+        reg_types: &HashMap<u32, Ty>,
+        uses: &mut Vec<&'t str>,
+    ) {
+        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+            if let MirInstr::ParamListAddress {
+                dest,
+                values: Const::Value(CtValue::Tuple(items)),
+            } = instruction
+                && reg_types.get(&dest.0).is_some_and(|ty| {
+                    matches!(ty.kind(), TyKind::Pointer { element, .. }
+                        if matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
+                })
+            {
+                uses.extend(items.iter().filter_map(|item| match item {
+                    CtValue::Str(function) => self.lookup(function),
+                    _ => None,
+                }));
+            }
+            for region in crate::mir::instruction_regions(instruction) {
+                self.function_list_uses(region, reg_types, uses);
+            }
+        }
     }
 
     /// The symbols the struct `declaration` names: in its declaration, and

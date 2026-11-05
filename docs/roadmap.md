@@ -3925,6 +3925,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Both thin and capturing elements are affected.
   - The indexed call `fns[0](5)` already works through element-call dispatch.
     A `ref`-typed callee has no such path.
+  - Probe: `for f in fs: f()` in `def run[*fs: def() thin -> None]()` over
+    `run[a, b]()` reports "'f' has type ref def() thin -> None and is not
+    callable", where `fs[i]()` in a `comptime for` prints `a` and `b`
+    (found while landing R1874, 2026-11-05).
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -10489,31 +10493,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     R221 (its `unsafe_bitcast` of the element pointer).
   - Model: Fable, Not Planned.
 
-- [ ] **R1874 A pack of callables is a frame slot, not a parameter list**
-
-  A body reads `*fs: def() thin -> None` from a `VariadicPack` slot
-  nothing stores, which the elaborator substitutes by name, where upstream
-  reads the pack as its `ParameterList` of the bound functions, as for
-  any other value pack.
-  - The check keeps a callable pack out of the value scope
-    (`annotations::value_scope`) and out of `Checker::value_binder_read`
-    (`types::binder_read_takes_slot`), so no `ParameterList` member or
-    subscript reaches it.
-  - MIR still declares its slot (`callable_parameter_locals`), and
-    `mem-2-reg` keeps a slot nothing stores or declares for it
-    (`variance`).
-  - A single callable binder's read became its parameter constant with
-    R1449, so the pack is the last callable binder with storage.
-  - Probe: `fs[i]()` in a `comptime for i in range(len(fs))` of `def
-    run[*fs: def() thin -> None]` reports "'fs' has type
-    $variadic[def() thin -> None] and is not callable"; the pin prints
-    `a` and `b` over `run[a, b]()`.
-  - Probe: `print(len(fs))` there reports "vm backend does not support
-    methods on None yet"; the pin prints `2`.
-  - Found while landing R1449 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where
   upstream's `lit.try` always holds both**
 
@@ -12689,9 +12668,8 @@ follow-ups the landed producer stages filed come last.
     its `ParameterList` type instead of `VariadicPack(T)`.
   - `value_pack_in_scope`'s pack-scope test (`checker/constraints.rs`)
     goes: a pack and a raw-list binder already differ by declared type.
-  - A callable pack (`*fs: thin def()`) keeps its frame slot. It is
-    rejected when another parameter follows it; probe the pin before
-    keeping either rule.
+  - A callable pack (`*fs: def() thin -> None`) is rejected when another
+    parameter follows it; probe the pin before keeping that rule.
   - Risk: R1601's removed-argument display, when the read value is printed.
   - Done when `rg infer_value_pack_read` finds nothing and the R1491 gate
     fixtures (`value_pack_*`, `parameter_list_*`) still run.

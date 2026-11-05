@@ -1340,6 +1340,7 @@ impl Checker {
                 kwargs,
             } => match self
                 .infer_unbound_pack_construction(name, param_args, args, kwargs)
+                .or_else(|| self.infer_pack_element_call(expr, name, param_args, args, kwargs))
                 .or_else(|| self.infer_value_method_call(expr, name, param_args, args, kwargs))
             {
                 Some(typed) => typed,
