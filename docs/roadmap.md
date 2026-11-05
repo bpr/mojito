@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1941**.
+Next free ID: **R1942**.
 
 ## Ordered Work
 
@@ -12219,29 +12219,72 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1941 MIR rewrites each closure's checked type to its storage
+  struct, where upstream's `liftClosure` does it in the front end**
+
+  `nested::resolve_closure_types` replaces each `CallableEnvironment::Storage`
+  type by the storage struct while lowering, and `retarget_storage_calls`
+  points calls through it at `<storage>.__call__`, where upstream's
+  `liftClosure` rewrites every reference to the nested struct before
+  anything is emitted.
+  - Record the closure trait as `CheckedClosureStorage::contract` (what
+    `closure_value_ty` rebuilds today) so MIR no longer reads it through
+    the site.
+  - At the end of `collect_closure_uses`, rewrite every `Ty` the checked
+    program records (expressions, adjustments, bindings, def signatures
+    and captures, `declaration_types`, `generic_instantiations`) from site
+    to `Struct(storage.name, uses.binders.own_argument())`, and set each
+    call through a storage to `<storage>.__call__`.
+  - Delete `resolve_closure_types`, `retarget_storage_calls`,
+    `ClosureStorageTypes`, `ClosureTypes`, and the verifier's
+    `unresolved_closure`.
+  - Probe: `rg 'resolve_closure_types|retarget_storage_calls|unresolved_closure' crates`
+    is empty, and `closure_storage_values`, `closure_storage_method_binders`,
+    `capturing_lambda_storage`, and `comptime_lambda_initializer` run
+    unchanged on both backends.
+  - Plan: `R1893-a-closure-s-checked-type-names-plan.md`, Stage A.
+  - Found while planning R1893 (2026-11-05).
+  - Depends on R1940: MIR names a re-lowered lambda's storage within its
+    namespace, which a checked struct type cannot follow.
+  - Model: Opus, Planned.
+
 - [ ] **R1893 A closure's checked type names its declaration site, where
   upstream types the value by its storage struct**
 
   A capture-list closure's or capturing lambda's checked type is a
-  `def(...)` whose environment is `CallableEnvironment::Storage`, which
-  `nested::resolve_closure_types` replaces by the storage struct in MIR,
-  where upstream's `emitClosure` returns a value typed by the struct.
-  - Register the storage as a checker `StructInfo` with its closure trait
-    as `callable_conformance` and `<storage>.__call__` as
-    `callable_target`, the path a nominal `struct S(def(Int) -> Int)`
-    already takes.
-  - Rewrite the `Storage` consumers (`conformance.rs`, `types.rs`
-    coercion and display, `traits.rs`, `places.rs`, `inference.rs`,
-    `ref_params.rs`), then delete `ClosureSite`, `resolve_closure_types`,
-    `retarget_storage_calls`, and the verifier's `unresolved_closure`.
+  `def(...)` whose environment is `CallableEnvironment::Storage`, where
+  upstream's `emitClosure` returns a value typed by a struct nested in the
+  closure's declaration, which `liftClosure` (R1941) later renames.
+  - The checker cannot register the storage under its lifted name: the
+    ordinal and method-flag parts of the name and the binders it is
+    applied to exist only after `collect_closure_uses`. Give it a
+    check-time name ending in `$__storage`, typed `Struct(nested, [])`,
+    and key R1941's rewrite by that name.
+  - Register that name as a checker `StructInfo` with the closure trait as
+    `callable_conformance`, `<nested>.__call__` as `callable_target`, a
+    `__call__` method carrying the closure's full signature (defaults,
+    type parameters), and `conforms` from the storage's copyability and
+    passability.
+  - Rewrite the `Storage` consumers to the struct path (`types.rs`
+    coercion and display, `conformance.rs`, `scopes.rs`, `checker.rs`,
+    `traits.rs`, `places.rs`, `inference.rs`, `type_resolution.rs`,
+    `statements.rs`, MIR's `closure_storage` text tag), and read captures
+    through `callable_conformance` where `ref_params.rs`, `checker.rs`,
+    `comptime_validation.rs`, and `generics.rs` read
+    `environment.captures()`.
   - Display must keep the pin's text, the closure trait with names
-    (`cannot implicitly convert 'def(a: Int) -> Int' value to 'Int'`).
+    (`cannot implicitly convert 'def(a: Int) -> Int' value to 'Int'`), as
+    upstream's printer reads the struct's declaration.
   - Probe: `rg 'CallableEnvironment::Storage|ClosureSite' crates` is
-    empty, and `assets/type_error/capturing_lambda_display_*` and
-    `closure_capturing_loop_ref_escapes.mojo` keep their texts.
+    empty, `assets/type_error/capturing_lambda_display_*`,
+    `closure_storage_not_trivially_register_passable.mojo`, and
+    `closure_capturing_loop_ref_escapes.mojo` keep their texts, and a
+    capture-list `def f(x: Int = 4) {k}` with `k = 3` still prints `12`
+    for `f()`.
+  - Plan: `R1893-a-closure-s-checked-type-names-plan.md`, Stage B.
   - Found while landing R1436 (2026-11-03).
-  - Depends on R1891, R1892.
-  - Model: Fable, Not Planned.
+  - Depends on R1940, R1941.
+  - Model: Fable, Planned.
 
 - [ ] **R1894 A closure storage's reference fields carry an untracked
   origin, where upstream promotes the captured origins to the struct's
