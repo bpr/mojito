@@ -60,13 +60,26 @@ impl CheckedTables {
     /// declaration's body.
     pub fn nested_defs(&self, ids: &[CheckedStmtId]) -> Vec<NestedDefSite> {
         let mut sites = Vec::new();
-        self.find_nested_defs(ids, &mut Vec::new(), &mut sites);
+        self.find_nested_defs(ids, &mut Vec::new(), &mut sites, &mut Vec::new());
         sites
     }
 
-    /// The hidden `def` of each lambda in `expression`; a lambda inside a
-    /// lambda is the inner scope's.
+    /// The hidden `def` of each lambda in `expression` its scope declares:
+    /// a lambda inside a lambda is the inner scope's, and one inside an
+    /// expression the check lifted to a function of its own
+    /// ([`Self::lifted_function`]) is that function's.
     pub fn expression_lambda_defs(&self, expression: CheckedNodeId) -> Vec<CheckedStmtId> {
+        if self.lifted_function(expression).is_some() {
+            return Vec::new();
+        }
+        self.lifted_lambda_defs(expression)
+    }
+
+    /// The hidden `def` of each lambda the function returning `expression`
+    /// declares, a function the check lifted it to or an evaluated
+    /// default's: those of [`Self::expression_lambda_defs`], and those of
+    /// the expression itself when the check lifted it.
+    pub fn lifted_lambda_defs(&self, expression: CheckedNodeId) -> Vec<CheckedStmtId> {
         let mut defs = Vec::new();
         self.walk_expression(expression, &mut |walked| match walked {
             Walked::Expression(crate::checked::CheckedExpr {
@@ -76,9 +89,47 @@ impl CheckedTables {
                 defs.push(*def);
                 WalkResult::SkipBodies
             }
+            Walked::Expression(node)
+                if node.id != expression && self.lifted_function(node.id).is_some() =>
+            {
+                WalkResult::Skip
+            }
             _ => WalkResult::Advance,
         });
         defs
+    }
+
+    /// The function the check lifted the expression of node `expression`
+    /// to, as upstream lifts a compile-time expression its interpreter
+    /// evaluates ([`SemanticAdjustment::ComptimeApplication`]): one lifted
+    /// from a body (`$comptime$<function>$c<k>`) or a module constant's
+    /// initializer (`$comptime$<constant>$module`). `None` for any other
+    /// expression, including a call of an evaluated default, which names
+    /// the default's own function.
+    pub fn lifted_function(&self, expression: CheckedNodeId) -> Option<&str> {
+        self.expression(expression)?
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                SemanticAdjustment::ComptimeApplication { application, .. } => {
+                    match application.kind() {
+                        mojito_types::param_expr::ParamKind::Apply { function, .. } => {
+                            Some(function.as_str())
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .filter(|function| {
+                matches!(
+                    mojito_symbol::symbol::lifted_owner(function),
+                    Some(
+                        mojito_symbol::symbol::LiftedOwner::Constant(_)
+                            | mojito_symbol::symbol::LiftedOwner::Numbered(_)
+                    )
+                )
+            })
     }
 
     /// The index the `comptime for` statement `id` binds, as its body sees
@@ -116,11 +167,16 @@ impl CheckedTables {
         }
     }
 
+    /// Find the declarations of the scope whose statement nodes are `ids`
+    /// ([`Self::nested_defs`]) into `out`, and the expressions of its
+    /// statements the check lifted to functions of their own into
+    /// `lifted`, each with the `comptime for` loops around it.
     fn find_nested_defs(
         &self,
         ids: &[CheckedStmtId],
         loops: &mut Vec<CheckedStmtId>,
         out: &mut Vec<NestedDefSite>,
+        lifted: &mut Vec<LiftedSite>,
     ) {
         for id in self.live_statements(ids) {
             let node = self
@@ -128,16 +184,32 @@ impl CheckedTables {
                 .expect("a body statement id names a node of its tables");
             // Lambda expressions anywhere in this statement's own expressions
             // (conditions, iterables, values, arguments) declare hidden nested
-            // definitions in this scope.
-            out.extend(
-                statement_lambda_operands(&node.op)
-                    .into_iter()
-                    .flat_map(|expression| self.expression_lambda_defs(expression))
-                    .map(|node| NestedDefSite {
-                        node,
-                        loops: loops.clone(),
-                    }),
-            );
+            // definitions in this scope, but for those in an expression the
+            // check lifted, which its function declares.
+            for expression in statement_lambda_operands(&node.op) {
+                out.extend(
+                    self.expression_lambda_defs(expression)
+                        .into_iter()
+                        .map(|node| NestedDefSite {
+                            node,
+                            loops: loops.clone(),
+                        }),
+                );
+                self.walk_expression(expression, &mut |walked| match walked {
+                    Walked::Expression(expression) => match self.lifted_function(expression.id) {
+                        Some(function) => {
+                            lifted.push(LiftedSite {
+                                node: expression.id,
+                                function: function.to_string(),
+                                loops: loops.clone(),
+                            });
+                            WalkResult::Skip
+                        }
+                        None => WalkResult::SkipBodies,
+                    },
+                    Walked::Statement(_) => WalkResult::SkipBodies,
+                });
+            }
             let bodies = match &node.op {
                 CheckedStmtOp::Def(_) => {
                     out.push(NestedDefSite {
@@ -162,7 +234,7 @@ impl CheckedTables {
                 loops.push(*id);
             }
             for ids in bodies {
-                self.find_nested_defs(ids, loops, out);
+                self.find_nested_defs(ids, loops, out, lifted);
             }
             if region {
                 loops.pop();
@@ -191,7 +263,9 @@ impl CheckedProgram {
     /// Each nested declaration is named under the symbol of the body
     /// declaring it ([`CheckedDef::symbol`]): the unit's root, the module
     /// initializer at module scope, a parameter default's lifted function
-    /// for a lambda in it, and a storage's method for a body that is one.
+    /// for a lambda in it, the function a compile-time expression is
+    /// lifted to for a lambda in that ([`CheckedTables::lifted_function`]),
+    /// and a storage's method for a body that is one.
     pub(crate) fn collect_closure_uses(&mut self) {
         let found = {
             let mut collector = Collector {
@@ -218,8 +292,8 @@ impl CheckedProgram {
                     })
                 })
                 .collect();
-            collector.scope(
-                self.tables().nested_defs(&toplevel),
+            collector.body(
+                &toplevel,
                 mojito_symbol::symbol::MODULE_INITIALIZER,
                 &BinderScope::default(),
                 &HashMap::new(),
@@ -287,8 +361,8 @@ impl CheckedProgram {
                 ),
                 &HashMap::new(),
             ),
-            LoweringUnit::Constant { root } => collector.scope(
-                tables.nested_defs(&[root]),
+            LoweringUnit::Constant { root } => collector.body(
+                &[root],
                 mojito_symbol::symbol::MODULE_INITIALIZER,
                 &BinderScope::default(),
                 &HashMap::new(),
@@ -352,6 +426,16 @@ struct Collector<'t> {
     found: Vec<(CheckedStmtId, Lifted)>,
 }
 
+/// An expression of one lexical scope the check lifted to a function of
+/// its own ([`CheckedTables::lifted_function`]), which declares the
+/// lambdas in it: its node, the function, and the `comptime for`
+/// statements of the scope enclosing it, outermost first.
+struct LiftedSite {
+    node: CheckedNodeId,
+    function: String,
+    loops: Vec<CheckedStmtId>,
+}
+
 /// A nested declaration as the check lifts it: its symbol, and its
 /// storage's uses, `None` for one without storage or whose storage names a
 /// binder its scope does not declare.
@@ -374,14 +458,14 @@ impl Collector<'_> {
         scope: &BinderScope,
         registry: &HashMap<OwnerId, Ty>,
     ) {
-        self.scope(self.tables.nested_defs(body), symbol, scope, registry);
+        self.body(body, symbol, scope, registry);
         // A default's lambdas are a scope of their own, the function its
         // default is lifted to, which registers none of the body's
         // closures.
         for (parameter, default) in defaults {
             let sites = self
                 .tables
-                .expression_lambda_defs(default)
+                .lifted_lambda_defs(default)
                 .into_iter()
                 .map(|node| NestedDefSite {
                     node,
@@ -394,6 +478,38 @@ impl Collector<'_> {
                 scope,
                 &HashMap::new(),
             );
+        }
+    }
+
+    /// Collect the uses of the declarations of the lexical scope whose
+    /// statement nodes are `ids`, in the body lowered as `parent`
+    /// ([`Self::scope`]). The lambdas of an expression the check lifted are
+    /// a scope of their own, the function it is lifted to, which registers
+    /// none of the body's closures and sees the binders in scope where the
+    /// expression is spelled.
+    fn body(
+        &mut self,
+        ids: &[CheckedStmtId],
+        parent: &str,
+        scope: &BinderScope,
+        registry: &HashMap<OwnerId, Ty>,
+    ) {
+        let mut sites = Vec::new();
+        let mut lifted = Vec::new();
+        self.tables
+            .find_nested_defs(ids, &mut Vec::new(), &mut sites, &mut lifted);
+        self.scope(sites, parent, scope, registry);
+        for site in lifted {
+            let sites = self
+                .tables
+                .lifted_lambda_defs(site.node)
+                .into_iter()
+                .map(|node| NestedDefSite {
+                    node,
+                    loops: site.loops.clone(),
+                })
+                .collect();
+            self.scope(sites, &site.function, scope, &HashMap::new());
         }
     }
 

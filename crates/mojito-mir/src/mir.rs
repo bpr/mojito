@@ -2139,7 +2139,6 @@ fn lower_function(
             returned: None,
             overloads,
             callables: &HashMap::new(),
-            namespace: None,
         },
         functions,
         declarations,
@@ -2390,7 +2389,6 @@ fn lower_struct_member<P: DeclaredParam>(
             returned: None,
             overloads,
             callables: &HashMap::new(),
-            namespace: None,
         },
         functions,
         declarations,
@@ -2504,7 +2502,6 @@ fn lower_default<P: DeclaredParam>(
             binders: &binders,
             ty,
             callables: &HashMap::new(),
-            namespace: None,
         },
         functions,
         declarations,
@@ -2533,9 +2530,6 @@ struct ExpressionThunk<'a> {
     ty: &'a Ty,
     /// The nested `def`s the expression calls directly.
     callables: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    /// The namespace of the closures it lowers again
-    /// ([`FunctionLowering::namespace`]).
-    namespace: Option<&'a str>,
 }
 
 /// Lower `<prologue>; return <node>` as the function `name`, whose
@@ -2556,7 +2550,6 @@ fn lower_expression_thunk(
         binders,
         ty,
         callables,
-        namespace,
     } = thunk;
     lower_fn_nested(
         FunctionLowering {
@@ -2578,7 +2571,6 @@ fn lower_expression_thunk(
             returned: Some(node),
             overloads,
             callables,
-            namespace,
         },
         functions,
         declarations,
@@ -2936,9 +2928,6 @@ impl ComptimeThunks {
                     binders: &request.binders,
                     ty: &request.ty,
                     callables: &self.callables,
-                    // The owner lowers the closures of the expression
-                    // too, under the names the check gave them.
-                    namespace: Some(&request.name),
                 },
                 functions,
                 declarations,

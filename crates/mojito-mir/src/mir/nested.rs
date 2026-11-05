@@ -46,11 +46,6 @@ pub(super) struct FunctionLowering<'a> {
     /// names `outer::inner` over the enclosing parameters
     /// ([`ComptimeThunks::callables`]). Empty for any other body.
     pub(super) callables: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    /// The name the closures it lowers are qualified with, for a function
-    /// lowering again the closures its owner lowers, a lifted compile-time
-    /// expression's; `None` for any other, whose closures take the names
-    /// the check gave them.
-    pub(super) namespace: Option<&'a str>,
 }
 
 pub(super) fn lower_fn_nested(
@@ -78,11 +73,10 @@ pub(super) fn lower_fn_nested(
         returned,
         overloads,
         callables,
-        namespace,
     } = request;
     let starts = LoweredFrom::at(out, declarations);
     let closures = ClosureLowering::default();
-    let children = analyze_root_children(checked, namespace, statements, returned);
+    let children = analyze_root_children(checked, statements, returned);
     let registry = scope_registry(&children, callables, &closures.types, invariant_errors);
 
     let cfg = returned.map_or_else(
@@ -784,11 +778,8 @@ struct NestedNode {
     loop_indices: Vec<LoopIndex>,
     binding: mojito_types::origin::OwnerId,
     source_name: String,
-    /// The checked symbol, within `namespace`.
+    /// The checked symbol.
     mangled: String,
-    /// The namespace its lowering qualifies the check's names with
-    /// ([`FunctionLowering::namespace`]).
-    namespace: Option<String>,
     captures: Vec<NestedCapture>,
     callable_ty: Option<Ty>,
     /// The storage struct the check declared for its closure
@@ -816,13 +807,10 @@ impl NestedNode {
     }
 }
 
-/// The declaration at `site`, named as the check named it, within
-/// `namespace` when it is lowered again under another function's name
-/// ([`FunctionLowering::namespace`]).
+/// The declaration at `site`, named as the check named it.
 fn analyze_node(
     checked: &mojito_checked::checked::CheckedProgram,
     site: NestedDefSite,
-    namespace: Option<&str>,
 ) -> NestedNode {
     let NestedDefSite { node, loops } = site;
     let statement = checked
@@ -835,9 +823,8 @@ fn analyze_node(
         .binding
         .expect("checked nested function has no value binding");
 
-    let mangled = within(namespace, &def.symbol);
     let captures = analyze_captures(def);
-    let children = analyze_root_children(checked, namespace, &def.body, None);
+    let children = analyze_root_children(checked, &def.body, None);
 
     NestedNode {
         node,
@@ -847,8 +834,7 @@ fn analyze_node(
             .collect(),
         binding,
         source_name: name.clone(),
-        mangled,
-        namespace: namespace.map(str::to_string),
+        mangled: def.symbol.clone(),
         captures,
         callable_ty: checked
             .checked_type_at(&AnnotationSite::FunctionType {
@@ -977,22 +963,15 @@ fn closure_storage(
             (field.name.clone(), ty)
         })
         .collect();
-    let name = within(child.namespace.as_deref(), &declared.name);
-    // A copy lowered within a namespace declares the binders as its own
-    // struct's.
-    let parameters = match &child.namespace {
-        None => uses.parameters.clone(),
-        Some(_) => mojito_types::types::reown_as_own_parameters(&uses.binders, &name).0,
-    };
     Some(ClosureStorage {
         ty: TyKind::Struct(
-            name,
+            declared.name.clone(),
             uses.binders.iter().map(ParamDecl::own_argument).collect(),
         )
         .into(),
         fields,
         param_decls: uses.binders.clone(),
-        parameters,
+        parameters: uses.parameters.clone(),
         method: uses.method.then(|| {
             mojito_symbol::symbol::closure_method_name(&child.mangled, &child.source_name)
         }),
@@ -1973,38 +1952,32 @@ fn def_of(
     }
 }
 
+/// The declarations a function lowers whose body's statement nodes are
+/// `ids`. A function returning a checked expression, one the check lifted
+/// or an evaluated default, declares the lambdas of that expression alone
+/// ([`CheckedTables::lifted_lambda_defs`]): those of the owner's
+/// evaluated bindings its prologue reads are the owner's.
+///
+/// [`CheckedTables::lifted_lambda_defs`]: mojito_checked::checked::CheckedTables::lifted_lambda_defs
 fn analyze_root_children(
     checked: &mojito_checked::checked::CheckedProgram,
-    namespace: Option<&str>,
     ids: &[CheckedStmtId],
     returned: Option<CheckedNodeId>,
 ) -> Vec<NestedNode> {
-    let mut direct = checked.tables().nested_defs(ids);
-    // A thunk's returned expression (an invoked lambda in a lifted
-    // `comptime` initializer) declares its lambdas in the thunk's scope.
-    if let Some(returned) = returned {
-        direct.extend(
-            checked
-                .tables()
-                .expression_lambda_defs(returned)
-                .into_iter()
-                .map(|node| NestedDefSite {
-                    node,
-                    loops: Vec::new(),
-                }),
-        );
-    }
+    let direct = match returned {
+        None => checked.tables().nested_defs(ids),
+        Some(returned) => checked
+            .tables()
+            .lifted_lambda_defs(returned)
+            .into_iter()
+            .map(|node| NestedDefSite {
+                node,
+                loops: Vec::new(),
+            })
+            .collect(),
+    };
     direct
         .into_iter()
-        .map(|site| analyze_node(checked, site, namespace))
+        .map(|site| analyze_node(checked, site))
         .collect()
-}
-
-/// `symbol`, the check's name for a nested declaration or its storage,
-/// within `namespace` ([`FunctionLowering::namespace`]).
-fn within(namespace: Option<&str>, symbol: &str) -> String {
-    namespace.map_or_else(
-        || symbol.to_string(),
-        |namespace| mojito_symbol::symbol::nested_lifted_name(namespace, symbol),
-    )
 }

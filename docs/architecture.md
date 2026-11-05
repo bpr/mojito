@@ -747,11 +747,12 @@ policy or data-model responsibilities to focused children:
   every nested declaration (`CheckedDef::symbol`) under the symbol of
   the body declaring it: the lowering unit's root, the module
   initializer at module scope, a default's lifted function for a lambda
-  in it, the storage's method for a body that is one, and an ordinal
-  for a spelling one body declares twice (`outer$choose$decl1`). A
-  lifted compile-time expression lowers its lambdas a second time,
-  qualifying each checked name with its own
-  (`FunctionLowering::namespace`, R1940). The
+  in it, the function a compile-time expression is lifted to for a
+  lambda in that (`CheckedTables::lifted_function`), the storage's
+  method for a body that is one, and an ordinal for a spelling one body
+  declares twice (`outer$choose$decl1`). Such a lambda is lowered once,
+  by the lifted function (`CheckedTables::lifted_lambda_defs`); its
+  owner's scope does not declare it. The
   struct's parameters are its own,
   declared for the enclosing binders the closure names, in its fields,
   its signature, or its body, nested declarations included, which the

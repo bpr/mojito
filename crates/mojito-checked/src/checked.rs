@@ -3882,6 +3882,8 @@ pub enum WalkResult {
     /// Walk the node's operands, but not its bodies: a statement's nested
     /// statement lists, a lambda's hidden `def`.
     SkipBodies,
+    /// Walk neither the node's operands nor its bodies.
+    Skip,
 }
 
 /// The whole program's checked expression and statement nodes and its
@@ -3956,6 +3958,9 @@ impl CheckedTables {
             return;
         };
         let result = visit(Walked::Expression(node));
+        if result == WalkResult::Skip {
+            return;
+        }
         if let CheckedOp::Lambda { def } = &node.op {
             if result == WalkResult::Advance {
                 self.walk_statement(*def, visit);
@@ -4132,7 +4137,11 @@ impl CheckedTables {
         let Some(statement) = self.statement(id) else {
             return;
         };
-        let bodies = visit(Walked::Statement(statement)) == WalkResult::Advance;
+        let result = visit(Walked::Statement(statement));
+        if result == WalkResult::Skip {
+            return;
+        }
+        let bodies = result == WalkResult::Advance;
         let walk = |body: &[CheckedStmtId], visit: &mut dyn FnMut(Walked<'_>) -> WalkResult| {
             if bodies {
                 self.walk(body, visit);

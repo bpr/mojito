@@ -16,8 +16,13 @@ to evolve under the `0.x` compatibility rules.
   (R1892). MIR reads those names instead of qualifying and renaming them
   while lowering. Two same-spelled declarations of one body are told
   apart by their ordinal (`outer$choose$decl1`) rather than a declaration
-  id, and a lambda in a lifted compile-time expression's second lowering
-  is named under the checked name (R1940).
+  id.
+- A lambda in an expression the check lifts to a compile-time function
+  is declared and named by that function alone
+  (`$comptime$main$c0$$lambda$<n>`), and MIR lowers it once there
+  instead of in both the owner and the lifted function under a
+  re-qualified name; `FunctionLowering::namespace` is gone, as upstream
+  emits the closure once (R1940).
 
 - The enclosing binders a closure's storage struct is applied to, and
   whether its body becomes the struct's method, are now collected by the

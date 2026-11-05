@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1942**.
+Next free ID: **R1943**.
 
 ## Ordered Work
 
@@ -4642,6 +4642,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1287 (2026-11-03).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1942 A lifted compile-time expression calling a local
+  `comptime` closure fails in CTFE, where the pin runs it**
+
+  A local `comptime` binding of a lambda is evaluated again in the
+  prologue of each lifted function that reads it, so the lifted function
+  calls the closure through a `def(...)` contract's indirect call, which
+  VM CTFE does not run; upstream's binding is an alias of the closure
+  itself, which the interpreter calls directly.
+  - Probe: `comptime f = lambda (x: Int) {} -> Int: x * 2`, then
+    `comptime w = f(21)` and `print(w)` in `main` fails with "unsupported
+    VM CTFE failed for '$comptime$main$c0': ... callee
+    '__trait_dispatch.__call__$ov$Int'"; the run-time `print(f(4))`
+    alone prints `8`.
+  - Lever: make the binding the closure's alias (the check's
+    `denotes`), as a binding of an application already is, so the lifted
+    function names the owner's lowered lambda instead of re-binding it.
+  - Found while landing R1940 (2026-11-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1887 A compile-time application building a `StringSpan` from a
   literal mints a colliding constructor instance**
@@ -12197,28 +12217,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1940 A closure in a lifted compile-time expression is lowered
-  twice, where upstream emits it once**
-
-  A lambda inside an expression the check lifts to a `$comptime$…`
-  function is lowered by its owner under the name the check gave it and
-  again by the lifted function, which qualifies every name the check gave
-  with its own (`FunctionLowering::namespace`, `mir/nested.rs`).
-  - Cause: the owner's `nested_defs` and the thunk's
-    `expression_lambda_defs` both reach the lambda, so MIR still names one
-    copy itself, and that copy re-owns its storage's binders under the
-    namespaced name instead of reading `CheckedClosureUses::parameters`.
-  - Lever: give the lambda to one lowering, the lifted function, as the
-    check already names it there, and drop `namespace`.
-  - Probe: `assets/ok/comptime_lambda_initializer.mojo` lowers both
-    `main$$lambda$<n>` and `$comptime$main$c0$main$$lambda$<n>`.
-  - A module `comptime` initializer's lambda is lowered only by its thunk,
-    yet takes the namespaced name too
-    (`$comptime$<constant>$module$__toplevel__$…`).
-  - Found while landing R1892 (2026-11-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1941 MIR rewrites each closure's checked type to its storage
   struct, where upstream's `liftClosure` does it in the front end**
 
@@ -12244,8 +12242,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     unchanged on both backends.
   - Plan: `R1893-a-closure-s-checked-type-names-plan.md`, Stage A.
   - Found while planning R1893 (2026-11-05).
-  - Depends on R1940: MIR names a re-lowered lambda's storage within its
-    namespace, which a checked struct type cannot follow.
+  - Depends on R1940.
   - Model: Opus, Planned.
 
 - [ ] **R1893 A closure's checked type names its declaration site, where
