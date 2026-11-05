@@ -888,13 +888,12 @@ pub enum SemanticAdjustment {
     /// The dunder each link of a chained comparison (`a < b < c`) selected,
     /// in link order: MIR lowers every link as its lone operator's call.
     CompareLinks(Vec<CheckedCompareLink>),
-    /// `x.write_to(writer)` on a receiver with no `write_to` body of its own
-    /// (a `Writable`-bounded type parameter or a built-in Writable value):
-    /// receiver and argument swap, so MIR lowers the call as
+    /// `x.write_to(writer)` on an intrinsic Writable receiver with no
+    /// declared `write_to` (`DType`): receiver and argument swap, so MIR lowers the call as
     /// `writer.write(x)` — the same `Writer.write` shape both backends
     /// already format through the argument's `write_to` conformance.
     InvertedWrite,
-    /// `x.write_repr_to(writer)` on a `Writable`-bounded receiver: format the
+    /// `x.write_repr_to(writer)` on the same intrinsic receivers: format the
     /// receiver through `repr(x)`, then feed that text to `writer.write`.
     /// This is the representation twin of [`Self::InvertedWrite`]. `repr` is
     /// the checked type of the `repr(x)` text — the nominal `String` upstream's

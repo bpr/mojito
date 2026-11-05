@@ -243,8 +243,8 @@ impl<'a> Flatten<'a> {
         {
             return Some(self.expr(object));
         }
-        // `x.write_to(writer)` on a receiver without a `write_to`
-        // body of its own (checker-marked): receiver and argument
+        // `x.write_to(writer)` on an intrinsic receiver without a
+        // declared `write_to` (checker-marked): receiver and argument
         // swap into the `writer.write(x)` shape, the writer's place
         // retained for the accumulator write-back.
         if node.adjustments.iter().any(|adjustment| {
@@ -285,8 +285,8 @@ impl<'a> Flatten<'a> {
             });
             return Some(d);
         }
-        // `write_repr_to` on a bounded or intrinsic Writable has no
-        // concrete receiver body. Produce `repr(receiver)` once, typed
+        // `write_repr_to` on an intrinsic Writable has no declared
+        // receiver body. Produce `repr(receiver)` once, typed
         // as the checked `repr` result, and feed the text through the
         // supplied Writer's ordinary `write` path.
         if let Some(repr_ty) = node

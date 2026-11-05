@@ -1891,10 +1891,10 @@ fn converted_memory_only_subscript_key_reads_its_source_in_place() {
 
 #[test]
 fn repr_text_and_transferred_temporary_receiver_use_call_result_slots() {
-    // The `repr(x)` text a bounded `write_repr_to` writes is read in its
+    // The `repr(x)` text an intrinsic `DType`'s `write_repr_to` writes is read in its
     // call-result slot, and `^` over a temporary owned receiver hands the
     // `deinit` method that temporary's slot.
-    let source = "trait Rel:\n    def release(deinit self): ...\n\nstruct H(Movable, Rel):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def release(deinit self):\n        print(self.id)\n\ndef pk[T: Rel & Movable](var x: T) -> T:\n    return x^\n\ndef through[T: Rel & Movable](var x: T):\n    pk(x^)^.release()\n\ndef first[T: Writable & Copyable](items: List[T]) -> String:\n    var text = String()\n    items[0].write_repr_to(text)\n    return text\n\ndef main():\n    through(H(4))\n    var items: List[String] = [\"a\"]\n    print(first(items))\n";
+    let source = "trait Rel:\n    def release(deinit self): ...\n\nstruct H(Movable, Rel):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def release(deinit self):\n        print(self.id)\n\ndef pk[T: Rel & Movable](var x: T) -> T:\n    return x^\n\ndef through[T: Rel & Movable](var x: T):\n    pk(x^)^.release()\n\ndef first(d: DType) -> String:\n    var text = String()\n    d.write_repr_to(text)\n    return text\n\ndef main():\n    through(H(4))\n    print(first(DType.int8))\n";
     let compiled = Compiler::default()
         .with_pre_elaboration(false)
         .compile_source(source, Path::new("mir_test.mojo"))

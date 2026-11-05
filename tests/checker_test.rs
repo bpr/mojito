@@ -3999,10 +3999,10 @@ fn statics_through_origin_applications_partition_and_bind_origins() {
 }
 
 #[test]
-fn bounded_and_builtin_write_to_lower_as_writer_write() {
-    // `x.write_to(writer)` on a `Writable`-bounded parameter or a builtin
-    // Writable value is the `writer.write(x)` shape; an unbounded parameter
-    // has no such method and the argument must be a Writer.
+fn bounded_and_builtin_write_to_check_against_the_writer() {
+    // `x.write_to(writer)` on a `Writable`-bounded parameter is the
+    // requirement's call and on a scalar its declared member; an unbounded
+    // parameter has no such method and the argument must be a Writer.
     ok_std(
         "struct Wrap[T: Writable & ImplicitlyCopyable & Deinitable](Writable):\n    var value: Self.T\n\n    def __init__(out self, value: Self.T):\n        self.value = value\n\n    def write_to[W: Writer](self, mut writer: W):\n        writer.write(\"Wrap(\")\n        self.value.write_to(writer)\n        Int(3).write_to(writer)\n        writer.write(\")\")\n\nvar w = Wrap(8)\n",
     );
@@ -9707,10 +9707,11 @@ fn fieldwise_ref_field_construction_binds_as_its_synthesized_init_call() {
 }
 
 #[test]
-fn simd_write_to_takes_its_declared_member_and_a_bound_receiver_inverts() {
+fn write_to_through_a_bound_or_on_simd_calls_the_member() {
     // `SIMD`'s `write_to` and `write_repr_to` are declared Mojo members, so
-    // a direct call on a sized scalar is a method call; a `Writable`-bounded
-    // parameter has no body of its own and stays `writer.write(x)`.
+    // a direct call on a sized scalar is a method call, and a call through a
+    // `Writable` bound is the requirement's, which the elaborator resolves
+    // to the conformer's witness.
     let checked = checked_with_std(
         "def show[T: Writable](x: T, mut s: String):\n    x.write_to(s)\n\ndef main():\n    var s = String()\n    Int8(4).write_to(s)\n    Float32(1.5).write_repr_to(s)\n    show(3, s)\n",
     )
@@ -9727,7 +9728,7 @@ fn simd_write_to_takes_its_declared_member_and_a_bound_receiver_inverts() {
                 })
         })
     };
-    assert!(inverted("write_to"), "the bound receiver inverts");
+    assert!(!inverted("write_to"), "the bound receiver does not invert");
     assert!(!inverted("write_repr_to"), "a SIMD receiver does not");
 }
 

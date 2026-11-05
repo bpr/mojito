@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `x.write_to(w)` and `x.write_repr_to(w)` through a `Writable` bound,
+  including a pack's `args[i].write_to(self)`, now call the conformer's
+  witness instead of writing host-formatted text, so a writer overriding
+  `write` is re-entered by the conformer's own `writer.write(...)` and by
+  a scalar's digits, and `print`'s elements see its
+  `_FlushingWriteBuffer`, as at the pin (R1462, R423;
+  `assets/ok/writable_bound_write_to_witness.mojo`). `String` and a
+  literal call their declared members too; only `DType` keeps the
+  inverted write (R160).
 - `Representable`, which the pin does not declare, is no longer a
   compiler-known trait, so a bound or `conforms_to` naming it is an
   unknown declaration, as at the pin (R579).

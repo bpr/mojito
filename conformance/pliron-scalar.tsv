@@ -1580,6 +1580,7 @@ assets/ok/with_multiple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_multiple_dependent.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/witness_default_differs_from_requirement.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/writable_bound_write_to_witness.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/writable_default_trait_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/writable_extra_write_to_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/writable_string_writer_type.mojo	-	ineligible	no-scalar-entry-shape

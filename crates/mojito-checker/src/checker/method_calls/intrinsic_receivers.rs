@@ -54,17 +54,13 @@ impl Checker {
         {
             return self.infer_raw_optional_method(site).map(Some);
         }
-        // `x.write_to(writer)` where `x` has no `write_to` body of its own — a
-        // `Writable`-bounded type parameter (the erased generic body) or a
-        // built-in Writable value (`Bool`, a literal, a `StringSpan`) — is
+        // `x.write_to(writer)` on an intrinsic Writable receiver with no
+        // declared `write_to` (`DType`, a value-less literal register) is
         // `writer.write(x)`: the checker records the operand swap and MIR
-        // lowers the `Writer.write` shape, whose formatting dispatches a
-        // struct argument through its own `write_to` (instance-clone aware)
-        // and a builtin directly. The nominal String takes the same shape
-        // (its `write_to` body is the literal bridge, which `Writer.write`
-        // already spells on both backends); every other struct receiver,
-        // and a `SIMD` value, whose members are declared, keeps the ordinary
-        // method path to its own `write_to`.
+        // lowers the host-formatted `Writer.write` shape. Every struct, a
+        // `SIMD` or valued literal whose members are declared, and a
+        // `Writable`-bounded type parameter, whose call is the requirement's
+        // and reaches the conformer's witness, keep the ordinary method path.
         let receiver = match obj_ty.kind() {
             TyKind::Ref(reference) => &reference.referent,
             _ => obj_ty,
@@ -73,13 +69,9 @@ impl Checker {
             && args.len() == 1
             && kwargs.is_empty()
             && param_args.is_empty()
-            && !receiver
-                .kind()
-                .as_non_simd_struct()
-                .is_some_and(|(name, targs)| {
-                    !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
-                })
-            && !(receiver.is_simd() && self.declared_receiver_member(receiver, method).is_some())
+            && receiver.kind().as_non_simd_struct().is_none()
+            && self.declared_receiver_member(receiver, method).is_none()
+            && !matches!(receiver.kind(), TyKind::Param { .. })
             && self.conforms_to(obj_ty, "Writable")
         {
             return self.infer_inverted_write(site).map(Some);
@@ -241,8 +233,8 @@ impl Checker {
         }
     }
 
-    /// `x.write_to(writer)` on a receiver with no `write_to` body of its own
-    /// is `writer.write(x)`: record the operand swap.
+    /// `x.write_to(writer)` on an intrinsic receiver with no declared
+    /// `write_to` is `writer.write(x)`: record the operand swap.
     fn infer_inverted_write(&self, site: MethodCallSite<'_>) -> Result<Ty, TypeError> {
         let MethodCallSite {
             span,

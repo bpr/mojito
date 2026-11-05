@@ -9123,57 +9123,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R423 A writer overriding `write` misses the nested `write` a
-  scalar's `write_to` makes at the pin**
-
-  Problem: a `Writer` whose own `write` wraps each argument
-  (`self.text += "<"`, then `args[i].write_to(self)`) prints `<1x>` for
-  `b.write(1, "x")` in Mojito and `<<>1x>` at the pin.
-  - The pin's `Int.write_to` and `Float64.write_to` are Mojo bodies that
-    call `writer.write` for their digits, which re-enters the override.
-  - A direct `Int(1).write_to(b)` writes `<|>|1` as at the pin since
-    R276, but the override's `args[i].write_to(self)` is a call through
-    the pack's `Writable` bound, which Mojito's checker marks
-    `SemanticAdjustment::InvertedWrite`, and MIR lowers it
-    (`mir/lower_expr/expr_method.rs`) to a `$write_formatted` method call
-    on the writer (`mojito_symbol::symbol::WRITE_FORMATTED`).
-  - The VM answers that call by formatting the value in the host
-    (`format_value` in `backend/vm/invoke.rs`) and calling the writer's
-    `write_string`, and Pliron's `lower/methods.rs` does the same, so the
-    override is never re-entered.
-  - Pinned by `conformance/probes/writer_override_scalar_write_to.mojo`.
-  - Ledger name: `writer-override-scalar-write-to`.
-  - Found while landing R414 (2026-10-06).
-  - Depends on R1462, which calls the conformer's witness through a bound.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1462 A `write_to` through a `Writable` bound is a host-formatted
-  write, where upstream calls the conformer's witness**
-
-  Problem: `x.write_to(w)` over `T: Writable` is checked as an inverted
-  write (`SemanticAdjustment::InvertedWrite`,
-  `checker/method_calls/intrinsic_receivers.rs`), which formats `x` and
-  hands the text to `w.write_string`, so a writer overriding `write` is not
-  re-entered by the conformer's own `writer.write(...)`.
-  - Probe: `show[T: Writable](x: T, mut w: Wrap)` calling `x.write_to(w)`
-    over a struct whose `write_to` is `writer.write("P")`, with `Wrap.write`
-    wrapping its arguments in `<`/`>`, leaves `P` where the pin leaves
-    `<P>`, on both backends. The direct call `P(1).write_to(w)` matches.
-  - A call through the bound needs every type that can bind `T` to answer
-    `write_to` as a witness, which the scalars, `Bool`, and the literals do
-    only once their text is Mojo: `SIMD`'s is since R276.
-  - Probe: `writer.write(Int(Self.length))` inside `SIMD.write_repr_to`
-    writes `<|2>` into the marking writer R159's probe describes, where
-    the pin writes `<<|>|2>`: the generic pack's `args[i].write_to(self)`
-    is still the inverted write.
-  - Probe: under `print` a `write_to` naming its writer's type
-    (`_unqualified_type_name[type_of(writer)]()`) sees `String`, where the
-    pin's is the library `print`'s `_FlushingWriteBuffer`: the pack's
-    `values[i].write_to(buffer)` is the inverted write.
-  - Found while landing R424 (2026-10-26).
-  - Depends on R276.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1463 A `Pointer` conforms to `Writable` but cannot be printed**
 
   Problem: `print(Pointer(to=x))` is rejected ("does not conform to trait
@@ -11234,6 +11183,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     marking writer R159's probe describes, writes `|DType.uint16` for
     `Self.dtype.write_repr_to(writer)`, where the pin's declared `DType`
     writes `|DType.|uint16`.
+  - `DType` is the last receiver the checker's inverted write serves
+    (`SemanticAdjustment::InvertedWrite` and `InvertedReprWrite`,
+    `intrinsic_receivers.rs`): retire both adjustments, their MIR arms in
+    `lower_expr/expr_method.rs`, and the `$write_formatted` primitive
+    they alone emit, with the builtin.
   - Depends on nothing.
   - Model: Fable, Planned.
 
