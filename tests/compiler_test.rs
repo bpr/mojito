@@ -5038,3 +5038,42 @@ fn callable_binder_function_value_inlines_through_canonicalize() {
         "the `nodebug` `double` is not inlined"
     );
 }
+
+#[test]
+fn automatic_inline_inlines_an_undecorated_capturing_nested_def() {
+    // A nested `def` called directly is its capture storage's method, which
+    // `automatic-inline` admits below its threshold as upstream's
+    // `AutomaticInline` does; `@no_inline` keeps the call.
+    let callees = |decoration: &str| {
+        let source = format!(
+            "def outer(x: Int) -> Int:\n    var y = x\n    {decoration}def get() {{imm y}} -> Int:\n        return y + 1\n    return get()\n\ndef counter() -> Int:\n    var c = 0\n    {decoration}def bump() {{mut c}}:\n        c += 3\n    bump()\n    bump()\n    return c\n\ndef main():\n    print(outer(4))\n    print(counter())\n"
+        );
+        let compiler = Compiler::default();
+        let program = compiler
+            .compile_source(
+                &source,
+                std::path::Path::new("/tmp/mojito_nested_def_inline.mojo"),
+            )
+            .expect("compile the nested defs");
+        assert_eq!(compiler.execute(&program).expect("run").output, "5\n6\n");
+        let concrete = program.concrete_mir().expect("elaborate");
+        concrete
+            .program
+            .functions
+            .iter()
+            .filter(|(name, _)| !name.contains("$__storage."))
+            .flat_map(|(_, function)| mojito::mir::nested_instructions(&function.blocks))
+            .filter_map(|instruction| match instruction {
+                mojito::mir::MirInstr::Call { func, .. } => Some(func.0.clone()),
+                mojito::mir::MirInstr::MethodCall {
+                    resolved: Some(target),
+                    ..
+                } => Some(target.clone()),
+                _ => None,
+            })
+            .filter(|callee| callee.contains("$get") || callee.contains("$bump"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(callees(""), Vec::<String>::new());
+    assert_eq!(callees("@no_inline\n    ").len(), 3);
+}

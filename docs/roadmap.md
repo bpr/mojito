@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1939**.
+Next free ID: **R1940**.
 
 ## Ordered Work
 
@@ -936,27 +936,23 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1349 `automatic-inline` keeps a direct call of an undecorated
-  capturing nested `def`**
+- [ ] **R1939 Concrete `eliminate-dead-symbols` keeps every method of a
+  live struct, where upstream removes any symbol nothing references**
 
-  A plain nested `def` that captures, such as `def get() {imm y} -> Int`,
-  stays a call in concrete MIR, where upstream's `AutomaticInline`
-  inlines it below its threshold of 50 operations.
-  - The elaborator clears a concrete declaration's `enclosing`
-    (`mono/specializer.rs`), since an instance reads no enclosing binder.
-  - `instantiated_callee` (`analysis/inline_parametric.rs`) accepts a
-    call's `capture_accesses` only for a callee with an `enclosing`
-    declaration, so the instance's direct call keeps them and is refused.
-  - Lever: recognize a lifted body's direct call by its capture operands
-    (the accesses are to places the call passes as leading arguments),
-    not by the declaration's `enclosing`.
-  - Probe: `outer(4)` over `var y = x` and an undecorated
-    `def get() {imm y} -> Int: return y + 1` keeps
-    `call "outer$get"` in concrete `main`; `def bump() {mut c}: c += 3`
-    called twice keeps both calls.
-  - A `nodebug` or `@always_inline` nested `def` inlines before
-    elaboration, so only the undecorated form is affected.
-  - Found while landing R1105 (2026-10-24).
+  `eliminate_dead_concrete_symbols` (`analysis/dead_symbols.rs`) makes a
+  live struct's non-constructor methods live from its type alone, so an
+  inlined method nothing calls stays in concrete MIR.
+  - Upstream's `EliminateDeadSymbols` after elaboration keeps only what a
+    live symbol names; every concrete call already names its callee.
+  - Lever: in `Resolution::Concrete`, reach a method only through a use
+    or the member table's entries the backends run with no call naming
+    them, and check which backend lookup still needs the rest.
+  - Probe: `outer(4)` over `var y = x` and
+    `def get() {imm y} -> Int: return y + 1` inlines `get()` into
+    concrete `main`, yet `outer$get$__storage.get` stays in the concrete
+    program with no reference; `def bump() {mut c}` keeps
+    `counter$bump$__storage.bump` the same way.
+  - Found while closing R1349 (2026-11-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

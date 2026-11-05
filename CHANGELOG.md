@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A direct call of an undecorated capturing nested `def` (`def get()
+  {imm y} -> Int`, `def bump() {mut c}`) is confirmed inlined by
+  `automatic-inline` below upstream's threshold, as it has been since a
+  nested `def` became its capture storage's method; a compiler test now
+  pins it beside the `@no_inline` form, which keeps its calls (R1349).
+  The unreferenced storage method left behind in concrete MIR is filed as
+  R1939.
+
 - `String(x)` and `repr(x)` are now upstream's library code rather than
   compiler builtins (R1882): `String(x)` resolves among the bundled
   `String` initializers, the `*Ts: Writable` pack initializer for any
