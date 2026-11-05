@@ -3,7 +3,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::FuncTy;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -95,50 +94,35 @@ impl Checker {
     }
 
     /// Whether a type MAY carry loans once populated: it carries loans
-    /// already, or it contains a capturing callable whose declared
-    /// environment has not yet been narrowed to a concrete capture set
-    /// (`capturing[_]` / `capturing[origins]` storage). Origin bookkeeping
-    /// for such storage must record the populating value's concrete capture
-    /// origins even though the declared type alone is loan-blind.
+    /// already, or it contains an abstract type parameter, which may be
+    /// instantiated with a loan-carrying type. Origin bookkeeping stays
+    /// conservative for such storage so generic bodies record transfer
+    /// effects.
     pub(in crate::checker) fn type_may_carry_loans(&self, ty: &Ty) -> bool {
-        fn contains_open_captures(ty: &Ty) -> bool {
-            use mojito_types::origin::{CallableEnvironment, CaptureOriginSet};
+        fn contains_type_parameter(ty: &Ty) -> bool {
             match ty.kind() {
-                // An abstract type parameter may be instantiated with a
-                // loan-carrying type: origin bookkeeping stays conservative
-                // so generic bodies record transfer effects.
                 TyKind::Param { .. } => true,
-                TyKind::Func(func) => {
-                    let FuncTy { environment, .. } = &**func;
-                    matches!(
-                        environment,
-                        CallableEnvironment::Capturing(
-                            CaptureOriginSet::Infer | CaptureOriginSet::Param(_)
-                        )
-                    )
-                }
                 struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
                     arguments.iter().any(|argument| match argument {
-                        mojito_types::types::TyArg::Ty(ty) => contains_open_captures(ty),
+                        mojito_types::types::TyArg::Ty(ty) => contains_type_parameter(ty),
                         _ => false,
                     })
                 }
-                TyKind::Ref(reference) => contains_open_captures(&reference.referent),
-                TyKind::Tuple(elements) => elements.iter().any(contains_open_captures),
+                TyKind::Ref(reference) => contains_type_parameter(&reference.referent),
+                TyKind::Tuple(elements) => elements.iter().any(contains_type_parameter),
                 _ => false,
             }
         }
-        self.type_carries_loans(ty) || contains_open_captures(ty) || {
+        self.type_carries_loans(ty) || contains_type_parameter(ty) || {
             // A struct's fields, at the application's arguments, may hold
-            // open-capture callables; a field left open by the arguments
-            // stays conservative.
+            // a type parameter the arguments leave open.
             match ty.kind() {
                 struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                     self.structs.get(name).is_some_and(|info| {
                         let subst = struct_subst(&info.decls, arguments);
                         info.fields
                             .iter()
-                            .any(|(_, field)| contains_open_captures(&substitute(field, &subst)))
+                            .any(|(_, field)| contains_type_parameter(&substitute(field, &subst)))
                     })
                 }
                 _ => false,
@@ -231,7 +215,7 @@ impl Checker {
                     }
                 }
                 TyKind::Func(_) | TyKind::GenericFunc(_)
-                    if let Some(CaptureOriginSet::Concrete(captures)) =
+                    if let Some(CaptureOriginSet(captures)) =
                         ty.callable().and_then(|func| func.environment.captures()) =>
                 {
                     out.extend(captures.iter().cloned());
@@ -242,10 +226,7 @@ impl Checker {
 
         let mut origins = Vec::new();
         collect(self, ty, &HashMap::new(), &mut origins);
-        let CaptureOriginSet::Concrete(origins) = CaptureOriginSet::concrete(origins) else {
-            unreachable!("concrete capture canonicalization stays concrete")
-        };
-        origins
+        CaptureOriginSet::concrete(origins).0
     }
 
     pub(in crate::checker) fn checked_capture(
@@ -276,11 +257,7 @@ impl Checker {
             }
             mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move => {}
         }
-        let mojito_types::origin::CaptureOriginSet::Concrete(origins) =
-            mojito_types::origin::CaptureOriginSet::concrete(origins)
-        else {
-            unreachable!("concrete capture canonicalization stays concrete")
-        };
+        let origins = mojito_types::origin::CaptureOriginSet::concrete(origins).0;
         mojito_checked::checked::CheckedCapture {
             name: name.to_string(),
             binding,
@@ -338,7 +315,7 @@ impl Checker {
                     result
                 }
                 TyKind::Func(_) | TyKind::GenericFunc(_)
-                    if let Some(mojito_types::origin::CaptureOriginSet::Concrete(captures)) =
+                    if let Some(mojito_types::origin::CaptureOriginSet(captures)) =
                         ty.callable().and_then(|func| func.environment.captures()) =>
                 {
                     captures.iter().any(|capture| {

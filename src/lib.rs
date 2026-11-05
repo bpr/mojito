@@ -70,8 +70,8 @@ pub use module::{
     link_source_with_options, link_with_options,
 };
 pub use origin::{
-    CallableEnvironment, CaptureAccess, CaptureOrigin, CaptureOriginSet, CaptureSetParamId,
-    Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefTy,
+    CallableEnvironment, CaptureAccess, CaptureOrigin, CaptureOriginSet, Mutability, Origin,
+    OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefTy,
 };
 pub use parser::{ParseReport, Parser};
 pub use runtime::RuntimeError;

@@ -1890,8 +1890,8 @@ and `sig_carried(type)`. Signature
 mutability is `sig_immutable`, `sig_mutable`, `sig_bool_param(index)`, or
 `sig_infer`. A `RefSig` is `ref_sig { origin, mutability }`.
 
-Capture access is `read` or `write`. Capture sets are `capture_set_infer`,
-`capture_set_param(id)`, or `capture_set([capture_origin...])`. Callable
+Capture access is `read` or `write`. A capture set is
+`capture_set([capture_origin...])`. Callable
 environments are `default`, `thin`, or `capturing(capture_set)`.
 
 Every transfer, call argument, boundary, result adapter, iterator call, generic

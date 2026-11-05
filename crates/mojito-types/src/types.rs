@@ -4652,9 +4652,9 @@ pub fn callable_environment_coerces(
     }
     match (from, to) {
         // An unqualified callable contract does not constrain the environment
-        // in the *bound* channel: a supplied `@parameter`/comptime callable
-        // argument against `F: def(...)` may capture (upstream accepts this —
-        // see `subscript_call_contracts.mojo`), so `unify`,
+        // in the *bound* channel: a supplied callable argument against
+        // `F: def(...)` may capture (upstream accepts this — see
+        // `subscript_call_contracts.mojo`), so `unify`,
         // `callable_bound_accepts`, and MIR verify stay on this permissive
         // predicate. Runtime value coercion uses the strict
         // `callable_environment_value_coerces` above.
@@ -4667,12 +4667,8 @@ pub fn callable_environment_coerces(
         // (upstream accepts a thin function for a capturing funarg).
         (CallableEnvironment::Thin, CallableEnvironment::Capturing(_)) => true,
         (
-            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(_)),
-            CallableEnvironment::Capturing(CaptureOriginSet::Infer | CaptureOriginSet::Param(_)),
-        ) => true,
-        (
-            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(actual)),
-            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(allowed)),
+            CallableEnvironment::Capturing(CaptureOriginSet(actual)),
+            CallableEnvironment::Capturing(CaptureOriginSet(allowed)),
         ) => actual.iter().all(|capture| allowed.contains(capture)),
         _ => false,
     }
@@ -7105,42 +7101,34 @@ fn write_callable(
         crate::origin::CallableEnvironment::Thin => write!(f, " thin")?,
         crate::origin::CallableEnvironment::Capturing(origins) => {
             write!(f, " capturing[")?;
-            match origins {
-                crate::origin::CaptureOriginSet::Infer => write!(f, "_")?,
-                crate::origin::CaptureOriginSet::Param(id) => {
-                    write!(f, "origin_set#{}", id.0)?;
+            for (index, capture) in origins.0.iter().enumerate() {
+                if index > 0 {
+                    write!(f, ", ")?;
                 }
-                crate::origin::CaptureOriginSet::Concrete(members) => {
-                    for (index, capture) in members.iter().enumerate() {
-                        if index > 0 {
-                            write!(f, ", ")?;
-                        }
-                        if capture.access == crate::origin::CaptureAccess::Write {
-                            write!(f, "mut ")?;
-                        }
-                        match &capture.origin {
-                            crate::origin::Origin::Param(id) => {
-                                write!(f, "origin#{}", id.0)?;
-                            }
-                            crate::origin::Origin::Place(place) => {
-                                write!(f, "origin@{}", place.root.0)?;
-                            }
-                            crate::origin::Origin::SelfParam => {
-                                write!(f, "origin_of(self)")?;
-                            }
-                            crate::origin::Origin::Static => write!(f, "static")?,
-                            crate::origin::Origin::Untracked { mutable: true } => {
-                                write!(f, "mut-untracked")?;
-                            }
-                            crate::origin::Origin::Untracked { mutable: false } => {
-                                write!(f, "immut-untracked")?;
-                            }
-                            crate::origin::Origin::Union(_) => {
-                                write!(f, "origin-union")?;
-                            }
-                            crate::origin::Origin::Unbound => write!(f, "_")?,
-                        }
+                if capture.access == crate::origin::CaptureAccess::Write {
+                    write!(f, "mut ")?;
+                }
+                match &capture.origin {
+                    crate::origin::Origin::Param(id) => {
+                        write!(f, "origin#{}", id.0)?;
                     }
+                    crate::origin::Origin::Place(place) => {
+                        write!(f, "origin@{}", place.root.0)?;
+                    }
+                    crate::origin::Origin::SelfParam => {
+                        write!(f, "origin_of(self)")?;
+                    }
+                    crate::origin::Origin::Static => write!(f, "static")?,
+                    crate::origin::Origin::Untracked { mutable: true } => {
+                        write!(f, "mut-untracked")?;
+                    }
+                    crate::origin::Origin::Untracked { mutable: false } => {
+                        write!(f, "immut-untracked")?;
+                    }
+                    crate::origin::Origin::Union(_) => {
+                        write!(f, "origin-union")?;
+                    }
+                    crate::origin::Origin::Unbound => write!(f, "_")?,
                 }
             }
             write!(f, "]")?;

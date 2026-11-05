@@ -11,10 +11,9 @@ use mojito_types::types::TyKind;
 /// `def` it defines, pushing the function and each lifted nested function into
 /// `out`. A liftable nested `def` takes the symbol the check gave it
 /// (`name$inner` for one `name` declares), and its closure's storage
-/// struct as its leading parameter, or, for a `@parameter`
-/// closure, its captured enclosing locals as leading reference
-/// parameters; a nested `def` we can't lift stays a clean `Unsupported` at
-/// execution.
+/// struct as its leading parameter, or, for a body without storage, its
+/// captured enclosing locals as leading reference parameters (R1946); a
+/// nested `def` we can't lift stays a clean `Unsupported` at execution.
 pub(super) struct FunctionLowering<'a> {
     pub(super) checked: &'a mojito_checked::checked::CheckedProgram,
     pub(super) name: &'a str,
@@ -659,9 +658,9 @@ fn analyze_node(
 /// upstream's `constructClosure` and `resolveAnonymousClosure` emit a
 /// closure instance for every one, and its body is the storage's method
 /// ([`ClosureStorage::method`]); one without storage a sibling
-/// captures keeps its closure in a slot ([`NestedInfo::slotted`]). A
-/// `@parameter` closure, which captures without a list, takes its
-/// captures as leading reference parameters. A declaration whose storage
+/// captures keeps its closure in a slot ([`NestedInfo::slotted`]). A body
+/// without storage takes its captures, if any, as leading reference
+/// parameters (R1946). A declaration whose storage
 /// the check recorded no uses for, one naming a binder no enclosing
 /// declaration binds or one no lowering unit reaches, is an invariant
 /// failure, recorded in `invariant_errors`.
@@ -1286,8 +1285,8 @@ fn lower_nested_node(
         .collect();
     // A body with storage takes it as its one leading `read` parameter,
     // as upstream's lifted method takes `self`, and holds its captures in
-    // frame locals; a `@parameter` closure's body takes each capture as a
-    // leading reference parameter.
+    // frame locals; a body without storage takes each capture as a
+    // leading reference parameter (R1946).
     let capture_names: Vec<String> = captures
         .iter()
         .map(|capture| capture.name.clone())
@@ -1320,9 +1319,8 @@ fn lower_nested_node(
         });
         body_parameter_ty(p, ty)
     }));
-    // A lifted invocation only borrows its storage, as a `@parameter`
-    // closure's borrows its captures; it must neither destroy nor
-    // duplicate it on each call.
+    // A lifted invocation only borrows its storage or its captures; it
+    // must neither destroy nor duplicate them on each call.
     let mut owned2: Vec<bool> = vec![false; leading];
     owned2.extend(
         caller_params
@@ -1336,9 +1334,8 @@ fn lower_nested_node(
             .iter()
             .map(|(_, parameter)| is_deinit(&parameter.convention)),
     );
-    // A `@parameter` closure's captures are `mut` (their final value is
-    // written back to the enclosing variable — reference-capture
-    // semantics); a storage is read.
+    // A capture without storage is `mut` (its final value is written back
+    // to the enclosing variable); a storage is read.
     let mut refp2: Vec<bool> = vec![storage.is_none(); leading];
     refp2.extend(
         caller_params
@@ -1570,7 +1567,7 @@ fn storage_parameter(
 }
 
 /// The type each of `captures` takes as a leading parameter of a body
-/// without storage (a `@parameter` closure's), whose captured siblings
+/// without storage (R1946), whose captured siblings
 /// `registry` registers, and whether a call of the body may write it. A
 /// reference capture of a
 /// reference binding (a loop's reference target) is a reference
@@ -1601,8 +1598,7 @@ fn capture_parameters(
 
 /// The slots `captures` bind in a lifted body, from slot `first` on: each
 /// a local holding a reference to its field of `storage` when the body
-/// takes it, at `location`, else, for a `@parameter` closure, each a
-/// leading reference parameter.
+/// takes it, at `location`, else each a leading reference parameter.
 fn capture_slots(
     captures: &[NestedCapture],
     storage: Option<&ClosureStorage>,

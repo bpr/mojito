@@ -2104,7 +2104,7 @@ fn verifier_checks_stores_into_erased_instance_storage() {
     // A capturing closure fits unqualified callable storage; an unqualified
     // callable does not fit capturing storage.
     let capturing = with_environment(mojito::CallableEnvironment::Capturing(
-        mojito::CaptureOriginSet::Concrete(Vec::new()),
+        mojito::CaptureOriginSet::empty(),
     ));
     let unqualified = with_environment(mojito::CallableEnvironment::Default);
     clean(&store(unqualified.clone(), capturing.clone()));

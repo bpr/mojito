@@ -1208,21 +1208,16 @@ fn verify_struct_creation(cx: &InstrCx<'_>, dest: Reg, fields: &[Reg], errors: &
 }
 
 /// Whether a closure's capture binds the leading parameter `index` of its
-/// lifted body `declaration`: a reference parameter (a `@parameter`
-/// closure's), or a `read` one, a closure's storage (a `def` used as a
-/// value). A method's receiver leads its parameters: a closure's storage
-/// is the `read` `self` of the method its body is.
+/// lifted body `declaration`: a reference parameter, or a `read` one. A
+/// method's receiver binds no capture: a closure's storage reaches its
+/// method as the receiver of a direct call, never as an environment.
 fn capture_binds(declaration: &MirFunctionDeclaration, index: usize) -> bool {
-    match index.checked_sub(usize::from(declaration.has_receiver)) {
-        Some(index) => {
-            declaration.ref_params.get(index).copied().unwrap_or(false)
-                || matches!(
-                    declaration.param_conventions.get(index),
-                    Some(None | Some(ArgConvention::Imm))
-                )
-        }
-        None => declaration.receiver_convention.is_none(),
-    }
+    !declaration.has_receiver
+        && (declaration.ref_params.get(index).copied().unwrap_or(false)
+            || matches!(
+                declaration.param_conventions.get(index),
+                Some(None | Some(ArgConvention::Imm))
+            ))
 }
 
 /// A `scalar.cast` reads a value its target `casts_from` and defines a

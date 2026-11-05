@@ -2750,8 +2750,7 @@ pub struct CheckedDef {
     /// are found from its body's checked bindings.
     pub captures: Vec<CheckedCapture>,
     /// Whether it declares a capture list (`{...}`), for which upstream's
-    /// `constructClosure` builds a closure storage struct; a `@parameter`
-    /// closure captures without one.
+    /// `constructClosure` builds a closure storage struct.
     pub capture_list: bool,
     /// The storage struct its closure is, for a capture-list `def` or a
     /// capturing lambda that captures, as upstream's `liftClosure`

@@ -3548,8 +3548,8 @@ impl MirResultAdapter {
     }
 }
 
-/// One captured place of a [`MirInstr::MakeClosure`]: a reference to it
-/// (a `@parameter` closure's capture, or a closure storage's place).
+/// One captured place of a [`MirInstr::MakeClosure`]: a reference to it,
+/// which the lifted body takes as a leading reference parameter.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirClosureCapture {
     pub place: MirPlace,

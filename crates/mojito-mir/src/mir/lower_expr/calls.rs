@@ -740,9 +740,10 @@ impl<'a> Flatten<'a> {
     }
 
     /// The closure of the body `info` without storage at `at` (a thin
-    /// lambda, or a `@parameter` closure or capture-free `def` used as a
-    /// value): each capture is a reference to its place, which a
-    /// `@parameter` closure's body takes as a leading reference parameter.
+    /// lambda, or a capture-free `def` used as a value): each capture is a
+    /// reference to its place, which the body takes as a leading reference
+    /// parameter. A body without storage captures nothing in a checked
+    /// program the pin accepts (R1946).
     pub(in crate::mir) fn emit_nested_closure(&mut self, info: &NestedInfo, at: SourceSpan) -> Reg {
         let captures = info
             .captures
@@ -769,25 +770,6 @@ impl<'a> Flatten<'a> {
         info: &NestedInfo,
         at: SourceSpan,
     ) -> Reg {
-        // A body with storage is the closure of its lifted body over that
-        // storage, captured by reference. The closure is a temporary of the
-        // statement that takes it, so the storage stays live to the
-        // statement's end.
-        if let Some(place) = self.storage_place(info) {
-            if !self.pending_argument_anchors.contains(&place.root) {
-                self.pending_argument_anchors.push(place.root);
-            }
-            let dest = match info.contract.clone() {
-                Some(ty) => self.fresh_typed(at, None, ty),
-                None => self.fresh(at, None),
-            };
-            self.emit(MirInstr::MakeClosure {
-                dest,
-                function: info.mangled.clone(),
-                captures: vec![MirClosureCapture { place }],
-            });
-            return dest;
-        }
         if !self.owner_vars.contains_key(&info.binding) {
             // A declaration without a slot makes its closure at each
             // first-class use. A lifted body has no direct access to an

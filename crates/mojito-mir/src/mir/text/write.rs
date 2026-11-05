@@ -3185,22 +3185,18 @@ fn environment_value(value: &CallableEnvironment) -> String {
     }
 }
 fn capture_set(value: &CaptureOriginSet) -> String {
-    match value {
-        CaptureOriginSet::Infer => "capture_set_infer".into(),
-        CaptureOriginSet::Param(v) => positional("capture_set_param", &v.0.to_string()),
-        CaptureOriginSet::Concrete(v) => positional(
-            "capture_set",
-            &list(v.iter().map(|capture| {
-                record(
-                    "capture_origin",
-                    &[
-                        ("origin", origin(&capture.origin)),
-                        ("access", capture_access_kind(capture.access).into()),
-                    ],
-                )
-            })),
-        ),
-    }
+    positional(
+        "capture_set",
+        &list(value.0.iter().map(|capture| {
+            record(
+                "capture_origin",
+                &[
+                    ("origin", origin(&capture.origin)),
+                    ("access", capture_access_kind(capture.access).into()),
+                ],
+            )
+        })),
+    )
 }
 const fn capture_access_kind(value: CaptureAccess) -> &'static str {
     match value {

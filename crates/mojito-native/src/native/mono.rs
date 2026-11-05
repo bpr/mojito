@@ -5,12 +5,10 @@
 //! consume. It never mutates the canonical MIR artifact.
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use environment::*;
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use equiv::*;
 use mojito_mir::mir::{
     addressed_slots, callable_targets, destroyed_structs, dunder_method_call, nested_instructions,
-    relocated_structs, renumber_slots, retire_slots,
+    relocated_structs, retire_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use spread::*;
@@ -441,13 +439,6 @@ struct Bindings {
     /// once `C` is bound to an instance, where no signature spelled the
     /// member for unification, and a reflection query reads the fields.
     structs: Rc<StructCatalog>,
-    /// Callable parameters bound to a closure with captures, each
-    /// beside the closure's lifted body and environment. The instance folds
-    /// the body's name, as for a callable that captures nothing, and takes
-    /// the environment alone: one trailing reference parameter per captured
-    /// place, typed here, which a call through the parameter passes to the
-    /// body's specialization.
-    callable_environments: Vec<(ParamRef, String, Vec<Ty>)>,
     /// What answers a layout application (`size_of[T]()`) or the current
     /// target a type of the instance carries: the target, and the struct
     /// declarations known when the layout is asked. `None` where neither is
@@ -472,15 +463,6 @@ struct Bindings {
 }
 
 impl Bindings {
-    /// Whether a callable parameter of the instance is bound to the lifted
-    /// body `target` of a closure that captures, whose environment the
-    /// instance takes as reference parameters.
-    fn binds_environment(&self, target: &str) -> bool {
-        self.callable_environments
-            .iter()
-            .any(|(_, body, _)| body == target)
-    }
-
     /// Erase every origin the bound types carry, as upstream binds a type
     /// parameter to a type whose origins read `origin={ }`. The instance key
     /// names these erased types, so a binding keeps none of the origins of
@@ -503,15 +485,6 @@ impl Bindings {
             .for_each(|ty| *ty = erase_origins(ty));
         self.values.values_mut().for_each(erase_value);
     }
-}
-
-/// What a call passes for the callable parameters it binds to closures that
-/// capture ([`Specializer::bind_capturing_callables`]).
-#[derive(Default)]
-struct CapturingArguments {
-    /// Each captured place the instance takes by reference, beside the
-    /// register its load fills.
-    environment: Vec<(Reg, MirPlace)>,
 }
 
 /// The compile-time applications of lowered functions the elaboration's
@@ -727,7 +700,6 @@ struct Specializer<'a> {
 mod availability;
 mod bodies;
 mod catalog;
-mod environment;
 mod equiv;
 mod failure;
 mod gather;

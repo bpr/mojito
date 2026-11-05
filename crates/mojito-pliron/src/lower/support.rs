@@ -30,9 +30,8 @@ pub fn emit_thunk_body(
         operands.push(argument(ctx, &mut next_argument));
     }
     let env = argument(ctx, &mut next_argument);
-    // Each slot stores a captured place's address, which a `@parameter`
-    // closure's body takes as a reference parameter and a `def`'s as its
-    // storage `self`.
+    // Each slot stores a captured place's address, which the lifted body
+    // takes as a leading reference parameter.
     for index in 0..captures {
         let slot = if index == 0 {
             env

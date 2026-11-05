@@ -59,17 +59,6 @@ pub fn encoding_packaged_owners<R>(f: impl FnOnce() -> R) -> R {
 )]
 pub struct OriginParamId(pub u32);
 
-/// Stable identity of an `OriginSet` parameter appearing in a callable
-/// environment contract.
-///
-/// Like [`OriginParamId`], this is the declaration-order identity selected by
-/// checking rather than a source spelling, so independently named but
-/// otherwise identical callable contracts remain alpha-equivalent.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub struct CaptureSetParamId(pub u32);
-
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -268,19 +257,13 @@ impl CaptureOrigin {
     }
 }
 
-/// The origin dependencies of a parametric capturing callable.
+/// The origin dependencies of a capturing callable.
 ///
 /// Mojo's `OriginSet` is deliberately separate from an [`Origin`] union: it is
-/// the set of owner origins retained by a callable environment, not an origin a
-/// reference value can designate. `Infer` is the checked placeholder introduced
-/// by `capturing[_]`; `Param` names a source `OriginSet` binder after resolution;
-/// and `Concrete` is the canonical set attached to a materialized environment.
+/// the canonical set of owner origins retained by a callable environment, not
+/// an origin a reference value can designate.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum CaptureOriginSet {
-    Infer,
-    Param(CaptureSetParamId),
-    Concrete(Vec<CaptureOrigin>),
-}
+pub struct CaptureOriginSet(pub Vec<CaptureOrigin>);
 
 impl CaptureOriginSet {
     /// Construct a concrete set with nested unions flattened, duplicates
@@ -316,11 +299,11 @@ impl CaptureOriginSet {
                 canonical.push(member);
             }
         }
-        Self::Concrete(canonical)
+        Self(canonical)
     }
 
     pub const fn empty() -> Self {
-        Self::Concrete(Vec::new())
+        Self(Vec::new())
     }
 }
 
@@ -944,7 +927,7 @@ mod tests {
                 CaptureOrigin::write(first.clone()),
                 CaptureOrigin::read(Origin::union([second.clone(), first.clone()])),
             ]),
-            CaptureOriginSet::Concrete(vec![
+            CaptureOriginSet(vec![
                 CaptureOrigin::write(first),
                 CaptureOrigin::read(second),
             ])

@@ -1233,14 +1233,13 @@ impl Checker {
     /// struct's (a closure's storage) are its fields' at its arguments, a
     /// callable type's its concrete environment's.
     fn concrete_callable_captures(&self, ty: &Ty) -> Vec<mojito_types::origin::CaptureOrigin> {
-        use mojito_types::origin::CaptureOriginSet;
         if self.is_callable_struct(ty) {
             return self.capture_origins_in_type(ty);
         }
-        match ty.callable().and_then(|func| func.environment.captures()) {
-            Some(CaptureOriginSet::Concrete(captures)) => captures.clone(),
-            _ => Vec::new(),
-        }
+        ty.callable()
+            .and_then(|func| func.environment.captures())
+            .map(|captures| captures.0.clone())
+            .unwrap_or_default()
     }
 
     /// Whether `ty` is a struct conforming to a callable contract: a
@@ -1265,10 +1264,7 @@ impl Checker {
             .into_iter()
             .flat_map(|ty| self.concrete_callable_captures(ty))
             .collect::<Vec<_>>();
-        let CaptureOriginSet::Concrete(captures) = CaptureOriginSet::concrete(captures) else {
-            unreachable!("concrete capture canonicalization stays concrete")
-        };
-        captures
+        CaptureOriginSet::concrete(captures).0
     }
 
     fn record_call_capture_effects<'a>(

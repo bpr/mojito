@@ -285,7 +285,7 @@ pub(super) fn canonicalize_callable(ty: &Ty) -> Ty {
 /// Erase the callable-environment spelling from every `TyKind::Func` in `ty`,
 /// recursively, but `thin`'s. A capture set is a semantic origin fact with
 /// no runtime ABI: instance identity and binding solutions must not split
-/// on it (`capturing[_]` vs `capturing[origin@N]` is the same closure
+/// on it (two capture sets over different places name the same closure
 /// value). `thin` is part of the type, as at the pin, which a struct
 /// instance's member spells as its caller does.
 pub(super) fn erase_callable_environments(ty: &mut Ty) {

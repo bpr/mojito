@@ -885,57 +885,6 @@ impl<'a> Specializer<'a> {
         self.instances[index].1.as_str()
     }
 
-    /// Bind the callable parameters this call binds to a closure that
-    /// captures, but those the callee removed, answering the trailing
-    /// arguments the call passes for them and the loads those arguments need
-    /// first. An environment survives no name: the instance folds the lifted
-    /// body, as upstream keys a `@parameter` closure on its body, and takes
-    /// the captured places as reference parameters.
-    pub(super) fn bind_capturing_callables(
-        &self,
-        owner: &str,
-        function: &mut MirFunction,
-        target: &str,
-        param_args: &[mojito_mir::mir::MirParamArg],
-        bindings: &mut Bindings,
-    ) -> Result<CapturingArguments, MonoError> {
-        bindings.callable_environments.clear();
-        let mut trailing = CapturingArguments::default();
-        let Some(declaration) = self.declarations.get(target) else {
-            return Ok(trailing);
-        };
-        let removed = self.removed_params(target, bindings.reduced);
-        for (decl, reg, _) in
-            mojito_mir::mir::matched_parameter_arguments(&declaration.param_decls, param_args)
-        {
-            let Some(ty) = decl.value_element_ty() else {
-                continue;
-            };
-            if removed.contains(decl.id()) {
-                continue;
-            }
-            if !matches!(
-                peel_refs(ty).kind(),
-                TyKind::GenericFunc(_) | TyKind::Func(_)
-            ) {
-                continue;
-            }
-            let Some((callee, false)) = self.callable_targets.get(&reg.0) else {
-                continue;
-            };
-            let captured = self.capture_arguments(owner, function, callee)?;
-            let environment = captured
-                .iter()
-                .map(|(reg, _)| function.reg_types[&reg.0].clone())
-                .collect();
-            bindings
-                .callable_environments
-                .push((decl.binder(), callee.clone(), environment));
-            trailing.environment.extend(captured);
-        }
-        Ok(trailing)
-    }
-
     /// The values a call through a callable contract gives each of the
     /// contract's compile-time parameters, in order: a supplied argument, or
     /// the contract's default, which overrides the implementation's own. A
@@ -1144,39 +1093,11 @@ impl<'a> Specializer<'a> {
                 error
             })?;
         self.close_lane_masks(&key.template, &mut function)?;
-        // A capturing closure's environment trails the parameter block: the
-        // body folds the lifted body's name, and a call through the
-        // parameter passes these reference parameters as its environment.
-        let environments: Vec<(String, Vec<mojito_hir::hir::VarId>)> = bindings
-            .callable_environments
-            .iter()
-            .map(|(parameter, target, types)| {
-                let slots = append_environment_parameters(&mut function, &parameter.name, types);
-                (target.clone(), slots)
-            })
-            .collect();
         self.enclosing.clone_from(bindings);
         self.instantiate_nested_bodies(&key.template, &mut function.blocks)?;
         self.constant_values = function_constant_values(&function);
         self.callable_targets = callable_targets(&function);
         self.closure_captures = function_closure_captures(&function);
-        for (target, slots) in &environments {
-            let captures = slots
-                .iter()
-                .map(|&slot| MirClosureCapture {
-                    place: MirPlace {
-                        through: Some(slot),
-                        ..MirPlace::root(slot, function.var_tys.get(&slot).cloned())
-                    },
-                })
-                .collect();
-            self.closure_captures.insert(target.clone(), captures);
-            for (callee, captures_are_empty) in self.callable_targets.values_mut() {
-                if callee == target {
-                    *captures_are_empty = false;
-                }
-            }
-        }
         self.constant_values.extend(
             self.callable_targets
                 .iter()
@@ -1207,18 +1128,6 @@ impl<'a> Specializer<'a> {
             declaration.param_decls.clear();
             declaration.availability.clear();
             declaration.enclosing = None;
-            for (target, slots) in environments {
-                let body = &self.declarations[target.as_str()];
-                for (position, slot) in slots.into_iter().enumerate() {
-                    declare_environment_parameter(
-                        &mut declaration,
-                        function.var_names[slot as usize].clone(),
-                        function.param_types[slot as usize].clone(),
-                        body,
-                        position,
-                    );
-                }
-            }
             self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
             owned_pack = mojito_mir::mir::owned_pack_slot(&declaration);
             self.output_function_decls.push(declaration);
@@ -2514,9 +2423,7 @@ impl<'a> Specializer<'a> {
     /// direct call, which names its reduced generator as any direct call
     /// does. A generic nested body's value names its generator under this
     /// instance, its enclosing binders bound and its own open, which a call
-    /// binding its own parameters extends. A closure over its storage's
-    /// method names the method's instance at the storage instance it
-    /// captures, as a call on that storage would.
+    /// binding its own parameters extends.
     fn instantiate_nested_bodies(
         &mut self,
         owner: &str,
@@ -2524,21 +2431,6 @@ impl<'a> Specializer<'a> {
     ) -> Result<(), MonoError> {
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
             match instruction {
-                MirInstr::MakeClosure {
-                    function: target,
-                    captures,
-                    ..
-                } if self.is_storage_bound_closure_method(target) => {
-                    let Some(storage) = captures
-                        .first()
-                        .and_then(|capture| capture.place.ty.clone())
-                    else {
-                        continue;
-                    };
-                    let (bindings, arguments, _) =
-                        self.infer_receiver_call(owner, target, &storage, ReceiverCall::default())?;
-                    *target = self.enqueue(target, bindings, arguments)?;
-                }
                 MirInstr::MakeClosure {
                     function: target, ..
                 }
@@ -2618,12 +2510,6 @@ impl<'a> Specializer<'a> {
 
     /// Whether `target` is a closure's body as its storage's method
     /// without parameters of its own.
-    fn is_storage_bound_closure_method(&self, target: &str) -> bool {
-        self.declarations.get(target).is_some_and(|declaration| {
-            declaration.is_closure_method() && declaration.param_decls.is_empty()
-        })
-    }
-
     /// The bindings and instance arguments of the nested body `target` under
     /// `bindings`, those of the instance (or the unrolled region copy) it is
     /// declared in: keyed by the solution of each binder of the scope it is
@@ -3040,16 +2926,6 @@ impl<'a> Specializer<'a> {
                         if let Some(spelled) = static_receiver.take() {
                             self.bind_static_receiver(owner, &target, &spelled, &mut bindings)?;
                         }
-                        // A callable parameter bound to a closure with
-                        // captures keeps its environment: the instance takes
-                        // it as trailing runtime parameters, passed here.
-                        let capturing = self.bind_capturing_callables(
-                            owner,
-                            function,
-                            &target,
-                            param_arg_regs,
-                            &mut bindings,
-                        )?;
                         let reduced = bindings.reduced;
                         func.0 = self.enqueue(&target, bindings, arguments)?;
                         if reduced {
@@ -3067,7 +2943,6 @@ impl<'a> Specializer<'a> {
                         }
                         param_arg_regs.clear();
                         instantiated_args.clear();
-                        pass_capturing_arguments(capturing, index, args, arg_places, &mut preludes);
                     }
                     MirInstr::MethodCall {
                         dest,
@@ -3182,7 +3057,7 @@ impl<'a> Specializer<'a> {
                         {
                             *result_adapter = None;
                         }
-                        let (target, mut bindings, arguments) = self.infer_call(
+                        let (target, bindings, arguments) = self.infer_call(
                             owner,
                             function,
                             &target,
@@ -3193,15 +3068,6 @@ impl<'a> Specializer<'a> {
                             param_arg_regs,
                             instantiated_args,
                             None,
-                        )?;
-                        // As at a direct call, a callable parameter bound to
-                        // a capturing closure takes its environment.
-                        let capturing = self.bind_capturing_callables(
-                            owner,
-                            function,
-                            &target,
-                            param_arg_regs,
-                            &mut bindings,
                         )?;
                         let reduced = bindings.reduced;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
@@ -3222,21 +3088,6 @@ impl<'a> Specializer<'a> {
                         param_decls.clear();
                         if reduced {
                             self.reduce_method_call(owner, &target, instruction)?;
-                        }
-                        if let MirInstr::MethodCall {
-                            args, arg_places, ..
-                        }
-                        | MirInstr::Call {
-                            args, arg_places, ..
-                        } = instruction
-                        {
-                            pass_capturing_arguments(
-                                capturing,
-                                index,
-                                args,
-                                arg_places,
-                                &mut preludes,
-                            );
                         }
                     }
                     // An indirect call whose callee is a nominal callable
@@ -3276,9 +3127,7 @@ impl<'a> Specializer<'a> {
                             });
                         if let Some((callable, captures_are_empty)) =
                             self.callable_targets.get(&callee.0).cloned()
-                            && (captures_are_empty
-                                || dependent_callable
-                                || self.enclosing.binds_environment(&callable))
+                            && (captures_are_empty || dependent_callable)
                         {
                             let target = callable.clone();
                             // The lifted body takes its environment as leading
@@ -3331,7 +3180,7 @@ impl<'a> Specializer<'a> {
                                 };
                                 // A generic `def` nested in this body binds
                                 // this instance's binders beside its own.
-                                let (target, mut bindings, arguments) = self.infer_call(
+                                let (target, bindings, arguments) = self.infer_call(
                                     owner,
                                     function,
                                     &target,
@@ -3342,16 +3191,6 @@ impl<'a> Specializer<'a> {
                                     param_arg_regs,
                                     &contract_values,
                                     scope.cloned().as_ref(),
-                                )?;
-                                // As at a direct call, a callable parameter
-                                // bound to a capturing closure becomes the
-                                // instance's trailing runtime parameters.
-                                let capturing = self.bind_capturing_callables(
-                                    owner,
-                                    function,
-                                    &target,
-                                    param_arg_regs,
-                                    &mut bindings,
                                 )?;
                                 let reduced = bindings.reduced;
                                 let concrete = self.enqueue(&target, bindings, arguments)?;
@@ -3368,13 +3207,6 @@ impl<'a> Specializer<'a> {
                                         },
                                     )?;
                                 }
-                                pass_capturing_arguments(
-                                    capturing,
-                                    index,
-                                    args,
-                                    arg_places,
-                                    &mut preludes,
-                                );
                                 concrete
                             } else {
                                 target
@@ -4323,28 +4155,6 @@ impl<'a> Specializer<'a> {
 fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
     matches!(&declaration.variadic, Some(element)
         if !matches!(element.kind(), TyKind::RuntimePack(_) | TyKind::Tuple(_)))
-}
-
-/// Append a call's trailing arguments for its capturing callable parameters,
-/// queueing the loads they need ahead of instruction `index`.
-fn pass_capturing_arguments(
-    capturing: CapturingArguments,
-    index: usize,
-    args: &mut Vec<Reg>,
-    arg_places: &mut Vec<Option<MirPlace>>,
-    preludes: &mut Vec<(usize, Vec<MirInstr>)>,
-) {
-    if capturing.environment.is_empty() {
-        return;
-    }
-    arg_places.resize(args.len(), None);
-    let mut loads = Vec::with_capacity(capturing.environment.len());
-    for (dest, place) in capturing.environment {
-        args.push(dest);
-        arg_places.push(Some(place.clone()));
-        loads.push(MirInstr::LoadPlace { dest, place });
-    }
-    preludes.push((index, loads));
 }
 
 /// Drops the compile-time argument slots `instruction` still carries: a

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1945**.
+Next free ID: **R1948**.
 
 ## Ordered Work
 
@@ -12260,40 +12260,73 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1889 The compile-time capturing-callable environment survives
-  the removal of its only producers**
+- [ ] **R1945 A nested `def` without a capture list calls a sibling
+  capture-list closure, which the pin rejects**
 
-  A compile-time callable parameter bound to a capturing closure folded the
-  closure's body and passed its captured places as trailing run-time
-  arguments. Since the `capturing` effect and `@parameter` closures no
-  longer parse, no checked program builds that binding: a closure reaches
-  a callee through a closure-trait binder `F: def(...)` as its storage
-  value, and a storage cannot bind a compile-time parameter ("cannot use a
-  dynamic value in a parameter list").
-  - Delete `CaptureOriginSet::{Infer, Param}` and `CaptureSetParamId`
-    (`mojito-types/src/origin.rs`) with their arms in `types.rs` and
-    `checker/origins/ref_params.rs`.
-  - Delete the MIR text tags `capture_set_infer` / `capture_set_param`
-    (`mir/text/write.rs`, `mir/text/parse/origins.rs`) and respell or drop
-    the pass cases that spell them:
-    `inline-parametric/capturing_callable_binder`,
-    `canonicalize/dead_reference_closure`, and
-    `mem-2-reg/reference_closure_slot`.
-  - Delete `Specializer::bind_capturing_callables`,
-    `pass_capturing_arguments`, `CapturingArguments`, and
-    `Bindings::callable_environments` (`native/mono/specializer.rs`,
-    `mono/equiv.rs`), after confirming no binding reaches them.
-  - Respell the comments that still describe a `@parameter` closure's
-    storage-less lowering (`mir/nested.rs`, `mir/lower_expr/calls.rs`,
-    `mir/ir.rs`, `mir/verify/instr.rs`, `native/mono/environment.rs`,
-    `checked.rs`, `pliron/lower/support.rs`) to the paths that remain, or
-    delete those paths if only a `@parameter` closure took them.
-  - Probe: `load_nested_closure`'s storage branch (`mir/lower_expr/calls.rs`),
-    a closure capturing a `def`'s storage by reference at a converted
-    first-class use, and the receiver arm of `capture_binds`
-    (`mir/verify/instr.rs`) that admits it may be reached by no checked
-    program since R176; delete both if so.
+  Problem: `def m(v: Int) -> Int: return k(v) * 2`, beside a sibling
+  `def k(v: Int) {x} -> Int`, passes the check and then fails MIR
+  verification ("a call of 'main$k$__storage.k' leaves out an argument";
+  "closure environment ... binds neither a leading reference parameter nor
+  a leading `read` one"), where the pin rejects it at `k(v)` with "Could
+  not infer capture convention of the captured value k".
+  - `Checker::record_permitted_call_capture` (`checker/scopes.rs`) records
+    nothing when no capture policy names the sibling, and the call goes
+    on, so `m`'s frame reaches `k`'s storage-bearing body through
+    `load_nested_closure`, which builds a `closure.make` over `k`'s
+    captures for its method.
+  - A thin sibling (`def k(v: Int) -> Int` with no captures) stays legal
+    there, as at the pin, which prints `4` for it.
+  - Probe: the program above, and the same `m` passed as a value
+    (`var mm = m`).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1946 MIR still lowers a nested body without storage that
+  captures, which no accepted program declares**
+
+  Every capture-list `def` and capturing lambda is its storage struct, and
+  a list-less `def` captures nothing, so the storage-less capture
+  lowering that `@parameter` closures used is reached by no checked
+  program the pin accepts (R1945 removes the one invalid program that
+  still reaches it).
+  - Delete the leading reference parameters a body without storage takes
+    for its captures (`mir/nested.rs`: `capture_parameters`,
+    `capture_slots`' parameter branch, the `storage.is_none()` arms of the
+    lifted declaration's ownership and reference flags).
+  - Delete `calls_nested_directly`'s storage-less capture arm and
+    `lower_direct_nested_call`'s loaded-capture arguments
+    (`mir/lower_expr/calls.rs`), and the captured places
+    `emit_nested_closure` puts on a `closure.make`.
+  - Make `mir::verify` reject a `closure.make` with captures, replacing
+    `capture_binds` (`mir/verify/instr.rs`).
+  - Probe: a `closure.make` with captures after lowering any program
+    (none should remain); `assets/ok/closure_storage_values.mojo`,
+    `nested_def_capture_storage.mojo`, and
+    `generic_nested_def_captures.mojo` still run.
+  - Depends on R1945.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1947 `closure.make` carries a capture list no lowering fills**
+
+  Once R1946 lands every `closure.make` has empty captures, as upstream's
+  function value of a thin body carries no environment, but each consumer
+  still models one.
+  - Drop `MirInstr::MakeClosure::captures` and `MirClosureCapture`
+    (`mir/ir.rs`), its MIR text field, and the passes and analyses that
+    read it (`inline_parametric`, `canonicalize`, `mem2reg`, `loans`,
+    `moves`, `interior`, `scan`, `register_ends`, `verify/places.rs`).
+  - Drop the captured-place splice of a devirtualized call
+    (`Specializer::capture_arguments`, the `captures_are_empty` flag of
+    `mir::callable_targets`) in `native/mono`.
+  - Drop the VM's closure environment (`vm/exec.rs`) and Pliron's
+    environment slots (`pliron/lower/support.rs`,
+    `pliron/lower/closures.rs`), keeping the two-word callable value's
+    layout until a thin function value needs no environment word.
+  - Respell the pass cases that build a capturing `closure.make`
+    (`inline-parametric/capturing_callable_binder`,
+    `canonicalize/dead_reference_closure`,
+    `mem-2-reg/reference_closure_slot`).
+  - Depends on R1946.
   - Model: Opus, Not Planned.
 
 - [ ] **R538 Storage paths for reference-valued elements outlive the last spelling of one**

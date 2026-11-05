@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The compile-time capturing-callable environment is gone (R1889): a
+  capture set is now always the concrete `OriginSet` of a materialized
+  closure (`CaptureOriginSet` is that set; its `Infer`/`Param` forms,
+  `CaptureSetParamId`, and the MIR text tags `capture_set_infer` /
+  `capture_set_param` are removed), and the elaborator no longer folds a
+  capturing closure bound to a callable parameter or appends its captured
+  places as trailing instance parameters. MIR no longer builds a closure
+  over a nested `def`'s storage at a first-class use, and the verifier no
+  longer lets a closure capture bind a method's receiver: a storage reaches
+  its method only as a call's receiver, as upstream's lifted method takes
+  `self`.
 - A closure's storage struct now declares an origin parameter for each
   reference capture, types that capture's field `ref[o]` over it instead
   of an untracked origin, and the closure's value applies it to the

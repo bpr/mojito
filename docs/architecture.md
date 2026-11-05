@@ -7214,10 +7214,8 @@ point where a slot declared in a loop is uninitialized again.
   beside its enclosing declarations' (R973), and the binders of the
   `comptime for` regions it and each of them is declared in (R974).
   `__toplevel__` has no candidates. A callable value parameter is one
-  like any other (R910): the elaborator binds no runtime closure or
-  environment for one the callee removed
-  (`Specializer::bind_capturing_callables`), and a call site with no
-  compile-time value for it binds nothing.
+  like any other (R910): a call site with no compile-time value for it
+  binds nothing.
   Each run records the unread set afresh, and a parameter only grows
   removable as the cleanup passes erase reads, so the last round's run,
   after every cleanup pass, decides it. The elaborator leaves a removed parameter's

@@ -268,37 +268,31 @@ impl Decoder {
 
     pub(super) fn capture_set(&mut self, value: &Value) -> Option<CaptureOriginSet> {
         match &value.kind {
-            ValueKind::Atom(tag) if tag == "capture_set_infer" => Some(CaptureOriginSet::Infer),
-            ValueKind::Positional(tag, inner) => match tag.as_str() {
-                "capture_set_param" => self
-                    .uint32(inner)
-                    .map(|v| CaptureOriginSet::Param(CaptureSetParamId(v))),
-                "capture_set" => {
-                    let mut captures = Vec::new();
-                    if let Ok(values) = self.list(inner) {
-                        for entry in values {
-                            let Ok(fields) = self.record(entry, "capture_origin") else {
-                                continue;
-                            };
-                            let origin = self
-                                .required(entry, fields, "origin")
-                                .and_then(|v| self.origin(v));
-                            let access = self
-                                .required(entry, fields, "access")
-                                .and_then(|v| self.capture_access_kind(v));
-                            self.unknown(fields, &["origin", "access"]);
-                            if let (Some(origin), Some(access)) = (origin, access) {
-                                captures.push(CaptureOrigin { origin, access });
-                            }
+            ValueKind::Positional(tag, inner) if tag == "capture_set" => {
+                let mut captures = Vec::new();
+                if let Ok(values) = self.list(inner) {
+                    for entry in values {
+                        let Ok(fields) = self.record(entry, "capture_origin") else {
+                            continue;
+                        };
+                        let origin = self
+                            .required(entry, fields, "origin")
+                            .and_then(|v| self.origin(v));
+                        let access = self
+                            .required(entry, fields, "access")
+                            .and_then(|v| self.capture_access_kind(v));
+                        self.unknown(fields, &["origin", "access"]);
+                        if let (Some(origin), Some(access)) = (origin, access) {
+                            captures.push(CaptureOrigin { origin, access });
                         }
                     }
-                    Some(CaptureOriginSet::concrete(captures))
                 }
-                other => {
-                    self.error(value.span, format!("unknown capture set `{other}`"));
-                    None
-                }
-            },
+                Some(CaptureOriginSet::concrete(captures))
+            }
+            ValueKind::Positional(other, _) => {
+                self.error(value.span, format!("unknown capture set `{other}`"));
+                None
+            }
             _ => {
                 self.error(value.span, "expected capture set");
                 None

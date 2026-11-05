@@ -1449,13 +1449,10 @@ impl Checker {
                 .lookup(name)
                 .and_then(Ty::callable)
                 .is_some_and(|callable| {
-                    callable.environment.captures().is_none_or(|captures| {
-                        matches!(
-                            captures,
-                            mojito_types::origin::CaptureOriginSet::Concrete(members)
-                                if members.is_empty()
-                        )
-                    })
+                    callable
+                        .environment
+                        .captures()
+                        .is_none_or(|captures| captures.0.is_empty())
                 })
     }
 
