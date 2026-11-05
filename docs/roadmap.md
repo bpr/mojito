@@ -9443,6 +9443,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - The VM's `repr` formats it as `str` does (`format_value` in
     `crates/mojito-vm/src/backend/vm/dispatch.rs`), and Pliron's
     `lower_repr_builtin` (`lower/methods.rs`) has no `Error` arm.
+  - Probe: `x.write_repr_to(s)` in `show[T: Writable](x: T)` over an
+    `Error` fails on the VM ("does not support methods on Error"), where
+    the pin writes `Error('boom')`: the elaborator answers an intrinsic
+    receiver's `write_to` through a bound with the writer's
+    `$write_formatted` (`rewrite_blocks`, `mono/specializer.rs`), but
+    `Error` has no `write_repr_to` witness for the requirement to reach.
   - Found while landing R1326 (2026-10-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.

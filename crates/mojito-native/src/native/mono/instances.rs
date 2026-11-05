@@ -251,6 +251,43 @@ impl Specializer<'_> {
             .is_some_and(|target| self.functions.contains_key(target))
     }
 
+    /// A `writer.$write_formatted(x)` call reaches the writer's
+    /// `write_string` and formats each argument through its own `write_to`
+    /// first: enqueue those instances for the lowered expansion.
+    pub(super) fn enqueue_formatted_write(
+        &mut self,
+        owner: &str,
+        function: &MirFunction,
+        writer: Reg,
+        args: &[Reg],
+    ) -> Result<(), MonoError> {
+        let Some(writer_ty) = function
+            .reg_types
+            .get(&writer.0)
+            .map(|ty| peel_refs(ty).clone())
+        else {
+            return Ok(());
+        };
+        let Some((writer_name, _)) = mojito_types::types::nominal_parts(&writer_ty) else {
+            return Ok(());
+        };
+        let write_string = mojito_symbol::symbol::resolve_callable_symbol(
+            &self.functions,
+            &format!("{}.write_string", nominal_template(writer_name)),
+            1,
+        );
+        if !self.functions.contains_key(write_string.as_str()) {
+            return Ok(());
+        }
+        let (bindings, arguments, _) =
+            self.infer_receiver_call(owner, &write_string, &writer_ty, ReceiverCall::default())?;
+        self.enqueue(&write_string, bindings, arguments)?;
+        for &arg in args {
+            self.enqueue_display_instance(owner, function, arg)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn enqueue_display_instance(
         &mut self,
         owner: &str,
