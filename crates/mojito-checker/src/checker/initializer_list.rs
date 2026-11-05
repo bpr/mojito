@@ -129,6 +129,30 @@ impl Checker {
                     got: param_args.len(),
                 }))
             }
+            // A call that leaves a partial alias's parameter unbound
+            // constructs the alias's application with that slot a `_`
+            // (`Scalar(True)` is `SIMD[_, length=1](True)`), which the
+            // arguments bind as upstream's construction does.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if self.generic_type_alias(name)
+                && let Some((callee, param_args)) =
+                    self.unbound_alias_application(name, param_args) =>
+            {
+                let construction = derived_construction(
+                    expression,
+                    ExprKind::Call {
+                        name: callee,
+                        param_args,
+                        args: args.clone(),
+                        kwargs: kwargs.clone(),
+                    },
+                );
+                Some(self.infer_spelled(expression, construction))
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -387,6 +411,99 @@ impl Checker {
             && self.comptime_aliases.get(name).is_some_and(|alias| {
                 !alias.decls.is_empty() && matches!(alias.body, AliasBody::Type(_))
             })
+    }
+
+    /// The application the generic alias `name` names under `param_args`
+    /// when they leave one of its parameters unbound (none spelled, or a
+    /// `_`): the alias's own application with each parameter it applies
+    /// bare spelled as its argument, or as a `_` where the list leaves it
+    /// open. `None` when the list binds every parameter, or the alias
+    /// applies a parameter other than bare.
+    fn unbound_alias_application(
+        &self,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
+        use mojito_ast::ast::ParamArg;
+        let alias = self.comptime_aliases.get(name)?;
+        let ExprKind::TypeApply {
+            name: callee,
+            args: applied,
+        } = &alias.value.kind
+        else {
+            return None;
+        };
+        let unbound = mojito_ast::call::bracket_unbound_slots(&alias.decls, param_args).ok()?;
+        let keywords = mojito_ast::call::bracket_keywords(&param_args[..unbound.listed]);
+        let slots = mojito_ast::call::match_parameter_slots(&alias.decls, &keywords).ok()?;
+        let mut bound: Vec<Option<&ParamArg>> = vec![None; alias.decls.len()];
+        for (position, (argument, slot)) in param_args.iter().zip(slots).enumerate() {
+            if unbound.kept.contains(&position) {
+                bound[slot] = Some(match argument {
+                    ParamArg::Named { value, .. } => &**value,
+                    positional => positional,
+                });
+            }
+        }
+        let defaulted = |decl: &ParamDecl| {
+            matches!(
+                decl,
+                ParamDecl::Value {
+                    default: Some(_),
+                    ..
+                } | ParamDecl::Type {
+                    default: Some(_),
+                    ..
+                }
+            )
+        };
+        let open = |index: usize| bound[index].is_none() && !defaulted(&alias.decls[index]);
+        if !(0..alias.decls.len()).any(open)
+            || (0..alias.decls.len()).any(|index| bound[index].is_none() && !open(index))
+        {
+            return None;
+        }
+        let binder = |argument: &ParamArg| match argument {
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(binder),
+                ..
+            }) => alias.decls.iter().position(|decl| decl.name() == binder),
+            _ => None,
+        };
+        let spelled = |argument: &ParamArg| {
+            binder(argument).map(|index| {
+                bound[index].cloned().unwrap_or_else(|| {
+                    ParamArg::Value(Expr::new(
+                        ExprKind::Identifier("_".to_string()),
+                        alias.value.span,
+                    ))
+                })
+            })
+        };
+        let mut applied_binders = 0;
+        let param_args = applied
+            .iter()
+            .map(|argument| match argument {
+                ParamArg::Named { name, value } => match spelled(value) {
+                    Some(value) => {
+                        applied_binders += 1;
+                        ParamArg::Named {
+                            name: name.clone(),
+                            value: Box::new(value),
+                        }
+                    }
+                    None => argument.clone(),
+                },
+                positional => spelled(positional).map_or_else(
+                    || positional.clone(),
+                    |value| {
+                        applied_binders += 1;
+                        value
+                    },
+                ),
+            })
+            .collect();
+        (applied_binders == alias.decls.len()).then(|| (callee.clone(), param_args))
     }
 
     /// The spelling of the type `object` names when it applies a generic

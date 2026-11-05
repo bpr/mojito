@@ -107,9 +107,6 @@ impl FnLowering<'_> {
             }
             return self.materialize_pending(ctx, &literal, target, dest);
         }
-        if let Some(value) = self.intable_struct_value(ctx, elem, dest)? {
-            return self.convert_lane(ctx, ScalarTy::Int, target, value, dest);
-        }
         let source = match self.concrete_scalar_ty(elem)? {
             Some(ty) => ty,
             None => match self.func.reg_types.get(&elem.0).map(Ty::kind) {
@@ -119,51 +116,6 @@ impl FnLowering<'_> {
         };
         let value = self.reg_value(ctx, elem, source)?;
         self.convert_lane(ctx, source, target, value, dest)
-    }
-
-    /// Invoke a concrete nominal `__int__` selected by the checker for a
-    /// `SIMD[dt, _](x)` constructor operand (R1544). Returns `None` for
-    /// non-struct operands and for a `Bool`, whose held `!kgen.scalar<bool>`
-    /// is the lane, as upstream's `SIMD.__init__(value: Bool)` reads it.
-    pub(super) fn intable_struct_value(
-        &mut self,
-        ctx: &mut Context,
-        source: Reg,
-        anchor: Reg,
-    ) -> Result<Option<Value>, PlironError> {
-        let register_ty = self.func.reg_types.get(&source.0).cloned();
-        let Some((name, _)) = register_ty
-            .as_ref()
-            .filter(|ty| !ty.is_bool())
-            .and_then(|ty| ty.kind().as_non_simd_struct())
-        else {
-            return Ok(None);
-        };
-        let Some((method, signature)) = self
-            .struct_member(name, "__int__", 0)
-            .and_then(|method| Some((method, self.signatures.get(method)?)))
-        else {
-            return Err(
-                self.unsupported_reg(format!("`{name}` without compiled `__int__`"), anchor)
-            );
-        };
-        if signature.outcome.is_some() || signature.sret.is_some() {
-            return Err(self.unsupported_reg(format!("non-scalar `{method}`"), anchor));
-        }
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let receiver = self.reg_ptr(ctx, source)?;
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(callee),
-            signature.func_ty,
-            vec![receiver],
-        );
-        self.append(ctx, call.get_operation(), Some(anchor));
-        Ok(Some(call.get_result(ctx)))
     }
 
     /// `SimdCast` (upstream's `pop.cast`) — the VM's

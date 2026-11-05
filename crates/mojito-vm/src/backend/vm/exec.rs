@@ -1765,27 +1765,13 @@ impl VmBackend {
                 let reg_types = &prog.mir.functions[function].1.reg_types;
                 // A `Bool` element is its held `!kgen.scalar<bool>` lane, as
                 // upstream's `SIMD.__init__(value: Bool)` reads it.
-                let mut vals: Vec<Value> = elems
+                let vals: Vec<Value> = elems
                     .iter()
                     .map(|r| match reg_types.get(&r.0) {
                         Some(ty) if ty.is_bool() => regs[r.0 as usize].clone(),
                         ty => prog.boxed(regs[r.0 as usize].clone(), ty),
                     })
                     .collect();
-                // An `Intable` element of a `SIMD[dt, _](x)` construction
-                // (R1544) arrives as its concrete struct; normalize it
-                // through `__int__` before lane build.
-                for val in &mut vals {
-                    if let Value::Struct { name, .. } = val {
-                        let index = prog.struct_member(name, "__int__", 0).ok_or_else(|| {
-                            RuntimeError::Unsupported(format!(
-                                "vm: struct '{name}' has no method '__int__'"
-                            ))
-                        })?;
-                        let receiver = std::mem::replace(val, Value::None);
-                        *val = self.call_function(prog, index, vec![receiver])?;
-                    }
-                }
                 let (dtype, width) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;
                 regs[dest.0 as usize] = simd_from_values(dtype, width, &vals)?;
             }

@@ -365,38 +365,6 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Enqueue a nominal `__int__` reached implicitly by a `SIMD[dt, _](x)`
-    /// construction (R1544). The checker records the concrete operand type on the
-    /// element register, while MIR deliberately keeps construction as
-    /// `MakeSimd` rather than synthesizing a method call.
-    pub(super) fn enqueue_intable_instance(
-        &mut self,
-        owner: &str,
-        function: &MirFunction,
-        arg: Reg,
-    ) -> Result<(), MonoError> {
-        let Some(ty) = function.reg_types.get(&arg.0) else {
-            return Ok(());
-        };
-        let Some((name, _)) = ty.kind().as_non_simd_struct() else {
-            return Ok(());
-        };
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            &self.functions,
-            nominal_template(name),
-            "__int__",
-            None,
-            0,
-        );
-        if !self.functions.contains_key(target.as_str()) {
-            return Ok(());
-        }
-        let (bindings, arguments, _) =
-            self.infer_receiver_call(owner, &target, ty, ReceiverCall::default())?;
-        self.enqueue(&target, bindings, arguments)?;
-        Ok(())
-    }
-
     /// Enqueue the display member `method` of the closed `SIMD` type `ty`,
     /// instantiated at the `String` writer, and declare the `SIMD` instance
     /// whose member table a backend finds it in from the value's type.

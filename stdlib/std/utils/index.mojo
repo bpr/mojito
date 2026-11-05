@@ -1,8 +1,4 @@
 # Upstream's `std/utils/index.mojo`, in its order, with these departures:
-# - `IndexList.__init__()` and `__init__(fill=)` spell
-#   `StaticTuple[Self._int_type, Self.size]` where upstream infers the
-#   element slot from the initializer (`StaticTuple[_, Self.size]`)
-#   (R1773).
 # - The comparisons pass `self, rhs` where upstream passes
 #   `self.data, rhs.data` through the `@implicit` constructor, since a
 #   binder is not inferred through a converting argument (R52).
@@ -202,7 +198,7 @@ struct IndexList[size: Int, *, element_type: DType = .int64](
     @inline(.always)
     def __init__(out self):
         """Constructs a static int tuple of the given size."""
-        self.data = StaticTuple[Self._int_type, Self.size](fill=Self._int_type(0))
+        self.data = StaticTuple[_, Self.size](fill=Self._int_type(0))
 
     @inline(.always)
     @implicit
@@ -275,7 +271,7 @@ struct IndexList[size: Int, *, element_type: DType = .int64](
         comptime assert (
             Self.element_type.is_integral()
         ), "Element type must be of integral type."
-        self.data = StaticTuple[Self._int_type, Self.size](fill=Self._int_type(fill))
+        self.data = StaticTuple[_, Self.size](fill=Self._int_type(fill))
 
     @inline(.nodebug)
     def __len__(self) -> Int:

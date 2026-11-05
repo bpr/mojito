@@ -260,6 +260,7 @@ assets/ok/conforms_to_runtime_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_trivial_register_passable_undeclared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_undeclared_compiler_trait.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_user_and_unasked_traits.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/construction_unbound_slot_from_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/construction_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/constructor_overload_shortest_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/constructor_read_temporary_drop_order.mojo	-	ineligible	no-scalar-entry-shape

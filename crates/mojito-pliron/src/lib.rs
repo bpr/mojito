@@ -1249,21 +1249,6 @@ impl<'p> CallEdges<'p, '_> {
                     }
                 }
             }
-            // A `SIMD[dt, _](x)` construction over a concrete Intable
-            // struct (R1544) invokes its checker-selected `__int__` in the
-            // lowered expansion, so retain that implicit edge.
-            MirInstr::MakeSimd { elems, .. } => {
-                for elem in elems {
-                    if let Some((name, _)) = self
-                        .function
-                        .reg_types
-                        .get(&elem.0)
-                        .and_then(|ty| ty.kind().as_non_simd_struct())
-                    {
-                        self.push_members(name, "__int__");
-                    }
-                }
-            }
             // A copy or a `^` transfer runs the constructor it names,
             // except the nominal String's copy constructor, which is
             // bridged natively.

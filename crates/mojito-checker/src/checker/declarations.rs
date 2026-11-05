@@ -3956,7 +3956,20 @@ impl Checker {
             });
         }
         if !param_args.is_empty() {
-            return self.bind_bracket_params(name, decls, param_args, None, patterns, actuals);
+            // A `_` the bracket spells leaves its slot to the arguments, as
+            // upstream infers a construction's unbound parameter
+            // (`SIMD[DType.int32, _](v)` binds the width from `v`).
+            let unbound = mojito_ast::call::bracket_unbound_slots(decls, param_args)
+                .ok()
+                .filter(mojito_ast::call::UnboundSlots::any_open);
+            return self.bind_bracket_params(
+                name,
+                decls,
+                param_args,
+                unbound.as_ref().map(|slots| (slots, true)),
+                patterns,
+                actuals,
+            );
         }
         // Inference: type parameters (and value parameters occupying a solved
         // argument slot, `Array[T, length]` against `Array[Int, 3]`) from the
@@ -4202,7 +4215,8 @@ impl Checker {
                 decl.name()
             )));
         }
-        let bound = self.bind_bracket_params(name, decls, param_args, Some(&unbound), &[], &[])?;
+        let bound =
+            self.bind_bracket_params(name, decls, param_args, Some((&unbound, false)), &[], &[])?;
         let arguments = bound
             .arguments
             .into_iter()
@@ -4237,6 +4251,7 @@ impl Checker {
                 },
                 [(_, argument)],
             ) = (decl, arguments.as_slice())
+                && mojito_ast::call::unbound_marker(argument).is_none()
                 && let TyArg::Ty(ty) = self.resolve_param_arg(decl, argument)?
             {
                 explicit.insert(id.clone(), ty);
@@ -4892,15 +4907,31 @@ impl Checker {
             ids: mojito_types::param_expr::ParamBindings::new(),
             origins: HashMap::new(),
         };
-        // The instance the brackets or an alias spell, whole.
-        let known = if param_args.is_empty() {
+        // The instance the brackets or an alias spell, each slot a `_`
+        // leaves to the arguments `None`.
+        let known: Option<Vec<Option<TyArg>>> = if param_args.is_empty() {
             constructed.and_then(|ty| {
-                mojito_types::types::nominal_parts(ty).map(|(_, arguments)| arguments.into_owned())
+                mojito_types::types::nominal_parts(ty)
+                    .map(|(_, arguments)| arguments.iter().cloned().map(Some).collect())
             })
         } else {
-            self.resolve_use_params(name, decls, param_args, &[], &[])
+            self.resolve_partial_use_params(name, decls, param_args)
                 .ok()
-                .map(|bound| bound.arguments)
+                .map(|(arguments, _)| arguments)
+        };
+        let masked_known = |arguments: &[TyArg], known: &[Option<TyArg>]| -> Ty {
+            TyKind::Struct(
+                name.to_string(),
+                arguments
+                    .iter()
+                    .zip(known)
+                    .map(|(argument, known)| match known {
+                        Some(_) => argument.clone(),
+                        None => TyArg::Ty(Ty::none()),
+                    })
+                    .collect(),
+            )
+            .into()
         };
         let own_patterns: Vec<(Ty, Ty)> = bound
             .iter()
@@ -4910,10 +4941,14 @@ impl Checker {
                     actual.clone(),
                 )
             })
-            .chain(known.iter().map(|arguments| {
+            .chain(known.iter().map(|known| {
+                let spelled: Vec<TyArg> = known
+                    .iter()
+                    .map(|argument| argument.clone().unwrap_or_else(|| TyArg::Ty(Ty::none())))
+                    .collect();
                 (
-                    refined.clone(),
-                    TyKind::Struct(name.to_string(), arguments.clone()).into(),
+                    masked_known(&refinement, known),
+                    masked_known(&spelled, known),
                 )
             }))
             .collect();
@@ -4923,8 +4958,13 @@ impl Checker {
         // parameter uninferred.
         let spelled_own =
             bracket_bindings(&format!("{name}.__init__"), &sig.decls, explicit, None)?;
-        for ((decl, argument), defined) in decls.iter().zip(&refinement).zip(&defined) {
-            if !defined || known.is_some() {
+        for (index, ((decl, argument), defined)) in
+            decls.iter().zip(&refinement).zip(&defined).enumerate()
+        {
+            let spelled = known
+                .as_ref()
+                .is_some_and(|known| known.get(index).is_some_and(Option::is_some));
+            if !defined || spelled {
                 continue;
             }
             let undetermined = sig.decls.iter().zip(&spelled_own).any(|(own, spelled)| {
@@ -5405,18 +5445,21 @@ impl Checker {
     /// The explicit-bracket binding [`Self::resolve_use_params`] and
     /// [`Self::resolve_partial_use_params`] share: `unbound`, when given,
     /// names the arguments that bind and the slots the list leaves open,
-    /// each read as its own binder.
+    /// each read as its own binder, or, with its flag set, solved from
+    /// `patterns` against `actuals` as a construction's are.
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn bind_bracket_params(
         &self,
         name: &str,
         decls: &[ParamDecl],
         param_args: &[mojito_ast::ast::ParamArg],
-        unbound: Option<&mojito_ast::call::UnboundSlots>,
+        unbound: Option<(&mojito_ast::call::UnboundSlots, bool)>,
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<BoundParameters, TypeError> {
         let mut subst: TySubst = TySubst::new();
+        let (unbound, solve_open) =
+            unbound.map_or((None, false), |(slots, solve)| (Some(slots), solve));
         let bound = bracket_bindings(name, decls, param_args, unbound)?;
         let open = |index: usize| unbound.is_some_and(|slots| slots.open[index].is_some());
         let mut attributes: BracketAttributes = vec![None; param_args.len()];
@@ -5467,8 +5510,9 @@ impl Checker {
                 with_earlier_arguments(typed.as_ref().unwrap_or(decl), decls, &tyargs).or(typed);
             let decl = typed.as_ref().unwrap_or(decl);
             // An unbound slot reads its own binder, as a generic body's
-            // identity arguments do, so later slots' types see it open.
-            if open(index) {
+            // identity arguments do, so later slots' types see it open; a
+            // construction's is solved from its arguments below.
+            if open(index) && !solve_open {
                 tyargs.push(decl.own_argument());
                 continue;
             }
@@ -5619,6 +5663,10 @@ impl Checker {
                 && let Some(solved) = value_solutions.get(pname)
             {
                 TyArg::Val(solved.clone())
+            } else if open(index)
+                && let ParamDecl::Value { .. } = decl
+            {
+                return Err(self.unsolved_binder(name, decl, patterns, actuals));
             } else if let ParamDecl::Value {
                 callable_default: Some(_),
                 ..
@@ -5646,9 +5694,10 @@ impl Checker {
                 && let Some(inferred) = subst.get(id)
             {
                 TyArg::Ty(inferred.clone())
-            } else if let ParamDecl::Type {
-                default: Some(ty), ..
-            } = decl
+            } else if !open(index)
+                && let ParamDecl::Type {
+                    default: Some(ty), ..
+                } = decl
             {
                 TyArg::Ty((*ty).clone())
             } else {
@@ -5665,9 +5714,21 @@ impl Checker {
                 );
             }
         }
+        // A `_` the arguments solved is the attribute of what it binds.
+        if solve_open && let Some(slots) = unbound {
+            let listed = &param_args[..slots.listed];
+            let keywords = mojito_ast::call::bracket_keywords(listed);
+            let matched = mojito_ast::call::match_parameter_slots(decls, &keywords)
+                .map_err(|error| error.into_type_error(name))?;
+            for (position, index) in matched.into_iter().enumerate() {
+                if !slots.kept.contains(&position) {
+                    attributes[position] = tyargs.get(index).cloned();
+                }
+            }
+        }
         // A partial binding's bounds and `where` clauses wait for the
         // generator's application, which binds every slot.
-        if !unbound.is_some_and(mojito_ast::call::UnboundSlots::any_open) {
+        if solve_open || !unbound.is_some_and(mojito_ast::call::UnboundSlots::any_open) {
             self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
             self.validate_trait_parameter_bounds(name, decls, &tyargs)?;
             self.validate_generic_constraints(name, decls, &tyargs)?;

@@ -3084,11 +3084,6 @@ impl<'a> Specializer<'a> {
                         instantiated_args.clear();
                         pass_capturing_arguments(capturing, index, args, arg_places, &mut preludes);
                     }
-                    MirInstr::MakeSimd { elems, .. } => {
-                        for elem in elems.clone() {
-                            self.enqueue_intable_instance(owner, function, elem)?;
-                        }
-                    }
                     MirInstr::MethodCall {
                         dest,
                         recv,

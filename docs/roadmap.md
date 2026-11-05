@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1935**.
+Next free ID: **R1936**.
 
 ## Ordered Work
 
@@ -4138,90 +4138,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1544 `SIMD[dt, _](v)` does not bind its width from a vector
-  argument**
+- [ ] **R1935 A `SIMD` construction checked before `SIMD`'s initializers
+  register is the checker's rule, where upstream calls a declared one**
 
-  `SIMD[DType.int32, _](v)` and `SIMD[DType.float64, _](w)` over a
-  four-lane `float64` `v` and a two-lane `float64` `w` print `[1, 2, 3, 4]`
-  and copy `w` at the pin. Mojito rejects both: "type mismatch for SIMD
-  element: expected a DType.int32 element, found SIMD[DType.float64, 4]".
-  - The declared cast overload `__init__[other_dtype](value:
-    SIMD[other_dtype, Self.length])` does not bind an unbound `_` from its
-    argument, so the construction falls back to the checker's rule, whose
-    `argument_simd_width` admits only a one-lane argument.
-  - A user struct of the same shape, `W[DType.int32, _](v)` over
-    `__init__[other: DType, //](out self, x: SIMD[other, Self.n], /)`, is
-    rejected at the pin too ("depends on an unresolved parameter 'n'"), so
-    find what lets `SIMD`'s `_` bind before changing the general rule.
-  - Probe: `SIMD[DType.int, _](True)` prints `1` at the pin, through
-    `__init__[T: Intable]`; Mojito rejects it ("expected a DType.int
-    element, found Bool"). `SIMD[DType.int, _](I())` over an `Intable`
-    `I` already prints the pin's `9`, by the rule.
-  - Once a `_` width binds the declared overloads, delete the rule they
-    leave: `declared_simd_construction`'s positional fallback for an
-    unknown width, `check_simd_value`'s `Intable` clause and
-    `argument_simd_width`'s `Bool`/`Param`/`Struct` arm
-    (`checker/operators.rs`), and the `simd.make` `__int__` machinery
-    (the VM `exec.rs` `MakeSimd` arm, Pliron `intable_struct_value` and
-    `lib.rs`'s `MakeSimd` edge, mono `enqueue_intable_instance`, and
-    `__int__` in `mir::TYPE_REACHED_MEMBERS`).
-  - The same gap binds a `_` dtype from the selected initializer's
-    refined `out self`: `SIMD[_, 1](True)` and `Scalar(True)` print `True`
-    at the pin, and `W[_, 1](True)` over `__init__(out self:
-    W[DType.bool, Self.n], value: Bool, /)` prints `bool 1 1`. Mojito
-    rejects them ("'_' does not name a DType in scope", "type 'Scalar'
-    expects 1 type argument(s), got 0", "expected DType, found a
-    non-materializable compile-time value"); bare `Scalar` also waits on
-    R1557's alias.
-  - On landing, restore upstream's `Scalar(True)` and `Scalar(False)` in
-    `stdlib/std/utils/numerics.mojo`'s `bool` arms.
-  - The rule's `SemanticAdjustment::ConstructSimd` is what MIR's
-    `Flatten::try_simd_call` lowers, as a storage splat or build and
-    `struct.create`, in place of a declared initializer's call. It also
-    serves `SIMD.__init__`'s own `comptime res = SIMD[Self.dtype,
-    Self.length](0)` through the parameter domain's `simd_construction`
-    (`checker/constraints.rs`), so every program reaches it; delete
-    `try_simd_call` with the rule.
-  - Found while landing R186 (2026-10-27).
+  Problem: the builtin folds and the module aliases are checked before
+  `check_struct_method_signatures` registers `SIMD.__init__`, so
+  `declared_simd_construction` (`checker/call_inference.rs`) finds no
+  initializer and `infer_simd_construction` (`checker/operators.rs`)
+  types the call by the checker's rule.
+  - Two bundled sites reach it: `SIMD.__init__()`'s own `comptime res =
+    SIMD[Self.dtype, Self.length](0)`, folded by `fold_builtin_bodies`,
+    and `std.hash.hasher`'s `comptime default_hasher =
+    AHasher[SIMD[DType.uint64, 4](0)]`, registered beside the shells.
+  - The rule records `simd_construction`, whose
+    `SemanticAdjustment::ConstructSimd` MIR's `Flatten::try_simd_call`
+    lowers as a `simd.make` and `struct.create` in place of the
+    initializer's call.
+  - Upstream resolves the declaration on demand, so both sites call the
+    `@implicit` `IntLiteral` initializer.
+  - Lever: let a fold or an alias whose `SIMD` construction finds no
+    initializer wait for `SIMD`'s signatures, as
+    `settle_constructing_aliases` already lets an alias over a program's
+    own struct wait (`AwaitsSignatures`).
+  - Then delete the rule: `infer_simd_construction`, `construct_simd`,
+    `check_simd_args`, `check_simd_value`, and `argument_simd_width`,
+    `infer_unbound_call`'s `SIMD` arm, `infer_instance_construction`'s
+    fallback, the `simd_construction` fact, `ConstructSimd`, and
+    `try_simd_call`.
+  - Probe: `rg "fn try_simd_call" crates` is empty and every SIMD fixture
+    still runs.
+  - Found while landing R1544 (2026-11-05).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1545 A `SIMD[dtype](...)` call with its length omitted is
-  rejected, where the pin binds the length from the arguments**
-
-  `print(SIMD[DType.int8](5))` prints `5` at the pin, which leaves
-  `length` unbound as `SIMD[DType.int8, _](5)` does. Mojito stops with
-  "type 'SIMD' expects 2 type argument(s), got 1".
-  - Cause: `Checker::simd_dims` (`checker/type_resolution.rs`) requires
-    both bracket arguments, and the construction dimensions `infer`
-    records read it too.
-  - Lever: a construction with one bracket argument takes the unbound
-    width `argument_simd_width` already binds for `_`.
-  - Found while landing R186 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1773 A `_` type slot in a construction is not bound by the
-  selected initializer**
-
-  `StaticTuple[_, 3](fill=Int64(2))` prints `2` at the pin, which leaves
-  `element_type` unbound for the initializer to bind. Mojito stops with
-  "type '_' for parameter 'element_type' does not conform to trait
-  'ImplicitlyCopyable'".
-  - Cause: the type resolver maps `_` to `Ty::infer()`
-    (`checker/type_resolution.rs`), and the construction checks the
-    parameter's bound against that hole instead of leaving the slot for
-    the selected `__init__` to solve.
-  - R1544 and R1545 are the same rule for `SIMD`'s width; this is a
-    struct's type slot.
-  - Probe: `B[_, 3](fill=x)` over a user `struct B[T: ImplicitlyCopyable,
-    n: Int]`.
-  - On landing, restore upstream's `StaticTuple[_, Self.size]` in
-    `IndexList.__init__()` and `__init__(fill=)`
-    (`stdlib/std/utils/index.mojo`).
-  - Found while landing R1674 (2026-10-31).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1602 An `and`/`or` left operand that converts to the right
   operand's type is rejected, where upstream tests it before converting it**

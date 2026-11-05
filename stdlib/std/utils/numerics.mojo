@@ -6,10 +6,7 @@
 # `max_finite`'s `float4_e2m1fn`, `float8_*`, and `bfloat16` arms, and the
 # classifiers' `float8_*`, `float4_e2m1fn`, and `bfloat16` arms and
 # `dtype in (…)` tests are omitted: Mojito has none of those dtypes (R65).
-# The two `bool` arms spell `Scalar[DType.bool](...)` where upstream spells
-# `Scalar(...)`, since a `_` the selected initializer's `out self` binds is
-# not yet solved (R1544). `get_accum_type`, `nextafter`, and
-# `FlushDenormals` are not ported.
+# `get_accum_type`, `nextafter`, and `FlushDenormals` are not ported.
 """Defines utilities to work with numeric types.
 
 You can import these APIs from the `utils` package. For example:
@@ -535,7 +532,7 @@ def max_finite[dtype: DType]() -> Scalar[dtype]:
     elif dtype == .float64:
         return 1.79769313486231570815e308
     elif dtype == .bool:
-        return Scalar[DType.bool](True)._refine[dtype]()
+        return Scalar(True)._refine[dtype]()
     else:
         comptime assert False, "max_finite() called on unsupported dtype"
 
@@ -564,7 +561,7 @@ def min_finite[dtype: DType]() -> Scalar[dtype]:
     elif dtype.is_floating_point():
         return -max_finite[dtype]()
     elif dtype == .bool:
-        return Scalar[DType.bool](False)._refine[dtype]()
+        return Scalar(False)._refine[dtype]()
     else:
         comptime assert False, "min_finite() called on unsupported dtype"
 

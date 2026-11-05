@@ -1359,6 +1359,13 @@ impl Checker {
         let records = self.node_facts.borrow();
         param_args
             .iter()
+            .filter(|argument| {
+                let argument = match argument {
+                    mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
+                    positional => positional,
+                };
+                mojito_ast::call::unbound_marker(argument).is_none()
+            })
             .filter_map(|argument| match argument {
                 mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
                 mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {

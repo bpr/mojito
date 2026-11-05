@@ -368,13 +368,10 @@ impl Checker {
     }
 
     /// A `SIMD` construction through the `__init__` overloads `std.simd`
-    /// declares, or `None` when it is the checker's rule's: no declared one
-    /// matches and the rule serves its one positional argument into a
-    /// width not known here (`SIMD[dt, _]`,
-    /// R1544); any other miss is the declared selection's error, so
-    /// `Int8(x)` over a struct whose `__int__` raises but which does not
-    /// declare `IntableRaising` is rejected as at the pin. `constructed` is
-    /// the instance a construction spelled through an alias is bound to,
+    /// declares, a `_` slot bound from the arguments
+    /// (`SIMD[DType.int32, _](v)`), or `None` while `SIMD`'s initializers
+    /// have not registered, when the checker's rule serves it. `constructed`
+    /// is the instance a construction spelled through an alias is bound to,
     /// or `None` for `SIMD`'s own bracket.
     fn declared_simd_construction(
         &self,
@@ -392,29 +389,9 @@ impl Checker {
         {
             return None;
         }
-        let construct =
-            || self.infer_construction_of(span, name, constructed, param_args, args, kwargs);
-        let rule_served = || {
-            if kwargs.is_empty() {
-                if args.len() > 1 {
-                    return false;
-                }
-                let instance = match constructed {
-                    Some(constructed) => Some(constructed.clone()),
-                    None => self.simd_application(param_args).ok().map(|(ty, _)| ty),
-                };
-                return instance
-                    .and_then(|instance| simd_slots(&instance))
-                    .is_none_or(|(_, width)| width.known().is_none());
-            }
-            false
-        };
-        // An explicit initializer list binds only a declared initializer.
-        let explicit_own = self.spelled_initializer_args.borrow().contains_key(span);
-        if !explicit_own && self.probe(rule_served) && self.probe(construct).is_err() {
-            return None;
-        }
-        Some(construct().and_then(|ty| {
+        let constructed =
+            self.infer_construction_of(span, name, constructed, param_args, args, kwargs);
+        Some(constructed.and_then(|ty| {
             self.type_runtime_param_args(param_args)?;
             Ok(ty)
         }))

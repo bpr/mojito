@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `_` in a construction's bracket now leaves its slot to the selected
+  initializer, which binds it from the arguments or its refined `out
+  self`, as at the pin: `SIMD[DType.int32, _](v)` casts a four-lane `v`,
+  `SIMD[DType.int, _](True)` is `1`, `SIMD[_, 1](True)`, `Scalar(True)`,
+  and `StaticTuple[_, 3](fill=x)` run, and a user struct's `_` slot binds
+  the same way (R1544, R1545, R1773). `std.utils.numerics` and `IndexList`
+  spell upstream's `Scalar(True)` and `StaticTuple[_, Self.size]` again,
+  and the checker's `Intable` rule and the `simd.make` `__int__` call on
+  both backends are gone. A construction checked before `SIMD`'s
+  initializers register is still the rule's (R1935).
+  `assets/ok/construction_unbound_slot_from_arguments.mojo` pins it.
 - A struct's `def(...)` conformance and a closure storage's `__call__`
   witness now record a witness table, as a declared trait's conformance
   does, and the elaborator resolves a call through a `def(...)` bound on

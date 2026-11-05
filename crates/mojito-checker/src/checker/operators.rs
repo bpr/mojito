@@ -935,7 +935,7 @@ impl Checker {
         let (dtype, mut width, attributes) = self.simd_dims(param_args)?;
         self.record_bracket_attributes(span.clone(), attributes);
         if width.is_inferred() {
-            width = self.argument_simd_width(&dtype, args)?;
+            width = self.argument_simd_width(args)?;
         }
         self.construct_simd(span, &dtype, &width, args)
     }
@@ -1261,18 +1261,11 @@ impl Checker {
         ))
     }
 
-    /// The width an unbound `SIMD[dtype, _]` construction binds from its
-    /// arguments, as upstream's one-value overloads do: a `SIMD[other_dtype,
-    /// Self.length]` argument gives its own width (a literal materializes to
-    /// a scalar), and an `Intable` one binds `__init__[T: Intable]`, a scalar
-    /// whose `comptime assert` wants an integral dtype. No overload binds
-    /// `_` from an element count. Each is this rule's until a `_` width
-    /// binds the declared overloads (R1544).
-    fn argument_simd_width(
-        &self,
-        dtype: &SimdDtype,
-        args: &[Expr],
-    ) -> Result<SimdWidth, TypeError> {
+    /// The width an unbound `SIMD[dtype, _]` construction the rule serves
+    /// binds from its one argument: a `SIMD[other_dtype, Self.length]`
+    /// argument gives its own width, and a literal materializes to a
+    /// scalar. Every other `_` binds the declared initializers.
+    fn argument_simd_width(&self, args: &[Expr]) -> Result<SimdWidth, TypeError> {
         let no_match = || TypeError::BadCall {
             func: "SIMD".to_string(),
             reason: "no matching function in initialization: an unbound '_' width binds \
@@ -1290,32 +1283,12 @@ impl Checker {
             {
                 Ok(width)
             }
-
-            TyKind::Param { .. } | TyKind::Struct(..)
-                if !aty.is_simd()
-                    && !mojito_types::types::is_simd_length(&aty)
-                    && (aty.is_bool() || self.conforms_to(&aty, "Intable")) =>
-            {
-                if !dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) {
-                    return Err(TypeError::BadCall {
-                        func: "SIMD".to_string(),
-                        reason: format!(
-                            "constraint failed: {}",
-                            mojito_types::types::INTABLE_CONVERSION_MESSAGE
-                        ),
-                    });
-                }
-                Ok(SimdWidth::Known(1))
-            }
             _ => Err(no_match()),
         }
     }
 
     /// Check the one argument of a SIMD construction: the cast from another
-    /// dtype ([`converts_to_lane`], a scalar splatting across the width), or
-    /// a scalar's construction from an `Intable` value through its
-    /// `__int__`. Only `SIMD[dt, _](x)` reaches the `Intable` clause: every
-    /// spelled width binds the declared `__init__[T: Intable]` (R1544).
+    /// dtype ([`converts_to_lane`], a scalar splatting across the width).
     fn check_simd_value(
         &self,
         dtype: &SimdDtype,
@@ -1326,17 +1299,7 @@ impl Checker {
         if converts_to_lane(&aty, dtype) {
             return Ok(());
         }
-        let intable_object = width.known() == Some(1)
-            && dtype.licenses(|d| d != Dtype::Bool && !d.is_float())
-            && (aty.is_non_simd_struct() || matches!(aty.kind(), TyKind::Param { .. }))
-            && self.conforms_to(&aty, "Intable");
-        if !intable_object {
-            return Err(simd_argument_error(dtype, width, &aty));
-        }
-        self.borrow_nominal_place_argument(arg, &aty);
-        self.borrow_parameter_place_argument(arg, &aty);
-        self.record_read_temporary_argument(arg);
-        Ok(())
+        Err(simd_argument_error(dtype, width, &aty))
     }
 
     /// A read dunder binds its operand as a method call binds a read
