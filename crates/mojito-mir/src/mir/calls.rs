@@ -3,7 +3,7 @@
 //! invalidation emission.
 //! Extracted from `mir.rs`; see `docs/symbol-map.md`.
 
-use super::call_results::CValue;
+use super::call_results::{CValue, operand_reads};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::CheckedCallArgumentSource;
@@ -153,7 +153,7 @@ impl<'a> Flatten<'a> {
             borrowed
                 .then(|| this.lower_borrowed_read_argument(expression))
                 .flatten()
-                .unwrap_or_else(|| this.temporary_operand(expression, false, false))
+                .unwrap_or_else(|| this.temporary_operand(expression, false, false).0)
         });
         self.allow_argument_anchors = saved_anchor_permission;
         value
@@ -585,11 +585,10 @@ impl<'a> Flatten<'a> {
             // A reference result's read, and the temporary binding of its
             // copy, are setup work too.
             let read = |this: &mut Self| this.temporary_operand(expression, converted, false);
-            let value = match setup {
+            return match setup {
                 Some(source) => self.defer_to_setup(expression, Some(source), true, read),
                 None => read(self),
             };
-            return (value, None);
         }
 
         // A written-back subscript's getter runs at the call's setup, after
@@ -685,7 +684,7 @@ impl<'a> Flatten<'a> {
         // rejects a non-place actual for a place-requiring parameter; lowering
         // stays total so the verifier can diagnose corrupt checked input
         // without manufacturing a caller place.
-        (self.temporary_operand(expression, converted, true), None)
+        self.temporary_operand(expression, converted, true)
     }
 
     /// Evaluate an augmented-subscript argument before either accessor call,
@@ -1927,7 +1926,7 @@ impl<'a> Flatten<'a> {
         adjustments: &[mojito_checked::checked::SemanticAdjustment],
         converted: bool,
         reads: bool,
-    ) -> Option<Reg> {
+    ) -> Option<(Reg, Option<MirPlace>)> {
         let subscript_view = matches!(
             expression.op(),
             CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. } | CheckedOp::Slice { .. }
@@ -1966,7 +1965,7 @@ impl<'a> Flatten<'a> {
         value: Reg,
         loans: Vec<MirLoan>,
         reads: bool,
-    ) -> Reg {
+    ) -> (Reg, Option<MirPlace>) {
         if expression.indirect_result() {
             let slot = self.temporary_storage(expression, value, true, "$arg_loan_r");
             self.establish_storage_loans(expression, slot, loans);
@@ -1975,8 +1974,8 @@ impl<'a> Flatten<'a> {
         let (read, place) =
             self.anchor_borrowing_temporary(expression, value, loans, "$arg_loan_r");
         self.pending_argument_anchors
-            .extend(place.map(|place| place.root));
-        read
+            .extend(place.as_ref().map(|place| place.root));
+        (read, place.filter(|_| operand_reads(expression, reads)))
     }
 
     /// Bind a loan-carrying temporary into a hidden retained slot whose loans
@@ -2286,27 +2285,39 @@ impl<'a> Flatten<'a> {
     /// that reads (`reads`) or takes it by its recorded convention
     /// ([`Self::operand_c`]): a result returned through memory is used in
     /// its call-result slot, and a loan-carrying temporary anchors its loans
-    /// through the call ([`Self::anchor_temporary_argument`]).
-    fn temporary_operand(&mut self, expression: Node<'a>, converted: bool, reads: bool) -> Reg {
+    /// through the call ([`Self::anchor_temporary_argument`]). A memory-only
+    /// `read` temporary ([`read_by_address`]) is passed by the address of
+    /// that storage, its call-result, argument-anchor, or lambda storage
+    /// slot, as upstream's `lit.call` takes a `!lit.ref` of the rvalue it
+    /// materialized: the slot is returned as the operand's place for
+    /// [`crate::mir::address_call_operands`].
+    fn temporary_operand(
+        &mut self,
+        expression: Node<'a>,
+        converted: bool,
+        reads: bool,
+    ) -> (Reg, Option<MirPlace>) {
+        let by_address = read_by_address(expression);
         let value = match self.operand_expr_c(expression) {
             CValue::Value(value) => {
-                if let Some(read) = self.anchor_temporary_argument(
+                if let Some((read, place)) = self.anchor_temporary_argument(
                     expression,
                     value,
                     expression.adjustments(),
                     converted,
                     reads,
                 ) {
-                    return read;
+                    return (read, place.filter(|_| by_address));
                 }
                 match self.loaned_call_result(expression, value) {
                     Some(slot) => CValue::Slot(slot),
-                    None => return value,
+                    None => return (value, None),
                 }
             }
             slot @ CValue::Slot(_) => slot,
         };
-        self.operand_c(expression, value, reads)
+        let (read, place) = self.operand_c(expression, value, reads);
+        (read, place.filter(|_| by_address))
     }
 
     /// Materialize `value`, a fresh temporary its call returned in
@@ -2397,6 +2408,16 @@ impl<'a> Flatten<'a> {
         }
         (value, place)
     }
+}
+
+/// Whether call operand `expression` is a `read` temporary upstream passes
+/// by address: the checker marked it `ReadTemporaryArgument`, not
+/// `ForwardedArgument`, and did not prove its type register-passable
+/// (`RegisterPassableRead`).
+fn read_by_address(expression: Node<'_>) -> bool {
+    expression.ty().is_some()
+        && !expression.register_passable_read()
+        && operand_reads(expression, false)
 }
 
 /// Whether method call `call` reads or owns its receiver by value, so the

@@ -922,10 +922,11 @@ pub enum SemanticAdjustment {
     /// upstream's `mergeCValuesAcrossIfLikeOp` does. Any other result is
     /// stored into a result slot by each arm.
     RegisterPassableResult,
-    /// A [`Self::BorrowReadArgument`] whose type is proven register-passable,
-    /// which upstream passes to a `read` parameter by value. Any other read
-    /// argument is memory-only and passed by address: lowering retains its
-    /// place, so the callee binds the caller's storage.
+    /// A [`Self::BorrowReadArgument`] or [`Self::ReadTemporaryArgument`]
+    /// whose type is proven register-passable, which upstream passes to a
+    /// `read` parameter by value. Any other read argument is memory-only and
+    /// passed by address: lowering retains its place, or a temporary's
+    /// storage, so the callee binds that storage.
     RegisterPassableRead,
     /// A call, dispatched operator, by-value subscript, or display whose
     /// selected callee returns its result through memory, as upstream's

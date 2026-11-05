@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A direct call passes a memory-only `read` temporary by the address of
+  its storage, its call-result, argument-anchor, or capturing lambda's
+  storage slot, as upstream's `lit.call` takes a `!lit.ref` of the rvalue
+  it materialized, instead of a loaded value with no place (R1917). The
+  checker now judges a `read` temporary's register-passability
+  (`RegisterPassableRead`) at its converted type, and copy elision's read
+  lend renames the retained place to the dying source. `twice(lambda {var
+  s^} -> Int: ...)` no longer frees the lambda's storage twice; it prints
+  `34`, as the pin does. A read collector's elements (R1302), a reference
+  result's copy (R701), and `divmod`'s operands (R1458) keep the loaded
+  value.
+
 - A memory-only temporary that carries a loan keeps it on its one
   call-result slot, as upstream's borrowers sit on its
   `__call_result_tmp__`: the argument, receiver, view-conversion, and

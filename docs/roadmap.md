@@ -2707,6 +2707,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     rejected even over a concrete `List[C]`, where the pin borrows both.
     `lower_borrowed_read_argument` returns `None` for a call, which spells
     no name (found landing R1354, 2026-10-25).
+  - Probe: a direct call's reference result at a `read` parameter of a
+    `Copyable` type is copied: `show(pick(a))`, `pick(ref m: M) -> ref[m]
+    M`, prints `copy 101` then `show 101`, where the pin binds the
+    parameter to the returned reference and prints `show 1` (found
+    landing R1917, 2026-11-04).
   - The rejection is the checker's implicit-copy test on a reference
     result (`crates/mojito-checker/src/checker.rs`), which treats the
     `ref` slot as a consuming read.
@@ -9904,41 +9909,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1917 A memory-only value with no caller place at a `read`
-  argument is passed as a loaded value, where upstream passes the address
-  of a temporary**
-
-  A direct `call` passes a by-address argument as a `ref.make` of its
-  retained place (`mir::address_call_operands`), but an operand whose
-  lowering retains no place keeps its value.
-  - Upstream stores such an rvalue in a stack temporary, passes its
-    address, and destroys the temporary after the call.
-  - Probe: `twice[F: def() -> Int](f: F) -> Int: return f() * 10 + f()`
-    over `lambda {var s^} -> Int: (s.__iadd__("!"), s.byte_length())[1]`
-    with `s = String("ab")` stops on "double free of Pointer allocation"
-    on the VM, where the pin prints `34`. `main` passes a `place.load` of
-    the lambda's storage slot with no `arg_places` entry.
-  - Probe (from R1873): a named memory-only value at a `read` argument is
-    a register the call's end destroys: `divmod(y, d)` over `T:
-    DivModable & Deinitable` moves `y` and copies `d`
-    (`value_traits_library.mojo`, `boolable_and_divmod.mojo`,
-    `math_operation_traits_library.mojo`), `print(e)` moves `e: T.E`
-    (`where_refined_bound_members.mojo`), and `llvm_intrinsic`'s
-    `*args` spread moves the whole `$variadic[*types]` pack.
-  - Probe (from R1873): a memory-only temporary at a `read` argument that
-    `Flatten::result_storage` (`mir/call_results.rs`) leaves in its
-    register: a `__copyinit__` of a reference result in `print(name_of(s))`
-    (`always_inline_nodebug_reference_results.mojo`,
-    `module_reference_result_reads.mojo`) and of a walrus value in
-    `print(names[0] := String("zz"))` (`walrus_place_targets.mojo`), and
-    a call result of pack-element type in `print(first([v, v], v))`
-    (`pack_element_list_display.mojo`).
-  - Fix: in `lower_call_operand` (`mir/calls.rs`), bind the rvalue to a
-    call-result slot (`CALL_RESULT_SLOT`) and retain that slot as the
-    operand's place, so the address rewrite reaches it.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1918 A method call passes its receiver and by-address arguments
   as loaded values beside their places**
 
@@ -10051,11 +10021,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     storage handed over, the form `lower_drops` gives every slot drop.
   - A 2026-11-03 census of `assets/ok` and `assets/ownership_ok` with the
     rule on found 10 fixtures (35 with `MOJITO_PRE_ELABORATION=0`, the rest
-    `llvm_intrinsic`'s pack spread), each a probe filed on R1917 or on
-    R1418, which has landed.
+    `llvm_intrinsic`'s pack spread), each a probe now filed on R1302,
+    R701, or R1458 (R1418 and R1917 have landed).
   - Re-run the census, both ways, before landing it: the rule runs after
     every pass in a debug build.
-  - Depends on R1425, R1418, R1917.
+  - Depends on R1425, R1418, R1302, R701, R1458.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
@@ -10170,6 +10140,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     builtin copies a generic `T`'s or a struct's operands
     (`boolable_and_divmod.mojo`, `numeric_operation_traits.mojo`,
     `math_operation_traits_library.mojo`).
+  - Probe (from R1873, via R1917): `divmod(y, d)` over `T: DivModable &
+    Deinitable` moves `y` and copies `d`, registers the call's end
+    destroys (`value_traits_library.mojo`).
   - Probe: `divmod(UInt8(7), 3)` is rejected ("'divmod' is not defined for
     UInt8 and Int"), where the pin prints `(2, 1)`: `builtin_args`
     materializes the literal to `Int` before the pair is typed, where
@@ -10397,6 +10370,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `o`'s values before `c`'s, where the pin destroys `c`, `h`, `o`
     together after the call
     (`assets/ok/condition_truthiness_reads_in_place.mojo`).
+  - Probe (from R1873, via R1917): a memory-only element of a `read`
+    collector is a loaded register the call's end destroys, where
+    upstream's `VariadicPack` holds its address: `print(e)` over `e: T.E`
+    (`where_refined_bound_members.mojo`), `print(name_of(s))`
+    (`always_inline_nodebug_reference_results.mojo`,
+    `module_reference_result_reads.mojo`), `print(names[0] :=
+    String("zz"))` (`walrus_place_targets.mojo`), and `print(first([v,
+    v], v))` (`pack_element_list_display.mojo`).
+  - Probe (from R1873, via R1917): `llvm_intrinsic`'s `*args` spread
+    (`lower_pack_spread_argument`, `mir/calls.rs`) moves the whole
+    `$variadic[*types]` pack into the call.
   - Found while planning R743 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Not Planned.

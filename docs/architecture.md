@@ -2214,9 +2214,17 @@ where an instance's substitution makes the parameter register-passable
 (`read x: T` at `T = Int`), as upstream's pass loads such an argument at
 the call. The place stays in `arg_places`, which the VM and Pliron still
 bind a parameter from, and the VM loads an addressed operand's place for
-a callee taking the value (R1920). A method call, an indirect call, a
-subscript, and an operand with no place keep the load (R1917, R1918,
-R1919).
+a callee taking the value (R1920). A memory-only `read` temporary (one
+the checker marked `ReadTemporaryArgument` and did not prove
+register-passable, `RegisterPassableRead`, judged at its converted type
+when an implicit conversion made it) retains its storage as its place:
+its call-result slot, argument-anchor slot, or a capturing lambda's
+storage slot (`Flatten::temporary_operand`), so the rewrite passes that
+slot's address, and copy elision's read lend renames the retained place
+to the dying source with the load. A method call, an indirect call, and a
+subscript keep the load (R1918, R1919); so do a read collector's elements
+(R1302), a reference result's copy, which upstream passes as the
+reference itself (R701), and the `divmod` builtin's operands (R1458).
 
 The same pass builds every call's positional collector, as upstream's call
 builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes

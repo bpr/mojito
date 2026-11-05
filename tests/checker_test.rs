@@ -3456,6 +3456,42 @@ fn checked_calls_mark_ordinary_and_parameterized_implicit_receiver_copies() {
 }
 
 #[test]
+fn read_temporaries_record_register_passability() {
+    // A `read` temporary of a register-passable type is passed by value
+    // (`RegisterPassableRead`); a memory-only one is passed by address.
+    let source = "def show(s: String) -> Int:\n    return s.byte_length()\n\ndef bump(x: Int) -> Int:\n    return x + 1\n\ndef main():\n    print(show(String(\"ab\")))\n    print(bump(Int(3)))\n";
+    let checked = checked_with_std(source).expect("check");
+    let read_temporaries = own_expressions(&checked)
+        .filter(|expression| {
+            expression
+                .adjustments
+                .iter()
+                .any(|adjustment| matches!(adjustment, SemanticAdjustment::ReadTemporaryArgument))
+        })
+        .map(|expression| {
+            (
+                format!("{:?}", expression.ty),
+                expression.adjustments.iter().any(|adjustment| {
+                    matches!(adjustment, SemanticAdjustment::RegisterPassableRead)
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        read_temporaries
+            .iter()
+            .any(|(ty, by_value)| ty.contains("String") && !by_value),
+        "{read_temporaries:#?}"
+    );
+    assert!(
+        read_temporaries
+            .iter()
+            .any(|(ty, by_value)| ty.contains("Int") && *by_value),
+        "{read_temporaries:#?}"
+    );
+}
+
+#[test]
 fn parameter_valued_conditions_mark_their_conditionals_comptime() {
     // `flag` and `n > 0` are parameter values; a call of an ordinary `def`
     // and an `and` are run-time values, as the pin's `getIfPValue` has them.

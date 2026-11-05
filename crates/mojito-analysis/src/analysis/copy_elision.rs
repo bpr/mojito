@@ -31,8 +31,9 @@
 //! reads once. When its source dies there and nothing evaluated between the binding and the
 //! call can raise, the source is lent instead: the construction, the
 //! binding, and the source's death go, the call reads the source where it
-//! lies, and every death of the slot, its `DropVar`, becomes the source's, as Mojo binds the borrowed
-//! temporary to the dead source's own storage. A raising argument after the
+//! lies (a by-address operand's retained place names the source), and
+//! every death of the slot, its `DropVar`, becomes the source's, as Mojo
+//! binds the borrowed temporary to the dead source's own storage. A raising argument after the
 //! construction keeps the move, as at Mojo. A copy any other binding takes
 //! still becomes a move.
 //!
@@ -368,16 +369,20 @@ fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at:
 struct Lending {
     binding_at: usize,
     load_at: usize,
+    /// The reader of the load, which may retain the slot as the place a
+    /// by-address operand binds.
+    consumer_at: usize,
     load: Reg,
     slot: VarId,
 }
 
 /// The call-result slot the dying copy at `at` binds right past the run
 /// of drops holding its source's death, when the source can stand in for
-/// it: only the binding and one whole load name the slot, that load's one
-/// use is a later instruction of the block before any region op, nothing
-/// from the binding to that
-/// use can raise, and nothing from the binding to the slot's last death in
+/// it: only the binding, one whole load, and that load's reader (when a
+/// direct call retains the slot as a by-address operand's place,
+/// [`retained_operand_places`]) name the slot, that load's one use is a
+/// later instruction of the block before any region op, nothing from the
+/// binding to that use can raise, and nothing from the binding to the slot's last death in
 /// the block names the source.
 fn lending_use(
     instrs: &[MirInstr],
@@ -398,7 +403,7 @@ fn lending_use(
         .var_names
         .get(slot as usize)
         .is_some_and(|name| name.starts_with(CALL_RESULT_SLOT));
-    if src != dest || !read_temporary || elision.mentions.get(&slot) != Some(&2) {
+    if src != dest || !read_temporary {
         return None;
     }
     let end = segment_end(instrs, binding_at + 1);
@@ -418,6 +423,12 @@ fn lending_use(
         return None;
     }
     let consumer_at = first_reader(instrs, load_at + 1..end, load)?;
+    let retained = retained_operand_places(&instrs[consumer_at])
+        .filter(|place| place.root == slot)
+        .count();
+    if elision.mentions.get(&slot) != Some(&(2 + retained)) {
+        return None;
+    }
     let last_death = instrs[..end]
         .iter()
         .rposition(
@@ -435,20 +446,48 @@ fn lending_use(
     (silent && untouched).then_some(Lending {
         binding_at,
         load_at,
+        consumer_at,
         load,
         slot,
     })
 }
 
+/// The places a direct call retains for its by-address operands, which
+/// [`mojito_mir::mir::address_call_operands`] passes as `ref.make`s; a
+/// receiver's place, which a `ref self` binds, is not one.
+fn retained_operand_places(instruction: &MirInstr) -> impl Iterator<Item = &MirPlace> {
+    let places = match instruction {
+        MirInstr::Call {
+            arg_places,
+            kwarg_places,
+            ..
+        } => Some(arg_places.iter().chain(kwarg_places).flatten()),
+        _ => None,
+    };
+    places.into_iter().flatten()
+}
+
 /// Lend the dying source to the read call that takes the call-result
 /// slot: the load, the construction, the source's death, and the slot's
-/// binding go, and the slot's load reads the source instead. The slot's
-/// deaths become the source's once the whole function is rewritten.
+/// binding go, and the slot's load, and the call's retained operand place,
+/// read the source instead. The slot's deaths become the source's once the whole function is rewritten.
 fn lend(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, lending: Lending) -> Loan {
     if let MirInstr::LoadPlace { place, .. } | MirInstr::MakeRef { place, .. } =
         &mut instrs[lending.load_at]
     {
         place.root = source.var;
+    }
+    if let MirInstr::Call {
+        arg_places,
+        kwarg_places,
+        ..
+    } = &mut instrs[lending.consumer_at]
+    {
+        for place in arg_places.iter_mut().chain(kwarg_places).flatten() {
+            if place.root == lending.slot {
+                place.root = source.var;
+            }
+        }
     }
     let mut removed = [lending.binding_at, source.drop_at, at, at - 1];
     removed.sort_unstable_by(|left, right| right.cmp(left));

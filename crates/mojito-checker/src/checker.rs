@@ -2160,7 +2160,7 @@ impl Checker {
     /// so is an implicit conversion's when its type is. A conversion's
     /// `read` source stays passed by address only when it is memory-only
     /// ([`mojito_checked::checked::SemanticAdjustment::ConversionReadsSource`]).
-    /// A read argument
+    /// A read argument, a borrowed place or a temporary,
     /// whose type is not memory-only is passed by value
     /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableRead`]).
     fn record_result_conventions(&self) {
@@ -2179,20 +2179,27 @@ impl Checker {
             records
                 .iter()
                 .filter_map(|(span, facts)| {
-                    let by_value = facts.borrowed_read_call_place
-                        && facts.ty.as_ref().is_some_and(|ty| !memory_only(ty));
+                    let conversion = facts
+                        .implicit_conversion
+                        .as_deref()
+                        .and_then(constructed)
+                        .or_else(|| facts.implicit_conversion_type.clone());
+                    // A converted temporary is passed as the conversion's
+                    // result.
+                    let passed = match (facts.read_temporary_argument, &conversion) {
+                        (true, Some(converted)) => Some(converted),
+                        _ => facts.ty.as_ref(),
+                    };
+                    let by_value = (facts.borrowed_read_call_place
+                        || facts.read_temporary_argument)
+                        && passed.is_some_and(|ty| !memory_only(ty));
                     let indirect = facts
                         .declared_result
                         .clone()
                         .or_else(|| facts.overload_target.as_deref().and_then(constructed))
                         .or_else(|| facts.ty.clone())
                         .is_some_and(|ty| memory_only(&ty));
-                    let converted = facts
-                        .implicit_conversion
-                        .as_deref()
-                        .and_then(constructed)
-                        .or_else(|| facts.implicit_conversion_type.clone())
-                        .is_some_and(|ty| memory_only(&ty));
+                    let converted = conversion.as_ref().is_some_and(memory_only);
                     let reads_source =
                         facts.conversion_reads_source && facts.ty.as_ref().is_some_and(memory_only);
                     (indirect || converted || by_value || facts.conversion_reads_source)

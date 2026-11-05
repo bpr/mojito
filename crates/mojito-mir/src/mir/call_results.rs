@@ -230,21 +230,21 @@ impl<'a> Flatten<'a> {
     /// `value`, call operand `expression` (an argument, receiver, or
     /// operator operand), used by the convention the checker recorded for
     /// it: one it marked `ReadTemporaryArgument` (or any, when `reads`) is
-    /// read, and any other is taken, as an owned operand the checker marked
-    /// `ForwardedArgument` is.
-    pub(super) fn operand_c(&mut self, expression: Node<'a>, value: CValue, reads: bool) -> Reg {
-        let forwarded = expression
-            .adjustments()
-            .iter()
-            .any(|adjustment| matches!(adjustment, SemanticAdjustment::ForwardedArgument));
-        let read = expression
-            .adjustments()
-            .iter()
-            .any(|adjustment| matches!(adjustment, SemanticAdjustment::ReadTemporaryArgument));
-        if !forwarded && (reads || read) {
-            return self.read_c(expression, value).0;
+    /// read, with the storage it was read from, the slot whose address a
+    /// by-address `read` parameter binds
+    /// ([`crate::mir::address_call_operands`]); any other is taken, as an
+    /// owned operand the checker marked `ForwardedArgument` is, and has no
+    /// place.
+    pub(super) fn operand_c(
+        &mut self,
+        expression: Node<'a>,
+        value: CValue,
+        reads: bool,
+    ) -> (Reg, Option<MirPlace>) {
+        if operand_reads(expression, reads) {
+            return self.read_c(expression, value);
         }
-        self.take_c(expression, value)
+        (self.take_c(expression, value), None)
     }
 
     /// A condition's `Bool`: its value, or, for a `Boolable` struct the
@@ -352,4 +352,18 @@ impl<'a> Flatten<'a> {
         self.var_types.entry(slot).or_insert(ty);
         Some(slot)
     }
+}
+
+/// Whether call operand `expression` is read rather than taken: the checker
+/// marked it `ReadTemporaryArgument` (or the consumer `reads` any operand),
+/// and it is not a `ForwardedArgument`.
+pub(super) fn operand_reads(expression: Node<'_>, reads: bool) -> bool {
+    let adjustments = expression.adjustments();
+    !adjustments
+        .iter()
+        .any(|adjustment| matches!(adjustment, SemanticAdjustment::ForwardedArgument))
+        && (reads
+            || adjustments
+                .iter()
+                .any(|adjustment| matches!(adjustment, SemanticAdjustment::ReadTemporaryArgument)))
 }

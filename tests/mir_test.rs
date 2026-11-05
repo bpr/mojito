@@ -3731,6 +3731,53 @@ fn method_call_temporary_view_argument_anchors_its_source_loan() {
 }
 
 #[test]
+fn memory_only_read_temporary_passes_its_slot_address() {
+    // A memory-only temporary at a `read` parameter retains its call-result
+    // slot as the operand's place, so the call passes that slot's address,
+    // as upstream's `lit.call` takes a `!lit.ref` of the rvalue it
+    // materialized; a register-passable one stays a value.
+    let source = r#"
+@no_inline
+def show(s: String) -> Int:
+    return s.byte_length()
+
+@no_inline
+def bump(x: Int) -> Int:
+    return x + 1
+
+@no_inline
+def make() -> String:
+    return String("abc")
+
+def main():
+    print(show(make()))
+    print(bump(Int(3)))
+"#;
+    let (_, main) = checked_main(source);
+    let first_place = |callee: &str| {
+        nested_instructions(&main.blocks)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func, arg_places, ..
+                } if func.0 == callee => Some(arg_places.first().cloned().flatten()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a call of `{callee}`"))
+    };
+    let place = first_place("show").expect("`show` retains its operand's storage");
+    assert!(
+        main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT),
+        "{place:?}"
+    );
+    assert!(place.proj.is_empty(), "{place:?}");
+    assert!(
+        first_place("bump").is_none(),
+        "an `Int` temporary stays a value"
+    );
+}
+
+#[test]
 fn short_circuit_argument_anchor_dies_in_its_arm() {
     // A temporary an `or`'s right operand makes for a call argument is
     // defined in the `or`'s else region and dies there, as upstream's
