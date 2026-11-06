@@ -376,8 +376,15 @@ impl Checker {
     /// chain off it (`q.i.v`), a parameter expression rather than storage.
     /// A module constant bound to a requested value, or folded to a closed
     /// attribute, is one too, as is a local binding of an application: it
-    /// has no storage, and each read materializes it.
+    /// has no storage, and each read materializes it. So is the enclosing
+    /// struct's value pack (`Self.vs`), its visible `ParameterList` binder.
     pub(super) fn is_parameter_read(&self, expr: &Expr) -> bool {
+        if let ExprKind::Member { object, field } = &expr.kind
+            && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+            && self.self_value_pack(field).is_some()
+        {
+            return true;
+        }
         field_chain_root(expr).is_some_and(|root| {
             root != "Self"
                 && (self.is_compile_time_binding(root)

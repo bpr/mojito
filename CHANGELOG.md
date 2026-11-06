@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value pack read at run time (`var l = vs`, `for v in vs`, `print(vs)`,
+  `Self.vs[i]`) now reads the pack's visible binder `vs: ParameterList[T,
+  vs.values]`, as the pin does, instead of the checker spelling a fresh
+  `ParameterList[vs.values]()` construction in its place. A callable pack
+  may now be followed by another parameter (`run_all[hi, bye, n=3]()`
+  over `[*fs: def() thin -> None, n: Int]`), which the pin accepts and
+  Mojito rejected (R1910).
 - A `Bool` value pack's elements now read back as the values bound, on the
   VM as natively: `for f in fs: print(f)` in `def flags[*fs: Bool]()` at
   `flags[True, False, True]()` prints `True`, `False`, `True` instead of

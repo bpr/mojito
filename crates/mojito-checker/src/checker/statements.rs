@@ -3154,28 +3154,7 @@ impl Checker {
         if carried {
             // Nothing to bind or infer: the pops below balance the pushes above.
         } else {
-            // Value parameters are ordinary `Int` locals in the body.
-            for d in &decls {
-                if let ParamDecl::Value {
-                    name, ty, variadic, ..
-                } = d
-                    && !d.is_pack_list()
-                    && !d.is_type_pack()
-                {
-                    result = self.declare_value_parameter(
-                        name.trim_start_matches('*'),
-                        match d.value_element_ty() {
-                            Some(element) if *variadic => {
-                                TyKind::VariadicPack(element.clone()).into()
-                            }
-                            _ => (*ty).clone(),
-                        },
-                    );
-                    if result.is_err() {
-                        break;
-                    }
-                }
-            }
+            result = self.declare_value_parameters(&decls);
             if result.is_ok() {
                 for ((param, ty), opaque) in params.iter().zip(&param_tys).zip(&opaque_params) {
                     let bind_ty = match param.kind {

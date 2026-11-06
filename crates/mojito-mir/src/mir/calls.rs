@@ -388,12 +388,15 @@ impl<'a> Flatten<'a> {
 
     /// The objects `expression`'s accessor chain reads through, innermost
     /// last. A static call's receiver is a type, never a place, so the call
-    /// ends its chain as a free call does.
+    /// ends its chain as a free call does; a parameter value read through a
+    /// member (`Self.vs`) is a value, so it ends the chain too.
     fn place_chain(&self, expression: Node<'a>) -> Vec<Node<'a>> {
         std::iter::successors(Some(expression), |node| {
             node.object().filter(|object| {
-                !matches!(node.op(), CheckedOp::MethodCall { .. })
-                    || self.type_receiver_name(*object).is_none()
+                (!matches!(node.op(), CheckedOp::MethodCall { .. })
+                    || self.type_receiver_name(*object).is_none())
+                    && (node.recorded_value().is_none()
+                        || !matches!(node.op(), CheckedOp::Member { .. }))
             })
         })
         .skip(1)

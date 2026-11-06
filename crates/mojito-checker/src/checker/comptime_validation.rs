@@ -4389,8 +4389,9 @@ impl Checker {
 
     /// Every binder in scope as the reference a parameter expression names
     /// it by, outermost declaration first: the enclosing struct's
-    /// parameters, then each open declaration's type parameters and
-    /// non-callable value parameters, a `comptime for` index among them.
+    /// parameters, then each open declaration's type parameters, value
+    /// packs' list binders, and non-callable value parameters, a `comptime
+    /// for` index among them.
     fn binders_in_scope(&self) -> Vec<ParamExpr> {
         use mojito_types::param_expr::MetaTy;
         let mut binders: Vec<ParamExpr> = self
@@ -4438,6 +4439,16 @@ impl Checker {
                 .collect();
             types.sort();
             binders.extend(types);
+            // A value pack's list binder (`vs.values`), which its visible
+            // binder's `ParameterList[T, vs.values]` type names.
+            let mut lists: Vec<ParamExpr> = packs
+                .into_iter()
+                .flat_map(HashMap::values)
+                .filter(|list| *list.meta() != MetaTy::type_list())
+                .cloned()
+                .collect();
+            lists.sort();
+            binders.extend(lists);
             let mut values: Vec<ParamExpr> = self
                 .vparams
                 .get(level)
@@ -4906,9 +4917,10 @@ impl Checker {
         }
     }
 
-    /// The value pack an expression names while it is still a parameter: a
-    /// `def`'s own `*values: Int`, typed as the pack of its element, which
-    /// no instance has bound yet, or the enclosing struct's `Self.values`.
+    /// The list binder of the value pack an expression names while it is
+    /// still a parameter: a `def`'s own `*values: Int`, whose local is its
+    /// visible `ParameterList` binder and which no other local shadows, or
+    /// the enclosing struct's `Self.values`.
     pub(super) fn value_pack_named(&self, expr: &Expr) -> Option<ParamExpr> {
         if let ExprKind::Member { object, field } = &expr.kind
             && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
@@ -4919,11 +4931,8 @@ impl Checker {
             return None;
         };
         // A signature binds no local: there the name is the binder alone.
-        match self.lookup(name).map(Ty::kind) {
-            Some(TyKind::VariadicPack(element))
-                if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_none() => {}
-            Some(_) => return None,
-            None => {}
+        if self.lookup(name).is_some() && !self.is_value_parameter(name) {
+            return None;
         }
         self.value_pack_in_scope(name)
     }
@@ -4985,14 +4994,6 @@ impl Checker {
         Some(self.infer(&invocation).inspect(|ty| {
             self.record_spelled_construction(call, invocation, ty);
         }))
-    }
-
-    /// A value pack read as a runtime value (`for v in values`, `var l =
-    /// values`, `values[i]` at a runtime index): the zero-sized
-    /// `ParameterList[values.values]()` the pin types the read as, spelled in
-    /// the read's place and checked as any construction is.
-    pub(super) fn infer_value_pack_read(&self, expression: &Expr) -> Result<Ty, TypeError> {
-        self.infer_spelled_pack_read(expression, PARAMETER_LIST)
     }
 
     /// A type pack read as a value (`var l = Ts`, `len(Ts)` at run time,

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1953**.
+Next free ID: **R1954**.
 
 ## Ordered Work
 
@@ -10670,6 +10670,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The checker site is the `Index` arm of `compile_dependent_ct_expr`
     (`checker/constraints.rs`), which also serves display lists and module
     display constants and must keep doing so.
+  - Its value-pack arm must claim the pack ahead of the struct-value
+    subscript: since R1910 a bare `vs` builds to its visible
+    `ParameterList` binder, a compile-time struct value whose
+    `__getitem_param__` the bundled port lacks (`comptime First[*vs: Int]
+    = vs[0]`, `assets/ok/generic_alias_type_pack.mojo`).
   - Add `comptime __getitem_param__[idx: Int]: Self.type =
     Self.values[idx]` to `ParameterList` in
     `stdlib/std/builtin/variadics.mojo`, as `TypeList` already declares
@@ -12209,28 +12214,23 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1910 A value pack's run-time read is spelled again instead of
-  read from its visible binder**
+- [ ] **R1953 A call through a struct's own callable pack element is
+  not resolved**
 
-  A bare `vs` read at run time is re-spelled as `ParameterList[vs.values]()`
-  (`infer_value_pack_read`, `checker/comptime_validation.rs`), where
-  upstream reads the visible binder `vs: ParameterList[T, vs.values]`
-  that R1491 now declares, materialized from its `{}` constant.
-  - Today the checker's value and pack scopes both map `vs` to the list
-    binder (`value_scope`, `pack_scope`, `checker/annotations.rs`), so the
-    visible binder is declared and bound but never read.
-  - `declare_value_parameters` (`checker/scopes.rs`) then declares `vs` at
-    its `ParameterList` type instead of `VariadicPack(T)`.
-  - `value_pack_in_scope`'s pack-scope test (`checker/constraints.rs`)
-    goes: a pack and a raw-list binder already differ by declared type.
-  - A callable pack (`*fs: def() thin -> None`) is rejected when another
-    parameter follows it; probe the pin before keeping that rule.
-  - Risk: R1601's removed-argument display, when the read value is printed.
-  - Done when `rg infer_value_pack_read` finds nothing and the R1491 gate
-    fixtures (`value_pack_*`, `parameter_list_*`) still run.
-  - Found while landing R1491 (2026-11-03).
+  `Self.fs[1]()` over `struct R[*fs: def() thin -> None]` reports
+  "Undefined variable 'Self'", where the pin calls the bound function.
+  - The call parses as an `Invoke` whose callee is the `Self.fs` member
+    with `[1]` as its bracket arguments; `infer_pack_element_call`
+    (`checker/comptime_validation.rs`) re-reads only a named call
+    (`fs[i]()`) as the invocation of the pack's element.
+  - Upstream reads the brackets on any value as its subscript, so the fix
+    is the same reading for a member callee whose object is a value pack
+    (`value_pack_named`), not a second rule.
+  - Probe: `R[hi, bye].go()` with `Self.fs[1]()` and `print(len(Self.fs))`
+    in a `@staticmethod def go()` prints `bye` and `2` at the pin.
+  - Found while landing R1910 (2026-11-06).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1912 A type pack's compile-time and run-time reads re-spell
   its `TypeList` instead of reading the visible binder**

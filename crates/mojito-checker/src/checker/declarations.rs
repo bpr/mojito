@@ -1089,16 +1089,12 @@ impl Checker {
                         variadic,
                         constraints,
                     };
-                    if !variadic {
-                        decls[index] = decl;
-                    } else if index + 1 == decls.len() {
-                        decls.pop();
-                        self.push_value_param(&mut decls, decl);
+                    if variadic {
+                        decls.remove(index);
+                        let moved = ParamDecl::insert_value_pack(&mut decls, index, decl);
+                        self.move_trait_bounded_binders(moved);
                     } else {
-                        return Err(TypeError::Unsupported(format!(
-                            "a callable value pack '{}' before another parameter",
-                            source.name
-                        )));
+                        decls[index] = decl;
                     }
                 } else {
                     let ParamDecl::Type {
@@ -1233,7 +1229,7 @@ impl Checker {
     /// `trait_value` ([`ParamDecl::push_type_pack`]), each binder it moves
     /// up a slot moved in the trait-bounded binders too.
     fn push_param(&mut self, decls: &mut Vec<ParamDecl>, decl: ParamDecl, trait_value: &CtValue) {
-        let moved: HashMap<ParamId, ParamId> = match decl {
+        let moved = match decl {
             ParamDecl::Value { variadic: true, .. } => ParamDecl::push_value_pack(decls, decl),
             ParamDecl::Type { variadic: true, .. } => {
                 ParamDecl::push_type_pack(decls, decl, trait_value)
@@ -1242,9 +1238,14 @@ impl Checker {
                 decls.push(decl);
                 return;
             }
-        }
-        .into_iter()
-        .collect();
+        };
+        self.move_trait_bounded_binders(moved);
+    }
+
+    /// Move each binder a pack declaration moved up a slot (`moved`, old
+    /// identity with new) in the trait-bounded binders too.
+    fn move_trait_bounded_binders(&mut self, moved: Vec<(ParamId, ParamId)>) {
+        let moved: HashMap<ParamId, ParamId> = moved.into_iter().collect();
         if moved.is_empty() {
             return;
         }

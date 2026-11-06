@@ -1521,6 +1521,7 @@ assets/ok/value_argument_from_caller_parameter.mojo	main	exe-differential	saniti
 assets/ok/value_getter_subscript_argument.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_aggregate_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_bracket_spread.mojo	main	exe-differential	sanitized
+assets/ok/value_pack_callable_before_parameter.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_comptime_for_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_parameter_list_members.mojo	main	exe-differential	sanitized

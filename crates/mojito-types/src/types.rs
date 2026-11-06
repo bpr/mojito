@@ -3093,12 +3093,24 @@ impl ParamDecl {
     ///
     /// Returns each moved binder's old identity with its new one.
     pub fn push_value_pack(decls: &mut Vec<Self>, visible: Self) -> Vec<(ParamId, ParamId)> {
+        let end = decls.len();
+        Self::insert_value_pack(decls, end, visible)
+    }
+
+    /// [`Self::push_value_pack`] for a pack at source position `at` that
+    /// binders `decls` already declares follow (`*fs: def() thin -> None,
+    /// n: Int`, whose callable contract is lowered after `n` is declared).
+    pub fn insert_value_pack(
+        decls: &mut Vec<Self>,
+        at: usize,
+        visible: Self,
+    ) -> Vec<(ParamId, ParamId)> {
         let Self::Value { ty: element, .. } = &visible else {
-            decls.push(visible);
+            decls.insert(at, visible);
             return Vec::new();
         };
         let element = element.clone();
-        push_pack(decls, visible, |list, bindings| {
+        insert_pack(decls, at, visible, |list, bindings| {
             let element = bind_signature_slots(&element, bindings);
             let list = list.with_value_type(TyKind::ParamList(element.clone()).into());
             let reference = ParamContext::detached().decl_ref(
@@ -7394,20 +7406,35 @@ fn push_pack(
     pack: ParamDecl,
     list_and_ty: impl FnOnce(ParamDecl, &ParamBindings) -> (ParamDecl, Ty),
 ) -> Vec<(ParamId, ParamId)> {
+    let end = decls.len();
+    insert_pack(decls, end, pack, list_and_ty)
+}
+
+/// [`push_pack`] for a pack whose source position `at` is followed by
+/// binders `decls` already declares from `at` on: the visible binder
+/// takes slot `at` among the source binders, and each later binder moves
+/// up a slot past the inserted list binder, as does every reference to
+/// one.
+fn insert_pack(
+    decls: &mut Vec<ParamDecl>,
+    at: usize,
+    pack: ParamDecl,
+    list_and_ty: impl FnOnce(ParamDecl, &ParamBindings) -> (ParamDecl, Ty),
+) -> Vec<(ParamId, ParamId)> {
     let owner = pack.id().owner.clone();
     let type_pack = matches!(pack, ParamDecl::Type { .. });
-    let end = decls.len();
     let position = decls
         .iter()
         .take_while(|decl| mojito_ast::call::CompileTimeParam::infer_only(*decl))
-        .count();
+        .count()
+        .min(at);
     let list_name = format!("{}.values", pack.name().trim_start_matches('*'));
     let mut ordered = decls.clone();
-    ordered.push(pack);
+    ordered.insert(at, pack);
     let (mut moved, bindings) = reown_parameters(&ordered, &owner, |slot, _| {
         if slot < position {
             slot
-        } else if type_pack && slot == end {
+        } else if type_pack && slot == at {
             position
         } else {
             slot + 1
@@ -7419,11 +7446,12 @@ fn push_pack(
         .filter(|(old, new)| old.id() != new.id())
         .map(|(old, new)| (old.id().clone(), new.id().clone()))
         .collect();
-    let Some(moved_pack) = moved.pop() else {
+    if moved.len() <= at {
         return renumbered;
-    };
+    }
+    let moved_pack = moved.remove(at);
     let list_id = ParamId::new(&owner, position);
-    let visible_id = ParamId::new(&owner, end + 1);
+    let visible_id = ParamId::new(&owner, at + 1);
     let (list, visible) = match moved_pack {
         ParamDecl::Type {
             name,
@@ -7471,8 +7499,8 @@ fn push_pack(
         ),
     };
     let (list, ty) = list_and_ty(list, &bindings);
+    moved.insert(at, visible.with_value_type(ty));
     moved.insert(position, list);
-    moved.push(visible.with_value_type(ty));
     *decls = moved;
     renumbered
 }

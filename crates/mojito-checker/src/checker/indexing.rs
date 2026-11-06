@@ -1797,19 +1797,14 @@ impl Checker {
             if let Some(self_ty) = &self.self_ty {
                 self.record_at(object.source_span()).ty = Some(self_ty.clone());
             }
-            if self.self_value_pack(field).is_some()
-                && let Some(element) = self
-                    .self_decls
-                    .iter()
-                    .find(|d| d.name().trim_start_matches('*') == field)
-                    .and_then(ParamDecl::value_element_ty)
-            {
-                return Ok(TyKind::VariadicPack(element.clone()).into());
-            }
-            return match self.self_decls.iter().find(|d| d.name() == field) {
+            return match self.self_decls.iter().find(|d| {
+                d.name() == field
+                    || (d.is_value_pack() && d.name().trim_start_matches('*') == field)
+            }) {
                 // A value parameter reads as its declared type: upstream's
                 // `kgen.param.constant` of the binder, never a read of a
-                // `Self` value.
+                // `Self` value. A value pack's is its visible
+                // `ParameterList[T, vs.values]` binder.
                 Some(decl @ ParamDecl::Value { ty, .. }) => {
                     self.record_member_value(
                         span,

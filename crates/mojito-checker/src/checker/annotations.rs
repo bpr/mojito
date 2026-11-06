@@ -442,15 +442,18 @@ pub(super) fn pack_list_expr(decls: &[ParamDecl], decl: &ParamDecl) -> Option<Pa
 
 /// The value-parameter scope a declaration's own binders open: a callable
 /// binder's included, which a body reads as its parameter reference too,
-/// and a value pack's, a pack of callables among them, as its list.
+/// and a value pack's, a pack of callables among them, as its visible
+/// binder (`vs: ParameterList[T, vs.values]`), whose list [`pack_scope`]
+/// maps the same name to.
 pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
         .filter(|decl| !decl.is_pack_list() && !decl.is_type_pack())
         .filter_map(|decl| match decl {
-            ParamDecl::Value { name, .. } if let Some(list) = pack_list_expr(decls, decl) => {
-                Some((name.trim_start_matches('*').to_string(), list))
-            }
+            ParamDecl::Value { name, ty, .. } if decl.is_value_pack() => Some((
+                name.trim_start_matches('*').to_string(),
+                value_parameter_expr(decl, ty),
+            )),
             ParamDecl::Value {
                 name,
                 ty,

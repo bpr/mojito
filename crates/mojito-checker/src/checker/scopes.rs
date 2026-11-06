@@ -89,7 +89,8 @@ impl Checker {
         Ok(())
     }
 
-    /// Bind every value parameter among `decls`, a variadic one as its pack.
+    /// Bind every value parameter among `decls` at its declared type, a
+    /// value pack as its visible `ParameterList[T, vs.values]` binder.
     pub(super) fn declare_value_parameters(
         &mut self,
         decls: &[ParamDecl],
@@ -98,15 +99,9 @@ impl Checker {
             // A pack's list binder is read through the pack, and a type
             // pack's visible binder is read as the pack's list for now.
             ParamDecl::Value { .. } if decl.is_pack_list() || decl.is_type_pack() => Ok(()),
-            ParamDecl::Value {
-                name, ty, variadic, ..
-            } => self.declare_value_parameter(
-                name.trim_start_matches('*'),
-                match decl.value_element_ty() {
-                    Some(element) if *variadic => TyKind::VariadicPack(element.clone()).into(),
-                    _ => (*ty).clone(),
-                },
-            ),
+            ParamDecl::Value { name, ty, .. } => {
+                self.declare_value_parameter(name.trim_start_matches('*'), ty.clone())
+            }
             ParamDecl::Type { .. } => Ok(()),
         })
     }

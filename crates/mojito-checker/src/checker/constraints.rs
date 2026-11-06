@@ -1716,7 +1716,8 @@ impl Checker {
 
     /// The parameter-list reference a bare name denotes when it is a
     /// variadic value pack of an enclosing declaration that no local
-    /// `comptime` binding shadows.
+    /// `comptime` binding shadows: the list binder (`vs.values`) the name's
+    /// visible `ParameterList[T, vs.values]` binder names.
     pub(super) fn value_pack_in_scope(&self, name: &str) -> Option<ParamExpr> {
         let level = (0..self.tparams.len()).rev().find(|level| {
             self.vparams
@@ -1727,9 +1728,18 @@ impl Checker {
         if *pack.meta() == MetaTy::type_list() {
             return None;
         }
-        let pack = self.param_context.intern(pack);
-        self.value_parameter_in_scope(name)
-            .filter(|found| *found == pack)
+        let list = pack.as_decl_ref()?;
+        let visible = self.value_parameter_in_scope(name)?;
+        visible.as_decl_ref()?;
+        let TyKind::Struct(_, arguments) = visible.meta().as_value()?.kind() else {
+            return None;
+        };
+        matches!(
+            arguments.as_slice(),
+            [_, TyArg::Val(CtValue::Expr(named))]
+                if named.as_decl_ref().is_some_and(|named| named.id == list.id)
+        )
+        .then(|| self.param_context.intern(pack))
     }
 
     /// The parameter-list reference a bare name denotes when it is a variadic
@@ -2018,6 +2028,11 @@ impl Checker {
             // earlier member (`Self.Ts[Self.width - 1]`).
             ExprKind::Index { object, index } if let Some(pack) = self.type_pack_named(object) => {
                 Ok(context.type_shape(self.type_pack_element(&pack, &build(index)?)?))
+            }
+            // An element of a value pack (`vs[0]`): `param_list.get` over the
+            // list binder its visible `ParameterList` binder names.
+            ExprKind::Index { object, index } if let Some(pack) = self.value_pack_named(object) => {
+                context.list_get(&pack, &build(index)?).map_err(param_error)
             }
             // An element of a reflected list (`NAMES[1]` over `comptime
             // NAMES = reflect[P].field_names()`): `param_list.get` over the

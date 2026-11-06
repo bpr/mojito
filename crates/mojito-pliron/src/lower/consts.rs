@@ -290,10 +290,16 @@ impl FnLowering<'_> {
             | CtValue::Str(_)
             | CtValue::PopArray { .. } => {
                 // A struct value is typed by its own name, a `#pop.array` by
-                // its attribute type; a tuple and a string by the nominal
-                // instance their register names.
+                // its attribute type; a tuple, a string, and a pack's `{}`
+                // (whose name is the `ParameterList`/`TypeList` template, its
+                // list carried by the type) by the nominal instance their
+                // register names.
                 let ty = match value {
-                    CtValue::Struct { name, .. } => TyKind::Struct(name.clone(), Vec::new()).into(),
+                    CtValue::Struct { name, .. }
+                        if !mojito_types::types::ParamDecl::is_pack_value(value) =>
+                    {
+                        TyKind::Struct(name.clone(), Vec::new()).into()
+                    }
                     CtValue::PopArray { .. } => value.pop_array_type().ok_or_else(|| {
                         self.unsupported_reg(format!("parameter value `{value}`"), dest)
                     })?,
