@@ -7,6 +7,35 @@ use super::*;
 use mojito_checked::checked::{CheckedCompareLink, SemanticAdjustment};
 use mojito_types::types::TyKind;
 
+/// The type two merging values share, as upstream's `findCommonType`
+/// reports it.
+pub(super) enum CommonType {
+    Common(Ty),
+    /// Each value converts to the other's type, or the two convert to
+    /// different materialization targets.
+    Ambiguous,
+    /// No step finds a type both values convert to.
+    Incompatible,
+}
+
+impl CommonType {
+    /// The common type, or the merge's error over the `left` and `right`
+    /// value types.
+    pub(super) fn into_result(self, left: &Ty, right: &Ty) -> Result<Ty, TypeError> {
+        match self {
+            Self::Common(ty) => Ok(ty),
+            Self::Ambiguous => Err(TypeError::AmbiguousMerge {
+                left: left.to_string(),
+                right: right.to_string(),
+            }),
+            Self::Incompatible => Err(TypeError::IncompatibleMerge {
+                left: left.to_string(),
+                right: right.to_string(),
+            }),
+        }
+    }
+}
+
 impl Checker {
     pub(super) fn infer_prefix(
         &self,
@@ -383,47 +412,112 @@ impl Checker {
         Err(bad_infix_operator(op, &lt, &rt))
     }
 
-    /// The common type two values merging into one result take (a
-    /// conditional expression's arms, `and`/`or`'s operands), as upstream's
-    /// `coerceTypesToEachOther` finds it: their shared or numeric common
-    /// type, else the left's type when the right converts to it implicitly,
-    /// else the right's when the left does; nothing converts to a type
-    /// parameter it is not. Each value's conversion to it is
-    /// recorded at the value, a literal's materialization included. `None`
-    /// when neither converts. A conditional expression under a contextual
-    /// type converts each arm to it first ([`Self::infer_in_context`]).
+    /// The common type of two values `lt` and `rt` merging into one result,
+    /// as upstream's `findCommonType` finds it, in its order: equal types;
+    /// the `contextual` type when both convert to it; the one type the
+    /// other value converts to, ambiguous when each converts to the other;
+    /// else the materialization target the other value converts to (the
+    /// `Int` of `1 if c else 2`), ambiguous when both convert to different
+    /// targets (`1 if c else 2.5`). Upstream's meta-type bound merge and
+    /// `__merge_with__` steps are not modelled: no bundled struct declares
+    /// `__merge_with__`.
+    pub(super) fn common_type(
+        &self,
+        lt: &Ty,
+        rt: &Ty,
+        contextual: Option<&Ty>,
+    ) -> Result<CommonType, TypeError> {
+        if lt == rt {
+            return Ok(CommonType::Common(lt.clone()));
+        }
+        if let Some(expected) = contextual
+            && self.converts_implicitly(lt, expected)?
+            && self.converts_implicitly(rt, expected)?
+        {
+            return Ok(CommonType::Common(expected.clone()));
+        }
+        match (
+            self.converts_implicitly(lt, rt)?,
+            self.converts_implicitly(rt, lt)?,
+        ) {
+            (true, true) => return Ok(CommonType::Ambiguous),
+            (true, false) => return Ok(CommonType::Common(rt.clone())),
+            (false, true) => return Ok(CommonType::Common(lt.clone())),
+            (false, false) => {}
+        }
+        let left_target = self.merge_target(lt);
+        let right_target = self.merge_target(rt);
+        let right_converts = match &left_target {
+            Some(target) => self.converts_implicitly(rt, target)?,
+            None => false,
+        };
+        let left_converts = match &right_target {
+            Some(target) => self.converts_implicitly(lt, target)?,
+            None => false,
+        };
+        Ok(match (left_target, right_target) {
+            (Some(left), Some(right)) if right_converts && left_converts => {
+                if left == right {
+                    CommonType::Common(left)
+                } else {
+                    CommonType::Ambiguous
+                }
+            }
+            (Some(left), _) if right_converts => CommonType::Common(left),
+            (_, Some(right)) if left_converts => CommonType::Common(right),
+            _ => CommonType::Incompatible,
+        })
+    }
+
+    /// Merge two values into one result as upstream's
+    /// `coerceTypesToEachOther` does: find their [`Self::common_type`],
+    /// record each value's conversion to it, and in a run-time context
+    /// materialize a nonmaterializable common type (two equal literals
+    /// merge at `Int`, `1 if c else 1.0` at `Float64`), each value then
+    /// converting straight to the target.
     pub(super) fn coerce_to_each_other(
         &self,
         left: &Expr,
         lt: &Ty,
         right: &Expr,
         rt: &Ty,
-    ) -> Result<Option<Ty>, TypeError> {
-        if let Some(ty) = common_branch_ty(lt, rt) {
-            for (value, value_ty) in [(left, lt), (right, rt)] {
-                // A string literal materializes through `String`'s
-                // `@implicit` constructor.
-                if value_ty.is_string_literal() && is_nominal_string(&ty) {
-                    self.record_implicit_conversion(value, value_ty, &ty)?;
-                } else if *value_ty != ty {
-                    self.record_literal_materializations(value, value_ty, &ty)?;
-                }
-            }
-            return Ok(Some(ty));
-        }
-        // A type parameter is rigid in its body: a value converts to it
-        // only by being of it, which the common type above covers.
-        let converts = |value: &Expr, from: &Ty, to: &Ty| {
-            if matches!(to.kind(), TyKind::Param { .. }) {
-                Ok(false)
-            } else {
-                self.record_implicit_conversion(value, from, to)
-            }
+        contextual: Option<&Ty>,
+    ) -> Result<CommonType, TypeError> {
+        let common = match self.common_type(lt, rt, contextual)? {
+            CommonType::Common(common) => common,
+            failed => return Ok(failed),
         };
-        if converts(right, rt, lt)? {
-            return Ok(Some(lt.clone()));
+        let ty = match self.merge_target(&common) {
+            Some(target) if self.crosses_to_runtime() => target,
+            _ => common,
+        };
+        for (value, value_ty) in [(left, lt), (right, rt)] {
+            if *value_ty != ty {
+                self.record_implicit_conversion(value, value_ty, &ty)?;
+            }
         }
-        Ok(converts(left, lt, rt)?.then(|| rt.clone()))
+        Ok(CommonType::Common(ty))
+    }
+
+    /// Whether a value of type `from` converts implicitly to `to`, as a
+    /// merge asks it: by coercion or a declared `@implicit` constructor. A
+    /// type parameter is rigid in its body, so a value converts to it only
+    /// by being of it.
+    pub(super) fn converts_implicitly(&self, from: &Ty, to: &Ty) -> Result<bool, TypeError> {
+        if matches!(to.kind(), TyKind::Param { .. }) {
+            return Ok(from == to || *from == TyKind::Never);
+        }
+        Ok(self.value_coerces(from, to) || self.implicit_conversion_target(from, to)?.is_some())
+    }
+
+    /// The type a merged value of `ty` materializes to: its
+    /// `@__nonmaterializable` target, a numeric literal's default type on
+    /// a seam that links no literal struct.
+    pub(super) fn merge_target(&self, ty: &Ty) -> Option<Ty> {
+        self.materialization_target(ty).or_else(|| {
+            matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+                .then(|| mojito_types::types::default_literal(ty))
+        })
     }
 
     /// Type `left and right` or `left or right` as upstream's `emitAndOr`
@@ -432,7 +526,8 @@ impl Checker {
     /// the operand the test selects. Operands with a common type
     /// ([`Self::coerce_to_each_other`]) yield that type (`n or 2` is an
     /// `Int`), each place operand copied into the result; operands with
-    /// none are each converted to `Bool`, which is then the result, and
+    /// none, an ambiguous merge included (`0 or 2.5`), are each converted
+    /// to `Bool`, which is then the result, and
     /// read in place for the conversion. A left operand converting to the
     /// right's type is tested after its conversion here, where upstream
     /// converts it in its arm, so only a literal's materialization is
@@ -453,7 +548,7 @@ impl Checker {
             return Err(bad_infix_operator(op, &lt, &rt));
         };
         let context = format!("operand of '{}'", op.symbol());
-        let Some(ty) = self.coerce_to_each_other(left, &lt, right, &rt)? else {
+        let CommonType::Common(ty) = self.coerce_to_each_other(left, &lt, right, &rt, None)? else {
             self.expect_bool(left, &context)?;
             self.expect_bool(right, &context)?;
             return Ok(Ty::bool());

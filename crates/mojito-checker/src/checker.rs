@@ -2088,9 +2088,8 @@ impl Checker {
             }
             // Upstream's `@implicit SIMD.__init__(FloatLiteral)` is no
             // builtin body: the conversion is its call, whose instance
-            // asserts a float dtype. A value-less literal (the merge of
-            // `a if c else 0.5` under no contextual type) is still the
-            // `Float64` it materializes as (R1848), and a scalar-typed
+            // asserts a float dtype. A value-less literal (`1 / 2`) is
+            // still the `Float64` it materializes as (R1849), and a scalar-typed
             // expression that folds to a literal is no conversion.
             let literal_typed = matches!(
                 record.ty.as_ref().map(Ty::kind),

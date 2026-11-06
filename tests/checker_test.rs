@@ -3573,6 +3573,19 @@ fn parameter_valued_conditions_mark_their_conditionals_comptime() {
 }
 
 #[test]
+fn conditional_merge_follows_find_common_type() {
+    // The literal arm converts one way, to `Float64`.
+    ok_std("def main():\n    var c = True\n    var x = 1 if c else Float64(2)\n    print(x)\n");
+    // Each literal arm converts to the other's materialization target.
+    let error =
+        err_std("def main():\n    var c = True\n    var x = 1 if c else 2.5\n    print(x)\n");
+    assert!(
+        format!("{error:?}").contains("AmbiguousMerge"),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn conditional_under_contextual_type_converts_each_arm() {
     // Every arm converts to the annotation, so each converts and the
     // conditional is of the annotated type, as at the pin.
@@ -3584,7 +3597,7 @@ fn conditional_under_contextual_type_converts_each_arm() {
         "def main():\n    var c = False\n    var o: Optional[Float32] = Float32(0.5) if c else String(\"x\")\n    print(o.__bool__())\n",
     );
     assert!(
-        format!("{error:?}").contains("conditional-expression branches"),
+        format!("{error:?}").contains("IncompatibleMerge"),
         "got {error:?}"
     );
     // A call argument is no contextual site: the arms merge first.
@@ -3592,7 +3605,7 @@ fn conditional_under_contextual_type_converts_each_arm() {
         "def f(o: Optional[String]):\n    pass\n\ndef main():\n    var c = False\n    f(String(\"a\") if c else None)\n",
     );
     assert!(
-        format!("{error:?}").contains("conditional-expression branches"),
+        format!("{error:?}").contains("IncompatibleMerge"),
         "got {error:?}"
     );
 }

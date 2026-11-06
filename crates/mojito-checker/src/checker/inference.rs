@@ -496,12 +496,9 @@ impl Checker {
             .and_then(|ty| self.reject_runtime_deferred_call(expr, ty))
             .map(|ty| self.carry_literal_value(expr, ty));
         if let Ok(ty) = &result {
-            // A contextual conditional's arms carry their own conversions.
+            // A conditional's arms carry their own conversions.
             if is_scalar_simd(ty)
-                && !self
-                    .conditional_contexts
-                    .borrow()
-                    .contains_key(&expr.source_span())
+                && !matches!(expr.kind, ExprKind::IfExpr { .. })
                 && let Some(literal_ty) = self
                     .exact_literal_value(expr)
                     .as_ref()
@@ -1192,7 +1189,11 @@ impl Checker {
                     .iter()
                     .map(|(key, _)| key.clone())
                     .collect::<Vec<_>>();
-                let key_ty = self.infer_list_elem(&keys)?;
+                let key_ty = if dictionary {
+                    self.infer_dict_component(&keys)?
+                } else {
+                    self.infer_list_elem(&keys)?
+                };
                 super::type_resolution::reject_stored_callable_type(
                     &key_ty,
                     "a collection display element",
@@ -1217,7 +1218,7 @@ impl Checker {
                     .iter()
                     .filter_map(|(_, value)| value.clone())
                     .collect::<Vec<_>>();
-                let value_ty = self.infer_list_elem(&values)?;
+                let value_ty = self.infer_dict_component(&values)?;
                 super::type_resolution::reject_stored_callable_type(
                     &value_ty,
                     "a collection display element",
@@ -2276,12 +2277,12 @@ impl Checker {
                     .filter_map(|(_, value)| value.clone())
                     .collect::<Vec<_>>();
                 let key = if expected_key == &TyKind::Infer {
-                    self.infer_list_elem(&actual_keys)?
+                    self.infer_dict_component(&actual_keys)?
                 } else {
                     expected_key.clone()
                 };
                 let value = if expected_value == &TyKind::Infer {
-                    self.infer_list_elem(&actual_values)?
+                    self.infer_dict_component(&actual_values)?
                 } else {
                     expected_value.clone()
                 };
@@ -2572,44 +2573,43 @@ impl Checker {
         }))
     }
 
+    /// The element type of a list or set display, as upstream's
+    /// `unifyOperands` finds it: each element is inferred without context
+    /// and merged into the first ([`Self::common_type`]), which a run-time
+    /// display materializes after each merge (`[1, 1, 2.5]` is a list of
+    /// `Int`); every element then converts to the result. Two aggregates
+    /// that differ only in which elements are still literals merge in
+    /// their materialized form, as upstream's tuple display materializes
+    /// (`[(1, 2), (3, n)]` is a list of `Tuple[Int, Int]`).
     pub(super) fn infer_list_elem(&self, elems: &[Expr]) -> Result<Ty, TypeError> {
-        let mut acc: Option<Ty> = None;
-        for e in elems {
-            let ty = self.infer(e)?;
-            acc = Some(match acc {
-                None => ty,
-                Some(cur) => {
-                    common_display_element(&cur, &ty).ok_or_else(|| TypeError::TypeMismatch {
-                        expected: cur.to_string(),
-                        found: ty.to_string(),
-                        context: "list element".to_string(),
-                    })?
-                }
-            });
-        }
-        // A non-empty literal always sets `acc`; empty is handled by the caller.
-        let element = acc.ok_or_else(|| {
-            TypeError::InvariantViolation("empty list reached non-empty inference".to_string())
-        })?;
-        // An element beside the type it materializes to converts to it, as
-        // the pin infers `[name(n), "z"]`.
         let element_tys = elems
             .iter()
             .map(|value| self.infer(value))
             .collect::<Result<Vec<_>, _>>()?;
-        if element_tys.iter().any(|ty| {
-            self.materializes_by_construction(ty)
-                && self.materialization_target(ty).as_ref() == Some(&element)
-        }) {
-            for (value, ty) in elems.iter().zip(&element_tys) {
-                if self.materialization_target(ty).as_ref() == Some(&element) {
-                    self.materialize_at(ty, value.source_span())?;
-                }
+        let (first, rest) = element_tys.split_first().ok_or_else(|| {
+            TypeError::InvariantViolation("empty list reached non-empty inference".to_string())
+        })?;
+        let mut element = first.clone();
+        for ty in rest {
+            let (left, right) = if element != *ty
+                && element.kind().is_non_simd_struct()
+                && ty.kind().is_non_simd_struct()
+            {
+                (default_literal(&element), default_literal(ty))
+            } else {
+                (element, ty.clone())
+            };
+            element = self
+                .common_type(&left, &right, None)?
+                .into_result(&left, &right)?;
+            if self.crosses_to_runtime()
+                && let Some(target) = self.merge_target(&element)
+            {
+                element = target;
             }
-            return Ok(element);
         }
-        // A `@__nonmaterializable` element materializes in every runtime
-        // display, as upstream's `StringLiteral` does to `String`.
+        // A `@__nonmaterializable` element materializes in every display,
+        // as upstream's `StringLiteral` does to `String`.
         if self.materializes_by_construction(&element) {
             let mut materialized = element;
             for (value, ty) in elems.iter().zip(&element_tys) {
@@ -2617,12 +2617,47 @@ impl Checker {
             }
             return Ok(materialized);
         }
-        let materialized = default_literal(&element);
-        for value in elems {
-            let actual = self.infer(value)?;
-            self.record_literal_materializations(value, &actual, &materialized)?;
+        let element = default_literal(&element);
+        for (value, ty) in elems.iter().zip(&element_tys) {
+            if self.materializes_by_construction(ty)
+                && self.materialization_target(ty).as_ref() == Some(&element)
+            {
+                self.materialize_at(ty, value.source_span())?;
+            } else if *ty != element {
+                self.record_implicit_conversion(value, ty, &element)?;
+            }
         }
-        Ok(materialized)
+        Ok(element)
+    }
+
+    /// The key or value type of a dictionary display, as upstream binds
+    /// `Dict`'s `K` or `V` from its constructor call rather than merging the
+    /// entries: the first entry's deduced type (a literal's
+    /// materialization), to which every entry must convert
+    /// (`{1: 2, 3: 4.5}` binds `V` to `Int`).
+    pub(super) fn infer_dict_component(&self, values: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = values
+            .iter()
+            .map(|value| self.infer(value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let first = tys.first().ok_or_else(|| {
+            TypeError::InvariantViolation(
+                "empty dictionary reached non-empty inference".to_string(),
+            )
+        })?;
+        let component = self.deduced_ty(first);
+        for (value, ty) in values.iter().zip(&tys) {
+            if *ty != component && !self.record_implicit_conversion(value, ty, &component)? {
+                return Err(TypeError::BadCall {
+                    func: "Dict".to_string(),
+                    reason: format!(
+                        "no matching function in initialization: an entry of type '{ty}' \
+                         does not convert to '{component}'"
+                    ),
+                });
+            }
+        }
+        Ok(component)
     }
 
     /// Record the construction display `display` of `target` lowers as, as
@@ -3445,10 +3480,10 @@ impl Checker {
     }
 
     /// Type `then_branch if cond else else_branch` as upstream emits it.
-    /// Each arm is inferred without context. Under a contextual type
-    /// ([`Self::infer_in_context`]) every arm converting to it converts and
-    /// the result is that type; otherwise the arms merge
-    /// ([`Self::coerce_to_each_other`]). A parameter-valued condition is
+    /// Each arm is inferred without context, and the arms merge as
+    /// upstream's `coerceTypesToEachOther` merges them
+    /// ([`Self::coerce_to_each_other`]), a contextual type
+    /// ([`Self::infer_in_context`]) taking part as its fourth step. A parameter-valued condition is
     /// checked as a `comptime if` condition is, and its then arm under the
     /// conformances it proves.
     fn infer_conditional(
@@ -3490,21 +3525,9 @@ impl Checker {
             .borrow()
             .get(&expr.source_span())
             .cloned();
-        let ty = match contextual {
-            Some(expected) if self.every_arm_converts(&[&tt, &et], &expected)? => {
-                for (arm, ty) in [(then_branch, &tt), (else_branch, &et)] {
-                    self.record_implicit_conversion(arm, ty, &expected)?;
-                }
-                expected
-            }
-            _ => self
-                .coerce_to_each_other(then_branch, &tt, else_branch, &et)?
-                .ok_or_else(|| TypeError::TypeMismatch {
-                    expected: tt.to_string(),
-                    found: et.to_string(),
-                    context: "conditional-expression branches".to_string(),
-                })?,
-        };
+        let ty = self
+            .coerce_to_each_other(then_branch, &tt, else_branch, &et, contextual.as_ref())?
+            .into_result(&tt, &et)?;
         // A result only possibly register-passable (a parameter, a
         // conditional conformance) is stored, as upstream's
         // parse-time `isRegisterPassable` does in a generator.
@@ -3512,23 +3535,6 @@ impl Checker {
             self.record_at(expr.source_span()).register_passable_result = true;
         }
         Ok(ty)
-    }
-
-    /// Whether every arm type converts implicitly to `expected`; nothing
-    /// converts to a type parameter it is not.
-    fn every_arm_converts(&self, arms: &[&Ty], expected: &Ty) -> Result<bool, TypeError> {
-        for arm in arms {
-            let converts = if matches!(expected.kind(), TyKind::Param { .. }) {
-                *arm == expected
-            } else {
-                self.value_coerces(arm, expected)
-                    || self.implicit_conversion_target(arm, expected)?.is_some()
-            };
-            if !converts {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 }
 

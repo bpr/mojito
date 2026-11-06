@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1962**.
+Next free ID: **R1963**.
 
 ## Ordered Work
 
@@ -1321,6 +1321,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: `var o: Optional[Int] = 1 if c else None` and `= None if c
     else 1`, whose arms convert to the annotation, fail the same way;
     the pin prints `False` and `1`.
+  - Probe: `var v = 1 if c else Optional[Int](2)`, whose literal arm
+    converts to the other's type, fails the same way after `sroa`; the
+    pin prints `Optional[SIMD[DType.int, 1]]` for its type.
   - Found while landing R97 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2849,6 +2852,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1503 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1962 A merge of two pointers, spans, or string slices of
+  different origins is rejected, where upstream's `__merge_with__` unions
+  them**
+
+  Problem: `Pointer(to=a) if c else Pointer(to=b)` stops with "value of
+  type 'Pointer[Int, origin@…]' is not compatible with value of type
+  'Pointer[Int, origin@…]'", where the pin prints `1`.
+  - Cause: `Checker::common_type` (`checker/operators.rs`) models
+    upstream's `findCommonType` without its third step, a type's
+    `__merge_with__[other_type]` conversion, and its second, the
+    meta-type bound merge.
+  - Upstream's `Pointer`, `Span`, and `StringSlice` declare
+    `__merge_with__`, whose result origin is `origin_of(Self.origin,
+    other_type.origin)`; the bundled ones declare none.
+  - Probe: `StringSlice(s1) if c else StringSlice(s2)` over two `String`
+    locals fails the same way ("'StringSpan' is not compatible with
+    'StringSpan'"); the pin prints `x`.
+  - Probe: `Span(l1) if c else Span(l2)` over two lists fails the same
+    way; the pin prints `2`.
+  - Found while landing R1848 (2026-11-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1687 A `comptime` binding annotated `Int` rejects a `SIMDLength`
   value**
@@ -6791,45 +6817,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1848 A run-time merge of an int and a float literal is accepted,
-  where upstream reports an ambiguous merge**
-
-  Problem: `1 if c else 2.5`, `1.5 if c else 2`, and `[1, 2.5]` run in
-  Mojito (`1.0`, `1.5`, `Array[Float64, 2]`), where the pin rejects each
-  with "ambiguous merge: left value has type 'IntLiteral[1]' and right
-  value has type 'FloatLiteral[2.5]', and both convert to each other".
-  - Cause: `builtins::common_literal` (`checker/builtins.rs`) joins two
-    literals to the value-less literal type instead of upstream's
-    `coerceTypesToEachOther`, which merges two differently valued
-    literals of one family at `Int`/`Float64` and rejects a mixed pair.
-  - The compile-time merges already follow the pin: `short_circuit_value`
-    (`checker/constraints.rs`) and `ParamContext::list_get`'s element
-    meta (`param_expr.rs`).
-  - Lever: split the merge from `common_numeric` (operator typing, R1753)
-    and call it from `common_branch_ty`, `common_elem`,
-    `coerce_to_each_other`, and `common_display_element`.
-  - Probe: `var x = 1 if c else 2; print(_unqualified_type_name[type_of(x)]())`
-    prints `SIMD[DType.int, 1]` at the pin, and `emit-mir` of it holds no
-    `IntLiteral` register.
-  - Probe: `f(0.5 if c else 0.25)` over `def f(x: Float32)` runs, where
-    the pin reports "cannot be converted from 'Float64' to 'Float32'": a
-    call argument is no contextual site, so the arms merge first.
-  - Probe: `var y: Float32 = 0.5 if c else (0.25 if d else 0.125)` runs,
-    where the pin cannot convert the nested arm's `Float64`.
-  - Probe: `comptime B = 0.5 if True else 0.25` then `var x: Float32 = B`
-    runs, where the pin's `B` is a `Float64`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1849 A value-less `IntLiteral`/`FloatLiteral` type still exists,
   where upstream's literal type always carries its value**
 
   Problem: `TyKind::IntLiteral(None)`/`FloatLiteral(None)` still types
   values the pin types `IntLiteral[v]` or `Int`, so a literal type can
   lose its value.
-  - Its remaining producers: the run-time merge (R1848), a literal's
-    unary operators (R1853), `/` (R1784), `**` (R1855), and an `IntLiteral`
-    beside a `FloatLiteral` (R1854) in `checker/operators.rs`, the
+  - Its remaining producers: a literal's unary operators (R1853), `/`
+    (R1784), `**` (R1855), and an `IntLiteral` beside a `FloatLiteral`
+    (R1854) in `checker/operators.rs`, the
     symbolic literal polynomial (`IntDomain::Literal::ty`,
     `param_expr.rs`, upstream's `IntLiteral[#pop.int_literal_bin<…>]`),
     and MIR text's bare `IntLiteral` decode.
@@ -6839,7 +6835,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Ty::int_literal()`/`float_literal()`, and `TyKind::INT_LITERAL`/
     `FLOAT_LITERAL`.
   - Done when the variants hold `Box<CtValue>`, not an `Option`.
-  - Depends on R1848, R1753.
+  - Depends on R1753.
   - Model: Fable, Not Planned.
 
 - [ ] **R1850 A numeric literal register holds its value at run time,
@@ -8068,27 +8064,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R605 (2026-10-10).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1748 A conditional expression of two literal arms stays a
-  literal, where the pin's is `Float64` or `Int`**
-
-  `print(Float32(1) * (1.5 if True else 2.5))` prints `1.5`, where the pin
-  rejects it: "cannot be converted from 'Float64' to 'Float32'".
-  - Cause: the `ExprKind::IfExpr` arm of inference
-    (`checker/inference.rs`) returns the arms' coerced type, `FloatLiteral`
-    or `IntLiteral`; the pin materializes the result to its default type.
-  - Probe: `Int8(1) + (3 if True else 4)` prints `4`; the pin types the
-    conditional `Int`.
-  - Probe: `comptime f = 1.5 if True else 2.5`, then `Float32(1) * f`,
-    prints `1.5`: an unannotated `comptime` binding keeps its
-    initializer's type.
-  - Probe: `k(1 if c else 2)` over `comptime c = True` and `def k(x:
-    IntLiteral)` prints `1`, where the pin rejects it: "value passed to
-    'x' cannot be converted from 'Int' to 'IntLiteral[x.value]'". With a
-    run-time condition both reject it.
-  - Found while landing R1741 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R744 A conditional expression copies a place arm that is not
   `ImplicitlyCopyable`**

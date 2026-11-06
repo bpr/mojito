@@ -2184,9 +2184,11 @@ impl Checker {
             {
                 context.not(&operand).map_err(param_error)
             }
-            // `a if c else b`: the arm a closed condition selects, else the
-            // selection over both arms, an integer literal arm taking the
-            // `Int` the other arm or a bare literal has.
+            // `a if c else b`, as upstream's parameter-context emission
+            // builds it: both arms merge ([`Self::common_type`], with no
+            // run-time materialization), a constant arm converting to the
+            // common type, then a closed condition selects one and a
+            // symbolic one is the selection over both.
             ExprKind::IfExpr {
                 cond,
                 then_branch,
@@ -2194,29 +2196,36 @@ impl Checker {
             } if let Ok(condition) = build(cond)
                 && *condition.meta() == MetaTy::bool() =>
             {
-                match condition.as_bool() {
-                    Some(true) => build(then_branch),
-                    Some(false) => build(else_branch),
-                    None => {
-                        let arm = |branch: &Expr| {
-                            let value = build(branch)?;
-                            match value.as_constant() {
-                                Some(literal @ CtValue::IntLiteral(_)) => {
-                                    match literal.clone().materialize_as(&Ty::int()) {
-                                        Some(int) => self.ct_param(int),
-                                        None => Ok(value),
-                                    }
-                                }
-                                _ => Ok(value),
-                            }
-                        };
-                        context
-                            .op(
-                                mojito_types::param_expr::ParamOp::Cond,
-                                &[condition, arm(then_branch)?, arm(else_branch)?],
-                            )
-                            .map_err(param_error)
+                let then_value = build(then_branch)?;
+                let else_value = build(else_branch)?;
+                let common = match (then_value.meta().as_value(), else_value.meta().as_value()) {
+                    (Some(left), Some(right)) => Some(
+                        self.common_type(left, right, None)?
+                            .into_result(left, right)?,
+                    ),
+                    _ => None,
+                };
+                let arm = |value: ParamExpr| -> Result<ParamExpr, TypeError> {
+                    match (value.as_constant(), common.as_ref()) {
+                        (Some(constant), Some(ty)) if value.meta().as_value() != Some(ty) => {
+                            constant
+                                .clone()
+                                .materialize_as(ty)
+                                .map_or(Ok(value), |converted| self.ct_param(converted))
+                        }
+                        _ => Ok(value),
                     }
+                };
+                let (then_value, else_value) = (arm(then_value)?, arm(else_value)?);
+                match condition.as_bool() {
+                    Some(true) => Ok(then_value),
+                    Some(false) => Ok(else_value),
+                    None => context
+                        .op(
+                            mojito_types::param_expr::ParamOp::Cond,
+                            &[condition, then_value, else_value],
+                        )
+                        .map_err(param_error),
                 }
             }
             // `a and b` / `a or b` over a non-`Bool` left operand: the

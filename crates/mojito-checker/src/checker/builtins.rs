@@ -3,7 +3,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
-pub(super) use mojito_types::types::is_nominal_string;
 pub use mojito_types::types::{builtin_copy_is_value_read, callable_environment_coerces, coerces};
 
 pub(super) use mojito_types::conformance::{
@@ -58,71 +57,8 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
     }
 }
 
-/// The common type of two list elements: numeric elements unify like operands
-/// (widening literals); otherwise the two must be equal.
-pub(super) fn common_elem(a: &Ty, b: &Ty) -> Option<Ty> {
-    if is_numeric(a) && is_numeric(b) {
-        common_numeric(a, b)
-    } else if a == b {
-        Some(a.clone())
-    } else {
-        common_string_literal(a, b)
-    }
-}
-
-/// The common type of two string literals of different texts: the
-/// `String` both materialize to, as upstream's join of two `StringLiteral`
-/// instances is.
-fn common_string_literal(a: &Ty, b: &Ty) -> Option<Ty> {
-    (a.is_string_literal() && b.is_string_literal()).then(|| {
-        mojito_types::types::nominal_type(mojito_symbol::symbol::STDLIB_STRING_STRUCT, Vec::new())
-    })
-}
-
-/// The common element of a display's two elements ([`common_elem`]), where a
-/// string literal beside the nominal `String` joins it, a numeric literal
-/// joins a `SIMD` its implicit constructor converts it to, a symbolic one
-/// included (`[Scalar[dtype](1.0), 2.0]`), and two aggregates that differ
-/// only in which elements are still literals join their materialized form
-/// (`[(1, 2), (3, n)]` is a list of `Tuple[Int, Int]`).
-pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
-    match (a.kind(), b.kind()) {
-        (kind, _) if kind.is_string_literal() && is_nominal_string(b) => Some(b.clone()),
-        (_, kind) if kind.is_string_literal() && is_nominal_string(a) => Some(a.clone()),
-        (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_), _) if b.is_simd() && coerces(a, b) => {
-            Some(b.clone())
-        }
-        (_, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) if a.is_simd() && coerces(b, a) => {
-            Some(a.clone())
-        }
-        (left, right) if a != b && left.is_non_simd_struct() && right.is_non_simd_struct() => {
-            let materialized = mojito_types::types::default_literal(a);
-            (materialized == mojito_types::types::default_literal(b)).then_some(materialized)
-        }
-        _ => common_elem(a, b),
-    }
-}
-
 /// The common type of two numeric operands, coercing literals as needed, or
 /// `None` if they can't be unified (e.g. two different concrete types).
-/// The common type of a ternary's two branches: unify numerics (widening
-/// literals), else an exact match or a one-way literal coercion. `None` if the
-/// branches are incompatible.
-pub(super) fn common_branch_ty(a: &Ty, b: &Ty) -> Option<Ty> {
-    if let Some(c) = common_numeric(a, b) {
-        return Some(c);
-    }
-    if a == b {
-        Some(a.clone())
-    } else if coerces(a, b) {
-        Some(b.clone())
-    } else if coerces(b, a) {
-        Some(a.clone())
-    } else {
-        common_string_literal(a, b)
-    }
-}
-
 pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
     if !is_numeric(a) || !is_numeric(b) {
         return None;
@@ -138,9 +74,8 @@ pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
     }
 }
 
-/// The common type of two numeric literals of different values: the
-/// value-less `IntLiteral`, or `FloatLiteral` beside any float, which
-/// materializes where it is bound (`1 if c else 2` is an `Int`).
+/// The common type of two numeric literal operands of different values:
+/// the value-less `IntLiteral`, or `FloatLiteral` beside any float.
 fn common_literal(a: &Ty, b: &Ty) -> Option<Ty> {
     match (a.kind(), b.kind()) {
         (TyKind::IntLiteral(_), TyKind::IntLiteral(_)) => Some(Ty::int_literal()),

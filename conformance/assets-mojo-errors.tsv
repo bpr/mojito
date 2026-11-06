@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1076
+# swept-count	1082
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -297,6 +297,7 @@ assets/type_error/comptime_call_of_function_value_local.mojo	compile-reject	agre
 assets/type_error/comptime_call_raising.mojo	compile-reject	agree	error: cannot call raising function in type parameter
 assets/type_error/comptime_call_signature_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, h(Int(2))]' value to 'SIMD[.int32, 4]'
 assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'
+assets/type_error/comptime_conditional_float_literals_float64.mojo	compile-reject	agree	error: cannot implicitly convert 'Float64' value to 'Float32'
 assets/type_error/comptime_constants.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
 assets/type_error/comptime_dict_raising_subscript_raising_body.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
@@ -347,7 +348,9 @@ assets/type_error/comptime_type_ordering_rejected.mojo	compile-reject	agree	erro
 assets/type_error/comptime_type_pack_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'TypeList[Ts.values]' value to 'Int'
 assets/type_error/comptime_unread_constant_is_checked.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'StringLiteral["x"]' to 'Int'
 assets/type_error/comptime_with_body_abandoned.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
+assets/type_error/conditional_equal_literal_arms_materialize.mojo	compile-reject	agree	error: invalid call to 'k': value passed to 'x' cannot be converted from 'Int' to 'Int8'
 assets/type_error/conditional_float_literal_arms_int_lane.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/conditional_int_float_literal_ambiguous_merge.mojo	compile-reject	agree	error: ambiguous merge: left value has type 'IntLiteral[1]' and right value has type 'FloatLiteral[2.5]', and both convert to each other
 assets/type_error/constrained_conforms_to_message.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_on_nonparametric_struct.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/construction_unbound_int_slot_through_simd_length.mojo	compile-reject	agree	error: no matching function in initialization
@@ -384,6 +387,7 @@ assets/type_error/destructure_sequence_undeclared_target.mojo	compile-reject	agr
 assets/type_error/destructure_starred_discard_slices.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'i' cannot be converted from slice literal to 'Int'
 assets/type_error/destructure_starred_tuple_target.mojo	compile-reject	agree	error: cannot unpack value of type 'Span[Int, origin_of(values["element"])]' into 2 values
 assets/type_error/destructure_undeclared_target.mojo	compile-reject	agree	error: implicit declaration of 'a' is not allowed; add 'var' to declare a new name
+assets/type_error/dict_display_int_value_then_float_literal.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/dict_display_requires_copyable_value.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/dict_display_symbolic_value_lacks_evidence.mojo	compile-reject	agree	error: invalid call to '__init__': lacking evidence to prove correctness, each candidate requires 1 implicit conversion, disambiguate with an explicit cast
 assets/type_error/dict_requires_hashable_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Key]'
@@ -571,6 +575,8 @@ assets/type_error/len_undeclared_sized_struct.mojo	compile-reject	agree	error: n
 assets/type_error/linear_bound_message_sorts_by_module.mojo	compile-reject	agree	error: 'x' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
 assets/type_error/linear_parameter_abandoned_on_raise.mojo	compile-reject	agree	error: 't' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/list_anytype_append_requires_movable.mojo	compile-reject	agree	error: invalid call to 'append': violated constraint
+assets/type_error/list_display_int_float_literal_ambiguous_merge.mojo	compile-reject	agree	error: ambiguous merge: left value has type 'IntLiteral[1]' and right value has type 'FloatLiteral[2.5]', and both convert to each other
+assets/type_error/list_display_int_then_float_literal.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/list_display_literal_constructor_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no matching function in call to 'hash'
 assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	error: no matching function in initialization

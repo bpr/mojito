@@ -282,6 +282,20 @@ pub enum TypeError {
         found: String,
         context: String,
     },
+    /// Two values merging into one result (a conditional expression's
+    /// arms, a list or set display's elements) where each converts to the
+    /// other's type, or both to different materialization targets:
+    /// upstream's ambiguous `findCommonType`.
+    AmbiguousMerge {
+        left: String,
+        right: String,
+    },
+    /// Two values merging into one result where neither converts to the
+    /// other's type nor both to one materialization target.
+    IncompatibleMerge {
+        left: String,
+        right: String,
+    },
     /// A struct value whose origin arguments differ from the ones its
     /// destination names (`p = P(Pointer(to=ys))` over a `P[origin_of(xs)]`
     /// binding): the origin is part of the struct's identity, as upstream.
@@ -842,6 +856,16 @@ impl fmt::Display for TypeError {
             Self::ReturnOutsideFunction => write!(f, "'return' outside of a function"),
             Self::BreakOutsideLoop => write!(f, "'break' outside of a loop"),
             Self::ContinueOutsideLoop => write!(f, "'continue' outside of a loop"),
+            Self::AmbiguousMerge { left, right } => write!(
+                f,
+                "ambiguous merge: left value has type '{left}' and right value has type \
+                 '{right}', and both convert to each other\nnote: you could disambiguate by \
+                 casting the left value to '{right}'\nnote: or cast the right value to '{left}'"
+            ),
+            Self::IncompatibleMerge { left, right } => write!(
+                f,
+                "value of type '{left}' is not compatible with value of type '{right}'"
+            ),
             Self::OriginIdentityMismatch { found, expected } => {
                 write!(
                     f,

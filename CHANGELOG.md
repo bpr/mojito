@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Two values merging into one result (a conditional expression's arms,
+  `and`/`or`'s operands, a list or set display's elements) now take
+  upstream's `findCommonType`: equal types, then the contextual type,
+  then the one type the other value converts to, then a shared
+  materialization target. `1 if c else 2.5` and `[1, 2.5]` are now the
+  pin's "ambiguous merge", a run-time merge materializes a literal result
+  (`k(1 if c else 1)` over an `Int8` parameter is rejected), `0 or 2.5`
+  is `True`, a dictionary display binds `K`/`V` from its first entry, and
+  `comptime B = 0.5 if True else 0.25` is a `Float64` (R1848, R1748).
 - A conditional expression under a contextual type (a binding or
   `comptime` annotation, an assignment, a `return`, a field or subscript
   store, a parameter default, or a tuple display element under one) now
