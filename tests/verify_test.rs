@@ -678,7 +678,13 @@ fn verifier_checks_a_literal_materialized_at_its_storage() {
     // storage, a vector's as a scalar's.
     let float =
         || Const::FloatLiteral(mojito::FloatLiteral::parse_decimal("0.5").expect("decimal"));
-    let float_ty = || Ty::new(TyKind::FloatLiteral(None));
+    let float_ty = || {
+        Ty::new(TyKind::FloatLiteral(Box::new(
+            mojito_types::ct::CtValue::PopFloatLiteral(
+                mojito_common::literal::FloatLiteral::from_int(&0.into()),
+            ),
+        )))
+    };
     let lanes = |width| mojito::types::canonical_simd_ty(mojito::ast::Dtype::Float32, width);
     for width in [1, 4] {
         assert_eq!(
@@ -698,7 +704,7 @@ fn verifier_checks_a_literal_materialized_at_its_storage() {
     let mask = mojito::types::canonical_simd_ty(mojito::ast::Dtype::Bool, 4);
     let one = storage_materialization_findings(
         Const::IntLiteral(mojito::IntLiteral::from(1)),
-        Ty::int_literal(),
+        Ty::int_literal_of(&0.into()),
         &mask,
     );
     assert!(
@@ -732,7 +738,7 @@ fn verifier_rejects_a_literal_materialized_at_a_struct() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::int_literal()), (1, Ty::int())],
+        &[(0, Ty::int_literal_of(&0.into())), (1, Ty::int())],
     );
     expect_finding(
         &program(f),

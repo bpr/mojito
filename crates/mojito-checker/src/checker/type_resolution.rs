@@ -2174,8 +2174,8 @@ impl Checker {
                 || matches!(
                     kind,
                     TyKind::KgenSimd { .. }
-                        | TyKind::IntLiteral(Some(_))
-                        | TyKind::FloatLiteral(Some(_))
+                        | TyKind::IntLiteral(_)
+                        | TyKind::FloatLiteral(_)
                         | TyKind::PopArray { .. }
                 ))
                 && !parameters.is_empty()
@@ -2433,10 +2433,7 @@ impl Checker {
             // or one a literal's struct declares (`StringLiteral._from`).
             kind if (kind.is_simd()
                 || kind.string_literal_value().is_some()
-                || matches!(
-                    kind,
-                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
-                ))
+                || matches!(kind, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
                 && let Some((sname, targs)) = self.nominal_struct(base)
                 && self.structs.get(sname).is_some_and(|info| {
                     info.associated.contains_key(name)
@@ -4294,8 +4291,8 @@ impl Checker {
             || matches!(
                 (found.kind(), expected.kind()),
                 (
-                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)),
-                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)),
+                    TyKind::IntLiteral(_) | TyKind::FloatLiteral(_),
+                    TyKind::IntLiteral(_) | TyKind::FloatLiteral(_),
                 )
             )
         {

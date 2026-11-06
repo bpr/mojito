@@ -70,20 +70,7 @@ pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
     } else if coerces(b, a) {
         Some(a.clone())
     } else {
-        common_literal(a, b)
-    }
-}
-
-/// The common type of two numeric literal operands of different values:
-/// the value-less `IntLiteral`, or `FloatLiteral` beside any float.
-fn common_literal(a: &Ty, b: &Ty) -> Option<Ty> {
-    match (a.kind(), b.kind()) {
-        (TyKind::IntLiteral(_), TyKind::IntLiteral(_)) => Some(Ty::int_literal()),
-        (
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_),
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_),
-        ) => Some(Ty::float_literal()),
-        _ => None,
+        None
     }
 }
 
@@ -344,8 +331,22 @@ impl Checker {
     /// call reaches this rule only where no `max`/`min` binding exists — a
     /// module loaded while the prelude bootstraps, or a program linked
     /// without the prelude; elsewhere it calls `std.math`'s overloads.
+    /// Two literals of different values materialize, to `Float64` beside
+    /// a float and else `Int`, the result of the `std.math` overload the
+    /// rule stands in for.
     pub(super) fn infer_min_max(&self, name: &str, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args(name, 2, args)?;
+        if tys[0] != tys[1] && tys.iter().all(|ty| ty.kind().is_numeric_literal()) {
+            let target = if tys.iter().any(Ty::is_float_literal) {
+                Ty::float64()
+            } else {
+                Ty::int()
+            };
+            for (arg, ty) in args.iter().zip(&tys) {
+                self.record_literal_materializations(arg, ty, &target)?;
+            }
+            return Ok(target);
+        }
         common_numeric(&tys[0], &tys[1]).ok_or_else(|| TypeError::BadOperator {
             op: name.to_string(),
             operands: format!("{} and {}", tys[0], tys[1]),

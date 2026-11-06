@@ -401,10 +401,7 @@ impl Checker {
         }
         .filter(|ty| {
             ty.kind().string_literal_value().is_some()
-                || matches!(
-                    ty.kind(),
-                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
-                )
+                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
         })?;
         let construct = || {
             // The application's arguments are typed as the instance's.
@@ -442,10 +439,7 @@ impl Checker {
             // symbolic until the instance is elaborated
             // (`StringLiteral.__add__`'s `{}`).
             kind if (kind.string_literal_value().is_some()
-                || matches!(
-                    kind,
-                    TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
-                ))
+                || matches!(kind, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
                 && args.is_empty()
                 && kwargs.is_empty() =>
             {

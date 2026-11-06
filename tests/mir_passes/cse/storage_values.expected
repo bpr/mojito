@@ -14,7 +14,7 @@
         return_type: present(kgen_simd { dtype: float32, width: 4 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: kgen_simd { dtype: float32, width: 4 } }, reg_type { reg: %r3, type: kgen_simd { dtype: float32, width: 4 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(99))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: kgen_simd { dtype: float32, width: 4 } }, reg_type { reg: %r3, type: kgen_simd { dtype: float32, width: 4 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 194, end: 195, origin: present($v0) }) }],
         blocks: [
           bb0 {

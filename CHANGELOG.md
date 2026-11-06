@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A numeric literal's type now always carries its value, as upstream's
+  `IntLiteral[value]`/`FloatLiteral[value]` does: the value-less literal
+  type is gone. A literal's unary `-`/`~`, `/`, `**`, and an `IntLiteral`
+  beside a `FloatLiteral` are typed by the `#pop` attribute the missing
+  dunder's signature computes, so over `x: IntLiteral[_]` `type_of(-x)`
+  is `IntLiteral[0 - x.value]` and `type_of(x / 2)` a `FloatLiteral`
+  attribute, and a symbolic literal polynomial's type is its attribute.
+  MIR text moves to 1.172, which drops the bare `IntLiteral` and
+  `FloatLiteral` register types; an older artifact's bare register takes
+  its defining `const`'s value (R1849).
 - Two values merging into one result (a conditional expression's arms,
   `and`/`or`'s operands, a list or set display's elements) now take
   upstream's `findCommonType`: equal types, then the contextual type,

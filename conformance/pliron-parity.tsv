@@ -561,6 +561,7 @@ assets/ok/list_to_span_conversion_borrows.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
 assets/ok/literal_operator_dunders.mojo	main	exe-differential	sanitized
+assets/ok/literal_rule_value_type.mojo	main	exe-differential	sanitized
 assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
 assets/ok/llvm_intrinsic.mojo	main	exe-differential	sanitized
 assets/ok/llvm_intrinsic_deinterleave.mojo	main	exe-differential	sanitized

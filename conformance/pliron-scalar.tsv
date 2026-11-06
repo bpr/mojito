@@ -561,6 +561,7 @@ assets/ok/list_to_span_conversion_borrows.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/list_unsafe_ptr_multi_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/literal_operator_dunders.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/literal_rule_value_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic_deinterleave.mojo	-	ineligible	no-scalar-entry-shape

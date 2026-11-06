@@ -37,12 +37,15 @@ impl Decoder {
             .field(fields, "error_slot")
             .ok()
             .and_then(|slot| self.var(slot));
-        let reg_types_raw = self.type_map(
-            self.field(fields, "register_types").ok()?,
-            "reg_type",
-            "reg",
-            "%r",
-        );
+        let register_rows = self.field(fields, "register_types").ok()?;
+        let bare_literals = if self.minor < 172 {
+            self.bare_literal_registers(register_rows)
+        } else {
+            Vec::new()
+        };
+        self.bare_literal_rows = !bare_literals.is_empty();
+        let reg_types_raw = self.type_map(register_rows, "reg_type", "reg", "%r");
+        self.bare_literal_rows = false;
         let reg_types: HashMap<u32, Ty> = reg_types_raw
             .into_iter()
             .map(|(id, ty)| (id as u32, ty))
@@ -166,7 +169,37 @@ impl Decoder {
         if self.minor < 170 {
             upgrade_struct_literal_targets(&mut function);
         }
+        for register in upgrade_bare_literals(&mut function, &bare_literals) {
+            self.error(
+                value.span,
+                format!(
+                    "function `{name}` types %r{register} a bare literal, \
+                     but no literal `const` defines it"
+                ),
+            );
+        }
         Some((name, function))
+    }
+
+    /// The registers whose row in `rows` spells the bare `IntLiteral` or
+    /// `FloatLiteral` atom, the value-less literal type MIR text before
+    /// 1.172 wrote.
+    fn bare_literal_registers(&mut self, rows: &Value) -> Vec<u32> {
+        let Ok(rows) = self.list(rows) else {
+            return Vec::new();
+        };
+        rows.iter()
+            .filter_map(|row| {
+                let fields = self.record(row, "reg_type").ok()?;
+                let ty = self.field(fields, "type").ok()?;
+                if !matches!(&ty.kind, ValueKind::Atom(tag) if tag == "IntLiteral" || tag == "FloatLiteral")
+                {
+                    return None;
+                }
+                let register = self.identity(self.field(fields, "reg").ok(), "%r")?;
+                u32::try_from(register).ok()
+            })
+            .collect()
     }
 
     /// A function's `removed_params` (schema 1.60): its own binders the
@@ -1425,6 +1458,41 @@ pub(super) fn upgrade_struct_literal_targets(function: &mut MirFunction) {
     let mut blocks = std::mem::take(&mut function.blocks);
     storage_literal_targets(&mut blocks, function);
     function.blocks = blocks;
+}
+
+/// Give each register of `registers`, typed by a bare literal atom older
+/// than MIR 1.172, the literal type carrying the value of the `const`
+/// defining it; the registers no literal `const` defines.
+pub(super) fn upgrade_bare_literals(function: &mut MirFunction, registers: &[u32]) -> Vec<u32> {
+    let mut undefined = Vec::new();
+    for &register in registers {
+        match literal_definition(&function.blocks, register) {
+            Some(ty) => {
+                function.reg_types.insert(register, ty);
+            }
+            None => undefined.push(register),
+        }
+    }
+    undefined
+}
+
+fn literal_definition(blocks: &[MirBlock], register: u32) -> Option<Ty> {
+    blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::Const {
+                dest,
+                k: Const::IntLiteral(value),
+            } if dest.0 == register => Some(Ty::int_literal_of(value)),
+            MirInstr::Const {
+                dest,
+                k: Const::FloatLiteral(value),
+            } if dest.0 == register => Some(Ty::float_literal_of(value)),
+            _ => crate::mir::instruction_regions(instruction)
+                .into_iter()
+                .find_map(|region| literal_definition(region, register)),
+        })
 }
 
 /// Name `slot` in each store [`legacy_error_store`] made before a raise

@@ -9901,3 +9901,26 @@ fn compile_time_application_takes_ref_but_not_mut_parameters() {
     check_with_std(&program("ref")).expect("a `ref` parameter applies");
     check_with_std(&program("mut")).expect_err("a `mut` parameter applies no call");
 }
+
+/// A literal operator the checker's literal rule types (`-x`, `x / 2`)
+/// keeps a symbolic operand's attribute, as the missing dunder's signature
+/// computes it: `type_of(-x)` over `x: IntLiteral[_]` is
+/// `IntLiteral[0 - x.value]`, which no other literal value converts to.
+#[test]
+fn a_literal_rule_type_carries_a_symbolic_attribute() {
+    check_with_std(
+        "def neg(x: IntLiteral[_]) -> type_of(-x):\n    return {}\n\
+         def half(x: IntLiteral[_]) -> type_of(x / 2):\n    return {}\n\
+         def main():\n    _ = neg(3)\n    _ = half(3)\n",
+    )
+    .expect("a literal rule type over a symbolic literal checks");
+    let error = check_with_std(
+        "def h(x: IntLiteral[_]):\n    var a: type_of(-x) = 2\n    _ = a\n\
+         def main():\n    h(3)\n",
+    )
+    .expect_err("a literal of another value does not convert");
+    assert!(
+        error.to_string().contains("cannot implicitly convert"),
+        "{error}"
+    );
+}

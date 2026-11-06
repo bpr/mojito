@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.171
+mojito-mir 1.172
 ```
 
-The writer emits 1.171. The reader accepts 1.0 through 1.171; *Schema 1.0*
+The writer emits 1.172. The reader accepts 1.0 through 1.172; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1014,8 +1014,8 @@ literal by its text: a literal register is spelled as the application
 `struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(4))] }`
 (`FloatLiteral` over `ct_pop_float_literal`), which the reader bridges back
 to the literal type, and a symbolic value as its `ct_expr`. The value-less
-`IntLiteral` and `FloatLiteral` keep their atoms. The package format moves
-to `mojito-package 172`.
+`IntLiteral` and `FloatLiteral` kept their atoms until 1.172. The package
+format moves to `mojito-package 172`.
 
 Schema 1.153 gives the parameter operator `int_literal_convert` the result
 type as its first operand, `(type, literal)`, as `simd_splat` and `cast`
@@ -1147,6 +1147,14 @@ Schema 1.163 removes the instructions `variant.set_init_with` and
 and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
+
+Schema 1.172 removes the value-less `IntLiteral` and `FloatLiteral` atoms
+(R1849): a numeric literal's type always carries its value, as upstream's
+`IntLiteral[value]` does, so every literal register is the `struct_type`
+application 1.152 introduced, and the reader rejects a bare atom. An older
+artifact's register row may still spell one; the reader gives that
+register the value of the literal `const` defining it, and rejects a bare
+row no literal `const` defines.
 
 Schema 1.171 lets a `literal.materialize` target be a multi-lane or
 symbolic-width `kgen_simd` storage (R1836), as `#pop.int_literal_convert`
@@ -1770,7 +1778,7 @@ read back, a pack element and a reflection query included.
 The complete `Ty` tag set is:
 
 ```text
-Int UInt Bool StringLiteral Float64 None Never IntLiteral FloatLiteral Infer
+Int UInt Bool StringLiteral Float64 None Never Infer
 DType Self Error
 func { environment, params, names, return_type, required, variadic,
        kw_variadic, positional_only, keyword_only, raises, error_type,

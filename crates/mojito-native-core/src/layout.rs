@@ -361,8 +361,16 @@ mod tests {
 
     #[test]
     fn literal_storage_uses_materialized_widths() {
-        assert_eq!(layout_of(&Ty::int_literal()), Ok(Layout::new(8, 8)));
-        assert_eq!(layout_of(&Ty::float_literal()), Ok(Layout::new(8, 8)));
+        assert_eq!(
+            layout_of(&Ty::int_literal_of(&0.into())),
+            Ok(Layout::new(8, 8))
+        );
+        assert_eq!(
+            layout_of(&Ty::float_literal_of(
+                &mojito_common::literal::FloatLiteral::from_int(&0.into())
+            )),
+            Ok(Layout::new(8, 8))
+        );
     }
 
     #[test]

@@ -343,29 +343,50 @@ fn same_spelled_binders_of_two_declarations_bind_apart() {
 fn literal_actuals_merge_with_concrete_bindings_in_either_order() {
     let mut bindings = Bindings::default();
     // Receiver-first: `T := Int` from the concrete receiver, then a
-    // literal-typed actual (`41 : IntLiteral`) — compatible, keeps `Int`.
+    // literal-typed actual (`0 : IntLiteral[0]`) — compatible, keeps `Int`.
     bind_type(&test_binder("T"), &Ty::int(), &mut bindings).unwrap();
-    bind_type(&test_binder("T"), &Ty::int_literal(), &mut bindings).unwrap();
+    bind_type(
+        &test_binder("T"),
+        &Ty::int_literal_of(&0.into()),
+        &mut bindings,
+    )
+    .unwrap();
     assert_eq!(bindings.types.get(&test_binder("T")), Some(&Ty::int()));
 
     // Result-last: the literal actual binds first, the concrete result
     // type upgrades it.
     let mut bindings = Bindings::default();
-    bind_type(&test_binder("T"), &Ty::int_literal(), &mut bindings).unwrap();
+    bind_type(
+        &test_binder("T"),
+        &Ty::int_literal_of(&0.into()),
+        &mut bindings,
+    )
+    .unwrap();
     bind_type(&test_binder("T"), &Ty::int(), &mut bindings).unwrap();
     assert_eq!(bindings.types.get(&test_binder("T")), Some(&Ty::int()));
 
     // Genuinely distinct concrete solutions still conflict, and the
-    // message carries the structural forms (`Display` collapses
-    // `IntLiteral` to `Int`).
+    // message carries the structural forms.
     let mut bindings = Bindings::default();
     bind_type(&test_binder("T"), &Ty::int(), &mut bindings).unwrap();
     let error = bind_type(&test_binder("T"), &Ty::float64(), &mut bindings).unwrap_err();
     assert!(error.contains("conflicting"), "{error}");
     // Two different literal kinds conflict too.
     let mut bindings = Bindings::default();
-    bind_type(&test_binder("T"), &Ty::int_literal(), &mut bindings).unwrap();
-    assert!(bind_type(&test_binder("T"), &Ty::float_literal(), &mut bindings).is_err());
+    bind_type(
+        &test_binder("T"),
+        &Ty::int_literal_of(&0.into()),
+        &mut bindings,
+    )
+    .unwrap();
+    assert!(
+        bind_type(
+            &test_binder("T"),
+            &Ty::float_literal_of(&mojito_common::literal::FloatLiteral::from_int(&0.into())),
+            &mut bindings
+        )
+        .is_err()
+    );
 }
 
 #[test]

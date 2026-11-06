@@ -17,8 +17,20 @@ impl Decoder {
                 "Float64" => Ty::float64(),
                 "None" => Ty::none(),
                 "Never" => Ty::never(),
-                "IntLiteral" => Ty::int_literal(),
-                "FloatLiteral" => Ty::float_literal(),
+                // A register row older than MIR 1.172 may spell a literal
+                // register's type bare; the `const` defining the register
+                // gives it its value once the body is read.
+                "IntLiteral" if self.bare_literal_rows => Ty::int_literal_of(&0.into()),
+                "FloatLiteral" if self.bare_literal_rows => {
+                    Ty::float_literal_of(&mojito_common::literal::FloatLiteral::from_int(&0.into()))
+                }
+                "IntLiteral" | "FloatLiteral" => {
+                    self.error(
+                        value.span,
+                        format!("a literal type `{tag}` carries its value since MIR 1.172"),
+                    );
+                    return None;
+                }
                 "Infer" => Ty::infer(),
                 "DType" => Ty::dtype(),
                 "TypeType" => TyKind::TypeType.into(),

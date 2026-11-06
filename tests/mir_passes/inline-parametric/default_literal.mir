@@ -87,7 +87,7 @@ artifact {
         return_type: present(Float64),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Float64 }, reg_type { reg: %r2, type: FloatLiteral }, reg_type { reg: %r3, type: Float64 }, reg_type { reg: %r4, type: kgen_simd { dtype: float64, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Float64 }, reg_type { reg: %r2, type: struct_type { name: FloatLiteral, arguments: [value_arg(ct_pop_float_literal(0.0))] } }, reg_type { reg: %r3, type: Float64 }, reg_type { reg: %r4, type: kgen_simd { dtype: float64, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 330, end: 331, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 348, end: 349, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 361, end: 364, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 361, end: 364, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 361, end: 364, origin: absent }) }],
         blocks: [
           bb0 {

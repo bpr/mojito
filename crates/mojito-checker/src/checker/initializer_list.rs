@@ -1141,10 +1141,8 @@ impl Checker {
             kind if kind.string_literal_value().is_some() => {
                 mojito_types::types::STRING_LITERAL_TYPE_NAME.to_string()
             }
-            TyKind::IntLiteral(Some(_)) => mojito_types::types::INT_LITERAL_TYPE_NAME.to_string(),
-            TyKind::FloatLiteral(Some(_)) => {
-                mojito_types::types::FLOAT_LITERAL_TYPE_NAME.to_string()
-            }
+            TyKind::IntLiteral(_) => mojito_types::types::INT_LITERAL_TYPE_NAME.to_string(),
+            TyKind::FloatLiteral(_) => mojito_types::types::FLOAT_LITERAL_TYPE_NAME.to_string(),
             TyKind::Dependent(_) => instance.to_string(),
             _ => return None,
         };

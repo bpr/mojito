@@ -410,8 +410,8 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
         // A literal's value binds an `IntLiteral[v]` or `FloatLiteral[v]`
         // pattern's binder, as a literal's text binds a `StringLiteral[v]`
         // one's through the struct arm below.
-        (TyKind::IntLiteral(Some(pattern)), TyKind::IntLiteral(Some(actual)))
-        | (TyKind::FloatLiteral(Some(pattern)), TyKind::FloatLiteral(Some(actual))) => {
+        (TyKind::IntLiteral(pattern), TyKind::IntLiteral(actual))
+        | (TyKind::FloatLiteral(pattern), TyKind::FloatLiteral(actual)) => {
             if let CtValue::Expr(expr) = pattern.as_ref() {
                 if let Some(reference) = expr.as_decl_ref() {
                     out.entry(reference.name.to_string())
@@ -421,7 +421,7 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 }
             }
         }
-        (TyKind::FloatLiteral(Some(pattern)), TyKind::IntLiteral(Some(_))) => {
+        (TyKind::FloatLiteral(pattern), TyKind::IntLiteral(_)) => {
             if let CtValue::Expr(expr) = pattern.as_ref()
                 && let Some(reference) = expr.as_decl_ref()
                 && let Some(value) = mojito_types::types::int_literal_as_float(actual)
@@ -757,8 +757,8 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             || matches!(
                 kind,
                 TyKind::KgenSimd { .. }
-                    | TyKind::IntLiteral(Some(_))
-                    | TyKind::FloatLiteral(Some(_))
+                    | TyKind::IntLiteral(_)
+                    | TyKind::FloatLiteral(_)
                     | TyKind::PopArray { .. }
             ))
             && mojito_types::types::is_symbolic(ty) =>

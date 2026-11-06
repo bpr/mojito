@@ -2185,27 +2185,28 @@ fn ty_value(ty: &Ty) -> String {
         kind if kind.is_uint() => "UInt".into(),
         kind if kind.is_bool() => "Bool".into(),
         TyKind::StringLiteral => "StringLiteral".into(),
-        // A numeric literal whose type carries its value is spelled as the
-        // struct application the decoder's `Ty::new` bridges back.
-        TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_)) => {
-            mojito_types::types::nominal_parts(ty).map_or_else(
-                || "IntLiteral".into(),
-                |(name, args)| {
-                    record(
-                        "struct_type",
-                        &[
-                            ("name", symbol(name)),
-                            ("arguments", list(args.iter().map(ty_arg))),
-                        ],
-                    )
-                },
+        // A numeric literal's type carries its value, so it is spelled as
+        // the struct application the decoder's `Ty::new` bridges back.
+        TyKind::IntLiteral(value) | TyKind::FloatLiteral(value) => {
+            let name = if ty.is_int_literal() {
+                mojito_types::types::INT_LITERAL_TYPE_NAME
+            } else {
+                mojito_types::types::FLOAT_LITERAL_TYPE_NAME
+            };
+            record(
+                "struct_type",
+                &[
+                    ("name", symbol(name)),
+                    (
+                        "arguments",
+                        list([ty_arg(&TyArg::Val(value.as_ref().clone()))]),
+                    ),
+                ],
             )
         }
         kind if kind.is_float64() => "Float64".into(),
         TyKind::None => "None".into(),
         TyKind::Never => "Never".into(),
-        TyKind::IntLiteral(_) => "IntLiteral".into(),
-        TyKind::FloatLiteral(_) => "FloatLiteral".into(),
         TyKind::Infer => "Infer".into(),
         TyKind::Dtype => "DType".into(),
         TyKind::TypeType => "TypeType".into(),

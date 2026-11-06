@@ -396,7 +396,7 @@ impl Checker {
     pub(super) fn comptime_binding_ty(&self, value_ty: &Ty, name: &str) -> Result<Ty, TypeError> {
         if matches!(
             value_ty.kind(),
-            TyKind::FloatLiteral(_) | TyKind::IntLiteral(Some(_))
+            TyKind::FloatLiteral(_) | TyKind::IntLiteral(_)
         ) {
             return Ok(value_ty.clone());
         }

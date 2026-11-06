@@ -1672,7 +1672,7 @@ impl ParamContext {
     fn integer_literal(&self, domain: IntDomain, value: &IntLiteral) -> ParamExpr {
         let value = domain.constant(value);
         let meta = match domain {
-            IntDomain::IntStorage | IntDomain::UIntStorage => MetaTy::value(domain.ty()),
+            IntDomain::IntStorage | IntDomain::UIntStorage => domain.meta(),
             _ => MetaTy::of_value(&value),
         };
         self.make(meta, ParamKind::Constant(value))
@@ -1715,8 +1715,8 @@ impl ParamContext {
             if domain != machine && !converts {
                 return Err(ParamError::TypeMismatch {
                     operation: op.name().to_string(),
-                    expected: machine.ty().to_string(),
-                    found: domain.ty().to_string(),
+                    expected: machine.name(),
+                    found: domain.name(),
                 });
             }
         }
@@ -1798,17 +1798,15 @@ impl ParamContext {
             (Some(CtValue::IntLiteral(value)), _) if from == IntDomain::IntStorage => {
                 self.integer_literal(from, value)
             }
-            (_, Some(IntDomain::Int)) if from == IntDomain::IntStorage => self.field(
-                operand,
-                crate::ct::MLIR_VALUE_FIELD,
-                MetaTy::value(from.ty()),
-            )?,
+            (_, Some(IntDomain::Int)) if from == IntDomain::IntStorage => {
+                self.field(operand, crate::ct::MLIR_VALUE_FIELD, from.meta())?
+            }
             _ => operand.clone(),
         };
         if IntDomain::of(operand.meta()) != Some(from) {
             return Err(ParamError::TypeMismatch {
                 operation: op.name().to_string(),
-                expected: from.ty().to_string(),
+                expected: from.name(),
                 found: operand.meta().to_string(),
             });
         }
@@ -1819,7 +1817,7 @@ impl ParamContext {
                 operands[0].clone()
             }
             _ => self.make(
-                MetaTy::value(to.ty()),
+                to.meta(),
                 ParamKind::Op {
                     op,
                     operands: vec![atom.clone()],
@@ -1870,7 +1868,7 @@ impl ParamContext {
             {
                 Some(field) => field.clone(),
                 None => self.make(
-                    MetaTy::value(storage.ty()),
+                    storage.meta(),
                     ParamKind::Field {
                         base: atom.clone(),
                         name: crate::ct::MLIR_VALUE_FIELD.to_string(),
@@ -1895,9 +1893,9 @@ impl ParamContext {
         let domain = scalar.storage().ok_or_else(|| ParamError::TypeMismatch {
             operation: "struct value".to_string(),
             expected: "an `Int` or a `UInt`".to_string(),
-            found: scalar.ty().to_string(),
+            found: scalar.name(),
         })?;
-        let meta = MetaTy::value(scalar.ty());
+        let meta = scalar.meta();
         let whole = Polynomial::of(domain, storage)?
             .as_atom()
             .is_some_and(|atom| atom == storage);
@@ -1946,7 +1944,7 @@ impl ParamContext {
                 factors.remove(0)
             } else {
                 self.make(
-                    MetaTy::value(domain.ty()),
+                    self.node_meta(domain, ParamOp::Mul, &factors),
                     ParamKind::Op {
                         op: ParamOp::Mul,
                         operands: factors,
@@ -1959,13 +1957,58 @@ impl ParamContext {
             0 => self.integer(domain, 0),
             1 => terms.remove(0),
             _ => self.make(
-                MetaTy::value(domain.ty()),
+                self.node_meta(domain, ParamOp::Add, &terms),
                 ParamKind::Op {
                     op: ParamOp::Add,
                     operands: terms,
                 },
             ),
         }
+    }
+
+    /// The meta-type of a polynomial node `op` over `operands` in
+    /// `domain`: a machine domain's one type, and in the literal domain
+    /// [`Self::literal_node_meta`].
+    fn node_meta(&self, domain: IntDomain, op: ParamOp, operands: &[ParamExpr]) -> MetaTy {
+        match domain {
+            IntDomain::Literal => self.literal_node_meta(op, operands),
+            _ => domain.meta(),
+        }
+    }
+
+    /// The meta-type of a literal-domain node `op` over `operands`: the
+    /// `IntLiteral` whose slot is the node's `!pop.int_literal` image, the
+    /// operands' slots joined left to right by `#pop<int_literal_bin<…>>`,
+    /// as upstream types `x * 2` over `x: IntLiteral[_]`
+    /// `IntLiteral[#pop.int_literal_bin<mul x.value, 2>]`.
+    fn literal_node_meta(&self, op: ParamOp, operands: &[ParamExpr]) -> MetaTy {
+        let slot = |operand: &ParamExpr| match operand.as_constant() {
+            Some(CtValue::IntLiteral(value)) => {
+                self.constant(CtValue::PopIntLiteral(value.clone())).ok()
+            }
+            _ => operand
+                .meta()
+                .as_value()
+                .and_then(|ty| match ty.kind() {
+                    TyKind::IntLiteral(slot) => Some(slot.as_ref().clone()),
+                    _ => None,
+                })
+                .and_then(|slot| self.constant(slot).ok()),
+        };
+        let image = operands
+            .iter()
+            .map(slot)
+            .collect::<Option<Vec<_>>>()
+            .and_then(|slots| {
+                let mut slots = slots.into_iter();
+                let first = slots.next()?;
+                slots.try_fold(first, |joined, slot| {
+                    self.build_pop_literal(op, vec![joined, slot]).ok()
+                })
+            });
+        image.map_or_else(MetaTy::int, |image| {
+            MetaTy::value(Ty::new(TyKind::IntLiteral(Box::new(image.into_value()))))
+        })
     }
 
     /// An operator with no algebra: fold it when every operand is constant and
@@ -4844,15 +4887,31 @@ impl IntDomain {
         }
     }
 
-    fn ty(self) -> Ty {
+    /// The type of a value of a machine domain. The literal domain has no
+    /// one type: each of its values is `IntLiteral[v]` over its own value
+    /// ([`ParamContext::literal_node_meta`]).
+    fn ty(self) -> Option<Ty> {
         match self {
-            Self::Int => Ty::int(),
-            Self::UInt => Ty::uint(),
-            Self::IntStorage => crate::types::storage_ty(&Ty::int()),
-            Self::UIntStorage => crate::types::storage_ty(&Ty::uint()),
-            Self::Index => Ty::index(),
-            Self::Literal => Ty::int_literal(),
+            Self::Int => Some(Ty::int()),
+            Self::UInt => Some(Ty::uint()),
+            Self::IntStorage => Some(crate::types::storage_ty(&Ty::int())),
+            Self::UIntStorage => Some(crate::types::storage_ty(&Ty::uint())),
+            Self::Index => Some(Ty::index()),
+            Self::Literal => None,
         }
+    }
+
+    /// The domain's name in a diagnostic.
+    fn name(self) -> String {
+        self.ty().map_or_else(
+            || crate::types::INT_LITERAL_TYPE_NAME.to_string(),
+            |ty| ty.to_string(),
+        )
+    }
+
+    /// The meta-type of a value of a machine domain.
+    fn meta(self) -> MetaTy {
+        self.ty().map_or_else(MetaTy::int, MetaTy::value)
     }
 
     /// The storage domain of a scalar domain, its `_mlir_value`'s.

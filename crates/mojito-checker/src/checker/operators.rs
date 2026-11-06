@@ -55,21 +55,33 @@ impl Checker {
             return Ok(ty);
         }
         match (op, t.kind()) {
-            // A literal's negation and unary plus are literals, whose type
-            // carries the folded value (`-2.5` is `FloatLiteral[-2.5]`).
-            (PrefixOp::Neg | PrefixOp::Pos, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) => {
-                return Ok(mojito_types::types::value_less_literal(&t));
+            // A literal's `-x`, `~x`, and `+x` are the literal its dunder's
+            // signature types (`IntLiteral.__neg__` is `type_of(0 - self)`,
+            // `__invert__` `type_of(self ^ -1)`, `FloatLiteral.__neg__`
+            // `type_of(self * -1)`, `__pos__` `Self`), so `-2.5` is
+            // `FloatLiteral[-2.5]`.
+            (PrefixOp::Pos, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) => return Ok(t),
+            (PrefixOp::Neg, TyKind::IntLiteral(_)) => {
+                return self.literal_rule_type(InfixOp::Sub, &Ty::int_literal_of(&0.into()), &t);
+            }
+            (PrefixOp::Neg, TyKind::FloatLiteral(_)) => {
+                let minus_one = Ty::float_literal_of(
+                    &mojito_common::literal::FloatLiteral::from_int(&(-1).into()),
+                );
+                return self.literal_rule_type(InfixOp::Mul, &t, &minus_one);
+            }
+            (PrefixOp::Invert, TyKind::IntLiteral(_)) => {
+                return self.literal_rule_type(
+                    InfixOp::BitXor,
+                    &t,
+                    &Ty::int_literal_of(&(-1).into()),
+                );
             }
             (PrefixOp::Not, kind) if kind.is_bool() => return Ok(Ty::bool()),
             // A numeric scalar is `Boolable`: `not n` over an `Int`, or
             // `not (a == b)` over `UInt64`s.
             (PrefixOp::Not, _) if is_numeric(&t) || is_scalar_simd(&t) => {
                 return Ok(Ty::bool());
-            }
-            // A literal's inversion keeps its type; a `SIMD`'s and a
-            // `Bool`'s are their `__invert__` above.
-            (PrefixOp::Invert, TyKind::IntLiteral(_)) => {
-                return Ok(mojito_types::types::value_less_literal(&t));
             }
             _ => {}
         }
@@ -330,6 +342,9 @@ impl Checker {
                 .infer_operator_call(span, op, left, right, &receiver, Some(&rt))?
                 .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
         }
+        if let Some(ty) = self.literal_rule(op, &lt, &rt)? {
+            return Ok(ty);
+        }
         let result = match op {
             // Two literals concatenate through `StringLiteral.__add__`, except
             // in an unlinked program (a phase test's), whose two texts
@@ -352,37 +367,10 @@ impl Checker {
                     },
                 )
             }
-            // Literal arithmetic, bitwise logic, and shifts keep the literal
-            // type; the same operators beside a `SIMD` are its dunders above.
-            Add | Sub | Mul | FloorDiv
-                if common.as_ref().is_some_and(|ty| {
-                    matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-                }) =>
-            {
-                common
-            }
-            Shl | Shr | BitAnd | BitOr | BitXor
-                if common.as_ref().is_some_and(Ty::is_int_literal) =>
-            {
-                common
-            }
-            // `%` beside a `SIMD` is its `__mod__` above, so a literal pair
-            // keeps its common type here (`IntLiteral`'s fold, R1624); an
-            // `IntLiteral` pair's `**` is the literal's own.
-            Mod => common,
-            Pow if common.as_ref().is_some_and(Ty::is_int_literal) => common,
-            // A literal pair divides exactly into a `FloatLiteral`, as
-            // upstream's `IntLiteral.__truediv__` does; concrete operands
-            // keep their common type.
-            Div => common.map(|ty| {
-                if matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) {
-                    Ty::float_literal()
-                } else {
-                    ty
-                }
-            }),
+            // `%` and `/` over concrete operands keep their common type.
+            Mod | Div => common,
             // Ordering between numbers.
-            Lt | Gt | Le | Ge if common.is_some() => Some(Ty::bool()),
+            Lt | Gt | Le | Ge if common.is_some() || numeric_literals(&lt, &rt) => Some(Ty::bool()),
             // Equality: between numbers (any common type), or equal non-numeric
             // scalars (`None`, and a `Bool` in an unlinked program, which
             // declares no `Bool`). A string literal compares through
@@ -391,6 +379,7 @@ impl Checker {
             // of which declares them.
             Eq | Ne
                 if common.is_some()
+                    || numeric_literals(&lt, &rt)
                     || (lt == rt && is_scalar(&lt) && !lt.is_string_literal())
                     || (lt.is_string_literal()
                         && rt.is_string_literal()
@@ -805,6 +794,85 @@ impl Checker {
         Ok(ty)
     }
 
+    /// The literal rule's type of `op` over two numeric literals, for an
+    /// operator neither literal's declared dunder took: the literal its
+    /// missing dunder's signature computes, through
+    /// [`Self::literal_rule_type`]. `None` for any other operands, and for
+    /// a comparison, which is a `Bool` below.
+    fn literal_rule(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Option<Ty>, TypeError> {
+        use InfixOp::{Add, BitAnd, BitOr, BitXor, Div, FloorDiv, Mod, Mul, Pow, Shl, Shr, Sub};
+        if !numeric_literals(lt, rt) {
+            return Ok(None);
+        }
+        let float = lt.is_float_literal() || rt.is_float_literal();
+        match op {
+            Add | Sub | Mul | FloorDiv | Div => self.literal_rule_type(op, lt, rt).map(Some),
+            // `FloatLiteral.__mod__` is `type_of(self - (self // rhs) * rhs)`.
+            Mod if float => {
+                let quotient = self.literal_rule_type(FloorDiv, lt, rt)?;
+                let product = self.literal_rule_type(Mul, &quotient, rt)?;
+                self.literal_rule_type(Sub, lt, &product).map(Some)
+            }
+            Mod | Pow | Shl | Shr | BitAnd | BitOr | BitXor if !float => {
+                self.literal_rule_type(op, lt, rt).map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// `IntLiteral[#pop<int_literal_bin<op l, r>>]` over the two literals'
+    /// slots, or the `FloatLiteral` of `#pop<float_literal_bin<…>>` when
+    /// either is a float or `op` is `/`, each integer slot first converted
+    /// by `#pop<int_to_float_literal>`, as upstream's
+    /// `IntLiteral.__truediv__` (`type_of(FloatLiteral(self) / rhs)`) and
+    /// its implicit `FloatLiteral` conversion type them. Closed slots fold;
+    /// a symbolic slot, or a closed fold that fails (`1 / 0`), keeps the
+    /// attribute.
+    fn literal_rule_type(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
+        let float = op == InfixOp::Div || lt.is_float_literal() || rt.is_float_literal();
+        let slot = |ty: &Ty| -> Result<ParamExpr, TypeError> {
+            let (TyKind::IntLiteral(slot) | TyKind::FloatLiteral(slot)) = ty.kind() else {
+                return Err(bad_infix_operator(op, lt, rt));
+            };
+            let slot = self
+                .param_context
+                .constant(slot.as_ref().clone())
+                .map_err(param_error)?;
+            if float && ty.is_int_literal() {
+                self.param_context
+                    .op(ParamOp::IntToFloatLiteral, &[slot])
+                    .map_err(param_error)
+            } else {
+                Ok(slot)
+            }
+        };
+        let param_op = match op {
+            InfixOp::Add => ParamOp::Add,
+            InfixOp::Sub => ParamOp::Sub,
+            InfixOp::Mul => ParamOp::Mul,
+            InfixOp::Div => ParamOp::Div,
+            InfixOp::FloorDiv => ParamOp::FloorDiv,
+            InfixOp::Mod => ParamOp::Mod,
+            InfixOp::Pow => ParamOp::Pow,
+            InfixOp::Shl => ParamOp::Shl,
+            InfixOp::Shr => ParamOp::Shr,
+            InfixOp::BitAnd => ParamOp::BitAnd,
+            InfixOp::BitOr => ParamOp::BitOr,
+            InfixOp::BitXor => ParamOp::BitXor,
+            _ => return Err(bad_infix_operator(op, lt, rt)),
+        };
+        let value = self
+            .param_context
+            .op(param_op, &[slot(lt)?, slot(rt)?])
+            .map_err(param_error)?
+            .into_value();
+        Ok(Ty::new(if float {
+            TyKind::FloatLiteral(Box::new(value))
+        } else {
+            TyKind::IntLiteral(Box::new(value))
+        }))
+    }
+
     /// `left op right` over two value-carrying literals as the declared
     /// dunder of the left one, else the reflected dunder of the right one,
     /// with no materialization; `None` when neither declares a dunder that
@@ -818,12 +886,8 @@ impl Checker {
         lt: &Ty,
         rt: &Ty,
     ) -> Result<Option<Ty>, TypeError> {
-        let carries_value = |ty: &Ty| {
-            matches!(
-                ty.kind(),
-                TyKind::IntLiteral(Some(_)) | TyKind::FloatLiteral(Some(_))
-            )
-        };
+        let carries_value =
+            |ty: &Ty| matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_));
         if !carries_value(lt) || !carries_value(rt) {
             return Ok(None);
         }
@@ -1445,6 +1509,11 @@ impl Checker {
             ty: ty.to_string(),
         })
     }
+}
+
+/// Whether both operands are numeric literals.
+fn numeric_literals(lt: &Ty, rt: &Ty) -> bool {
+    lt.kind().is_numeric_literal() && rt.kind().is_numeric_literal()
 }
 
 /// Whether `ty` is an archetype whose methods its bounds' requirements

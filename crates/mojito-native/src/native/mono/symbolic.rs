@@ -252,7 +252,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
             value,
             CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
         ),
-        TyKind::IntLiteral(Some(value)) | TyKind::FloatLiteral(Some(value)) => matches!(
+        TyKind::IntLiteral(value) | TyKind::FloatLiteral(value) => matches!(
             value.as_ref(),
             CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
         ),

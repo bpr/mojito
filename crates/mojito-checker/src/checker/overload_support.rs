@@ -858,9 +858,9 @@ pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
 }
 
 /// The conversion cost of one argument, in `CONVERSION_UNIT`s: 0 for an
-/// exact match (a literal against its value-less literal type is one, as
-/// the pin's literal is the `StringLiteral[_]` or `IntLiteral[_]` it
-/// binds), one unit for a numeric literal at its contextual default
+/// exact match (a string literal against the value-less `StringLiteral`
+/// is one, as the pin's literal is the `StringLiteral[_]` it binds), one
+/// unit for a numeric literal at its contextual default
 /// type, and one whole conversion for an implicit conversion. A string
 /// literal converting to anything but the nominal `String` costs two:
 /// `String` is the literal's contextual default type, so it ranks above the
@@ -870,11 +870,6 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
     if actual == expected
         || actual.kind().string_literal_value().is_some()
             && matches!(expected.kind(), TyKind::StringLiteral)
-        || matches!(
-            (actual.kind(), expected.kind()),
-            (TyKind::IntLiteral(Some(_)), TyKind::IntLiteral(None))
-                | (TyKind::FloatLiteral(Some(_)), TyKind::FloatLiteral(None))
-        )
     {
         0
     } else if matches!(actual.kind(), TyKind::IntLiteral(_)) && expected.is_int()

@@ -1191,10 +1191,7 @@ impl Checker {
         // `StringLiteral["ab"]`, `type_of(N + 2.5)` over `comptime N = 4`
         // `FloatLiteral[6.5]`, and `type_of(M)` over `comptime M: Int = 4`
         // the `Int` it materialized as.
-        if matches!(
-            ty.kind(),
-            TyKind::IntLiteral(None) | TyKind::FloatLiteral(None) | TyKind::StringLiteral
-        ) {
+        if matches!(ty.kind(), TyKind::StringLiteral) {
             return Err(TypeError::Unsupported(
                 "'type_of' of a literal value is not supported yet".to_string(),
             ));

@@ -4243,7 +4243,7 @@ mod tests {
         assert_eq!(folds(lane(4), lane(4)), Some(Reg(0)));
         let literal = Ty::string_literal();
         assert_eq!(folds(literal.clone(), literal), Some(Reg(0)));
-        assert_eq!(folds(Ty::int_literal(), Ty::int()), None);
+        assert_eq!(folds(Ty::int_literal_of(&0.into()), Ty::int()), None);
         let reg_types = HashMap::from([(0, Ty::int()), (1, Ty::int())]);
         let rebind = MirInstr::Rebind {
             dest: Reg(1),
@@ -4670,7 +4670,7 @@ mod tests {
         let binary = fold_binary;
         let literal = int_literal;
         assert!(matches!(
-            binary(InfixOp::Add, literal(2), literal(3), TyKind::IntLiteral(None), TyKind::IntLiteral(None)),
+            binary(InfixOp::Add, literal(2), literal(3), TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into()))), TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into())))),
             Some(Const::IntLiteral(value)) if value == IntLiteral::from(5i64)
         ));
         assert!(matches!(
@@ -4678,7 +4678,7 @@ mod tests {
                 InfixOp::Lt,
                 literal(1),
                 literal(2),
-                TyKind::IntLiteral(None),
+                TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into()))),
                 Ty::bool().kind().clone()
             ),
             Some(Const::Bool(true))
@@ -4860,8 +4860,15 @@ mod tests {
         let ty = |kind| Ty::new(kind);
         let literal = int_literal;
         let materialize = |target: TyKind| {
-            let reg_types =
-                HashMap::from([(0, ty(TyKind::IntLiteral(None))), (1, ty(target.clone()))]);
+            let reg_types = HashMap::from([
+                (
+                    0,
+                    ty(TyKind::IntLiteral(Box::new(
+                        mojito_types::ct::CtValue::PopIntLiteral(0.into()),
+                    ))),
+                ),
+                (1, ty(target.clone())),
+            ]);
             MirInstr::MaterializeLiteral {
                 dest: Reg(1),
                 value: Reg(0),
@@ -4903,7 +4910,11 @@ mod tests {
             })
         };
         let into_lane = |value: i64, dtype| {
-            materialize_into(literal(value), TyKind::IntLiteral(None), lane(dtype))
+            materialize_into(
+                literal(value),
+                TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into()))),
+                lane(dtype),
+            )
         };
         assert!(matches!(
             (into_lane(250, Dtype::UInt8), simd(Dtype::UInt8, CtLane::Int(250))),
@@ -4916,7 +4927,7 @@ mod tests {
         assert!(matches!(
             materialize_into(
                 literal(-1),
-                TyKind::IntLiteral(None),
+                TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into()))),
                 ty(Ty::uint().kind().clone())
             ),
             Some(Const::Value(CtValue::UInt(u64::MAX)))
@@ -4926,7 +4937,7 @@ mod tests {
         assert!(matches!(
             materialize_into(
                 Const::FloatLiteral(tenth),
-                TyKind::FloatLiteral(None),
+                TyKind::FloatLiteral(Box::new(mojito_types::ct::CtValue::PopFloatLiteral(mojito_common::literal::FloatLiteral::from_int(&0.into())))),
                 lane(Dtype::Float32)
             ),
             Some(Const::Value(CtValue::Simd { lanes, .. }))
@@ -4942,7 +4953,7 @@ mod tests {
             (
                 materialize_into(
                     literal(300),
-                    TyKind::IntLiteral(None),
+                    TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into()))),
                     storage(&lane(Dtype::UInt8))
                 ),
                 simd(Dtype::UInt8, CtLane::Int(44))
@@ -4954,7 +4965,7 @@ mod tests {
         assert!(
             materialize_into(
                 literal(1),
-                TyKind::IntLiteral(None),
+                TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into()))),
                 mojito_types::types::canonical_simd_ty(Dtype::Int32, 4)
             )
             .is_none()
@@ -5000,8 +5011,14 @@ mod tests {
 
         let lanes = |op, a: Const, b: Const, operand: Ty, dest: Ty| {
             let right = match &b {
-                Const::IntLiteral(_) => ty(TyKind::IntLiteral(None)),
-                Const::FloatLiteral(_) => ty(TyKind::FloatLiteral(None)),
+                Const::IntLiteral(_) => ty(TyKind::IntLiteral(Box::new(
+                    mojito_types::ct::CtValue::PopIntLiteral(0.into()),
+                ))),
+                Const::FloatLiteral(_) => ty(TyKind::FloatLiteral(Box::new(
+                    mojito_types::ct::CtValue::PopFloatLiteral(
+                        mojito_common::literal::FloatLiteral::from_int(&0.into()),
+                    ),
+                ))),
                 _ => operand.clone(),
             };
             let reg_types = HashMap::from([(0, operand), (1, right), (2, dest)]);
@@ -5083,7 +5100,15 @@ mod tests {
 
         let make = |width: i64| {
             let target = mojito_types::types::canonical_simd_ty(Dtype::UInt8, width);
-            let reg_types = HashMap::from([(0, ty(TyKind::IntLiteral(None))), (1, target)]);
+            let reg_types = HashMap::from([
+                (
+                    0,
+                    ty(TyKind::IntLiteral(Box::new(
+                        mojito_types::ct::CtValue::PopIntLiteral(0.into()),
+                    ))),
+                ),
+                (1, target),
+            ]);
             MirInstr::MakeSimd {
                 dest: Reg(1),
                 dtype: mojito_types::types::SimdDtype::Known(Dtype::UInt8),
@@ -5184,7 +5209,7 @@ mod tests {
             Some(Const::Value(CtValue::Simd { lanes, .. })) => Some(lanes),
             _ => None,
         };
-        let int_literal = Ty::int_literal();
+        let int_literal = Ty::int_literal_of(&0.into());
         assert_eq!(
             lanes_of(splat(literal(300), int_literal.clone(), Dtype::UInt8, 4)),
             Some(vec![CtLane::Int(44); 4])
@@ -5193,7 +5218,7 @@ mod tests {
         assert_eq!(
             lanes_of(splat(
                 Const::FloatLiteral(tenth),
-                Ty::float_literal(),
+                Ty::float_literal_of(&mojito_common::literal::FloatLiteral::from_int(&0.into())),
                 Dtype::Float32,
                 8
             )),
@@ -5224,7 +5249,11 @@ mod tests {
             dtype: Dtype::Int32,
             lanes: vec![CtLane::Int(1); 4],
         });
-        let reg_types = HashMap::from([(0, quad.clone()), (1, Ty::int_literal()), (2, quad)]);
+        let reg_types = HashMap::from([
+            (0, quad.clone()),
+            (1, Ty::int_literal_of(&0.into())),
+            (2, quad),
+        ]);
         let sum = MirInstr::BinOp {
             op: InfixOp::Add,
             dest: Reg(2),
@@ -5265,20 +5294,25 @@ mod tests {
         };
         let int = |value: i64| Const::IntLiteral(IntLiteral::from(value));
         assert_eq!(
-            lanes_of(convert(int(300), Ty::int_literal(), Dtype::UInt8, 4)),
+            lanes_of(convert(
+                int(300),
+                Ty::int_literal_of(&0.into()),
+                Dtype::UInt8,
+                4
+            )),
             Some(vec![CtLane::Int(44); 4])
         );
         let tenth = FloatLiteral::parse_decimal("0.1").expect("decimal literal");
         assert_eq!(
             lanes_of(convert(
                 Const::FloatLiteral(tenth),
-                Ty::float_literal(),
+                Ty::float_literal_of(&mojito_common::literal::FloatLiteral::from_int(&0.into())),
                 Dtype::Float32,
                 8
             )),
             Some(vec![CtLane::Float(f64::from(0.1f32).to_bits()); 8])
         );
-        assert!(convert(int(1), Ty::int_literal(), Dtype::Bool, 4).is_none());
+        assert!(convert(int(1), Ty::int_literal_of(&0.into()), Dtype::Bool, 4).is_none());
     }
 
     #[test]
@@ -5290,7 +5324,7 @@ mod tests {
         let literal = |value: i64| {
             (
                 Const::IntLiteral(IntLiteral::from(value)),
-                TyKind::IntLiteral(None),
+                TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into()))),
             )
         };
         let make = |elements: Vec<(Option<Const>, TyKind)>, dtype, width: i64| {
@@ -5342,8 +5376,18 @@ mod tests {
         assert_eq!(
             make(
                 vec![
-                    some(Const::FloatLiteral(tenth), TyKind::FloatLiteral(None)),
-                    some(literal(1).0, TyKind::IntLiteral(None))
+                    some(
+                        Const::FloatLiteral(tenth),
+                        TyKind::FloatLiteral(Box::new(mojito_types::ct::CtValue::PopFloatLiteral(
+                            mojito_common::literal::FloatLiteral::from_int(&0.into())
+                        )))
+                    ),
+                    some(
+                        literal(1).0,
+                        TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(
+                            0.into()
+                        )))
+                    )
                 ],
                 Dtype::Float32,
                 2
@@ -5373,7 +5417,12 @@ mod tests {
             make(
                 vec![
                     some(seven, int32),
-                    some(literal(2).0, TyKind::IntLiteral(None))
+                    some(
+                        literal(2).0,
+                        TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(
+                            0.into()
+                        )))
+                    )
                 ],
                 Dtype::Int32,
                 2
@@ -5384,7 +5433,12 @@ mod tests {
             make(
                 vec![
                     some(Const::Int(7), Ty::int().kind().clone()),
-                    some(literal(2).0, TyKind::IntLiteral(None))
+                    some(
+                        literal(2).0,
+                        TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(
+                            0.into()
+                        )))
+                    )
                 ],
                 Dtype::Int32,
                 2
@@ -5422,7 +5476,7 @@ mod tests {
             conversion(
                 ScalarConversion::Bool,
                 Const::IntLiteral(IntLiteral::from(1)),
-                TyKind::IntLiteral(None)
+                TyKind::IntLiteral(Box::new(mojito_types::ct::CtValue::PopIntLiteral(0.into())))
             ),
             Some(Const::Bool(true))
         ));

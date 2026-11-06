@@ -548,7 +548,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         kind if let Some(value) = kind.string_literal_value() => {
             closed_literal(ty, value, bindings)
         }
-        TyKind::IntLiteral(Some(value)) | TyKind::FloatLiteral(Some(value)) => {
+        TyKind::IntLiteral(value) | TyKind::FloatLiteral(value) => {
             closed_literal(ty, value, bindings)
         }
         // A vector's storage closes as the vector it stores.

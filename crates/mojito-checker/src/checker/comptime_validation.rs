@@ -3391,8 +3391,8 @@ impl Checker {
                 .materialize_as(ty)
                 .and_then(|closed| self.param_context.constant(closed).ok()),
         };
-        // A numeric constant's value type is the value-less literal type,
-        // which the literal type carrying its value names (R1659).
+        // A string constant's value type is the value-less `StringLiteral`,
+        // which the literal type carrying its text names (R1659).
         if let Some(argument) = argument.filter(|argument| {
             argument.meta().as_value().is_some_and(|found| {
                 found == ty || *found == mojito_types::types::value_less_literal(ty)

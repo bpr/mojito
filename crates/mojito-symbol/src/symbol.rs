@@ -1454,19 +1454,17 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // A literal whose type carries its value is the application
         // `IntLiteral[value]` (`FloatLiteral[value]`) it bridges, an
         // instance of its own.
-        TyKind::IntLiteral(Some(value)) => format!(
+        TyKind::IntLiteral(value) => format!(
             "{}$V{value}",
             encode_identifier(mojito_types::types::INT_LITERAL_TYPE_NAME)
         ),
-        TyKind::FloatLiteral(Some(value)) => format!(
+        TyKind::FloatLiteral(value) => format!(
             "{}$V{value}",
             encode_identifier(mojito_types::types::FLOAT_LITERAL_TYPE_NAME)
         ),
-        kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(None)) => "Int".to_string(),
+        kind if kind.is_int() => "Int".to_string(),
         kind if kind.is_uint() => "UInt".to_string(),
-        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(None)) => {
-            "Float64".to_string()
-        }
+        kind if kind.is_float64() => "Float64".to_string(),
         // A `SIMD` application spells as its display (`Int32`,
         // `SIMD[DType.int32, 4]`), not as a struct's arguments.
         kind if kind.is_simd() => kind.to_string(),

@@ -29,7 +29,7 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 35, end: 36, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 35, end: 36, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 35, end: 36, origin: absent }) }],
         blocks: [
           bb0 {

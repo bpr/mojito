@@ -14,7 +14,7 @@
         return_type: present(UInt),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: UInt }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: UInt }, reg_type { reg: %r5, type: UInt }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r7, type: kgen_simd { dtype: uint, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(7))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: UInt }, reg_type { reg: %r3, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r4, type: UInt }, reg_type { reg: %r5, type: UInt }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r7, type: kgen_simd { dtype: uint, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 38, end: 50, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 54, end: 55, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 54, end: 55, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 38, end: 55, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 54, end: 55, origin: absent }) }],
         blocks: [
           bb0 {
@@ -47,7 +47,7 @@
         return_type: present(Bool),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Bool }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r1, type: Bool }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 104, end: 105, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 99, end: 106, origin: absent }) }],
         blocks: [
           bb0 {
@@ -74,7 +74,7 @@
         return_type: present(Float64),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: UInt }, reg_type { reg: %r2, type: Float64 }, reg_type { reg: %r3, type: kgen_simd { dtype: uint, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(3))] } }, reg_type { reg: %r1, type: UInt }, reg_type { reg: %r2, type: Float64 }, reg_type { reg: %r3, type: kgen_simd { dtype: uint, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 164, end: 165, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 164, end: 165, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 151, end: 167, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 164, end: 165, origin: absent }) }],
         blocks: [
           bb0 {
@@ -103,7 +103,7 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: Int }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(200))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 216, end: 219, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 210, end: 220, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 206, end: 221, origin: absent }) }],
         blocks: [
           bb0 {
@@ -131,7 +131,7 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: Float64 }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: kgen_simd { dtype: float64, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: FloatLiteral, arguments: [value_arg(ct_pop_float_literal(1000000000000000000000000000000.0))] } }, reg_type { reg: %r1, type: Float64 }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: kgen_simd { dtype: float64, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 273, end: 277, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 273, end: 277, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 261, end: 279, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 273, end: 277, origin: absent }) }],
         blocks: [
           bb0 {

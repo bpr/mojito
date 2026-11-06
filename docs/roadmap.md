@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1963**.
+Next free ID: **R1964**.
 
 ## Ordered Work
 
@@ -2758,11 +2758,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Instantiating the callee's return type must bind its own binders
     simultaneously, never through a caller binder of the same spelling.
   - Landing it ports upstream's reflected `FloatLiteral` dunders
-    (`__radd__`, `__rsub__`, `__rmul__`, `__rmod__`, `__rfloordiv__`,
-    `__rtruediv__`, each `type_of(rhs OP self)`), which give `2 + 2.5 ==
-    5.0` today, so `2 + 2.5` becomes `FloatLiteral.__radd__`.
+    (`__radd__`, `__rsub__`, `__rmul__`, `__rtruediv__`, each
+    `type_of(rhs OP self)`), which give `2 + 2.5 == 5.0` today, so `2 +
+    2.5` becomes `FloatLiteral.__radd__`, and deletes the mixed-family
+    case of `Checker::literal_rule` (`checker/operators.rs`).
   - Probe: `print(2 + 2.5, 1 / 2.0, 3 - 0.5, (2.5).__radd__(1.0))` prints
     `4.5 0.5 2.5 3.5` at the pin.
+  - Probe: `print(7 // 2.5)` and `print(7 % 2.5)` fail at the pin with
+    "constraint failed: the SIMD type must be floating point", since no
+    reflected `//` or `%` takes an `IntLiteral` and both operands
+    materialize to `Int`; Mojito's literal rule types them
+    `FloatLiteral[2]` and prints `2.0`.
   - Found while landing R1753 (2026-11-02).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -6813,30 +6819,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     FloatLiteral.infinity._is_normal())` prints `True False` at the pin.
   - The `float_literal_isa` folds (`fold::fold_literal_attribute`) answer
     `nan` as always false until then.
+  - Probe: `print(1 / 0)` prints `nan` at the pin; Mojito types it by the
+    unfolded `#pop<float_literal_bin<truediv 1.0, 0.0>>`, which elaboration
+    rejects ("keeps symbolic type").
   - Found while landing R1507 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1849 A value-less `IntLiteral`/`FloatLiteral` type still exists,
-  where upstream's literal type always carries its value**
+- [ ] **R1963 A value parameter typed `IntLiteral[_]` stays its binder
+  after monomorphization**
 
-  Problem: `TyKind::IntLiteral(None)`/`FloatLiteral(None)` still types
-  values the pin types `IntLiteral[v]` or `Int`, so a literal type can
-  lose its value.
-  - Its remaining producers: a literal's unary operators (R1853), `/`
-    (R1784), `**` (R1855), and an `IntLiteral` beside a `FloatLiteral`
-    (R1854) in `checker/operators.rs`, the
-    symbolic literal polynomial (`IntDomain::Literal::ty`,
-    `param_expr.rs`, upstream's `IntLiteral[#pop.int_literal_bin<…>]`),
-    and MIR text's bare `IntLiteral` decode.
-  - Its consumers go with it: `coerces`'s and `conversion_count`'s
-    `(Some, None)` arms, the `type_of` guard (`constraints.rs`), the
-    numeric arms of `types::value_less_literal`, mangling, `ct::source_type`, `Display`,
-    `Ty::int_literal()`/`float_literal()`, and `TyKind::INT_LITERAL`/
-    `FLOAT_LITERAL`.
-  - Done when the variants hold `Box<CtValue>`, not an `Option`.
-  - Depends on R1753.
-  - Model: Fable, Not Planned.
+  `def g[x: IntLiteral[_]](): print(x)` with `g[3]()` fails elaboration
+  with "keeps the parameter constant `x`", where the pin prints `3`.
+  - The instance `g$mono$V3$V3` binds both `x` and its hidden
+    `$value_x`, yet a run-time read of `x` (a `const` of the parameter)
+    is not substituted, while `[x: Int]` is.
+  - Look at `native::mono`'s substitution of a `Const::Param` whose
+    binder's type is a literal over another binder of the same signature.
+  - Probe: `def g[x: IntLiteral[_]](): comptime y = x * 2 + 1;
+    print(type_of(y)(), y)` with `g[3]()` prints `7 7` at the pin; today
+    `type_of(y)()` alone prints `7`, and reading `y` fails the same way.
+  - Found while landing R1849 (2026-11-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1850 A numeric literal register holds its value at run time,
   where upstream's literal struct is empty**
@@ -9561,8 +9566,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `elaborate-drops/register_drop_named.mir` fails at load the
     same way ("drop.reg destroys %r2 of memory-only type Noisy"), and
     needs the same re-emit.
+  - Probe: `inline-parametric/deinit_register_receiver.mir` and
+    `read_owned_register_temporary.mir` fail at load the same way (a
+    `deinit` receiver call destroys a memory-only `Box`/`Res` register).
   - Both cases' `.expected` were rewritten by hand for R1837's storage
-    `literal.materialize` (2026-11-06); re-bless them after the re-emit.
+    `literal.materialize` (2026-11-06), and every such case's literal
+    register types for R1849's MIR 1.172; re-bless them after the re-emit.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9651,6 +9660,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `print((2).__pow__(10), 2 ** 10)` prints `1024 1024` at the pin.
   - Probe: `(2.5).__pow__(2.0)` stays rejected, since `FloatLiteral`
     declares no `__pow__`.
+  - Probe: `print(2 ** -1)` prints `0.5` at the pin through the
+    negative-exponent overload; the literal rule types it by the
+    unfolded `#pop<int_literal_bin<pow 2, -1>>`, which elaboration
+    rejects ("keeps symbolic type").
   - Found while landing R1753 (2026-11-02).
   - Depends on nothing.
   - Model: Opus, Not Planned.

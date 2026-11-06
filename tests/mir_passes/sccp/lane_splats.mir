@@ -30,7 +30,7 @@ artifact {
         return_type: present(kgen_simd { dtype: uint8, width: 4 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 4 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(300))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: uint8, width: 4 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 73, end: 76, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 52, end: 77, origin: absent }) }],
         blocks: [
           bb0 {
@@ -57,7 +57,7 @@ artifact {
         return_type: present(kgen_simd { dtype: float32, width: 4 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: float32, width: 4 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: FloatLiteral, arguments: [value_arg(ct_pop_float_literal(1/10))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: float32, width: 4 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 158, end: 161, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 135, end: 162, origin: absent }) }],
         blocks: [
           bb0 {
@@ -84,7 +84,7 @@ artifact {
         return_type: present(kgen_simd { dtype: int32, width: 4 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: int32, width: 4 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: kgen_simd { dtype: int32, width: 4 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int32, width: 4 } }, reg_type { reg: %r2, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r3, type: kgen_simd { dtype: int32, width: 4 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 237, end: 238, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 216, end: 239, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 242, end: 243, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 216, end: 243, origin: absent }) }],
         blocks: [
           bb0 {
@@ -113,7 +113,7 @@ artifact {
         return_type: present(kgen_simd { dtype: int32, width: 4 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: kgen_simd { dtype: int32, width: 1 } }, reg_type { reg: %r2, type: kgen_simd { dtype: int32, width: 4 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(7))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int32, width: 1 } }, reg_type { reg: %r2, type: kgen_simd { dtype: int32, width: 4 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 327, end: 328, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 321, end: 329, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 300, end: 330, origin: absent }) }],
         blocks: [
           bb0 {

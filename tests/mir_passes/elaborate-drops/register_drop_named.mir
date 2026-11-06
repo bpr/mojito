@@ -85,7 +85,7 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 191, end: 192, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 191, end: 192, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 185, end: 193, origin: absent }) }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 191, end: 192, origin: absent }) }],
         blocks: [
           bb0 {

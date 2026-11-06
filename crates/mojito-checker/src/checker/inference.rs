@@ -493,8 +493,7 @@ impl Checker {
             .infer_impl(expr)
             .and_then(|ty| self.apply_rebind_target(expr, ty))
             .map(|ty| self.read_through_call_reference(expr, ty))
-            .and_then(|ty| self.reject_runtime_deferred_call(expr, ty))
-            .map(|ty| self.carry_literal_value(expr, ty));
+            .and_then(|ty| self.reject_runtime_deferred_call(expr, ty));
         if let Ok(ty) = &result {
             // A conditional's arms carry their own conversions.
             if is_scalar_simd(ty)
@@ -1945,27 +1944,6 @@ impl Checker {
                 _ => unreachable!("checked Variant operation"),
             }
         })())
-    }
-
-    /// The type of `expr` once a value-less numeric literal type `ty`
-    /// carries the value the expression folds to (`N + 2.5` over
-    /// `comptime N = 4` is `FloatLiteral[6.5]`), as upstream's operator
-    /// dunders over `#pop<int_literal_bin<…>>` type it. The checker's
-    /// evaluator stands in for the dunders the literal rule still types:
-    /// `/` and `**` over two integer literals, a literal's unary `-` and
-    /// `~`, and an `IntLiteral` beside a `FloatLiteral`.
-    fn carry_literal_value(&self, expr: &Expr, ty: Ty) -> Ty {
-        if !matches!(
-            ty.kind(),
-            TyKind::IntLiteral(None) | TyKind::FloatLiteral(None)
-        ) {
-            return ty;
-        }
-        self.exact_literal_value(expr)
-            .as_ref()
-            .and_then(Ty::of_literal_value)
-            .filter(|carried| carried.is_int_literal() == ty.is_int_literal())
-            .unwrap_or(ty)
     }
 
     /// `Variant.set` implicitly destroys the previous payload under a

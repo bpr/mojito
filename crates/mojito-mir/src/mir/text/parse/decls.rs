@@ -16,6 +16,7 @@ impl Decoder {
             unlabelled_tries: false,
             legacy_raise: None,
             legacy_raises: false,
+            bare_literal_rows: false,
             minor,
             pack_upgrades: packs::PackUpgrades::default(),
         }

@@ -125,9 +125,9 @@ fn control_flow_program() -> MirProgram {
         spans: SpanTable::default(),
         reg_types: HashMap::from([
             (0, Ty::bool()),
-            (1, Ty::int_literal()),
+            (1, Ty::int_literal_of(&7.into())),
             (2, Ty::int()),
-            (3, Ty::int_literal()),
+            (3, Ty::int_literal_of(&(-3).into())),
             (4, Ty::int()),
             (5, Ty::int()),
             (6, kgen_simd_ty(Dtype::Int, 1)),

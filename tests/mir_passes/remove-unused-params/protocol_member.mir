@@ -55,7 +55,7 @@ artifact {
         return_type: present(Bool),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: C, arguments: [] } }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(3))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: C, arguments: [] } }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 198, end: 199, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 198, end: 199, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 203, end: 204, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 198, end: 204, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 198, end: 199, origin: absent }) }],
         blocks: [
           bb0 {

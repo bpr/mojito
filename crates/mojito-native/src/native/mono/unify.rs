@@ -433,16 +433,16 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         {
             bind_value(binder, text, bindings)
         }
-        TyKind::IntLiteral(Some(slot)) | TyKind::FloatLiteral(Some(slot))
+        TyKind::IntLiteral(slot) | TyKind::FloatLiteral(slot)
             if let CtValue::Expr(expr) = slot.as_ref()
                 && let Some(binder) = expr.as_decl_ref()
-                && let TyKind::IntLiteral(Some(value)) | TyKind::FloatLiteral(Some(value)) =
+                && let TyKind::IntLiteral(value) | TyKind::FloatLiteral(value) =
                     actual.kind()
                 && pattern.is_int_literal() == actual.is_int_literal() =>
         {
             bind_value(binder, value, bindings)
         }
-        TyKind::FloatLiteral(Some(slot))
+        TyKind::FloatLiteral(slot)
             if let CtValue::Expr(expr) = slot.as_ref()
                 && let Some(binder) = expr.as_decl_ref()
                 && let Some(value) = mojito_types::types::int_literal_as_float(actual) =>

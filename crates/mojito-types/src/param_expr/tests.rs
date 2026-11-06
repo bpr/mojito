@@ -1071,7 +1071,7 @@ fn literal_slot_cast_folds_like_an_int_cast() {
     let value = context.register(
         ParamId::new("SL.__init__", 0),
         "value",
-        MetaTy::value(Ty::int_literal()),
+        MetaTy::value(Ty::int_literal_of(&0.into())),
     );
     let cast = context
         .cast_to_builtin(&value)

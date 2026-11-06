@@ -2093,11 +2093,11 @@ impl Checker {
             // expression that folds to a literal is no conversion.
             let literal_typed = matches!(
                 record.ty.as_ref().map(Ty::kind),
-                Some(TyKind::FloatLiteral(Some(_)))
+                Some(TyKind::FloatLiteral(_))
             );
             drop(record);
             if literal_typed
-                && matches!(from.kind(), TyKind::FloatLiteral(Some(_)))
+                && matches!(from.kind(), TyKind::FloatLiteral(_))
                 && self
                     .structs
                     .get(mojito_types::types::SIMD_TYPE_NAME)

@@ -42,7 +42,7 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Grid, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(5))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Grid, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 167, end: 174, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 167, end: 177, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }],
         removed_params: [param_id { owner: "get_fwd", slot: 0 }],
         callee_removed_params: [callee_params { callee: "Grid.__getitem_param__", params: [param_id { owner: "Grid.__getitem_param__", slot: 0 }] }],

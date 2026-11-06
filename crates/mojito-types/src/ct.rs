@@ -1757,7 +1757,6 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         // A literal whose type carries its value has no closed spelling:
         // `IntLiteral[v]`'s attribute is no source expression.
         kind if kind.is_int() => Type::Named("Int".to_string(), Vec::new()),
-        TyKind::IntLiteral(None) => Type::Named("Int".to_string(), Vec::new()),
         kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
         kind if kind.is_bool() => Type::Named("Bool".to_string(), Vec::new()),
         // A string literal's type is the closed application of the declared
@@ -1769,7 +1768,6 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         ),
         TyKind::StringLiteral => Type::ClosedStringLiteral,
         kind if kind.is_float64() => Type::Named("Float64".to_string(), Vec::new()),
-        TyKind::FloatLiteral(None) => Type::Named("Float64".to_string(), Vec::new()),
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         kind if let Some((dtype, width)) = kind.known_simd() => Type::Named(

@@ -702,7 +702,7 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         | TyKind::LitRefPack { elements, .. } => elements.iter().any(contains_type_param),
         TyKind::Ref(reference) => contains_type_param(&reference.referent),
         kind if let Some(value) = kind.string_literal_value() => matches!(value, CtValue::Expr(_)),
-        TyKind::IntLiteral(Some(value)) | TyKind::FloatLiteral(Some(value)) => {
+        TyKind::IntLiteral(value) | TyKind::FloatLiteral(value) => {
             matches!(value.as_ref(), CtValue::Expr(_))
         }
         struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {

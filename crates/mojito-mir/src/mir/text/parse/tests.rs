@@ -4230,7 +4230,7 @@ fn an_artifact_older_than_1_170_materializes_a_literal_at_its_storage() {
     let program = program_with(vec![(
         "main".into(),
         function_with(
-            vec![Ty::int_literal(), Ty::int()],
+            vec![Ty::int_literal_of(&0.into()), Ty::int()],
             vec![
                 MirInstr::Const {
                     dest: Reg(0),
@@ -4272,4 +4272,43 @@ fn an_artifact_older_than_1_170_materializes_a_literal_at_its_storage() {
             MirInstr::MakeStruct { dest: Reg(1), fields },
         ] if *target == storage && fields == &[Reg(2)]
     ));
+}
+
+/// A register row older than MIR 1.172 may spell a literal register's
+/// type as the bare `IntLiteral` atom, which reads as the literal type
+/// carrying the value of the `const` defining it; from 1.172 the bare
+/// atom is rejected, as every literal type carries its value.
+#[test]
+fn a_bare_literal_register_type_reads_from_its_const_before_1_172() {
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::int_literal_of(&7.into())],
+            vec![MirInstr::Const {
+                dest: Reg(0),
+                k: Const::IntLiteral(mojito_common::literal::IntLiteral::from(7)),
+            }],
+        ),
+    )]);
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let spelled = "struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(7))] }";
+    let text = write::program(&program);
+    assert!(text.contains(spelled));
+    let bare = text.replacen(spelled, "IntLiteral", 1);
+    let older = bare.replacen(&current, "mojito-mir 1.171", 1);
+    let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("the text reads");
+    let (_, function) = parsed.program.functions.into_iter().next().expect("main");
+    assert_eq!(
+        function.reg_types.get(&0),
+        Some(&Ty::int_literal_of(&7.into()))
+    );
+    let error = artifact(bare.as_bytes(), "unit.mir".to_string())
+        .err()
+        .expect("a bare literal type is rejected at the current minor");
+    assert!(
+        error.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("carries its value since MIR 1.172")),
+        "{error:?}"
+    );
 }
