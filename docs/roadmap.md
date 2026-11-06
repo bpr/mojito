@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1958**.
+Next free ID: **R1959**.
 
 ## Ordered Work
 
@@ -522,6 +522,10 @@ which names the upstream pass each one follows. Each is measured by the
     inlined, `canonicalize` folds the call through the closure to
     `get`'s method call on its storage
     (`tests/mir_passes/canonicalize/indirect_closure_storage.mir`).
+  - That case's input no longer loads ("closure environment … binds
+    neither a leading reference parameter nor a leading `read` one");
+    rebuild it and re-bless its `.expected`, which predates R1837's
+    storage `literal.materialize` and `struct.create` pair.
   - Found while landing R1345 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9567,6 +9571,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     fails at load, since its input predates R1873's rule (`swapped`'s
     `deinit` receiver call destroys a memory-only `Tuple` register); it
     needs re-emitting from current lowering once `emit-mir` works.
+  - Probe: `elaborate-drops/register_drop_named.mir` fails at load the
+    same way ("drop.reg destroys %r2 of memory-only type Noisy"), and
+    needs the same re-emit.
+  - Both cases' `.expected` were rewritten by hand for R1837's storage
+    `literal.materialize` (2026-11-06); re-bless them after the re-emit.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11332,36 +11341,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1955.
   - Model: Opus, Not Planned.
 
-- [ ] **R1837 The MIR verifier accepts a `literal.materialize` whose
-  target is a `SIMD` struct, where upstream's `pop.int_literal_convert`
-  and `float_literal_convert` attributes are typed at the `!pop.simd`
-  storage**
-
-  `verify_value_instruction` reads the target through `storage_value_ty`,
-  so `Int`, `UInt`, `Float64`, and `Scalar[dt]` targets pass beside their
-  storage. Lowering emits only storage targets (R1834), but hand-written
-  MIR still holds about 640 struct-target sites.
-  - Verifier: require `TyKind::KgenSimd` in the `MaterializeLiteral` arm,
-    with its own finding for a struct target.
-  - Emitters: drop the non-storage arms of `materialize_literal`
-    (`lower_expr/calls.rs`), `call_defaults::materialize`, and
-    `analysis/inline_parametric.rs`.
-  - Readers: the VM, Pliron's `lower/instr.rs` and `lower/support.rs`,
-    `analysis/sccp.rs`, and `MirInstr::folded_constant` read
-    `storage_simd(target)` directly.
-  - Hand MIR: rewrite the `target: Int` (or `UInt`, `Float64`, `simd`)
-    sites of about 257 `tests/mir_passes/**` artifacts as a storage
-    conversion plus `struct.create`, declaring the `SIMD` struct each
-    needs, and re-bless their `.expected`.
-  - `tests/snapshots/mir/control_flow.mir` changes through
-    `tests/mir_disassembler_test.rs::control_flow_program`.
-  - Probe: `mojito opt --pass canonicalize
-    tests/mir_passes/canonicalize/simd_struct_constant_folds.mir` fails
-    at load with "struct creation's result is no declared struct"; the
-    rewrite's `SIMD` declaration repairs it.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1836 A multi-lane literal conversion splats the unconverted
   literal, where upstream's attribute converts at the full `!kgen.simd`
   storage**
@@ -11385,6 +11364,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `emit-mir` prints, so the probe is a phase test, not the CLI.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1958 The MIR verifier does not type `literal.materialize`'s
+  result at its target, where upstream's converted attribute is the
+  value's type**
+
+  `verify_value_instruction`'s `MaterializeLiteral` arm judges the target
+  and the source but never the `dest` register's type, so a storage
+  conversion into an `Int`-typed register verifies.
+  - Lowering and the reader's pre-1.170 upgrade both type the result at
+    the `!kgen.simd` target, so the rule should reject no emitted MIR.
+  - Probe: a hand-written `literal.materialize { dest: %r1, value: %r0,
+    target: kgen_simd { dtype: int, width: 1 } }` with `%r1` typed `Int`
+    passes `mojito opt`.
+  - Found while landing R1837 (2026-11-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1618 A compile-time argument computed by an inlined dunder keeps
   its function's parameter**

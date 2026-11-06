@@ -28,7 +28,7 @@
       },
       fn {
         name: mkg,
-        registers: 7,
+        registers: 8,
         vars: 4,
         var_names: [n, "$tmp_field_r3", "self$inline2", "v$inline2"],
         params: 0,
@@ -41,16 +41,17 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 159, end: 160, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 162, end: 163, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 162, end: 163, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 157, end: 164, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 157, end: 166, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 157, end: 166, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 157, end: 164, origin: absent }) }],
+        register_types: [reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r7, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 159, end: 160, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 162, end: 163, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 162, end: 163, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 157, end: 164, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 157, end: 166, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 157, end: 166, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 162, end: 163, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 157, end: 164, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r1, value: int_literal(5) },
-              literal.materialize { dest: %r2, value: %r1, target: Int },
+              literal.materialize { dest: %r6, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r6] },
               var.declare { var: $v2 },
               var.store { var: $v3, src: %r2, binding_type: present(Int), in_place: false },
-              loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r6, var: $v3, mode: copy }, place.store { place: place { root: $v2, root_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r6 }], terminator: break { label: present(loop4294967295), values: [] } }] },
+              loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r7, var: $v3, mode: copy }, place.store { place: place { root: $v2, root_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r7 }], terminator: break { label: present(loop4294967295), values: [] } }] },
               var.use { dest: %r3, var: $v2, mode: forward },
               var.store { var: $v1, src: %r3, binding_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: false },
               place.load { dest: %r4, place: place { root: $v1, root_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },

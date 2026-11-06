@@ -3387,7 +3387,7 @@ impl MirInstr {
                 value,
                 target,
             } => {
-                let target = &mojito_types::types::storage_value_ty(target);
+                let target = &mojito_types::types::storage_simd(target)?;
                 let literal = operand(*value)?;
                 let materializes = target.is_int()
                     || target.is_uint()

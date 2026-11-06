@@ -1,4 +1,4 @@
-mojito-mir 1.109
+mojito-mir 1.170
 artifact {
   features: [],
   files: [
@@ -6,6 +6,7 @@ artifact {
   ],
   traits: [],
   structs: [
+    struct { name: SIMD, fields: [field { name: _mlir_value, type: kgen_simd { dtype: ct_expr(param_decl_ref { owner: "SIMD", slot: 0, name: dtype, type: meta_value(DType) }), width: ct_expr(param_decl_ref { owner: "SIMD", slot: 1, name: length, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "SIMD", slot: 0, name: dtype, type: DType, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }, value_param { owner: "SIMD", slot: 1, name: length, type: struct_type { name: SIMDLength, arguments: [] }, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "std.simd" },
     struct { name: V, fields: [field { name: x, type: Int }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
   ],
   decls: [
@@ -103,7 +104,7 @@ artifact {
       },
       fn {
         name: via_sub,
-        registers: 5,
+        registers: 6,
         vars: 2,
         var_names: [a, i],
         params: 2,
@@ -116,13 +117,14 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: V, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 374, end: 375, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 376, end: 377, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 379, end: 380, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 379, end: 380, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 374, end: 381, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: V, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 374, end: 375, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 376, end: 377, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 379, end: 380, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 379, end: 380, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 374, end: 381, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 379, end: 380, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r2, value: int_literal(2) },
-              literal.materialize { dest: %r3, value: %r2, target: Int },
+              literal.materialize { dest: %r5, value: %r2, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r3, fields: [%r5] },
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent } },
               var.use { dest: %r1, var: $v1, mode: copy },
               index.multi { dest: %r4, object: %r0, args: [index(%r1), index(%r3)], object_place: present(place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent }), arg_places: [absent, absent], kwargs: [], kwarg_places: [], call: present(subscript_call { target: "V.__getitem__", raises: absent, result_type: Int, receiver_requires_place: false, receiver_convention: absent, arguments: [call_argument { source: positional(0), parameter_type: Int, requires_place: false, convention: absent }, call_argument { source: positional(1), parameter_type: Int, requires_place: false, convention: absent }], capture_accesses: [], reference_result: absent, param_arg_regs: [], param_decls: [] }) }

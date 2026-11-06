@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `literal.materialize` now targets a `!kgen.simd` storage only, as
+  upstream's `#pop.int_literal_convert` and `float_literal_convert` are
+  typed at `!pop.simd`: the MIR verifier rejects a `SIMD` struct target,
+  and the VM, Pliron, and the folders read the storage directly. MIR text
+  moves to 1.170, and an older artifact's struct target reads as the
+  storage conversion plus `struct.create` (R1837).
 - `Bool` in type position is now the prelude's `std.builtin.bool.Bool`
   name, as upstream's is, instead of an AST keyword type, so a program's
   own `struct Bool` shadows it in annotations and constructions (R1841).

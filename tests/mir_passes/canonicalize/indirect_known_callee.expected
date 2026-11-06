@@ -1,7 +1,7 @@
   functions: [
       fn {
         name: double,
-        registers: 4,
+        registers: 5,
         vars: 1,
         var_names: [x],
         params: 1,
@@ -15,7 +15,7 @@
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 434, end: 435, origin: present($v0) }) }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 438, end: 439, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 434, end: 439, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 434, end: 435, origin: present($v0) }) }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 438, end: 439, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 434, end: 439, origin: absent }) }, reg_loc { reg: %r4, location: absent }],
         blocks: [
           bb0 {
             instructions: [
@@ -57,7 +57,7 @@
       },
       fn {
         name: "outer$minus",
-        registers: 4,
+        registers: 5,
         vars: 1,
         var_names: [x],
         params: 1,
@@ -71,7 +71,7 @@
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 434, end: 435, origin: present($v0) }) }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 438, end: 439, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 434, end: 439, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 434, end: 435, origin: present($v0) }) }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 438, end: 439, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 434, end: 439, origin: absent }) }, reg_loc { reg: %r4, location: absent }],
         blocks: [
           bb0 {
             instructions: [
@@ -85,7 +85,7 @@
       },
       fn {
         name: outer,
-        registers: 9,
+        registers: 10,
         vars: 1,
         var_names: [k],
         params: 1,
@@ -98,14 +98,14 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r8, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }],
+        register_types: [reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r9, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r2, value: int(3) },
-              place.load { dest: %r8, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
-              call { dest: %r3, func: "outer$plus", raises: absent, args: [%r8, %r2], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }), absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              place.load { dest: %r9, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              call { dest: %r3, func: "outer$plus", raises: absent, args: [%r9, %r2], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }), absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               call { dest: %r5, func: "outer$minus", raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r6, a: %r3, b: %r5, resolved: absent, raises: absent }
             ],

@@ -23,7 +23,7 @@ instruction	store_to_mem	unsupported	compile-time memory has no run-time form; o
 instruction	type.name	unsupported	the elaborator spells every type name as a constant; one that survives rejects
 instruction	type.construct	unsupported	monomorphization leaves no type parameter to construct; one that survives rejects
 instruction	type.construct_expr	unsupported	monomorphization leaves no type expression to construct; one that survives rejects
-instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a run-time literal value converts from its i64/f64 storage; a constant exceeding that storage rejects
+instruction	literal.materialize	partial	width-1 `!kgen.simd` storage targets (wrapping, VM-exact); a run-time literal value converts from its i64/f64 storage; a constant exceeding that storage rejects
 instruction	scalar.cast	partial	numeric, Bool, width-1 SIMD, and literal operands, VM-exact; Int of a pointer is its address; a pointer to any other target rejects
 instruction	pointer.convert	supported	a `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one `ptr`; the copy is the identity
 instruction	var.use	supported	copy/move/borrow

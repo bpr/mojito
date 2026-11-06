@@ -163,6 +163,9 @@ impl Decoder {
         if function.error_slot.is_none() {
             upgrade_function_error_slot(&mut function);
         }
+        if self.minor < 170 {
+            upgrade_struct_literal_targets(&mut function);
+        }
         Some((name, function))
     }
 
@@ -1414,6 +1417,16 @@ pub(super) fn upgrade_function_error_slot(function: &mut MirFunction) {
     function.error_slot = Some(slot);
 }
 
+/// Convert each literal `function`, read from text older than MIR 1.170,
+/// materializes at a `SIMD` struct at that struct's `!kgen.simd` storage,
+/// as upstream's `#pop.int_literal_convert` is typed, into a fresh storage
+/// register the struct is then created over (`struct.create`).
+pub(super) fn upgrade_struct_literal_targets(function: &mut MirFunction) {
+    let mut blocks = std::mem::take(&mut function.blocks);
+    storage_literal_targets(&mut blocks, function);
+    function.blocks = blocks;
+}
+
 /// Name `slot` in each store [`legacy_error_store`] made before a raise
 /// out of the function in `blocks`, typing it `ty`; whether there was one.
 fn name_function_error_slot(blocks: &mut [MirBlock], slot: VarId, ty: &Ty) -> bool {
@@ -1435,6 +1448,38 @@ fn name_function_error_slot(blocks: &mut [MirBlock], slot: VarId, ty: &Ty) -> bo
         }
     }
     named
+}
+
+fn storage_literal_targets(blocks: &mut [MirBlock], function: &mut MirFunction) {
+    for block in blocks {
+        let mut index = 0;
+        while index < block.instrs.len() {
+            for region in crate::mir::instruction_regions_mut(&mut block.instrs[index]) {
+                storage_literal_targets(region, function);
+            }
+            if let MirInstr::MaterializeLiteral { dest, target, .. } = &mut block.instrs[index]
+                && let Some(storage_ty) = mojito_types::types::simd_storage(target)
+            {
+                let storage = crate::mir::Reg(function.n_regs);
+                function.n_regs += 1;
+                function.reg_types.insert(storage.0, storage_ty.clone());
+                if let Some(span) = function.spans.0.get(&dest.0).cloned() {
+                    function.spans.0.insert(storage.0, span);
+                }
+                let created = std::mem::replace(dest, storage);
+                *target = storage_ty;
+                block.instrs.insert(
+                    index + 1,
+                    MirInstr::MakeStruct {
+                        dest: created,
+                        fields: vec![storage],
+                    },
+                );
+                index += 1;
+            }
+            index += 1;
+        }
+    }
 }
 
 fn upgrade_blocks(blocks: &mut [MirBlock], function: &mut MirFunction) {

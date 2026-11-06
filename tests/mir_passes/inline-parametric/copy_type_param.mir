@@ -1,4 +1,4 @@
-mojito-mir 1.89
+mojito-mir 1.170
 artifact {
   features: [],
   files: [
@@ -6,7 +6,8 @@ artifact {
   ],
   traits: [],
   structs: [
-    struct { name: Counter, fields: [field { name: n, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __copyinit__, symbol: "Counter.__copyinit__" }] }
+    struct { name: Counter, fields: [field { name: n, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __copyinit__, symbol: "Counter.__copyinit__" }] },
+    struct { name: SIMD, fields: [field { name: _mlir_value, type: kgen_simd { dtype: ct_expr(param_decl_ref { owner: "SIMD", slot: 0, name: dtype, type: meta_value(DType) }), width: ct_expr(param_decl_ref { owner: "SIMD", slot: 1, name: length, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "SIMD", slot: 0, name: dtype, type: DType, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }, value_param { owner: "SIMD", slot: 1, name: length, type: struct_type { name: SIMDLength, arguments: [] }, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "std.simd" }
   ],
   decls: [
     decl { lowered_name: "Counter.__copyinit__", param_names: [copy], param_types: [struct_type { name: Counter, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: present(0), param_decls: [], has_receiver: true, receiver_convention: present(out), param_conventions: [absent], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
@@ -45,7 +46,7 @@ artifact {
       },
       fn {
         name: "Counter.__init__",
-        registers: 2,
+        registers: 3,
         vars: 1,
         var_names: [self],
         params: 1,
@@ -58,13 +59,14 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 169, end: 170, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 169, end: 170, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 169, end: 170, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 169, end: 170, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 169, end: 170, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(0) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r2, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r2] },
               place.store { place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r1 }
             ],
             terminator: return { value: absent }
@@ -73,7 +75,7 @@ artifact {
       },
       fn {
         name: "Counter.__copyinit__",
-        registers: 4,
+        registers: 5,
         vars: 2,
         var_names: [self, copy],
         params: 2,
@@ -86,13 +88,14 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 232, end: 238, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 241, end: 244, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 241, end: 244, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 232, end: 244, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 232, end: 238, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 241, end: 244, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 241, end: 244, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 232, end: 244, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 241, end: 244, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r1, value: int_literal(100) },
-              literal.materialize { dest: %r2, value: %r1, target: Int },
+              literal.materialize { dest: %r4, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r4] },
               place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
               binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
               place.store { place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r3 }
@@ -130,7 +133,7 @@ artifact {
       },
       fn {
         name: main,
-        registers: 6,
+        registers: 7,
         vars: 3,
         var_names: [a, c, d],
         params: 0,
@@ -143,13 +146,14 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: Counter, arguments: [] } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 290, end: 299, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 316, end: 317, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 312, end: 318, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 290, end: 299, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 316, end: 317, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 312, end: 318, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(7) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r6, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r6] },
               call { dest: %r2, func: dup, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(Int)], spread: absent },
               var.store { var: $v0, src: %r2, binding_type: present(Int), in_place: true },
               drop.var { var: $v0 },

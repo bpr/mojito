@@ -3,7 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
-use mojito_types::types::storage_value_ty;
+use mojito_types::types::storage_simd;
 
 impl FnLowering<'_> {
     pub(super) fn lower_const(
@@ -637,26 +637,18 @@ impl FnLowering<'_> {
         value: Reg,
         target_ty: &Ty,
     ) -> Result<(), PlironError> {
-        let target_ty = &storage_value_ty(target_ty);
-        let (target, literal_storage) = match target_ty.kind() {
-            kind if kind.is_int() => (ScalarTy::Int, false),
-            kind if kind.is_uint() => (ScalarTy::UInt, false),
-            kind if kind.is_float64() => (ScalarTy::Float64, false),
-            ty if let Some(dtype) = scalar_simd_dtype(ty) => (ScalarTy::of_dtype(dtype), false),
-            // Literal-typed storage holds the exact value at its default
-            // width, rejecting what i64/f64 cannot represent.
-            TyKind::IntLiteral(_) => (ScalarTy::Int, true),
-            TyKind::FloatLiteral(_) => (ScalarTy::Float64, true),
-            other => {
+        let target = match storage_simd(target_ty).as_ref().map(Ty::kind) {
+            Some(kind) if kind.is_int() => ScalarTy::Int,
+            Some(kind) if kind.is_uint() => ScalarTy::UInt,
+            Some(kind) if kind.is_float64() => ScalarTy::Float64,
+            Some(ty) if let Some(dtype) = scalar_simd_dtype(ty) => ScalarTy::of_dtype(dtype),
+            _ => {
                 return Err(
-                    self.unsupported_reg(format!("literal materialization to `{other:?}`"), dest)
+                    self.unsupported_reg(format!("literal materialization to `{target_ty}`"), dest)
                 );
             }
         };
         let constant = match self.pending_literals.get(&value.0).cloned() {
-            Some(literal) if literal_storage => {
-                self.exact_literal_storage(ctx, &literal, target_ty, dest)?
-            }
             Some(literal) => self.materialize_pending(ctx, &literal, target, dest)?,
             None => self.runtime_literal_value(ctx, value, target, dest)?,
         };

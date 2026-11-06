@@ -741,27 +741,21 @@ impl Literal {
         let Some(target) = &self.materialized else {
             return dest;
         };
+        let Some(storage_ty) = simd_storage(target) else {
+            return dest;
+        };
         let value = dest;
         let dest = fresh_register(function, target.clone(), span);
-        match simd_storage(target) {
-            Some(storage_ty) => {
-                let storage = fresh_register(function, storage_ty.clone(), span);
-                instructions.extend(storage_construction(
-                    dest,
-                    storage,
-                    MirInstr::MaterializeLiteral {
-                        dest: storage,
-                        value,
-                        target: storage_ty,
-                    },
-                ));
-            }
-            None => instructions.push(MirInstr::MaterializeLiteral {
-                dest,
+        let storage = fresh_register(function, storage_ty.clone(), span);
+        instructions.extend(storage_construction(
+            dest,
+            storage,
+            MirInstr::MaterializeLiteral {
+                dest: storage,
                 value,
-                target: target.clone(),
-            }),
-        }
+                target: storage_ty,
+            },
+        ));
         dest
     }
 }

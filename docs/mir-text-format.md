@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.169
+mojito-mir 1.170
 ```
 
-The writer emits 1.169. The reader accepts 1.0 through 1.169; *Schema 1.0*
+The writer emits 1.170. The reader accepts 1.0 through 1.170; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1148,6 +1148,16 @@ and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
 
+Schema 1.170 types `literal.materialize`'s `target` at a `kgen_simd`
+storage only (R1837), as upstream's `#pop.int_literal_convert` and
+`float_literal_convert` attributes are typed at `!pop.simd`: an `Int`,
+`UInt`, `Float64`, or `Scalar[dt]` value is a `struct.create` over the
+conversion, and the verifier rejects a `SIMD` struct target. An artifact
+below 1.170 whose target is a `SIMD` struct reads as the conversion into a
+fresh register typed at the struct's storage, located where the old
+destination was, followed by `struct.create` of the old destination; it
+verifies only when it declares `SIMD`, as every emitted artifact does.
+
 Schema 1.169 types a parameter expression's `cast_from_builtin` at
 `Int`'s `!kgen.scalar<index>` storage (R1835), as upstream's
 `pop.cast_from_builtin[_type=!kgen.scalar<index>]` is typed, and
@@ -2030,7 +2040,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` — a `value.copy` carries `constructor: "<symbol>"` after its operands when it names the `__copyinit__` it runs, as `var.use` does (schema 1.68) |
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`; schema 1.157 withdraws mode `move` and with it `constructor` and `destructor`: a capture is `closure_capture { place }`, a reference to its place, and a 1.156 or older artifact's capture may spell `mode: reference`) |
-| `Const` / `MaterializeLiteral` | `const` / `literal.materialize` (schema 1.148 removes `layout.size_of`, schema 1.155 `type.name`) |
+| `Const` / `MaterializeLiteral` | `const` / `literal.materialize`, whose `target` is a `kgen_simd` storage from schema 1.170 (schema 1.148 removes `layout.size_of`, schema 1.155 `type.name`) |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage, or (schema 1.164) one is a `ui8` and the other a `UInt8`'s `!kgen.scalar<ui8>` storage |
 | `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |

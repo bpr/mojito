@@ -86,7 +86,7 @@
       },
       fn {
         name: "Box.bump",
-        registers: 5,
+        registers: 6,
         vars: 1,
         var_names: [self],
         params: 1,
@@ -99,15 +99,16 @@
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 246, end: 252, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 256, end: 257, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 256, end: 257, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 246, end: 252, origin: absent }) }, reg_loc { reg: %r4, location: absent }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 246, end: 252, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 256, end: 257, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 256, end: 257, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 246, end: 252, origin: absent }) }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 256, end: 257, origin: absent }) }],
         removed_params: [param_id { owner: "Box", slot: 0 }],
         blocks: [
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               const { dest: %r1, value: int_literal(1) },
-              literal.materialize { dest: %r2, value: %r1, target: Int },
+              literal.materialize { dest: %r5, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r5] },
               binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
               place.store { place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r3 }
             ],

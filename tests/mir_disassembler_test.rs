@@ -1,5 +1,5 @@
 use mojito::SourceSpan;
-use mojito::ast::ArgConvention;
+use mojito::ast::{ArgConvention, Dtype};
 use mojito::checked::CheckedConst;
 use mojito::literal::{FloatLiteral, IntLiteral};
 use mojito::mir::{
@@ -8,6 +8,7 @@ use mojito::mir::{
 };
 use mojito::types::ParamDecl;
 use mojito::types::Ty;
+use mojito::types::kgen_simd_ty;
 use std::collections::{HashMap, HashSet};
 
 fn identity_program() -> MirProgram {
@@ -57,7 +58,7 @@ fn identity_program() -> MirProgram {
 }
 
 fn control_flow_program() -> MirProgram {
-    let literal = |dest: u32, value: &str| {
+    let literal = |dest: u32, storage: u32, value: &str| {
         let literal = value
             .strip_prefix('-')
             .map_or_else(
@@ -71,9 +72,13 @@ fn control_flow_program() -> MirProgram {
                 k: Const::IntLiteral(literal),
             },
             MirInstr::MaterializeLiteral {
-                dest: Reg(dest + 1),
+                dest: Reg(storage),
                 value: Reg(dest),
-                target: Ty::int(),
+                target: kgen_simd_ty(Dtype::Int, 1),
+            },
+            MirInstr::MakeStruct {
+                dest: Reg(dest + 1),
+                fields: vec![Reg(storage)],
             },
         ]
     };
@@ -90,20 +95,20 @@ fn control_flow_program() -> MirProgram {
                     results: vec![Reg(5)],
                     cond: Reg(0),
                     then: vec![MirBlock {
-                        instrs: literal(1, "7"),
+                        instrs: literal(1, 6, "7"),
                         term: MirTerm::Yield(vec![Reg(2)]),
                     }],
                     elifs: Vec::new(),
                     else_args: Vec::new(),
                     orelse: vec![MirBlock {
-                        instrs: literal(3, "-3"),
+                        instrs: literal(3, 7, "-3"),
                         term: MirTerm::Yield(vec![Reg(4)]),
                     }],
                 },
             ],
             term: MirTerm::Return(Some(Reg(5))),
         }],
-        n_regs: 6,
+        n_regs: 8,
         n_vars: 1,
         var_names: vec!["flag".into()],
         n_params: 1,
@@ -125,6 +130,8 @@ fn control_flow_program() -> MirProgram {
             (3, Ty::int_literal()),
             (4, Ty::int()),
             (5, Ty::int()),
+            (6, kgen_simd_ty(Dtype::Int, 1)),
+            (7, kgen_simd_ty(Dtype::Int, 1)),
         ]),
         removed_params: Vec::new(),
         callee_removed_params: Vec::new(),
@@ -134,9 +141,25 @@ fn control_flow_program() -> MirProgram {
     };
     MirProgram {
         functions: vec![("choose".into(), function)],
-        declarations: MirDeclarations::default(),
+        declarations: MirDeclarations {
+            structs: vec![simd_declaration()],
+            ..MirDeclarations::default()
+        },
         invariant_errors: Vec::new(),
     }
+}
+
+/// The bundled library's `SIMD` declaration, which a `struct.create` of
+/// an `Int` names.
+fn simd_declaration() -> MirStructDeclaration {
+    let artifact = include_bytes!("mir_passes/canonicalize/simd_struct_constant_folds.mir");
+    mir::text::parse_artifact(artifact, "simd_struct_constant_folds.mir")
+        .expect("parse the SIMD declaration's artifact")
+        .program
+        .declarations
+        .structure("SIMD")
+        .cloned()
+        .expect("the artifact declares SIMD")
 }
 
 fn metadata_program() -> MirProgram {

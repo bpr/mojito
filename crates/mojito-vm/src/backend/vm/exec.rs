@@ -6,7 +6,7 @@
 use super::*;
 use mojito_mir::mir::verify::instruction_places;
 use mojito_types::types::TyKind;
-use mojito_types::types::storage_value_ty;
+use mojito_types::types::storage_simd;
 
 impl VmBackend {
     /// The value a `place.load` of `place` reads in the frame `frame_id` of
@@ -391,10 +391,13 @@ impl VmBackend {
                 value,
                 target,
             } => {
-                regs[dest.0 as usize] = crate::runtime::materialize_literal(
-                    regs[value.0 as usize].clone(),
-                    &storage_value_ty(target),
-                )?;
+                let vector = storage_simd(target).ok_or_else(|| {
+                    RuntimeError::TypeError(format!(
+                        "literal.materialize targets {target}, not a `!kgen.simd` storage"
+                    ))
+                })?;
+                regs[dest.0 as usize] =
+                    crate::runtime::materialize_literal(regs[value.0 as usize].clone(), &vector)?;
             }
             MirInstr::ScalarCast {
                 dest,

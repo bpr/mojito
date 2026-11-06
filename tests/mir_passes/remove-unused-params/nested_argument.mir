@@ -1,11 +1,12 @@
-mojito-mir 1.69
+mojito-mir 1.170
 artifact {
   features: [],
   files: [
   ],
   traits: [],
   structs: [
-    struct { name: Arr, fields: [field { name: v, type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) } }], mut_self_methods: [], fieldwise_init: true, param_decls: [value_param { owner: "Arr", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: copyable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) }) } }] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) }) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: deinitable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) }) } }] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+    struct { name: Arr, fields: [field { name: v, type: simd { dtype: int64, width: ct_expr(param_struct_value { fields: [field { name: _mlir_value, value: param_expr { op: cast_to_builtin, type: meta_value(index), operands: [param_field { base: param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }, name: _mlir_value, type: meta_value(kgen_simd { dtype: int, width: 1 }) }] } }], spelling: param_apply { function: "SIMDLength.__init__$ov$Int", type: meta_value(struct_type { name: SIMDLength, arguments: [] }), args: [param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }] }, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) } }], mut_self_methods: [], fieldwise_init: true, param_decls: [value_param { owner: "Arr", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: copyable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_struct_value { fields: [field { name: _mlir_value, value: param_expr { op: cast_to_builtin, type: meta_value(index), operands: [param_field { base: param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }, name: _mlir_value, type: meta_value(kgen_simd { dtype: int, width: 1 }) }] } }], spelling: param_apply { function: "SIMDLength.__init__$ov$Int", type: meta_value(struct_type { name: SIMDLength, arguments: [] }), args: [param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }] }, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) }) } }] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_struct_value { fields: [field { name: _mlir_value, value: param_expr { op: cast_to_builtin, type: meta_value(index), operands: [param_field { base: param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }, name: _mlir_value, type: meta_value(kgen_simd { dtype: int, width: 1 }) }] } }], spelling: param_apply { function: "SIMDLength.__init__$ov$Int", type: meta_value(struct_type { name: SIMDLength, arguments: [] }), args: [param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }] }, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) }) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: deinitable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_struct_value { fields: [field { name: _mlir_value, value: param_expr { op: cast_to_builtin, type: meta_value(index), operands: [param_field { base: param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }, name: _mlir_value, type: meta_value(kgen_simd { dtype: int, width: 1 }) }] } }], spelling: param_apply { function: "SIMDLength.__init__$ov$Int", type: meta_value(struct_type { name: SIMDLength, arguments: [] }), args: [param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }] }, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) }) } }] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] },
+    struct { name: SIMD, fields: [field { name: _mlir_value, type: kgen_simd { dtype: ct_expr(param_decl_ref { owner: "SIMD", slot: 0, name: dtype, type: meta_value(DType) }), width: ct_expr(param_decl_ref { owner: "SIMD", slot: 1, name: length, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "SIMD", slot: 0, name: dtype, type: DType, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }, value_param { owner: "SIMD", slot: 1, name: length, type: struct_type { name: SIMDLength, arguments: [] }, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "std.simd" }
   ],
   decls: [
     decl { lowered_name: apply, param_names: [f], param_types: [func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: never },
@@ -22,7 +23,7 @@ artifact {
   functions: [
       fn {
         name: apply,
-        registers: 4,
+        registers: 5,
         vars: 1,
         var_names: [f],
         params: 1,
@@ -35,14 +36,15 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               const { dest: %r1, value: int_literal(4) },
-              literal.materialize { dest: %r2, value: %r1, target: Int },
+              literal.materialize { dest: %r4, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r4] },
               call.indirect { dest: %r3, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r2], kwargs: [], callee_place: present(place { root: $v0, root_type: present(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), through: absent }), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r3) }
@@ -51,7 +53,7 @@ artifact {
       },
       fn {
         name: outer,
-        registers: 8,
+        registers: 10,
         vars: 1,
         var_names: [k],
         params: 1,
@@ -64,16 +66,18 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r9, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(1) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r8, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r8] },
               call { dest: %r2, func: "outer$inner", raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r3, value: int_literal(5) },
-              literal.materialize { dest: %r4, value: %r3, target: Int },
+              literal.materialize { dest: %r9, value: %r3, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r4, fields: [%r9] },
               place.load { dest: %r5, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               call { dest: %r6, func: "outer$cap", raises: absent, args: [%r5, %r4], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }), absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r7, a: %r2, b: %r6, resolved: absent, raises: absent }
@@ -84,7 +88,7 @@ artifact {
       },
       fn {
         name: "outer$inner",
-        registers: 2,
+        registers: 3,
         vars: 1,
         var_names: [a],
         params: 1,
@@ -97,13 +101,14 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(3) },
-              literal.materialize { dest: %r1, value: %r0, target: Int }
+              literal.materialize { dest: %r2, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r2] }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -111,7 +116,7 @@ artifact {
       },
       fn {
         name: "outer$cap",
-        registers: 5,
+        registers: 6,
         vars: 2,
         var_names: [k, x],
         params: 2,
@@ -124,15 +129,16 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
               ref.read { dest: %r0, reference: %r1 },
               const { dest: %r2, value: int_literal(1) },
-              literal.materialize { dest: %r3, value: %r2, target: Int },
+              literal.materialize { dest: %r5, value: %r2, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r3, fields: [%r5] },
               binary { op: add, dest: %r4, a: %r0, b: %r3, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r4) }
@@ -141,7 +147,7 @@ artifact {
       },
       fn {
         name: cap2,
-        registers: 4,
+        registers: 5,
         vars: 1,
         var_names: [k],
         params: 1,
@@ -154,13 +160,14 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(1) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r4, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r4] },
               place.load { dest: %r2, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               call { dest: %r3, func: "cap2$c", raises: absent, args: [%r2, %r1], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }), absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
@@ -196,7 +203,7 @@ artifact {
       },
       fn {
         name: g,
-        registers: 6,
+        registers: 7,
         vars: 1,
         var_names: [x],
         params: 1,
@@ -209,15 +216,16 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
+        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               closure.make { dest: %r0, function: "g$ign", captures: [] },
               call { dest: %r1, func: apply, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r2, value: int_literal(9) },
-              literal.materialize { dest: %r3, value: %r2, target: Int },
+              literal.materialize { dest: %r6, value: %r2, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r3, fields: [%r6] },
               call { dest: %r4, func: "g$ign", raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r5, a: %r1, b: %r4, resolved: absent, raises: absent }
             ],
@@ -227,7 +235,7 @@ artifact {
       },
       fn {
         name: "g$ign",
-        registers: 2,
+        registers: 3,
         vars: 1,
         var_names: [y],
         params: 1,
@@ -240,13 +248,14 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(3) },
-              literal.materialize { dest: %r1, value: %r0, target: Int }
+              literal.materialize { dest: %r2, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r2] }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -254,7 +263,7 @@ artifact {
       },
       fn {
         name: h,
-        registers: 3,
+        registers: 4,
         vars: 1,
         var_names: [x],
         params: 1,
@@ -267,13 +276,14 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(9) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r3, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r3] },
               call { dest: %r2, func: "h$only", raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r2) }
@@ -282,7 +292,7 @@ artifact {
       },
       fn {
         name: "h$only",
-        registers: 2,
+        registers: 3,
         vars: 1,
         var_names: [y],
         params: 1,
@@ -295,13 +305,14 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(3) },
-              literal.materialize { dest: %r1, value: %r0, target: Int }
+              literal.materialize { dest: %r2, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r2] }
             ],
             terminator: return { value: present(%r1) }
           }

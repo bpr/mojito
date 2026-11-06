@@ -27,7 +27,7 @@
       },
       fn {
         name: "Counter.__init__",
-        registers: 2,
+        registers: 3,
         vars: 1,
         var_names: [self],
         params: 1,
@@ -40,13 +40,14 @@
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(0) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r2, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r2] },
               place.store { place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r1 }
             ],
             terminator: return { value: absent }

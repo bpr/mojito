@@ -1,4 +1,4 @@
-mojito-mir 1.87
+mojito-mir 1.170
 artifact {
   features: [],
   files: [
@@ -6,6 +6,7 @@ artifact {
   ],
   traits: [],
   structs: [
+    struct { name: SIMD, fields: [field { name: _mlir_value, type: kgen_simd { dtype: ct_expr(param_decl_ref { owner: "SIMD", slot: 0, name: dtype, type: meta_value(DType) }), width: ct_expr(param_decl_ref { owner: "SIMD", slot: 1, name: length, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "SIMD", slot: 0, name: dtype, type: DType, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }, value_param { owner: "SIMD", slot: 1, name: length, type: struct_type { name: SIMDLength, arguments: [] }, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "std.simd" }
   ],
   decls: [
     decl { lowered_name: scaled, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
@@ -13,7 +14,7 @@ artifact {
   functions: [
       fn {
         name: scaled,
-        registers: 19,
+        registers: 25,
         vars: 1,
         var_names: [n],
         params: 0,
@@ -26,26 +27,31 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: IntLiteral }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: IntLiteral }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: IntLiteral }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Bool }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: IntLiteral }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r18, type: None }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 38, end: 39, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 38, end: 39, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 34, end: 49, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 34, end: 59, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 71, end: 72, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 71, end: 72, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 80, end: 81, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 80, end: 81, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 67, end: 82, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 118, end: 119, origin: present($v0) }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 96, end: 97, origin: present($v0) }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 104, end: 105, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 104, end: 105, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 96, end: 106, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 96, end: 106, origin: present($v0) }) }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: IntLiteral }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: IntLiteral }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: IntLiteral }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Bool }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: IntLiteral }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r18, type: None }, reg_type { reg: %r19, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r20, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r21, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r22, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r23, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r24, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 38, end: 39, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 38, end: 39, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 34, end: 49, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 34, end: 59, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 71, end: 72, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 71, end: 72, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 80, end: 81, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 80, end: 81, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 67, end: 82, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 118, end: 119, origin: present($v0) }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 96, end: 97, origin: present($v0) }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 104, end: 105, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 104, end: 105, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 96, end: 106, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 96, end: 106, origin: present($v0) }) }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 38, end: 39, origin: absent }) }, reg_loc { reg: %r20, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r21, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r22, location: present(loc { file: file0, start: 71, end: 72, origin: absent }) }, reg_loc { reg: %r23, location: present(loc { file: file0, start: 80, end: 81, origin: absent }) }, reg_loc { reg: %r24, location: present(loc { file: file0, start: 104, end: 105, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(2) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r19, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r19] },
               const { dest: %r2, value: int_literal(3) },
-              literal.materialize { dest: %r3, value: %r2, target: Int },
+              literal.materialize { dest: %r20, value: %r2, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r3, fields: [%r20] },
               binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
               const { dest: %r5, value: int_literal(4) },
-              literal.materialize { dest: %r6, value: %r5, target: Int },
+              literal.materialize { dest: %r21, value: %r5, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r6, fields: [%r21] },
               binary { op: mul, dest: %r7, a: %r4, b: %r6, resolved: absent, raises: absent },
               var.store { var: $v0, src: %r7, binding_type: present(Int), in_place: true },
               const { dest: %r8, value: int_literal(2) },
-              literal.materialize { dest: %r9, value: %r8, target: Int },
+              literal.materialize { dest: %r22, value: %r8, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r9, fields: [%r22] },
               const { dest: %r10, value: int_literal(3) },
-              literal.materialize { dest: %r11, value: %r10, target: Int },
+              literal.materialize { dest: %r23, value: %r10, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r11, fields: [%r23] },
               binary { op: lt, dest: %r12, a: %r9, b: %r11, resolved: absent, raises: absent },
-              if { results: [], condition: %r12, then: [bb0 { instructions: [const { dest: %r15, value: int_literal(1) }, literal.materialize { dest: %r16, value: %r15, target: Int }, var.use { dest: %r14, var: $v0, mode: copy }, drop.var { var: $v0 }, binary { op: sub, dest: %r17, a: %r14, b: %r16, resolved: absent, raises: absent }, interiors.invalidate { base: interior_origin { root: $v0, path: [] }, except: absent, include_base_generation: false, marker: %r18 }, var.store { var: $v0, src: %r17, binding_type: absent, in_place: false }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r12, then: [bb0 { instructions: [const { dest: %r15, value: int_literal(1) }, literal.materialize { dest: %r24, value: %r15, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r16, fields: [%r24] }, var.use { dest: %r14, var: $v0, mode: copy }, drop.var { var: $v0 }, binary { op: sub, dest: %r17, a: %r14, b: %r16, resolved: absent, raises: absent }, interiors.invalidate { base: interior_origin { root: $v0, path: [] }, except: absent, include_base_generation: false, marker: %r18 }, var.store { var: $v0, src: %r17, binding_type: absent, in_place: false }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               var.use { dest: %r13, var: $v0, mode: copy },
               drop.var { var: $v0 }
             ],

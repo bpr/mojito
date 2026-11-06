@@ -1,4 +1,4 @@
-mojito-mir 1.52
+mojito-mir 1.170
 artifact {
   features: [],
   files: [
@@ -6,6 +6,7 @@ artifact {
   ],
   traits: [],
   structs: [
+    struct { name: SIMD, fields: [field { name: _mlir_value, type: kgen_simd { dtype: ct_expr(param_decl_ref { owner: "SIMD", slot: 0, name: dtype, type: meta_value(DType) }), width: ct_expr(param_decl_ref { owner: "SIMD", slot: 1, name: length, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "SIMD", slot: 0, name: dtype, type: DType, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }, value_param { owner: "SIMD", slot: 1, name: length, type: struct_type { name: SIMDLength, arguments: [] }, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "std.simd" }
   ],
   decls: [
     decl { lowered_name: f, param_names: [a], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
@@ -14,7 +15,7 @@ artifact {
   functions: [
       fn {
         name: f,
-        registers: 6,
+        registers: 7,
         vars: 3,
         var_names: [a, b, c],
         params: 1,
@@ -27,8 +28,8 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 34, end: 35, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 48, end: 49, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 61, end: 62, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 65, end: 66, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 65, end: 66, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 61, end: 66, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 34, end: 35, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 48, end: 49, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 61, end: 62, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 65, end: 66, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 65, end: 66, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 61, end: 66, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 65, end: 66, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
@@ -37,7 +38,8 @@ artifact {
               var.use { dest: %r1, var: $v1, mode: copy },
               var.store { var: $v2, src: %r1, binding_type: present(Int), in_place: false },
               const { dest: %r3, value: int_literal(1) },
-              literal.materialize { dest: %r4, value: %r3, target: Int },
+              literal.materialize { dest: %r6, value: %r3, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r4, fields: [%r6] },
               var.use { dest: %r2, var: $v2, mode: copy },
               binary { op: add, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
             ],
@@ -47,7 +49,7 @@ artifact {
       },
       fn {
         name: main,
-        registers: 4,
+        registers: 5,
         vars: 0,
         var_names: [],
         params: 0,
@@ -60,13 +62,14 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: None }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 92, end: 94, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 92, end: 94, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 90, end: 95, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 84, end: 96, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 92, end: 94, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 92, end: 94, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 90, end: 95, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 84, end: 96, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 92, end: 94, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(41) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r4, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r4] },
               call { dest: %r2, func: f, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],

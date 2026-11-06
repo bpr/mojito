@@ -1,4 +1,4 @@
-mojito-mir 1.53
+mojito-mir 1.170
 artifact {
   features: [],
   files: [
@@ -6,14 +6,15 @@ artifact {
   ],
   traits: [],
   structs: [
+    struct { name: SIMD, fields: [field { name: _mlir_value, type: kgen_simd { dtype: ct_expr(param_decl_ref { owner: "SIMD", slot: 0, name: dtype, type: meta_value(DType) }), width: ct_expr(param_decl_ref { owner: "SIMD", slot: 1, name: length, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "SIMD", slot: 0, name: dtype, type: DType, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }, value_param { owner: "SIMD", slot: 1, name: length, type: struct_type { name: SIMDLength, arguments: [] }, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "std.simd" }
   ],
   decls: [
-    decl { lowered_name: literal_statement, param_names: [x], param_types: [param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+    decl { lowered_name: literal_statement, param_names: [x], param_types: [param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], trait_param: absent, callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
   ],
   functions: [
       fn {
         name: literal_statement,
-        registers: 3,
+        registers: 4,
         vars: 1,
         var_names: [x],
         params: 1,
@@ -26,13 +27,14 @@ artifact {
         return_type: present(param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 210, end: 212, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 224, end: 225, origin: present($v0) }) }, reg_loc { reg: %r2, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 210, end: 212, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 224, end: 225, origin: present($v0) }) }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(42) },
-              literal.materialize { dest: %r2, value: %r0, target: Int },
+              literal.materialize { dest: %r3, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r3] },
               var.use { dest: %r1, var: $v0, mode: copy }
             ],
             terminator: return { value: present(%r1) }

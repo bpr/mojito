@@ -1,7 +1,7 @@
   functions: [
       fn {
         name: unsigned,
-        registers: 2,
+        registers: 3,
         vars: 0,
         var_names: [],
         params: 0,
@@ -14,12 +14,13 @@
         return_type: present(UInt),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: UInt }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 35, end: 55, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 35, end: 55, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: UInt }, reg_type { reg: %r2, type: kgen_simd { dtype: uint, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 35, end: 55, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 35, end: 55, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 35, end: 55, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(18446744073709551615) },
+              const { dest: %r2, value: value(ct_uint(18446744073709551615)) },
               const { dest: %r1, value: value(ct_uint(18446744073709551615)) }
             ],
             terminator: return { value: present(%r1) }
@@ -56,7 +57,7 @@
       },
       fn {
         name: narrow_int,
-        registers: 2,
+        registers: 3,
         vars: 0,
         var_names: [],
         params: 0,
@@ -69,12 +70,13 @@
         return_type: present(simd { dtype: uint8, width: 1 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 149, end: 152, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 149, end: 152, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: kgen_simd { dtype: uint8, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 149, end: 152, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 149, end: 152, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 149, end: 152, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(300) },
+              const { dest: %r2, value: value(ct_simd { dtype: uint8, lanes: [lane_int(44)] }) },
               const { dest: %r1, value: value(ct_simd { dtype: uint8, lanes: [lane_int(44)] }) }
             ],
             terminator: return { value: present(%r1) }
@@ -83,7 +85,7 @@
       },
       fn {
         name: narrow_float,
-        registers: 2,
+        registers: 3,
         vars: 0,
         var_names: [],
         params: 0,
@@ -96,12 +98,13 @@
         return_type: present(simd { dtype: float32, width: 1 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: simd { dtype: float32, width: 1 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 197, end: 200, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 197, end: 200, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: kgen_simd { dtype: float32, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 197, end: 200, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 197, end: 200, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 197, end: 200, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: float_literal(1/10) },
+              const { dest: %r2, value: value(ct_simd { dtype: float32, lanes: [lane_float_bits(3fb99999a0000000)] }) },
               const { dest: %r1, value: value(ct_simd { dtype: float32, lanes: [lane_float_bits(3fb99999a0000000)] }) }
             ],
             terminator: return { value: present(%r1) }
@@ -110,7 +113,7 @@
       },
       fn {
         name: negative,
-        registers: 3,
+        registers: 4,
         vars: 0,
         var_names: [],
         params: 0,
@@ -123,13 +126,14 @@
         return_type: present(simd { dtype: int32, width: 1 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: simd { dtype: int32, width: 1 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 240, end: 241, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 239, end: 241, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 239, end: 241, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: simd { dtype: int32, width: 1 } }, reg_type { reg: %r3, type: kgen_simd { dtype: int32, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 240, end: 241, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 239, end: 241, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 239, end: 241, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 239, end: 241, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(2) },
               const { dest: %r1, value: int_literal(-2) },
+              const { dest: %r3, value: value(ct_simd { dtype: int32, lanes: [lane_int(-2)] }) },
               const { dest: %r2, value: value(ct_simd { dtype: int32, lanes: [lane_int(-2)] }) }
             ],
             terminator: return { value: present(%r2) }

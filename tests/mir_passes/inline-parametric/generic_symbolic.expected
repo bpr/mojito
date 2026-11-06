@@ -29,7 +29,7 @@
       },
       fn {
         name: generic_symbolic,
-        registers: 9,
+        registers: 10,
         vars: 2,
         var_names: [x, "x$inline1"],
         params: 1,
@@ -42,14 +42,14 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 821, end: 822, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 825, end: 826, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 825, end: 826, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 821, end: 826, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 828, end: 829, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 814, end: 830, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 814, end: 830, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 814, end: 830, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 814, end: 830, origin: absent }) }],
+        register_types: [reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 821, end: 822, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 825, end: 826, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 825, end: 826, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 821, end: 826, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 828, end: 829, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 814, end: 830, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 825, end: 826, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 814, end: 830, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 814, end: 830, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 814, end: 830, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r4, var: $v0, mode: copy },
               var.store { var: $v1, src: %r4, binding_type: present(Int), in_place: false },
-              loop { results: [%r5], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r6, var: $v1, mode: copy }, const { dest: %r7, value: param(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "generic_symbolic", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }) }, binary { op: mul, dest: %r8, a: %r6, b: %r7, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r8] } }] }
+              loop { results: [%r5], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r7, var: $v1, mode: copy }, const { dest: %r8, value: param(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "generic_symbolic", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }) }, binary { op: mul, dest: %r9, a: %r7, b: %r8, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r9] } }] }
             ],
             terminator: return { value: present(%r5) }
           }

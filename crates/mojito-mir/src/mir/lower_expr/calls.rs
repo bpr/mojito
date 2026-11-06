@@ -958,7 +958,8 @@ impl<'a> Flatten<'a> {
     /// `#pop.int_literal_convert`, a multi-lane vector as the one-element
     /// splat explicit `SIMD[dt, w](literal)` construction emits.
     /// A vector whose width is still a parameter expression splats too: the
-    /// instance's width may be above one.
+    /// instance's width may be above one. A `!kgen.simd` target is the
+    /// conversion alone; any other target is an explicit boundary.
     pub(in crate::mir) fn materialize_literal(
         &mut self,
         value: Reg,
@@ -978,6 +979,9 @@ impl<'a> Flatten<'a> {
                     target: storage,
                 }
             });
+        }
+        if mojito_types::types::storage_simd(target).is_none() {
+            return self.unsupported_value(source, "literal materialization at a non-SIMD type");
         }
         let dest = self.fresh_typed(source, None, target.clone());
         self.emit(MirInstr::MaterializeLiteral {

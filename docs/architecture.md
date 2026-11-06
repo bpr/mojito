@@ -2172,8 +2172,8 @@ decision, and MIR converts the literal at the target's `!kgen.simd` storage
 (`MaterializeLiteral { value, target: storage }`) and `struct.create`s the
 scalar over it, as `SIMD.__init__(IntLiteral)` writes
 `#pop.int_literal_convert` at `Self._mlir_type`; the verifier requires an
-exact-literal source and compatible concrete target, read through the storage,
-and still accepts a struct target until R1837. Integer targets
+exact-literal source and a `!kgen.simd` storage target, rejecting a `SIMD`
+struct target, and every backend and folder reads the storage. Integer targets
 use destination-width two's-complement wrapping. Floating targets round once
 from the exact rational directly to binary32 or binary64, preserving signed
 zero and producing IEEE infinity on overflow. Bindings, stores, calls, returns,

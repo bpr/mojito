@@ -2197,39 +2197,25 @@ fn materialize(
     if !literal_materializes_to(found, target) {
         return value;
     }
+    let Some(storage_ty) = mojito_types::types::simd_storage(target) else {
+        return value;
+    };
     let dest = fresh_register(function, target.clone(), location);
-    if let Some((dtype, width)) = mojito_types::types::simd_slots(target)
-        && width.known().is_none_or(|width| width > 1)
-    {
-        let storage = fresh_register(function, mojito_types::types::storage_ty(target), location);
-        prelude.extend(storage_construction(
-            dest,
-            storage,
-            MirInstr::MakeSimd {
-                dest: storage,
-                dtype,
-                width,
-                elems: vec![value],
-            },
-        ));
-    } else if let Some(storage_ty) = mojito_types::types::simd_storage(target) {
-        let storage = fresh_register(function, storage_ty.clone(), location);
-        prelude.extend(storage_construction(
-            dest,
-            storage,
-            MirInstr::MaterializeLiteral {
-                dest: storage,
-                value,
-                target: storage_ty,
-            },
-        ));
-    } else {
-        prelude.push(MirInstr::MaterializeLiteral {
-            dest,
+    let storage = fresh_register(function, storage_ty.clone(), location);
+    let conversion = match mojito_types::types::simd_slots(target) {
+        Some((dtype, width)) if width.known().is_none_or(|width| width > 1) => MirInstr::MakeSimd {
+            dest: storage,
+            dtype,
+            width,
+            elems: vec![value],
+        },
+        _ => MirInstr::MaterializeLiteral {
+            dest: storage,
             value,
-            target: target.clone(),
-        });
-    }
+            target: storage_ty,
+        },
+    };
+    prelude.extend(storage_construction(dest, storage, conversion));
     dest
 }
 

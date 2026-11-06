@@ -4,7 +4,7 @@
 use super::*;
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::TyKind;
-use mojito_types::types::{storage_ty, storage_value_ty};
+use mojito_types::types::storage_ty;
 
 pub(super) fn verify_instruction(
     name: &str,
@@ -587,7 +587,15 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
     let prefix = cx.prefix;
     match instruction {
         MirInstr::MaterializeLiteral { value, target, .. } => {
-            let target = &storage_value_ty(target);
+            // Upstream's `#pop.int_literal_convert` and
+            // `float_literal_convert` are typed at the `!pop.simd` storage;
+            // a `SIMD` value is a `struct.create` over the conversion.
+            let Some(target) = &mojito_types::types::storage_simd(target) else {
+                errors.push(format!(
+                    "{prefix}: literal materialization targets {target}, not a `!kgen.simd` storage"
+                ));
+                return;
+            };
             let valid_target = target.is_int()
                 || target.is_uint()
                 || target.is_float64()

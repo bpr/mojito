@@ -5,7 +5,7 @@
 use super::*;
 use mojito_types::types::FuncTy;
 use mojito_types::types::TyKind;
-use mojito_types::types::{simd_storage, storage_value_ty};
+use mojito_types::types::{simd_storage, storage_simd};
 
 /// Field-list equivalence for name-colliding struct instances: strict
 /// structural equality except that pointer types collapse (one opaque
@@ -423,7 +423,9 @@ fn register_constant(
                 target,
             } if *dest == reg => Some(
                 literal_constant(instructions, *value)
-                    .and_then(|literal| literal.materialize_as(&storage_value_ty(target)))
+                    .and_then(|literal| {
+                        storage_simd(target).and_then(|t| literal.materialize_as(&t))
+                    })
                     .or_else(|| register_constant(reg_types, instructions, *value, visiting)),
             ),
             MirInstr::MakeStruct { dest, fields }

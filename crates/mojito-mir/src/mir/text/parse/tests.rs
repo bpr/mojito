@@ -4221,3 +4221,55 @@ fn int_of_index_round_trips_and_upgrades_an_int_typed_cast() {
     assert!(old.contains("mojito-mir 1.168"));
     assert_eq!(only_register_type(&old), ty);
 }
+
+/// A literal materialized at a `SIMD` struct below MIR 1.170 reads as the
+/// conversion at its `!kgen.simd` storage and the struct created over it;
+/// at 1.170 the struct target reads unchanged, for the verifier to reject.
+#[test]
+fn an_artifact_older_than_1_170_materializes_a_literal_at_its_storage() {
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::int_literal(), Ty::int()],
+            vec![
+                MirInstr::Const {
+                    dest: Reg(0),
+                    k: Const::IntLiteral(mojito_common::literal::IntLiteral::from(7)),
+                },
+                MirInstr::MaterializeLiteral {
+                    dest: Reg(1),
+                    value: Reg(0),
+                    target: Ty::int(),
+                },
+            ],
+        ),
+    )]);
+    let text = write::program(&program);
+    let read = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("the text reads");
+        let (_, function) = parsed.program.functions.into_iter().next().expect("main");
+        function
+    };
+    let current = read(&text);
+    assert!(matches!(
+        current.blocks[0].instrs[1],
+        MirInstr::MaterializeLiteral { dest: Reg(1), ref target, .. } if *target == Ty::int()
+    ));
+    let older = text.replacen(
+        &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
+        "mojito-mir 1.169",
+        1,
+    );
+    assert!(older.contains("mojito-mir 1.169"));
+    let upgraded = read(&older);
+    let storage = mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Int, 1);
+    assert_eq!(upgraded.n_regs, 3);
+    assert_eq!(upgraded.reg_types.get(&2), Some(&storage));
+    assert!(matches!(
+        &upgraded.blocks[0].instrs[1..],
+        [
+            MirInstr::MaterializeLiteral { dest: Reg(2), value: Reg(0), target },
+            MirInstr::MakeStruct { dest: Reg(1), fields },
+        ] if *target == storage && fields == &[Reg(2)]
+    ));
+}

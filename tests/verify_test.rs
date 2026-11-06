@@ -696,6 +696,34 @@ fn verifier_checks_a_literal_materialized_at_its_storage() {
 }
 
 #[test]
+fn verifier_rejects_a_literal_materialized_at_a_struct() {
+    // Upstream's literal conversion is typed at the `!pop.simd` storage;
+    // the `Int` is a `struct.create` over it.
+    let f = function(
+        vec![block(
+            vec![
+                MirInstr::Const {
+                    dest: Reg(0),
+                    k: Const::IntLiteral(mojito::IntLiteral::from(1)),
+                },
+                MirInstr::MaterializeLiteral {
+                    dest: Reg(1),
+                    value: Reg(0),
+                    target: Ty::int(),
+                },
+            ],
+            MirTerm::Return(None),
+        )],
+        2,
+        &[(0, Ty::int_literal()), (1, Ty::int())],
+    );
+    expect_finding(
+        &program(f),
+        "literal materialization targets Int, not a `!kgen.simd` storage",
+    );
+}
+
+#[test]
 fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
     let f = function(
         vec![block(

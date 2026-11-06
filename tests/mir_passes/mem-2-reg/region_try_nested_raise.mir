@@ -1,10 +1,11 @@
-mojito-mir 1.108
+mojito-mir 1.170
 artifact {
   features: [],
   files: [
   ],
   traits: [],
   structs: [
+    struct { name: SIMD, fields: [field { name: _mlir_value, type: kgen_simd { dtype: ct_expr(param_decl_ref { owner: "SIMD", slot: 0, name: dtype, type: meta_value(DType) }), width: ct_expr(param_decl_ref { owner: "SIMD", slot: 1, name: length, type: meta_value(struct_type { name: SIMDLength, arguments: [] }) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "SIMD", slot: 0, name: dtype, type: DType, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }, value_param { owner: "SIMD", slot: 1, name: length, type: struct_type { name: SIMDLength, arguments: [] }, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true), constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "std.simd" }
   ],
   decls: [
     decl { lowered_name: fail, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: None, returns_reference: false, raises: true, error_type: present(Error), ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
@@ -13,7 +14,7 @@ artifact {
   functions: [
       fn {
         name: fail,
-        registers: 6,
+        registers: 7,
         vars: 2,
         var_names: [x, "$error"],
         params: 1,
@@ -27,13 +28,14 @@ artifact {
         raises: true,
         error_type: present(Error),
         error_slot: $v1,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: StringLiteral }, reg_type { reg: %r5, type: Error }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: StringLiteral }, reg_type { reg: %r5, type: Error }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r1, value: int_literal(5) },
-              literal.materialize { dest: %r2, value: %r1, target: Int },
+              literal.materialize { dest: %r6, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r6] },
               var.use { dest: %r0, var: $v0, mode: copy },
               binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
               if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("big") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r5, binding_type: present(Error), in_place: false }], terminator: error_return {} }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }
@@ -44,7 +46,7 @@ artifact {
       },
       fn {
         name: nested_raise,
-        registers: 20,
+        registers: 24,
         vars: 4,
         var_names: [c, y, "$try_error0", "$try_error1"],
         params: 1,
@@ -57,17 +59,18 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: None }, reg_type { reg: %r7, type: Bool }, reg_type { reg: %r8, type: Error }, reg_type { reg: %r9, type: IntLiteral }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r12, type: StringLiteral }, reg_type { reg: %r13, type: Error }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: IntLiteral }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r19, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: absent }, reg_loc { reg: %r17, location: absent }, reg_loc { reg: %r18, location: absent }, reg_loc { reg: %r19, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: None }, reg_type { reg: %r7, type: Bool }, reg_type { reg: %r8, type: Error }, reg_type { reg: %r9, type: IntLiteral }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r12, type: StringLiteral }, reg_type { reg: %r13, type: Error }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: IntLiteral }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r19, type: Int }, reg_type { reg: %r20, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r21, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r22, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r23, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: absent }, reg_loc { reg: %r17, location: absent }, reg_loc { reg: %r18, location: absent }, reg_loc { reg: %r19, location: absent }, reg_loc { reg: %r20, location: absent }, reg_loc { reg: %r21, location: absent }, reg_loc { reg: %r22, location: absent }, reg_loc { reg: %r23, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(0) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r20, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r20] },
               var.store { var: $v1, src: %r1, binding_type: present(Int), in_place: false },
               drop.var { var: $v1 },
               var.declare { var: $v2 },
-              try { label: try0, error: present($v2), results: [], body: [bb0 { instructions: [var.declare { var: $v3 }, try { label: try1, error: present($v3), results: [], body: [bb0 { instructions: [const { dest: %r2, value: int_literal(1) }, literal.materialize { dest: %r3, value: %r2, target: Int }, var.store { var: $v1, src: %r3, binding_type: absent, in_place: false }, var.use { dest: %r5, var: $v0, mode: copy }, call { dest: %r6, func: fail, raises: present(raises { type: Error, flag: %r7, error: %r8 }), args: [%r5], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r7, then: [bb0 { instructions: [drop.var { var: $v1 }, var.store { var: $v3, src: %r8, binding_type: present(Error), in_place: false }], terminator: try.raise { label: try1, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r9, value: int_literal(2) }, literal.materialize { dest: %r10, value: %r9, target: Int }, var.store { var: $v1, src: %r10, binding_type: absent, in_place: false }, const { dest: %r12, value: string("again") }, call { dest: %r13, func: Error, raises: absent, args: [%r12], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v2, src: %r13, binding_type: present(Error), in_place: false }], terminator: try.raise { label: try0, values: [] } }]), else_arguments: [], orelse: absent }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r15, value: int_literal(10) }, literal.materialize { dest: %r16, value: %r15, target: Int }, var.use { dest: %r14, var: $v1, mode: copy }, drop.var { var: $v1 }, binary { op: add, dest: %r17, a: %r14, b: %r16, resolved: absent, raises: absent }, var.store { var: $v1, src: %r17, binding_type: absent, in_place: false }], terminator: try.yield { values: [] } }]), else_arguments: [], orelse: absent },
+              try { label: try0, error: present($v2), results: [], body: [bb0 { instructions: [var.declare { var: $v3 }, try { label: try1, error: present($v3), results: [], body: [bb0 { instructions: [const { dest: %r2, value: int_literal(1) }, literal.materialize { dest: %r21, value: %r2, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r3, fields: [%r21] }, var.store { var: $v1, src: %r3, binding_type: absent, in_place: false }, var.use { dest: %r5, var: $v0, mode: copy }, call { dest: %r6, func: fail, raises: present(raises { type: Error, flag: %r7, error: %r8 }), args: [%r5], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r7, then: [bb0 { instructions: [drop.var { var: $v1 }, var.store { var: $v3, src: %r8, binding_type: present(Error), in_place: false }], terminator: try.raise { label: try1, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r9, value: int_literal(2) }, literal.materialize { dest: %r22, value: %r9, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r10, fields: [%r22] }, var.store { var: $v1, src: %r10, binding_type: absent, in_place: false }, const { dest: %r12, value: string("again") }, call { dest: %r13, func: Error, raises: absent, args: [%r12], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v2, src: %r13, binding_type: present(Error), in_place: false }], terminator: try.raise { label: try0, values: [] } }]), else_arguments: [], orelse: absent }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r15, value: int_literal(10) }, literal.materialize { dest: %r23, value: %r15, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r16, fields: [%r23] }, var.use { dest: %r14, var: $v1, mode: copy }, drop.var { var: $v1 }, binary { op: add, dest: %r17, a: %r14, b: %r16, resolved: absent, raises: absent }, var.store { var: $v1, src: %r17, binding_type: absent, in_place: false }], terminator: try.yield { values: [] } }]), else_arguments: [], orelse: absent },
               var.use { dest: %r19, var: $v1, mode: copy },
               drop.var { var: $v1 }
             ],

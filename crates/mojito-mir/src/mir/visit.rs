@@ -603,7 +603,7 @@ mod tests {
             instrs: vec![MirInstr::MaterializeLiteral {
                 dest: Reg(5),
                 value: Reg(0),
-                target: int(),
+                target: mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Int, 1),
             }],
             term: MirTerm::TryYield(Vec::new()),
         }];

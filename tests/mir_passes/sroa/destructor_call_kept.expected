@@ -1,7 +1,7 @@
   functions: [
       fn {
         name: compute,
-        registers: 15,
+        registers: 17,
         vars: 2,
         var_names: [s, "$fwd_arg_r3"],
         params: 0,
@@ -14,13 +14,14 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: StringLiteral }, reg_type { reg: %r3, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: IntLiteral }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r14, type: None }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }],
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: StringLiteral }, reg_type { reg: %r3, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: IntLiteral }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r14, type: None }, reg_type { reg: %r15, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r16, type: kgen_simd { dtype: int, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(1) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              literal.materialize { dest: %r15, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r1, fields: [%r15] },
               const { dest: %r2, value: string("a") },
               call { dest: %r3, func: "__module$std$string$String.__init__$ov$StringLiteral", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r3, binding_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), in_place: true },
@@ -29,7 +30,8 @@
               var.store { var: $v0, src: %r5, binding_type: present(struct_type { name: S, arguments: [] }), in_place: false },
               place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
               const { dest: %r7, value: int_literal(1) },
-              literal.materialize { dest: %r8, value: %r7, target: Int },
+              literal.materialize { dest: %r16, value: %r7, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r8, fields: [%r16] },
               binary { op: add, dest: %r9, a: %r6, b: %r8, resolved: absent, raises: absent },
               place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r9 },
               place.load { dest: %r11, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
