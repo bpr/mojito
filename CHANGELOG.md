@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime if` or `comptime assert` condition that calls a function
+  (`_llvm_bitwidth(dtype) * width == src_width`), compares
+  `@always_inline("builtin")` struct values (`L(n) < L(3)`), or reads a
+  reflected `field_types()` list at a `comptime for` index (`types[i] ==
+  Int`) now records its `Bool` parameter value: the builder reads the
+  condition as a parameter expression, a call its callee's application, as
+  upstream's parameter emitter does (R1903).
 - A compile-time comparison of a literal with a `SIMD` value parameter
   (`x < 10` over `x: UInt8`, `Int32`, or `Float32`, `v == 4` over a
   vector) now materializes the literal at that operand's type, splatted

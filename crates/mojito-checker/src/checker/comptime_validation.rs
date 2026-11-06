@@ -1222,13 +1222,18 @@ impl Checker {
                 self.evaluated_condition(cond, test).map(Some)
             }
             Ok(constraint) => {
-                // The leaf's value is what the one builder reads it as; a
-                // spelling it does not yet read leaves the condition with
-                // its constraint alone.
-                let value = self
-                    .compile_dependent_ct_expr(cond)
-                    .ok()
-                    .filter(|value| *value.meta() == mojito_types::param_expr::MetaTy::bool());
+                // The leaf's value is what the one builder reads it as, a
+                // call in it the callee's application (`f(n) == 4`, a
+                // struct operand's builtin `__lt__`), as upstream emits the
+                // condition as a parameter expression; a spelling it does
+                // not yet read leaves the condition with its constraint
+                // alone.
+                let value = {
+                    let _lifting = self.lifting_position();
+                    self.compile_dependent_ct_expr(cond)
+                }
+                .ok()
+                .filter(|value| *value.meta() == mojito_types::param_expr::MetaTy::bool());
                 let condition = CompiledCondition {
                     constraint: self.fold_closed_constraint(constraint),
                     value,

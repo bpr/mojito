@@ -331,25 +331,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1903 The constraint compiler reads two condition operands the one
-  builder rejects**
-
-  `constraint_operand` (`checker/constraints.rs`) compiles operands that
-  `build_ct` fails on, so those conditions record no `Bool` value.
-  - A comparison of `@always_inline("builtin")` struct values (`L(n) <
-    L(3)`) is "not an associated comptime expression".
-  - A local `comptime` tuple of reflected types read at a loop index
-    (`types[i] == Int` after `comptime types = r.field_types()`) is
-    "'(T, Int)' is not a compile-time constant here".
-  - A call of an ordinary function in an operand
-    (`_llvm_bitwidth(dtype) * width == src_width`, std
-    `memory/unsafe.mojo`) is "not an associated comptime expression".
-  - Probes: `assets/ok/always_inline_builtin_self_method_fold.mojo`,
-    `reflection_field_ref_generic.mojo`.
-  - Found while landing R1475 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1904 A builtin operation's instance assertion carries a constraint
   and no `Bool` value**
 

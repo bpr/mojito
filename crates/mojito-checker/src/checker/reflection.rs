@@ -739,6 +739,43 @@ impl Checker {
         }
     }
 
+    /// Element `index` of a reflected field-type list at a compile-time
+    /// index already compiled.
+    pub(super) fn reflection_list_get(
+        &self,
+        list: &CtValue,
+        index: &ParamExpr,
+    ) -> Result<Ty, TypeError> {
+        // A generic struct's own fields at its parameters are types no
+        // constant holds: the element is their selection.
+        if let CtValue::Tuple(values) = list
+            && let Some(types) = values
+                .iter()
+                .map(|value| match value {
+                    CtValue::Type(ty) => Some(ty.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<Ty>>>()
+        {
+            return self
+                .param_context
+                .select(types, index)
+                .map(DependentType::resolve)
+                .map_err(param_error);
+        }
+        let list = match list {
+            CtValue::Expr(expr) => expr.clone(),
+            constant => self
+                .param_context
+                .constant(constant.clone())
+                .map_err(param_error)?,
+        };
+        self.param_context
+            .list_get(&list, index)
+            .map(DependentType::resolve)
+            .map_err(param_error)
+    }
+
     /// The length of a `field_names()` or `field_types()` list read at
     /// `expr`: an `Int`, which over a symbolic subject is its field count,
     /// as upstream sizes both lists by `_field_types_of[T]().length`.
@@ -840,39 +877,6 @@ impl Checker {
     fn reflection_list_element(&self, list: &CtValue, index: &Expr) -> Result<Ty, TypeError> {
         let index = self.reflection_index(index)?;
         self.reflection_list_get(list, &index)
-    }
-
-    /// Element `index` of a reflected field-type list at a compile-time
-    /// index already compiled.
-    fn reflection_list_get(&self, list: &CtValue, index: &ParamExpr) -> Result<Ty, TypeError> {
-        // A generic struct's own fields at its parameters are types no
-        // constant holds: the element is their selection.
-        if let CtValue::Tuple(values) = list
-            && let Some(types) = values
-                .iter()
-                .map(|value| match value {
-                    CtValue::Type(ty) => Some(ty.clone()),
-                    _ => None,
-                })
-                .collect::<Option<Vec<Ty>>>()
-        {
-            return self
-                .param_context
-                .select(types, index)
-                .map(DependentType::resolve)
-                .map_err(param_error);
-        }
-        let list = match list {
-            CtValue::Expr(expr) => expr.clone(),
-            constant => self
-                .param_context
-                .constant(constant.clone())
-                .map_err(param_error)?,
-        };
-        self.param_context
-            .list_get(&list, index)
-            .map(DependentType::resolve)
-            .map_err(param_error)
     }
 
     /// A compile-time `Int` index over the parameters and `comptime for`

@@ -2015,6 +2015,11 @@ impl Checker {
             ExprKind::Index { object, index }
                 if let Ok(Some((query, list))) = self.reflection_list(object) =>
             {
+                // A field type is the list's element type, which over a
+                // generic struct's own fields is their selection.
+                if query == mojito_types::param_expr::ReflectQuery::FieldTypes {
+                    return Ok(context.type_shape(self.reflection_list_get(&list, &build(index)?)?));
+                }
                 let list = match list {
                     CtValue::Expr(symbolic) => symbolic,
                     closed => context.constant(closed).map_err(param_error)?,
