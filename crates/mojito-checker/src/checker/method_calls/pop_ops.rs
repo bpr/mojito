@@ -275,20 +275,36 @@ impl Checker {
         if !SimdDtype::Expr(dtype.clone()).is_symbolic() {
             return;
         }
-        let holds = Dtype::ALL
+        let excluded: Vec<_> = Dtype::ALL
             .into_iter()
             .filter(|excluded| !lanes.admits(*excluded))
+            .collect();
+        let holds = excluded
+            .iter()
             .map(|excluded| {
                 GenericConstraint::Ne(
                     ConstraintOperand::Expr(dtype.clone()),
-                    ConstraintOperand::Value(CtValue::Dtype(excluded)),
+                    ConstraintOperand::Value(CtValue::Dtype(*excluded)),
                 )
             })
             .reduce(|left, right| GenericConstraint::And(Box::new(left), Box::new(right)));
+        // The same conjunction as a `Bool` parameter value, each conjunct
+        // the dtype's `!=` with an excluded one.
+        let context = &self.param_context;
+        let value = excluded
+            .iter()
+            .map(|excluded| {
+                context
+                    .constant(CtValue::Dtype(*excluded))
+                    .and_then(|excluded| context.infix(InfixOp::Ne, &dtype, &excluded))
+            })
+            .reduce(|left, right| context.infix(InfixOp::And, &left?, &right?))
+            .and_then(Result::ok);
         if let Some(holds) = holds {
             self.record_instance_constraint(
                 span,
                 holds,
+                value,
                 &format!(
                     "'{name}' op operand #0 must be SIMD type whose element type is {} dtype",
                     lanes.describe()

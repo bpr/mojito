@@ -331,21 +331,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1904 A builtin operation's instance assertion carries a constraint
-  and no `Bool` value**
-
-  The `comptime assert`s the checker records for a builtin dunder or
-  constructor (`record_instance_constraint`, `checker/operators.rs`) reach
-  MIR as `SemanticAdjustment::InstanceAssertion(GenericConstraint)`, so
-  their `comptime.assert` has no `value`.
-  - The lever: record the assertion's parameter value beside it (`lanes ==
-    1` over the width's lanes), as a `comptime assert` statement's is.
-  - Probe: a `SIMD` construction at a symbolic width prints a
-    `comptime.assert` without `value` under `mojito emit-mir`.
-  - Found while landing R1475 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1905 MIR's compile-time tests carry a constraint beside their
   `Bool` value**
 
@@ -353,7 +338,8 @@ which names the upstream pass each one follows. Each is measured by the
   and `values`/`value`, where upstream's `hlcf.comptime.if` and
   `kgen.param.assert` take one `i1` parameter value.
   - What goes: `ComptimeIf.conds`, `ComptimeAssert.cond`, the `constraint`
-    of `SemanticAdjustment::ComptimeCondition`, `comptime_condition_of`'s
+    of `SemanticAdjustment::ComptimeCondition` and of
+    `SemanticAdjustment::InstanceAssertion`, `comptime_condition_of`'s
     connective fallback, `decide_comptime_condition`, and the `comptime
     for` stop test's constraint (`ComptimeSequence::stop_test`).
   - `canonicalize/hlcf.rs`, `verify/structure.rs`, and mono's unroll then

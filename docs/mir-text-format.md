@@ -1151,6 +1151,11 @@ and `dtype.from_ui8` between them. `builtin.cast` also converts between
 register holds the `dtype` constant. The package format moves to
 `mojito-package 189`.
 
+The package format moves to `mojito-package 191` with the schema
+unchanged (R1904): the checked `InstanceAssertion` adjustment carries its
+assertion's `Bool` parameter value beside the constraint, which MIR emits
+as its `comptime.assert`'s `value`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

@@ -1179,8 +1179,13 @@ pub enum SemanticAdjustment {
     /// this node applies (`__lt__`'s `Self.length == 1`, or the implicit
     /// `Bool` to `SIMD[DType.bool, n]` conversion's), judged per reached
     /// instance. A compile-time position folds the application and drops
-    /// it, so the check records none there.
-    InstanceAssertion(Box<mojito_types::types::GenericConstraint>),
+    /// it, so the check records none there. `value` is the assertion's
+    /// `Bool` parameter value, the `i1` attribute upstream's
+    /// `kgen.param.assert` takes, when the check built one.
+    InstanceAssertion {
+        constraint: Box<mojito_types::types::GenericConstraint>,
+        value: Option<mojito_types::param_expr::ParamExpr>,
+    },
     /// ``__mlir_op.`pop.call_llvm_intrinsic`[intrin=…, _type=…,
     /// hasSideEffects=…](operands)``: a call of the LLVM intrinsic
     /// `intrinsic` names (a `!kgen.string`), with the `Bool` side-effect
@@ -6894,10 +6899,11 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             value: facts.comptime_condition_value.clone(),
         });
     }
-    for assertion in facts.instance_assertions.iter().flatten() {
-        adjustments.push(SemanticAdjustment::InstanceAssertion(Box::new(
-            assertion.clone(),
-        )));
+    for (constraint, value) in facts.instance_assertions.iter().flatten() {
+        adjustments.push(SemanticAdjustment::InstanceAssertion {
+            constraint: Box::new(constraint.clone()),
+            value: value.clone(),
+        });
     }
     if let Some((dtype, width)) = &facts.simd_construction {
         adjustments.push(SemanticAdjustment::ConstructSimd {
@@ -7183,9 +7189,13 @@ node_facts! {
         /// decides, when the one builder reads each of its leaves.
         comptime_condition_value: mojito_types::param_expr::ParamExpr,
         /// The `comptime assert`s of the builtin dunders and constructors
-        /// the occurrence applies, in application order
+        /// the occurrence applies, in application order, each with its
+        /// `Bool` parameter value when the check built one
         /// ([`SemanticAdjustment::InstanceAssertion`]).
-        instance_assertions: Vec<mojito_types::types::GenericConstraint>,
+        instance_assertions: Vec<(
+            mojito_types::types::GenericConstraint,
+            Option<mojito_types::param_expr::ParamExpr>,
+        )>,
         /// What each bracket argument of a call or type application
         /// resolved to, in source order: `Some` for a type-shaped one or a
         /// value-shaped one the check bound to a type, an origin, or a raw

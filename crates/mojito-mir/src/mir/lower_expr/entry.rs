@@ -142,6 +142,18 @@ impl<'a> Flatten<'a> {
                 } => value.as_ref(),
                 _ => None,
             })?;
+        self.comptime_test_value(value)
+    }
+
+    /// The `Bool` parameter value `value` of a compile-time test as its
+    /// `i1` attribute: a [`Const::Bool`] once closed, else a
+    /// [`Const::Param`] over this body's binders, a binder no enclosing
+    /// declaration is respelled as the enclosing declaration's of that
+    /// spelling.
+    pub(in crate::mir) fn comptime_test_value(
+        &self,
+        value: &mojito_types::param_expr::ParamExpr,
+    ) -> Option<Const> {
         let context = mojito_types::param_expr::ParamContext::detached();
         let mut bindings = mojito_types::param_expr::ParamBindings::new();
         value.visit(&mut |node| {

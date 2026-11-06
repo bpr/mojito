@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The `comptime assert` a builtin operation records for each instance to
+  judge, the implicit `Bool` to `SIMD[DType.bool, n]` constructor's one
+  lane and a `pop` op's lane rule over a symbolic dtype, now carries its
+  `Bool` parameter value beside its constraint, as a `comptime assert`
+  statement's does, and the elaborator decides it from that value
+  (R1904). The package format moves to `mojito-package 191`.
 - A `comptime if` or `comptime assert` condition that calls a function
   (`_llvm_bitwidth(dtype) * width == src_width`), compares
   `@always_inline("builtin")` struct values (`L(n) < L(3)`), or reads a

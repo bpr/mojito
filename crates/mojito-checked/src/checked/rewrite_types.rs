@@ -531,6 +531,10 @@ impl RewriteTypes for SemanticAdjustment {
             Self::ComptimeCondition {
                 constraint: _,
                 value,
+            }
+            | Self::InstanceAssertion {
+                constraint: _,
+                value,
             } => {
                 value.rewrite_types(rewrite);
             }
@@ -730,7 +734,6 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::MarkInitialized
             | Self::MarkDestroyed
             | Self::MlirOp(_)
-            | Self::InstanceAssertion(_)
             | Self::PopSimdShuffle { mask: _ }
             | Self::PopArrayRepeat
             | Self::PopArrayGep

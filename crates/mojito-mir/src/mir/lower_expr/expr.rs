@@ -56,17 +56,23 @@ impl<'a> Flatten<'a> {
         // The `comptime assert`s of the builtin dunders and constructors
         // `node` applies, for each reached instance to judge.
         for adjustment in node.adjustments() {
-            if let mojito_checked::checked::SemanticAdjustment::InstanceAssertion(cond) = adjustment
+            if let mojito_checked::checked::SemanticAdjustment::InstanceAssertion {
+                constraint,
+                value,
+            } = adjustment
             {
-                let (cond, message) = match &**cond {
+                let (cond, message) = match &**constraint {
                     GenericConstraint::WithMessage(cond, message) => {
                         (cond.clone(), Some(Const::Str(message.clone())))
                     }
-                    _ => (cond.clone(), None),
+                    _ => (constraint.clone(), None),
                 };
+                let value = value
+                    .as_ref()
+                    .and_then(|value| self.comptime_test_value(value));
                 self.emit(MirInstr::ComptimeAssert {
                     cond,
-                    value: None,
+                    value,
                     message,
                 });
             }

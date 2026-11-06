@@ -865,9 +865,11 @@ impl Checker {
 
     /// Record at `span` the `comptime assert Self.length == 1, message` of
     /// the builtin `SIMD` dunder or constructor applied there, over `width`
-    /// lanes, for each reached instance to judge. A width-one application
-    /// holds it already, and a compile-time position folds the application,
-    /// dropping it, as the pin's fold of a builtin call does.
+    /// lanes, for each reached instance to judge, its `Bool` value the
+    /// lanes' `==` with `1` as the pin's parameter emitter builds it. A
+    /// width-one application holds it already, and a compile-time position
+    /// folds the application, dropping it, as the pin's fold of a builtin
+    /// call does.
     pub(super) fn record_instance_assertion(
         &self,
         span: &SourceSpan,
@@ -877,26 +879,35 @@ impl Checker {
         if matches!(width, SimdWidth::Known(1)) || self.comptime_positions.get() != 0 {
             return Ok(());
         }
+        let context = &self.param_context;
+        let lanes = width.lanes(context).map_err(param_error)?;
+        let value = context
+            .constant(CtValue::Int(1))
+            .and_then(|one| context.infix(InfixOp::Eq, &lanes, &one))
+            .map_err(param_error)?;
         let lanes = match width {
             SimdWidth::Known(lanes) => ConstraintOperand::Value(CtValue::Int(*lanes)),
-            SimdWidth::Expr(_) => {
-                ConstraintOperand::Expr(width.lanes(&self.param_context).map_err(param_error)?)
-            }
+            SimdWidth::Expr(_) => ConstraintOperand::Expr(lanes),
         };
         let holds = GenericConstraint::Eq(lanes, ConstraintOperand::Value(CtValue::Int(1)));
-        self.record_instance_constraint(span, holds, message);
+        self.record_instance_constraint(span, holds, Some(value), message);
         Ok(())
     }
 
-    /// Record at `span` the assertion that `holds`, failing with `message`,
-    /// for each reached instance to judge, once.
+    /// Record at `span` the assertion that `holds`, its `Bool` parameter
+    /// value `value`, failing with `message`, for each reached instance to
+    /// judge, once.
     pub(super) fn record_instance_constraint(
         &self,
         span: &SourceSpan,
         holds: GenericConstraint,
+        value: Option<ParamExpr>,
         message: &str,
     ) {
-        let assertion = GenericConstraint::WithMessage(Box::new(holds), message.to_string());
+        let assertion = (
+            GenericConstraint::WithMessage(Box::new(holds), message.to_string()),
+            value,
+        );
         let mut record = self.record_at(span.clone());
         let assertions = record.instance_assertions.get_or_insert_with(Vec::new);
         if !assertions.contains(&assertion) {
