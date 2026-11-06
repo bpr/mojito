@@ -4184,3 +4184,40 @@ fn pack_queries_read_pre_1_111_binder() {
     assert!(!older.contains("operand_param("));
     assert_eq!(comptime_if_values(&older), values);
 }
+
+/// `Int(mlir_value=i)` over an `index` round trips as the `Int` created
+/// from `i`'s `!kgen.scalar<index>` storage cast, and an artifact below
+/// 1.169, whose `cast_from_builtin` recorded the `Int` itself, reads as
+/// that `Int`.
+#[test]
+fn int_of_index_round_trips_and_upgrades_an_int_typed_cast() {
+    let context = ParamContext::detached();
+    let i = context.decl_ref(ParamId::new("f", 0), "i", MetaTy::value(Ty::index()));
+    let created = context.int_of_index(&i).expect("an index is an Int");
+    let ty: Ty = TyKind::Struct(
+        "Buf".into(),
+        vec![TyArg::Val(CtValue::Expr(created.clone()))],
+    )
+    .into();
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![ty.clone()], Vec::new()),
+    )]);
+    let text = write::program(&program);
+    assert_eq!(only_register_type(&text), ty);
+    let start = text.find("param_struct_value").expect("a struct value");
+    let end = text[start..].find(" }))]").expect("its end") + start + " }".len();
+    let old = format!(
+        "{}param_expr {{ op: cast_from_builtin, type: meta_value(Int), operands: \
+         [param_decl_ref {{ owner: \"f\", slot: 0, name: i, type: meta_value(index) }}] }}{}",
+        &text[..start],
+        &text[end..],
+    )
+    .replacen(
+        &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
+        "mojito-mir 1.168",
+        1,
+    );
+    assert!(old.contains("mojito-mir 1.168"));
+    assert_eq!(only_register_type(&old), ty);
+}

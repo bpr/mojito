@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.168
+mojito-mir 1.169
 ```
 
-The writer emits 1.168. The reader accepts 1.0 through 1.168; *Schema 1.0*
+The writer emits 1.169. The reader accepts 1.0 through 1.169; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1147,6 +1147,16 @@ Schema 1.163 removes the instructions `variant.set_init_with` and
 and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
+
+Schema 1.169 types a parameter expression's `cast_from_builtin` at
+`Int`'s `!kgen.scalar<index>` storage (R1835), as upstream's
+`pop.cast_from_builtin[_type=!kgen.scalar<index>]` is typed, and
+`cast_to_builtin` takes that storage: an `Int` operand is its
+`param_field` `_mlir_value`. `Int(mlir_value=i)` over an `index` is a
+`param_struct_value` of `Int` whose `_mlir_value` is the cast, spelled
+`param_apply` of `$scalar_from_storage` when no call spells it. An
+artifact below 1.169 whose `cast_from_builtin` records `meta_value(Int)`
+reads as that struct value.
 
 Schema 1.168 adds a struct record's `origin_params: [origin_param(N)...]`
 (R1875): the id of each explicit origin parameter, in the order an

@@ -964,10 +964,11 @@ fn dunder_application_displays_as_its_operator() {
     assert_eq!(method.to_string(), "L.doubled(L(n))");
 }
 
-/// The casts between `Int` and `index` are a ring isomorphism on the
-/// canonical polynomial, as the pin identifies them: they distribute over
-/// `+` and `*`, a round trip cancels, a constant folds, and a residual cast
-/// shows pulled outward (`assets/ok/mlir_index_parameter.mojo`).
+/// The casts between `Int`'s storage and `index` are a ring isomorphism on
+/// the canonical polynomial, as the pin identifies them: they distribute
+/// over `+` and `*`, a round trip cancels, a constant folds, and a residual
+/// cast shows pulled outward (`assets/ok/mlir_index_parameter.mojo`). An
+/// `Int` operand casts its storage, as `Int.__mlir_index__()` does.
 #[test]
 fn builtin_casts_distribute_and_cancel() {
     let context = ParamContext::new();
@@ -975,19 +976,26 @@ fn builtin_casts_distribute_and_cancel() {
     let j = int_param(&context, "h", 1, "j");
     let to = |x: &ParamExpr| context.cast_to_builtin(x).expect("an Int casts");
     let from = |x: &ParamExpr| context.cast_from_builtin(x).expect("an index casts");
+    let int = |x: &ParamExpr| context.int_of_index(x).expect("an index is an Int");
     let sum = infix(&context, InfixOp::Add, &k, &j);
     assert_eq!(to(&sum), infix(&context, InfixOp::Add, &to(&j), &to(&k)));
     let zero = infix(&context, InfixOp::Add, &k, &literal(&context, 0));
     assert_eq!(to(&zero), to(&k));
-    assert_eq!(from(&to(&k)), k);
+    assert_eq!(int(&to(&k)), k);
     let i = context.register(ParamId::new("g", 0), "i", MetaTy::value(Ty::index()));
     assert_eq!(to(&from(&i)), i);
+    assert_eq!(to(&int(&i)), i);
+    assert_eq!(
+        from(&i).meta(),
+        &MetaTy::value(crate::types::storage_ty(&Ty::int()))
+    );
+    assert_eq!(int(&i).meta(), &MetaTy::int());
     assert_eq!(
         to(&literal(&context, 3)).as_constant(),
         Some(&CtValue::Index(3))
     );
     assert_eq!(
-        from(&to(&literal(&context, -7))).as_constant(),
+        int(&to(&literal(&context, -7))).as_constant(),
         Some(&CtValue::Int(-7))
     );
     let incremented = infix(&context, InfixOp::Add, &k, &literal(&context, 1));
@@ -995,8 +1003,62 @@ fn builtin_casts_distribute_and_cancel() {
     assert_ne!(to(&incremented), to(&doubled));
     assert_eq!(to(&incremented).to_string(), "(k + 1).__mlir_index__()");
     assert_eq!(to(&k).to_string(), "k.__mlir_index__()");
-    assert_eq!(from(&i).to_string(), "Int(mlir_value=i)");
+    assert_eq!(int(&i).to_string(), "Int(mlir_value=i)");
+    assert_eq!(from(&i).to_string(), "Int(mlir_value=i)._mlir_value");
     assert!(context.cast_to_builtin(&i).is_err());
+}
+
+/// An `Int`'s `_mlir_value` is its `!kgen.scalar<index>` storage, and the
+/// `struct.extract` and `struct.create` between them are a ring isomorphism
+/// on the canonical polynomial, so a builtin body's storage arithmetic
+/// (`Self(mlir_value=pop.add(self._mlir_value, rhs._mlir_value))`) is the
+/// `Int` arithmetic it implements, and `Int(mlir_value=(n +
+/// 1).__mlir_index__())` is `n + 1`.
+#[test]
+fn int_storage_extract_and_create_are_inverse() {
+    let context = ParamContext::new();
+    let storage = MetaTy::value(crate::types::storage_ty(&Ty::int()));
+    let n = int_param(&context, "f", 0, "n");
+    let m = int_param(&context, "f", 1, "m");
+    let field = |x: &ParamExpr| {
+        context
+            .field(x, crate::ct::MLIR_VALUE_FIELD, storage.clone())
+            .expect("an Int has a storage")
+    };
+    let create = |x: &ParamExpr| {
+        context
+            .scalar_from_storage(x)
+            .expect("a storage is an Int's")
+    };
+    assert_eq!(field(&n).meta(), &storage);
+    assert_eq!(field(&n).to_string(), "n._mlir_value");
+    assert_eq!(create(&field(&n)), n);
+    let sum = infix(&context, InfixOp::Add, &n, &m);
+    let storage_sum = infix(&context, InfixOp::Add, &field(&n), &field(&m));
+    assert_eq!(storage_sum.meta(), &storage);
+    assert_eq!(field(&sum), storage_sum);
+    assert_eq!(create(&storage_sum), sum);
+    let incremented = infix(&context, InfixOp::Add, &n, &literal(&context, 1));
+    let index = context.cast_to_builtin(&incremented).expect("an Int casts");
+    assert_eq!(context.int_of_index(&index).expect("an index"), incremented);
+    let three = context.constant(CtValue::Int(3)).expect("a constant");
+    let closed = field(&three);
+    assert_eq!(closed.meta(), &storage);
+    assert_eq!(closed.as_constant(), Some(&CtValue::Int(3)));
+    assert_eq!(create(&closed), three);
+    let i = context.register(ParamId::new("g", 0), "i", MetaTy::value(Ty::index()));
+    let created = context.int_of_index(&i).expect("an index");
+    let doubled = infix(&context, InfixOp::Mul, &literal(&context, 2), &created);
+    assert_eq!(
+        field(&doubled),
+        infix(
+            &context,
+            InfixOp::Mul,
+            &literal(&context, 2),
+            &context.cast_from_builtin(&i).expect("an index casts"),
+        )
+    );
+    assert_eq!(doubled.to_string(), "2 * Int(mlir_value=i)");
 }
 
 /// A symbolic `IntLiteral` slot casts to `index` from the literal domain, as

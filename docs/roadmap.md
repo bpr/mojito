@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1955**.
+Next free ID: **R1957**.
 
 ## Ordered Work
 
@@ -6681,6 +6681,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on R1835.
   - Model: Fable, Not Planned.
 
+- [ ] **R1956 A `SIMDLength` binder read as `Int(n)` in a result type is
+  never bound by the elaborator**
+
+  `def g[n: SIMDLength]() -> Tag[Int(n)]` called as `g[2]()` fails
+  elaboration ("unsupported monomorphizing `g` return: unresolved value
+  parameter `n`"), where the pin runs it.
+  - The binder read as `Int(n)` in an argument type alone runs
+    (`g[2](Tag[2]())` over `x: Tag[Int(n)]`), as does an `Int` binder in
+    a result (`-> Tag[n + 1]`).
+  - With both (`def g[n: SIMDLength](x: Tag[Int(n)]) -> Tag[Int(n)]`),
+    `g[2](Tag[2]())` fails as "unsupported monomorphizing `g`: unresolved
+    value parameter `n`", and so does `g[m](…)` over `comptime m =
+    SIMDLength(2)`.
+  - The image is `types::simd_length_image`, `Int(mlir_value=)` of the
+    binder's `_mlir_value`, so the result's substitution misses the
+    explicit binding: find where mono closes a signature's result type.
+  - Probes: the three shapes above, with `Tag[n: Int]` a field-less
+    struct.
+  - Found while landing R1835 (2026-11-06), whose plan recorded the
+    argument-and-result shape failing before it.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1845 A conditional expression joins two float literals to a
   value-less literal, where upstream converts each arm to the expected
   type**
@@ -11318,41 +11341,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1835 The parameter domain reads an `Int`'s `_mlir_value` as the
-  `Int`, where upstream's is its `!kgen.scalar<index>` storage**
+- [ ] **R1955 The parameter domain reads a `Bool`'s `_mlir_value` as the
+  `Bool`, where upstream's is its `!kgen.scalar<bool>` storage**
 
-  A vector's `_mlir_value` read is a `struct.extract` at its storage, but
-  an `Int`'s, `UInt`'s, or `Float64`'s is still the scalar itself.
-  - `Checker::scalar_storage_expression` (`checker/constraints.rs`) reads
-    an `is_scalar_value` object's `_mlir_value` as the object, and
-    `Int(mlir_value=s)` over an `Int`-typed `s` as `s`.
-  - So `IntDomain::of` (`param_expr.rs`) reads `Int`'s and `UInt`'s
-    storage as the scalar, `ParamOp::CastFromBuiltin` gives an `Int`
-    where upstream's gives `!kgen.scalar<index>`, and `builtin_value`
-    (`builtin_fold.rs`) still accepts a scalar's field value at its
-    vector.
-  - Typing the read at the storage alone fails to package std ("invalid
-    call to '_shuffle_list'"): std's folded `SIMDLength.__init__(Int)`
-    body becomes `cast_to_builtin(n._mlir_value)` while
-    `types::simd_length_converted` builds `cast_to_builtin(n)`.
-  - Lever: add `IntDomain::{IntStorage, UIntStorage}` and make
-    `struct.extract`/`struct.create` between `Int` and its storage a ring
-    isomorphism on the canonical polynomial, as `build_cast` already
-    makes `CastToBuiltin`/`CastFromBuiltin` between `Int` and `index`.
-  - It changes the canonical node of `Int(mlir_value=i)` to a
-    construction over a storage-typed `CastFromBuiltin`: update
-    `simd_length_image`/`simd_length_of_image`/`simd_length_converted`,
-    `write_expr` (keep printing `n.__mlir_index__()` and
-    `Int(mlir_value=…)`), the MIR text round trip, and mono's
-    `struct_value_agrees`.
-  - Then drop `builtin_value`'s scalar exception.
-  - Probe: with a temporary `eprintln!` on `builtin_value` refusing a
-    `!kgen.simd` field, std packaging drops the fold of
-    `SIMD.__init__(out self: Int, *, mlir_value: index)` (found `Int`,
-    expected `!kgen.simd<length, dtype>`).
-  - Probe: `Tag[Int(mlir_value=(n + 1).__mlir_index__())]` and
-    `Tag[n + 1]` stay one type, as does `Tag[2 * Int(n)]` against
-    `Tag[Int(2 * n)]` for `n: SIMDLength`.
+  A vector's or other scalar's `_mlir_value` read is a `struct.extract`
+  at its storage, but a `Bool`'s is still the `Bool` itself.
+  - `Checker::scalar_storage_expression` (`checker/constraints.rs`) keeps
+    a short-circuit for a `Bool` object's `_mlir_value`, and its
+    `Bool(mlir_value=s)` arm reads a `Bool`-typed `s` as the `Bool`.
+  - The connectives (`BoolAnd`, `BoolOr`, `BoolXor`, `Cond`) have no
+    storage counterpart, so `struct.extract` and `struct.create` between
+    a `Bool` and its storage must map them node by node, as
+    `ParamContext::build_extract`/`build_create` map the integers'
+    polynomial.
+  - Probe: `def f[b: Bool](x: Tag[Bool(mlir_value=b._mlir_value)])`
+    fails to check ("not a compile-time Int constant: not an associated
+    comptime expression"), where `Tag[b]` runs.
+  - Probe: with the short-circuit gone, std still packages and
+    `assets/ok/bool_storage_primitives.mojo` and
+    `assets/ok/mlir_pop_select.mojo` run.
+  - Found while landing R1835 (2026-11-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

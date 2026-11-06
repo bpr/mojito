@@ -463,6 +463,11 @@ impl ApplicableFunction {
         self.raises
     }
 
+    /// A refined initializer's `out self` annotation.
+    pub(in crate::checker) const fn refined_self(&self) -> Option<&SourceType> {
+        self.refined_self.as_ref()
+    }
+
     /// The declared result.
     pub(in crate::checker) const fn result(&self) -> &SourceType {
         &self.result

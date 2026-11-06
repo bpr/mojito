@@ -112,8 +112,9 @@ command cannot use both.
    conversions are their declarations (R1753, R1785's first part, R1788,
    R1789, R1738), and a `StringLiteral[value]` is the declared struct
    (R1655, R1657–R1660). What is left:
-   - `SIMD` storage: R1835 (an `Int`'s `_mlir_value` read) → R1843
-     (splat and `SIMDLength` as the `@implicit` initializers), R1837 (a
+   - `SIMD` storage: R1843 (splat and `SIMDLength` as the `@implicit`
+     initializers, now that R1835 reads an `Int`'s `_mlir_value` as its
+     storage), R1955 (a `Float64`'s or `Bool`'s read), R1837 (a
      struct `literal.materialize` target), and R1836 (a multi-lane literal
      splats the unconverted literal).
    - `Bool`: R1840 (MIR's `i1` is a `Bool` register) and R1841 (`Bool` is
@@ -302,7 +303,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 6 (R1835 → R1843, R1837, R1840, R1841, R1845 → R1851, R1858–R1860 → R1862), R1936 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
+| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 6 (R1843, R1955, R1837, R1840, R1841, R1845 → R1851, R1858–R1860 → R1862), R1936 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
 | `Writable`'s intrinsic receivers (`DType`, `Error`) are host-formatted by each backend | R1936, R1938 | R1463, R1409, R18, R159, R1883, R1884 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |

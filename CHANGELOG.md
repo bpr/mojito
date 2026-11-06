@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The parameter domain now reads an `Int`'s, `UInt`'s, or `Float64`'s
+  `_mlir_value` as its `!kgen.scalar` storage, as upstream does, instead
+  of as the scalar itself. Between an `Int` or a `UInt` and its storage,
+  `struct.extract` and `struct.create` distribute over `+` and `*`, so
+  `Int(mlir_value=(n + 1).__mlir_index__())` is still `n + 1`, and
+  `pop.cast_from_builtin` gives the storage, not the `Int`. A refined
+  initializer (`SIMD.__init__(out self: Int, *, mlir_value: index)`) now
+  folds at its instance's field types, so its builtin fold lands. MIR
+  text moves to 1.169, and an older artifact's `Int`-typed
+  `cast_from_builtin` reads as the `Int` created from the storage (R1835).
 - The MIR text reader now reads an artifact older than MIR 1.159 (a value
   pack) or 1.160 (a type pack) that declares a pack as one binder as
   upstream's two binders, renumbering the references and regrouping the

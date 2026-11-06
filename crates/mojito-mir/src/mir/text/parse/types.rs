@@ -869,7 +869,18 @@ impl Decoder {
                         .map(|operand| self.param_expr(operand))
                         .collect::<Option<_>>()?;
                     self.unknown(fields, &["op", "type", "operands"]);
-                    let built = self.context.rebuild(op, &operands);
+                    // Below 1.169 a `cast_from_builtin` gave the `Int`, where
+                    // it gives the `Int`'s `!kgen.scalar<index>` storage, so
+                    // the `Int` it recorded is the one created from it.
+                    let built = if self.minor <= 168
+                        && op == ParamOp::CastFromBuiltin
+                        && meta == MetaTy::int()
+                        && let [index] = operands.as_slice()
+                    {
+                        self.context.int_of_index(index)
+                    } else {
+                        self.context.rebuild(op, &operands)
+                    };
                     let built = self.built(value, built)?;
                     if *built.meta() != meta {
                         self.error(

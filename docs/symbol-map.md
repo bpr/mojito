@@ -2278,9 +2278,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   through `simd_dunder_is_builtin`). The elaborator's `Specializer::demand_application` passes a
   method's receiver as its first runtime argument. `build_ct` reads the body's
   ``__mlir_op`` arithmetic through `builtin_fold::mlir_op_operator` (over
-  `MlirOp::lowering`), a vector's `_mlir_value` (a `ParamKind::Field` at
-  its `!kgen.simd` storage; an `Int`'s, `UInt`'s, or `Float64`'s is still
-  the scalar, R1835), and `Int(mlir_value=)`, and `constraint_operand`
+  `MlirOp::lowering`), a vector's or scalar's `_mlir_value` (a
+  `ParamKind::Field` at its `!kgen.simd` storage; a `Bool`'s is still the
+  `Bool`, R1955), and `Int(mlir_value=)` (`ParamContext::int_of_index`
+  over an `index`, `ParamContext::scalar_from_storage` over a storage),
+  and `constraint_operand`
   takes a folded call as a `where` operand. The typed
   ``__mlir_op.`pop.simd.splat` `` and ``__mlir_op.`pop.cast` ``
   (`builtin_fold::typed_lane_op`) build `ParamOp::SimdSplat` and
@@ -2289,8 +2291,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   folds over `ct::CtLane::{of_scalar, cast}` at the vector the storage
   holds. A builtin `SIMD` initializer folds to its `_mlir_value`:
   `folded_construction` reads `self = e` as every field of `e`,
-  `builtin_value` takes a `!kgen.simd` field's value only at that storage
-  (or at a scalar's vector, R1835), `folded_leading_statement` drops a call of a builtin function
+  `builtin_value` takes a `!kgen.simd` field's value only at that storage,
+  a refined initializer (`out self: Int`) folds at its instance's fields
+  (`constructed_fields`), `folded_leading_statement` drops a call of a builtin function
   with no result (`Checker::builtin_procedures`), a non-`Self` struct
   argument's field reads its type from `Checker::builtin_struct_fields`,
   and a fold-time conversion takes the `@implicit` initializer
@@ -3184,8 +3187,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `IntDomain::Index` polynomial and `ParamOp::CastToBuiltin`/
   `ParamOp::CastFromBuiltin` (`ParamContext::cast_to_builtin`/
   `cast_from_builtin`, `param_expr.rs`; constants by
-  `fold::fold_cast_to_builtin`/`fold_cast_from_builtin`) carry the casts,
-  which `Checker::scalar_storage_expression` (`constraints.rs`) builds from
+  `fold::fold_cast_to_builtin`/`fold_cast_from_builtin`) carry the casts
+  between `index` and `Int`'s storage, `IntDomain::{IntStorage,
+  UIntStorage}`, which `ParamContext::field` (`struct.extract`,
+  `build_extract`) and `struct_value` (`struct.create`, `build_create`,
+  `scalar_from_storage`, `int_of_index`) map to and from the scalar term
+  by term (`map_polynomial`); a created atom is spelled
+  `SCALAR_FROM_STORAGE_FUNCTION`.
+  `Checker::scalar_storage_expression` (`constraints.rs`) builds from
   `__mlir_index__` and `Int(mlir_value=)` and `builtin_fold::mlir_op_operator`
   from the explicit ops; `ApplicableShape::applicable`
   (`comptime_validation.rs`) admits `index` slots, binders, and results.

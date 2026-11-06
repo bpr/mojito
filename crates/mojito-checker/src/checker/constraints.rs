@@ -2561,19 +2561,19 @@ impl Checker {
 
     /// The parameter expression of a compile-time scalar's storage read, as
     /// an `@always_inline("builtin")` body spells its arithmetic: a
-    /// vector's `_mlir_value` is the field at its `!kgen.simd` storage
-    /// (`struct.extract`), an `Int`'s, `UInt`'s, or `Float64`'s still the
-    /// scalar itself (R1835), `Int(mlir_value=s)` the scalar its storage `s`
-    /// holds, `Bool(value=b)` over the `i1` an `index.cmp` folds to its
+    /// vector's or scalar's `_mlir_value` is the field at its `!kgen.simd`
+    /// storage (`struct.extract`), a `Bool`'s still the `Bool` itself
+    /// (R1955), `Int(mlir_value=s)` the `Int` created from its storage `s`
+    /// (`struct.create`), `Bool(value=b)` over the `i1` an `index.cmp` folds to its
     /// `Bool`, and ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
     /// ([`super::builtin_fold::mlir_op_operator`]), and the typed
     /// ``__mlir_op.`pop.simd.splat` `` and ``__mlir_op.`pop.cast` `` are
     /// `ParamOp::SimdSplat` and `ParamOp::Cast` at the storage their
     /// `_type=` names. Between an `Int` and the MLIR builtin `index`,
-    /// `x.__mlir_index__()` (`pop.cast_to_builtin`, of an `Int`, its
-    /// storage, or an `IntLiteral`) and `Int(mlir_value=i)` over an `index`
-    /// (`pop.cast_from_builtin`) are the parameter domain's casts. `None`
-    /// for any other expression.
+    /// `x.__mlir_index__()` (`pop.cast_to_builtin`, of an `Int`'s storage,
+    /// the `Int`, or an `IntLiteral`) and `Int(mlir_value=i)` over an
+    /// `index` (the `Int` created from `pop.cast_from_builtin`'s storage)
+    /// are the parameter domain's casts. `None` for any other expression.
     fn scalar_storage_expression(
         &self,
         expr: &Expr,
@@ -2598,7 +2598,12 @@ impl Checker {
                 Some(self.build_ct(&operator, recording))
             }
             ExprKind::Member { object, field } if field == mojito_types::ct::MLIR_VALUE_FIELD => {
-                if let Some(scalar) = scalar(object) {
+                if let Some(scalar) = scalar(object).filter(|scalar| {
+                    scalar
+                        .meta()
+                        .as_value()
+                        .is_some_and(|ty| ty.kind().is_bool())
+                }) {
                     return Some(Ok(scalar));
                 }
                 let value = self.build_ct(object, recording).ok()?;
@@ -2652,11 +2657,18 @@ impl Checker {
                 if target == Ty::int()
                     && matches!(value.meta().as_value().map(Ty::kind), Some(TyKind::Index))
                 {
-                    return Some(
-                        self.param_context
-                            .cast_from_builtin(&value)
-                            .map_err(param_error),
-                    );
+                    return Some(self.param_context.int_of_index(&value).map_err(param_error));
+                }
+                if is_integer_scalar(&target) {
+                    return value
+                        .meta()
+                        .as_value()
+                        .is_some_and(|ty| mojito_types::types::storage_simd(ty) == Some(target))
+                        .then(|| {
+                            self.param_context
+                                .scalar_from_storage(&value)
+                                .map_err(param_error)
+                        });
                 }
                 Some(value)
                     .filter(|value| {
@@ -3311,7 +3323,7 @@ impl Checker {
                     });
                 }
                 context
-                    .cast_from_builtin(&index)
+                    .int_of_index(&index)
                     .and_then(|index| context.list_get(&list, &index))
                     .map_err(param_error)
             }
@@ -6109,6 +6121,12 @@ fn is_simd_length_value(value: &ParamExpr) -> bool {
         .meta()
         .as_value()
         .is_some_and(mojito_types::types::is_simd_length)
+}
+
+/// Whether `ty` is `Int` or `UInt`, which the parameter domain creates
+/// from its `!kgen.scalar` storage over the canonical polynomial.
+fn is_integer_scalar(ty: &Ty) -> bool {
+    ty.is_int() || ty.is_uint()
 }
 
 fn is_scalar_value(value: &ParamExpr) -> bool {

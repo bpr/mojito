@@ -369,7 +369,7 @@ pub fn simd_length_image(
     context: &ParamContext,
     length: &ParamExpr,
 ) -> Result<ParamExpr, ParamError> {
-    context.cast_from_builtin(&context.field(
+    context.int_of_index(&context.field(
         length,
         crate::ct::MLIR_VALUE_FIELD,
         MetaTy::value(Ty::index()),
@@ -409,15 +409,27 @@ pub fn simd_length_converted(
 }
 
 /// The `SIMDLength` whose lane count `lanes` is, when `lanes` is that
-/// length's [`simd_length_image`]: the inverse a width binder is solved by.
+/// length's [`simd_length_image`], the `Int` created from the storage cast
+/// from its field: the inverse a width binder is solved by.
 pub fn simd_length_of_image(lanes: &ParamExpr) -> Option<&ParamExpr> {
+    let ParamKind::StructValue { fields, .. } = lanes.kind() else {
+        return None;
+    };
+    let [(field, storage)] = fields.as_slice() else {
+        return None;
+    };
     let ParamKind::Op {
         op: crate::param_expr::ParamOp::CastFromBuiltin,
         operands,
-    } = lanes.kind()
+    } = storage.kind()
     else {
         return None;
     };
+    if field != crate::ct::MLIR_VALUE_FIELD
+        || !lanes.meta().as_value().is_some_and(|ty| ty.kind().is_int())
+    {
+        return None;
+    }
     let ParamKind::Field { base, name } = operands.first()?.kind() else {
         return None;
     };

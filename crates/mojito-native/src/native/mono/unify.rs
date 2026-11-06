@@ -799,23 +799,34 @@ pub(super) fn unify_arg(
 
 /// Whether `expr`, a struct value a builtin `__init__` folds to whose
 /// construction no substitution has run yet, has the fields of the frozen
-/// `value`: a struct value's identity is its fields.
+/// `value`: a struct value's identity is its fields. An `Int` or a `UInt`
+/// created from its storage agrees with the frozen scalar its
+/// `_mlir_value` holds.
 fn struct_value_agrees(expr: &ParamExpr, value: &CtValue, bindings: &Bindings) -> bool {
-    let (ParamKind::StructValue { fields, .. }, CtValue::Struct { fields: frozen, .. }) =
-        (expr.kind(), value)
-    else {
+    let ParamKind::StructValue { fields, .. } = expr.kind() else {
         return false;
     };
-    fields.len() == frozen.len()
-        && fields
-            .iter()
-            .zip(frozen)
-            .all(|((name, field), (frozen_name, frozen_value))| {
-                name == frozen_name
-                    && eval_ct(field, bindings).is_ok_and(|field| {
-                        mojito_types::param_expr::identity_eq(&field, frozen_value)
+    let agrees = |field: &ParamExpr, frozen: &CtValue| {
+        eval_ct(field, bindings)
+            .is_ok_and(|field| mojito_types::param_expr::identity_eq(&field, frozen))
+    };
+    match (fields.as_slice(), value) {
+        ([(name, field)], CtValue::Int(_) | CtValue::UInt(_))
+            if name == mojito_types::ct::MLIR_VALUE_FIELD =>
+        {
+            agrees(field, value)
+        }
+        (_, CtValue::Struct { fields: frozen, .. }) => {
+            fields.len() == frozen.len()
+                && fields
+                    .iter()
+                    .zip(frozen)
+                    .all(|((name, field), (frozen_name, frozen_value))| {
+                        name == frozen_name && agrees(field, frozen_value)
                     })
-            })
+        }
+        _ => false,
+    }
 }
 
 /// Bind the type pack `binder` to `elements`: as the runtime pack every

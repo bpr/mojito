@@ -275,10 +275,36 @@ impl ParamContext {
         self.op(ParamOp::CastToBuiltin, std::slice::from_ref(operand))
     }
 
-    /// `Int(mlir_value=operand)`: an `index` as an `Int`; see
-    /// [`ParamOp::CastFromBuiltin`].
+    /// `pop.cast_from_builtin[_type=!kgen.scalar<index>](operand)`: an
+    /// `index` as the `Int` storage it is; see [`ParamOp::CastFromBuiltin`].
     pub fn cast_from_builtin(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
         self.op(ParamOp::CastFromBuiltin, std::slice::from_ref(operand))
+    }
+
+    /// `Int(mlir_value=operand)` over an `index`: upstream's builtin
+    /// `SIMD.__init__(out self: Int, *, mlir_value: index)` folded, the
+    /// `Int` created from the storage [`Self::cast_from_builtin`] gives.
+    pub fn int_of_index(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.scalar_from_storage(&self.cast_from_builtin(operand)?)
+    }
+
+    /// The `Int` or `UInt` created from `storage`, a value of its
+    /// `!kgen.scalar` storage (`struct.create`, `Int(mlir_value=s)`): a
+    /// scalar's own `_mlir_value` is that scalar, and a sum of storages the
+    /// sum of the scalars created from them.
+    pub fn scalar_from_storage(&self, storage: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let scalar = match IntDomain::of(storage.meta()) {
+            Some(IntDomain::IntStorage) => IntDomain::Int,
+            Some(IntDomain::UIntStorage) => IntDomain::UInt,
+            _ => {
+                return Err(ParamError::TypeMismatch {
+                    operation: "struct value".to_string(),
+                    expected: "an `Int`'s or a `UInt`'s storage".to_string(),
+                    found: storage.meta().to_string(),
+                });
+            }
+        };
+        self.build_create(scalar, storage, None)
     }
 
     /// The canonicalizing primitive constructor: checks arity and operand
@@ -817,10 +843,14 @@ impl ParamContext {
             {
                 return self.constant(parameter);
             }
-            // A constant `SIMD`'s storage is that constant at the storage
-            // type (upstream's `StructExtractOp::fold`).
+            // A constant `SIMD`'s storage, an `Int`'s or a `UInt`'s among
+            // them, is that constant at the storage type (upstream's
+            // `StructExtractOp::fold`).
             if name == crate::ct::MLIR_VALUE_FIELD
-                && matches!(value, CtValue::Simd { .. })
+                && matches!(
+                    value,
+                    CtValue::Simd { .. } | CtValue::Int(_) | CtValue::UInt(_)
+                )
                 && let Some(storage) = meta.as_value()
             {
                 return self.typed_constant(value.clone(), storage);
@@ -845,6 +875,11 @@ impl ParamContext {
                     found: name.to_string(),
                 })?;
             return self.constant(field.1.clone());
+        }
+        if name == crate::ct::MLIR_VALUE_FIELD
+            && let Some(domain @ (IntDomain::Int | IntDomain::UInt)) = IntDomain::of(base.meta())
+        {
+            return self.build_extract(domain, base);
         }
         if let ParamKind::StructValue { fields, spelling } = base.kind() {
             return fields
@@ -1062,6 +1097,15 @@ impl ParamContext {
     /// `SIMD` created from a constant storage is that constant, as
     /// upstream's `StructCreateOp::fold` folds it.
     pub fn struct_value(&self, fields: &[(String, ParamExpr)], spelling: &ParamExpr) -> ParamExpr {
+        if let [(field, storage)] = fields
+            && field == crate::ct::MLIR_VALUE_FIELD
+            && let Some(scalar @ (IntDomain::Int | IntDomain::UInt)) =
+                IntDomain::of(spelling.meta())
+            && IntDomain::of(storage.meta()) == scalar.storage()
+            && let Ok(created) = self.build_create(scalar, storage, Some(spelling))
+        {
+            return created;
+        }
         match (own_fields_base(fields), fields) {
             (Some(base), _) if base.meta() == spelling.meta() => base.clone(),
             (_, [(field, storage)])
@@ -1627,7 +1671,11 @@ impl ParamContext {
 
     fn integer_literal(&self, domain: IntDomain, value: &IntLiteral) -> ParamExpr {
         let value = domain.constant(value);
-        self.make(MetaTy::of_value(&value), ParamKind::Constant(value))
+        let meta = match domain {
+            IntDomain::IntStorage | IntDomain::UIntStorage => MetaTy::value(domain.ty()),
+            _ => MetaTy::of_value(&value),
+        };
+        self.make(meta, ParamKind::Constant(value))
     }
 
     fn require_type_subject(operation: &str, subject: &ParamExpr) -> Result<(), ParamError> {
@@ -1724,26 +1772,37 @@ impl ParamContext {
         }
     }
 
-    /// A cast between `Int` and `index` over the canonical polynomial: each
-    /// coefficient is kept and each atom maps to its cast, a cast of the
-    /// inverse cast being its operand, so `(k + j).__mlir_index__()` and
-    /// `k.__mlir_index__() + j.__mlir_index__()` are one node and a round
-    /// trip is the identity. A symbolic `IntLiteral` operand casts from the
-    /// literal domain, as `IntLiteral.__mlir_index__()` does at the pin.
+    /// A cast between `Int`'s `!kgen.scalar<index>` storage and `index`
+    /// over the canonical polynomial: each coefficient is kept and each
+    /// atom maps to its cast, a cast of the inverse cast being its operand,
+    /// so `(k + j).__mlir_index__()` and `k.__mlir_index__() +
+    /// j.__mlir_index__()` are one node and a round trip is the identity.
+    /// An `Int` operand casts its storage, as `Int.__mlir_index__()` reads
+    /// it, and a symbolic `IntLiteral` one casts from the literal domain,
+    /// as `IntLiteral.__mlir_index__()` does at the pin.
     fn build_cast(&self, op: ParamOp, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
         let (from, to, inverse) = if op == ParamOp::CastToBuiltin {
             let from = match IntDomain::of(operand.meta()) {
                 Some(IntDomain::Literal) if operand.as_constant().is_none() => IntDomain::Literal,
-                _ => IntDomain::Int,
+                _ => IntDomain::IntStorage,
             };
             (from, IntDomain::Index, ParamOp::CastFromBuiltin)
         } else {
-            (IntDomain::Index, IntDomain::Int, ParamOp::CastToBuiltin)
+            (
+                IntDomain::Index,
+                IntDomain::IntStorage,
+                ParamOp::CastToBuiltin,
+            )
         };
-        let operand = match operand.as_constant() {
-            Some(CtValue::IntLiteral(value)) if from == IntDomain::Int => {
+        let operand = match (operand.as_constant(), IntDomain::of(operand.meta())) {
+            (Some(CtValue::IntLiteral(value)), _) if from == IntDomain::IntStorage => {
                 self.integer_literal(from, value)
             }
+            (_, Some(IntDomain::Int)) if from == IntDomain::IntStorage => self.field(
+                operand,
+                crate::ct::MLIR_VALUE_FIELD,
+                MetaTy::value(from.ty()),
+            )?,
             _ => operand.clone(),
         };
         if IntDomain::of(operand.meta()) != Some(from) {
@@ -1753,28 +1812,120 @@ impl ParamContext {
                 found: operand.meta().to_string(),
             });
         }
-        let mut image = Polynomial::zero(to);
-        for (monomial, coefficient) in &Polynomial::of(from, &operand)?.terms {
+        self.map_polynomial(from, to, &operand, |atom| match atom.kind() {
+            ParamKind::Op { op, operands }
+                if *op == inverse && IntDomain::of(operands[0].meta()) == Some(to) =>
+            {
+                operands[0].clone()
+            }
+            _ => self.make(
+                MetaTy::value(to.ty()),
+                ParamKind::Op {
+                    op,
+                    operands: vec![atom.clone()],
+                },
+            ),
+        })
+    }
+
+    /// `operand`, of the domain `from`, mapped term by term into `to`: each
+    /// coefficient kept, each atom replaced by `image(atom)`. A ring
+    /// isomorphism such as a cast or a scalar's `struct.extract` and
+    /// `struct.create` distributes over the canonical polynomial, so its
+    /// image is canonical too.
+    fn map_polynomial(
+        &self,
+        from: IntDomain,
+        to: IntDomain,
+        operand: &ParamExpr,
+        image: impl Fn(&ParamExpr) -> ParamExpr,
+    ) -> Result<ParamExpr, ParamError> {
+        let mut mapped = Polynomial::zero(to);
+        for (monomial, coefficient) in &Polynomial::of(from, operand)?.terms {
             let mut term = Polynomial::constant(to, coefficient);
             for atom in monomial {
-                let cast = match atom.kind() {
-                    ParamKind::Op { op, operands } if *op == inverse => operands[0].clone(),
-                    _ => self.make(
-                        MetaTy::value(to.ty()),
-                        ParamKind::Op {
-                            op,
-                            operands: vec![atom.clone()],
-                        },
-                    ),
-                };
-                term = term.mul(&Polynomial::of(to, &cast)?)?;
+                term = term.mul(&Polynomial::of(to, &image(atom))?)?;
             }
-            image = image.add(&term);
+            mapped = mapped.add(&term);
         }
-        if image.as_constant().is_some() {
+        if mapped.as_constant().is_some() {
             self.count_fold();
         }
-        Ok(self.polynomial_node(&image))
+        Ok(self.polynomial_node(&mapped))
+    }
+
+    /// A scalar's `_mlir_value` (`struct.extract`) over the canonical
+    /// polynomial of `base`, of the scalar domain `domain`: each atom's
+    /// storage is its field, a scalar created from a storage being that
+    /// storage, so `(n + 1)._mlir_value` is `n._mlir_value + 1`.
+    fn build_extract(&self, domain: IntDomain, base: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let storage = domain.storage().ok_or_else(|| ParamError::TypeMismatch {
+            operation: format!("field `{}`", crate::ct::MLIR_VALUE_FIELD),
+            expected: "an `Int` or a `UInt`".to_string(),
+            found: base.meta().to_string(),
+        })?;
+        self.map_polynomial(domain, storage, base, |atom| {
+            match scalar_storage_field(atom)
+                .filter(|field| IntDomain::of(field.meta()) == Some(storage))
+            {
+                Some(field) => field.clone(),
+                None => self.make(
+                    MetaTy::value(storage.ty()),
+                    ParamKind::Field {
+                        base: atom.clone(),
+                        name: crate::ct::MLIR_VALUE_FIELD.to_string(),
+                    },
+                ),
+            }
+        })
+    }
+
+    /// The scalar of the domain `scalar` created from `storage`
+    /// (`struct.create`) over its canonical polynomial: each atom that is a
+    /// scalar's field is that scalar, and any other the struct value of it,
+    /// so `Int(mlir_value=n._mlir_value + 1)` is `n + 1`. A created atom is
+    /// spelled `spelling` when it is the whole storage, and otherwise the
+    /// application of [`SCALAR_FROM_STORAGE_FUNCTION`] to it.
+    fn build_create(
+        &self,
+        scalar: IntDomain,
+        storage: &ParamExpr,
+        spelling: Option<&ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        let domain = scalar.storage().ok_or_else(|| ParamError::TypeMismatch {
+            operation: "struct value".to_string(),
+            expected: "an `Int` or a `UInt`".to_string(),
+            found: scalar.ty().to_string(),
+        })?;
+        let meta = MetaTy::value(scalar.ty());
+        let whole = Polynomial::of(domain, storage)?
+            .as_atom()
+            .is_some_and(|atom| atom == storage);
+        self.map_polynomial(domain, scalar, storage, |atom| match atom.kind() {
+            ParamKind::Field { base, name }
+                if name == crate::ct::MLIR_VALUE_FIELD
+                    && IntDomain::of(base.meta()) == Some(scalar) =>
+            {
+                base.clone()
+            }
+            _ => {
+                let spelling = match spelling {
+                    Some(spelling) if whole => self.intern(spelling),
+                    _ => self.apply(
+                        SCALAR_FROM_STORAGE_FUNCTION,
+                        std::slice::from_ref(atom),
+                        meta.clone(),
+                    ),
+                };
+                self.make(
+                    meta.clone(),
+                    ParamKind::StructValue {
+                        fields: vec![(crate::ct::MLIR_VALUE_FIELD.to_string(), atom.clone())],
+                        spelling: Spelling(spelling),
+                    },
+                )
+            }
+        })
     }
 
     fn polynomial_node(&self, polynomial: &Polynomial) -> ParamExpr {
@@ -2764,6 +2915,13 @@ impl LayoutQuery {
 /// The callable symbol of the compilation target the elaborator answers
 /// ([`ParamContext::current_target`]).
 pub const CURRENT_TARGET_FUNCTION: &str = "kgen.current_target";
+
+/// The callable symbol spelling a scalar created from a storage atom.
+///
+/// It is a [`ParamKind::StructValue`] spelling (`struct.create` of an `Int`
+/// over its `!kgen.scalar`) that names no declaration: the value is its
+/// field, and a closed one folds to the scalar's constant.
+pub const SCALAR_FROM_STORAGE_FUNCTION: &str = "$scalar_from_storage";
 
 /// The callable symbol of the length of a parameter list the elaborator
 /// evaluates ([`ParamContext::list_length`]).
@@ -4656,22 +4814,32 @@ impl Node {
 enum IntDomain {
     Int,
     UInt,
+    /// `Int`'s `!kgen.scalar<index>` storage, its `_mlir_value`.
+    IntStorage,
+    /// `UInt`'s `!kgen.scalar<ui64>` storage.
+    UIntStorage,
     /// The MLIR builtin `index` of the 64-bit host target.
     Index,
     Literal,
 }
 
 impl IntDomain {
-    /// The domain of a value of type `meta`. `Int`'s and `UInt`'s
-    /// `!kgen.scalar` storage is read as the scalar, since an `Int`'s
-    /// `_mlir_value` read is still the `Int` itself (R1835).
+    /// The domain of a value of type `meta`. A scalar's `!kgen.scalar`
+    /// storage is a domain of its own, which `struct.extract` and
+    /// `struct.create` map to and from the scalar's.
     fn of(meta: &MetaTy) -> Option<Self> {
-        let ty = meta.as_value().map(crate::types::storage_value_ty);
-        match ty.as_ref().map(Ty::kind) {
-            Some(kind) if kind.is_int() => Some(Self::Int),
-            Some(kind) if kind.is_uint() => Some(Self::UInt),
-            Some(TyKind::Index) => Some(Self::Index),
-            Some(TyKind::IntLiteral(_)) => Some(Self::Literal),
+        let ty = meta.as_value()?;
+        let storage = matches!(ty.kind(), TyKind::KgenSimd { .. });
+        let value = crate::types::storage_value_ty(ty);
+        match value.kind() {
+            kind if kind.is_int() => Some(if storage { Self::IntStorage } else { Self::Int }),
+            kind if kind.is_uint() => Some(if storage {
+                Self::UIntStorage
+            } else {
+                Self::UInt
+            }),
+            TyKind::Index if !storage => Some(Self::Index),
+            TyKind::IntLiteral(_) if !storage => Some(Self::Literal),
             _ => None,
         }
     }
@@ -4680,8 +4848,19 @@ impl IntDomain {
         match self {
             Self::Int => Ty::int(),
             Self::UInt => Ty::uint(),
+            Self::IntStorage => crate::types::storage_ty(&Ty::int()),
+            Self::UIntStorage => crate::types::storage_ty(&Ty::uint()),
             Self::Index => Ty::index(),
             Self::Literal => Ty::int_literal(),
+        }
+    }
+
+    /// The storage domain of a scalar domain, its `_mlir_value`'s.
+    const fn storage(self) -> Option<Self> {
+        match self {
+            Self::Int => Some(Self::IntStorage),
+            Self::UInt => Some(Self::UIntStorage),
+            _ => None,
         }
     }
 
@@ -4689,10 +4868,10 @@ impl IntDomain {
     /// the literal domain is exact.
     fn reduce(self, value: &IntLiteral) -> IntLiteral {
         match self {
-            Self::Int | Self::Index => value
+            Self::Int | Self::IntStorage | Self::Index => value
                 .wrapping_signed(64)
                 .map_or_else(|| value.clone(), IntLiteral::from),
-            Self::UInt => value
+            Self::UInt | Self::UIntStorage => value
                 .wrapping_unsigned(64)
                 .map_or_else(|| value.clone(), IntLiteral::from),
             Self::Literal => value.clone(),
@@ -4701,8 +4880,12 @@ impl IntDomain {
 
     fn constant(self, value: &IntLiteral) -> CtValue {
         match self {
-            Self::Int => CtValue::Int(value.wrapping_signed(64).unwrap_or_default()),
-            Self::UInt => CtValue::UInt(value.wrapping_unsigned(64).unwrap_or_default()),
+            Self::Int | Self::IntStorage => {
+                CtValue::Int(value.wrapping_signed(64).unwrap_or_default())
+            }
+            Self::UInt | Self::UIntStorage => {
+                CtValue::UInt(value.wrapping_unsigned(64).unwrap_or_default())
+            }
             Self::Index => CtValue::Index(value.wrapping_signed(64).unwrap_or_default()),
             Self::Literal => CtValue::IntLiteral(value.clone()),
         }
@@ -4822,6 +5005,19 @@ impl Polynomial {
             negated.insert(monomial.clone(), &coefficient.neg());
         }
         negated
+    }
+
+    /// The one atom this polynomial is, at coefficient one.
+    fn as_atom(&self) -> Option<&ParamExpr> {
+        let mut terms = self.terms.iter();
+        match (terms.next(), terms.next()) {
+            (Some((monomial, coefficient)), None)
+                if monomial.len() == 1 && *coefficient == IntLiteral::from(1_i64) =>
+            {
+                monomial.first()
+            }
+            _ => None,
+        }
     }
 
     fn as_constant(&self) -> Option<IntLiteral> {
@@ -5122,7 +5318,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
         ParamKind::IndexRef { depth, index } => write!(f, "${depth}.{index}"),
         // A `SIMDLength`'s lane count shows as the length, as the pin
         // spells a width (`SIMD[DType.int32, w]`).
-        ParamKind::Op { .. } if let Some(length) = crate::types::simd_length_of_image(expr) => {
+        _ if let Some(length) = crate::types::simd_length_of_image(expr) => {
             write_expr(f, length, parent)
         }
         ParamKind::Op { op, operands } => {
@@ -5135,14 +5331,16 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                     write!(f, "-")?;
                     write_expr(f, operand, level)?;
                 }
+                // An `Int`'s storage cast shows as `Int.__mlir_index__()`,
+                // which reads it.
                 (ParamOp::CastToBuiltin, [operand]) => {
-                    write_expr(f, operand, level)?;
+                    write_expr(f, scalar_of_storage(operand).unwrap_or(operand), level)?;
                     write!(f, ".__mlir_index__()")?;
                 }
                 (ParamOp::CastFromBuiltin, [operand]) => {
                     write!(f, "Int(mlir_value=")?;
                     write_expr(f, operand, 0)?;
-                    write!(f, ")")?;
+                    write!(f, ")._mlir_value")?;
                 }
                 (ParamOp::DtypeToUi8, [operand]) => {
                     write_expr(f, operand, level)?;
@@ -5290,6 +5488,23 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             write_operands(f, &values)?;
             write!(f, ")")
         }
+        // A scalar created from a storage atom shows as the `__init__` that
+        // creates it, `Int(mlir_value=i)` over the `index` its storage casts.
+        ParamKind::StructValue { spelling, .. }
+            if let ParamKind::Apply { function, .. } = spelling.0.kind()
+                && function == SCALAR_FROM_STORAGE_FUNCTION
+                && let Some(storage) = scalar_storage_field(expr) =>
+        {
+            write!(f, "{}(mlir_value=", expr.meta())?;
+            match storage.kind() {
+                ParamKind::Op {
+                    op: ParamOp::CastFromBuiltin,
+                    operands,
+                } => write_expr(f, &operands[0], 0)?,
+                _ => write_expr(f, storage, 0)?,
+            }
+            write!(f, ")")
+        }
         ParamKind::StructValue { spelling, .. } => write!(f, "{}", spelling.0),
         ParamKind::Hole { kind, token } => match kind {
             HoleKind::Unknown => write!(f, "?unknown{token}"),
@@ -5335,13 +5550,29 @@ fn pulled_cast(expr: &ParamExpr) -> Option<ParamExpr> {
                 atom.kind(),
                 ParamKind::Op {
                     op: ParamOp::CastToBuiltin,
-                    ..
-                }
+                    operands,
+                } if IntDomain::of(operands[0].meta()) == Some(IntDomain::IntStorage)
             )
         });
     casts_only
-        .then(|| ParamContext::detached().cast_from_builtin(expr).ok())
+        .then(|| ParamContext::detached().int_of_index(expr).ok())
         .flatten()
+}
+
+/// The scalar whose `_mlir_value` `expr` reads, when it is a field read.
+fn scalar_of_storage(expr: &ParamExpr) -> Option<&ParamExpr> {
+    match expr.kind() {
+        ParamKind::Field { base, name }
+            if name == crate::ct::MLIR_VALUE_FIELD
+                && matches!(
+                    IntDomain::of(base.meta()),
+                    Some(IntDomain::Int | IntDomain::UInt)
+                ) =>
+        {
+            Some(base)
+        }
+        _ => None,
+    }
 }
 
 /// The bindings a generator's application installs: each bound slot's
@@ -5382,6 +5613,22 @@ fn bound_generator_params(
             decl
         })
         .collect()
+}
+
+/// The storage a scalar struct value holds, when `expr` is an `Int` or a
+/// `UInt` created from its `_mlir_value` ([`ParamContext::struct_value`]).
+fn scalar_storage_field(expr: &ParamExpr) -> Option<&ParamExpr> {
+    let ParamKind::StructValue { fields, .. } = expr.kind() else {
+        return None;
+    };
+    match (fields.as_slice(), IntDomain::of(expr.meta())) {
+        ([(name, field)], Some(IntDomain::Int | IntDomain::UInt))
+            if name == crate::ct::MLIR_VALUE_FIELD =>
+        {
+            Some(field)
+        }
+        _ => None,
+    }
 }
 
 /// A struct value's fields with each value rebuilt by `rebuild`.

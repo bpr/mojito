@@ -449,6 +449,32 @@ impl Checker {
         Some(())
     }
 
+    /// The instance an initializer `declaration` constructs and its fields,
+    /// in order, each with its type there: a refined initializer's `out
+    /// self` annotation (`out self: Int` on `SIMD`), whose fields are the
+    /// instance's, and otherwise `Self` with the declared fields.
+    fn constructed_fields(
+        &self,
+        declaration: &ApplicableDeclaration<'_>,
+    ) -> Option<(Ty, Vec<(String, Ty)>)> {
+        let declared = self.declared_fields(declaration)?;
+        let Some(refined) = declaration.function.refined_self() else {
+            return Some((self.self_ty.clone()?, declared));
+        };
+        let refined = self.ty_from_anno(refined).ok()?;
+        if let Some(storage) = mojito_types::types::simd_storage(&refined) {
+            let fields = declared
+                .into_iter()
+                .map(|(name, _)| (name, storage.clone()));
+            return Some((refined, fields.collect()));
+        }
+        let (owner, arguments) = mojito_types::types::nominal_parts(&refined)?;
+        let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
+        let decls = &self.structs.get(owner)?.decls;
+        let fields = mojito_types::types::struct_field_types(decls, &arguments, &declared)?;
+        Some((refined.clone(), fields.into_owned()))
+    }
+
     /// The fields the struct declaring `declaration` declares, in order,
     /// each with its type, resolved in its member scope.
     fn declared_fields(
@@ -520,8 +546,8 @@ impl Checker {
         declaration: &ApplicableDeclaration<'_>,
         level: usize,
     ) -> Option<Vec<(String, ParamExpr)>> {
-        let declared = self.declared_fields(declaration)?;
         let self_ty = self.self_ty.clone()?;
+        let (constructed, declared) = self.constructed_fields(declaration)?;
         let symbol = declaration.function.symbol();
         let mut slots: Vec<ParamExpr> = declaration
             .function
@@ -536,11 +562,11 @@ impl Checker {
             })
             .collect::<Option<_>>()?;
         if !self.enclosing_type_params.is_empty() {
-            slots.insert(0, self.param_context.type_shape(self_ty.clone()));
+            slots.insert(0, self.param_context.type_shape(self_ty));
         }
         let spelling = self
             .param_context
-            .apply(symbol, &slots, MetaTy::value(self_ty.clone()));
+            .apply(symbol, &slots, MetaTy::value(constructed.clone()));
         let mut stored: Vec<Option<ParamExpr>> = vec![None; declared.len()];
         for statement in declaration.body {
             let so_far: Vec<(String, ParamExpr)> = declared
@@ -555,7 +581,7 @@ impl Checker {
             if let StmtKind::Assign { name, value, .. } = &statement.kind
                 && name == "self"
             {
-                let whole = self.builtin_value(value, &self_ty)?;
+                let whole = self.builtin_value(value, &constructed)?;
                 for ((field, field_ty), slot) in declared.iter().zip(&mut stored) {
                     *slot = Some(
                         self.param_context
@@ -629,26 +655,21 @@ impl Checker {
     /// closed one materialized at it. A closed value of type `!kgen.simd`
     /// is the `SIMD` value whose storage it is, as the parameter domain
     /// holds a vector's storage, and a symbolic one is typed at the
-    /// storage, or at the `Int`, `UInt`, or `Float64` whose `_mlir_value`
-    /// read the domain still reads as the scalar (R1835).
+    /// storage.
     fn builtin_value(&self, value: &Expr, ty: &Ty) -> Option<ParamExpr> {
         let vector = mojito_types::types::storage_value_ty(ty);
         let value = self.builtin_operand(value)?;
         let value = match value.as_constant() {
             Some(closed) => self
                 .param_context
-                .constant(closed.clone().materialize_as(&vector)?)
+                .typed_constant(closed.clone().materialize_as(&vector)?, ty)
                 .ok()?,
             None => value,
         };
         value
             .meta()
             .as_value()
-            .is_some_and(|found| {
-                found == ty
-                    || (*found == vector
-                        && (vector.is_int() || vector.is_uint() || vector.is_float64()))
-            })
+            .is_some_and(|found| found == ty)
             .then_some(value)
     }
 
@@ -669,7 +690,7 @@ impl Checker {
 /// `pop.select` over `c.__mlir_bool__()` is the conditional `a if c else
 /// b`. A builtin cast is its sugar: `pop.cast_to_builtin` over `s` is
 /// `s.__mlir_index__()` and `pop.cast_from_builtin` over `i` is
-/// `Int(mlir_value=i)`, the result type its `_type=` names being the one
+/// `Int(mlir_value=i)._mlir_value`, the result type its `_type=` names being the one
 /// the check gave the op; at the `bool` pair they are
 /// `Bool(mlir_value=s).__mlir_i1__()` and `Bool(i).__mlir_bool__()`.
 /// `None` for any other expression or op.
@@ -760,7 +781,10 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
         (MlirLowering::BuiltinCast, [operand]) if typed && op == MlirOp::PopCastToBuiltin => {
             method_call(operand.clone(), "__mlir_index__")
         }
-        (MlirLowering::BuiltinCast, [operand]) if typed => storage_call("Int", operand),
+        (MlirLowering::BuiltinCast, [operand]) if typed => ExprKind::Member {
+            object: Box::new(at_call(storage_call("Int", operand))),
+            field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+        },
         _ if typed => return None,
         // `pop.cmp` is elementwise, where an infix comparison is the
         // reducing dunder.
