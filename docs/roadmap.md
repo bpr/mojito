@@ -5537,26 +5537,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1872 A struct-valued `comptime` member read through a type
-  parameter stays a parameter constant after elaboration**
-
-  `print(T.V.a)` in `def show[T: HasP]()`, over a trait requirement
-  `comptime V: P` that `struct A` sets to `P(2)`, stops at `show[A]()`
-  with "keeps the parameter constant `T.V` in elaborated MIR", where the
-  pin prints `2`.
-  - `print(A.V.a)` and `var v = A.V` run, so the gap is the elaborator's
-    answer to a type member whose value is a construction, once the
-    instance binds `T`.
-  - `Specializer::param_constant` (`mono/specializer.rs`) evaluates the
-    member symbolically and keeps it when that fails, where upstream's
-    elaborator runs the construction.
-  - Probe: `print(T.V)`, `look(T.V)` over `def look(p: P)`, and `var v =
-    T.V` fail the same way, where the pin constructs one `P` per read and
-    destroys each.
-  - Found while landing R1095 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1197 The elaborator cannot decide a pack's `all` or `any` through
   a predicate alias**
 

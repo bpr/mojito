@@ -1474,6 +1474,7 @@ assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_place_copies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_comparison_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_member_string_materialized.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/type_member_struct_value_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_member_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_names_applied_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_comptime_assert.mojo	-	ineligible	no-scalar-entry-shape

@@ -1353,7 +1353,7 @@ impl ParamContext {
         oracle: &mut ReflectOracle<'_>,
     ) -> Result<ParamExpr, ParamError> {
         self.answer_queries(expr, &mut |node| match node.kind() {
-            ParamKind::Reflect { subject, query } => oracle(subject, query),
+            ParamKind::Reflect { subject, query } => self.constant_answer(oracle(subject, query)?),
             _ => Ok(None),
         })
     }
@@ -1373,12 +1373,33 @@ impl ParamContext {
                 subject,
                 name,
                 args,
-            } => Ok(oracle(subject, name, args)?.map(|value| {
+            } => self.constant_answer(oracle(subject, name, args)?.map(|value| {
                 node.meta()
                     .as_value()
                     .and_then(|ty| value.clone().materialize_as(ty))
                     .unwrap_or(value)
             })),
+            _ => Ok(None),
+        })
+    }
+
+    /// Rebuild `expr` with every type member read `oracle` answers replaced
+    /// by the member's expression at the instance, as upstream's
+    /// substitution reads the conformance's witness attribute: a member
+    /// whose value is a compile-time application (`comptime V = P(2)`)
+    /// becomes that application, for the elaborator to run. A read the
+    /// oracle leaves (`Ok(None)`) is rebuilt as it is.
+    pub fn expand_type_members(
+        &self,
+        expr: &ParamExpr,
+        oracle: &mut TypeMemberBodyOracle<'_>,
+    ) -> Result<ParamExpr, ParamError> {
+        self.answer_queries(expr, &mut |node| match node.kind() {
+            ParamKind::TypeMember {
+                subject,
+                name,
+                args,
+            } => oracle(subject, name, args),
             _ => Ok(None),
         })
     }
@@ -1391,7 +1412,7 @@ impl ParamContext {
     pub fn answer_builtin_applications(&self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
         self.answer_queries(expr, &mut |node| match node.kind() {
             ParamKind::Apply { function, args } => {
-                builtin_application_value(function, args).transpose()
+                self.constant_answer(builtin_application_value(function, args).transpose()?)
             }
             _ => Ok(None),
         })
@@ -1408,7 +1429,7 @@ impl ParamContext {
         oracle: &mut ApplicationOracle<'_>,
     ) -> Result<ParamExpr, ParamError> {
         self.answer_queries(expr, &mut |node| match node.kind() {
-            ParamKind::Apply { function, args } => oracle(function, args),
+            ParamKind::Apply { function, args } => self.constant_answer(oracle(function, args)?),
             _ => Ok(None),
         })
     }
@@ -1477,13 +1498,13 @@ impl ParamContext {
 
     /// Rebuild `expr` bottom-up, replacing each reflection query or
     /// application `answer` answers (after its operands are rebuilt) by its
-    /// constant; everything above re-enters the folding constructors. A
+    /// answer; everything above re-enters the folding constructors. A
     /// display application's answer is the frozen collection itself, which
     /// list reads see through [`CtValue::comptime_iteration_elements`].
     fn answer_queries(
         &self,
         expr: &ParamExpr,
-        answer: &mut dyn FnMut(&ParamExpr) -> Result<Option<CtValue>, ParamError>,
+        answer: &mut dyn FnMut(&ParamExpr) -> Result<Option<ParamExpr>, ParamError>,
     ) -> Result<ParamExpr, ParamError> {
         let rebuilt = match expr.kind() {
             ParamKind::Reflect { subject, query } => {
@@ -1587,10 +1608,13 @@ impl ParamContext {
             }
             _ => return Ok(expr.clone()),
         };
-        match answer(&rebuilt)? {
-            Some(value) => self.constant(value),
-            None => Ok(rebuilt),
-        }
+        Ok(answer(&rebuilt)?.unwrap_or(rebuilt))
+    }
+
+    /// An oracle's constant answer as the node [`Self::answer_queries`]
+    /// puts in place of the query.
+    fn constant_answer(&self, value: Option<CtValue>) -> Result<Option<ParamExpr>, ParamError> {
+        value.map(|value| self.constant(value)).transpose()
     }
 
     fn make(&self, meta: MetaTy, kind: ParamKind) -> ParamExpr {
@@ -4170,6 +4194,14 @@ pub type ReflectOracle<'a> =
 pub type TypeMemberOracle<'a> =
     dyn FnMut(&ParamExpr, &str, &[ParamExpr]) -> Result<Option<CtValue>, ParamError> + 'a;
 
+/// What answers a type member read with the member's expression.
+///
+/// [`ParamContext::expand_type_members`] passes the subject, the member's
+/// name, and a parameterized member's bound arguments; the answer is the
+/// member's expression at the instance, or `None` to leave the read.
+pub type TypeMemberBodyOracle<'a> =
+    dyn FnMut(&ParamExpr, &str, &[ParamExpr]) -> Result<Option<ParamExpr>, ParamError> + 'a;
+
 /// What answers a compile-time application for
 /// [`ParamContext::answer_applications`]: the applied function and its
 /// arguments, to its value, or `None` to leave the application as it is.
@@ -5419,7 +5451,7 @@ fn write_operands(f: &mut fmt::Formatter<'_>, operands: &[&ParamExpr]) -> fmt::R
 /// (`ParamContext::answer_queries`).
 struct Answering<'a> {
     context: &'a ParamContext,
-    answer: &'a mut dyn FnMut(&ParamExpr) -> Result<Option<CtValue>, ParamError>,
+    answer: &'a mut dyn FnMut(&ParamExpr) -> Result<Option<ParamExpr>, ParamError>,
 }
 
 impl crate::types::TyRewrite for Answering<'_> {

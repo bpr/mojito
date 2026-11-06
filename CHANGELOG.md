@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait member whose value is a construction (`comptime V = P(2)`), read
+  through a type parameter (`T.V`, or `T.get[3]` for a parameterized
+  member), is now the application the elaborator
+  runs per instance, so `print(T.V)`, `look(T.V)`, and `var v = T.V` run,
+  each building and destroying one value as at the pin; a field read off a
+  type's member (`T.V.a`, `A.V.a`) now folds to the field instead of
+  materializing the value, so a struct with a destructor no longer fails
+  MIR verification there (R1872).
 - A compile-time `String` application carrying a literal
   (`label[pick(n) + "!"]()`) beside a `StringSlice = " "` default, as
   `print`'s `sep`, no longer mints a colliding `StringSpan` constructor

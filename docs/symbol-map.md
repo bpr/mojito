@@ -2635,7 +2635,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConformanceFacts::associated_values` → `MirStructDeclaration::associated_values`
   (`Checker::conformance_facts`, `traits.rs`), and `native::mono` answers
   the node per instance (`type_member_answer`, `mono/symbolic.rs`, over
-  the declaration's `associated_values`). A trait's parameterized value requirement is
+  the declaration's `associated_values`); a member whose value is an
+  application is expanded to it first (`type_member_application`, through
+  `ParamContext::expand_type_members`, from `Specializer::applied`) and run
+  like any compile-time application. A trait's parameterized value requirement is
   `CtMemberReq::Generator` (`checker/overload_support.rs`, built by
   `Checker::generator_requirement` in `traits.rs`, merged and matched by
   `same_generator_signature` in `traits_support.rs`); a read through a

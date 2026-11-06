@@ -45,6 +45,35 @@ pub(super) fn ct_bindings(bindings: &Bindings) -> ParamBindings {
     bound
 }
 
+/// The expression of the compile-time member `name` of `subject` at the
+/// instance, closed over the member's bindings ([`member_body`]), when it
+/// applies a function `runs` names (`P(2)` of `comptime V = P(2)`, `P(i +
+/// 1)` of `comptime get[i: Int] = P(i + 1)` read as `T.get[3]`): the
+/// elaborator runs that application, where a folded member is
+/// [`type_member_answer`]'s. Any other read, one the bindings leave
+/// symbolic or one [`member_body`] rejects, is kept for that answer.
+pub(super) fn type_member_application(
+    subject: &ParamExpr,
+    name: &str,
+    args: &[ParamExpr],
+    bindings: &Bindings,
+    runs: &dyn Fn(&str) -> bool,
+) -> Result<Option<ParamExpr>, ParamError> {
+    let Ok(Some((body, member_bindings))) = member_body(subject, name, args, bindings) else {
+        return Ok(None);
+    };
+    let mut applies = false;
+    body.visit(&mut |node| {
+        applies |= matches!(node.kind(), ParamKind::Apply { function, .. } if runs(function));
+    });
+    if !applies {
+        return Ok(None);
+    }
+    ParamContext::detached()
+        .replace(&body, &ct_bindings(&member_bindings))
+        .map(Some)
+}
+
 /// The answer to a reflection query over `subject` at the instance: a
 /// source struct's fields at its arguments, under the policy the checker
 /// applies to a closed subject. A subject the bindings leave symbolic, or a
@@ -102,11 +131,9 @@ fn reflection_answer(
 }
 
 /// The value of the compile-time member `name` of `subject` at the
-/// instance: the source struct's member, evaluated under the struct
-/// instance's own bindings (`Self.n + 1` of `B[4]` to `5`); a
-/// parameterized member's body also binds its own parameters to `args` by
-/// position, each evaluated under the reader's `bindings` (`get[0]` of
-/// `S[4, 5]` to `4`). A subject or type argument the bindings leave
+/// instance: the member's body evaluated under its bindings
+/// ([`member_body`]), so `Self.n + 1` of `B[4]` is `5` and `get[0]` of
+/// `S[4, 5]` is `4`. A subject or type argument the bindings leave
 /// symbolic keeps the read.
 fn type_member_answer(
     subject: &ParamExpr,
@@ -114,6 +141,27 @@ fn type_member_answer(
     args: &[ParamExpr],
     bindings: &Bindings,
 ) -> Result<Option<CtValue>, ParamError> {
+    let Some((body, member_bindings)) = member_body(subject, name, args, bindings)? else {
+        return Ok(None);
+    };
+    eval_ct(&body, &member_bindings)
+        .map(Some)
+        .map_err(|error| ParamError::Unsupported(error.construct))
+}
+
+/// The body of the compile-time member `name` of `subject` at the
+/// instance, with the bindings it reads under: the source struct
+/// instance's own, and for a parameterized member also its parameters
+/// bound to `args` by position, each evaluated under the reader's
+/// `bindings`. `None` when the subject or a type argument the bindings
+/// leave symbolic keeps the read; an absent member, or an arity mismatch,
+/// is an error.
+fn member_body(
+    subject: &ParamExpr,
+    name: &str,
+    args: &[ParamExpr],
+    bindings: &Bindings,
+) -> Result<Option<(ParamExpr, Bindings)>, ParamError> {
     let subject = match subject.kind() {
         ParamKind::TypeShape(ty) => match substitute_ty(ty, bindings) {
             Ok(ty) => ty,
@@ -129,54 +177,48 @@ fn type_member_answer(
     let Some(instance) = struct_instance(&subject, bindings).map_err(unsupported)? else {
         return Ok(None);
     };
-    if !args.is_empty() {
-        let member = instance
+    let absent =
+        || ParamError::Unsupported(format!("`{subject}` has no compile-time member `{name}`"));
+    if args.is_empty() {
+        let (_, value) = instance
             .declaration
-            .parameterized_associated_values
+            .associated_values
             .iter()
-            .find(|member| member.name == name)
-            .ok_or_else(|| {
-                ParamError::Unsupported(format!("`{subject}` has no compile-time member `{name}`"))
-            })?;
-        if member.params.len() != args.len() {
-            return Err(ParamError::Unsupported(format!(
-                "`{subject}.{name}` takes {} compile-time argument(s), got {}",
-                member.params.len(),
-                args.len()
-            )));
-        }
-        let mut arguments = Vec::with_capacity(args.len());
-        for arg in args {
-            let argument = match arg.kind() {
-                ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
-                    let ty = substitute_ty(ty, bindings).map_err(unsupported)?;
-                    if is_symbolic(&ty) {
-                        return Ok(None);
-                    }
-                    TyArg::Ty(ty)
-                }
-                _ => TyArg::Val(eval_ct(arg, bindings).map_err(unsupported)?),
-            };
-            arguments.push(argument);
-        }
-        let mut member_bindings = instance.bindings.clone();
-        bind_ty_args(&member.params, &arguments, &mut member_bindings)
-            .map_err(ParamError::Unsupported)?;
-        return eval_ct(&member.body, &member_bindings)
-            .map(Some)
-            .map_err(unsupported);
+            .find(|(member, _)| member == name)
+            .ok_or_else(absent)?;
+        return Ok(Some((value.clone(), instance.bindings)));
     }
-    let (_, value) = instance
+    let member = instance
         .declaration
-        .associated_values
+        .parameterized_associated_values
         .iter()
-        .find(|(member, _)| member == name)
-        .ok_or_else(|| {
-            ParamError::Unsupported(format!("`{subject}` has no compile-time member `{name}`"))
-        })?;
-    eval_ct(value, &instance.bindings)
-        .map(Some)
-        .map_err(unsupported)
+        .find(|member| member.name == name)
+        .ok_or_else(absent)?;
+    if member.params.len() != args.len() {
+        return Err(ParamError::Unsupported(format!(
+            "`{subject}.{name}` takes {} compile-time argument(s), got {}",
+            member.params.len(),
+            args.len()
+        )));
+    }
+    let mut arguments = Vec::with_capacity(args.len());
+    for arg in args {
+        let argument = match arg.kind() {
+            ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
+                let ty = substitute_ty(ty, bindings).map_err(unsupported)?;
+                if is_symbolic(&ty) {
+                    return Ok(None);
+                }
+                TyArg::Ty(ty)
+            }
+            _ => TyArg::Val(eval_ct(arg, bindings).map_err(unsupported)?),
+        };
+        arguments.push(argument);
+    }
+    let mut member_bindings = instance.bindings.clone();
+    bind_ty_args(&member.params, &arguments, &mut member_bindings)
+        .map_err(ParamError::Unsupported)?;
+    Ok(Some((member.body.clone(), member_bindings)))
 }
 
 pub(super) fn is_symbolic(ty: &Ty) -> bool {

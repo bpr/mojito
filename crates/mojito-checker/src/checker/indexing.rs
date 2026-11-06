@@ -1862,15 +1862,16 @@ impl Checker {
         if let Some(read) = self.read_type_member(span.clone(), object, field) {
             return read;
         }
-        // A field of a compile-time binding (`q.a` in `def f[q: Q]()`) is
-        // upstream's struct extract on the parameter attribute: a parameter
-        // expression read as a runtime value, never a read of the whole
-        // binding. The extract binds a generic instance's arguments into the
-        // field's type (`struct_value_field`), so a chain folds through
-        // `G[Int]` as through any struct.
+        // A field of a compile-time binding (`q.a` in `def f[q: Q]()`), or of
+        // a type's compile-time member (`T.V.a`), is upstream's struct
+        // extract on the parameter attribute: a parameter expression read as
+        // a runtime value, never a read of the whole value. The extract
+        // binds a generic instance's arguments into the field's type
+        // (`struct_value_field`), so a chain folds through `G[Int]` as
+        // through any struct.
         if self.comptime_positions.get() == 0
-            && self.is_parameter_read(object)
             && (self.infer(object)?).kind().is_non_simd_struct()
+            && (self.is_parameter_read(object) || self.is_parameter_value_read(object))
             && let Some(value) = self.struct_value_field(object, field)
         {
             let value = value?;

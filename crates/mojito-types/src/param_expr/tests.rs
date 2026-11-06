@@ -1231,6 +1231,35 @@ fn answered_type_member_closes_its_enclosing_expression() {
 }
 
 #[test]
+fn expanded_type_member_is_its_application_under_a_field_read() {
+    let context = ParamContext::new();
+    let subject = context.register(ParamId::new("show", 0), "T", MetaTy::Type);
+    let p = MetaTy::value(TyKind::Struct("P".to_string(), Vec::new()).into());
+    let member = context.type_member(&subject, "V", &[], p.clone());
+    let read = context
+        .field(&member, "a", MetaTy::int())
+        .expect("a field read");
+
+    let application = context.apply("P.__init__", &[literal(&context, 2)], p);
+    let expanded = context
+        .expand_type_members(&read, &mut |_, name, _| {
+            assert_eq!(name, "V");
+            Ok(Some(application.clone()))
+        })
+        .expect("expands");
+    let ParamKind::Field { base, name } = expanded.kind() else {
+        panic!("a field read stays one over its application, got `{expanded}`");
+    };
+    assert_eq!(name, "a");
+    assert_eq!(*base, application);
+
+    let kept = context
+        .expand_type_members(&read, &mut |_, _, _| Ok(None))
+        .expect("rebuilds");
+    assert_eq!(kept, read);
+}
+
+#[test]
 fn frozen_collection_parameter_projection() {
     let context = ParamContext::detached();
     // `List` stores an `Allocation` whose `ThinAllocation` holds the buffer.

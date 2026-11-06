@@ -1379,6 +1379,23 @@ impl<'a> Specializer<'a> {
         expr: &ParamExpr,
         bindings: &Bindings,
     ) -> Result<ParamExpr, MonoError> {
+        // A type member the instance closes to an application (`T.V` of a
+        // `comptime V = P(2)` witness) is that application, run below.
+        let mut reads_member = false;
+        expr.visit(&mut |node| {
+            reads_member |= matches!(node.kind(), ParamKind::TypeMember { .. });
+        });
+        let runs = |function: &str| self.declarations.contains_key(function);
+        let expanded = if reads_member {
+            ParamContext::detached()
+                .expand_type_members(expr, &mut |subject, name, args| {
+                    symbolic::type_member_application(subject, name, args, bindings, &runs)
+                })
+                .map_err(|error| self.error(Some(template), error.to_string()))?
+        } else {
+            expr.clone()
+        };
+        let expr = &expanded;
         let mut pending = false;
         expr.visit(&mut |node| {
             pending |= matches!(node.kind(), ParamKind::Apply {

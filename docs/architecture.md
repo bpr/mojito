@@ -4136,7 +4136,14 @@ elaborator binds; the checker records it as `SemanticAdjustment::ParamValue`
 `Const::Param`, and `native::mono` answers it per instance
 (`ParamContext::answer_type_members` with `type_member_answer`,
 `mono/symbolic.rs`), evaluating the member under the bound instance's own
-bindings. A read on a closed type (`A.K`, `B[4].K`, `Self.K`) folds in the
+bindings. A member whose value is a compile-time application (`comptime V
+= P(2)`) is first expanded to that application, closed over the instance's
+bindings (`ParamContext::expand_type_members` with
+`type_member_application`, from `Specializer::applied`), which the
+elaborator then runs on the VM like any application, as upstream's
+substitution reads the witness's attribute. A field read off such a
+member (`T.V.a`) is a `ParamKind::Field` over the read, as for a
+compile-time binding, so only the field crosses. A read on a closed type (`A.K`, `B[4].K`, `Self.K`) folds in the
 checker. A parameterized value member, upstream's generator, rides in
 `MirStructDeclaration.parameterized_associated_values`
 (`ConformanceFacts::parameterized_values`, text schema 1.80): its body over
