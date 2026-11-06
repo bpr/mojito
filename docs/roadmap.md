@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1951**.
+Next free ID: **R1952**.
 
 ## Ordered Work
 
@@ -310,6 +310,27 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1951 A pack query names its pack by binder, so `inline-parametric`
+  drops the `Bool` value of a test over a bound pack**
+
+  `ParamKind::PackQuery { pack: ParamRef, .. }` cannot take the element
+  list a call binds a callee pack to, where upstream's query takes its pack
+  as an operand.
+  - So `inline-parametric` drops such a test's value
+    (`unvalue_pack_tests`) and only its constraint form decides it.
+  - The lever: `PackQuery { pack: ParamExpr, query }`, a `DeclRef` to the
+    binder or, after `replace_at` substitutes it, the bound list.
+  - Then `proposition_constraint` maps a closed list to a
+    `ConstraintOperand::Value` tuple, the text form prints the operand
+    (a minor bump, reading the binder form at older minors), and
+    `unvalue_pack_tests` goes.
+  - Probe: `all_copy_tag[Int, Bool]()` in
+    `assets/ok/always_inline_nodebug_binders.mojo` leaves
+    `inline-parametric` with its values.
+  - Found while planning R1905 (2026-11-05).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
 - [ ] **R1905 MIR's compile-time tests carry a constraint beside their
   `Bool` value**
 
@@ -324,8 +345,11 @@ which names the upstream pass each one follows. Each is measured by the
   - `canonicalize/hlcf.rs`, `verify/structure.rs`, and mono's unroll then
     read the value. A schema bump makes `values`/`value` required.
   - The checker keeps its constraints for assumptions and `where` clauses.
+  - `decide_comptime_condition`'s leaf decision stays as the elaborator's
+    proposition oracle; `InstanceAssertion` gains a `message` field, and
+    `PACKAGE_FORMAT` moves with the schema.
   - Found while landing R1475 (2026-11-03).
-  - Depends on R1903, R1904, R1950.
+  - Depends on R1903, R1904, R1950, R1951.
   - Model: Fable, Planned.
 
 - [ ] **R1339 A `ref self` body types a reference reached through `self`
@@ -7223,12 +7247,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     spelling in Mojito at all.
   - The lever is a pack query over a list expression rather than over a
     pack binder (`ParamKind::PackQuery`).
-  - Probe: `inline-parametric` drops the `Bool` value of a `comptime if`
-    querying a pack the call binds to its elements (`unvalue_pack_tests`),
-    so `all_copy_tag[Int, Bool]()` in
-    `assets/ok/always_inline_nodebug_binders.mojo` is decided from its
-    constraint form.
-  - Depends on nothing.
+  - Depends on R1951, whose pack operand this generalizes to a computed
+    list.
   - Model: Fable, Planned.
 
 - [ ] **R348 A spread of a computed list binds only `Tuple`**
