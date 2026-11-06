@@ -122,6 +122,26 @@ pub struct ParameterizedAssociatedType {
     pub template: Ty,
 }
 
+/// What [`StructDeclaration::associated_member`] finds.
+///
+/// It is the member's template with every origin it binds substituted,
+/// and its type parameters beside the application's arguments, which the
+/// caller binds with the struct's own parameters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssociatedMember {
+    pub template: Ty,
+    pub types: Vec<(ParamRef, Ty)>,
+}
+
+/// Why [`StructDeclaration::associated_member`] cannot apply a member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssociatedLookupError {
+    /// A member value parameter, which no phase below the check binds.
+    ValueParameter,
+    /// An argument whose kind is not its parameter's.
+    Mismatch,
+}
+
 /// A compile-time value member with parameters of its own, upstream's
 /// generator.
 ///
@@ -245,38 +265,94 @@ impl StructDeclaration {
             .map(|witness| witness.member.as_str())
     }
 
-    /// The type the associated member `name` of the struct at `arguments`
-    /// names, applied to `args` (`IteratorType[o]` of `List[Int]` is
-    /// `_ListIter[Int, o]`), as upstream's substitution resolves an
-    /// associated alias from the conformance's witness.
+    /// The associated member `name` of the struct at `arguments`, applied
+    /// to `args`: the conformance's witness for the alias, as upstream's
+    /// substitution finds it before it applies the struct's parameters.
     ///
-    /// `None` when the struct does not declare the member closed at these
-    /// arguments: an argument only the elaborator binds (a pack, a deferred
-    /// value, an omitted default), a type or value member parameter, or a
-    /// member over one of the struct's own origin parameters that the
-    /// arguments leave unbound (an erased spelling with no origin tail).
-    /// The struct's own origins bind from the instance's origin arguments
-    /// by [`Self::origin_params`], beside the member's own, before the
-    /// declared parameters are replaced.
-    pub fn associated_type(&self, arguments: &[TyArg], name: &str, args: &[TyArg]) -> Option<Ty> {
-        let context = ParamContext::detached();
-        let mut bindings = ParamBindings::new();
-        let (origin_arguments, arguments): (Vec<_>, Vec<_>) = arguments
-            .iter()
-            .partition(|argument| matches!(argument, TyArg::Origin(_)));
+    /// `None` when the struct declares no member `name` taking `args.len()`
+    /// arguments. The member's own origin parameters and the struct's own
+    /// origins (by [`Self::origin_params`], from the instance's origin
+    /// arguments) are substituted into the template; a struct origin the
+    /// arguments leave unbound stays an `Origin::Param`. The member's type
+    /// parameters come back paired with their arguments, for the caller's
+    /// substituter to bind beside the struct's parameters.
+    ///
+    /// # Errors
+    ///
+    /// A member value parameter, which no phase below the check binds, or
+    /// an argument whose kind is not its parameter's.
+    pub fn associated_member(
+        &self,
+        arguments: &[TyArg],
+        name: &str,
+        args: &[TyArg],
+    ) -> Option<Result<AssociatedMember, AssociatedLookupError>> {
         let mut origins: HashMap<u32, Origin> = self
             .origin_params
             .iter()
-            .zip(origin_arguments)
-            .filter_map(|(id, argument)| match argument {
-                TyArg::Origin(origin) => Some((id.0, origin.clone())),
+            .zip(arguments.iter().filter_map(|argument| match argument {
+                TyArg::Origin(origin) => Some(origin),
                 _ => None,
-            })
+            }))
+            .map(|(id, origin)| (id.0, origin.clone()))
             .collect();
-        if arguments.len() != self.param_decls.len() {
+        let mut types = Vec::new();
+        let template = if args.is_empty()
+            && let Some((_, member)) = self
+                .associated_types
+                .iter()
+                .find(|(member, _)| member == name)
+        {
+            member
+        } else {
+            let member = self
+                .parameterized_associated_types
+                .iter()
+                .find(|member| member.name == name)
+                .filter(|member| member.params.len() == args.len())?;
+            for (param, arg) in member.params.iter().zip(args) {
+                match (param, arg) {
+                    (AssociatedParameter::Origin(id), TyArg::Origin(origin)) => {
+                        origins.insert(id.0, origin.clone());
+                    }
+                    (AssociatedParameter::Type(binder), TyArg::Ty(ty)) => {
+                        types.push((binder.clone(), ty.clone()));
+                    }
+                    (AssociatedParameter::Value(_), _) => {
+                        return Some(Err(AssociatedLookupError::ValueParameter));
+                    }
+                    _ => return Some(Err(AssociatedLookupError::Mismatch)),
+                }
+            }
+            &member.template
+        };
+        Some(Ok(AssociatedMember {
+            template: substitute_origin_params(template, &origins),
+            types,
+        }))
+    }
+
+    /// The type the associated member `name` of the struct at `arguments`
+    /// names, applied to `args` (`IteratorType[o]` of `List[Int]` is
+    /// `_ListIter[Int, o]`): [`Self::associated_member`] under the
+    /// instance's declared parameters.
+    ///
+    /// `None` when the struct does not declare the member closed at these
+    /// arguments: an argument only the elaborator binds (a pack, a deferred
+    /// value, an omitted default), a value member parameter, or a member
+    /// over one of the struct's own origin parameters that the arguments
+    /// leave unbound (an erased spelling with no origin tail).
+    pub fn associated_type(&self, arguments: &[TyArg], name: &str, args: &[TyArg]) -> Option<Ty> {
+        let context = ParamContext::detached();
+        let mut bindings = ParamBindings::new();
+        let declared: Vec<_> = arguments
+            .iter()
+            .filter(|argument| !matches!(argument, TyArg::Origin(_)))
+            .collect();
+        if declared.len() != self.param_decls.len() {
             return None;
         }
-        for (decl, argument) in self.param_decls.iter().zip(arguments) {
+        for (decl, argument) in self.param_decls.iter().zip(declared) {
             match (decl, argument) {
                 (
                     ParamDecl::Type {
@@ -305,29 +381,12 @@ impl StructDeclaration {
                 _ => return None,
             }
         }
-        let template = if args.is_empty()
-            && let Some((_, member)) = self
-                .associated_types
-                .iter()
-                .find(|(member, _)| member == name)
-        {
-            member
-        } else {
-            let member = self
-                .parameterized_associated_types
-                .iter()
-                .find(|member| member.name == name)
-                .filter(|member| member.params.len() == args.len())?;
-            for (param, arg) in member.params.iter().zip(args) {
-                let (AssociatedParameter::Origin(id), TyArg::Origin(origin)) = (param, arg) else {
-                    return None;
-                };
-                origins.insert(id.0, origin.clone());
-            }
-            &member.template
-        };
-        let template = substitute_origin_params(template, &origins);
-        let ty = replace_parameters(&context, &template, &bindings, 0).ok()?;
+        let member = self.associated_member(arguments, name, args)?.ok()?;
+        for (binder, ty) in member.types {
+            bindings.bind(binder.id.clone(), context.type_shape(ty.clone()));
+            bindings.bind_type(binder.id, ty);
+        }
+        let ty = replace_parameters(&context, &member.template, &bindings, 0).ok()?;
         (!mentions(&ty, &names_origin_param)).then_some(ty)
     }
 }
@@ -943,6 +1002,101 @@ mod tests {
         assert_eq!(
             unparameterized.associated_type(&instance, "Walk", &[]),
             Some(over("Bag", Origin::Static)),
+        );
+    }
+
+    fn param(owner: &str, name: &str) -> ParamRef {
+        ParamRef {
+            id: mojito_types::param_expr::ParamId::new(owner, 0),
+            name: name.into(),
+        }
+    }
+
+    fn param_ty(binder: ParamRef) -> Ty {
+        TyKind::Param {
+            binder,
+            bounds: Vec::new(),
+            callable_bound: None,
+        }
+        .into()
+    }
+
+    /// `Box[T]` whose `Wrap[U]` is `Pair[Self.T, U]`, or whose `Wrap[n]`
+    /// takes a value parameter when `value` is set.
+    fn boxed(value: bool) -> StructDeclaration {
+        let t = param("Box", "T");
+        let u = param("Box.Wrap", "U");
+        let mut boxed = declaration(
+            Vec::new(),
+            Vec::new(),
+            vec![ParameterizedAssociatedType {
+                name: "Wrap".into(),
+                params: vec![if value {
+                    AssociatedParameter::Value("n".into())
+                } else {
+                    AssociatedParameter::Type(u.clone())
+                }],
+                template: TyKind::Struct(
+                    "Pair".into(),
+                    vec![TyArg::Ty(param_ty(t.clone())), TyArg::Ty(param_ty(u))],
+                )
+                .into(),
+            }],
+        );
+        boxed.param_decls = vec![ParamDecl::Type {
+            id: t.id,
+            name: "T".into(),
+            bounds: Vec::new(),
+            trait_param: None,
+            callable_bound: None,
+            default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        }];
+        boxed
+    }
+
+    #[test]
+    fn associated_type_binds_a_type_member_parameter() {
+        let boxed = boxed(false);
+        assert_eq!(
+            boxed.associated_type(&[TyArg::Ty(Ty::bool())], "Wrap", &[TyArg::Ty(Ty::int())]),
+            Some(
+                TyKind::Struct(
+                    "Pair".into(),
+                    vec![TyArg::Ty(Ty::bool()), TyArg::Ty(Ty::int())]
+                )
+                .into()
+            ),
+        );
+    }
+
+    #[test]
+    fn associated_member_rejects_a_value_member_parameter() {
+        let boxed = boxed(true);
+        let member = boxed.associated_member(
+            &[TyArg::Ty(Ty::bool())],
+            "Wrap",
+            &[TyArg::Val(CtValue::Int(3))],
+        );
+        assert_eq!(member, Some(Err(AssociatedLookupError::ValueParameter)));
+        assert_eq!(boxed.associated_member(&[], "Absent", &[]), None);
+    }
+
+    #[test]
+    fn associated_member_keeps_an_unbound_struct_origin() {
+        let bag = bag(
+            vec![OriginParamId(1)],
+            over("BagIter", Origin::Param(OriginParamId(1))),
+        );
+        let member = [TyArg::Origin(Origin::Static)];
+        assert_eq!(
+            bag.associated_member(&[], "IteratorType", &member),
+            Some(Ok(AssociatedMember {
+                template: over("BagIter", Origin::Param(OriginParamId(1))),
+                types: Vec::new(),
+            })),
         );
     }
 

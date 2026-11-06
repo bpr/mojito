@@ -4093,11 +4093,22 @@ the struct `C` is bound to (`declared_associated_type`,
 `MirStructDeclaration.parameterized_associated_types`
 (`ConformanceFacts::parameterized_associated`, text schema 1.46): its
 template plus its explicit parameters, each keyed as the template names it.
-`declared_associated_type` binds the application's origin arguments into
-the template (`mojito_types::types::substitute_origin_params`, which the
-checker's `substitute_assoc` shares) and its type arguments as binders,
-then substitutes under the instance. Elaborated MIR carries no associated
-types.
+The member itself is found once, by `StructDeclaration::associated_member`
+(`mojito-checked/src/declaration.rs`), the lookup `inline-parametric`'s
+`StructDeclaration::associated_type` uses too, as upstream's substitution
+finds the alias in the conformance's witness: it picks the row, checks
+the application's arity, binds the application's origin arguments and the
+struct's own origins (`StructDeclaration::origin_params`) into the
+template (`mojito_types::types::substitute_origin_params`, which the
+checker's `substitute_assoc` shares), and returns its type parameters
+beside their arguments (`AssociatedMember`), a value parameter being an
+`AssociatedLookupError`. Each phase then applies the struct's parameters
+and those binders through its own substituter: `declared_associated_type`
+under the instance's `Bindings` (`struct_instance`, which binds packs,
+defaults, and erased arguments), `associated_type` through
+`ParamBindings`. The elaborator reads the declaration row itself
+(`StructCatalog::declaration`, `mono/catalog.rs`). Elaborated MIR carries
+no associated types.
 
 A loop or comprehension whose iterable has an `__iter__` step, borrowed or
 owned, splits its source from its iterator, as upstream's iterator is a
@@ -6690,7 +6701,9 @@ point where a slot declared in a loop is uninitialized again.
   (the private `ClosedProjections`): `T.IteratorType[o]` at `T =
   List[Int]` becomes the type `List`'s associated-type rows declare
   (`MirDeclarations::associated_type`, from
-  `StructDeclaration::associated_type`), as upstream's substitution
+  `StructDeclaration::associated_type` over the shared
+  `StructDeclaration::associated_member` lookup the elaborator also
+  reads, a type member parameter included), as upstream's substitution
   resolves the alias from the conformance's witness. A template naming
   the struct's own origin (`Span`'s `IteratorType` is `_SpanIter[T,
   Self.origin]`) binds it from the instance's origin arguments, which

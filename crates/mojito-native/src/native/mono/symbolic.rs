@@ -70,8 +70,8 @@ fn reflection_answer(
         mojito_symbol::symbol::reflected_type_name(ty, form, &|name| {
             bindings
                 .structs
-                .shape(name)
-                .map(|shape| shape.module.clone())
+                .declaration(name)
+                .map(|declaration| declaration.module.clone())
         })
     };
     let answer = match subject.kind() {
@@ -85,7 +85,7 @@ fn reflection_answer(
                 return Ok(None);
             };
             let fields = instance
-                .shape
+                .declaration
                 .fields
                 .iter()
                 .map(|(name, ty)| {
@@ -131,8 +131,8 @@ fn type_member_answer(
     };
     if !args.is_empty() {
         let member = instance
-            .shape
-            .parameterized_values
+            .declaration
+            .parameterized_associated_values
             .iter()
             .find(|member| member.name == name)
             .ok_or_else(|| {
@@ -167,8 +167,8 @@ fn type_member_answer(
             .map_err(unsupported);
     }
     let (_, value) = instance
-        .shape
-        .values
+        .declaration
+        .associated_values
         .iter()
         .find(|(member, _)| member == name)
         .ok_or_else(|| {

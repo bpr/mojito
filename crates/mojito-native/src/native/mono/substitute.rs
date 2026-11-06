@@ -4,7 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::ComptimeSequence;
-use mojito_checked::declaration::AssociatedParameter;
+use mojito_checked::declaration::AssociatedLookupError;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::variadics::FrameTables;
 use mojito_mir::mir::visit::{
@@ -215,7 +215,7 @@ pub(super) struct StructInstance<'b> {
     /// The source declaration's name, which a generic instance's symbol
     /// extends.
     pub(super) template: &'b str,
-    pub(super) shape: &'b StructShape,
+    pub(super) declaration: &'b MirStructDeclaration,
     /// The bindings a member type over the struct's own parameters
     /// substitutes under.
     pub(super) bindings: Bindings,
@@ -232,9 +232,9 @@ pub(super) fn struct_instance<'b>(
     else {
         return Ok(None);
     };
-    let Some((template, shape)) = [struct_name, nominal_template(struct_name)]
+    let Some((template, declaration)) = [struct_name, nominal_template(struct_name)]
         .into_iter()
-        .find_map(|name| Some((name, bindings.structs.shape(name)?)))
+        .find_map(|name| Some((name, bindings.structs.declaration(name)?)))
     else {
         return Ok(None);
     };
@@ -244,17 +244,17 @@ pub(super) fn struct_instance<'b>(
         applications: bindings.applications.clone(),
         ..Bindings::default()
     };
-    bind_ty_args(&shape.param_decls, &struct_args, &mut instance).map_err(|construct| {
+    bind_ty_args(&declaration.param_decls, &struct_args, &mut instance).map_err(|construct| {
         MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,
             construct,
         }
     })?;
-    apply_defaults(&shape.param_decls, &[], &mut instance)?;
+    apply_defaults(&declaration.param_decls, &[], &mut instance)?;
     Ok(Some(StructInstance {
         template,
-        shape,
+        declaration,
         bindings: instance,
     }))
 }
@@ -1046,14 +1046,14 @@ fn close_field_step(
     };
     let name = usize::try_from(position)
         .ok()
-        .and_then(|position| instance.shape.fields.get(position))
+        .and_then(|position| instance.declaration.fields.get(position))
         .map(|(name, _)| name.clone())
         .ok_or_else(|| MonoError {
             kind: MonoErrorKind::Instantiation,
             function: None,
             construct: format!(
                 "field index {position} is out of range for '{base}' with {} fields",
-                instance.shape.fields.len()
+                instance.declaration.fields.len()
             ),
         })?;
     *step = Proj::Field(name);
@@ -1131,10 +1131,14 @@ fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<
     Ok(())
 }
 
-/// The associated type `name` of the instance `base` resolves to, read off
-/// the member its struct declares: the member's type under the instance's
-/// own arguments and, for a parameterized member (`C.IteratorType[o]`), the
-/// application's. `None` where `base` is no struct that declares the member.
+/// The associated type `name` of the instance `base` resolves to: the
+/// member its struct's declaration finds
+/// ([`StructDeclaration::associated_member`]), the struct's own origins
+/// and the member's bound there, under the instance's bindings and, for a
+/// parameterized member (`C.IteratorType[o]`), the application's type
+/// arguments. `None` where `base` is no struct that declares the member.
+///
+/// [`StructDeclaration::associated_member`]: mojito_checked::declaration::StructDeclaration::associated_member
 fn declared_associated_type(
     base: &Ty,
     name: &str,
@@ -1142,55 +1146,40 @@ fn declared_associated_type(
     bindings: &Bindings,
 ) -> Result<Option<Ty>, MonoError> {
     let base = substitute_ty(base, bindings)?;
-    let Some(instance) = struct_instance(peel_refs(&base), bindings)? else {
+    let instance_ty = peel_refs(&base);
+    let Some(instance) = struct_instance(instance_ty, bindings)? else {
         return Ok(None);
     };
-    if args.is_empty()
-        && let Some((_, member)) = instance
-            .shape
-            .members
-            .iter()
-            .find(|(member, _)| member == name)
+    let arguments = mojito_types::types::nominal_parts(instance_ty)
+        .map(|(_, arguments)| arguments)
+        .unwrap_or_default();
+    let member = match instance
+        .declaration
+        .associated_member(&arguments, name, args)
     {
-        return substitute_ty(member, &instance.bindings).map(Some);
-    }
-    let Some(member) = instance
-        .shape
-        .parameterized
-        .iter()
-        .find(|member| member.name == name)
-    else {
-        return Ok(None);
-    };
-    if member.params.len() != args.len() {
-        return Ok(None);
-    }
-    let mut member_bindings = instance.bindings.clone();
-    let mut origins = HashMap::new();
-    for (param, arg) in member.params.iter().zip(args) {
-        match (param, arg) {
-            (AssociatedParameter::Type(binder), TyArg::Ty(ty)) => {
-                member_bindings
-                    .types
-                    .insert(binder.clone(), substitute_ty(ty, bindings)?);
-            }
-            (AssociatedParameter::Origin(id), TyArg::Origin(origin)) => {
-                origins.insert(id.0, origin.clone());
-            }
-            _ => {
-                return Err(MonoError {
-                    kind: MonoErrorKind::Unsupported,
-                    function: None,
-                    construct: format!(
-                        "associated type `{base}.{name}`: a value parameter of an associated \
-                         type is not elaborated"
-                    ),
-                });
-            }
+        None => return Ok(None),
+        Some(Ok(member)) => member,
+        Some(Err(error)) => {
+            let why = match error {
+                AssociatedLookupError::ValueParameter => {
+                    "a value parameter of an associated type is not elaborated"
+                }
+                AssociatedLookupError::Mismatch => "an argument's kind is not its parameter's",
+            };
+            return Err(MonoError {
+                kind: MonoErrorKind::Unsupported,
+                function: None,
+                construct: format!("associated type `{base}.{name}`: {why}"),
+            });
         }
+    };
+    let mut member_bindings = instance.bindings;
+    for (binder, ty) in member.types {
+        member_bindings
+            .types
+            .insert(binder, substitute_ty(&ty, bindings)?);
     }
-    let template = mojito_types::types::substitute_origin_params(&member.template, &origins);
-    substitute_ty(&template, &member_bindings).map(Some)
+    substitute_ty(&member.template, &member_bindings).map(Some)
 }
 
 /// Construct each part of a parameter value at its type into a fresh

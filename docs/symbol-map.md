@@ -942,7 +942,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   module path (`StructInfo::module`, from
   `mojito_module::module::declaring_module_path`; MIR's
   `StructDeclaration::module` through `CheckedProgram::struct_modules`, which
-  mono's `StructShape::module` reads), and `static_string_of` wraps it in the
+  mono's `StructCatalog::declaration` reads), and `static_string_of` wraps it in the
   application of `StringSpan`'s `_kgen` initializer the elaborator applies,
   as upstream's method constructs its `StaticString`. `reflected_static_name`
   answers `_unqualified_type_name[T]()` (`call_inference.rs`) the same way,
@@ -1888,8 +1888,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `parameterized_associated_types` (`ParameterizedAssociatedType`,
   `AssociatedParameter` in `mojito-checked/src/declaration.rs`, built by
   `ParameterizedMember::checked_fact`) (`declared_associated_type` over
-  `struct_instance`, `native/mono/substitute.rs`; the template's origins
-  bind through `mojito_types::types::substitute_origin_params`).
+  `struct_instance`, `native/mono/substitute.rs`, reading the row through
+  `StructDeclaration::associated_member` / `AssociatedMember` /
+  `AssociatedLookupError`, the one member lookup `associated_type` shares;
+  the template's origins, the struct's own included, bind through
+  `mojito_types::types::substitute_origin_params`).
   `StructDeclaration::origin_params` (MIR text 1.168) keys a struct's own
   origin binders to an instance's origin arguments, so
   `StructDeclaration::associated_type` binds a member template's
@@ -2632,7 +2635,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConformanceFacts::associated_values` → `MirStructDeclaration::associated_values`
   (`Checker::conformance_facts`, `traits.rs`), and `native::mono` answers
   the node per instance (`type_member_answer`, `mono/symbolic.rs`, over
-  `StructShape::values`). A trait's parameterized value requirement is
+  the declaration's `associated_values`). A trait's parameterized value requirement is
   `CtMemberReq::Generator` (`checker/overload_support.rs`, built by
   `Checker::generator_requirement` in `traits.rs`, merged and matched by
   `same_generator_signature` in `traits_support.rs`); a read through a
@@ -2645,7 +2648,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConformanceFacts::parameterized_values` →
   `MirStructDeclaration::parameterized_associated_values`, and
   `type_member_answer` binds the arguments to its parameters by position
-  (`StructShape::parameterized_values`). A read's declared type is
+  (`parameterized_associated_values`). A read's declared type is
   `Checker::member_value_type`: the bound's requirement, or on a struct
   the annotation `StructInfo::associated_value_types` keeps (or an
   unannotated raw-list body's own type), at the application's arguments.

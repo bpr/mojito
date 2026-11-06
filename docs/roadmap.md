@@ -774,34 +774,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1876 The elaborator solves an associated projection from its own
-  copy of the struct's associated-type rows**
-
-  Upstream has one witness lookup for an associated alias, but Mojito
-  has two below the checker.
-  - `inline-parametric` closes a projection through
-    `StructDeclaration::associated_type`.
-  - The elaborator's `declared_associated_type` (`mono/substitute.rs`)
-    reads `StructShape::{members, parameterized}`, built from the same
-    rows in `mono/catalog.rs`.
-  - Only the elaborator's handles a type member parameter, an omitted
-    defaulted struct argument (`apply_defaults`), or an erased one
-    (`RemovedArg`).
-  - Lever: extend `StructDeclaration::associated_type` with those cases,
-    route `declared_associated_type` through it, and drop the two
-    `StructShape` fields.
-  - Probe: `tests/mir_passes/inline-parametric/bound_iteration.mir` and
-    every `for` over a bound still elaborate with no output change.
-  - `declared_associated_type` leaves the struct's own origin unbound
-    (`Span[Int, o]`'s `IteratorType` is `_SpanIter[Int, origin_param(2)]`),
-    where `associated_type` binds it by `StructDeclaration::origin_params`;
-    routing it there gives the elaborator that binding too. Probe: the
-    `bound_iteration_own_origin` pass case's `Bag` and `Walk` through
-    `count`, elaborated.
-  - Found while landing R1280 (2026-11-03).
-  - Depends on R1875.
-  - Model: Opus, Planned.
-
 - [ ] **R1350 `mem-2-reg` keeps a slot whose stored register another
   instruction also reads**
 
@@ -7298,12 +7270,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   whose explicit parameters are types or origins, but rejects one with a
   value parameter (`comptime Buf[n: Int] = InlineArray[Self.T, n]`) as
   unsupported.
-  - `declared_associated_type` (`mono/substitute.rs`) has no value
-    binding to give `AssociatedParameter::Value`, which names its
-    parameter by spelling.
+  - The one member lookup both phases share,
+    `StructDeclaration::associated_member`, has no binder to pair with
+    `AssociatedParameter::Value`, which names its parameter by spelling,
+    so it answers `AssociatedLookupError::ValueParameter`.
   - The checker binds it by spelling too (`resolve_parameterized_member`).
-  - `inline-parametric`'s `StructDeclaration::associated_type` leaves such
-    a projection open for the same reason.
+  - The elaborator's `declared_associated_type` rejects it from that
+    error, and `inline-parametric`'s `StructDeclaration::associated_type`
+    leaves such a projection open.
   - No executing fixture reaches it.
   - Done when the member's value parameter keys by a binder identity and
     the elaborator binds it from the application's `TyArg::Val`.

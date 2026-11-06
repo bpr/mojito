@@ -6,7 +6,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::link::ImportedDeclarations;
-use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
@@ -86,37 +85,29 @@ impl<T: Declared> std::ops::Index<&str> for Catalog<'_, T> {
     }
 }
 
-/// What substitution reads about a struct by name: whether it is a generic
-/// template, and its shape. The program's own structs are indexed up
-/// front; a package struct's shape is built the first time it is asked.
+/// The struct declarations substitution reads by name: the program's own,
+/// indexed up front, then the attached package's, decoded the first time
+/// a name reaches them.
 #[derive(Default)]
 pub(super) struct StructCatalog {
-    own: HashMap<String, StructShape>,
+    own: HashMap<String, MirStructDeclaration>,
     imported: Option<ImportedDeclarations>,
-    /// Each package struct's shape once asked, by package position.
-    package_shapes: Vec<OnceCell<Option<StructShape>>>,
 }
 
 impl StructCatalog {
     pub(super) fn new(declarations: &MirDeclarations) -> Self {
-        let imported = declarations.imported.clone();
         Self {
             own: declarations
                 .structs
                 .iter()
-                .map(|declaration| (declaration.name.clone(), StructShape::of(declaration)))
+                .map(|declaration| (declaration.name.clone(), declaration.clone()))
                 .collect(),
-            package_shapes: imported.as_ref().map_or_else(Vec::new, |imported| {
-                std::iter::repeat_with(OnceCell::new)
-                    .take(imported.package().struct_count())
-                    .collect()
-            }),
-            imported,
+            imported: declarations.imported.clone(),
         }
     }
 
-    /// A catalog of the generic templates `names` alone, each with no
-    /// shape beyond its being generic.
+    /// A catalog of the generic templates `names` alone, each declaring
+    /// one type parameter and nothing else.
     #[cfg(test)]
     pub(super) fn generic(names: &[&str]) -> Self {
         Self {
@@ -125,7 +116,12 @@ impl StructCatalog {
                 .map(|name| {
                     (
                         (*name).to_string(),
-                        StructShape {
+                        MirStructDeclaration {
+                            name: (*name).to_string(),
+                            module: String::new(),
+                            fields: Vec::new(),
+                            mut_self_methods: HashSet::new(),
+                            fieldwise_init: false,
                             param_decls: vec![ParamDecl::Type {
                                 id: mojito_types::param_expr::ParamId::new(name, 0),
                                 name: "T".to_string(),
@@ -137,31 +133,31 @@ impl StructCatalog {
                                 variadic: false,
                                 constraints: Vec::new(),
                             }],
+                            origin_params: Vec::new(),
+                            explicit_destructors: HashMap::new(),
+                            explicit_destroy: None,
+                            conformances: Vec::new(),
+                            declared: Vec::new(),
+                            associated_types: Vec::new(),
+                            parameterized_associated_types: Vec::new(),
+                            associated_values: Vec::new(),
+                            parameterized_associated_values: Vec::new(),
                             members: Vec::new(),
-                            parameterized: Vec::new(),
-                            values: Vec::new(),
-                            parameterized_values: Vec::new(),
-                            fields: Vec::new(),
-                            module: String::new(),
+                            witness_tables: Vec::new(),
                         },
                     )
                 })
                 .collect(),
             imported: None,
-            package_shapes: Vec::new(),
         }
     }
 
-    /// The shape of the struct `name`.
-    pub(super) fn shape(&self, name: &str) -> Option<&StructShape> {
-        if let Some(shape) = self.own.get(name) {
-            return Some(shape);
-        }
-        let imported = self.imported.as_ref()?;
-        let position = imported.package().struct_position(name)?;
-        self.package_shapes[position]
-            .get_or_init(|| imported.structure(name).map(StructShape::of))
-            .as_ref()
+    /// The declaration of the struct `name`, a package's decoded on first
+    /// use.
+    pub(super) fn declaration(&self, name: &str) -> Option<&MirStructDeclaration> {
+        self.own
+            .get(name)
+            .or_else(|| self.imported.as_ref()?.structure(name))
     }
 
     /// Join to `index` each non-generic struct `ty` reaches, through its
@@ -169,9 +165,15 @@ impl StructCatalog {
     pub(super) fn fill_layout(&self, index: &RefCell<StructFieldIndex>, ty: &Ty) {
         let reached = mojito_mir::mir::reached_struct_fields(ty, |name| {
             index.borrow().get(name).map(<[Ty]>::to_vec).or_else(|| {
-                self.shape(name)
-                    .filter(|shape| shape.param_decls.is_empty())
-                    .map(|shape| shape.fields.iter().map(|(_, ty)| ty.clone()).collect())
+                self.declaration(name)
+                    .filter(|declaration| declaration.param_decls.is_empty())
+                    .map(|declaration| {
+                        declaration
+                            .fields
+                            .iter()
+                            .map(|(_, ty)| ty.clone())
+                            .collect()
+                    })
             })
         });
         let mut index = index.borrow_mut();
@@ -185,21 +187,7 @@ impl StructCatalog {
     /// Whether the struct `name` is a generic template, which substitution
     /// renames a concrete application of to its instance symbol.
     pub(super) fn is_generic(&self, name: &str) -> bool {
-        self.shape(name)
-            .is_some_and(|shape| !shape.param_decls.is_empty())
-    }
-}
-
-impl StructShape {
-    fn of(declaration: &MirStructDeclaration) -> Self {
-        Self {
-            param_decls: declaration.param_decls.clone(),
-            members: declaration.associated_types.clone(),
-            parameterized: declaration.parameterized_associated_types.clone(),
-            values: declaration.associated_values.clone(),
-            parameterized_values: declaration.parameterized_associated_values.clone(),
-            fields: declaration.fields.clone(),
-            module: declaration.module.clone(),
-        }
+        self.declaration(name)
+            .is_some_and(|declaration| !declaration.param_decls.is_empty())
     }
 }

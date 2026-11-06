@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator and `inline-parametric` now find an associated alias
+  through one lookup on the struct's declaration,
+  `StructDeclaration::associated_member`, as upstream's substitution reads
+  the conformance's witness: a type member parameter (`C.Wrap[Int]`) now
+  closes before elaboration too, the elaborator binds the struct's own
+  origin in a projection it solves, and its struct catalog reads each
+  declaration row instead of a copy of its fields (R1876).
 - A struct's MIR row now records its own origin parameters' ids
   (`origin_params`), so `inline-parametric` closes an associated
   projection whose template names the struct's origin (`Span`'s

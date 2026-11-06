@@ -589,20 +589,6 @@ fn layout_query_answer(
         .map_err(|error| construct(error.to_string()))
 }
 
-/// A struct's own parameters, and its associated types, compile-time value
-/// members, and fields over them.
-struct StructShape {
-    param_decls: Vec<ParamDecl>,
-    members: Vec<(String, Ty)>,
-    parameterized: Vec<mojito_checked::declaration::ParameterizedAssociatedType>,
-    values: Vec<(String, ParamExpr)>,
-    parameterized_values: Vec<mojito_checked::declaration::ParameterizedAssociatedValue>,
-    fields: Vec<(String, Ty)>,
-    /// The declaring module's dotted path, which qualifies the struct's
-    /// name in `reflect[T].name()`.
-    module: String,
-}
-
 struct Specializer<'a> {
     source: &'a MirProgram,
     /// The target every layout query is answered for.
