@@ -413,6 +413,7 @@ assets/ok/function_typed_kwargs.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_display.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_element_binding.mojo	main	exe-differential	sanitized
 assets/ok/generator_runtime_value.mojo	main	exe-differential	sanitized
+assets/ok/generator_type_construction.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_parameter.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_valued.mojo	main	exe-differential	sanitized
 assets/ok/generator_unbound_application.mojo	main	exe-differential	sanitized

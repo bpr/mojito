@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a type generator now constructs the type its application
+  names: `P[Int]()` over `comptime P = MkList` and `comptime MkList[T:
+  Copyable] = List[T]`, local or module, and `Q()` over `comptime Q =
+  P[Int]`, run as at the pin instead of reporting "Undefined variable
+  'P'" (R1908).
 - A generator read as a run-time value (`var x = S.k`, `var x = Add[1,
   _]`, `var x = G` over a generator parameter) is now upstream's trivial,
   zero-sized register value on both backends instead of stopping in the

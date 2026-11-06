@@ -5665,6 +5665,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `StructMetaType` converting to `AnyTrait`, `ExprConversions.cpp`), and
     no conformance join over the known traits.
   - Probe: `comptime T = type_of(Int)` runs at the pin (`AnyStruct[Int]`).
+  - Probe: `count[MkList]()` over `def count[G: __generator_type[T:
+    Copyable] Defaultable]()` and `comptime MkList[T: Copyable] = List[T]`
+    binds at the pin, which types `MkList` read unapplied as
+    `__generator_type[T: Copyable] AnyStruct[List[T]]`. Mojito types it
+    with an `AnyType` result and rejects the binding. The body's
+    `G[Int]()` already checks as the construction.
     Mojito says "'type_of' of a type is not supported yet"
     (`Checker::type_of_operand`, `checker/constraints.rs`).
   - Upstream's stdlib relies on it in `TypeList.of[...]` without `Trait=`
@@ -5840,22 +5846,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Upstream binds the open slots on the type itself, never in the alias
     body's scope: a struct type with open slots that an application fills.
   - Found while landing R296 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1908 A call headed by a type generator is no construction**
-
-  `var z = P[Int]()` over `comptime P = MkList` and `comptime MkList[T:
-  Copyable] = List[T]` reports "Undefined variable 'P'", where the
-  application `P[Int]` is `List[Int]` and the call constructs it.
-  - `Checker::infer_call` resolves a call's head by name among functions,
-    structs, and aliases. A local `comptime` generator binding or a
-    generator parameter is none of them, though the same application in a
-    type position (`var y: P[Int] = [1]`) resolves through
-    `value_headed_type`.
-  - Probe: `comptime Q = P[Int]` then `Q()` reports the same, since the
-    local alias's call is spelled as `P[Int]()`.
-  - Found while landing R1486 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

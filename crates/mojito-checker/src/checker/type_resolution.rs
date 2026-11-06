@@ -420,6 +420,58 @@ impl Checker {
         resolved
     }
 
+    /// The type a `Named` annotation denotes when its head names no type:
+    /// the expression it spells (the head, or its subscript by the bracket
+    /// arguments), built as upstream's `emitExprType` builds any annotation,
+    /// so a compile-time value's subscript is its `__getitem_param__`
+    /// element and a value alone is "expected a type". The spelling is asked
+    /// first, so a local value never shadows a type of its name here. A head
+    /// that names nothing at all stays an unknown type.
+    pub(super) fn value_headed_type(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::{ParamArg, SubscriptArg};
+        let unknown = || TypeError::UnknownType(name.to_string());
+        let operand = |arg: &ParamArg| match arg {
+            ParamArg::Value(value) => Some(value.clone()),
+            ParamArg::Type(ty) => ty.expression_spelling(mojito_common::token::Span::default()),
+            ParamArg::Named { .. } => None,
+        };
+        let operands = args
+            .iter()
+            .map(operand)
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(unknown)?;
+        let span = operands
+            .first()
+            .map_or_else(mojito_common::token::Span::default, |first| first.span);
+        let head = Expr::new(ExprKind::Identifier(name.to_string()), span);
+        let expr = match <[Expr; 1]>::try_from(operands) {
+            Ok([index]) => Expr::new(
+                ExprKind::Index {
+                    object: Box::new(head),
+                    index: Box::new(index),
+                },
+                span,
+            ),
+            Err(operands) if operands.is_empty() => head,
+            Err(operands) => Expr::new(
+                ExprKind::MultiIndex {
+                    object: Box::new(head),
+                    args: operands.into_iter().map(SubscriptArg::Index).collect(),
+                },
+                span,
+            ),
+        };
+        self.denoted_type(&expr, "type annotation")
+            .map_err(|error| match error {
+                TypeError::NotComptime(unbound) if unbound == name => unknown(),
+                error => error,
+            })
+    }
+
     fn resolve_ty_from_anno_at_depth(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         if let Some(reflected) = self.reflected_type_annotation(ty)? {
             return Ok(reflected);
@@ -1159,58 +1211,6 @@ impl Checker {
                 .map(|ty| (ty, vec![None]));
         }
         Err(TypeError::UnknownType(name.to_string()))
-    }
-
-    /// The type a `Named` annotation denotes when its head names no type:
-    /// the expression it spells (the head, or its subscript by the bracket
-    /// arguments), built as upstream's `emitExprType` builds any annotation,
-    /// so a compile-time value's subscript is its `__getitem_param__`
-    /// element and a value alone is "expected a type". The spelling is asked
-    /// first, so a local value never shadows a type of its name here. A head
-    /// that names nothing at all stays an unknown type.
-    fn value_headed_type(
-        &self,
-        name: &str,
-        args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Ty, TypeError> {
-        use mojito_ast::ast::{ParamArg, SubscriptArg};
-        let unknown = || TypeError::UnknownType(name.to_string());
-        let operand = |arg: &ParamArg| match arg {
-            ParamArg::Value(value) => Some(value.clone()),
-            ParamArg::Type(ty) => ty.expression_spelling(mojito_common::token::Span::default()),
-            ParamArg::Named { .. } => None,
-        };
-        let operands = args
-            .iter()
-            .map(operand)
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(unknown)?;
-        let span = operands
-            .first()
-            .map_or_else(mojito_common::token::Span::default, |first| first.span);
-        let head = Expr::new(ExprKind::Identifier(name.to_string()), span);
-        let expr = match <[Expr; 1]>::try_from(operands) {
-            Ok([index]) => Expr::new(
-                ExprKind::Index {
-                    object: Box::new(head),
-                    index: Box::new(index),
-                },
-                span,
-            ),
-            Err(operands) if operands.is_empty() => head,
-            Err(operands) => Expr::new(
-                ExprKind::MultiIndex {
-                    object: Box::new(head),
-                    args: operands.into_iter().map(SubscriptArg::Index).collect(),
-                },
-                span,
-            ),
-        };
-        self.denoted_type(&expr, "type annotation")
-            .map_err(|error| match error {
-                TypeError::NotComptime(unbound) if unbound == name => unknown(),
-                error => error,
-            })
     }
 
     /// The type a bracketed `__mlir_type[...]` spelling denotes, read as

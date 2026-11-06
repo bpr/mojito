@@ -184,6 +184,20 @@ impl Checker {
                             .and_then(|construction| self.infer_spelled(expression, construction))
                     }),
             ),
+            // A compile-time value's application that is a type constructs
+            // it (`P[Int]()` over `comptime P = MkList`), as upstream calls
+            // the type the subscript denotes.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if let Some(ty) = self.value_application_type(name, param_args) => {
+                Some(ty.and_then(|ty| {
+                    self.type_construction(expression, None, &ty, args, kwargs)
+                        .and_then(|construction| self.infer_spelled(expression, construction))
+                }))
+            }
             // A call of a struct's type member constructs the type it names
             // (`T[4].other(10)`).
             ExprKind::MethodCall {
@@ -408,6 +422,36 @@ impl Checker {
             && self.comptime_aliases.get(name).is_some_and(|alias| {
                 !alias.decls.is_empty() && matches!(alias.body, AliasBody::Type(_))
             })
+    }
+
+    /// The type a call's head `name[param_args]` denotes when `name` is a
+    /// compile-time value (a `comptime` binding of a generator, or a
+    /// generator parameter) rather than a struct or a binding, as
+    /// upstream's `emitExprType` reads the subscript. `None` when `name` is
+    /// no such value or its application is a value.
+    fn value_application_type(
+        &self,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        if param_args.is_empty()
+            || self
+                .lookup(name)
+                .is_some_and(|ty| !matches!(ty.kind(), TyKind::Generator(_)))
+            || self.structs.contains_key(name)
+            || self
+                .compile_dependent_ct_expr(&Expr::new(
+                    ExprKind::Identifier(name.to_string()),
+                    mojito_common::token::Span::default(),
+                ))
+                .is_err()
+        {
+            return None;
+        }
+        match self.value_headed_type(name, param_args) {
+            Err(TypeError::TypeMismatch { expected, .. }) if expected == "a type" => None,
+            denoted => Some(denoted),
+        }
     }
 
     /// The application the generic alias `name` names under `param_args`
