@@ -314,6 +314,44 @@ fn a_literal_compared_with_a_simd_parameter_materializes_at_its_type() {
     ));
 }
 
+/// A literal beside a `Scalar` of open dtype is upstream's
+/// `SIMD.__init__(IntLiteral)` struct value over its literal convert at the
+/// symbolic storage, which folds to the scalar once the dtype closes.
+#[test]
+fn a_literal_compared_at_an_open_simd_type_folds_once_the_dtype_closes() {
+    let context = ParamContext::new();
+    let dt = context.register(ParamId::new("g", 0), "dt", MetaTy::value(Ty::dtype()));
+    let open = Ty::simd(
+        crate::types::SimdDtype::Expr(dt),
+        crate::types::SimdWidth::Known(1),
+    );
+    let x = context.register(ParamId::new("g", 1), "x", MetaTy::value(open));
+    let differs = infix(&context, InfixOp::Eq, &x, &literal(&context, 3));
+    assert_eq!(*differs.meta(), MetaTy::bool());
+    let int32 = crate::types::canonical_simd_ty(Dtype::Int32, 1);
+    let at = |value: i64| {
+        context
+            .constant_as(CtValue::IntLiteral(IntLiteral::from(value)), &int32)
+            .expect("a literal converts to Int32")
+    };
+    let decided = |value: i64| {
+        let mut bindings = ParamBindings::new();
+        bindings.bind_name(
+            "dt",
+            context
+                .constant(CtValue::Dtype(Dtype::Int32))
+                .expect("a dtype is a constant"),
+        );
+        bindings.bind_name("x", at(value));
+        context
+            .replace(&differs, &bindings)
+            .expect("replacement")
+            .as_bool()
+    };
+    assert_eq!(decided(3), Some(true));
+    assert_eq!(decided(4), Some(false));
+}
+
 #[test]
 fn signature_slots_are_alpha_equivalent_and_capture_avoiding() {
     let context = ParamContext::new();

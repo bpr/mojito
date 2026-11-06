@@ -1534,6 +1534,14 @@ pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
 /// The name of upstream's `SIMD`, declared in `std.simd`.
 pub const SIMD_TYPE_NAME: &str = "SIMD";
 
+/// The symbol of upstream's `@implicit SIMD.__init__(IntLiteral)`, which
+/// splats an integer literal across a vector's lanes.
+pub const SIMD_FROM_INT_LITERAL: &str = "SIMD.__init__$ov$IntLiteral";
+
+/// The symbol of upstream's `@implicit SIMD.__init__(FloatLiteral)`, which
+/// splats a float literal across a vector's lanes.
+pub const SIMD_FROM_FLOAT_LITERAL: &str = "SIMD.__init__$ov$FloatLiteral";
+
 /// The name of upstream's `Bool`, declared in `std.builtin.bool`
 /// ([`Ty::is_bool`]).
 pub const BOOL_TYPE_NAME: &str = "Bool";

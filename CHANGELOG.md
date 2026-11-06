@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time comparison of a literal with a `Scalar` of symbolic
+  dtype (`neg_zero != 0` in std's `SIMD.__hash__`) now builds the literal
+  as the pin's `SIMD.__init__(IntLiteral)` (or `FloatLiteral`) struct
+  value over its literal convert at the symbolic `!kgen.simd` storage, so
+  the condition records its `Bool` parameter value, folded once the dtype
+  closes (R1950).
 - The `comptime assert` a builtin operation records for each instance to
   judge, the implicit `Bool` to `SIMD[DType.bool, n]` constructor's one
   lane and a `pop` op's lane rule over a symbolic dtype, now carries its
@@ -26,8 +32,7 @@ to evolve under the `0.x` compatibility rules.
   vector) now materializes the literal at that operand's type, splatted
   across its lanes, as the pin's implicit `SIMD.__init__(IntLiteral)`
   does, so such a `comptime if` condition records its `Bool` parameter
-  value instead of only its constraint form (R1902). A literal beside a
-  `Scalar` of a symbolic dtype is still unread (R1950).
+  value instead of only its constraint form (R1902).
 - A `comptime if` or `comptime assert` condition over `IsTrivially*[T]`,
   a predicate-alias application, a `TypeList` proposition
   (`.contains[T]()`, `.all[P]()`, `.any[P]()`, `.all_conforms_to[Tr]()`),

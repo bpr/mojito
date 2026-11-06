@@ -309,27 +309,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1899 (2026-11-05).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-- [ ] **R1950 The one builder has no node for a literal materialized at a
-  `SIMD` of symbolic dtype**
-
-  `neg_zero != 0` over `neg_zero: Scalar[_unsigned_integral_type_of[
-  Self.dtype]()]` (std `simd.mojo`'s `SIMD.__hash__`) builds to
-  "parameter expression 'eq' expects Scalar[...], found IntLiteral[0]".
-  - Upstream's `SIMD.__init__(IntLiteral)` at an open type is a
-    `struct.create` over `#pop.int_literal_convert<0>` at its `!kgen.simd`
-    storage, which the parameter domain cannot yet spell.
-  - `ParamContext::literal_at` (`param_expr.rs`) materializes a literal
-    only at a `known_simd` type, so the condition records no `Bool` value
-    and is decided from its constraint form.
-  - Lever: build `construction` of `_mlir_value` over
-    `ParamOp::IntLiteralConvert` (or `FloatLiteralConvert`) at the
-    symbolic storage, folding once the dtype closes.
-  - Probe: a temporary `eprintln!` on the `compile_dependent_ct_expr`
-    error in `check_ct_bool` (`checker/comptime_validation.rs`) prints it
-    on the first `mojito run assets/ok/simd_hash_member.mojo` after a
-    build, while std is packaged afresh.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1905 MIR's compile-time tests carry a constraint beside their
   `Bool` value**

@@ -2197,25 +2197,68 @@ impl ParamContext {
     /// `SIMD.__init__(IntLiteral)` and `SIMD.__init__(FloatLiteral)` fold
     /// it, splatting across a vector's lanes; any other operand, or one
     /// beside an integer-domain `other` (which [`Self::arithmetic_domain`]
-    /// converts), unchanged.
+    /// converts), unchanged. At a `SIMD` whose dtype or width is still
+    /// symbolic, the materialized literal is that `__init__`'s struct value:
+    /// its `_mlir_value` the `#pop.int_literal_convert` (or
+    /// `#pop<float_literal_convert>`) of the literal at the vector's
+    /// `!kgen.simd` storage, which folds to the vector once the type closes.
     fn literal_at(&self, operand: ParamExpr, other: &MetaTy) -> ParamExpr {
         let Some(ty) = other.as_value().filter(|_| IntDomain::of(other).is_none()) else {
             return operand;
         };
-        let Some((dtype, width)) = ty.kind().known_simd() else {
-            return operand;
-        };
-        let materialized = operand
+        let Some(value) = operand
             .as_constant()
             .filter(|value| matches!(value, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)))
-            .and_then(|value| match width {
+        else {
+            return operand;
+        };
+        let materialized = match ty.kind().known_simd() {
+            Some((dtype, width)) => match width {
                 1 => value.clone().materialize_as(ty),
-                _ => fold::splat_lanes(value, dtype, usize::try_from(width).ok()?)
+                _ => usize::try_from(width)
+                    .ok()
+                    .and_then(|width| fold::splat_lanes(value, dtype, width))
                     .map(|lanes| CtValue::Simd { dtype, lanes }),
-            });
-        materialized.map_or(operand, |value| {
-            self.make(other.clone(), ParamKind::Constant(value))
-        })
+            }
+            .map(|value| self.make(other.clone(), ParamKind::Constant(value))),
+            None => self.symbolic_literal_at(&operand, value, ty),
+        };
+        materialized.unwrap_or(operand)
+    }
+
+    /// The struct value upstream's `SIMD.__init__(IntLiteral)` or
+    /// `SIMD.__init__(FloatLiteral)` builds from the literal `operand`
+    /// (whose constant is `value`) at the open `SIMD` type `ty`.
+    fn symbolic_literal_at(
+        &self,
+        operand: &ParamExpr,
+        value: &CtValue,
+        ty: &Ty,
+    ) -> Option<ParamExpr> {
+        let storage = crate::types::simd_storage(ty)?;
+        let (op, init) = match value {
+            CtValue::IntLiteral(_) => (
+                ParamOp::IntLiteralConvert,
+                crate::types::SIMD_FROM_INT_LITERAL,
+            ),
+            _ => (
+                ParamOp::FloatLiteralConvert,
+                crate::types::SIMD_FROM_FLOAT_LITERAL,
+            ),
+        };
+        let literal = self.constant(value.literal_value()?).ok()?;
+        let converted = self
+            .op(op, &[self.type_shape(storage), literal.clone()])
+            .ok()?;
+        let spelling = self.apply(
+            init,
+            &[self.type_shape(ty.clone()), literal, operand.clone()],
+            MetaTy::value(ty.clone()),
+        );
+        Some(self.struct_value(
+            &[(crate::ct::MLIR_VALUE_FIELD.to_string(), converted)],
+            &spelling,
+        ))
     }
 
     /// Conditional selection stays lazy: only a constant condition selects.
