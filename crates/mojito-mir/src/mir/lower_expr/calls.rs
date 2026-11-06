@@ -936,6 +936,14 @@ impl<'a> Flatten<'a> {
         d
     }
 
+    /// Lower the index operand `index` of a place projection, an intrinsic
+    /// subscript, or a pointer offset: a literal converts at `Int`, as
+    /// upstream's `index(idx)` reads a literal's `__mlir_index__` constant.
+    pub(in crate::mir) fn index_operand(&mut self, index: Node<'a>) -> Reg {
+        let value = self.expr(index);
+        self.materialize_register(value, &Ty::int(), index.location())
+    }
+
     pub(in crate::mir) fn materialize_register(
         &mut self,
         value: Reg,

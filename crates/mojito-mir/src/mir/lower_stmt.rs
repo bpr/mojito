@@ -598,7 +598,7 @@ impl<'a> Flatten<'a> {
                 if let Some((object, offset)) = e.pointer_keyword_subscript() =>
             {
                 let mut p = self.place(object);
-                let idx = self.expr(offset);
+                let idx = self.index_operand(offset);
                 if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
                     p.project(Proj::Index(idx), ty);
                 } else {
@@ -652,7 +652,7 @@ impl<'a> Flatten<'a> {
                     p.project(Proj::ConstIndex(index), element);
                     return p;
                 }
-                let idx = self.expr(index); // evaluated once, before the store
+                let idx = self.index_operand(index); // evaluated once, before the store
                 if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
                     p.project(Proj::Index(idx), ty);
                 } else {
@@ -2062,7 +2062,7 @@ impl<'a> Flatten<'a> {
                 if let Some((object, offset)) = e.pointer_keyword_subscript() =>
             {
                 let mut p = self.try_place(object)?;
-                let idx = self.expr(offset);
+                let idx = self.index_operand(offset);
                 if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
                     p.project(Proj::Index(idx), ty);
                 } else {
@@ -2105,8 +2105,8 @@ impl<'a> Flatten<'a> {
                 let projection = match object.ty().as_ref().map(Ty::kind) {
                     Some(TyKind::Tuple(_)) => index
                         .exact_nonnegative_index()
-                        .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
-                    _ => Proj::Index(self.expr(index)),
+                        .map_or_else(|| Proj::Index(self.index_operand(index)), Proj::ConstIndex),
+                    _ => Proj::Index(self.index_operand(index)),
                 };
                 if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
                     p.project(projection, ty);

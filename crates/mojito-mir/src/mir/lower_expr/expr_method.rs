@@ -440,7 +440,7 @@ impl<'a> Flatten<'a> {
             // (`unsafe_take_pointee`/`unsafe_deinit_pointee`) fix it
             // to the dereference offset 0.
             let index = match args.first() {
-                Some(index) => self.expr(*index),
+                Some(index) => self.index_operand(*index),
                 None => self.constant(call, Const::Int(0)),
             };
             debug_assert!(kwargs.is_empty());

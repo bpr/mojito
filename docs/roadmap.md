@@ -6843,28 +6843,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1966 A literal index operand reaches a subscript or pointer
-  offset unconverted**
-
-  Problem: a place projection, an intrinsic subscript, and a pointer
-  offset take an `IntLiteral` register as their index, which the VM reads
-  through `value_as_index`'s literal arm and Pliron through
-  `PendingLiteral`.
-  - Upstream converts through `index(idx)`, which is
-    `idx.__mlir_index__()`, and on a literal that folds to a constant of
-    `self.value`.
-  - Lever: where MIR lowers a subscript, projection, or pointer-offset
-    index whose register is literal-typed, emit `literal.materialize` at
-    the `Int` storage plus `struct.create`.
-  - Drop `IntLiteral` from the verifier's `index_ok`
-    (`verify/instr.rs`), and the literal acceptance of the `Proj::Index`
-    and intrinsic-index checks.
-  - Probe: `var l = [10, 20]; print(l[0])`,
-    `assets/ok/pointer_unsafe_vocabulary.mojo`, and
-    `assets/ok/allocation_tracked_unsafe_ptr.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1967 The MIR verifier treats a literal's conversion as
   representational**
 

@@ -1358,8 +1358,8 @@ impl<'a> Flatten<'a> {
                 let projection = match object.ty().as_ref().map(Ty::kind) {
                     Some(TyKind::Tuple(_)) => index
                         .exact_nonnegative_index()
-                        .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
-                    _ => Proj::Index(self.expr(index)),
+                        .map_or_else(|| Proj::Index(self.index_operand(index)), Proj::ConstIndex),
+                    _ => Proj::Index(self.index_operand(index)),
                 };
                 if let Some(ty) = expression.place_ty().or_else(|| expression.ty()) {
                     place.project(projection, ty);

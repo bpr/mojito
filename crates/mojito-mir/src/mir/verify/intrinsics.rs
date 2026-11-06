@@ -15,6 +15,13 @@ pub(super) fn verify_intrinsic_index(
     errors: &mut Vec<String>,
 ) {
     if let Some(index) = index
+        && index.is_int_literal()
+    {
+        errors.push(format!(
+            "{prefix}: intrinsic index is the literal {index}, which no conversion \
+             materialized at Int"
+        ));
+    } else if let Some(index) = index
         && !types_compatible(index, &Ty::int())
         && !index.is_uint()
     {

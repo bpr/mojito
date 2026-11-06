@@ -346,9 +346,11 @@ impl<'a> Flatten<'a> {
         } else {
             (self.expr(object), self.simple_place(object))
         };
-        let (idx, index_place) = self.lower_call_argument(index);
+        let (mut idx, index_place) = self.lower_call_argument(index);
         if has_call {
             self.close_call_setup(None);
+        } else {
+            idx = self.materialize_register(idx, &Ty::int(), index.location());
         }
         let call = self.subscript_call_contract(e, &[MirSubscriptArg::Index(idx)]);
         let intrinsic = call
@@ -657,6 +659,7 @@ impl<'a> Flatten<'a> {
         let base = self.expr(object);
         let base_place = self.simple_place(object);
         let (idx, index_place) = self.lower_call_argument(index);
+        let idx = self.materialize_register(idx, &Ty::int(), index.location());
         let d = self.fresh(e.location(), None);
         self.emit_interior_invalidations(index, None);
         self.emit_interior_invalidations(e, None);

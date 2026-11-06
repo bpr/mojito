@@ -6849,7 +6849,9 @@ point where a slot declared in a loop is uninitialized again.
   non-literal slot only through `literal.materialize`, as upstream's IR
   has no implicit conversion; the verifier rejects a literal register at a
   closed non-literal call argument, `place.store`, `DefVar` binding,
-  `return`, `WriteRef`, or `tuple.make` element. The slot is dropped after the body
+  `return`, `WriteRef`, or `tuple.make` element, or at an index operand
+  (a place's `Index` projection, an intrinsic subscript, a pointer-storage
+  slot, a SIMD lane), which lowering converts at `Int`. The slot is dropped after the body
   when the parameter only borrows a type with a destructor. A default
   computed by a lowered default function (`CheckedConst::Evaluate`), or a
   literal the parameter's type does not hold, keeps the call. A raising

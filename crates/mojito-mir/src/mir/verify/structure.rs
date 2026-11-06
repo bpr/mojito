@@ -1683,6 +1683,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_literal_place_index_is_a_finding() {
+        let mut place = crate::mir::MirPlace::root(0, Some(Ty::int()));
+        place.project(crate::mir::Proj::Index(Reg(1)), Ty::int());
+        let mut function = function_with(vec![MirInstr::Store { place, src: Reg(2) }]);
+        function.reg_types.insert(
+            1,
+            Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(0)),
+        );
+        function.reg_types.insert(2, Ty::int());
+        assert_finding(
+            &findings(&function),
+            "place index register r1 is the literal IntLiteral[0], which no conversion \
+             materialized",
+        );
+    }
+
     /// A `DefVar` binding register 1, of type `source`, to an `Int` slot.
     fn literal_binding(source: Ty) -> MirFunction {
         let mut function = function_with(vec![MirInstr::DefVar {

@@ -345,9 +345,16 @@ pub(super) fn verify_place(
                         register.0
                     ));
                 } else if let Some(index_ty) = function.reg_types.get(&register.0)
+                    && index_ty.is_int_literal()
+                {
+                    errors.push(format!(
+                        "{prefix} place index register r{} is the literal {index_ty}, which no \
+                         conversion materialized at Int",
+                        register.0
+                    ));
+                } else if let Some(index_ty) = function.reg_types.get(&register.0)
                     && !types_compatible(index_ty, &Ty::int())
                     && !index_ty.is_uint()
-
                 {
                     errors.push(format!(
                         "{prefix} place index register r{} has non-Indexer type {index_ty}",

@@ -2752,8 +2752,8 @@ pub enum MirInstr {
     },
     /// `pop.simd.extractelement`: lane `index` of `value`, a width-one
     /// vector of its dtype (`v[i]`). The index is an `Int`, a `UInt`, or an
-    /// `IntLiteral`; one outside the lanes traps, where upstream's lane is
-    /// poison.
+    /// `index`, never an unconverted literal; one outside the lanes traps,
+    /// where upstream's lane is poison.
     SimdExtract {
         dest: Reg,
         value: Reg,

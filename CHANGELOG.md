@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A numeric literal used as an index now converts explicitly at `Int`
+  before a pointer subscript, a pointer offset, a pack or `Tuple` storage
+  subscript, or a pointer-storage slot, as upstream's `index(idx)` converts
+  it, and the MIR verifier rejects a literal register at any index operand
+  (R1966).
 - A tuple display's numeric literal element now converts explicitly at its
   deduced element type (`(1, 2.5)`), as upstream's
   `Tuple.__init__(var *args: *Ts)` converts each argument, and a parameter

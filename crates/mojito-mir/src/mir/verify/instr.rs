@@ -916,7 +916,7 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
                 None => {}
             }
             if let Some(found) = cx.reg_ty(*index)
-                && !types_compatible(found, &Ty::int())
+                && (found.is_int_literal() || !types_compatible(found, &Ty::int()))
             {
                 errors.push(format!(
                     "{prefix}: compiler-private pointer storage index has type {found}, expected Int"
@@ -1116,7 +1116,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
 /// `simd.extract` and a `simd.reduce` give one lane of the vector's dtype,
 /// a `simd.insert` takes one (a `Bool` for `bool` lanes) and gives the
 /// vector's type; and a lane index
-/// is an `Int`, a `UInt`, or an `IntLiteral`.
+/// is an `Int`, a `UInt`, or an `index`, a literal one converted first.
 fn verify_simd_lane_instruction(
     cx: &InstrCx<'_>,
     instruction: &MirInstr,
@@ -1144,9 +1144,7 @@ fn verify_simd_lane_instruction(
     };
     let index_ok = |register: Reg| {
         cx.reg_ty(register).is_none_or(|ty| {
-            types_compatible(ty, &Ty::int())
-                || ty.is_uint()
-                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::Index)
+            types_compatible(ty, &Ty::int()) || ty.is_uint() || matches!(ty.kind(), TyKind::Index)
         })
     };
     match *instruction {
