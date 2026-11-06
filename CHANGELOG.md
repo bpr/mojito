@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time comparison of a literal with a `SIMD` value parameter
+  (`x < 10` over `x: UInt8`, `Int32`, or `Float32`, `v == 4` over a
+  vector) now materializes the literal at that operand's type, splatted
+  across its lanes, as the pin's implicit `SIMD.__init__(IntLiteral)`
+  does, so such a `comptime if` condition records its `Bool` parameter
+  value instead of only its constraint form (R1902). A literal beside a
+  `Scalar` of a symbolic dtype is still unread (R1950).
 - A `comptime if` or `comptime assert` condition over `IsTrivially*[T]`,
   a predicate-alias application, a `TypeList` proposition
   (`.contains[T]()`, `.all[P]()`, `.any[P]()`, `.all_conforms_to[Tr]()`),

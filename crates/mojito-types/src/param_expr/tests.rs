@@ -280,6 +280,41 @@ fn literal_and_machine_arguments_agree_after_contextual_conversion() {
 }
 
 #[test]
+fn a_literal_compared_with_a_simd_parameter_materializes_at_its_type() {
+    let context = ParamContext::new();
+    let uint8 = crate::types::canonical_simd_ty(Dtype::UInt8, 1);
+    let x = context.register(ParamId::new("g", 0), "x", MetaTy::value(uint8.clone()));
+    let below = infix(&context, InfixOp::Lt, &x, &literal(&context, 10));
+    assert_eq!(*below.meta(), MetaTy::bool());
+    let at_ten = context
+        .constant_as(CtValue::IntLiteral(IntLiteral::from(10_i64)), &uint8)
+        .expect("a literal converts to UInt8");
+    let bound = context
+        .op(ParamOp::Lt, &[x.clone(), at_ten])
+        .expect("two UInt8 operands compare");
+    assert_eq!(below, bound);
+    // A vector's literal splats across its lanes.
+    let lanes = context.register(
+        ParamId::new("g", 1),
+        "v",
+        MetaTy::value(crate::types::canonical_simd_ty(Dtype::Int32, 4)),
+    );
+    let equal = infix(&context, InfixOp::Eq, &literal(&context, 3), &lanes);
+    assert_eq!(*equal.meta(), MetaTy::bool());
+    // A float literal has no `UInt8` conversion, as the pin's
+    // `SIMD.__init__(FloatLiteral)` requires a floating-point dtype.
+    let half = context
+        .constant(CtValue::FloatLiteral(
+            mojito_common::literal::FloatLiteral::from_f64(1.5).expect("finite"),
+        ))
+        .expect("a constant");
+    assert!(matches!(
+        context.infix(InfixOp::Lt, &x, &half),
+        Err(ParamError::TypeMismatch { .. })
+    ));
+}
+
+#[test]
 fn signature_slots_are_alpha_equivalent_and_capture_avoiding() {
     let context = ParamContext::new();
     let slot = context.index_ref(0, 0, MetaTy::int());

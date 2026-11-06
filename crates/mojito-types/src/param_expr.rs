@@ -2146,6 +2146,14 @@ impl ParamContext {
             self.count_fold();
             return fold_primitive(op, &[a, b]).and_then(|value| self.constant(value));
         }
+        // `x < 10` over a non-`Int` scalar is `SIMD.__lt__(self, rhs: Self)`,
+        // whose implicit `SIMD.__init__(IntLiteral)` (or `FloatLiteral`)
+        // materializes the literal at the other operand's type.
+        let (left, right) = (
+            self.literal_at(left, operands[1].meta()),
+            self.literal_at(right, operands[0].meta()),
+        );
+        let operands = &[left.clone(), right.clone()];
         let domain = Self::arithmetic_domain(op, operands)?;
         if domain.is_none() && left.meta() != right.meta() {
             return Err(ParamError::TypeMismatch {
@@ -2182,6 +2190,32 @@ impl ParamContext {
             vec![left, right]
         };
         Ok(self.make(MetaTy::bool(), ParamKind::Op { op, operands }))
+    }
+
+    /// `operand`, a literal constant, materialized at the `SIMD` type
+    /// `other` is a value of, as the pin's implicit
+    /// `SIMD.__init__(IntLiteral)` and `SIMD.__init__(FloatLiteral)` fold
+    /// it, splatting across a vector's lanes; any other operand, or one
+    /// beside an integer-domain `other` (which [`Self::arithmetic_domain`]
+    /// converts), unchanged.
+    fn literal_at(&self, operand: ParamExpr, other: &MetaTy) -> ParamExpr {
+        let Some(ty) = other.as_value().filter(|_| IntDomain::of(other).is_none()) else {
+            return operand;
+        };
+        let Some((dtype, width)) = ty.kind().known_simd() else {
+            return operand;
+        };
+        let materialized = operand
+            .as_constant()
+            .filter(|value| matches!(value, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)))
+            .and_then(|value| match width {
+                1 => value.clone().materialize_as(ty),
+                _ => fold::splat_lanes(value, dtype, usize::try_from(width).ok()?)
+                    .map(|lanes| CtValue::Simd { dtype, lanes }),
+            });
+        materialized.map_or(operand, |value| {
+            self.make(other.clone(), ParamKind::Constant(value))
+        })
     }
 
     /// Conditional selection stays lazy: only a constant condition selects.

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1950**.
+Next free ID: **R1951**.
 
 ## Ordered Work
 
@@ -309,21 +309,25 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1899 (2026-11-05).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-- [ ] **R1902 The one builder rejects a literal compared with a non-`Int`
-  scalar parameter**
+- [ ] **R1950 The one builder has no node for a literal materialized at a
+  `SIMD` of symbolic dtype**
 
-  `x < 10` over `x: UInt8`, `Int32`, `Int8`, or a `SIMD` value parameter
-  builds to "parameter expression 'lt' expects UInt8, found IntLiteral[10]",
-  where upstream materializes the literal at the other operand's type.
-  - `ParamContext::build_comparison` coerces a literal only into the `Int`
-    arithmetic domain.
-  - Such a `comptime if` condition records no `Bool` value and is decided
-    from its constraint form.
-  - Probes: `assets/ok/comptime_if_scalar_value_param.mojo`,
-    `simd_comparison_dunders.mojo`, `simd_max_min_members.mojo`, and std
-    `simd.mojo`'s `Scalar` comparisons under
-    `always_inline_builtin_self_method_fold.mojo`.
-  - Found while landing R1475 (2026-11-03).
+  `neg_zero != 0` over `neg_zero: Scalar[_unsigned_integral_type_of[
+  Self.dtype]()]` (std `simd.mojo`'s `SIMD.__hash__`) builds to
+  "parameter expression 'eq' expects Scalar[...], found IntLiteral[0]".
+  - Upstream's `SIMD.__init__(IntLiteral)` at an open type is a
+    `struct.create` over `#pop.int_literal_convert<0>` at its `!kgen.simd`
+    storage, which the parameter domain cannot yet spell.
+  - `ParamContext::literal_at` (`param_expr.rs`) materializes a literal
+    only at a `known_simd` type, so the condition records no `Bool` value
+    and is decided from its constraint form.
+  - Lever: build `construction` of `_mlir_value` over
+    `ParamOp::IntLiteralConvert` (or `FloatLiteralConvert`) at the
+    symbolic storage, folding once the dtype closes.
+  - Probe: a temporary `eprintln!` on the `compile_dependent_ct_expr`
+    error in `check_ct_bool` (`checker/comptime_validation.rs`) prints it
+    on the first `mojito run assets/ok/simd_hash_member.mojo` after a
+    build, while std is packaged afresh.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -375,7 +379,7 @@ which names the upstream pass each one follows. Each is measured by the
     read the value. A schema bump makes `values`/`value` required.
   - The checker keeps its constraints for assumptions and `where` clauses.
   - Found while landing R1475 (2026-11-03).
-  - Depends on R1901, R1902, R1903, R1904.
+  - Depends on R1903, R1904, R1950.
   - Model: Fable, Planned.
 
 - [ ] **R1339 A `ref self` body types a reference reached through `self`
