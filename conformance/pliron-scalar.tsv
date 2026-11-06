@@ -1462,6 +1462,7 @@ assets/ok/tuple_consume_elements_discard.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_consume_elements_len.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_consume_elements_print.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_hashable_dict_key.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_index_int_comptime_expression.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_nested_type_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_of_scalars_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_one_element.mojo	-	ineligible	no-scalar-entry-shape

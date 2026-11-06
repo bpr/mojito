@@ -740,11 +740,12 @@ impl<'a> Flatten<'a> {
             raw_index,
             index.location(),
         );
-        let getter_call = self.mir_subscript_call_contract(
+        let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
             &[MirSubscriptArg::Index(getter_index)],
             target.location(),
         );
+        self.record_index_parameter(target, index, &mut getter_call);
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
         self.record_call(handle, Some(getter_call.target.clone()), 0);
@@ -861,11 +862,12 @@ impl<'a> Flatten<'a> {
                 raw_index,
                 index.location(),
             );
-            let getter_call = self.mir_subscript_call_contract(
+            let mut getter_call = self.mir_subscript_call_contract(
                 plan.getter.clone(),
                 &[MirSubscriptArg::Index(getter_index)],
                 target.location(),
             );
+            self.record_index_parameter(target, index, &mut getter_call);
             self.emit_checked_call_boundary(&plan.getter, &target.location());
             let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
             self.record_call(handle, Some(getter_call.target.clone()), 0);
@@ -896,11 +898,12 @@ impl<'a> Flatten<'a> {
             raw_index,
             index.location(),
         );
-        let getter_call = self.mir_subscript_call_contract(
+        let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
             &[MirSubscriptArg::Index(getter_index)],
             target.location(),
         );
+        self.record_index_parameter(target, index, &mut getter_call);
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
         self.record_call(current, Some(getter_call.target.clone()), 0);
@@ -941,11 +944,12 @@ impl<'a> Flatten<'a> {
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
-        let setter_call = self.mir_subscript_call_contract(
+        let mut setter_call = self.mir_subscript_call_contract(
             setter.clone(),
             &[MirSubscriptArg::Index(setter_index)],
             target.location(),
         );
+        self.record_index_parameter(target, index, &mut setter_call);
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,

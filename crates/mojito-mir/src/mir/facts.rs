@@ -1081,21 +1081,46 @@ impl<'a> Flatten<'a> {
     ) -> Option<MirSubscriptCall> {
         let contract = node.call_contract()?;
         let mut call = self.mir_subscript_call_contract(contract, operands, node.location());
-        // A compile-time index built from the enclosing binders
-        // (`self[Self.Ts.length - 1 - i]`) is recorded as the expression the
-        // checker solved it to, which the elaborator evaluates per instance.
-        if let Some((_, index)) = node.index_operands()
-            && let [argument] = call.param_arg_regs.as_mut_slice()
-            && argument.value.is_some()
-        {
-            argument.expr = match node.instantiated_args().as_slice() {
-                [TyArg::Val(mojito_types::ct::CtValue::Expr(solved))] => Some(solved.clone()),
-                _ => self
-                    .value_binder_node(index.id())
-                    .filter(|value| value.as_constant().is_none()),
-            };
+        if let Some((_, index)) = node.index_operands() {
+            self.record_index_parameter(node, index, &mut call);
         }
         Some(call)
+    }
+
+    /// Record on `call`, the subscript `node` of `index`, the expression
+    /// its compile-time index denotes. One built from the enclosing
+    /// binders (`self[Self.Ts.length - 1 - i]`) is the expression the
+    /// checker solved it to, which the elaborator evaluates per instance.
+    /// One the check closed from an operation (`t[N + 1]`) is that value,
+    /// the parameter attribute Mojo's call carries: its operand computes
+    /// it at run time, which no instance reads.
+    pub(super) fn record_index_parameter(
+        &self,
+        node: Node<'a>,
+        index: Node<'a>,
+        call: &mut MirSubscriptCall,
+    ) {
+        let [argument] = call.param_arg_regs.as_mut_slice() else {
+            return;
+        };
+        if argument.value.is_none() {
+            return;
+        }
+        argument.expr = match node.instantiated_args().as_slice() {
+            [TyArg::Val(mojito_types::ct::CtValue::Expr(solved))] => Some(solved.clone()),
+            [TyArg::Val(solved)]
+                if solved.is_parameter_attribute()
+                    && self
+                        .checked
+                        .expression(index.id())
+                        .is_some_and(|index| !matches!(index.op, CheckedOp::Int(_))) =>
+            {
+                ParamContext::detached().constant(solved.clone()).ok()
+            }
+            _ => self
+                .value_binder_node(index.id())
+                .filter(|value| value.as_constant().is_none()),
+        };
     }
 
     /// The subscript call of `contract` over `operands`, its raise edge's

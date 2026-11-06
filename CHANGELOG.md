@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A tuple index over an `Int`-typed compile-time expression now selects
+  its element: `t[N + 1]` over a module `comptime N: Int = 3`, and `t[n]`
+  or `t[n + 1]` over a local `comptime n: Int = 2`, read and store as at
+  the pin. The subscript's call carries the index the check closed as its
+  parameter attribute, and an annotated local constant is its constant at
+  the annotated type rather than a lifted application (R1842).
 - A `comptime assert` message built as a `StaticString` of a
   `_get_kgen_string` concatenation now checks, and a local `comptime`
   alias of a parameter keeps its place in a lifted concatenation's pack,

@@ -4667,27 +4667,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1842 A tuple index over an `Int`-typed compile-time expression
-  stays symbolic**
-
-  `t[N + 1]` over a module `comptime N: Int = 3`, and `t[n]` or `t[n + 1]`
-  over a local `comptime n: Int = 2`, fail, where the pin prints `5`, `3`,
-  and `4`; `t[N]` and a literal `t[K + 1]` run.
-  - Probe: the module form fails in elaboration, "keeps compile-time
-    parameter `index` in elaborated MIR".
-  - Probe: the local form fails in the check, "an element of 'values' with
-    type 'type_sequence[Int, ...][$comptime$main$c0()]' does not conform to
-    trait 'Writable'".
-  - Cause: `Tuple.__getitem_param__[index: Int]` returns `Self.Ts[index]`,
-    a `ParamKind::Select` that reduces only over a closed constant index.
-    An `Int` operand builds the index as an `Int` application (or a local
-    constant's `$comptime` application), which neither the check nor
-    `native::mono` folds before the select.
-  - Lever: fold a closed `Int` application in the select's index, as a
-    value parameter `f[N + 1]()` already folds.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1646 A construction spelled through a closed type alias is no
   compile-time application**
 

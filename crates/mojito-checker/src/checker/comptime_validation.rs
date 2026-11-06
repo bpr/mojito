@@ -3866,18 +3866,30 @@ impl Checker {
             return Ok(true);
         }
         // A closed binding is the application it requests, else the
-        // constant it builds to (`comptime s = "Lo"`), which an annotation
-        // would convert.
+        // constant it builds to (`comptime s = "Lo"`). An annotation that
+        // holds it as a constant of its own type (`comptime n: Int = 1`)
+        // binds that constant, which MIR reads off the initializer; any
+        // other annotation converts it.
         let expression = match denoted {
             Some(_) => None,
-            None => self
-                .requested_binding(value, ConstantScope::Local)?
-                .or_else(|| {
-                    annotation
-                        .is_none()
-                        .then(|| self.closed_constant_expression(value))
-                        .flatten()
+            None => match self.requested_binding(value, ConstantScope::Local)? {
+                Some(requested) => Some(requested),
+                None => self.closed_constant_expression(value).and_then(|closed| {
+                    let Some(annotation) = annotation else {
+                        return Some(closed);
+                    };
+                    let expected = self
+                        .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
+                        .ok()?;
+                    let held = self
+                        .applied_value(closed.as_constant()?.clone(), &expected)
+                        .filter(|held| held.as_constant().is_some())?;
+                    self.lifted_expressions
+                        .borrow_mut()
+                        .insert(value.source_span(), held.clone());
+                    Some(held)
                 }),
+            },
         };
         if let Some(expression) = expression
             && let Some(scope) = self.local_comptime_parameters.last_mut()
