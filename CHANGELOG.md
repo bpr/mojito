@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `type_of` construction over a literal (`var n = type_of(y)()` over
+  `comptime y = 2 + 3`, `var f = type_of(1.5)()`) is now the literal
+  materialized as the `var`'s scalar, as at the pin, instead of failing
+  MIR verification on a call of a function named `type_of` (R1856).
 - A `&` composition after a generator type's result is now that whole
   result, as at the pin: `[G: __generator_type[T: Copyable] Copyable &
   Defaultable]` lets `G[Int]` satisfy a `Defaultable` bound instead of

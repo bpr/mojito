@@ -7482,22 +7482,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1856 `type_of(x)()` over a local `comptime` literal binding
-  reaches MIR as a call to a function named `type_of`**
-
-  `comptime y = 2 + 3; print(type_of(y)())` fails MIR verification
-  ("register r4 has no checked type", a `Call` of `FuncRef("type_of")`),
-  where the pin prints `5`.
-  - The checker types the construction, but MIR lowering reads the callee
-    `type_of(y)` as a function name rather than the type the checker
-    recorded, so the call's register has no checked type.
-  - Probe: `comptime x = (2.5).__int_literal__(); print(type_of(x)())`
-    fails the same way ("register r0 has no checked type"), where the pin
-    prints `2`.
-  - Found while landing R1753 (2026-11-02).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1925 A decorator before a struct's `comptime` member is a parse
   error**
 

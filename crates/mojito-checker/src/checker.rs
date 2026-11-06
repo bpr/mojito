@@ -2005,6 +2005,12 @@ impl Checker {
         from: &Ty,
         to: &Ty,
     ) -> Result<bool, TypeError> {
+        // A spelled sugar (`type_of(x)()`) is its construction in place:
+        // the conversion is the construction's, beside the adjustment
+        // naming it.
+        if let Some(construction) = self.spelled_construction(expression) {
+            return self.record_implicit_conversion(&construction, from, to);
+        }
         if let TyKind::Overload(candidates) = from.kind() {
             let matches: Vec<_> = candidates
                 .iter()
@@ -2054,6 +2060,9 @@ impl Checker {
         from: &Ty,
         to: &Ty,
     ) -> Result<(), TypeError> {
+        if let Some(construction) = self.spelled_construction(expression) {
+            return self.record_literal_materializations(&construction, from, to);
+        }
         // Upstream's implicit `Bool` to `SIMD[DType.bool, n]` constructor,
         // which asserts one lane.
         if from.is_bool()
