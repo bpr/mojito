@@ -6843,51 +6843,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1964 A literal argument at a parameter the call binds to a scalar
-  reaches the callee unconverted**
-
-  Problem: when a declared parameter is a type parameter (`T`) that the
-  call site binds to `Int`, `UInt8`, or `Float64`, the checker coerces the
-  literal argument by the substituted type but records no
-  `MaterializeLiteral` adjustment.
-  - After `inline-parametric`, `_write_int`'s
-    `buf.unsafe_ptr().unsafe_offset(offset).write(0)` stores an
-    `IntLiteral` register into a `UInt8` slot, in almost every fixture.
-  - Calls such as `Tag(5)` into an `Int` field pass a literal register to
-    an `Int` parameter.
-  - The VM converts silently (`coerce_checked` in frames, calls, and
-    result adapters), and Pliron does the same through `PendingLiteral`.
-    Upstream's IR has no implicit conversion: each one is a call of the
-    `@implicit` `__init__(IntLiteral)`, folded to
-    `#pop.int_literal_convert`.
-  - Lever: record the adjustment against the substituted parameter type
-    where the checker records `SemanticAdjustment::MaterializeLiteral`
-    (`checker/call_inference.rs`, `checker/method_calls/selection.rs`).
-    MIR already lowers it.
-  - The `_write_int` CTFE path calls the VM's builtin `max(64, …)` with an
-    `IntLiteral`; upstream resolves the declared `max` overload.
-    Resolve the bundled declaration, or file the builtin as a divergence.
-  - Done when the verifier's call-argument and `var.store` sites reject a
-    literal register at a non-literal, non-parameter slot.
-  - Probe: `p.write(0)` into an `UnsafePointer[UInt8]`, and `Tag(5)`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **R1965 A tuple display, return, or reference write of a literal
-  leaves its conversion implicit in MIR**
+- [ ] **R1965 A tuple display or return of a literal leaves its
+  conversion implicit in MIR**
 
   Problem: `var p = (1, 2.5)` lowers to `MakeTuple` with `Int`/`Float64`
   element types over literal registers, and SROA turns it into `DefVar`s
   that bind a literal register at `Int`/`Float64`.
-  - `def f() -> Float64: return 2` returns a literal register, and a
-    `WriteRef` and a subscript store take one the same way.
+  - `def f() -> Float64: return 2` returns a literal register.
+  - Every `WriteRef` and subscript store of a literal was the builtin
+    pointer write R1964 converted; none is left (`ref r = f; r = 3`,
+    `l[0] = 7`, `q[] = 9` over `Float64`).
   - The VM converts silently (`coerce_checked` at `DefVar` and
     `MakeTuple`), where upstream's IR calls the `@implicit` initializer.
   - Lever: MIR's tuple-display lowering emits `literal.materialize` plus
     `struct.create` per literal element whose element type is not a
-    literal, and return and `WriteRef` lowering consume the checker's
-    adjustment. If the checker records none, add it at R1845's
-    storage-site conversion.
+    literal, and return lowering consumes the checker's adjustment. If
+    the checker records none, add it at R1845's storage-site conversion.
   - Done when the verifier's `DefVar`, `Return`, and `WriteRef` sites
     reject a literal register at a non-literal slot.
   - Probe: `var p = (1, 2.5); print(p[0], p[1])` and the `f` above.
@@ -6927,10 +6898,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: a found literal type is compatible only with an identical
     literal type or a type mentioning a parameter. Delete the
     literal-to-literal arm and the module doc's "representational" claim.
-  - Hand-migrate `tests/mir_passes` cases that store a literal into an
-    `Int` slot to the explicit `literal.materialize` form.
-  - Add a negative verifier test: a body storing `const int_literal(1)`
-    into an `Int` var is rejected.
+  - Call arguments and `place.store` already reject a literal at a closed
+    non-literal slot (`unconverted_literal`, R1964), with a negative test
+    in `verify/structure.rs`; fold that rule into `types_compatible`.
+  - Probe: `assets/ok/int_literal_value_type.mojo`'s `Holder.__init__`
+    stores a `FloatLiteral[2.5]` into a field typed `FloatLiteral[5/2]`,
+    which the literal-to-literal arm admits.
   - The `MakeSimd` literal element stays admitted until R1935.
   - Depends on R1964, R1965, R1966.
   - Model: Opus, Not Planned.
@@ -10710,7 +10683,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `builtin_min_max`, and Pliron's `lower_min_max_builtin`, where every
     other module calls `std.math`'s library overloads. `simd.mojo` imports
     `max` and `min` from `std.math` for `clamp`, and
-    `builtin/format_int.mojo` imports `abs`.
+    `builtin/format_int.mojo` imports `abs` and `max`.
   - Probe: `simd.mojo` imports `Optional` and `StaticString`, and
     `builtin/format_int.mojo` and `builtin/_format_float.mojo` import
     `StaticString`, `StringSlice`, and `Span`, which upstream's read from
@@ -10719,7 +10692,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     "no overload matches" `write_string`).
   - Fix: bind the prelude's names in bootstrap modules too, then drop the
     six `range` imports, `simd.mojo`'s `max`/`min` import, and
-    `format_int.mojo`'s `abs` import, and delete the `min`/`max` and `abs`
+    `format_int.mojo`'s `abs` and `max` imports, and delete the `min`/`max` and `abs`
     rules (`Checker::infer_min_max`, `infer_abs`), their
     `call_inference.rs` arms, the VM's `"min"`/`"max"`/`"abs"`
     `BUILTIN_CALLEES` entries and arms, and Pliron's

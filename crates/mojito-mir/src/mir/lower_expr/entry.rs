@@ -248,6 +248,10 @@ impl<'a> Flatten<'a> {
                     (value, None)
                 }
             };
+            let argument = match e.conversion_source_literal() {
+                Some(parameter) => self.materialize_literal(argument, &parameter, e.location()),
+                None => argument,
+            };
             // The conversion result is the constructed type, not the source
             // expression's checked type; targets are concrete constructors.
             // The checker records the converted-to type (with its arguments,

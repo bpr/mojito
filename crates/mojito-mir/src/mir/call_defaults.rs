@@ -2014,6 +2014,24 @@ fn omitted_argument(
                 arguments,
             }
         }
+        CheckedConst::Construct {
+            target,
+            arg,
+            parameter,
+        } => CheckedConst::Construct {
+            target: target.clone(),
+            arg: arg.clone(),
+            parameter: parameter
+                .as_ref()
+                .map(|parameter| {
+                    close_parameter_type(parameter, &site.bound).ok_or_else(|| {
+                        format!(
+                            "the default of '{name}' converts at a parameter naming a binder the call binds no argument for"
+                        )
+                    })
+                })
+                .transpose()?,
+        },
         default => default.clone(),
     };
     let ty = callee
@@ -2114,9 +2132,13 @@ fn evaluate_constant(
             });
             value
         }
-        CheckedConst::Construct { target, arg } => {
-            let literal_ty = literal_type(arg);
-            let argument = evaluate_constant(function, arg, &literal_ty, location, prelude);
+        CheckedConst::Construct {
+            target,
+            arg,
+            parameter,
+        } => {
+            let at = parameter.clone().unwrap_or_else(|| literal_type(arg));
+            let argument = evaluate_constant(function, arg, &at, location, prelude);
             let value = fresh_register(function, ty.clone(), location);
             // The constructor is owner-less: the call binds the struct's
             // parameters to the arguments of the type it builds, as a

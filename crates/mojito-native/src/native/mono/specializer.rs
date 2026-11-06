@@ -2343,7 +2343,7 @@ impl<'a> Specializer<'a> {
         declaration: &mut MirFunctionDeclaration,
     ) -> Result<(), MonoError> {
         for (index, default) in declaration.defaults.iter_mut().enumerate() {
-            let Some(CheckedConst::Construct { target, arg }) = default else {
+            let Some(CheckedConst::Construct { target, arg, .. }) = default else {
                 continue;
             };
             if matches!(**arg, CheckedConst::Construct { .. }) {

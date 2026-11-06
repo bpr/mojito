@@ -539,7 +539,12 @@ fn verify_reference_instruction(
                 };
                 // Storage of a reference type (a `List[ref T]` element) takes
                 // a reference; any other store writes through to the referent.
-                if !types_compatible(found, target) && !types_compatible(found, expected) {
+                if unconverted_literal(found, target) {
+                    errors.push(format!(
+                        "{prefix}: store of the literal {found}, which no conversion \
+                         materialized, into storage of type {target}"
+                    ));
+                } else if !types_compatible(found, target) && !types_compatible(found, expected) {
                     errors.push(format!(
                         "{prefix}: store of {found} into storage of type {target}"
                     ));

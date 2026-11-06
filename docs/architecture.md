@@ -6843,7 +6843,12 @@ point where a slot declared in a loop is uninitialized again.
   materializes it in the caller: a literal as a `const`, crossing the
   literal boundary with a `literal.materialize` at a scalar parameter, or
   a converting constructor's `call` (naming the struct for its one
-  `__init__`) run on such a literal. The slot is dropped after the body
+  `__init__`) run on such a literal, itself materialized at the
+  constructor's parameter (`CheckedConst::Construct`'s `parameter`). A
+  literal call argument, pointer write, or converted default reaches a
+  non-literal slot only through `literal.materialize`, as upstream's IR
+  has no implicit conversion; the verifier rejects a literal register at a
+  closed non-literal call argument or `place.store`. The slot is dropped after the body
   when the parameter only borrows a type with a destructor. A default
   computed by a lowered default function (`CheckedConst::Evaluate`), or a
   literal the parameter's type does not hold, keeps the call. A raising

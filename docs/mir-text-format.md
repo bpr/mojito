@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.172
+mojito-mir 1.173
 ```
 
-The writer emits 1.172. The reader accepts 1.0 through 1.172; *Schema 1.0*
+The writer emits 1.173. The reader accepts 1.0 through 1.173; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1148,6 +1148,15 @@ and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
 
+Schema 1.173 adds `checked_construct`'s optional `parameter` field
+(R1964): the constructor parameter a converted default's numeric literal
+materializes at (`literal.materialize` plus `struct.create`) before the
+converting constructor runs, as upstream converts a written conversion's
+literal source. It is written only when present; an older artifact's
+default has none and passes its literal unconverted. The checked
+adjustment `ConversionSourceLiteral` joins it, so the package format moves
+to `mojito-package 196`.
+
 Schema 1.172 removes the value-less `IntLiteral` and `FloatLiteral` atoms
 (R1849): a numeric literal's type always carries its value, as upstream's
 `IntLiteral[value]` does, so every literal register is the `struct_type`
@@ -1631,7 +1640,9 @@ rational; reprinting reduces it.
 `CheckedConst` uses `checked_int`, `checked_float`, `checked_bool`,
 `checked_string`, or `checked_none` with the same fidelity rules, plus
 `checked_dtype(name)`, `checked_construct { target, arg }` for an
-implicit-conversion default, and `checked_evaluate("function")` for a
+implicit-conversion default (schema 1.173 adds an optional
+`parameter: <type>`, the constructor parameter a literal `arg`
+materializes at), and `checked_evaluate("function")` for a
 default lowered as a function. Schema 1.43 adds the applied form
 `checked_evaluate { function, arguments: [ty-arg, ...] }`: the function's
 own compile-time parameters, in declaration order, written over the

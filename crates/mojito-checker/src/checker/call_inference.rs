@@ -411,11 +411,20 @@ impl Checker {
             if copy {
                 self.infer_builtin_copy_construction(span.clone(), name, &instance, &kwargs[0])?;
             } else {
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::ConstructType {
-                        ty: instance.clone(),
-                    },
-                ));
+                // A use's materialization supersedes the construction, which
+                // MIR reads off the type (`materialized_literal_construction`),
+                // so re-inferring the argument keeps it.
+                let mut record = self.record_at(span.clone());
+                if !matches!(
+                    record.adjustment.as_deref(),
+                    Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
+                ) {
+                    record.adjustment = Some(Box::new(
+                        mojito_checked::checked::SemanticAdjustment::ConstructType {
+                            ty: instance.clone(),
+                        },
+                    ));
+                }
             }
             self.type_runtime_param_args(param_args)?;
             Ok(instance.clone())

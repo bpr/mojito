@@ -177,10 +177,20 @@ impl VmBackend {
                 {
                     self.nominal_string_value(prog, text)
                 }
-                Some(CheckedConst::Construct { target, arg }) => self.call_named(
+                Some(CheckedConst::Construct {
+                    target,
+                    arg,
+                    parameter,
+                }) => self.call_named(
                     prog,
                     target,
-                    vec![checked_const_value(arg)],
+                    vec![match parameter {
+                        Some(parameter) => crate::runtime::materialize_literal(
+                            checked_const_value(arg),
+                            parameter,
+                        )?,
+                        None => checked_const_value(arg),
+                    }],
                     &[],
                     &CallTypes {
                         constructed: prog.declared_struct(sig.param_types.get(i)),

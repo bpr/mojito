@@ -1862,7 +1862,7 @@ impl Checker {
             .unwrap_or(matches);
         match matches.as_slice() {
             [] => Ok(None),
-            [(sig, _, own_arguments)] => {
+            [(sig, parameter, own_arguments)] => {
                 let target = constructor_symbol(
                     name,
                     "__init__",
@@ -1892,6 +1892,7 @@ impl Checker {
                     source_borrow,
                     consumes_source,
                     error,
+                    parameter: parameter.clone(),
                     own_arguments: own_arguments.clone(),
                 }))
             }
@@ -1916,7 +1917,7 @@ impl Checker {
         let Some(selected) = self.implicit_conversion_constructor(from, to)? else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, selected, to)?;
+        self.record_selected_conversion(expression, from, selected, to)?;
         Ok(true)
     }
 
@@ -1931,6 +1932,7 @@ impl Checker {
     fn record_selected_conversion(
         &self,
         expression: &Expr,
+        from: &Ty,
         selected: SelectedConversion,
         to: &Ty,
     ) -> Result<(), TypeError> {
@@ -1939,9 +1941,31 @@ impl Checker {
             source_borrow,
             consumes_source,
             error,
+            parameter,
             own_arguments,
         } = selected;
         let span = expression.source_span();
+        // Upstream converts a literal source to the constructor's parameter
+        // (`#pop.int_literal_convert`) before the `@implicit` call.
+        if matches!(from.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+            && (parameter.is_int()
+                || parameter.is_uint()
+                || parameter.is_float64()
+                || parameter
+                    .as_simd()
+                    .is_some_and(|(_, width)| !width.is_inferred()))
+        {
+            if let Some(value) = self.exact_literal_value(expression)
+                && !self.literal_value_fits_target(&value, &parameter)
+            {
+                return Err(TypeError::TypeMismatch {
+                    expected: parameter.to_string(),
+                    found: from.to_string(),
+                    context: format!("numeric literal materialization of '{value}'"),
+                });
+            }
+            self.record_at(span.clone()).conversion_source_literal = Some(parameter);
+        }
         if !consumes_source && source_borrow.is_none() {
             self.record_at(span.clone()).conversion_reads_source = true;
         }
@@ -2031,7 +2055,7 @@ impl Checker {
         let Some(selected) = self.implicit_conversion_constructor(from, to)? else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, selected, to)?;
+        self.record_selected_conversion(expression, from, selected, to)?;
         Ok(true)
     }
 
@@ -2104,7 +2128,7 @@ impl Checker {
                     .is_some_and(|info| info.methods.contains_key("__init__"))
                 && let Some(selected) = self.implicit_conversion_constructor(from, to)?
             {
-                return self.record_selected_conversion(expression, selected, to);
+                return self.record_selected_conversion(expression, from, selected, to);
             }
             self.record_at(expression.source_span()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(to.clone()),
@@ -2839,6 +2863,8 @@ struct SelectedConversion {
     consumes_source: bool,
     /// The error type the constructor raises, if it raises.
     error: Option<Ty>,
+    /// The constructor's parameter, at the converted-to type's arguments.
+    parameter: Ty,
     /// The constructor's own compile-time arguments, solved from the
     /// source, in declaration order.
     own_arguments: Vec<TyArg>,

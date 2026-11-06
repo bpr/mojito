@@ -1,14 +1,14 @@
 # Upstream's `std/builtin/format_int.mojo`, in part: `_write_int`, the
 # digit writer `SIMD.write_to` calls for an integral lane, and its digit
 # table. `bin`, `hex`, `oct`, and `_format_int` are not ported.
-# `abs` is imported, which upstream's prelude provides (R894).
+# `abs` and `max` are imported, which upstream's prelude provides (R894).
 """Provides the `hex` and `bin` functions.
 
 These are Mojo built-ins, so you don't need to import them.
 """
 
 from std.collections import Array
-from std.math import abs
+from std.math import abs, max
 from std.span import Span
 from std.string import StaticString, StringSlice
 from std.sys import bit_width_of

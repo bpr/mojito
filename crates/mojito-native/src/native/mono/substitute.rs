@@ -199,6 +199,15 @@ pub(super) fn substitute_declaration(
     if let Some(ty) = &mut decl.error_ty {
         *ty = substitute_ty(ty, bindings)?;
     }
+    for default in decl.defaults.iter_mut().flatten() {
+        if let CheckedConst::Construct {
+            parameter: Some(ty),
+            ..
+        } = default
+        {
+            *ty = substitute_ty(ty, bindings)?;
+        }
+    }
     Ok(())
 }
 

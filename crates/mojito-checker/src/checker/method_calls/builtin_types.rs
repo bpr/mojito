@@ -218,7 +218,7 @@ impl Checker {
                         .insert(value.source_span());
                 }
                 let vty = self.infer_with_expected(value, elem, true)?;
-                if !coerces(&vty, elem) {
+                if !self.record_implicit_conversion(value, &vty, elem)? {
                     return Err(TypeError::TypeMismatch {
                         expected: elem.to_string(),
                         found: vty.to_string(),
@@ -386,7 +386,7 @@ impl Checker {
                     });
                 }
                 let found = self.infer_with_expected(&args[0], element, true)?;
-                if !coerces(&found, element) {
+                if !self.record_implicit_conversion(&args[0], &found, element)? {
                     return Err(TypeError::TypeMismatch {
                         expected: element.to_string(),
                         found: found.to_string(),

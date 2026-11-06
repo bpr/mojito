@@ -2636,10 +2636,17 @@ fn checked_const(value: &CheckedConst) -> String {
         CheckedConst::String(v) => positional("checked_string", &quote(v)),
         CheckedConst::None => "checked_none".into(),
         CheckedConst::Dtype(v) => positional("checked_dtype", v.name()),
-        CheckedConst::Construct { target, arg } => record(
-            "checked_construct",
-            &[("target", quote(target)), ("arg", checked_const(arg))],
-        ),
+        CheckedConst::Construct {
+            target,
+            arg,
+            parameter,
+        } => {
+            let mut fields = vec![("target", quote(target)), ("arg", checked_const(arg))];
+            if let Some(parameter) = parameter {
+                fields.push(("parameter", ty_value(parameter)));
+            }
+            record("checked_construct", &fields)
+        }
         CheckedConst::Evaluate {
             function,
             arguments,

@@ -698,9 +698,16 @@ impl Decoder {
             ValueKind::Record(tag, fields) if tag == "checked_construct" => {
                 let target = self.string(self.field(fields, "target").ok()?)?;
                 let arg = self.checked_const(self.field(fields, "arg").ok()?)?;
+                // Schema 1.173 names the parameter a literal `arg`
+                // materializes at; an older artifact's has none.
+                let parameter = match self.field(fields, "parameter") {
+                    Ok(value) => Some(self.ty(value)?),
+                    Err(()) => None,
+                };
                 Some(CheckedConst::Construct {
                     target,
                     arg: Box::new(arg),
+                    parameter,
                 })
             }
             _ => {

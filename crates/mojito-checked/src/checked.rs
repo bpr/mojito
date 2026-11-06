@@ -742,6 +742,10 @@ pub enum SemanticAdjustment {
     /// The struct arguments the constructor of the `ImplicitConversion` at
     /// the same site takes, which its declaration restates first.
     ConversionInstantiatedArguments(Vec<mojito_types::types::TyArg>),
+    /// The constructor parameter the `ImplicitConversion` at the same site
+    /// materializes its numeric-literal source at, as upstream converts the
+    /// literal (`#pop.int_literal_convert`) before the `@implicit` call.
+    ConversionSourceLiteral(Ty),
     /// Materialize an exact, compile-time-only numeric literal expression into
     /// its checked runtime scalar type.  Keeping this distinct from a user
     /// `@implicit` constructor preserves the language boundary: literal
@@ -4854,6 +4858,10 @@ pub enum CheckedConst {
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
         target: String,
         arg: Box<Self>,
+        /// The constructor parameter a numeric-literal `arg` materializes
+        /// at before the call, as a written conversion's literal source
+        /// does ([`SemanticAdjustment::ConversionSourceLiteral`]).
+        parameter: Option<Ty>,
     },
     /// A default that is neither a folded literal nor a conversion of one
     /// (`String("a")`, `TWO + 1`): MIR lowers the expression as the
@@ -6746,6 +6754,9 @@ fn conversion_adjustments(facts: &NodeFacts) -> Vec<SemanticAdjustment> {
                 arguments.clone(),
             ));
         }
+        if let Some(ty) = &facts.conversion_source_literal {
+            adjustments.push(SemanticAdjustment::ConversionSourceLiteral(ty.clone()));
+        }
         if let Some(mutable) = &facts.conversion_source_borrow {
             adjustments.push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
         }
@@ -7099,6 +7110,9 @@ node_facts! {
         conversion_raises: Ty,
         /// The struct arguments an implicit conversion's constructor takes.
         conversion_instantiation: Vec<mojito_types::types::TyArg>,
+        /// The constructor parameter an implicit conversion's literal
+        /// source materializes at.
+        conversion_source_literal: Ty,
         ty: Ty,
         binding: mojito_types::origin::OwnerId,
         /// The binding a declaring statement introduces.

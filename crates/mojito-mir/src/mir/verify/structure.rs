@@ -1652,4 +1652,34 @@ mod tests {
             "%r1 is read before the error region decides it is defined",
         );
     }
+
+    /// A `place.store` of a literal register into an `Int` slot.
+    fn literal_store(source: Ty) -> MirFunction {
+        let mut function = function_with(vec![MirInstr::Store {
+            place: crate::mir::MirPlace::root(0, Some(Ty::int())),
+            src: Reg(1),
+        }]);
+        function.reg_types.insert(1, source);
+        function
+    }
+
+    #[test]
+    fn a_literal_stored_unconverted_into_a_scalar_slot_is_a_finding() {
+        let literal = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(1));
+        assert_finding(
+            &findings(&literal_store(literal)),
+            "store of the literal IntLiteral[1], which no conversion materialized",
+        );
+    }
+
+    #[test]
+    fn a_materialized_literal_store_is_no_literal_finding() {
+        let found = findings(&literal_store(Ty::int()));
+        assert!(
+            !found
+                .iter()
+                .any(|finding| finding.contains("no conversion materialized")),
+            "{found:?}"
+        );
+    }
 }

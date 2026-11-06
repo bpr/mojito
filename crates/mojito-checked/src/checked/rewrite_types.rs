@@ -499,6 +499,9 @@ impl RewriteTypes for SemanticAdjustment {
             Self::ConversionInstantiatedArguments(f0) => {
                 f0.rewrite_types(rewrite);
             }
+            Self::ConversionSourceLiteral(f0) => {
+                f0.rewrite_types(rewrite);
+            }
             Self::MaterializeLiteral(f0) => {
                 f0.rewrite_types(rewrite);
             }

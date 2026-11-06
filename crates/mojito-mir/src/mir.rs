@@ -1928,9 +1928,8 @@ fn struct_declaration(
 /// [`lower_default`] lowers it as code.
 fn mir_default(checked: &CheckedProgram, default: CheckedNodeId) -> Option<CheckedConst> {
     let base = CheckedConst::from_node(checked.tables(), default)?;
-    let conversion = checked
-        .expression(default)?
-        .adjustments
+    let adjustments = &checked.expression(default)?.adjustments;
+    let conversion = adjustments
         .iter()
         .rev()
         .find_map(|adjustment| match adjustment {
@@ -1944,6 +1943,12 @@ fn mir_default(checked: &CheckedProgram, default: CheckedNodeId) -> Option<Check
         Some(target) => Some(CheckedConst::Construct {
             target,
             arg: Box::new(base),
+            parameter: adjustments.iter().find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ConversionSourceLiteral(ty) => {
+                    Some(ty.clone())
+                }
+                _ => None,
+            }),
         }),
         None => Some(base),
     }

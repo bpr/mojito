@@ -347,10 +347,16 @@ impl Checker {
             }
             return Ok(target);
         }
-        common_numeric(&tys[0], &tys[1]).ok_or_else(|| TypeError::BadOperator {
+        let result = common_numeric(&tys[0], &tys[1]).ok_or_else(|| TypeError::BadOperator {
             op: name.to_string(),
             operands: format!("{} and {}", tys[0], tys[1]),
-        })
+        })?;
+        for (arg, ty) in args.iter().zip(&tys) {
+            if ty.kind().is_numeric_literal() && *ty != result {
+                self.record_literal_materializations(arg, ty, &result)?;
+            }
+        }
+        Ok(result)
     }
 
     pub(super) fn len_result_for_type(&self, ty: &Ty) -> Result<Option<Ty>, TypeError> {

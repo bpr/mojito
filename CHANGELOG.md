@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A numeric literal now reaches every call argument and pointer write as
+  an explicit `literal.materialize`, as upstream's IR converts it through
+  `#pop.int_literal_convert` rather than implicitly: an `@implicit`
+  conversion's literal source (`g(5)` at a `Tag` parameter,
+  `var o: Optional[Int] = 8`) and a converted default (`t: Tag = 5`)
+  materialize at the constructor's parameter, and a pointer's
+  `unsafe_write`/`write`, the builtin `min`/`max`, a comprehension
+  element, and an `IntLiteral[v]()` argument at a deduced `Int` record
+  their conversion. The MIR verifier now rejects a literal register at a
+  closed non-literal call argument or `place.store`. MIR
+  text moves to 1.173 (`checked_construct`'s `parameter`) and the package
+  format to 196 (R1964).
 - A numeric literal's type now always carries its value, as upstream's
   `IntLiteral[value]`/`FloatLiteral[value]` does: the value-less literal
   type is gone. A literal's unary `-`/`~`, `/`, `**`, and an `IntLiteral`

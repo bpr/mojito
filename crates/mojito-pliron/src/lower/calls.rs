@@ -466,7 +466,7 @@ impl FnLowering<'_> {
             }
         }
         match default {
-            CheckedConst::Construct { target, arg } => {
+            CheckedConst::Construct { target, arg, .. } => {
                 let LowerTy::Aggregate { layout, .. } = expected else {
                     return Err(self.unsupported_reg(
                         format!(
@@ -838,7 +838,7 @@ pub(super) fn keyword_collector_operand(
 fn string_default_text(default: &CheckedConst) -> Option<&str> {
     match default {
         CheckedConst::String(text) => Some(text.as_str()),
-        CheckedConst::Construct { target, arg }
+        CheckedConst::Construct { target, arg, .. }
             if mojito_symbol::symbol::init_overload_struct(target).is_some() =>
         {
             match &**arg {

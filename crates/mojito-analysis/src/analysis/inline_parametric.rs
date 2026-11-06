@@ -619,7 +619,12 @@ impl DefaultValue {
     /// `default` materialized at a parameter of type `ty`; `None` for a
     /// default this pass does not materialize.
     fn of(default: &CheckedConst, ty: &Ty, declarations: &MirDeclarations) -> Option<Self> {
-        let CheckedConst::Construct { target, arg } = default else {
+        let CheckedConst::Construct {
+            target,
+            arg,
+            parameter: converted,
+        } = default
+        else {
             return Literal::of(default, ty).map(Self::Literal);
         };
         let constructor = match declarations.structure(target) {
@@ -634,7 +639,7 @@ impl DefaultValue {
         }
         Some(Self::Constructed {
             target: target.clone(),
-            arg: Literal::of(arg, parameter)?,
+            arg: Literal::of(arg, converted.as_ref().unwrap_or(parameter))?,
             ty: ty.clone(),
         })
     }

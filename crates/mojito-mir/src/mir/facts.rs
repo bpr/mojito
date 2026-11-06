@@ -795,6 +795,20 @@ impl<'a> Node<'a> {
             })
     }
 
+    /// The constructor parameter this node's implicit conversion
+    /// materializes its literal source at
+    /// ([`mojito_checked::checked::SemanticAdjustment::ConversionSourceLiteral`]).
+    pub(super) fn conversion_source_literal(self) -> Option<Ty> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ConversionSourceLiteral(ty) => {
+                    Some(ty.clone())
+                }
+                _ => None,
+            })
+    }
+
     /// Whether this node's implicit conversion binds its memory-only
     /// source to a `read` parameter
     /// ([`mojito_checked::checked::SemanticAdjustment::ConversionReadsSource`]).

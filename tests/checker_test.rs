@@ -9584,6 +9584,35 @@ fn scalar_construction_from_a_literal_binds_the_declared_initializer() {
 }
 
 #[test]
+fn an_implicit_conversion_materializes_its_literal_source_at_the_parameter() {
+    // Upstream converts `5` to the constructor's `Int` parameter
+    // (`#pop.int_literal_convert`) before calling the `@implicit` `__init__`.
+    let source = "struct Tag(ImplicitlyCopyable):\n    var v: Int\n    @implicit\n    def __init__(out self, v: Int):\n        self.v = v\n\
+                  def g(t: Tag):\n    print(t.v)\n\
+                  def main():\n    g(5)\n";
+    let checked = checked_with_std(source).expect("check");
+    assert!(own_expressions(&checked).any(|expression| {
+        expression.adjustments.iter().any(|adjustment| {
+            matches!(adjustment, SemanticAdjustment::ConversionSourceLiteral(ty) if *ty == Ty::int())
+        })
+    }));
+}
+
+#[test]
+fn an_implicit_conversion_of_a_run_time_value_materializes_no_literal() {
+    let source = "struct Tag(ImplicitlyCopyable):\n    var v: Int\n    @implicit\n    def __init__(out self, v: Int):\n        self.v = v\n\
+                  def g(t: Tag):\n    print(t.v)\n\
+                  def main():\n    var n = 5\n    g(n)\n";
+    let checked = checked_with_std(source).expect("check");
+    assert!(!own_expressions(&checked).any(|expression| {
+        expression
+            .adjustments
+            .iter()
+            .any(|adjustment| matches!(adjustment, SemanticAdjustment::ConversionSourceLiteral(_)))
+    }));
+}
+
+#[test]
 fn trait_valued_parameters_bind_traits_their_bound_accepts() {
     ok_std(
         "def g[Tr: type_of(Movable) = Copyable]() -> Int:\n    return 1\n\

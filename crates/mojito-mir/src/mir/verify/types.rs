@@ -686,6 +686,16 @@ pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
         })
 }
 
+/// Whether `found`, a numeric literal, reaches a closed slot of `expected`,
+/// a non-literal type, with no conversion: upstream's IR has no implicit
+/// conversion, so each is an explicit `#pop.int_literal_convert`
+/// (`literal.materialize`) before the slot. A parameter slot is the
+/// instance's to bind, possibly to the literal itself.
+pub(super) fn unconverted_literal(found: &Ty, expected: &Ty) -> bool {
+    let literal = |ty: &Ty| matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_));
+    literal(found) && !literal(expected) && !contains_type_param(expected)
+}
+
 pub(super) fn contains_type_param(ty: &Ty) -> bool {
     match ty.kind() {
         TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Dependent(_) => true,
@@ -879,5 +889,19 @@ mod tests {
             &erased,
             &pair("Other$mono$V1$V2", CtValue::Int(1), CtValue::Int(2))
         ));
+    }
+
+    #[test]
+    fn a_literal_at_a_closed_scalar_slot_is_unconverted() {
+        let literal = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(5));
+        assert!(unconverted_literal(&literal, &Ty::int()));
+        assert!(unconverted_literal(&literal, &Ty::float64()));
+    }
+
+    #[test]
+    fn a_literal_at_a_literal_slot_or_a_scalar_value_is_not() {
+        let literal = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(5));
+        assert!(!unconverted_literal(&literal, &literal));
+        assert!(!unconverted_literal(&Ty::int(), &Ty::int()));
     }
 }
