@@ -146,6 +146,7 @@ assets/ok/comptime_assert_ends_out_result_path.mojo	-	ineligible	no-scalar-entry
 assets/ok/comptime_assert_judged_per_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_assert_proves_conformance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_assert_proves_proposition.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_assert_static_string_message.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_call_callee_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_call_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape

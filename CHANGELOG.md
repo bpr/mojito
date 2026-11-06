@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime assert` message built as a `StaticString` of a
+  `_get_kgen_string` concatenation now checks, and a local `comptime`
+  alias of a parameter keeps its place in a lifted concatenation's pack,
+  so upstream's `_constrained_conforms_to` is bundled and called from
+  `VariadicList`'s and `VariadicPack`'s `__deinit__`, failing with the
+  pin's message (R1881).
 - A trait member whose value is a construction (`comptime V = P(2)`), read
   through a type parameter (`T.V`, or `T.get[3]` for a parameterized
   member), is now the application the elaborator

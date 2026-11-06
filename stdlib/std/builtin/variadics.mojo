@@ -56,12 +56,12 @@
 # - `element_types` has no `@deprecated(use=Ts)` (R1925);
 # - `__len__(self)`, `__deinit__`, and `_write_to` read `Self.Ts.length`
 #   where upstream calls `Self.__len__()` (R1923);
-# - `__deinit__` omits `_constrained_conforms_to` (R1881);
 # - `__getitem_param__` returns `Pointer(_mlir_value=litref_elt)[]` where
 #   upstream returns `__get_litref_as_mvalue(litref_elt)`, and
 #   `consume_elements` is not declared (R1924);
 # - `_write_to`'s delimiters are `StaticString`s where upstream's are
 #   origin-parametric `StringSlice`s (R1926).
+from std.builtin.constrained import _constrained_conforms_to
 from std.builtin.reversed import reversed
 from std.collections.optional import Optional
 from std.iter import Iterable, Iterator, StopIteration
@@ -461,6 +461,12 @@ struct VariadicList[
         # them.  We destroy in backwards order to match how arguments are
         # normally torn down when CheckLifetimes is left to its own devices.
         comptime if Self.is_owned:
+            _constrained_conforms_to[
+                conforms_to(Self.element_type, Deinitable),
+                Parent=Self,
+                Element=Self.element_type,
+                ParentConformsTo="Deinitable",
+            ]()
             comptime assert conforms_to(Self.element_type, Deinitable)
 
             for i in reversed(range(len(self))):
@@ -646,6 +652,12 @@ struct VariadicPack[
         comptime if Self.is_owned:
             comptime for i in reversed(range(Self.Ts.length)):
                 comptime element_type = Self.Ts[i]
+                _constrained_conforms_to[
+                    conforms_to(element_type, Deinitable),
+                    Parent=Self,
+                    Element=element_type,
+                    ParentConformsTo="Deinitable",
+                ]()
                 comptime assert conforms_to(element_type, Deinitable)
 
                 # Safety: We own the elements in this pack.

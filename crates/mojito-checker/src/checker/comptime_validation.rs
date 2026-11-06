@@ -928,11 +928,30 @@ impl Checker {
                 )));
             }
             let _lifting = self.lifting_position();
-            self.compile_dependent_ct_expr(written)
-                .or_else(|error| self.lifted_application(written).ok_or(error))?
+            self.compile_dependent_ct_expr(written).or_else(|error| {
+                self.lifted_application(written)
+                    .or_else(|| self.requested_message(written, ty))
+                    .ok_or(error)
+            })?
         };
         self.record_at(message.source_span()).comptime_value = Some(Box::new(value));
         Ok(())
+    }
+
+    /// The application of the function MIR lifts for a message `message`
+    /// of type `ty` no other route compiles (`StaticString(_get_kgen_string
+    /// ["a", "b"]())`): the message is a compile-time value whatever it
+    /// constructs, as a local `comptime` binding's initializer is
+    /// ([`Self::requested_binding`]). `None` when it reads a run-time value.
+    fn requested_message(&self, message: &Expr, ty: Ty) -> Option<ParamExpr> {
+        if !self.reads_compile_time_alone(message) {
+            return None;
+        }
+        let application = self.named_application(message, &names_read(message), ty)?;
+        self.lifted_expressions
+            .borrow_mut()
+            .insert(message.source_span(), application.clone());
+        Some(application)
     }
 
     /// Whether the condition of a conditional expression is a parameter

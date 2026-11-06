@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1952**.
+Next free ID: **R1953**.
 
 ## Ordered Work
 
@@ -2452,6 +2452,23 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1952 `StringSpan`'s canonicalizing constructor
+  `__init__(other: StringSpan, out self: StringSpan[ImmOrigin(other.origin)])`
+  is not declared**
+
+  `StaticString(P)` over a `StaticString` parameter or local is rejected
+  ("expected a reference whose origin lies within the supplied 'origin'
+  argument"), where the pin prints it through that `@implicit` constructor.
+  - Declaring it verbatim in `std/string.mojo` fails to package: a bare
+    `StringSpan` parameter type inside the struct's own declaration is
+    "expects 0 type argument(s), got 1", and the result type's
+    `ImmOrigin(other.origin)` reads an argument's origin parameter.
+  - Probe: `def f[P: StaticString](): print(StaticString(P))`, and
+    `comptime assert True, StaticString(P)`; both print or pass at the pin.
+  - Found while landing R1881 (2026-11-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R750 A discard of a field transfer `_ = w.m^` is rejected**
 
   Problem: `var w = W(M(1), M(2)); _ = w.m^` over a destructor-less
@@ -4604,22 +4621,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The checker already answers both conformances for the thin argument
     (R1584), so the gap is the elaborator's alone.
   - Found while landing R1584 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1881 A `comptime assert` message built as a `StaticString` of a
-  `_get_kgen_string` concatenation does not check**
-
-  `comptime assert True, StaticString(_get_kgen_string["a", "b"]())` is
-  rejected, "not a compile-time Int constant: not an associated comptime
-  expression", where the pin runs it.
-  - Cause: `check_assert_message` (`checker/comptime_validation.rs`)
-    neither folds the construction through `compile_dependent_ct_expr`
-    nor lifts it; the same expression checks as a runtime `print`
-    argument.
-  - Probe: upstream's `_constrained_conforms_to`, omitted from the bundled
-    `std/builtin/constrained.mojo` for this reason.
-  - Found while landing R1461 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

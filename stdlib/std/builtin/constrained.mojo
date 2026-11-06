@@ -1,7 +1,5 @@
-# Upstream's `std/builtin/constrained.mojo`, in part:
-# `_field_conforms_to_error`, verbatim, with `StaticString` imported
-# explicitly rather than taken from the prelude.
-# Omitted: `_constrained_conforms_to` (R1881).
+# Upstream's `std/builtin/constrained.mojo`, verbatim, with `StaticString`
+# imported explicitly rather than taken from the prelude.
 """Implements compile-time constraint helpers used by trait conformance checks.
 """
 from std.collections.string.string_span import _get_kgen_string
@@ -9,6 +7,38 @@ from std.reflection import reflect
 from std.reflection.type_info import _unqualified_type_name
 from std.string import StaticString
 
+
+@inline(.nodebug)
+def _constrained_conforms_to[
+    cond: Bool,
+    *,
+    Parent: AnyType,
+    Element: AnyType,
+    ParentConformsTo: StaticString,
+    ElementConformsTo: StaticString = ParentConformsTo,
+]():
+    comptime parent_type_name = reflect[Parent].name()
+    comptime elem_type_name = reflect[Element].name()
+    # TODO(MOCO-2901): Support traits in reflect[T].name()
+    #   comptime trait_name = reflect[ParentConformsTo].name()
+    comptime parent_conforms_to_trait_name = ParentConformsTo
+    comptime elem_conforms_to_trait_name = ElementConformsTo
+
+    # Construct a message like:
+    #     List(Equatable) conformance requires Foo(Equatable) conformance, which
+    #     is not satisfied.
+    comptime assert cond, StaticString(
+        _get_kgen_string[
+            parent_type_name,
+            "(",
+            parent_conforms_to_trait_name,
+            ") conformance requires ",
+            elem_type_name,
+            "(",
+            elem_conforms_to_trait_name,
+            ") conformance, which is not satisfied.",
+        ]()
+    )
 
 @inline(.nodebug)
 def _field_conforms_to_error[

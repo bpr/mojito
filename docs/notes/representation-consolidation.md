@@ -86,7 +86,7 @@ command cannot use both.
      spelling) sit beside them.
    - The elaborator: R1875, R1876 (a struct's origin parameters and its
      associated-type rows), and R1872 landed 11-05.
-   - The check: R1842, R1871, R1856, R1881, and the generator follow-ups
+   - The check: R1842, R1871, R1856, and the generator follow-ups
      of R1486: R1907, R1908, R1909.
    - The members under *H* below were filed against `Elab`'s arms or the
      checker's folds. Re-probe each before planning it.
@@ -94,7 +94,7 @@ command cannot use both.
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1905 --task R1948 --task R1899 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1842 --only R1871 --only R1856 \
-     --only R1881 --only R1907 --only R1908 --only R1909 -n 0
+     --only R1907 --only R1908 --only R1909 -n 0
    ```
 
 5. **Gap I: packs are binder kinds** (slight size). Its cores landed

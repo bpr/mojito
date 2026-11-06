@@ -4448,13 +4448,16 @@ impl<'a> Flatten<'a> {
                 .constant(mojito_types::ct::CtValue::IntLiteral(value.clone()))
                 .ok(),
             // A binder, or a local `comptime` binding of an expression over
-            // them.
+            // them, which a lifted thunk's binders carry.
             CheckedOp::Identifier(name) => self
                 .enclosing_binders
                 .value(&self.spelling(node, name), false)
                 .or_else(|| {
-                    node.binding
-                        .and_then(|owner| self.comptime_thunks.bound_value(owner))
+                    node.binding.and_then(|owner| {
+                        self.enclosing_binders
+                            .comptime_value(owner)
+                            .or_else(|| self.comptime_thunks.bound_value(owner))
+                    })
                 }),
             CheckedOp::Member { object, field }
                 if self.checked.expression(*object).is_some_and(|object| {
