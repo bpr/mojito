@@ -377,11 +377,12 @@ impl Checker {
     /// A module constant bound to a requested value, or folded to a closed
     /// attribute, is one too, as is a local binding of an application: it
     /// has no storage, and each read materializes it. So is the enclosing
-    /// struct's value pack (`Self.vs`), its visible `ParameterList` binder.
+    /// struct's pack (`Self.vs`, `Self.Ts`), its visible `ParameterList` or
+    /// `TypeList` binder.
     pub(super) fn is_parameter_read(&self, expr: &Expr) -> bool {
         if let ExprKind::Member { object, field } = &expr.kind
             && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-            && self.self_value_pack(field).is_some()
+            && self.self_pack_visible(field).is_some()
         {
             return true;
         }

@@ -848,8 +848,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   in `constraints::eval_associated_ct`, and an application binds the pack's
   element list by binder in `bind_declared` and by name in
   `generics::solved_value_bindings`). A type pack is the bundled `TypeList`
-  (`stdlib/std/builtin/variadics.mojo`): `type_pack_type_list` spells it as
-  `TypeList[type_pack_trait(pack), pack]`, `constraints.rs:type_list_member`
+  (`stdlib/std/builtin/variadics.mojo`): `type_pack_type_list` is its
+  visible binder's declared `TypeList[Tr, Ts.values]`
+  (`comptime_validation::type_pack_declared`), whose `Trait` argument
+  `type_pack_trait` reads as an instance binds it,
+  `constraints.rs:type_list_member`
   reads its `length` and `values` through `struct_value_member` (from
   `type_member_value`, so `Ts.length` in any position), and
   `type_pack_element` applies its `__getitem_param__` through
@@ -2779,15 +2782,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and the MIR scope verifier. `ParamDecl::value_element_ty` reads the type
   each bound value has (a bracket argument is checked against it).
   `annotations::pack_scope` maps the pack's name to its list binder
-  (`annotations::pack_list_expr`), and `value_scope` maps a value pack's
-  to its visible binder, which `declare_value_parameters` (`scopes.rs`)
-  declares at its `ParameterList[T, vs.values]` type.
-  `Checker::value_pack_named` resolves a pack to its list — the bare name
-  through `value_pack_in_scope`, which reads the list off the visible
-  binder's `ParameterList` type (the one pack scope `pack_params`, from
-  `annotations::pack_scope`, holds type and value packs and no raw list;
-  `pack_parameter_in_scope` answers only its lists of types), a struct's
-  own `Self.values` through `self_value_pack`. Only a
+  (`annotations::pack_list_expr`), and `value_scope` maps a value or type
+  pack's to its visible binder, which `declare_value_parameters`
+  (`scopes.rs`) declares at its `ParameterList[T, vs.values]` or
+  `TypeList[Tr, Ts.values]` type (a struct's `Self.vs`/`Self.Ts` through
+  `self_pack_visible`). `Checker::value_pack_named` and `type_pack_named`
+  resolve a pack to its list — the bare name through
+  `value_pack_in_scope` or `type_pack_in_scope` (`constraints.rs`), which
+  read the list off the visible binder's type (`visible_pack_list`), a
+  struct's own `Self.values` through `self_value_pack`. Only a
   parameter position reads the list itself: `compile_dependent_ct_expr`'s
   `Index` arm makes `values[i]` a `ListGet` (upstream's
   `__getitem_param__`, roadmap R800), while a `comptime for` over it steps
@@ -2811,13 +2814,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   binder's `{}` constant (`infer_member`'s `Self.n` arm for
   `Self.values`, which `places::is_parameter_read` treats as a parameter
   read and MIR's `place_chain` ends at). A type
-  pack read as a value (`var l = Ts`, `len(Ts)` at run time, `Self.Ts`) is
-  the zero-sized `TypeList[Ts.values]()` spelled in the read's place
-  as a `SpelledConstruction` whose identity is derived at
-  `ast::PACK_READ_ORDINAL` (its argument and the argument's pack at
-  `PACK_READ_RAW_LIST_ORDINAL` and `PACK_READ_OPERAND_ORDINAL`)
-  (`Checker::infer_type_pack_read`, over `infer_spelled_pack_read`),
-  and a run-time read of a `comptime` binding of a `TypeList` value spells
+  pack read as a value (`var l = Ts`, `len(Ts)` at run time, `Self.Ts`)
+  reads its visible `TypeList[Tr, Ts.values]` binder the same way, its
+  `{}` bound by the elaborator wherever the list is
+  (`mono::unify::bind_pack_values`), and a run-time read of a `comptime`
+  binding of a `TypeList` value spells
   its initializer again under the read's derived identities
   (`Checker::infer_type_list_binding_read`, the `Identifier` fallback of
   `infer_impl`). The

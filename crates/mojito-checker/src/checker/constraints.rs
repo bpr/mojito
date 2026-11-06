@@ -1719,40 +1719,37 @@ impl Checker {
     /// `comptime` binding shadows: the list binder (`vs.values`) the name's
     /// visible `ParameterList[T, vs.values]` binder names.
     pub(super) fn value_pack_in_scope(&self, name: &str) -> Option<ParamExpr> {
-        let level = (0..self.tparams.len()).rev().find(|level| {
-            self.vparams
-                .get(*level)
-                .is_some_and(|scope| scope.contains_key(name))
-        })?;
-        let pack = self.pack_params.get(level)?.get(name)?;
-        if *pack.meta() == MetaTy::type_list() {
-            return None;
-        }
-        let list = pack.as_decl_ref()?;
-        let visible = self.value_parameter_in_scope(name)?;
-        visible.as_decl_ref()?;
-        let TyKind::Struct(_, arguments) = visible.meta().as_value()?.kind() else {
-            return None;
-        };
-        matches!(
-            arguments.as_slice(),
-            [_, TyArg::Val(CtValue::Expr(named))]
-                if named.as_decl_ref().is_some_and(|named| named.id == list.id)
-        )
-        .then(|| self.param_context.intern(pack))
+        self.visible_pack_list(name, mojito_types::types::PARAMETER_LIST_TYPE_NAME)
     }
 
-    /// The parameter-list reference a bare name denotes when it is a variadic
-    /// type pack of an enclosing declaration, innermost first: a pack whose
-    /// elements are types, upstream's `TypeList`.
-    pub(super) fn pack_parameter_in_scope(&self, name: &str) -> Option<ParamExpr> {
-        self.pack_params
-            .iter()
-            .take(self.tparams.len())
-            .rev()
-            .find_map(|scope| scope.get(name.trim_start_matches('*')))
-            .filter(|reference| *reference.meta() == MetaTy::type_list())
-            .map(|reference| self.param_context.intern(reference))
+    /// The parameter-list reference a bare name denotes when it is a
+    /// variadic type pack of an enclosing declaration that no local
+    /// `comptime` binding shadows: the list binder (`Ts.values`) the name's
+    /// visible `TypeList[Tr, Ts.values]` binder names.
+    pub(super) fn type_pack_in_scope(&self, name: &str) -> Option<ParamExpr> {
+        self.visible_pack_list(
+            name.trim_start_matches('*'),
+            mojito_types::types::TYPE_LIST_TYPE_NAME,
+        )
+    }
+
+    /// The list binder a bare name's visible pack binder names, when the
+    /// innermost value parameter the name denotes is a pack's visible
+    /// binder whose type is the bundled `list_struct[_, <list>]`.
+    fn visible_pack_list(&self, name: &str, list_struct: &str) -> Option<ParamExpr> {
+        let visible = self.value_parameter_in_scope(name)?;
+        visible.as_decl_ref()?;
+        let TyKind::Struct(struct_name, arguments) = visible.meta().as_value()?.kind() else {
+            return None;
+        };
+        match arguments.as_slice() {
+            [_, TyArg::Val(CtValue::Expr(list))]
+                if struct_name == list_struct && list.as_decl_ref().is_some() =>
+            {
+                Some(self.param_context.intern(list))
+            }
+            _ => None,
+        }
     }
 
     /// The value `Self.<name>` denotes: the instance's bound value inside a

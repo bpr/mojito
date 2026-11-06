@@ -90,15 +90,15 @@ impl Checker {
     }
 
     /// Bind every value parameter among `decls` at its declared type, a
-    /// value pack as its visible `ParameterList[T, vs.values]` binder.
+    /// pack as its visible `ParameterList[T, vs.values]` or `TypeList[Tr,
+    /// Ts.values]` binder.
     pub(super) fn declare_value_parameters(
         &mut self,
         decls: &[ParamDecl],
     ) -> Result<(), TypeError> {
         decls.iter().try_for_each(|decl| match decl {
-            // A pack's list binder is read through the pack, and a type
-            // pack's visible binder is read as the pack's list for now.
-            ParamDecl::Value { .. } if decl.is_pack_list() || decl.is_type_pack() => Ok(()),
+            // A pack's list binder is read through its visible binder's type.
+            ParamDecl::Value { .. } if decl.is_pack_list() => Ok(()),
             ParamDecl::Value { name, ty, .. } => {
                 self.declare_value_parameter(name.trim_start_matches('*'), ty.clone())
             }

@@ -3273,12 +3273,11 @@ impl Checker {
                         ParamDecl::Type { variadic: true, .. },
                         TyArg::Val(list @ CtValue::Tuple(_)),
                     ) => self.param_context.constant(list.clone()).ok()?,
-                    // A value pack's visible binder is its zero-sized
-                    // `ParameterList`.
-                    (ParamDecl::Value { variadic: true, .. }, _) => self
-                        .param_context
-                        .constant(ParamDecl::parameter_list_value())
-                        .ok()?,
+                    // A pack's visible binder is its zero-sized
+                    // `ParameterList` or `TypeList`.
+                    (ParamDecl::Value { variadic: true, .. }, _) => {
+                        self.param_context.constant(decl.pack_value()?).ok()?
+                    }
                     // A value pack's list holds each its element's value.
                     (ParamDecl::Value { ty, .. }, TyArg::Val(CtValue::Tuple(values)))
                         if decl.is_pack_list() =>
@@ -3517,9 +3516,7 @@ impl Checker {
             }
             let denoted = match self.display_named(name) {
                 Some(display) => Some(display.sequence.clone()),
-                None => self
-                    .value_parameter_in_scope(name)
-                    .or_else(|| self.pack_parameter_in_scope(name)),
+                None => self.value_parameter_in_scope(name),
             };
             match denoted {
                 Some(denoted) => {
@@ -4411,7 +4408,7 @@ impl Checker {
                     ty,
                     callable_default: None,
                     ..
-                } if !decl.binds_callables() && !decl.is_type_pack() => {
+                } if !decl.binds_callables() => {
                     Some(super::annotations::value_parameter_expr(decl, ty))
                 }
                 ParamDecl::Value { .. } => None,
@@ -4630,8 +4627,8 @@ impl Checker {
             )
         } else {
             let reference = self
-                .pack_parameter_in_scope(pack)
-                .filter(|_| self.lookup(pack).is_none())?;
+                .type_pack_in_scope(pack)
+                .filter(|_| self.lookup(pack).is_none() || self.is_value_parameter(pack))?;
             (
                 SourceType::Named(pack.to_string(), Vec::new()),
                 pack.to_string(),
@@ -4787,7 +4784,7 @@ impl Checker {
     /// struct's own.
     pub(super) fn pack_reference(&self, pack: &str) -> Option<ParamExpr> {
         let bare = pack.trim_start_matches('*');
-        self.pack_parameter_in_scope(bare).or_else(|| {
+        self.type_pack_in_scope(bare).or_else(|| {
             pack_scope(&self.self_decls)
                 .remove(bare)
                 .map(|reference| self.param_context.intern(&reference))
@@ -4819,53 +4816,48 @@ impl Checker {
         Some(TyKind::ParamList(element).into())
     }
 
-    /// The `Trait` argument of the `TypeList` a type pack is: the
-    /// trait-valued binder bounding it (`*Ts: Tr`), else the trait value its
-    /// declared bound composes. `None` when `pack` names no type pack.
+    /// The `Trait` argument of the `TypeList` a type pack is: the first
+    /// argument of its visible binder's declared `TypeList[Tr, Ts.values]`,
+    /// with a trait-valued binder of the enclosing struct read as the
+    /// instance binds it. `None` when `pack` names no type pack.
     pub(super) fn type_pack_trait(&self, pack: &ParamExpr) -> Option<CtValue> {
-        let binder = pack.as_decl_ref()?;
-        if pack.meta() != &mojito_types::param_expr::MetaTy::type_list() {
+        let declared = self.type_pack_declared(pack)?;
+        let TyKind::Struct(_, arguments) = declared.kind() else {
             return None;
-        }
-        if let Some(trait_binder) = self.trait_bounded_binders.get(&binder.id) {
-            let reference = self
-                .value_parameter_in_scope(&trait_binder.name)
-                .filter(|reference| {
-                    reference
-                        .as_decl_ref()
-                        .is_some_and(|reference| reference.id == trait_binder.id)
-                })
-                .map(CtValue::Expr)
-                .or_else(|| self.self_param_value(&trait_binder.name))?;
-            return Some(match reference {
-                CtValue::Expr(expr) => CtValue::Expr(expr),
-                value => CtValue::Expr(self.param_context.constant(value).ok()?),
-            });
-        }
-        let bounds = self
-            .tparams
-            .iter()
-            .flat_map(HashMap::values)
-            .find_map(|ty| match ty.kind() {
-                TyKind::Param {
-                    binder: declared,
-                    bounds,
-                    ..
-                } if declared.id == binder.id => Some(bounds.clone()),
-                _ => None,
+        };
+        let Some(TyArg::Val(trait_value)) = arguments.first() else {
+            return None;
+        };
+        let CtValue::Expr(trait_expr) = trait_value else {
+            return Some(trait_value.clone());
+        };
+        let Some(trait_binder) = trait_expr.as_decl_ref() else {
+            return Some(trait_value.clone());
+        };
+        let in_scope = self
+            .value_parameter_in_scope(&trait_binder.name)
+            .and_then(|reference| {
+                reference
+                    .as_decl_ref()
+                    .map(|found| found.id == trait_binder.id)
             })
-            .or_else(|| {
-                self.self_decls.iter().find_map(|decl| match decl {
-                    ParamDecl::Type { id, bounds, .. } if id == &binder.id => Some(bounds.clone()),
-                    _ => None,
-                })
-            })?;
-        Some(CtValue::Trait(self.canonical_trait_set(&bounds)))
+            .unwrap_or(false);
+        Some(
+            match (!in_scope)
+                .then(|| self.self_param_value(&trait_binder.name))
+                .flatten()
+            {
+                None => trait_value.clone(),
+                Some(CtValue::Expr(expr)) => CtValue::Expr(expr),
+                Some(value) => CtValue::Expr(self.param_context.constant(value).ok()?),
+            },
+        )
     }
 
     /// The bundled `TypeList` a type pack is, as upstream's variadic type
-    /// parameter is one: `TypeList[Trait, Ts.values]`. `None` when `pack`
-    /// names no type pack.
+    /// parameter is one: its visible binder's declared `TypeList[Tr,
+    /// Ts.values]`, its `Trait` argument as [`Self::type_pack_trait`] reads
+    /// it. `None` when `pack` names no type pack.
     pub(super) fn type_pack_type_list(&self, pack: &ParamExpr) -> Option<Ty> {
         let trait_value = self.type_pack_trait(pack)?;
         Some(
@@ -4904,8 +4896,11 @@ impl Checker {
     /// [`Self::value_pack_named`].
     pub(super) fn type_pack_named(&self, expr: &Expr) -> Option<ParamExpr> {
         match &expr.kind {
-            ExprKind::Identifier(name) if self.lookup(name).is_none() => {
-                self.pack_parameter_in_scope(name)
+            // A signature binds no local: there the name is the binder alone.
+            ExprKind::Identifier(name)
+                if self.lookup(name).is_none() || self.is_value_parameter(name) =>
+            {
+                self.type_pack_in_scope(name)
             }
             ExprKind::Member { object, field }
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
@@ -4994,13 +4989,6 @@ impl Checker {
         Some(self.infer(&invocation).inspect(|ty| {
             self.record_spelled_construction(call, invocation, ty);
         }))
-    }
-
-    /// A type pack read as a value (`var l = Ts`, `len(Ts)` at run time,
-    /// `show(Self.Ts)`): the zero-sized `TypeList[Ts.values]()` the pin
-    /// types the read as, spelled as a value pack read is.
-    pub(super) fn infer_type_pack_read(&self, expression: &Expr) -> Result<Ty, TypeError> {
-        self.infer_spelled_pack_read(expression, TYPE_LIST)
     }
 
     /// A run-time read of a `comptime` binding of a `TypeList` value
@@ -5148,6 +5136,15 @@ impl Checker {
                 )
             }
             _ => None,
+        })
+    }
+
+    /// The enclosing struct's pack visible binder named `field` (`Self.vs`,
+    /// `Self.Ts`): `vs: ParameterList[T, vs.values]` or `Ts: TypeList[Tr,
+    /// Ts.values]`.
+    pub(super) fn self_pack_visible(&self, field: &str) -> Option<&ParamDecl> {
+        self.self_decls.iter().find(|decl| {
+            decl.pack_list_ref().is_some() && decl.name().trim_start_matches('*') == field
         })
     }
 
@@ -5663,57 +5660,46 @@ impl Checker {
         !self.structs.contains_key(name)
     }
 
+    /// The declared type of the visible binder (`Ts: TypeList[Tr,
+    /// Ts.values]`) of the type pack whose list binder `pack` references:
+    /// an open declaration's, innermost first, else the enclosing struct's.
+    fn type_pack_declared(&self, pack: &ParamExpr) -> Option<Ty> {
+        let list = pack.as_decl_ref()?;
+        if *pack.meta() != mojito_types::param_expr::MetaTy::type_list() {
+            return None;
+        }
+        let names_list = |ty: &Ty| {
+            matches!(ty.kind(), TyKind::Struct(name, arguments)
+                if name == TYPE_LIST
+                    && matches!(arguments.as_slice(), [_, TyArg::Val(CtValue::Expr(named))]
+                        if named.as_decl_ref().is_some_and(|named| named.id == list.id)))
+        };
+        self.vparams
+            .iter()
+            .take(self.tparams.len())
+            .rev()
+            .flat_map(HashMap::values)
+            .filter(|visible| visible.as_decl_ref().is_some())
+            .filter_map(|visible| visible.meta().as_value())
+            .find(|ty| names_list(ty))
+            .cloned()
+            .or_else(|| {
+                self.self_decls.iter().find_map(|decl| match decl {
+                    ParamDecl::Value { ty, .. }
+                        if decl
+                            .pack_list_ref()
+                            .is_some_and(|named| named.id == list.id) =>
+                    {
+                        Some(ty.clone())
+                    }
+                    _ => None,
+                })
+            })
+    }
+
     /// Every `Param` operand of a compiled condition must name a parameter,
     /// binding, type, trait, or alias in scope: the constraint compiler
     /// reads any bare identifier as a parameter name.
-    /// A pack read at run time as the construction `<list>[<pack>.values]()`
-    /// of the bundled list struct `list`, spelled in the read's place under
-    /// the read's derived ordinals and checked as any construction is.
-    fn infer_spelled_pack_read(&self, expression: &Expr, list: &str) -> Result<Ty, TypeError> {
-        if !self.structs.contains_key(list) {
-            return Err(TypeError::Unsupported(format!(
-                "a pack read at run time needs the bundled '{VARIADICS_MODULE}' module's '{list}'"
-            )));
-        }
-        if !matches!(
-            expression.kind,
-            ExprKind::Member { .. } | ExprKind::Identifier(_)
-        ) {
-            return Err(TypeError::InvariantViolation(
-                "a pack read names no pack".to_string(),
-            ));
-        }
-        let pack = super::initializer_list::spelled_node(
-            expression,
-            mojito_ast::ast::PACK_READ_OPERAND_ORDINAL,
-            expression.kind.clone(),
-            expression.span,
-        );
-        let raw = super::initializer_list::spelled_node(
-            expression,
-            mojito_ast::ast::PACK_READ_RAW_LIST_ORDINAL,
-            ExprKind::Member {
-                object: Box::new(pack),
-                field: "values".to_string(),
-            },
-            expression.span,
-        );
-        let construction = super::initializer_list::spelled_node(
-            expression,
-            mojito_ast::ast::PACK_READ_ORDINAL,
-            ExprKind::Call {
-                name: list.to_string(),
-                param_args: vec![ParamArg::Value(raw)],
-                args: Vec::new(),
-                kwargs: Vec::new(),
-            },
-            expression.span,
-        );
-        let ty = self.infer(&construction)?;
-        self.record_spelled_construction(expression, construction, &ty);
-        Ok(ty)
-    }
-
     fn comptime_name_resolves(&self, name: &str) -> Result<(), TypeError> {
         let name = name.trim_start_matches('*');
         let known = self.lookup_tparam(name).is_some()
@@ -6610,8 +6596,6 @@ fn callees_read(expr: &Expr) -> Vec<String> {
     mojito_ast::visit::walk_expr(&mut callees, expr);
     callees.0
 }
-
-const VARIADICS_MODULE: &str = "std.builtin.variadics";
 
 /// The `#pop.array<i, …>` attribute of type `!pop.array<n, index>`, as
 /// [`mlir_attribute`] reads it: a [`CtValue::PopArray`] of `n` indices.

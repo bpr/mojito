@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type pack read (`var l = Ts`, `len(Ts)`, `Self.Ts`, and a bare
+  compile-time `Ts`) now reads the pack's visible binder `Ts: TypeList[Tr,
+  Ts.values]`, as the pin does, instead of the checker spelling a fresh
+  `TypeList[Ts.values]()` construction or rebuilding its `TypeList` from
+  the pack's bounds. The elaborator binds a forwarded `*args: *Ts` pack's
+  visible binder too, so `String.write` called through a `Some[Writer]`
+  keeps working (R1912).
 - A value pack read at run time (`var l = vs`, `for v in vs`, `print(vs)`,
   `Self.vs[i]`) now reads the pack's visible binder `vs: ParameterList[T,
   vs.values]`, as the pin does, instead of the checker spelling a fresh

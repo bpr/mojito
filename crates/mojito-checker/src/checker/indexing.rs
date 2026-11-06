@@ -1797,14 +1797,16 @@ impl Checker {
             if let Some(self_ty) = &self.self_ty {
                 self.record_at(object.source_span()).ty = Some(self_ty.clone());
             }
-            return match self.self_decls.iter().find(|d| {
-                d.name() == field
-                    || (d.is_value_pack() && d.name().trim_start_matches('*') == field)
-            }) {
+            return match self
+                .self_decls
+                .iter()
+                .find(|d| d.name() == field)
+                .or_else(|| self.self_pack_visible(field))
+            {
                 // A value parameter reads as its declared type: upstream's
                 // `kgen.param.constant` of the binder, never a read of a
-                // `Self` value. A value pack's is its visible
-                // `ParameterList[T, vs.values]` binder.
+                // `Self` value. A pack's is its visible `ParameterList[T,
+                // vs.values]` or `TypeList[Tr, Ts.values]` binder.
                 Some(decl @ ParamDecl::Value { ty, .. }) => {
                     self.record_member_value(
                         span,

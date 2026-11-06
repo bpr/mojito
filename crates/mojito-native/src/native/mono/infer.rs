@@ -469,6 +469,7 @@ impl Specializer<'_> {
                 if !bindings.types.contains_key(binder) {
                     let elements = overflow.iter().map(materialize_nested_literals).collect();
                     bind_pack(binder, elements, &mut bindings);
+                    bind_pack_values(&declaration.param_decls, &mut bindings);
                 }
             }
             Some(element)

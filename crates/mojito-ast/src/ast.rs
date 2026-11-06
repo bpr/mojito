@@ -34,21 +34,6 @@ pub fn auto_binder_owner<'a>(name: &'a str, parameter: &str) -> Option<&'a str> 
         .strip_prefix('_')
 }
 
-/// The derivation ordinal of a compiler-spelled value or type pack read.
-///
-/// The `ParameterList[values.values]()` or `TypeList[Ts.values]()`
-/// construction the compiler spells in place of a pack read at run time
-/// takes `SyntaxId::derived(read, this)`.
-pub const PACK_READ_ORDINAL: u32 = u32::MAX;
-
-/// The derivation ordinal of the `values.values` argument a spelled value
-/// or type pack read passes to its list struct: an occurrence of its own,
-/// apart from the construction the read's facts record.
-pub const PACK_READ_RAW_LIST_ORDINAL: u32 = u32::MAX - 1;
-
-/// The derivation ordinal of the pack operand of that `values.values`.
-pub const PACK_READ_OPERAND_ORDINAL: u32 = u32::MAX - 2;
-
 /// Whether a declaration carries `@__unsafe_nested_origins_read_only`: the
 /// callee promises to only read the origins its argument types carry, so a
 /// call's exclusivity check counts them as immutable paths.

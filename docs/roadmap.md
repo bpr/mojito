@@ -12232,30 +12232,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1912 A type pack's compile-time and run-time reads re-spell
-  its `TypeList` instead of reading the visible binder**
-
-  A bare `Ts` or `Self.Ts` read is re-spelled `TypeList[Ts.values]()`
-  (`infer_type_pack_read`, `type_pack_type_list`,
-  `checker/comptime_validation.rs`), where upstream reads the visible
-  binder `Ts: TypeList[Tr, Ts.values]` that R1492 now declares.
-  - The checker's pack scope maps `Ts` to the list binder, and
-    `value_scope` and `declare_value_parameters` skip the visible binder
-    (`checker/annotations.rs`, `checker/scopes.rs`), so it is declared and
-    bound but never read.
-  - `pack_parameter_in_scope` goes: its callers (`type_pack_named`,
-    `pack_reference`, `ty_value_from_name`) read the pack through the
-    visible binder's type (`ParamDecl::pack_list`), as R1910 does for
-    `value_pack_in_scope`.
-  - `type_pack_trait` becomes the visible binder's first `TypeList`
-    argument, which R1492 computes at declaration.
-  - Done when `rg 'pack_parameter_in_scope|infer_type_pack_read'` finds
-    nothing and R1492's gate fixtures (`type_pack_*`, `pack_struct_*`,
-    `typelist_*`) still run.
-  - Found while landing R1492 (2026-11-03).
-  - Depends on R1910.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1495 A refined type parameter is not a type**
 
   Upstream rebinds a value of type `T`, in a scope whose `where` clauses

@@ -245,7 +245,7 @@ pub(super) fn bind_explicit_value_arguments(
 }
 
 /// Bind each parameter of `decls` that `bindings` leave unbound to its
-/// default. An erased parameter, and one in `removed` that the callee's
+/// default, a pack's visible binder to its pack's value. An erased parameter, and one in `removed` that the callee's
 /// generator removed, takes none: upstream's call passes `_REMOVED_ARG`, so
 /// nothing evaluates its default (`_constraint: NoneType = _c[dtype]()`).
 pub(super) fn apply_defaults(
@@ -292,7 +292,23 @@ pub(super) fn apply_defaults(
             _ => {}
         }
     }
+    bind_pack_values(decls, bindings);
     Ok(())
+}
+
+/// Bind each pack's visible binder among `decls` whose list `bindings`
+/// bind to its zero-sized `ParameterList` or `TypeList`, which that binder
+/// always holds, whatever its list.
+pub(super) fn bind_pack_values(decls: &[ParamDecl], bindings: &mut Bindings) {
+    for decl in decls {
+        if let Some(list) = decl.pack_list_ref()
+            && bindings.values.contains_key(&list)
+            && !bindings.values.contains_key(&decl.binder())
+            && let Some(value) = decl.pack_value()
+        {
+            bindings.values.insert(decl.binder(), value);
+        }
+    }
 }
 
 pub(super) fn bind_ty_args(
