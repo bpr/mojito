@@ -3533,11 +3533,7 @@ impl Checker {
                         for embedded in node.embedded_types() {
                             typed |= !read_type_binder(embedded, &mut read);
                         }
-                        if let mojito_types::param_expr::ParamKind::DeclRef(reference)
-                        | mojito_types::param_expr::ParamKind::PackQuery {
-                            pack: reference,
-                            ..
-                        } = node.kind()
+                        if let mojito_types::param_expr::ParamKind::DeclRef(reference) = node.kind()
                         {
                             read.insert(reference.id.clone());
                         }
@@ -5145,7 +5141,7 @@ impl Checker {
         pack: &ParamExpr,
         query: mojito_types::param_expr::PackQuery,
     ) {
-        if let Some(pack) = pack.as_decl_ref() {
+        if pack.as_decl_ref().is_some() {
             self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ParamValue {
                     value: self.param_context.pack_query(pack, query),
@@ -6200,8 +6196,7 @@ fn reads_rebound_binder(folded: &ParamExpr, decls: &[ParamDecl], arguments: &[Ty
     folded.visit(&mut |node| {
         reads |= matches!(
             node.kind(),
-            ParamKind::DeclRef(reference) | ParamKind::PackQuery { pack: reference, .. }
-                if rebound.contains(&reference.id)
+            ParamKind::DeclRef(reference) if rebound.contains(&reference.id)
         );
     });
     reads

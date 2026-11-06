@@ -4323,7 +4323,7 @@ fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<
 fn proposition_constraint(value: &ParamExpr) -> Option<GenericConstraint> {
     match value.kind() {
         ParamKind::PackQuery { pack, query } => {
-            let operand = ConstraintOperand::Param(pack.clone());
+            let operand = pack_operand(pack);
             Some(match query {
                 PackQuery::Conforms(trait_name) => GenericConstraint::ConformsPack {
                     operand,
@@ -4349,6 +4349,16 @@ fn proposition_constraint(value: &ParamExpr) -> Option<GenericConstraint> {
             },
         )),
         _ => None,
+    }
+}
+
+/// A pack query's pack as a constraint operand: its binder, the list a
+/// substitution bound it to, or an expression computing the list.
+fn pack_operand(pack: &ParamExpr) -> ConstraintOperand {
+    match pack.kind() {
+        ParamKind::DeclRef(binder) => ConstraintOperand::Param(binder.clone()),
+        ParamKind::Constant(value) => ConstraintOperand::Value(value.clone()),
+        _ => ConstraintOperand::Expr(pack.clone()),
     }
 }
 

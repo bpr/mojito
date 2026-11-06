@@ -2985,7 +2985,7 @@ impl Checker {
         let unsupported =
             || TypeError::Unsupported("a pack proposition over no pack parameter".to_string());
         let pack = |operand: &ConstraintOperand| match operand {
-            ConstraintOperand::Param(pack) => Ok(pack.clone()),
+            ConstraintOperand::Param(pack) => Ok(context.type_pack(pack)),
             _ => Err(unsupported()),
         };
         Ok(match proposition {
@@ -4023,18 +4023,24 @@ impl Checker {
     /// The length query of a pack that is still a parameter, when `expr`
     /// asks one ([`Self::pack_length_binder`]).
     pub(super) fn pack_length_query(&self, expr: &Expr) -> Option<ParamExpr> {
-        let pack = self.pack_length_binder(expr)?;
+        let pack = self.pack_length_operand(expr)?;
         Some(
             self.param_context
                 .pack_query(&pack, mojito_types::param_expr::PackQuery::Length),
         )
     }
 
+    /// The binder of the pack whose length `expr` asks
+    /// ([`Self::pack_length_operand`]).
+    pub(super) fn pack_length_binder(&self, expr: &Expr) -> Option<ParamRef> {
+        self.pack_length_operand(expr)?.as_decl_ref().cloned()
+    }
+
     /// The pack whose length `expr` asks, as the pin reads it at compile
     /// time: `args.__len__()` of a collector spreading the pack, or `len(Ts)`
     /// of the pack itself. `len(args)` is a runtime value, as it is
     /// upstream; `Ts.length` is the pack's `TypeList` member.
-    pub(super) fn pack_length_binder(&self, expr: &Expr) -> Option<ParamRef> {
+    fn pack_length_operand(&self, expr: &Expr) -> Option<ParamExpr> {
         let pack = match &expr.kind {
             ExprKind::Call {
                 name,
@@ -4057,7 +4063,7 @@ impl Checker {
             }
             _ => None,
         }?;
-        pack.as_decl_ref().cloned()
+        pack.as_decl_ref().is_some().then_some(pack)
     }
 
     /// A condition of the declaration owning `decls` (a struct header's
@@ -5248,7 +5254,7 @@ impl Checker {
                 trait_name,
             } => facts.extend(if param.name.starts_with('*') {
                 Some(context.pack_query(
-                    param,
+                    &context.type_pack(param),
                     mojito_types::param_expr::PackQuery::Conforms(trait_name.clone()),
                 ))
             } else {

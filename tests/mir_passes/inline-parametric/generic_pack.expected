@@ -19,7 +19,7 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r1, value: param(param_pack_query { pack: binder { owner: "arity", slot: 0, name: Ts }, query: pack_length }) },
+              const { dest: %r1, value: param(param_pack_query { pack: param_decl_ref { owner: "arity", slot: 0, name: Ts, type: meta_param_list(meta_type) }, query: pack_length }) },
               var.use { dest: %r0, var: $v1, mode: copy },
               binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],
@@ -80,7 +80,7 @@
               literal.materialize { dest: %r2, value: %r1, target: Int },
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }), through: absent } },
               var.store { var: $v2, src: %r2, binding_type: present(Int), in_place: false },
-              loop { results: [%r3], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r5, value: param(param_pack_query { pack: binder { owner: "generic_pack_forwarded", slot: 0, name: Us }, query: pack_length }) }, var.use { dest: %r4, var: $v2, mode: copy }, binary { op: add, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r6] } }] }
+              loop { results: [%r3], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r5, value: param(param_pack_query { pack: param_decl_ref { owner: "generic_pack_forwarded", slot: 0, name: Us, type: meta_param_list(meta_type) }, query: pack_length }) }, var.use { dest: %r4, var: $v2, mode: copy }, binary { op: add, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r6] } }] }
             ],
             terminator: return { value: present(%r3) }
           }

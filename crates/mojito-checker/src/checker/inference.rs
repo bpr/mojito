@@ -2070,7 +2070,7 @@ impl Checker {
         match (mojito_types::types::pack_spread(alternatives)).map(Ty::kind) {
             Some(TyKind::Param { binder, .. }) => {
                 Some(VariantIndex::Expr(self.param_context.pack_query(
-                    binder,
+                    &self.param_context.type_pack(binder),
                     mojito_types::param_expr::PackQuery::IndexOf(
                         self.param_context.type_shape(selected.clone()),
                     ),

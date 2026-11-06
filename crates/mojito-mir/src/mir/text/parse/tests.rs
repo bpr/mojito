@@ -484,8 +484,9 @@ fn constant_families_reprint_byte_identically() {
 /// `Int`, and a closed expression alike.
 #[test]
 fn const_param_round_trips() {
-    let length = ParamContext::detached().pack_query(
-        &test_binder("Ts"),
+    let context = ParamContext::detached();
+    let length = context.pack_query(
+        &context.type_pack(&test_binder("Ts")),
         mojito_types::param_expr::PackQuery::Length,
     );
     let instrs = vec![
@@ -3396,20 +3397,24 @@ fn erased_struct_arguments_round_trip() {
     assert_eq!(parsed.program.functions[0].1.reg_types[&0], erased);
 }
 
-/// Schema 1.6 carries the identity of the pack a pack query names; an older
-/// artifact spells only its name, which reads as an unbound reference.
+/// A pack query takes its pack as an operand (MIR 1.166): the binder's
+/// reference, or a bound list. An older artifact names the pack by a
+/// `binder` record (1.6 on) or its bare spelling, which read as the
+/// reference to that binder and as an unbound one.
 #[test]
 fn pack_queries_round_trip_and_read_from_older_artifacts() {
-    let query = ParamContext::detached().pack_query(&test_binder("Ts"), PackQuery::Length);
-    let program = program_with(vec![(
-        "main".into(),
-        function_with(
-            vec![TyKind::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(query))]).into()],
-            Vec::new(),
-        ),
-    )]);
-    assert_reprints(&program);
-    let text = write::program(&program);
+    let context = ParamContext::detached();
+    let binder = context.type_pack(&test_binder("Ts"));
+    let program_over = |pack: &ParamExpr| {
+        let query = context.pack_query(pack, PackQuery::Conforms("Copyable".into()));
+        program_with(vec![(
+            "main".into(),
+            function_with(
+                vec![TyKind::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(query))]).into()],
+                Vec::new(),
+            ),
+        )])
+    };
     let read_pack = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
         let ty = parsed.program.functions[0].1.reg_types[&0].clone();
@@ -3424,16 +3429,34 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
         };
         pack.clone()
     };
-    assert_eq!(read_pack(&text).id, test_id("Ts"));
+    let closed = context
+        .type_list(vec![Ty::int(), Ty::bool()])
+        .expect("a type list");
+    assert_reprints(&program_over(&closed));
+    let program = program_over(&binder);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert_eq!(read_pack(&text), binder);
+
+    let current = format!(
+        "mojito-mir {}.{}",
+        crate::mir::text::VERSION_MAJOR,
+        crate::mir::text::VERSION_MINOR
+    );
+    let operand = "pack: param_decl_ref { owner: \"$test:Ts\", slot: 0, name: Ts, type: \
+                   meta_param_list(meta_type) }";
+    assert!(text.contains(operand), "{text}");
+    let legacy = text.replacen(&current, "mojito-mir 1.165", 1).replace(
+        operand,
+        "pack: binder { owner: \"$test:Ts\", slot: 0, name: Ts }",
+    );
+    assert_eq!(read_pack(&legacy), binder);
 
     let older = text
-        .replacen("mojito-mir 1.10", "mojito-mir 1.5", 1)
-        .replace(
-            "pack: binder { owner: \"$test:Ts\", slot: 0, name: Ts }",
-            "pack: Ts",
-        );
-    assert_ne!(older.replacen("mojito-mir 1.5", "mojito-mir 1.10", 1), text);
+        .replacen(&current, "mojito-mir 1.5", 1)
+        .replace(operand, "pack: Ts");
     let pack = read_pack(&older);
+    let pack = pack.as_decl_ref().expect("a binder reference");
     assert!(pack.is_unbound() && &*pack.name == "Ts");
 }
 
@@ -3451,8 +3474,10 @@ fn symbolic_variant_index_round_trips() {
         }
         .into(),
     );
-    let index =
-        VariantIndex::Expr(context.pack_query(&test_binder("*Ts"), PackQuery::IndexOf(element)));
+    let index = VariantIndex::Expr(context.pack_query(
+        &context.type_pack(&test_binder("*Ts")),
+        PackQuery::IndexOf(element),
+    ));
     let mut projected = sample_place(0);
     projected.proj = vec![Proj::Variant(index.clone())];
     projected.projection_tys = vec![Ty::int()];

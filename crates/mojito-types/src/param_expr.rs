@@ -179,6 +179,13 @@ impl ParamContext {
         )
     }
 
+    /// A reference to the type pack binder `pack` as a list operand: the
+    /// binder's declared name without its variadic star, of type-list meta.
+    pub fn type_pack(&self, pack: &ParamRef) -> ParamExpr {
+        let name = pack.name.strip_prefix('*').unwrap_or(&pack.name);
+        self.decl_ref(pack.id.clone(), name, MetaTy::type_list())
+    }
+
     /// A reference to slot `index` of the signature binder `depth` levels out.
     pub fn index_ref(&self, depth: u32, index: u32, meta: MetaTy) -> ParamExpr {
         self.make(meta, ParamKind::IndexRef { depth, index })
@@ -686,8 +693,8 @@ impl ParamContext {
                 })?;
                 self.constant(CtValue::Int(length))
             }
-            ParamKind::DeclRef(pack) if matches!(list.meta(), MetaTy::ParamList(_)) => {
-                Ok(self.pack_query(pack, PackQuery::Length))
+            ParamKind::DeclRef(_) if matches!(list.meta(), MetaTy::ParamList(_)) => {
+                Ok(self.pack_query(list, PackQuery::Length))
             }
             ParamKind::ListTabulate { count, .. } => Ok(count.clone()),
             ParamKind::ListConcat { lists } => {
@@ -841,9 +848,10 @@ impl ParamContext {
         ))
     }
 
-    /// One of today's bound-pack constraint leaves, carried for the checker's
-    /// concrete tuple/pack logic to resolve. It adds no symbolic pack support.
-    pub fn pack_query(&self, pack: &ParamRef, query: PackQuery) -> ParamExpr {
+    /// A query over a pack operand: the pack binder's reference in a
+    /// template, or the list a substitution bound it to. The elaborator
+    /// decides a closed one; nothing here folds it.
+    pub fn pack_query(&self, pack: &ParamExpr, query: PackQuery) -> ParamExpr {
         let meta = match &query {
             PackQuery::Length | PackQuery::IndexOf(_) => MetaTy::int(),
             PackQuery::Conforms(_) | PackQuery::Predicate { .. } | PackQuery::Contains(_) => {
@@ -858,10 +866,25 @@ impl ParamContext {
         self.make(
             meta,
             ParamKind::PackQuery {
-                pack: pack.clone(),
+                pack: self.intern(pack),
                 query,
             },
         )
+    }
+
+    /// Rebuild a pack query over `rewrite`'s image of its pack and element.
+    fn rewrite_pack_query(
+        &self,
+        pack: &ParamExpr,
+        query: &PackQuery,
+        rewrite: &mut dyn FnMut(&ParamExpr) -> Result<ParamExpr, ParamError>,
+    ) -> Result<ParamExpr, ParamError> {
+        let query = match query {
+            PackQuery::Contains(element) => PackQuery::Contains(rewrite(element)?),
+            PackQuery::IndexOf(element) => PackQuery::IndexOf(rewrite(element)?),
+            other => other.clone(),
+        };
+        Ok(self.pack_query(&rewrite(pack)?, query))
     }
 
     /// A reflection query on a subject type. The subject is any type
@@ -1293,6 +1316,9 @@ impl ParamContext {
                 &rebuilt_fields(fields, |value| self.fold(value))?,
                 &self.fold(&spelling.0)?,
             ),
+            ParamKind::PackQuery { pack, query } => {
+                self.rewrite_pack_query(pack, query, &mut |operand| self.fold(operand))?
+            }
             _ => expr.clone(),
         })
     }
@@ -2406,48 +2432,16 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 self.list_concat(&lists)?
             }
-            // A pack bound to its elements, to another pack, to a list
-            // computed from packs, or to a raw-list member read through a
-            // bound answers its length; the other queries stay the checker's
-            // concrete pack logic.
+            // A bound pack's length is its list's; any other query is over
+            // the bound list.
             ParamKind::PackQuery {
                 pack,
                 query: PackQuery::Length,
-            } if let Some(bound) = bindings.lookup(pack).filter(|bound| {
-                matches!(
-                    bound.kind(),
-                    ParamKind::Constant(CtValue::Tuple(_))
-                        | ParamKind::ListTabulate { .. }
-                        | ParamKind::ListConcat { .. }
-                ) || (matches!(
-                    bound.kind(),
-                    ParamKind::DeclRef(_) | ParamKind::TypeMember { .. }
-                ) && matches!(bound.meta(), MetaTy::ParamList(_)))
-            }) =>
-            {
-                let length = self.list_length(bound)?;
-                if depth == 0 {
-                    length
-                } else {
-                    self.shift(&length, 0, depth)?
-                }
-            }
+            } => self.list_length(&self.replace_at(pack, bindings, depth, memo)?)?,
             ParamKind::PackQuery { pack, query } => {
-                let query = match query {
-                    PackQuery::Contains(element) => {
-                        PackQuery::Contains(self.replace_at(element, bindings, depth, memo)?)
-                    }
-                    PackQuery::IndexOf(element) => {
-                        PackQuery::IndexOf(self.replace_at(element, bindings, depth, memo)?)
-                    }
-                    other => other.clone(),
-                };
-                // A pack bound to another pack is queried as that pack.
-                let pack = bindings
-                    .lookup(pack)
-                    .and_then(ParamExpr::as_decl_ref)
-                    .unwrap_or(pack);
-                self.pack_query(pack, query)
+                self.rewrite_pack_query(pack, query, &mut |operand| {
+                    self.replace_at(operand, bindings, depth, memo)
+                })?
             }
             ParamKind::Apply { function, args } => {
                 let args: Vec<ParamExpr> = args
@@ -2681,6 +2675,11 @@ impl ParamContext {
                 &rebuilt_fields(fields, |value| self.shift(value, cutoff, by))?,
                 &self.shift(&spelling.0, cutoff, by)?,
             ),
+            ParamKind::PackQuery { pack, query } => {
+                self.rewrite_pack_query(pack, query, &mut |operand| {
+                    self.shift(operand, cutoff, by)
+                })?
+            }
             _ => expr.clone(),
         })
     }
@@ -2924,14 +2923,10 @@ impl ParamExpr {
         &self,
         output: &mut HashSet<String, S>,
     ) {
-        self.visit(&mut |node| match node.kind() {
-            ParamKind::DeclRef(reference) => {
+        self.visit(&mut |node| {
+            if let ParamKind::DeclRef(reference) = node.kind() {
                 output.insert(reference.name.to_string());
             }
-            ParamKind::PackQuery { pack, .. } => {
-                output.insert(pack.name.to_string());
-            }
-            _ => {}
         });
     }
 
@@ -2962,9 +2957,10 @@ impl ParamExpr {
             ParamKind::ListTabulate { count, element } => vec![count, element],
             ParamKind::ListConcat { lists } => lists.iter().collect(),
             ParamKind::PackQuery {
+                pack,
                 query: PackQuery::Contains(element) | PackQuery::IndexOf(element),
-                ..
-            } => vec![element],
+            } => vec![pack, element],
+            ParamKind::PackQuery { pack, .. } => vec![pack],
             ParamKind::Apply { args, .. } => args.iter().collect(),
             ParamKind::BindParams { generator, args } => std::iter::once(generator)
                 .chain(args.iter().flatten())
@@ -2978,7 +2974,6 @@ impl ParamExpr {
             | ParamKind::DeclRef(_)
             | ParamKind::IndexRef { .. }
             | ParamKind::TypeShape(_)
-            | ParamKind::PackQuery { .. }
             | ParamKind::Hole { .. } => Vec::new(),
         }
     }
@@ -3195,9 +3190,11 @@ pub enum ParamKind {
         name: String,
         args: Vec<ParamExpr>,
     },
-    /// A bound-pack query the checker's concrete pack logic resolves; the
-    /// pack is named by its binder's identity.
-    PackQuery { pack: ParamRef, query: PackQuery },
+    /// A query over a pack, which is an operand as upstream's
+    /// `pop.variadic.size` and `TypeList` queries take it: the pack
+    /// binder's reference in a template, or the list a substitution bound
+    /// it to. Only the elaborator decides one.
+    PackQuery { pack: ParamExpr, query: PackQuery },
     /// A compile-time application of the callable symbol `function` to
     /// `args`, in argument order. It is never folded: two applications are
     /// one node by structure, as the pin keeps `f(Int(7))` symbolic through
@@ -5178,9 +5175,17 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             Ok(())
         }
         ParamKind::PackQuery { pack, query } => match query {
-            PackQuery::Length => write!(f, "TypeList[{pack}.values]().length"),
+            PackQuery::IndexOf(element) => {
+                if let Some(binder) = pack.as_decl_ref() {
+                    return write!(f, "_get_type_index[{element}, *{binder}]()");
+                }
+                write!(f, "_get_type_index[{element}, ")?;
+                write_pack_elements(f, pack)?;
+                write!(f, "]()")
+            }
+            PackQuery::Length => write!(f, "TypeList[{}]().length", PackList(pack)),
             PackQuery::Conforms(trait_name) => {
-                write!(f, "conforms_to({pack}.values, {trait_name})")
+                write!(f, "conforms_to({}, {trait_name})", PackList(pack))
             }
             PackQuery::Predicate { predicate, all } => {
                 let reduction = if *all { "all" } else { "any" };
@@ -5190,12 +5195,15 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                     }
                     PackPredicateRef::Alias(name) => name,
                 };
-                write!(f, "TypeList[{pack}.values]().{reduction}[{predicate}]()")
+                write!(
+                    f,
+                    "TypeList[{}]().{reduction}[{predicate}]()",
+                    PackList(pack)
+                )
             }
             PackQuery::Contains(element) => {
-                write!(f, "TypeList[{pack}.values]().contains[{element}]()")
+                write!(f, "TypeList[{}]().contains[{element}]()", PackList(pack))
             }
-            PackQuery::IndexOf(element) => write!(f, "_get_type_index[{element}, *{pack}]()"),
         },
         // Mojo-shaped: a type argument in brackets, a value in parentheses.
         // A construction spells its struct, or the generic instance it
@@ -5345,6 +5353,37 @@ fn own_fields_base(fields: &[(String, ParamExpr)]) -> Option<&ParamExpr> {
     });
     let first = bases.next()??;
     bases.all(|base| base == Some(first)).then_some(first)
+}
+
+/// A pack query's pack as upstream spells its list: a binder's
+/// `Ts.values`, or a bound list's elements.
+struct PackList<'a>(&'a ParamExpr);
+
+impl fmt::Display for PackList<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0.as_decl_ref() {
+            Some(binder) => write!(f, "{binder}.values"),
+            None => write_pack_elements(f, self.0),
+        }
+    }
+}
+
+/// A list operand's elements, comma-separated, or the operand itself when
+/// it is not a constant list.
+fn write_pack_elements(f: &mut fmt::Formatter<'_>, pack: &ParamExpr) -> fmt::Result {
+    let Some(elements) = pack
+        .as_constant()
+        .and_then(CtValue::comptime_iteration_elements)
+    else {
+        return write!(f, "{pack}");
+    };
+    for (index, element) in elements.iter().enumerate() {
+        if index > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{element}")?;
+    }
+    Ok(())
 }
 
 fn write_operands(f: &mut fmt::Formatter<'_>, operands: &[&ParamExpr]) -> fmt::Result {

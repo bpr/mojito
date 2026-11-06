@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pack query (`TypeList[Ts.values]().contains[T]()`, `all`/`any`,
+  `length`, `conforms_to(Ts.values, Trait)`, `_get_type_index[T, *Ts]()`)
+  now takes its pack as an operand, as upstream's queries do: the pack
+  binder's reference in a template, the bound element list once a
+  substitution binds it. So `inline-parametric` keeps the `Bool` value of
+  a compile-time test over a callee pack it binds, which the elaborator
+  decides over the closed list (R1951). MIR text moves to schema 1.166,
+  whose reader still takes the older `binder` record, and the package
+  format to `mojito-package 192`.
 - A compile-time comparison of a literal with a `Scalar` of symbolic
   dtype (`neg_zero != 0` in std's `SIMD.__hash__`) now builds the literal
   as the pin's `SIMD.__init__(IntLiteral)` (or `FloatLiteral`) struct

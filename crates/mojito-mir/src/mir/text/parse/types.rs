@@ -406,7 +406,7 @@ impl Decoder {
                     );
                     return None;
                 }
-                Some(ParamDecl::Type {
+                let decl = ParamDecl::Type {
                     id: self.binder_id(value, fields, &name)?,
                     name,
                     bounds,
@@ -416,7 +416,8 @@ impl Decoder {
                     infer_only,
                     variadic,
                     constraints,
-                })
+                };
+                Some(self.declared(decl))
             }
             "value_param" => {
                 let name = self.req(value, fields, "name", Self::symbol)?;
@@ -460,7 +461,7 @@ impl Decoder {
                     );
                     return None;
                 }
-                Some(ParamDecl::Value {
+                let decl = ParamDecl::Value {
                     id: self.binder_id(value, fields, &name)?,
                     name,
                     ty,
@@ -469,7 +470,8 @@ impl Decoder {
                     infer_only,
                     variadic,
                     constraints,
-                })
+                };
+                Some(self.declared(decl))
             }
             other => {
                 self.error(
@@ -479,6 +481,14 @@ impl Decoder {
                 None
             }
         }
+    }
+
+    /// Record a decoded binder's meta for the legacy pack queries that name
+    /// it ([`Self::pack_query_operand`]).
+    fn declared(&mut self, decl: ParamDecl) -> ParamDecl {
+        self.binder_metas
+            .insert(decl.id().clone(), decl.binder_meta());
+        decl
     }
 
     pub(super) fn constraints(&mut self, value: &Value) -> Vec<GenericConstraint> {
@@ -911,7 +921,7 @@ impl Decoder {
                     self.built(value, built)
                 }
                 "param_pack_query" => {
-                    let pack = self.req(value, fields, "pack", Self::pack_binder)?;
+                    let pack = self.req(value, fields, "pack", Self::pack_query_operand)?;
                     let query = self.req(value, fields, "query", Self::pack_query)?;
                     self.unknown(fields, &["pack", "query"]);
                     Some(self.context.pack_query(&pack, query))
@@ -1079,14 +1089,25 @@ impl Decoder {
         }
     }
 
-    /// The pack a pack query names: a `binder` record, or the bare spelling
-    /// of an artifact older than schema 1.6, which reads as an unbound
-    /// reference of that spelling.
-    fn pack_binder(&mut self, value: &Value) -> Option<ParamRef> {
-        if matches!(&value.kind, ValueKind::Record(tag, _) if tag == "binder") {
-            return self.binder_ref(value);
-        }
-        self.symbol(value).map(|name| ParamRef::unbound(&name))
+    /// A pack query's pack operand. Before MIR 1.166 the query named its
+    /// pack by a `binder` record (schema 1.6 on) or by its bare spelling
+    /// (older, an unbound reference of that spelling); either reads as the
+    /// reference to that binder, of the meta it was declared with, or a
+    /// type pack's when the artifact declares it later.
+    fn pack_query_operand(&mut self, value: &Value) -> Option<ParamExpr> {
+        let binder = match &value.kind {
+            ValueKind::Record(tag, _) if tag == "binder" => self.binder_ref(value)?,
+            ValueKind::Atom(_) | ValueKind::String(_) if self.minor < 166 => {
+                ParamRef::unbound(&self.symbol(value)?)
+            }
+            _ => return self.param_expr(value),
+        };
+        let meta = self
+            .binder_metas
+            .get(&binder.id)
+            .cloned()
+            .unwrap_or_else(MetaTy::type_list);
+        Some(self.context.decl_ref(binder.id, &binder.name, meta))
     }
 
     fn pack_query(&mut self, value: &Value) -> Option<PackQuery> {

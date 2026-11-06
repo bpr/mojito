@@ -6372,7 +6372,6 @@ pub fn names_binder(ty: &Ty, binder: &ParamRef) -> bool {
         fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
             expr.visit(&mut |node| {
                 self.found |= matches!(node.kind(), ParamKind::DeclRef(reference) if reference == self.binder)
-                    || matches!(node.kind(), ParamKind::PackQuery { pack, .. } if pack == self.binder)
                     || node
                         .embedded_types()
                         .into_iter()

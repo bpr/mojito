@@ -310,27 +310,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1951 A pack query names its pack by binder, so `inline-parametric`
-  drops the `Bool` value of a test over a bound pack**
-
-  `ParamKind::PackQuery { pack: ParamRef, .. }` cannot take the element
-  list a call binds a callee pack to, where upstream's query takes its pack
-  as an operand.
-  - So `inline-parametric` drops such a test's value
-    (`unvalue_pack_tests`) and only its constraint form decides it.
-  - The lever: `PackQuery { pack: ParamExpr, query }`, a `DeclRef` to the
-    binder or, after `replace_at` substitutes it, the bound list.
-  - Then `proposition_constraint` maps a closed list to a
-    `ConstraintOperand::Value` tuple, the text form prints the operand
-    (a minor bump, reading the binder form at older minors), and
-    `unvalue_pack_tests` goes.
-  - Probe: `all_copy_tag[Int, Bool]()` in
-    `assets/ok/always_inline_nodebug_binders.mojo` leaves
-    `inline-parametric` with its values.
-  - Found while planning R1905 (2026-11-05).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1905 MIR's compile-time tests carry a constraint beside their
   `Bool` value**
 
@@ -7245,8 +7224,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Over a closed list (`TypeList.of[…]().reverse()`) each of them folds.
   - Upstream's `slice`, `splat`, `map`, `filter_idx`, and `reduce` have no
     spelling in Mojito at all.
-  - The lever is a pack query over a list expression rather than over a
-    pack binder (`ParamKind::PackQuery`).
+  - The lever: the checker builds the query over the computed list as its
+    `ParamKind::PackQuery` operand, which the elaborator already decides
+    (`proposition_constraint`'s `Expr` operand).
   - Depends on R1951, whose pack operand this generalizes to a computed
     list.
   - Model: Fable, Planned.
@@ -9844,6 +9824,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - It started with R1873's rule (2026-11-05), and blocks every probe
     that reads `emit-mir`, with or without `MOJITO_PRE_ELABORATION=0`.
   - Probe: `emit-mir` of `def main(): print(1)` prints its MIR.
+  - Probe: the `tuple_reverse_closed` case of `tests/mir_pass_test.rs`
+    fails at load, since its input predates R1873's rule (`swapped`'s
+    `deinit` receiver call destroys a memory-only `Tuple` register); it
+    needs re-emitting from current lowering once `emit-mir` works.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

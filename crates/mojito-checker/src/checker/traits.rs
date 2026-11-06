@@ -3964,7 +3964,7 @@ pub(super) fn binder_fact(known: &ParamExpr) -> Option<(ParamId, String)> {
         ParamKind::PackQuery {
             pack,
             query: mojito_types::param_expr::PackQuery::Conforms(trait_name),
-        } => Some((pack.id.clone(), trait_name.clone())),
+        } => Some((pack.as_decl_ref()?.id.clone(), trait_name.clone())),
         _ => None,
     }
 }

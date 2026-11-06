@@ -144,6 +144,10 @@ struct Decoder {
     /// artifact by name, which is all a 1.0 reference carries. `None` reads
     /// schema 1.1, whose references are self-describing.
     legacy_binders: Option<HashMap<String, Vec<MetaTy>>>,
+    /// The meta of every binder declared so far, by identity: a pack query
+    /// older than MIR 1.166 names its pack by `binder` record alone, which
+    /// reads as the reference to that binder.
+    binder_metas: HashMap<ParamId, MetaTy>,
     /// The binder typing each register of the function being read: a
     /// `type.construct` older than schema 1.3 names its binder by spelling,
     /// and constructs the one its destination register is typed by.

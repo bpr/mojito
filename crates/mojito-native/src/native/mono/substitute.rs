@@ -1088,10 +1088,29 @@ fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<
         }
         return Ok(());
     };
-    let Some(TyKind::RuntimePack(alternatives)) = bindings.types.get(pack).map(Ty::kind) else {
-        return Ok(());
+    // The pack is its binder, bound to the instance's runtime pack, or the
+    // list of types a substitution above bound it to.
+    let alternatives = match pack.kind() {
+        ParamKind::DeclRef(binder) => match bindings.types.get(binder).map(Ty::kind) {
+            Some(TyKind::RuntimePack(alternatives)) => alternatives.clone(),
+            _ => return Ok(()),
+        },
+        ParamKind::Constant(CtValue::Tuple(elements)) => {
+            let Some(types) = elements
+                .iter()
+                .map(|element| match element {
+                    CtValue::Type(ty) => Some(ty.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+            else {
+                return Ok(());
+            };
+            types
+        }
+        _ => return Ok(()),
     };
-    let alternatives = sub_types(alternatives, bindings)?;
+    let alternatives = sub_types(&alternatives, bindings)?;
     let selected = match element.kind() {
         ParamKind::TypeShape(ty) => substitute_ty(ty, bindings)?,
         ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),

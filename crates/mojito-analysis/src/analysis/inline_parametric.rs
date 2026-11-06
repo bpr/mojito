@@ -3618,7 +3618,6 @@ fn instantiated<'c>(
     }
     let mut instantiation = Instantiation::new(declaration, owner, arguments, declarations)?;
     let mut function = callee.clone();
-    unvalue_pack_tests(&mut function.blocks, &instantiation);
     walk_function_mut(&mut instantiation, &mut function).ok()?;
     construct_type_parameters(&mut function.blocks, &instantiation, declarations).ok()?;
     if constructs_binder(&function.blocks, &instantiation.types) {
@@ -3633,48 +3632,6 @@ fn instantiated<'c>(
         body: Cow::Owned(function),
         closures,
     })
-}
-
-/// Drop the `Bool` value of each compile-time test in `blocks` that queries
-/// a callee pack the instantiation binds to its elements: a pack query names
-/// its pack by binder, so it cannot take the bound list, which the test's
-/// constraint form takes as its operand and the elaborator decides.
-fn unvalue_pack_tests(blocks: &mut [MirBlock], instantiation: &Instantiation<'_>) {
-    let queries_bound_pack = |value: &Const| {
-        let Const::Param(expr) = value else {
-            return false;
-        };
-        let mut bound = false;
-        expr.visit(&mut |node| {
-            bound |= matches!(node.kind(), ParamKind::PackQuery { pack, .. }
-                if instantiation.types.iter().any(|binder| binder.id == pack.id)
-                    && instantiation
-                        .bindings
-                        .lookup(pack)
-                        .and_then(ParamExpr::as_decl_ref)
-                        .is_none());
-        });
-        bound
-    };
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::ComptimeIf { values, .. } => values
-                    .iter_mut()
-                    .filter(|value| value.as_ref().is_some_and(queries_bound_pack))
-                    .for_each(|value| *value = None),
-                MirInstr::ComptimeAssert { value, .. }
-                    if value.as_ref().is_some_and(queries_bound_pack) =>
-                {
-                    *value = None;
-                }
-                _ => {}
-            }
-            for region in instruction_regions_mut(instruction) {
-                unvalue_pack_tests(region, instantiation);
-            }
-        }
-    }
 }
 
 /// Fold each witness lookup the substitution closed in `blocks`.
@@ -4348,7 +4305,9 @@ impl MutTypeVisitor for Instantiation<'_> {
         match index {
             VariantIndex::Expr(expr)
                 if matches!(expr.kind(), ParamKind::PackQuery { pack, .. }
-                    if self.types.iter().any(|bound| bound.id == pack.id)) =>
+                if pack.as_decl_ref().is_none_or(|pack| {
+                    self.types.iter().any(|bound| bound.id == pack.id)
+                })) =>
             {
                 Err(ParamError::Unsupported(format!(
                     "an index into the bound pack of `{expr}`"

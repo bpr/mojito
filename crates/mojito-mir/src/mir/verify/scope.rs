@@ -913,9 +913,6 @@ impl ScopeCx<'_> {
                         Some(node.meta().clone()),
                     ));
                 }
-                ParamKind::PackQuery { pack, .. } => {
-                    references.push((pack.id.clone(), pack.name.to_string(), None));
-                }
                 ParamKind::Hole { .. } => {
                     findings.push(format!("{slot} `{expr}` holds an unbound hole"));
                 }

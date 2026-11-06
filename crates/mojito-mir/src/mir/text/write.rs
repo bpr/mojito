@@ -2804,7 +2804,7 @@ fn param_expr(value: &ParamExpr) -> String {
         }
         ParamKind::PackQuery { pack, query } => record(
             "param_pack_query",
-            &[("pack", binder_ref(pack)), ("query", pack_query(query))],
+            &[("pack", param_expr(pack)), ("query", pack_query(query))],
         ),
         ParamKind::Apply { function, args } => record(
             "param_apply",

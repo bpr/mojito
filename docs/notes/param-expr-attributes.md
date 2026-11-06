@@ -30,7 +30,7 @@ has a checked meta-type and is built by a canonicalizing constructor on a
 | `Conforms`, `Trivial` | `Bool` | Contextual queries over a Type-meta-type subject. |
 | `TypeShape(Ty)` | `Type` | A type with free typed references; a closed type folds to a Type constant. |
 | `Select { elements, index }` | `Type` | Finite type selection, the payload of `DependentType::Parameter`. |
-| `PackQuery` | `Bool` / `Int` | Transport for today's bound-pack constraint leaves, naming its pack by the binder's identity. It adds no symbolic pack support. |
+| `PackQuery` | `Bool` / `Int` | A query over a pack operand, as upstream's `pop.variadic.size` and `TypeList` queries take one: the pack binder's `DeclRef`, or the list a substitution bound it to. Only the elaborator decides one. |
 | `Hole { kind, token }` | explicit | Reserved unknown/unbound. No source construct produces one; it is a boundary error at MIR. |
 
 `MetaTy` is `Value(Ty)`, `Type`, `ReflectedType`, the compile-time aggregates

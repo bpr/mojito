@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.165
+mojito-mir 1.166
 ```
 
-The writer emits 1.165. The reader accepts 1.0 through 1.165; *Schema 1.0*
+The writer emits 1.166. The reader accepts 1.0 through 1.166; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -83,7 +83,7 @@ Minor version 6 carries that identity on a pack query. The `pack` field of
 `param_pack_query` is a `binder { owner, slot, name }` record where it was a
 bare symbol. A 1.5 consumer rejects the record, which is the intended
 failure. A 1.6 consumer reads an older bare symbol as an unbound reference of
-that spelling.
+that spelling. Schema 1.166 replaced the record with the pack operand.
 
 Minor version 7 carries the expression a value argument denotes. A
 `param_arg` gains `expr`: `absent`, or the parameter expression over the
@@ -1138,6 +1138,18 @@ and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
 
+Schema 1.166 makes a pack query's `pack` an operand, as upstream's
+`pop.variadic.size` and `TypeList` queries take their pack: a `param-expr`
+that is the pack binder's `param_decl_ref` in a template, or the list a
+substitution bound it to (`ct_tuple` of the elements) once one does, so
+`inline-parametric` keeps the `Bool` value of a test over a callee pack it
+binds. The reader decides by the field's shape, not the minor: a
+`binder { owner, slot, name }` record (1.6 through 1.165) reads as the
+reference to that binder, of the meta the artifact declared it with (a
+type pack's `meta_param_list(meta_type)` when the binder is declared later
+or not at all), and below 1.166 a bare symbol reads as an unbound reference
+of that spelling. The package format moves to `mojito-package 192`.
+
 Schema 1.165 adds the method `$write_repr_formatted`, the representation
 twin of `$write_formatted`, which an intrinsic receiver's `write_repr_to`
 (`DType`, `Error`) lowers to; the builtin callees `String` and `repr` are
@@ -1667,8 +1679,9 @@ running its `spelling`, so concrete MIR holds none.
 (schema 1.147). `meta` is `meta_value(type)`, `meta_type`,
 `meta_tuple([meta...])`, `meta_list([meta...])`,
 `meta_set([meta...])`, `meta_dict([meta_entry { key, value }...])`, or
-`meta_param_list(meta)`. A pack query's `pack` is the
-`binder { owner, slot, name }` record of the pack binder it queries, and its
+`meta_param_list(meta)`. A pack query's `pack` (schema 1.166) is the
+`param-expr` list it queries: the pack binder's `param_decl_ref`, or the
+list a substitution bound it to. Its
 `query` is `pack_length`,
 `pack_conforms(symbol)`, `pack_predicate { predicate, all }`,
 `pack_contains(param-expr)`, or `pack_index_of(param-expr)` (schema 1.31:

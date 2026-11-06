@@ -1839,9 +1839,15 @@ second expression tree.
   declaration at each site the checker builds one, so the Tuple closedness
   check (`ClosingBinders`) counts it as bound only by that binder. The
   elaborator's markers for a name that is no parameter are a separate
-  variant, `CtValue::Marker(CtMarker)`. A bound-pack query
-  (`ParamKind::PackQuery`) names its pack by `ParamRef` as well, so
-  `ClosingBinders` is keyed by binder identity alone.
+  variant, `CtValue::Marker(CtMarker)`. A pack query
+  (`ParamKind::PackQuery`) takes its pack as an operand, as upstream's
+  `pop.variadic.size` and `TypeList` queries do: the pack binder's
+  `DeclRef` in a template, the list a substitution bound it to after one
+  (`ParamContext::replace_at` substitutes it like any operand). So
+  `ClosingBinders` is keyed by binder identity alone, and
+  `inline-parametric` keeps a test's `Bool` value over a callee pack it
+  binds; the elaborator decides the query over the closed list
+  (`proposition_constraint`).
 - `param_expr::fold` is the one implementation of compile-time scalar
   operators; the checker, the elaborator, and native monomorphization call it.
 
@@ -6744,8 +6750,9 @@ point where a slot declared in a loop is uninitialized again.
   open (a symbolic non-binder type, `Ts[i]()` under a loop binder, R445),
   or a value binder's slot used other than as a read. A `conforms_to` test
   and a `TypeList` pack query (`contains`, `all`/`any`, `length`) hold the
-  type or list they ask of as a `ConstraintOperand`, so a concrete binding
-  substitutes the bound list into the query. A compile-time application over a bound
+  type or list they ask of as a `ConstraintOperand`, and the test's `Bool`
+  value takes the pack as its `PackQuery` operand, so a concrete binding
+  substitutes the bound list into both. A compile-time application over a bound
   type pack (`Tuple.reverse`'s `comptime for` bound, a thunk applied to
   the owner's `Ts`) is applied to the bound element list, which
   `Specializer::demand_application` binds to the thunk's variadic binder
