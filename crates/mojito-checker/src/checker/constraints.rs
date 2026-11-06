@@ -1881,6 +1881,11 @@ impl Checker {
                 }
                 Ok(value)
             }
+            // `IsTrivially*[T]`, and a predicate alias applied to its
+            // arguments: the `Bool` proposition the constraint compiler
+            // reads the same spelling as.
+            _ if let Some(trivial) = self.trivial_predicate_value(expr) => trivial,
+            _ if let Some(applied) = self.predicate_alias_value(expr) => applied,
             ExprKind::Int(n) => self.ct_param(CtValue::IntLiteral(n.clone())),
             ExprKind::Float(value) => self.ct_param(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => self.ct_param(CtValue::Bool(*b)),
@@ -2785,6 +2790,13 @@ impl Checker {
             && kwargs.is_empty()
         {
             match (name.as_str(), args.as_slice()) {
+                // `conforms_to(Ts.values, Trait)`: the pack's conformance
+                // query.
+                ("conforms_to", [subject, _]) if pack_values_projection(subject).is_some() => {
+                    return self
+                        .compile_generic_constraint(expr)
+                        .and_then(|constraint| self.pack_proposition_value(&constraint));
+                }
                 ("conforms_to", [subject, traits]) => {
                     return self.conformance_query(subject, traits);
                 }
@@ -2849,6 +2861,12 @@ impl Checker {
                 return Err(error);
             }
         }
+        // A `TypeList` proposition (`Ts.all_conforms_to[T]()`,
+        // `TypeList[Ts.values]().contains[T]()`, `tl.all[P]()`): a pack's
+        // query, or a closed list's answer.
+        if let Ok(Some(proposition)) = self.compile_typelist_proposition(expr) {
+            return self.pack_proposition_value(&proposition);
+        }
         self.positioned_application(expr).ok_or_else(|| {
             if self.probing_literal.get() {
                 return TypeError::NotComptime("not an exact literal".to_string());
@@ -2907,6 +2925,103 @@ impl Checker {
         self.param_context
             .dtype_predicate(method, &dtype)
             .map(|predicate| predicate.map_err(param_error))
+    }
+
+    /// `IsTrivially{Movable,Copyable,Deinitable}[T]` read as a `Bool`
+    /// value: `True` where the type is trivial now, the proposition over a
+    /// type the instance closes, and `False` for any other closed type.
+    /// `None` for any other expression.
+    fn trivial_predicate_value(&self, expr: &Expr) -> Option<Result<ParamExpr, TypeError>> {
+        let name = match &expr.kind {
+            ExprKind::TypeApply { name, .. } => name,
+            ExprKind::Index { object, .. } => match &object.kind {
+                ExprKind::Identifier(name) => name,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let kind = mojito_types::types::trivial_predicate_name(name)
+            .filter(|_| self.lookup(name).is_none())?;
+        let subject = match &expr.kind {
+            ExprKind::TypeApply { args, .. } => match args.as_slice() {
+                [mojito_ast::ast::ParamArg::Type(ty)] => self.ty_from_anno(ty).map(Some),
+                [mojito_ast::ast::ParamArg::Value(value)] => self.comptime_type_operand(value),
+                _ => Err(TypeError::Unsupported(format!(
+                    "{name}[T] takes exactly one type argument"
+                ))),
+            },
+            ExprKind::Index { index, .. } => self.comptime_type_operand(index),
+            _ => return None,
+        };
+        let context = &self.param_context;
+        Some(subject.and_then(|ty| {
+            let ty = ty.ok_or_else(|| {
+                TypeError::NotComptime(format!("{name}[T] takes a type argument"))
+            })?;
+            if self.is_trivially(kind, &ty) {
+                return Ok(context.boolean(true));
+            }
+            self.conformance_subject(&ty).map_or_else(
+                || Ok(context.boolean(false)),
+                |subject| context.trivial(kind, &subject).map_err(param_error),
+            )
+        }))
+    }
+
+    /// The `Bool` value of a pack or `TypeList` proposition the constraint
+    /// compiler read: a closed list's answer, else the pack's query, which
+    /// the elaborator answers per instance.
+    fn pack_proposition_value(
+        &self,
+        proposition: &GenericConstraint,
+    ) -> Result<ParamExpr, TypeError> {
+        use mojito_types::param_expr::PackQuery;
+        let context = &self.param_context;
+        let unsupported =
+            || TypeError::Unsupported("a pack proposition over no pack parameter".to_string());
+        let pack = |operand: &ConstraintOperand| match operand {
+            ConstraintOperand::Param(pack) => Ok(pack.clone()),
+            _ => Err(unsupported()),
+        };
+        Ok(match proposition {
+            GenericConstraint::Bool(value) => context.boolean(*value),
+            GenericConstraint::And(left, right) => context
+                .infix(
+                    InfixOp::And,
+                    &self.pack_proposition_value(left)?,
+                    &self.pack_proposition_value(right)?,
+                )
+                .map_err(param_error)?,
+            GenericConstraint::ConformsPack {
+                operand,
+                trait_name,
+            } => context.pack_query(&pack(operand)?, PackQuery::Conforms(trait_name.clone())),
+            GenericConstraint::PackPredicate {
+                operand,
+                predicate,
+                all,
+            } => context.pack_query(
+                &pack(operand)?,
+                PackQuery::Predicate {
+                    predicate: predicate.clone(),
+                    all: *all,
+                },
+            ),
+            GenericConstraint::PackContains { operand, element } => {
+                let element = match element {
+                    ConstraintOperand::Type(ty) => ty.clone(),
+                    ConstraintOperand::Param(binder) => {
+                        self.binder_type(binder).ok_or_else(unsupported)?
+                    }
+                    _ => return Err(unsupported()),
+                };
+                context.pack_query(
+                    &pack(operand)?,
+                    PackQuery::Contains(context.type_shape(element)),
+                )
+            }
+            _ => return Err(unsupported()),
+        })
     }
 
     /// An element (`r[0]`, `Self.Ts.reverse()[0]`) or the length
@@ -4686,7 +4801,13 @@ impl Checker {
         expr: &Expr,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let (name, args) = self.predicate_alias_application(expr)?;
-        // A value binder an argument names stays its symbolic reference.
+        // A binder an argument names stays symbolic: a value binder its
+        // reference, a type binder the type it denotes, whose conformance
+        // and triviality stay the propositions the instance answers.
+        let types: Vec<(ParamId, TyArg)> = self
+            .open_type_binders()
+            .map(|(binder, ty)| (binder.id.clone(), TyArg::Ty(ty.clone())))
+            .collect();
         let symbolic: Vec<(ParamId, TyArg)> = self
             .vparams
             .iter()
@@ -4696,13 +4817,23 @@ impl Checker {
                 let id = reference.as_decl_ref()?.id.clone();
                 Some((id, TyArg::Val(CtValue::Expr(reference.clone()))))
             })
+            .chain(types.iter().cloned())
             .collect();
         let environment = ConstraintEnvironment::by_id(
             symbolic.iter().map(|(id, argument)| (id.clone(), argument)),
         );
+        let type_binders: HashSet<&ParamId> = types.iter().map(|(id, _)| id).collect();
         Some(
             self.apply_predicate_alias(name, &args)
                 .and_then(|constraint| {
+                    // A type binder's identity with another type is no
+                    // structural comparison of the two.
+                    if compares_binder(&constraint, &type_binders) {
+                        return Err(TypeError::Unsupported(format!(
+                            "the Bool-valued comptime alias '{name}' read as a value over a type \
+                     parameter"
+                        )));
+                    }
                     let proposition = self
                         .constraint_proposition(&constraint, &environment)
                         .map_err(param_error)?;
@@ -5538,6 +5669,26 @@ impl Checker {
         }
     }
 
+    /// The type parameters of the open scopes, each the type its binder
+    /// denotes.
+    fn open_type_binders(&self) -> impl Iterator<Item = (&ParamRef, &Ty)> {
+        self.tparams
+            .iter()
+            .rev()
+            .flat_map(HashMap::values)
+            .filter_map(|ty| match ty.kind() {
+                TyKind::Param { binder, .. } => Some((binder, ty)),
+                _ => None,
+            })
+    }
+
+    /// The type an open scope's type parameter `binder` denotes.
+    fn binder_type(&self, binder: &ParamRef) -> Option<Ty> {
+        self.open_type_binders()
+            .find(|(open, _)| open.id == binder.id)
+            .map(|(_, ty)| ty.clone())
+    }
+
     /// The binder of the type parameter a bare name denotes in the open
     /// scopes, if any.
     fn type_binder_in_scope(&self, name: &str) -> Option<ParamRef> {
@@ -5944,6 +6095,26 @@ fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {
 }
 
 /// The element types of a pack parameter bound in a constraint environment.
+/// Whether a comparison leaf of `constraint` has one of `binders` as an
+/// operand.
+fn compares_binder(constraint: &GenericConstraint, binders: &HashSet<&ParamId>) -> bool {
+    use GenericConstraint::{And, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, WithMessage};
+    let names = |operand: &ConstraintOperand| matches!(operand, ConstraintOperand::Param(param) if binders.contains(&param.id));
+    match constraint {
+        WithMessage(inner, _) | Not(inner) => compares_binder(inner, binders),
+        And(left, right) | Or(left, right) => {
+            compares_binder(left, binders) || compares_binder(right, binders)
+        }
+        Eq(left, right)
+        | Ne(left, right)
+        | Lt(left, right)
+        | Le(left, right)
+        | Gt(left, right)
+        | Ge(left, right) => names(left) || names(right),
+        _ => false,
+    }
+}
+
 fn bound_pack_types(environment: &ConstraintEnvironment<'_>, param: &ParamRef) -> Option<Vec<Ty>> {
     let TyArg::Val(list) = environment.get(param)? else {
         return None;

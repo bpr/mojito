@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime if` or `comptime assert` condition over `IsTrivially*[T]`,
+  a predicate-alias application, a `TypeList` proposition
+  (`.contains[T]()`, `.all[P]()`, `.any[P]()`, `.all_conforms_to[Tr]()`),
+  or `conforms_to(Ts.values, Tr)` now records its `Bool` parameter value,
+  which the compile-time builder reads as upstream's parameter emitter
+  does, instead of leaving the elaborator its constraint form alone
+  (R1901). A predicate alias over a type parameter now reads as a value
+  too, and a pack query whose pack is bound to another pack renames to it.
 - A pack receiver in a condition (`Ts.all_conforms_to[Trait]()` in a
   struct header, a `where` clause, or a `comptime if`/`comptime assert`) is
   now its binder, read where the condition is emitted, instead of a name

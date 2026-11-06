@@ -2365,6 +2365,11 @@ impl ParamContext {
                     }
                     other => other.clone(),
                 };
+                // A pack bound to another pack is queried as that pack.
+                let pack = bindings
+                    .lookup(pack)
+                    .and_then(ParamExpr::as_decl_ref)
+                    .unwrap_or(pack);
                 self.pack_query(pack, query)
             }
             ParamKind::Apply { function, args } => {

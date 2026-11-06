@@ -309,30 +309,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1899 (2026-11-05).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-- [ ] **R1901 The one builder reads no proposition the constraint compiler
-  reads by its own arms**
-
-  A `comptime if` condition records its `Bool` parameter value only where
-  `build_ct` reads every leaf, and it rejects three propositions that
-  `compile_generic_constraint` (`checker/constraints.rs`) reads specially.
-  - An `IsTrivially*[T]` application is "unknown type". The lever is
-    `ParamContext::trivial`.
-  - A predicate-alias application is "a Bool-valued comptime alias, not a
-    type". The lever is the alias body applied to its arguments.
-  - A `TypeList` proposition (`.contains[T]()`, `.all[P]()`, `.any[P]()`)
-    and a pack `conforms_to(Ts.values, Trait)` are "not an associated
-    comptime expression". The lever is `ParamContext::pack_query`.
-  - Each such condition keeps its constraint form alone, so the elaborator
-    decides it there (`decide_comptime_test`, `mono/specializer.rs`).
-  - Probes: `assets/ok/struct_del_is_trivial_hook.mojo`,
-    `maybe_uninit_predicates.mojo`, `bool_alias_predicate_where.mojo`,
-    `where_module_constant_operand.mojo`, `typelist_comptime_vocabulary.mojo`,
-    `always_inline_nodebug_binders.mojo`, and std `collections/array.mojo`,
-    `utils/static_tuple.mojo`, `io/io.mojo`.
-  - Found while landing R1475 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1902 The one builder rejects a literal compared with a non-`Int`
   scalar parameter**
 
@@ -361,6 +337,9 @@ which names the upstream pass each one follows. Each is measured by the
   - A local `comptime` tuple of reflected types read at a loop index
     (`types[i] == Int` after `comptime types = r.field_types()`) is
     "'(T, Int)' is not a compile-time constant here".
+  - A call of an ordinary function in an operand
+    (`_llvm_bitwidth(dtype) * width == src_width`, std
+    `memory/unsafe.mojo`) is "not an associated comptime expression".
   - Probes: `assets/ok/always_inline_builtin_self_method_fold.mojo`,
     `reflection_field_ref_generic.mojo`.
   - Found while landing R1475 (2026-11-03).
@@ -6487,12 +6466,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: `def f[*Vs: AnyType](x: B[Vs.contains[Int]()]) -> Int` over
   `struct B[b: Bool]` fails with "not a compile-time Int constant: not an
   associated comptime expression", where the pin prints the result.
-  - `compile_dependent_ct_expr` (`checker/constraints.rs`) has an arm for
-    a pack's length (`Vs.length == 2` runs) but none for a proposition,
-    which a body's expression already records as a `ParamKind::PackQuery`.
-  - Adding the arm is not enough: `ParamContext::replace_at` closes only
-    `PackQuery::Length` against a bound pack, so the call then reports
-    "expected B[TypeList[Vs.values]().contains[Int]()], found B[true]".
+  - The builder reads the proposition as a `ParamKind::PackQuery` (R1901),
+    but `ParamContext::replace_at` closes only `PackQuery::Length` against
+    a bound pack, so the call reports "expected
+    B[TypeList[Vs.values]().contains[Int]()], found B[true]".
   - `all_conforms_to[Tr]()`, `all[P]()`, and `any[P]()` are the same
     shape.
   - Probe: the same parameter on a trait requirement and its witness.
@@ -7296,6 +7273,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     spelling in Mojito at all.
   - The lever is a pack query over a list expression rather than over a
     pack binder (`ParamKind::PackQuery`).
+  - Probe: `inline-parametric` drops the `Bool` value of a `comptime if`
+    querying a pack the call binds to its elements (`unvalue_pack_tests`),
+    so `all_copy_tag[Int, Bool]()` in
+    `assets/ok/always_inline_nodebug_binders.mojo` is decided from its
+    constraint form.
   - Depends on nothing.
   - Model: Fable, Planned.
 
