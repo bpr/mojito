@@ -1736,7 +1736,6 @@ fn ast_raw(
                 ast_raw(&vector, comptimes, type_bounds, None)
             );
         }
-        Type::Bool => "Bool".to_string(),
         Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
@@ -2025,7 +2024,6 @@ fn annotation_display(
     scope: &HashMap<String, BinderSpelling>,
 ) -> String {
     match ty {
-        Type::Bool => "Bool".to_string(),
         Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args)

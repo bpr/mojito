@@ -574,11 +574,7 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
             walk_type(visitor, referent);
             walk_exprs(visitor, origin.as_deref().unwrap_or_default());
         }
-        Type::Bool
-        | Type::ClosedStringLiteral
-        | Type::None
-        | Type::SelfParam(_)
-        | Type::SelfType => {}
+        Type::ClosedStringLiteral | Type::None | Type::SelfParam(_) | Type::SelfType => {}
     }
 }
 
@@ -1385,11 +1381,7 @@ fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
                 walk_type_mut(visitor, error);
             }
         }
-        Type::Bool
-        | Type::ClosedStringLiteral
-        | Type::None
-        | Type::SelfParam(_)
-        | Type::SelfType => {}
+        Type::ClosedStringLiteral | Type::None | Type::SelfParam(_) | Type::SelfType => {}
     }
 }
 

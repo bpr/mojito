@@ -132,7 +132,6 @@ pub fn subscript_param_arg(index: &Expr) -> ParamArg {
 /// runtime semantics are not yet supported.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Type {
-    Bool,
     /// The closed type of one string literal, `StringLiteral[value]` at the
     /// pin, whose value Mojito does not track. The elaborator spells a binder
     /// bound to an inferred literal's type with it (a pack element
@@ -237,7 +236,6 @@ impl Type {
     /// spelling no expression denotes.
     pub fn expression_spelling(&self, span: Span) -> Option<Expr> {
         let kind = match self {
-            Self::Bool => ExprKind::Identifier("Bool".to_string()),
             Self::SelfType => ExprKind::Identifier("Self".to_string()),
             Self::Named(name, args) if args.is_empty() => ExprKind::Identifier(name.clone()),
             Self::Named(name, args) => ExprKind::TypeApply {
@@ -2008,10 +2006,7 @@ impl Expr {
         match &self.kind {
             ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
             ExprKind::Identifier(name) if !name.chars().next()?.is_lowercase() => {
-                Some(match name.as_str() {
-                    "Bool" => Type::Bool,
-                    _ => Type::Named(name.clone(), Vec::new()),
-                })
+                Some(Type::Named(name.clone(), Vec::new()))
             }
             ExprKind::TypeApply { name, args } => Some(Type::Named(name.clone(), args.clone())),
             ExprKind::Index { object, index }
@@ -3140,11 +3135,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         self.expr(clause);
                     }
                 }
-                Type::Bool
-                | Type::ClosedStringLiteral
-                | Type::None
-                | Type::SelfParam(_)
-                | Type::SelfType => {}
+                Type::ClosedStringLiteral | Type::None | Type::SelfParam(_) | Type::SelfType => {}
             }
         }
 

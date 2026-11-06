@@ -8,6 +8,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Bool` in type position is now the prelude's `std.builtin.bool.Bool`
+  name, as upstream's is, instead of an AST keyword type, so a program's
+  own `struct Bool` shadows it in annotations and constructions (R1841).
 - The MIR verifier holds the builtin `i1` as a register type of its own,
   as upstream does, instead of as the `Bool` it converts to: an `i1` and
   a `Bool` register no longer pass for each other, `builtin.cast` takes

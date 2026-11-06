@@ -352,7 +352,7 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         // binder.
         Type::TypeOf(_) => {}
         Type::Value(value) => rewrite::substitute_type_bindings_in_expr(value, subs),
-        Type::Bool | Type::ClosedStringLiteral | Type::None | Type::SelfType => {}
+        Type::ClosedStringLiteral | Type::None | Type::SelfType => {}
     }
 }
 
@@ -423,7 +423,6 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
 
 fn ct_param_source_type(source: &Type) -> Option<Ty> {
     match source {
-        Type::Bool => Some(Ty::bool()),
         Type::ClosedStringLiteral => Some(Ty::string_literal()),
         Type::Named(name, args) if name == "StringLiteral" && args.is_empty() => {
             Some(Ty::string_literal())
@@ -476,7 +475,7 @@ fn source_type_from_ty_with_origins(
             Type::Named("Int".to_string(), Vec::new())
         }
         kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
-        kind if kind.is_bool() => Type::Bool,
+        kind if kind.is_bool() => Type::Named("Bool".to_string(), Vec::new()),
         kind if kind.is_string_literal() => Type::ClosedStringLiteral,
         kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
             Type::Named("Float64".to_string(), Vec::new())

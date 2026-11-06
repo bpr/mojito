@@ -31,7 +31,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::GeneratorType => self.parse_generator_type_tail(),
             Token::None => Ok(Type::None),
             Token::Identifier(id) => match id.as_str() {
-                "Bool" => Ok(Type::Bool),
                 // `Self.T` references one of the enclosing struct's type
                 // parameters; bare `Self` is the enclosing struct/trait type.
                 "Self" if matches!(self.peek_token()?, Some(Token::Dot)) => {
@@ -519,21 +518,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.parse_expression_from(*value, Precedence::Lowest)?,
                 ));
             }
-            if matches!(self.peek_token()?, Some(Token::LParen)) {
-                let name = match &ty {
-                    Type::Bool => Some("Bool"),
-                    Type::SelfType => Some("Self"),
-                    _ => None,
-                };
-                if let Some(name) = name {
-                    let atom = Expr::new(
-                        ExprKind::Identifier(name.to_string()),
-                        (start, self.last_span.1),
-                    );
-                    return Ok(ParamArg::Value(
-                        self.parse_expression_from(atom, Precedence::Lowest)?,
-                    ));
-                }
+            if matches!(ty, Type::SelfType) && matches!(self.peek_token()?, Some(Token::LParen)) {
+                let atom = Expr::new(
+                    ExprKind::Identifier("Self".to_string()),
+                    (start, self.last_span.1),
+                );
+                return Ok(ParamArg::Value(
+                    self.parse_expression_from(atom, Precedence::Lowest)?,
+                ));
             }
             // A `Self`-rooted chain an operator continues (`Self.Ts.length -
             // 1 - i`) is the first atom of a value expression.
@@ -634,8 +626,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(match self.peek_token()? {
             Some(Token::None | Token::Def | Token::Star) => true,
             Some(Token::Identifier(id)) => {
-                matches!(id.as_str(), "Bool" | "StringLiteral" | "Self" | "ref")
-                    || is_scalar_alias_name(id)
+                matches!(id.as_str(), "StringLiteral" | "Self" | "ref") || is_scalar_alias_name(id)
             }
             _ => false,
         })
@@ -884,9 +875,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     // --- Expressions (Pratt parser) ---
 }
 
-/// A scalar alias of `std.simd` (`Int`, `Float64`, `UInt8`), which a bracket
+/// A prelude scalar name (`Bool`, `Int`, `Float64`, `UInt8`), which a bracket
 /// operand still parses as a type (roadmap R1511).
 fn is_scalar_alias_name(id: &str) -> bool {
-    matches!(id, "Int" | "UInt" | "Float64")
+    matches!(id, "Bool" | "Int" | "UInt" | "Float64")
         || mojito_ast::ast::Dtype::from_scalar_alias(id).is_some()
 }

@@ -480,7 +480,6 @@ impl Checker {
             return Ok(reflected);
         }
         Ok(match ty {
-            SourceType::Bool => Ty::bool(),
             SourceType::ClosedStringLiteral => Ty::string_literal(),
             SourceType::TypeOf(operand) => self.type_of_operand(operand)?,
             SourceType::None => Ty::none(),

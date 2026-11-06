@@ -804,7 +804,7 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
             }
         }
         Type::TypeOf(operand) | Type::Value(operand) => rewrite_expr(operand, subs),
-        Type::Bool | Type::ClosedStringLiteral | Type::None | Type::SelfType => {}
+        Type::ClosedStringLiteral | Type::None | Type::SelfType => {}
     }
 }
 
@@ -1943,7 +1943,6 @@ fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
     };
     let (head, head_args) = match replacement {
         Type::Named(head, head_args) => (head, head_args),
-        Type::Bool => ("Bool".to_string(), Vec::new()),
         Type::ClosedStringLiteral => ("String".to_string(), Vec::new()),
         // No source constructor head exists (function types, references);
         // leave the call for the checker to report against the clone.
@@ -2049,7 +2048,7 @@ fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr
     // A `Bool` element converts its zero literal explicitly, so the storage
     // is built at exactly the element type, with no literal left for the
     // store to materialize.
-    if matches!(ty, Type::Bool) {
+    if matches!(ty, Type::Named(name, arguments) if name == "Bool" && arguments.is_empty()) {
         return Some(Expr::new(
             ExprKind::Call {
                 name: "Bool".to_string(),

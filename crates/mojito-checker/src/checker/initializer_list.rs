@@ -1076,33 +1076,19 @@ impl Checker {
                     .instance_construction(expression, expected, args, kwargs)
                     .ok_or_else(unspellable);
             }
-            _ => {
-                let name = match mojito_types::ct::source_type(expected, expression.span) {
-                    Some(SourceType::Named(name, param_args)) => {
-                        return Ok(derived_construction(
-                            expression,
-                            ExprKind::Call {
-                                name,
-                                param_args,
-                                args,
-                                kwargs,
-                            },
-                        ));
-                    }
-                    Some(SourceType::Bool) => "Bool",
-                    _ => {
-                        return self
-                            .instance_construction(expression, expected, args, kwargs)
-                            .ok_or_else(unspellable);
-                    }
-                };
-                ExprKind::Call {
-                    name: name.to_string(),
-                    param_args: Vec::new(),
+            _ => match mojito_types::ct::source_type(expected, expression.span) {
+                Some(SourceType::Named(name, param_args)) => ExprKind::Call {
+                    name,
+                    param_args,
                     args,
                     kwargs,
+                },
+                _ => {
+                    return self
+                        .instance_construction(expression, expected, args, kwargs)
+                        .ok_or_else(unspellable);
                 }
-            }
+            },
         };
         Ok(derived_construction(expression, kind))
     }

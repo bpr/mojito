@@ -547,7 +547,7 @@ the checker decides whether each denotes a type or a value. An operand is a
 `def(...)`, a `ref` type, and a `*` pack. The scalar names (`Int`, `UInt`,
 `Bool`, `Float64`, and the sized aliases such as `UInt8`),
 `Self` and its members, and `None` still parse as a `type` there (a scalar
-alias as a `NAME` type), a divergence (roadmap R1511, R1512). Followed by `(`, `Int`, `UInt`, `Bool`,
+name as a `NAME` type), a divergence (roadmap R1511, R1512). Followed by `(`, `Int`, `UInt`, `Bool`,
 `StringLiteral`, `Float64`, and `Self` open the construction expression they
 start (`Int(3)`, `HookFor[Self()]`), a value operand.
 
@@ -1214,7 +1214,7 @@ Notes:
 
 ```
 type:
-    | 'Bool' | 'None'
+    | 'None'
     | 'Self' '.' NAME              # a struct's own type parameter, inside its body
     | 'Self'                       # the enclosing struct/trait type
     | function_type               # a checked function/closure contract or value type
@@ -1235,8 +1235,9 @@ function_type_param:
 fn_effect: 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
-`None` is a reserved keyword; `Bool` is an ordinary `NAME` recognized here by spelling (it
-is **not** reserved). `Int`, `UInt`, and `Float64` are plain `NAME`s: the prelude's `comptime`
+`None` is a reserved keyword. `Bool` is a plain `NAME`, the prelude's
+`std.builtin.bool.Bool` struct, which a program's own `struct Bool` shadows.
+`Int`, `UInt`, and `Float64` are plain `NAME`s too: the prelude's `comptime`
 aliases of `std.simd` (`Scalar[DType.int]`, `Scalar[DType.uint]`, `Scalar[DType.float64]`),
 which a program's own declaration of the name shadows, as it does `Int8` or `Scalar`. `String` is an ordinary `NAME` resolving to
 the prelude's nominal self-hosted `String` struct; `StringLiteral` is an ordinary `NAME` too,

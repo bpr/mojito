@@ -10916,27 +10916,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1936.
   - Model: Opus, Not Planned.
 
-- [ ] **R1841 `Bool` is an AST keyword type, where upstream's is a prelude
-  name**
-
-  The parser turns the identifier `Bool` into `ast::Type::Bool`
-  (`parser/types.rs`), so a program-local `struct Bool` cannot shadow the
-  prelude's, as it can at the pin.
-  - Delete `ast::Type::Bool`: the parser yields `Type::Named("Bool", [])`
-    and resolution goes through the prelude. Update `docs/grammar.md`
-    first.
-  - Port its arms in comptime (`comptime.rs`, `rewrite.rs`), symbol's two
-    spellings, `visit.rs`, `ast.rs`, `initializer_list.rs`,
-    `type_resolution.rs`, `comptime_validation.rs`, and `ct.rs`'s
-    `source_type`.
-  - Delete the `Type::Bool` arms beside a conformer's own name in
-    `synthesize_equatable_eq`'s `takes_self` (`comptime/synth.rs`) and
-    the trait defaults' `overload_key` (`trait_defaults.rs`), which read
-    a `rhs: Bool` parameter as `Self`.
-  - Probe: a program-local `struct Bool` used as `var b: Bool`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1858 An unsolved type binder is the value-less `StringLiteral`
   in the elaborator**
 

@@ -925,7 +925,6 @@ fn overload_key(
         .map(|param| {
             let mut param = param.clone();
             if matches!(&param.ty, Type::Named(named, args) if args.is_empty() && Some(named.as_str()) == conformer)
-                || (matches!(&param.ty, Type::Bool) && conformer == Some("Bool"))
             {
                 param.ty = Type::SelfType;
             }

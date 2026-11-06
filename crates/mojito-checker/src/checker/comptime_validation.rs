@@ -6039,7 +6039,7 @@ enum SelfSlot {
 /// The type of an [`ApplicableParameter`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum SlotType {
-    /// A `Bool`, an `index`, an `i1`, an `IntLiteral`, or a `StringLiteral`,
+    /// An `index`, an `i1`, an `IntLiteral`, or a `StringLiteral`,
     /// a `String` parameter's included.
     Scalar(Ty),
     /// `Self`, the struct a call's instance or receiver resolves.
@@ -6120,7 +6120,6 @@ impl ApplicableShape<'_> {
             })
             .collect::<Option<_>>()?;
         let slot = |ty: &SourceType| match ty {
-            SourceType::Bool => Some(SlotType::Scalar(Ty::bool())),
             SourceType::SelfType => Some(SlotType::Owner),
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
@@ -6192,10 +6191,7 @@ impl ApplicableShape<'_> {
                 variadic,
             ),
             result: match self.ret {
-                SourceType::Bool
-                | SourceType::None
-                | SourceType::SelfType
-                | SourceType::Named(..) => self.ret.clone(),
+                SourceType::None | SourceType::SelfType | SourceType::Named(..) => self.ret.clone(),
                 ret if is_mlir_index_source(ret)
                     || is_mlir_source(ret, "!kgen.deferred")
                     || is_mlir_source(ret, "!kgen.string")

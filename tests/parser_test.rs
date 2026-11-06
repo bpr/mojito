@@ -885,7 +885,7 @@ fn parses_trait_with_method_requirements() {
                     self_convention: None,
                     self_origin: None,
                     self_type: None,
-                    params: vec![fnparam("loud", Type::Bool)],
+                    params: vec![fnparam("loud", Type::Named("Bool".into(), vec![]))],
                     positional_only: None,
                     keyword_only: None,
                     raises: false,
@@ -1085,7 +1085,7 @@ fn parses_a_member_application_in_type_position() {
                 vec![ParamArg::Type(Type::Named("Int".into(), vec![]))]
             ),
             "Of",
-            vec![ParamArg::Type(Type::Bool)],
+            vec![ParamArg::Type(Type::Named("Bool".into(), vec![]))],
         )
     );
     // A single value index stays the subscript the checker reads either way.
@@ -1131,7 +1131,7 @@ fn parses_a_member_application_in_expression_position_as_a_subscript() {
                 },
                 "Of",
             ),
-            index: bx(ExprKind::TypeValue(Type::Bool)),
+            index: bx(ExprKind::TypeValue(Type::Named("Bool".into(), vec![]))),
         }
     );
     assert_eq!(
@@ -4289,7 +4289,7 @@ fn parses_function_type_annotations() {
             type_params: vec![],
             params: vec![
                 function_type_param(Type::Named("Int".into(), vec![])),
-                function_type_param(Type::Bool),
+                function_type_param(Type::Named("Bool".into(), vec![])),
             ],
             ret: Box::new(Type::Named("String".into(), vec![])),
             thin: true,
@@ -4882,7 +4882,7 @@ fn lambda_body_extends_through_ternary() {
         lambda_expr(
             0,
             vec![],
-            vec![fnparam("x", Type::Bool)],
+            vec![fnparam("x", Type::Named("Bool".into(), vec![]))],
             None,
             false,
             Some(Type::Named("Int".into(), vec![])),

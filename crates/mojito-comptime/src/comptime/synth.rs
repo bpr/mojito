@@ -277,7 +277,6 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
                 method.params.as_slice(),
                 [parameter] if matches!(&parameter.ty, Type::SelfType)
                     || matches!(&parameter.ty, Type::Named(named, _) if named == name)
-                    || (matches!(&parameter.ty, Type::Bool) && name == "Bool")
             )
         };
         if !conforms.iter().any(|conformance| equatable(conformance))
