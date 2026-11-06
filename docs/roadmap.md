@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1954**.
+Next free ID: **R1955**.
 
 ## Ordered Work
 
@@ -13275,23 +13275,18 @@ residue found inside a task moves to the task that owns its fix.
 
 Track: `tooling`.
 
-- [ ] **R1911 The MIR text reader rejects an older artifact that
-  declares a value pack**
+- [ ] **R1954 An older artifact's parameterized associated type keeps
+  its one-binder pack arguments**
 
-  Schema 1.159 declares a value pack as two binders (R1491), and the
-  reader rejects a 1.158 or older artifact whose `value_param` is
-  `variadic: true`, asking for it to be re-emitted.
-  - The upgrade splits the old binder: its id becomes the list binder's,
-    which every body reference names with the raw list's meaning, and the
-    visible binder takes the slot after the leading infer-only binders.
-  - Every later binder's slot moves up one, so the reader must renumber
-    references through its id table (`text/parse/types.rs`).
-  - Precedent: R808's 1.112 rejection, which R1151 withdrew.
-  - Schema 1.160 does the same for a type pack (R1492): a 1.159 or older
-    `type_param` with `variadic: true` is rejected. Its upgrade is the same
-    split, the old id the list binder's (renamed `Ts.values`, infer-only,
-    at the insertion point) and a visible `value_param` typed
-    `TypeList[Tr, Ts]` at the end.
+  The reader regroups an older artifact's arguments around a pack's two
+  binders only where the application names its target (R1911), and an
+  `assoc` record names no owner whose binders its arguments align with.
+  - Probe: a 1.158 artifact holding `assoc { base, member, arguments }`
+    for a parameterized associated type declared `[*vs: Int]` reads its
+    arguments one short of the declared binders.
+  - Also: the visible `TypeList` of an older type pack takes the trait
+    set of its bounds without the checker's implication pruning
+    (`canonical_trait_set`), which the reader cannot consult.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -101,11 +101,9 @@ command cannot use both.
    11-03 (R1491, R1492, R1485, R1486). What is left:
    - R1910, then R1912: a value pack's, then a type pack's, reads come
      from the visible binder instead of being spelled again. Planned.
-   - R1911: the MIR text reader upgrades an older artifact that declares a
-     value pack.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1912 --task R1911 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1912 -n 0
    ```
 
 6. **The scalar, literal, and string structs' residues** (conformance;

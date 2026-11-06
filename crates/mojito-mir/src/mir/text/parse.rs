@@ -129,6 +129,7 @@ mod decls;
 mod instrs;
 mod operands;
 mod origins;
+mod packs;
 mod prims;
 mod reader;
 mod types;
@@ -168,6 +169,9 @@ struct Decoder {
     /// The schema minor the header names: a `value_param` of a pack older
     /// than MIR 1.113 carries its element, not the list it binds.
     minor: u16,
+    /// The parameter lists of an artifact older than MIR 1.160 that
+    /// declare a pack as one binder, which reads as two.
+    pack_upgrades: packs::PackUpgrades,
 }
 
 fn parse_int_literal(value: &str) -> Option<IntLiteral> {

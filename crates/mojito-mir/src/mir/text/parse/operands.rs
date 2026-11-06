@@ -529,9 +529,11 @@ impl Decoder {
                 let function = self.req(value, fields, "function", Self::symbol);
                 let arguments = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)));
                 self.unknown(fields, &["function", "arguments"]);
+                let function = function?;
+                let arguments = self.upgraded_named_arguments(&function, arguments?);
                 Some(Const::FunctionInstance {
-                    function: function?,
-                    arguments: arguments?,
+                    function,
+                    arguments,
                 })
             }
             ValueKind::Positional(tag, inner) => match tag.as_str() {
@@ -569,7 +571,7 @@ impl Decoder {
         let slot = self.req(value, fields, "slot", Self::uint)?;
         self.unknown(fields, &["owner", "slot", "name"]);
         Some(mojito_types::param_expr::ParamRef {
-            id: mojito_types::param_expr::ParamId::new(&owner, slot),
+            id: self.upgraded_id(&owner, slot),
             name: name.into(),
         })
     }

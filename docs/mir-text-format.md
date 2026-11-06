@@ -1099,8 +1099,16 @@ binder's param_decl_ref>))] }`. A body reference to the pack names the list
 binder; an application binds it to the list and the visible binder to
 `ct_struct { name: ParameterList, fields: [] }`. Every binder after the
 list's slot moves up one. A 1.158 or older artifact that declares a value
-pack is rejected with a request to re-emit it (roadmap R1911). The package
-format moves to `mojito-package 184`.
+pack reads as the two binders (R1911): the old binder's identity becomes
+the list binder's, at the slot after the leading infer-only binders, the
+visible binder takes the slot after the old pack's, and every other binder
+from the list's slot on moves up one, in every reference the artifact
+holds. A struct type's arguments, a call's `instantiated_args`, a
+`function_instance`'s and a `checked_evaluate`'s arguments, and a
+`param_apply`'s arguments aligned with the old binders gain the visible
+binder's `ct_struct { name: ParameterList, fields: [] }` (a type pack's
+`TypeList`) at its slot. A parameter list declaring two packs is rejected.
+The package format moves to `mojito-package 184`.
 
 Schema 1.160 declares a type pack `*Ts: Tr` the same way (R1492): the
 infer-only, `variadic: true` `type_param` named `Ts.values`, whose bounds
@@ -1111,8 +1119,10 @@ value>), value_arg(ct_expr(<the list binder's param_decl_ref>))] }`. An
 application binds the list binder to the list (or a forwarded spread) and
 the visible binder to `ct_struct { name: TypeList, fields: [] }`; `Tuple`,
 `Variant`, and `TString` keep spelling their arguments element by element.
-A 1.159 or older artifact that declares a type pack is rejected with a
-request to re-emit it (roadmap R1911). The package format moves to
+A 1.159 or older artifact's type pack reads as the two binders the same
+way (R1911), the old `type_param` renamed `Ts.values` and made infer-only,
+its visible binder's trait value its trait-parameter bound or the trait
+set of its bounds. The package format moves to
 `mojito-package 185`.
 
 Schema 1.161 adds the type `lit_ref_pack { elements, origin }`, upstream's

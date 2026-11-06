@@ -258,7 +258,7 @@ impl Decoder {
         }
         let owner = self.req(value, fields, "owner", Self::string)?;
         let slot = self.req(value, fields, "slot", Self::uint)?;
-        Some(mojito_types::param_expr::ParamId::new(&owner, slot))
+        Some(self.upgraded_id(&owner, slot))
     }
     /// A register list a later schema added to a region op or terminator:
     /// 1.82 a loop's `results` and a break's `values`, 1.83 a loop's

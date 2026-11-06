@@ -17,6 +17,7 @@ impl Decoder {
             legacy_raise: None,
             legacy_raises: false,
             minor,
+            pack_upgrades: packs::PackUpgrades::default(),
         }
     }
 
@@ -27,6 +28,9 @@ impl Decoder {
         self.mark("artifact", value.span);
         if self.legacy_binders.is_some() {
             self.legacy_binders = Some(Self::legacy_value_binders(value));
+        }
+        if self.minor <= 159 {
+            self.scan_pack_upgrades(value);
         }
         let Ok(fields) = self.record(value, "artifact") else {
             return Err(self.diagnostics);
@@ -684,6 +688,7 @@ impl Decoder {
             ValueKind::Record(tag, fields) if tag == "checked_evaluate" => {
                 let function = self.string(self.field(fields, "function").ok()?)?;
                 let arguments = self.ty_args(self.field(fields, "arguments").ok()?);
+                let arguments = self.upgraded_named_arguments(&function, arguments);
                 Some(CheckedConst::Evaluate {
                     function,
                     arguments,

@@ -179,7 +179,7 @@ impl Decoder {
                 let owner = self.req(value, fields, "owner", Self::string)?;
                 let slot = self.req(value, fields, "slot", Self::uint)?;
                 self.unknown(fields, &["owner", "slot"]);
-                Some(mojito_types::param_expr::ParamId::new(&owner, slot))
+                Some(self.upgraded_id(&owner, slot))
             })
             .collect()
     }
@@ -262,12 +262,18 @@ impl Decoder {
             .collect()
     }
 
+    pub(super) fn instruction(&mut self, value: &Value) -> Option<MirInstr> {
+        let mut instruction = self.decoded_instruction(value)?;
+        self.upgrade_contract_arguments(&mut instruction);
+        Some(instruction)
+    }
+
     #[allow(
         clippy::cognitive_complexity,
         clippy::too_many_lines,
         reason = "TODO: split this pass"
     )]
-    pub(super) fn instruction(&mut self, value: &Value) -> Option<MirInstr> {
+    fn decoded_instruction(&mut self, value: &Value) -> Option<MirInstr> {
         let (tag, fields) = self.any_record(value)?;
         match tag {
             "loans.establish" => Some(MirInstr::EstablishLoans {
@@ -451,44 +457,51 @@ impl Decoder {
                 raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
                 refined_bound: self.refined_bound(fields).map(MirRefinedBound::boxed),
             }),
-            "call" => Some(MirInstr::Call {
-                dest: self.req(value, fields, "dest", Self::reg)?,
-                func: FuncRef(self.req(value, fields, "func", Self::symbol)?),
-                raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
-                args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
-                kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
-                arg_places: self
-                    .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
-                kwarg_places: self.req(value, fields, "kwarg_places", |d, v| {
-                    Some(d.places_option(v))
-                })?,
-                capture_accesses: self.req(value, fields, "capture_accesses", |d, v| {
-                    Some(d.mir_capture_accesses(v))
-                })?,
-                param_arg_regs: self.req(value, fields, "param_arg_regs", |d, v| {
-                    Some(d.mir_param_args(v))
-                })?,
-                // Schema 1.8 records the spelled receiver of a static call; an
-                // older artifact carries none.
-                receiver: (self
-                    .field(fields, "receiver")
-                    .ok()
-                    .and_then(|found| self.option_ty(Some(found)))),
-                // Schema 1.13 records the solved arguments of a generic
-                // `def` call; an older artifact carries none.
-                instantiated_args: self
-                    .field(fields, "instantiated_args")
-                    .ok()
-                    .map(|found| self.ty_args(found))
-                    .unwrap_or_default(),
-                // Schema 1.17 records the position of a whole pack spread
-                // into the callee's collector; an older artifact carries
-                // none.
-                spread: self
-                    .field(fields, "spread")
-                    .ok()
-                    .and_then(|found| self.option_uint(found)),
-            }),
+            "call" => {
+                let func_name = self.req(value, fields, "func", Self::symbol);
+                Some(MirInstr::Call {
+                    dest: self.req(value, fields, "dest", Self::reg)?,
+                    func: FuncRef(func_name.clone()?),
+                    raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
+                    args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
+                    kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
+                    arg_places: self
+                        .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
+                    kwarg_places: self.req(value, fields, "kwarg_places", |d, v| {
+                        Some(d.places_option(v))
+                    })?,
+                    capture_accesses: self.req(value, fields, "capture_accesses", |d, v| {
+                        Some(d.mir_capture_accesses(v))
+                    })?,
+                    param_arg_regs: self.req(value, fields, "param_arg_regs", |d, v| {
+                        Some(d.mir_param_args(v))
+                    })?,
+                    // Schema 1.8 records the spelled receiver of a static call; an
+                    // older artifact carries none.
+                    receiver: (self
+                        .field(fields, "receiver")
+                        .ok()
+                        .and_then(|found| self.option_ty(Some(found)))),
+                    // Schema 1.13 records the solved arguments of a generic
+                    // `def` call; an older artifact carries none.
+                    instantiated_args: self
+                        .field(fields, "instantiated_args")
+                        .ok()
+                        .map(|found| self.ty_args(found))
+                        .map(|args| match &func_name {
+                            Some(name) => self.upgraded_named_arguments(name, args),
+                            None => args,
+                        })
+                        .unwrap_or_default(),
+                    // Schema 1.17 records the position of a whole pack spread
+                    // into the callee's collector; an older artifact carries
+                    // none.
+                    spread: self
+                        .field(fields, "spread")
+                        .ok()
+                        .and_then(|found| self.option_uint(found)),
+                })
+            }
             "call.indirect" => Some(MirInstr::CallIndirect {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 callee: self.req(value, fields, "callee", Self::reg)?,

@@ -133,6 +133,7 @@ impl Decoder {
                     let name = self.req(value, fields, "name", Self::symbol)?;
                     let args = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)))?;
                     self.unknown(fields, &["name", "arguments"]);
+                    let args = self.upgraded_named_arguments(&name, args);
                     TyKind::Struct(name, args).into()
                 }
                 // Either slot may be a `ct_expr(...)` while symbolic; the
@@ -349,17 +350,24 @@ impl Decoder {
     /// schema 1.4 names its binder by spelling, which is the binder of that
     /// spelling in this list.
     pub(super) fn param_decls(&mut self, value: &Value) -> Vec<ParamDecl> {
-        let decls: Vec<ParamDecl> = self
+        let mut decls: Vec<ParamDecl> = self
             .list(value)
-            .map(|values| values.iter().filter_map(|v| self.param_decl(v)).collect())
+            .map(|values| values.iter().flat_map(|v| self.param_decl(v)).collect())
             .unwrap_or_default();
+        self.order_upgraded(&mut decls);
         decls
             .iter()
             .map(|decl| decl.bind_references(&[&decls]))
             .collect()
     }
 
-    pub(super) fn param_decl(&mut self, value: &Value) -> Option<ParamDecl> {
+    /// A parameter declaration: an older artifact's one pack binder reads
+    /// as its two ([`Self::split_legacy_pack`]).
+    pub(super) fn param_decl(&mut self, value: &Value) -> Vec<ParamDecl> {
+        self.param_binder(value).unwrap_or_default()
+    }
+
+    fn param_binder(&mut self, value: &Value) -> Option<Vec<ParamDecl>> {
         let (tag, fields) = self.any_record(value)?;
         match tag {
             "type_param" => {
@@ -395,17 +403,6 @@ impl Decoder {
                         "constraints",
                     ],
                 );
-                // Schema 1.159 and older declared a type pack as one
-                // binder, where the pack is now its list binder and a
-                // visible `TypeList` binder.
-                if variadic && self.minor <= 159 {
-                    self.error(
-                        value.span,
-                        "a type pack declared before MIR 1.160 is one binder; re-emit the \
-                         artifact",
-                    );
-                    return None;
-                }
                 let decl = ParamDecl::Type {
                     id: self.binder_id(value, fields, &name)?,
                     name,
@@ -417,7 +414,10 @@ impl Decoder {
                     variadic,
                     constraints,
                 };
-                Some(self.declared(decl))
+                if self.is_legacy_pack(tag, variadic) {
+                    return Some(self.split_legacy_pack(value, decl));
+                }
+                Some(vec![self.declared(decl)])
             }
             "value_param" => {
                 let name = self.req(value, fields, "name", Self::symbol)?;
@@ -450,17 +450,6 @@ impl Decoder {
                         "constraints",
                     ],
                 );
-                // Schema 1.158 and older declared a value pack as one
-                // binder, which every reference in a body names with the
-                // raw list's meaning, where the pack is now two.
-                if variadic && self.minor <= 158 {
-                    self.error(
-                        value.span,
-                        "a value pack declared before MIR 1.159 is one binder; re-emit the \
-                         artifact",
-                    );
-                    return None;
-                }
                 let decl = ParamDecl::Value {
                     id: self.binder_id(value, fields, &name)?,
                     name,
@@ -471,7 +460,10 @@ impl Decoder {
                     variadic,
                     constraints,
                 };
-                Some(self.declared(decl))
+                if self.is_legacy_pack(tag, variadic) {
+                    return Some(self.split_legacy_pack(value, decl));
+                }
+                Some(vec![self.declared(decl)])
             }
             other => {
                 self.error(
@@ -485,7 +477,7 @@ impl Decoder {
 
     /// Record a decoded binder's meta for the legacy pack queries that name
     /// it ([`Self::pack_query_operand`]).
-    fn declared(&mut self, decl: ParamDecl) -> ParamDecl {
+    pub(super) fn declared(&mut self, decl: ParamDecl) -> ParamDecl {
         self.binder_metas
             .insert(decl.id().clone(), decl.binder_meta());
         decl
@@ -848,10 +840,8 @@ impl Decoder {
                     let name = self.req(value, fields, "name", Self::symbol)?;
                     let meta = self.req(value, fields, "type", Self::meta_ty)?;
                     self.unknown(fields, &["owner", "slot", "name", "type"]);
-                    Some(
-                        self.context
-                            .decl_ref(ParamId::new(&owner, slot), &name, meta),
-                    )
+                    let id = self.upgraded_id(&owner, slot);
+                    Some(self.context.decl_ref(id, &name, meta))
                 }
                 "param_index_ref" => {
                     let depth = self.req(value, fields, "depth", Self::uint32)?;
@@ -1047,6 +1037,7 @@ impl Decoder {
                         self.ct_value(inner)?;
                     }
                     self.unknown(fields, &["function", "type", "args", "evaluated"]);
+                    let args = self.upgraded_apply_arguments(&function, args);
                     Some(self.context.apply(&function, &args, meta))
                 }
                 // A hole is a boundary error at MIR, never a parsed form.

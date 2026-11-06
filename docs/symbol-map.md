@@ -1367,7 +1367,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   matrix pins against); `mir/text/write.rs` owns structural
   serialization and ordering.
 - `mir/text/parse.rs` (split across
-  `parse/{reader,decls,instrs,operands,types,origins,prims}.rs`) owns UTF-8
+  `parse/{reader,decls,instrs,operands,types,origins,packs,prims}.rs`;
+  `packs.rs` reads an older artifact's one-binder pack as two) owns UTF-8
   validation, the recoverable spanned schema
   parser, full-schema typed reconstruction (every instruction, terminator,
   type, origin, and declaration-metadata form, including nested try-region

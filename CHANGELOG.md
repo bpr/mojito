@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR text reader now reads an artifact older than MIR 1.159 (a value
+  pack) or 1.160 (a type pack) that declares a pack as one binder as
+  upstream's two binders, renumbering the references and regrouping the
+  applications aligned with the old binders, instead of rejecting it
+  with a request to re-emit it (R1911).
 - A type pack read (`var l = Ts`, `len(Ts)`, `Self.Ts`, and a bare
   compile-time `Ts`) now reads the pack's visible binder `Ts: TypeList[Tr,
   Ts.values]`, as the pin does, instead of the checker spelling a fresh

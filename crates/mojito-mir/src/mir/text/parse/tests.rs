@@ -3095,22 +3095,11 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
     assert_eq!(recorded(&older), None);
 }
 
-/// A value pack's binder round-trips; a 1.158 or older artifact declared
-/// a pack as one binder, which the reader rejects rather than misreads.
-#[test]
-fn value_pack_declarations_from_older_artifacts_are_rejected() {
-    let pack: Ty = TyKind::ParamList(Ty::int()).into();
+/// A generic function type over `decls`, typing register 0 of `main`,
+/// with registers 1 and 2 typed by the struct types `refs` names.
+fn generic_over(decls: Vec<ParamDecl>, refs: Vec<Ty>) -> MirProgram {
     let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
-        decls: vec![ParamDecl::Value {
-            id: test_id("vs"),
-            name: "*vs".into(),
-            ty: pack.clone(),
-            default: None,
-            callable_default: None,
-            infer_only: false,
-            variadic: true,
-            constraints: Vec::new(),
-        }],
+        decls,
         func: FuncTy {
             environment: CallableEnvironment::Thin,
             params: Vec::new(),
@@ -3129,38 +3118,104 @@ fn value_pack_declarations_from_older_artifacts_are_rejected() {
             transfers: TransferSet(Vec::new()),
         },
     }));
-    let program = program_with(vec![(
-        "main".into(),
-        function_with(vec![generic.into()], Vec::new()),
-    )]);
-    assert_reprints(&program);
-    let read_ty = |text: &str| {
-        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match (parsed.program.functions[0].1.reg_types[&0]).kind() {
-            TyKind::GenericFunc(generic) => match &generic.decls[0] {
-                ParamDecl::Value { ty, .. } => ty.clone(),
-                other @ ParamDecl::Type { .. } => panic!("expected a value pack, read {other:?}"),
-            },
-            other => panic!("expected a generic function type, read {other}"),
-        }
-    };
-    let text = write::program(&program);
-    assert!(text.contains("type: param_list(Int)"), "{text}");
-    assert_eq!(read_ty(&text), pack);
-
-    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
-    let older = text.replacen(&current, "mojito-mir 1.158", 1);
-    assert!(artifact(older.as_bytes(), "unit.mir".to_string()).is_err());
+    let mut reg_types = vec![generic.into()];
+    reg_types.extend(refs);
+    program_with(vec![("main".into(), function_with(reg_types, Vec::new()))])
 }
 
-/// A type pack's two binders round-trip; a 1.159 or older artifact
-/// declared a type pack as one binder, which the reader rejects rather than
-/// misreads.
+/// `owner`'s value binder at `slot` referenced by a struct type's argument.
+fn referencing(owner: &str, slot: usize, name: &str, meta: MetaTy) -> Ty {
+    let reference = ParamContext::new().decl_ref(ParamId::new(owner, slot), name, meta);
+    TyKind::Struct("Ref".into(), vec![TyArg::Val(CtValue::Expr(reference))]).into()
+}
+
+/// The declarations and register types `text` reads.
+fn read_generic(text: &str) -> (Vec<ParamDecl>, Vec<Ty>) {
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let types = &parsed.program.functions[0].1.reg_types;
+    let TyKind::GenericFunc(generic) = types[&0].kind() else {
+        panic!("expected a generic function type, read {}", types[&0]);
+    };
+    (
+        generic.decls.clone(),
+        vec![types[&1].clone(), types[&2].clone()],
+    )
+}
+
+fn int_binder(owner: &str, slot: usize, name: &str, infer_only: bool) -> ParamDecl {
+    ParamDecl::Value {
+        id: ParamId::new(owner, slot),
+        name: name.into(),
+        ty: Ty::int(),
+        default: None,
+        callable_default: None,
+        infer_only,
+        variadic: false,
+        constraints: Vec::new(),
+    }
+}
+
+/// A 1.158 or older artifact declared a value pack as one binder, which
+/// reads as upstream's two: its references name the list binder, which
+/// takes the slot after the leading infer-only binders, and every later
+/// binder moves up one.
 #[test]
-fn type_pack_declarations_from_older_artifacts_are_rejected() {
-    let mut decls = Vec::new();
-    let list = ParamDecl::Type {
-        id: ParamId::new("f", 0),
+fn value_pack_declarations_from_older_artifacts_split() {
+    let list_meta = MetaTy::value(TyKind::ParamList(Ty::int()).into());
+    let old_pack = ParamDecl::Value {
+        id: ParamId::new("f", 2),
+        name: "*vs".into(),
+        ty: TyKind::ParamList(Ty::int()).into(),
+        default: None,
+        callable_default: None,
+        infer_only: false,
+        variadic: true,
+        constraints: Vec::new(),
+    };
+    let old = generic_over(
+        vec![
+            int_binder("f", 0, "k", true),
+            int_binder("f", 1, "a", false),
+            old_pack,
+        ],
+        vec![
+            referencing("f", 2, "vs", list_meta.clone()),
+            referencing("f", 1, "a", MetaTy::value(Ty::int())),
+        ],
+    );
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let older = write::program(&old).replacen(&current, "mojito-mir 1.158", 1);
+
+    let mut decls = vec![
+        int_binder("f", 0, "k", true),
+        int_binder("f", 1, "a", false),
+    ];
+    ParamDecl::push_value_pack(
+        &mut decls,
+        ParamDecl::Value {
+            id: ParamId::new("f", 2),
+            name: "*vs".into(),
+            ty: Ty::int(),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: true,
+            constraints: Vec::new(),
+        },
+    );
+    let expected = vec![
+        referencing("f", 1, "vs", list_meta),
+        referencing("f", 2, "a", MetaTy::value(Ty::int())),
+    ];
+    assert_eq!(read_generic(&older), (decls, expected));
+}
+
+/// A 1.159 or older artifact declared a type pack as one binder, which
+/// reads as upstream's two, as a value pack's does.
+#[test]
+fn type_pack_declarations_from_older_artifacts_split() {
+    let old_pack = ParamDecl::Type {
+        id: ParamId::new("f", 1),
         name: "*Ts".into(),
         bounds: vec!["Movable".into()],
         trait_param: None,
@@ -3170,42 +3225,27 @@ fn type_pack_declarations_from_older_artifacts_are_rejected() {
         variadic: true,
         constraints: Vec::new(),
     };
-    ParamDecl::push_type_pack(&mut decls, list, &CtValue::Trait(vec!["Movable".into()]));
-    let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
-        decls: decls.clone(),
-        func: FuncTy {
-            environment: CallableEnvironment::Thin,
-            params: Vec::new(),
-            names: Vec::new(),
-            ret: Ty::none(),
-            required: Vec::new(),
-            variadic: None,
-            kw_variadic: None,
-            positional_only: None,
-            keyword_only: None,
-            raises: false,
-            error: None,
-            conventions: Vec::new(),
-            ref_params: Vec::new(),
-            ref_return: None,
-            transfers: TransferSet(Vec::new()),
-        },
-    }));
-    let program = program_with(vec![(
-        "main".into(),
-        function_with(vec![generic.into()], Vec::new()),
-    )]);
-    assert_reprints(&program);
-    let text = write::program(&program);
-    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-    match (parsed.program.functions[0].1.reg_types[&0]).kind() {
-        TyKind::GenericFunc(generic) => assert_eq!(generic.decls, decls),
-        other => panic!("expected a generic function type, read {other}"),
-    }
-
+    let old = generic_over(
+        vec![int_binder("f", 0, "a", false), old_pack.clone()],
+        vec![
+            referencing("f", 1, "Ts", MetaTy::type_list()),
+            referencing("f", 0, "a", MetaTy::value(Ty::int())),
+        ],
+    );
     let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
-    let older = text.replacen(&current, "mojito-mir 1.159", 1);
-    assert!(artifact(older.as_bytes(), "unit.mir".to_string()).is_err());
+    let older = write::program(&old).replacen(&current, "mojito-mir 1.159", 1);
+
+    let mut decls = vec![int_binder("f", 0, "a", false)];
+    ParamDecl::push_type_pack(
+        &mut decls,
+        old_pack,
+        &CtValue::Trait(vec!["Movable".into()]),
+    );
+    let expected = vec![
+        referencing("f", 0, "Ts", MetaTy::type_list()),
+        referencing("f", 1, "a", MetaTy::value(Ty::int())),
+    ];
+    assert_eq!(read_generic(&older), (decls, expected));
 }
 
 /// Schema 1.4 carries a binder's identity on a `where` operand and on a
