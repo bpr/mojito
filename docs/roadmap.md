@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1964**.
+Next free ID: **R1968**.
 
 ## Ordered Work
 
@@ -6843,6 +6843,98 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1964 A literal argument at a parameter the call binds to a scalar
+  reaches the callee unconverted**
+
+  Problem: when a declared parameter is a type parameter (`T`) that the
+  call site binds to `Int`, `UInt8`, or `Float64`, the checker coerces the
+  literal argument by the substituted type but records no
+  `MaterializeLiteral` adjustment.
+  - After `inline-parametric`, `_write_int`'s
+    `buf.unsafe_ptr().unsafe_offset(offset).write(0)` stores an
+    `IntLiteral` register into a `UInt8` slot, in almost every fixture.
+  - Calls such as `Tag(5)` into an `Int` field pass a literal register to
+    an `Int` parameter.
+  - The VM converts silently (`coerce_checked` in frames, calls, and
+    result adapters), and Pliron does the same through `PendingLiteral`.
+    Upstream's IR has no implicit conversion: each one is a call of the
+    `@implicit` `__init__(IntLiteral)`, folded to
+    `#pop.int_literal_convert`.
+  - Lever: record the adjustment against the substituted parameter type
+    where the checker records `SemanticAdjustment::MaterializeLiteral`
+    (`checker/call_inference.rs`, `checker/method_calls/selection.rs`).
+    MIR already lowers it.
+  - The `_write_int` CTFE path calls the VM's builtin `max(64, …)` with an
+    `IntLiteral`; upstream resolves the declared `max` overload.
+    Resolve the bundled declaration, or file the builtin as a divergence.
+  - Done when the verifier's call-argument and `var.store` sites reject a
+    literal register at a non-literal, non-parameter slot.
+  - Probe: `p.write(0)` into an `UnsafePointer[UInt8]`, and `Tag(5)`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1965 A tuple display, return, or reference write of a literal
+  leaves its conversion implicit in MIR**
+
+  Problem: `var p = (1, 2.5)` lowers to `MakeTuple` with `Int`/`Float64`
+  element types over literal registers, and SROA turns it into `DefVar`s
+  that bind a literal register at `Int`/`Float64`.
+  - `def f() -> Float64: return 2` returns a literal register, and a
+    `WriteRef` and a subscript store take one the same way.
+  - The VM converts silently (`coerce_checked` at `DefVar` and
+    `MakeTuple`), where upstream's IR calls the `@implicit` initializer.
+  - Lever: MIR's tuple-display lowering emits `literal.materialize` plus
+    `struct.create` per literal element whose element type is not a
+    literal, and return and `WriteRef` lowering consume the checker's
+    adjustment. If the checker records none, add it at R1845's
+    storage-site conversion.
+  - Done when the verifier's `DefVar`, `Return`, and `WriteRef` sites
+    reject a literal register at a non-literal slot.
+  - Probe: `var p = (1, 2.5); print(p[0], p[1])` and the `f` above.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1966 A literal index operand reaches a subscript or pointer
+  offset unconverted**
+
+  Problem: a place projection, an intrinsic subscript, and a pointer
+  offset take an `IntLiteral` register as their index, which the VM reads
+  through `value_as_index`'s literal arm and Pliron through
+  `PendingLiteral`.
+  - Upstream converts through `index(idx)`, which is
+    `idx.__mlir_index__()`, and on a literal that folds to a constant of
+    `self.value`.
+  - Lever: where MIR lowers a subscript, projection, or pointer-offset
+    index whose register is literal-typed, emit `literal.materialize` at
+    the `Int` storage plus `struct.create`.
+  - Drop `IntLiteral` from the verifier's `index_ok`
+    (`verify/instr.rs`), and the literal acceptance of the `Proj::Index`
+    and intrinsic-index checks.
+  - Probe: `var l = [10, 20]; print(l[0])`,
+    `assets/ok/pointer_unsafe_vocabulary.mojo`, and
+    `assets/ok/allocation_tracked_unsafe_ptr.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1967 The MIR verifier treats a literal's conversion as
+  representational**
+
+  Problem: `types_compatible` (`verify/types.rs`) accepts a literal
+  register at an `Int`/`Float64` slot, and any `IntLiteral[a]` at any
+  `IntLiteral[b]`, so MIR may leave a literal's conversion implicit.
+  - In upstream's IR a literal value is used only at its own type, and
+    conversion is an explicit `#pop.int_literal_convert`.
+  - Lever: a found literal type is compatible only with an identical
+    literal type or a type mentioning a parameter. Delete the
+    literal-to-literal arm and the module doc's "representational" claim.
+  - Hand-migrate `tests/mir_passes` cases that store a literal into an
+    `Int` slot to the explicit `literal.materialize` form.
+  - Add a negative verifier test: a body storing `const int_literal(1)`
+    into an `Int` var is rejected.
+  - The `MakeSimd` literal element stays admitted until R1935.
+  - Depends on R1964, R1965, R1966.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1850 A numeric literal register holds its value at run time,
   where upstream's literal struct is empty**
 
@@ -6851,14 +6943,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   (`lower/types.rs`), and an 8-byte layout
   (`mojito-native-core/src/layout.rs`), where the pin's `IntLiteral[v]`
   carries no data and its conversion reads `v` from the type.
-  - Lever: `MaterializeLiteral` and the literal coercions read the value
-    off the operand's closed type, `Const::IntLiteral` writes an empty
-    struct, and `lower_ty`/`layout_of` lose their literal arms.
-  - Coordinate with R1834, which reshapes `literal.materialize`.
+  - It cannot land while MIR lets a literal register flow unconverted into
+    scalar slots (R1964, R1965, R1966, R1967): the VM and Pliron convert
+    those from the payload this entry deletes.
+  - Lever: one typed reader of a register's closed literal type in the VM
+    and its twin in Pliron. `MaterializeLiteral`, literal comparisons and
+    casts, and the `MakeSimd` literal element read through it.
+  - `Const::IntLiteral` writes an empty value, and `crossing.rs`'s
+    `vm_to_ct` gains a typed variant that reads a literal type's value.
+  - `lower_ty` maps literals to zero-sized, `layout_of` gives them an
+    empty layout, and `PendingLiteral` goes.
+  - Plan: `R1850-a-numeric-literal-register-holds-its-plan.md` (slices
+    5–7).
   - Done when `rg "Value::(IntLiteral|FloatLiteral)" crates/mojito-vm` is
     empty.
-  - Depends on R1849.
-  - Model: Fable, Not Planned.
+  - Depends on R1849, R1967, R1935 (the `SIMD(0)` checker rule's literal
+    `simd.make` element).
+  - Model: Fable, Planned.
 
 - [ ] **R1851 An `IntLiteral[v]` application is bridged onto a compiler
   kind, where upstream's is the declared struct**
