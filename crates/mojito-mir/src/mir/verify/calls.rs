@@ -386,14 +386,6 @@ pub(super) fn verify_direct_call(
             }
         });
         if let Some(found) = found
-            && unconverted_literal(found, expected)
-        {
-            errors.push(format!(
-                "{prefix}: argument {index} of '{}' is the literal {found}, which no conversion \
-                 materialized at {expected}",
-                declaration.lowered_name
-            ));
-        } else if let Some(found) = found
             && !types_compatible(found, expected)
         {
             errors.push(format!(

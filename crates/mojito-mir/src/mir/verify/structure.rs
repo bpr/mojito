@@ -1668,7 +1668,7 @@ mod tests {
         let literal = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(1));
         assert_finding(
             &findings(&literal_store(literal)),
-            "store of the literal IntLiteral[1], which no conversion materialized",
+            "store of IntLiteral[1] into storage of type Int",
         );
     }
 
@@ -1676,9 +1676,7 @@ mod tests {
     fn a_materialized_literal_store_is_no_literal_finding() {
         let found = findings(&literal_store(Ty::int()));
         assert!(
-            !found
-                .iter()
-                .any(|finding| finding.contains("no conversion materialized")),
+            !found.iter().any(|finding| finding.contains("store of")),
             "{found:?}"
         );
     }
@@ -1717,7 +1715,7 @@ mod tests {
         let literal = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(1));
         assert_finding(
             &findings(&literal_binding(literal)),
-            "binding of the literal IntLiteral[1], which no conversion materialized",
+            "binding of IntLiteral[1] to a slot of type Int",
         );
     }
 
@@ -1732,7 +1730,7 @@ mod tests {
         );
         assert_finding(
             &findings(&function),
-            "return of the literal IntLiteral[2], which no conversion materialized",
+            "return of IntLiteral[2] from a function returning Float64",
         );
     }
 
@@ -1740,9 +1738,7 @@ mod tests {
     fn a_materialized_binding_is_no_literal_finding() {
         let found = findings(&literal_binding(Ty::int()));
         assert!(
-            !found
-                .iter()
-                .any(|finding| finding.contains("no conversion materialized")),
+            !found.iter().any(|finding| finding.contains("binding of")),
             "{found:?}"
         );
     }

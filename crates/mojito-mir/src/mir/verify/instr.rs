@@ -527,14 +527,6 @@ fn verify_reference_instruction(
                     ));
                 }
                 if let Some(value) = cx.reg_ty(*value)
-                    && unconverted_literal(value, capability.target)
-                {
-                    errors.push(format!(
-                        "{prefix}: WriteRef of the literal {value}, which no conversion \
-                         materialized, into a referent of type {}",
-                        capability.target
-                    ));
-                } else if let Some(value) = cx.reg_ty(*value)
                     && !types_compatible(value, capability.target)
                 {
                     errors.push(format!(
@@ -552,12 +544,7 @@ fn verify_reference_instruction(
                 };
                 // Storage of a reference type (a `List[ref T]` element) takes
                 // a reference; any other store writes through to the referent.
-                if unconverted_literal(found, target) {
-                    errors.push(format!(
-                        "{prefix}: store of the literal {found}, which no conversion \
-                         materialized, into storage of type {target}"
-                    ));
-                } else if !types_compatible(found, target) && !types_compatible(found, expected) {
+                if !types_compatible(found, target) && !types_compatible(found, expected) {
                     errors.push(format!(
                         "{prefix}: store of {found} into storage of type {target}"
                     ));
@@ -776,13 +763,6 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             ..
         } => {
             if let Some(found) = cx.reg_ty(*src)
-                && unconverted_literal(found, expected)
-            {
-                errors.push(format!(
-                    "{prefix}: binding of the literal {found}, which no conversion \
-                     materialized, to a slot of type {expected}"
-                ));
-            } else if let Some(found) = cx.reg_ty(*src)
                 && !types_compatible(found, expected)
             {
                 errors.push(format!(
@@ -1658,9 +1638,8 @@ fn verify_builtin_cast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec
     }
 }
 
-/// Each element of a `tuple.make` reaches its element type converted: a
-/// literal register at a closed non-literal element is the conversion
-/// upstream's `Tuple.__init__(var *args: *Ts)` writes, left implicit.
+/// Each element of a `tuple.make` reaches its element type converted, as
+/// upstream's `Tuple.__init__(var *args: *Ts)` binds each at its `Ts`.
 fn verify_tuple_elements(
     cx: &InstrCx<'_>,
     elems: &[Reg],
@@ -1669,11 +1648,10 @@ fn verify_tuple_elements(
 ) {
     for (element, expected) in elems.iter().zip(element_types) {
         if let Some(found) = cx.reg_ty(*element)
-            && unconverted_literal(found, expected)
+            && !types_compatible(found, expected)
         {
             errors.push(format!(
-                "{}: tuple element %r{} is the literal {found}, which no conversion \
-                 materialized at {expected}",
+                "{}: tuple element %r{} has type {found}, declared {expected}",
                 cx.prefix, element.0
             ));
         }

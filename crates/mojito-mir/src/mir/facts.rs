@@ -1153,7 +1153,9 @@ impl<'a> Flatten<'a> {
                     }),
                 expr: None,
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let param_arg_regs =
+            self.converted_parameter_arguments(&contract.param_decls, param_arg_regs, &span);
         let raises = self.raises(contract.raises, span);
         MirSubscriptCall {
             target: contract.target,
@@ -1543,6 +1545,38 @@ impl<'a> Flatten<'a> {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// `arguments` with each literal register at a closed value parameter
+    /// of `decls` converted at the parameter's type, as Mojo binds the
+    /// parameter to the `#pop.int_literal_convert` of the literal.
+    fn converted_parameter_arguments(
+        &mut self,
+        decls: &[ParamDecl],
+        mut arguments: Vec<MirParamArg>,
+        span: &SourceSpan,
+    ) -> Vec<MirParamArg> {
+        let conversions: Vec<(usize, Ty)> =
+            crate::mir::ir::supplied_parameter_arguments(decls, &arguments)
+                .into_iter()
+                .filter_map(|(declaration, argument)| match declaration {
+                    ParamDecl::Value {
+                        ty,
+                        variadic: false,
+                        ..
+                    } if !mojito_types::types::has_free_parameters(ty) => arguments
+                        .iter()
+                        .position(|candidate| std::ptr::eq(candidate, argument))
+                        .map(|index| (index, ty.clone())),
+                    _ => None,
+                })
+                .collect();
+        for (index, ty) in conversions {
+            if let Some(value) = arguments[index].value {
+                arguments[index].value = Some(self.materialize_register(value, &ty, span.clone()));
+            }
+        }
+        arguments
     }
 
     /// The loans of the places a call binds to its `ref [origin]`

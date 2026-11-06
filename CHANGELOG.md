@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier no longer treats a numeric literal's conversion as
+  representational: a literal register is compatible only with its own
+  literal type, as upstream's IR uses an `IntLiteral[v]` value only at its
+  type, so `IntLiteral[5]` at an `IntLiteral[6]`, `Int`, or `Float64` slot
+  is a finding wherever types are compared. A literal compile-time
+  subscript argument (`t[0] += 1` on a `Tuple`) now converts at its value
+  parameter's type. An integer literal at a `FloatLiteral` stays admitted
+  until R1784 (R1967).
 - A numeric literal used as an index now converts explicitly at `Int`
   before a pointer subscript, a pointer offset, a pack or `Tuple` storage
   subscript, or a pointer-storage slot, as upstream's `index(idx)` converts

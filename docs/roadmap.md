@@ -3595,6 +3595,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     register unconverted. Probe: `var f: type_of(4.0) = 4; print(f)` prints
     `4.0` at the pin and on the VM, and fails Pliron's IR verification
     ("expected builtin.fp64 , got builtin.integer i64").
+  - The MIR verifier's `types_compatible` (`verify/types.rs`) keeps one
+    literal arm for the same rule: an `IntLiteral` register at a
+    `FloatLiteral` slot. Landing this deletes it. Probe:
+    `assets/ok/int_literal_parameter_value.mojo`'s `g(3)` binds
+    `IntLiteral[3]` to `x: FloatLiteral` with no conversion.
   - Landing it also ports `IntLiteral`'s `__add__`, `__sub__`, and
     `__mul__` over `rhs: FloatLiteral` and its `__truediv__`, each typed
     `type_of(FloatLiteral(self) OP rhs)`. That deletes the `Div` arm of the
@@ -6841,29 +6846,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `type_of(y)()` alone prints `7`, and reading `y` fails the same way.
   - Found while landing R1849 (2026-11-06).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1967 The MIR verifier treats a literal's conversion as
-  representational**
-
-  Problem: `types_compatible` (`verify/types.rs`) accepts a literal
-  register at an `Int`/`Float64` slot, and any `IntLiteral[a]` at any
-  `IntLiteral[b]`, so MIR may leave a literal's conversion implicit.
-  - In upstream's IR a literal value is used only at its own type, and
-    conversion is an explicit `#pop.int_literal_convert`.
-  - Lever: a found literal type is compatible only with an identical
-    literal type or a type mentioning a parameter. Delete the
-    literal-to-literal arm and the module doc's "representational" claim.
-  - Call arguments, `place.store`, `DefVar`, `return`, `WriteRef`, and
-    `tuple.make` elements already reject a literal at a closed
-    non-literal slot (`unconverted_literal`, R1964, R1965), with negative
-    tests in `verify/structure.rs`; fold that rule into
-    `types_compatible`.
-  - Probe: `assets/ok/int_literal_value_type.mojo`'s `Holder.__init__`
-    stores a `FloatLiteral[2.5]` into a field typed `FloatLiteral[5/2]`,
-    which the literal-to-literal arm admits.
-  - The `MakeSimd` literal element stays admitted until R1935.
-  - Depends on R1964, R1965, R1966.
   - Model: Opus, Not Planned.
 
 - [ ] **R1850 A numeric literal register holds its value at run time,

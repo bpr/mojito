@@ -9,10 +9,11 @@ use mojito_types::types::{FuncTy, TySubst};
 
 /// Compatibility for verification purposes: either direction of the checker's
 /// coercion predicate. Lowering emits checker-approved conversions before
-/// values flow, so remaining differences are representational (literal
-/// materialization, generic instantiation), not errors to re-litigate. A type
-/// mentioning an unsubstituted parameter is not compared — instantiation is
-/// the checker's domain and the verifier never re-derives it.
+/// values flow, so remaining differences are representational (erased
+/// origins, generic instantiation), not errors to re-litigate. A numeric
+/// literal is never one of them: it is compatible only with its own type. A
+/// type mentioning an unsubstituted parameter is not compared — instantiation
+/// is the checker's domain and the verifier never re-derives it.
 pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     pub(super) fn callable_environment(
         ty: &Ty,
@@ -31,12 +32,18 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if found.is_string_literal() && expected.is_string_literal() {
         return true;
     }
-    // So is every integer (float) literal one register whatever value its
-    // type carries (R1850).
-    if (found.is_int_literal() && expected.is_int_literal())
-        || (found.is_float_literal() && expected.is_float_literal())
-    {
-        return true;
+    // A numeric literal is used only at its own type, as upstream's
+    // `IntLiteral[v]` is: its conversion is an explicit `literal.materialize`
+    // (`#pop.int_literal_convert`). A side mentioning a parameter is the
+    // instance's to bind, possibly to the literal itself. An `IntLiteral`
+    // reaching a `FloatLiteral` stays the checker's coercion until the
+    // implicit initializer that converts it is declared (R1784).
+    if found.is_numeric_literal() || expected.is_numeric_literal() {
+        return contains_type_param(found)
+            || contains_type_param(expected)
+            || (found.is_int_literal()
+                && expected.is_float_literal()
+                && mojito_types::types::value_coerces(found, expected));
     }
     if let (Some(found), Some(expected)) =
         (callable_environment(found), callable_environment(expected))
@@ -686,16 +693,6 @@ pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
         })
 }
 
-/// Whether `found`, a numeric literal, reaches a closed slot of `expected`,
-/// a non-literal type, with no conversion: upstream's IR has no implicit
-/// conversion, so each is an explicit `#pop.int_literal_convert`
-/// (`literal.materialize`) before the slot. A parameter slot is the
-/// instance's to bind, possibly to the literal itself.
-pub(super) fn unconverted_literal(found: &Ty, expected: &Ty) -> bool {
-    let literal = |ty: &Ty| matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_));
-    literal(found) && !literal(expected) && !contains_type_param(expected)
-}
-
 pub(super) fn contains_type_param(ty: &Ty) -> bool {
     match ty.kind() {
         TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Dependent(_) => true,
@@ -892,16 +889,13 @@ mod tests {
     }
 
     #[test]
-    fn a_literal_at_a_closed_scalar_slot_is_unconverted() {
-        let literal = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(5));
-        assert!(unconverted_literal(&literal, &Ty::int()));
-        assert!(unconverted_literal(&literal, &Ty::float64()));
-    }
-
-    #[test]
-    fn a_literal_at_a_literal_slot_or_a_scalar_value_is_not() {
-        let literal = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(5));
-        assert!(!unconverted_literal(&literal, &literal));
-        assert!(!unconverted_literal(&Ty::int(), &Ty::int()));
+    fn a_numeric_literal_is_compatible_only_with_its_own_type() {
+        let five = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(5));
+        let six = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(6));
+        assert!(types_compatible(&five, &five));
+        assert!(!types_compatible(&five, &six));
+        assert!(!types_compatible(&five, &Ty::int()));
+        assert!(!types_compatible(&five, &Ty::float64()));
+        assert!(!types_compatible(&Ty::int(), &five));
     }
 }
