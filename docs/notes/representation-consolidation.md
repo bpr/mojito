@@ -116,8 +116,9 @@ command cannot use both.
      declared `@implicit` initializers' calls), R1955 (a `Float64`'s or `Bool`'s read), R1837 (a
      struct `literal.materialize` target), and R1836 (a multi-lane literal
      splats the unconverted literal).
-   - `Bool`: R1840 (MIR's `i1` is a `Bool` register) and R1841 (`Bool` is
-     an AST keyword).
+   - `Bool`: R1840 landed (MIR's `i1` is a register type of its own),
+     R1957 (the parameter domain's `i1` casts, after R1955), and R1841
+     (`Bool` is an AST keyword).
    - Numeric literals: R1845 → R1848 → R1849 → R1850 → R1851 deletes the
      value-less literal type, its run-time register, and its compiler
      kind. R1855 (`IntLiteral.__pow__`'s constraint) is beside them.
@@ -127,7 +128,7 @@ command cannot use both.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1843 --task R1837 --task R1836 \
-     --task R1840 --task R1841 -n 0
+     --task R1957 --task R1841 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1851 --task R1855 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1862 --task R1863 --task R1864 --task R1865 -n 0
    ```
@@ -302,7 +303,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 6 (R1843, R1955, R1837, R1840, R1841, R1845 → R1851, R1858–R1860 → R1862), R1936 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
+| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 6 (R1843, R1955, R1837, R1957, R1841, R1845 → R1851, R1858–R1860 → R1862), R1936 | R1408, R1019, R423, R1352, R851, R171, R427, R1681 (`Pointer`) |
 | `Writable`'s intrinsic receivers (`DType`, `Error`) are host-formatted by each backend | R1936, R1938 | R1463, R1409, R18, R159, R1883, R1884 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |

@@ -3219,11 +3219,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `builtin_cast_result` admits the casts between it and a `Bool`'s
   `!kgen.scalar<bool>` storage, which `builtin_fold::mlir_op_operator`
   folds as `Bool(mlir_value=s).__mlir_i1__()` and
-  `Bool(i).__mlir_bool__()`. Both backends hold it as a `Bool`:
-  `types::i1_as_bool` maps it to the `Bool` for the verifier's
-  `types_compatible`, `verify_builtin_cast`, and
-  `LlvmIntrinsic::signature_error` (R1840), and
-  `require_bool` (`verify/structure.rs`) takes it as a condition, which an
+  `Bool(i).__mlir_bool__()`. MIR holds it as a register type of its
+  own: the verifier's `types_compatible` gives it no `Bool` counterpart,
+  `verify_builtin_cast` admits it only beside `!kgen.scalar<bool>`, and
+  `LlvmIntrinsic::signature_error` translates it as the `Bool` storage,
+  both `i1` in LLVM. `require_bool` (`verify/structure.rs`) takes it as a
+  condition, which an
   inlined `-> Bool` body returning `index.cmp` leaves. The VM holds an
   `i1`, a `!kgen.scalar<bool>`, and a one-lane mask as one `Value::Bool`
   (`runtime::simd_value`), so its `builtin.cast` is the identity. A

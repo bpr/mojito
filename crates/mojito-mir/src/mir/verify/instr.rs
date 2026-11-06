@@ -4,7 +4,7 @@
 use super::*;
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::TyKind;
-use mojito_types::types::{i1_as_bool, storage_ty, storage_value_ty};
+use mojito_types::types::{storage_ty, storage_value_ty};
 
 pub(super) fn verify_instruction(
     name: &str,
@@ -1152,16 +1152,7 @@ fn verify_simd_lane_instruction(
             index,
         } => {
             let lane = expect_vector(value, "vector").and_then(|(dtype, _)| lane_of(&dtype));
-            // A `Bool` is a `bool` lane while the two are one register
-            // type (R1840).
-            let bool_lane = lane.as_ref().and_then(|lane| {
-                mojito_types::types::kgen_simd_slots(lane.kind())
-                    .and_then(|(dtype, _)| dtype.known())
-            }) == Some(mojito_ast::ast::Dtype::Bool)
-                && cx.reg_ty(element) == Some(&Ty::bool());
-            if !bool_lane {
-                expect_type(element, lane, "element");
-            }
+            expect_type(element, lane, "element");
             expect_type(dest, cx.reg_ty(value).cloned(), "result");
             if !index_ok(index) {
                 errors.push(format!("{prefix}: {mnemonic} index is not an Int"));
@@ -1603,11 +1594,11 @@ fn verify_builtin_cast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec
     let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
         return;
     };
-    let (to, from) = (&storage_ty(&i1_as_bool(to)), &storage_ty(&i1_as_bool(from)));
+    let (to, from) = (&storage_ty(to), &storage_ty(from));
     let pairs = [
         (Ty::index(), storage_ty(&Ty::int())),
         (
-            Ty::bool(),
+            Ty::i1(),
             mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Bool, 1),
         ),
         (

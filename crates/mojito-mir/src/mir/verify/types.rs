@@ -26,14 +26,6 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if found == expected {
         return true;
     }
-    // The MLIR builtin `i1` is held as the `Bool` it casts from (R1840).
-    let (found_bool, expected_bool) = (
-        mojito_types::types::i1_as_bool(found),
-        mojito_types::types::i1_as_bool(expected),
-    );
-    if found_bool != *found || expected_bool != *expected {
-        return types_compatible(&found_bool, &expected_bool);
-    }
     // Every string literal is one held descriptor whatever its text, which
     // the checker owns, value-less or still a parameter.
     if found.is_string_literal() && expected.is_string_literal() {

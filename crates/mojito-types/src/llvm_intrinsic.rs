@@ -12,7 +12,7 @@
 //! [`LlvmIntrinsic::shuffle_sources`], [`step_lanes`], [`scalef_lane`],
 //! and [`LlvmIntrinsic::table_lookup`], and the native backend calls the intrinsic, mangled by [`LlvmIntrinsic::overloads`].
 
-use crate::types::{SimdDtype, SimdWidth, Ty, TyKind, i1_as_bool, kgen_simd_slots, storage_ty};
+use crate::types::{SimdDtype, SimdWidth, Ty, TyKind, kgen_simd_slots, storage_ty};
 use mojito_ast::ast::Dtype;
 
 /// One LLVM intrinsic in the table, named after its LLVM spelling.
@@ -351,16 +351,17 @@ impl LlvmIntrinsic {
     /// translates as its `!kgen.simd` storage, as upstream's
     /// `LowerKGENToLLVM` lowers the `SIMD` struct to its field, the builtin
     /// `index` as the `Int` it casts from, and the builtin `i1` as the
-    /// `Bool` (R1840). A literal struct's elements translate each, as
+    /// `Bool` it casts from, both `i1` in LLVM. A literal struct's elements translate each, as
     /// `LowerKGENToLLVM` lowers a `!kgen.struct` element-wise.
     pub fn signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
         fn translated(ty: &Ty) -> Ty {
             match ty.kind() {
                 TyKind::Index => storage_ty(&Ty::int()),
+                TyKind::I1 => storage_ty(&Ty::bool()),
                 TyKind::Tuple(elements) => {
                     TyKind::Tuple(elements.iter().map(translated).collect()).into()
                 }
-                _ => storage_ty(&i1_as_bool(ty)),
+                _ => storage_ty(ty),
             }
         }
         let operands: Vec<Ty> = operands.iter().map(translated).collect();

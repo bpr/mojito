@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1957**.
+Next free ID: **R1958**.
 
 ## Ordered Work
 
@@ -10916,27 +10916,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1936.
   - Model: Opus, Not Planned.
 
-- [ ] **R1840 MIR holds the builtin `i1` as a `Bool` register, where
-  upstream's `i1` is a type of its own**
-
-  `types::i1_as_bool` makes an `i1` register and a `Bool` register
-  compatible, where upstream converts between them only through `Bool`'s
-  declared `__init__(value: __mlir_type.i1)` (`pop.cast_from_builtin`
-  into `_mlir_value`, then the struct) and `__mlir_i1__`.
-  - Uses: the verifier's `types_compatible` (`verify/types.rs`),
-    `verify_builtin_cast` (`verify/instr.rs`), and
-    `LlvmIntrinsic::signature_error` (`llvm_intrinsic.rs`).
-  - `Checker::scalar_storage_expression`'s `Bool(value=b)` arm
-    (`checker/constraints.rs`) reads a folded `i1` as the `Bool`. Replace
-    it with a parameter-domain `cast_from_builtin` from `i1` to
-    `!kgen.scalar<bool>` plus the struct value, as the `__mlir_index__` /
-    `Int(mlir_value=…)` pair does.
-  - `require_bool`'s `i1` arm stays: upstream branches on an `i1`.
-  - Probe: `assets/ok/bool_storage_primitives.mojo` and
-    `bool_declared_members.mojo`'s `Bool.__mlir_i1__(t)`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1841 `Bool` is an AST keyword type, where upstream's is a prelude
   name**
 
@@ -11338,9 +11317,41 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: with the short-circuit gone, std still packages and
     `assets/ok/bool_storage_primitives.mojo` and
     `assets/ok/mlir_pop_select.mojo` run.
+  - Probe: `def g[b: Bool]()` building
+    `Tag[Bool(mlir_value=b._mlir_value)]()` and passing it to
+    `use[b](x: Tag[b])` fails to elaborate ("keeps the parameter constant
+    `b._mlir_value` in elaborated MIR"), where the pin runs it.
   - Found while landing R1835 (2026-11-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1957 The parameter domain does not fold `Bool(value=i)` or
+  `b.__mlir_i1__()`, where upstream's are the `i1` builtin casts beside
+  `Bool`'s storage**
+
+  Upstream's `Bool.__init__(value: i1)` is `pop.cast_from_builtin` into
+  `!kgen.scalar<bool>` then `struct.create`, and `__mlir_i1__` is
+  `struct.extract` then `pop.cast_to_builtin`; Mojito's parameter casts
+  know only the `index` pair.
+  - `ParamOp::CastToBuiltin`/`CastFromBuiltin`
+    (`ParamContext::build_cast`, `param_expr/fold.rs`) cast only between
+    `index` and `!kgen.scalar<index>`. Add the `i1` /
+    `!kgen.scalar<bool>` pair.
+  - `Checker::scalar_storage_expression`'s `Bool(value=b)` arm
+    (`checker/constraints.rs`) reads a closed `i1` as the `Bool`. Replace
+    it with the cast plus R1955's `struct.create`, as the
+    `Int(mlir_value=…)` arm uses `int_of_index`.
+  - Build `b.__mlir_i1__()` as R1955's `struct.extract` plus
+    `cast_to_builtin`, as the `__mlir_index__` arm does.
+  - Probe: `def f[b: Bool]()` building
+    `Tag[Bool(value=b.__mlir_i1__())]()` and passing it to
+    `use[b](x: Tag[b])` fails ("expected Tag[b], found
+    Tag[$comptime$f$c0(b)]"), where the pin runs it.
+  - Probe: `comptime x = Bool(value=True.__mlir_i1__())` still prints
+    `True`, and `assets/ok/bool_storage_primitives.mojo` runs.
+  - Found while landing R1840 (2026-11-06).
+  - Depends on R1955.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1837 The MIR verifier accepts a `literal.materialize` whose
   target is a `SIMD` struct, where upstream's `pop.int_literal_convert`

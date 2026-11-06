@@ -1840,8 +1840,9 @@ one a function signature or call still carries.
 
 `i1` (schema 1.133) is upstream's MLIR builtin `i1`, what
 `Bool.__mlir_i1__` returns and `pop.cast_to_builtin` gives from a `Bool`'s
-`!kgen.scalar<bool>` storage. Both backends hold it as a `Bool`, and the
-verifier compares the two as one held representation.
+`!kgen.scalar<bool>` storage. It is a register type of its own, which the
+verifier never compares equal to a `Bool`; `builtin.cast` converts it to and
+from that storage. Both backends store it as they store a `Bool`.
 
 `kgen_simd { dtype, width }` (schema 1.129) is upstream's vector storage
 `!kgen.simd<width, dtype>` (`!kgen.scalar<dtype>` at width one), the type of

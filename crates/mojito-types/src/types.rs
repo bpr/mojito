@@ -744,7 +744,8 @@ pub enum TyKind {
     /// takes, displayed `__mlir_type.i1`. `pop.cast_from_builtin` and
     /// `pop.cast_to_builtin` convert it to and from a `Bool`'s
     /// `!kgen.scalar<bool>` storage. It has no members and conforms to no
-    /// trait. Both backends hold it as they hold a `Bool`.
+    /// trait. MIR holds it as a register type of its own, which both
+    /// backends store as they store a `Bool`.
     I1,
     /// Upstream's MLIR builtin `ui8` (`__mlir_type.ui8`), what
     /// `pop.dtype.to_ui8` returns and `pop.dtype.from_ui8` takes, displayed
@@ -1719,15 +1720,6 @@ pub fn kgen_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 /// any other type itself.
 pub fn storage_ty(ty: &Ty) -> Ty {
     simd_storage(ty).unwrap_or_else(|| ty.clone())
-}
-
-/// A `Bool` for the MLIR builtin `i1`, and any other type itself: the
-/// builtin `i1` and `Bool` are still one register type (R1840).
-pub fn i1_as_bool(ty: &Ty) -> Ty {
-    match ty.kind() {
-        TyKind::I1 => Ty::bool(),
-        _ => ty.clone(),
-    }
 }
 
 /// A bracketed `__mlir_type[...]` spelling as KGEN concatenates it.

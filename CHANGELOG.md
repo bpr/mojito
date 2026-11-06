@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier holds the builtin `i1` as a register type of its own,
+  as upstream does, instead of as the `Bool` it converts to: an `i1` and
+  a `Bool` register no longer pass for each other, `builtin.cast` takes
+  `i1` only beside `!kgen.scalar<bool>`, and a `bool` lane insert takes
+  that lane's type. The parameter domain's `i1` casts remain (R1957)
+  (R1840).
 - A scalar converted to a vector of its dtype and a `SIMDLength`
   converted to a vector now call `std.simd`'s declared `@implicit
   __init__(Scalar[Self.dtype])` and `__init__(SIMDLength)`, as the pin
