@@ -249,6 +249,25 @@ impl ParamContext {
         self.op(ParamOp::BoolXor, &[operand.clone(), self.boolean(true)])
     }
 
+    /// `left and right` (`and`) or `left or right` over two `Bool` values,
+    /// as upstream folds the operator to `POC::Cond` on `left`: `and`
+    /// selects `right` when `left` holds and `left` otherwise, `or` the
+    /// reverse. A `Cond` keeps its operand order, so the right operand is
+    /// reached only where the left one does not decide.
+    pub fn short_circuit(
+        &self,
+        and: bool,
+        left: &ParamExpr,
+        right: &ParamExpr,
+    ) -> Result<ParamExpr, ParamError> {
+        let arms = if and {
+            [left.clone(), right.clone(), left.clone()]
+        } else {
+            [left.clone(), left.clone(), right.clone()]
+        };
+        self.op(ParamOp::Cond, &arms)
+    }
+
     /// `operand.__mlir_index__()`: an `Int` or its `!kgen.scalar<index>`
     /// storage (or an integer literal, which materializes to an `Int`) as
     /// an `index`; see [`ParamOp::CastToBuiltin`].

@@ -543,11 +543,6 @@ impl crate::mir::visit::MutTypeVisitor for StorageBinders {
         Ok(())
     }
 
-    fn visit_constraint(&mut self, cond: &mut GenericConstraint) -> Result<(), Self::Error> {
-        self.move_constraint(cond);
-        Ok(())
-    }
-
     fn visit_sequence(
         &mut self,
         source: &mut mojito_checked::checked::ComptimeSequence,

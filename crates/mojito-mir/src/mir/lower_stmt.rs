@@ -181,29 +181,23 @@ impl<'a> Flatten<'a> {
                 arms,
                 orelse,
             } => {
-                let (conds, values) = conds.iter().map(|c| self.comptime_condition(c)).unzip();
+                let values = conds.iter().map(|c| self.comptime_condition(c)).collect();
                 let arms = arms.iter().map(|arm| self.hir_region(arm)).collect();
                 let orelse = self.hir_region(orelse);
                 self.emit(MirInstr::ComptimeIf {
                     results: Vec::new(),
-                    conds,
                     values,
                     arms,
                     orelse,
                 });
             }
             HirInstr::ComptimeAssert { cond, message } => {
-                let (cond, value) = self.comptime_condition(cond);
-                let cond = Box::new(cond);
+                let value = self.comptime_condition(cond);
                 let message = message.as_ref().map(|message| match message.as_constant() {
                     Some(mojito_types::ct::CtValue::Str(text)) => Const::Str(text.clone()),
                     _ => Const::Param(message.clone()),
                 });
-                self.emit(MirInstr::ComptimeAssert {
-                    cond,
-                    value,
-                    message,
-                });
+                self.emit(MirInstr::ComptimeAssert { value, message });
             }
             HirInstr::Loop { label, body } => {
                 let body = self.hir_region(body);
@@ -3717,8 +3711,7 @@ impl<'a> Flatten<'a> {
             let stop = self.loop_body(&iteration, binding, orelse);
             let test = MirInstr::ComptimeIf {
                 results: Vec::new(),
-                conds: vec![source.stop_test()],
-                values: vec![Some(Const::Param(source.has_next.clone()))],
+                values: vec![Const::Param(source.has_next.clone())],
                 arms: vec![suite],
                 orelse: stop,
             };

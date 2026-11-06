@@ -184,7 +184,6 @@ impl Specializer<'_> {
         // call left unread, is no slot of any copy either.
         tables.retired.extend(over_binder);
         tables.retired.extend(indexed.iter().copied());
-        let stop = op.source.stop_test();
         let mut operands = op.operands;
         let mut iterations = Vec::new();
         for iterator in iterators {
@@ -192,7 +191,7 @@ impl Specializer<'_> {
             iteration.values.insert(op.binder.clone(), iterator);
             let looped = LoopBody {
                 body: &body,
-                stop: &stop,
+                has_next: &op.source.has_next,
                 element: &op.source.next_value,
                 args: &op.args,
                 indexed: &indexed,
@@ -305,25 +304,33 @@ impl Specializer<'_> {
     ) -> Result<MirBlock, MonoError> {
         let LoopBody {
             body,
-            stop,
+            has_next,
             element,
             args,
             indexed,
         } = *looped;
         let template = frame.template;
         let mut clone = body.clone();
-        let Some(MirInstr::ComptimeIf { values, .. }) = clone
-            .instrs
-            .first()
-            .filter(|test| matches!(test, MirInstr::ComptimeIf { conds, .. } if conds.as_slice() == std::slice::from_ref(stop)))
-        else {
+        let Some(MirInstr::ComptimeIf { values, .. }) = clone.instrs.first() else {
             return Err(self.error(
                 Some(template),
                 "comptime for body does not open with its has_next test".to_string(),
             ));
         };
-        let value = values.first().cloned().flatten();
-        let suite = self.decide_comptime_test(template, stop, value.as_ref(), iteration)?;
+        let [test @ Const::Param(value)] = values.as_slice() else {
+            return Err(self.error(
+                Some(template),
+                "comptime for body does not open with its has_next test".to_string(),
+            ));
+        };
+        if value != has_next {
+            return Err(self.error(
+                Some(template),
+                "comptime for body does not open with its has_next test".to_string(),
+            ));
+        }
+        let test = test.clone();
+        let suite = self.decide_comptime_test(template, &test, iteration)?;
         if suite {
             self.answer_element(template, element, iteration)?;
         }
@@ -673,11 +680,12 @@ impl ComptimeForOp {
 }
 
 /// What each clone of a `comptime for` body is cloned from: the template's
-/// body, its leading `has_next` test `stop`, the iteration's `element`
-/// application, the body's arguments, and the slots typed over the binder.
+/// body, the `has_next` value its leading test decides, the iteration's
+/// `element` application, the body's arguments, and the slots typed over
+/// the binder.
 struct LoopBody<'b> {
     body: &'b MirBlock,
-    stop: &'b GenericConstraint,
+    has_next: &'b ParamExpr,
     element: &'b ParamExpr,
     args: &'b [Reg],
     indexed: &'b BTreeSet<VarId>,

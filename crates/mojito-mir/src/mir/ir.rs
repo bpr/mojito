@@ -2835,19 +2835,15 @@ pub enum MirInstr {
         results: Vec<Reg>,
         body: Vec<MirBlock>,
     },
-    /// `hlcf.comptime.if`: run the arm of the first condition of `conds`
-    /// that holds, else `orelse`, the conditions being parameter expressions
-    /// the elaborator decides. `arms` has one region per condition; an arm
-    /// that completes ends in [`MirTerm::ComptimeYield`], whose values
-    /// define `results`. `values` holds, per condition, the `Bool`
-    /// parameter value upstream's op takes as its `i1` attribute — a
-    /// [`Const::Param`], or a [`Const::Bool`] once closed — which the
-    /// elaborator decides where present; the constraint beside it is the
-    /// reading of a condition whose leaves the one builder does not all read.
+    /// `hlcf.comptime.if`: run the arm of the first of `values` that holds,
+    /// else `orelse`. Each value is the `Bool` parameter value upstream's op
+    /// takes as its `i1` attribute — a [`Const::Param`] of `Bool` meta the
+    /// elaborator decides, or a [`Const::Bool`] once closed. `arms` has one
+    /// region per value; an arm that completes ends in
+    /// [`MirTerm::ComptimeYield`], whose values define `results`.
     ComptimeIf {
         results: Vec<Reg>,
-        conds: Vec<GenericConstraint>,
-        values: Vec<Option<Const>>,
+        values: Vec<Const>,
         arms: Vec<Vec<MirBlock>>,
         orelse: Vec<MirBlock>,
     },
@@ -2855,7 +2851,7 @@ pub enum MirInstr {
     /// sequence `source` steps through, binding it to the parameter binder
     /// `binder`; the loop variable is an alias of `source.next_value` over
     /// it and has no storage. The body is one block holding a
-    /// [`MirInstr::ComptimeIf`] on [`ComptimeSequence::stop_test`] and ending
+    /// [`MirInstr::ComptimeIf`] on `source.has_next` and ending
     /// in [`MirTerm::Unreachable`]: the arm is the suite, which ends an
     /// iteration with [`MirTerm::ComptimeContinue`], and the else arm is the
     /// stop arm, which leaves the loop with [`MirTerm::ComptimeBreak`], as a
@@ -2866,8 +2862,6 @@ pub enum MirInstr {
     /// `results`, whose types are the operands'. `orelse` is upstream's
     /// else region after `LowerSemanticCF`: one block holding
     /// [`MirTerm::Unreachable`], with no arguments.
-    ///
-    /// [`ComptimeSequence::stop_test`]: mojito_checked::checked::ComptimeSequence::stop_test
     ComptimeFor {
         binder: mojito_types::param_expr::ParamRef,
         source: mojito_checked::checked::ComptimeSequence,
@@ -2877,16 +2871,15 @@ pub enum MirInstr {
         body: Vec<MirBlock>,
         orelse: Vec<MirBlock>,
     },
-    /// `kgen.param.assert`: a compile-time assertion over parameter
-    /// expressions. The elaborator judges `cond` per reached instance,
-    /// failing the instance when it does not hold with `message`, a
-    /// compile-time string ([`Const::Str`]) or the parameter expression
-    /// ([`Const::Param`]) it evaluates to one there; concrete MIR carries
-    /// none. `value` is the condition's `Bool` parameter value, as a
-    /// [`MirInstr::ComptimeIf`] condition's is, decided where present.
+    /// `kgen.param.assert`: a compile-time assertion over its `Bool`
+    /// parameter value, the `i1` attribute upstream's op takes, as a
+    /// [`MirInstr::ComptimeIf`] value is. The elaborator judges `value` per
+    /// reached instance, failing the instance when it does not hold with
+    /// `message`, a compile-time string ([`Const::Str`]) or the parameter
+    /// expression ([`Const::Param`]) it evaluates to one there; concrete
+    /// MIR carries none.
     ComptimeAssert {
-        cond: Box<GenericConstraint>,
-        value: Option<Const>,
+        value: Const,
         message: Option<Const>,
     },
     /// `hlcf.match`: run `cases` in order until one completes. A case

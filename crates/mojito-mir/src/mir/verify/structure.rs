@@ -3,8 +3,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::LoopLabel;
 use crate::mir::text::{instruction_mnemonic, terminator_mnemonic};
+use crate::mir::{Const, LoopLabel};
 use mojito_types::types::TyKind;
 
 /// Verify each region a region op holds, under the region's kind and its
@@ -105,26 +105,20 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
         }
         MirInstr::ComptimeIf {
             results,
-            conds,
             values,
             arms,
             orelse,
         } => {
-            if conds.is_empty() || conds.len() != arms.len() {
+            if values.is_empty() || values.len() != arms.len() {
                 errors.push(format!(
-                    "{}: comptime if has {} conditions for {} arms",
+                    "{}: comptime if has {} values for {} arms",
                     cx.prefix,
-                    conds.len(),
+                    values.len(),
                     arms.len()
                 ));
             }
-            if values.len() != conds.len() {
-                errors.push(format!(
-                    "{}: comptime if has {} condition values for {} conditions",
-                    cx.prefix,
-                    values.len(),
-                    conds.len()
-                ));
+            for value in values {
+                comptime_test_value(cx, "comptime if", value, errors);
             }
             for region in arms.iter().chain(std::iter::once(orelse)) {
                 let kind = RegionKind::ComptimeIfArm(results.clone());
@@ -148,7 +142,8 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
                     term: MirTerm::Unreachable,
                 }] if matches!(
                     instrs.first(),
-                    Some(MirInstr::ComptimeIf { conds, .. }) if conds == &[source.stop_test()]
+                    Some(MirInstr::ComptimeIf { values, .. })
+                        if matches!(values.as_slice(), [Const::Param(test)] if *test == source.has_next)
                 )
             );
             if !tests_has_next {
@@ -206,6 +201,9 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
                 orelse,
                 errors,
             );
+        }
+        MirInstr::ComptimeAssert { value, .. } => {
+            comptime_test_value(cx, "comptime assert", value, errors);
         }
         _ => {}
     }
@@ -411,6 +409,22 @@ fn require_bool(
     }
 }
 
+/// A compile-time test's value is upstream's `i1` attribute: a `Bool`
+/// constant, or a parameter expression of `Bool` meta.
+fn comptime_test_value(cx: &InstrCx<'_>, what: &str, value: &Const, errors: &mut Vec<String>) {
+    let is_bool = match value {
+        Const::Bool(_) => true,
+        Const::Param(value) => *value.meta() == mojito_types::param_expr::MetaTy::bool(),
+        _ => false,
+    };
+    if !is_bool {
+        errors.push(format!(
+            "{}: {what} value `{value:?}` is not a `Bool`",
+            cx.prefix
+        ));
+    }
+}
+
 /// What the values along a control-flow edge define: a region op's
 /// results, or a loop body's arguments.
 #[derive(Clone, Copy)]
@@ -532,7 +546,6 @@ mod tests {
     use crate::mir::{Const, MirProgram, SpanTable};
     use mojito_checked::checked::ComptimeSequence;
     use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
-    use mojito_types::types::GenericConstraint;
 
     fn one(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
         vec![MirBlock { instrs, term }]
@@ -571,8 +584,7 @@ mod tests {
         let source = sequence();
         let test = MirInstr::ComptimeIf {
             results: Vec::new(),
-            conds: vec![source.stop_test()],
-            values: vec![Some(Const::Param(source.has_next.clone()))],
+            values: vec![Const::Param(source.has_next.clone())],
             arms: vec![suite],
             orelse: one(Vec::new(), MirTerm::ComptimeBreak(Vec::new())),
         };
@@ -1215,8 +1227,7 @@ mod tests {
         let source = sequence();
         let test = MirInstr::ComptimeIf {
             results: Vec::new(),
-            conds: vec![source.stop_test()],
-            values: vec![Some(Const::Param(source.has_next.clone()))],
+            values: vec![Const::Param(source.has_next.clone())],
             arms: vec![one(Vec::new(), MirTerm::ComptimeContinue(next))],
             orelse: one(Vec::new(), MirTerm::ComptimeBreak(out)),
         };
@@ -1407,8 +1418,7 @@ mod tests {
     fn concrete_mir_carries_no_compile_time_control_flow() {
         let function = function_with(vec![MirInstr::ComptimeIf {
             results: Vec::new(),
-            conds: vec![GenericConstraint::Bool(true)],
-            values: vec![None],
+            values: vec![Const::Bool(true)],
             arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         }]);

@@ -3653,20 +3653,15 @@ fn structured_region_ops_and_terminators_reprint() {
         },
         MirInstr::ComptimeIf {
             results: Vec::new(),
-            conds: vec![GenericConstraint::Bool(true)],
-            values: vec![None],
+            values: vec![Const::Bool(true)],
             arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         },
         MirInstr::ComptimeIf {
             results: Vec::new(),
-            conds: vec![
-                GenericConstraint::Bool(true),
-                GenericConstraint::Bool(false),
-            ],
             values: vec![
-                Some(Const::Bool(true)),
-                Some(Const::Param(bool_parameter("$test:flag", 0, "flag"))),
+                Const::Bool(true),
+                Const::Param(bool_parameter("$test:flag", 0, "flag")),
             ],
             arms: vec![
                 one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
@@ -3675,18 +3670,15 @@ fn structured_region_ops_and_terminators_reprint() {
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         },
         MirInstr::ComptimeAssert {
-            cond: Box::new(GenericConstraint::Bool(true)),
-            value: None,
+            value: Const::Bool(true),
             message: None,
         },
         MirInstr::ComptimeAssert {
-            cond: Box::new(GenericConstraint::Bool(false)),
-            value: Some(Const::Param(bool_parameter("$test:flag", 0, "flag"))),
+            value: Const::Param(bool_parameter("$test:flag", 0, "flag")),
             message: Some(Const::Str("positive".to_string())),
         },
         MirInstr::ComptimeAssert {
-            cond: Box::new(GenericConstraint::Bool(false)),
-            value: None,
+            value: Const::Bool(false),
             message: Some(Const::Param(int_parameter("$test:msg", 0, "msg"))),
         },
         MirInstr::Match {
@@ -3960,12 +3952,111 @@ fn a_loop_and_continue_without_arguments_read_as_carrying_none() {
     assert_eq!(write::program(&parsed.program), text);
 }
 
+/// A `comptime.if` artifact at MIR 1.166, the last minor whose
+/// compile-time tests carried a constraint, over `conds`, one arm each.
+fn legacy_comptime_if(conds: &[GenericConstraint]) -> String {
+    let block = |term: MirTerm| {
+        vec![MirBlock {
+            instrs: Vec::new(),
+            term,
+        }]
+    };
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            Vec::new(),
+            vec![MirInstr::ComptimeIf {
+                results: Vec::new(),
+                values: vec![Const::Bool(true); conds.len()],
+                arms: (0..conds.len())
+                    .map(|_| block(MirTerm::ComptimeYield(Vec::new())))
+                    .collect(),
+                orelse: block(MirTerm::ComptimeYield(Vec::new())),
+            }],
+        ),
+    )]);
+    let written = write::program(&program);
+    let start = written.find("values: [").expect("a values field");
+    let end = start
+        + written[start..]
+            .find("], arms:")
+            .expect("arms after values")
+        + 1;
+    let conditions = conds.iter().map(write::constraint).collect::<Vec<_>>();
+    format!(
+        "{}conditions: [{}]{}",
+        &written[..start],
+        conditions.join(", "),
+        &written[end..]
+    )
+    .replace(
+        &crate::mir::text::version_header(),
+        &format!("{} 1.166", crate::mir::text::MAGIC),
+    )
+}
+
+/// The values a `comptime.if` artifact's first instruction reads as,
+/// printed.
+fn comptime_if_values(text: &str) -> Vec<String> {
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+        MirInstr::ComptimeIf { values, .. } => {
+            values.iter().map(|value| format!("{value:?}")).collect()
+        }
+        other => panic!("expected a compile-time branch, read {other:?}"),
+    }
+}
+
+/// Before MIR 1.167 a compile-time test carried its constraint, and before
+/// 1.158 nothing else: the reader derives each `Bool` value from it, as
+/// the checker builds the value today.
+#[test]
+fn legacy_comptime_if_derives_values_from_conditions() {
+    let context = ParamContext::detached();
+    let flag = bool_parameter("$test:flag", 0, "flag");
+    let n = int_parameter("$test:n", 0, "n");
+    let two = context.constant(CtValue::Int(2)).expect("a constant");
+    let conds = vec![
+        GenericConstraint::Bool(false),
+        GenericConstraint::Eq(
+            ConstraintOperand::Expr(flag.clone()),
+            ConstraintOperand::Value(CtValue::Bool(true)),
+        ),
+        GenericConstraint::And(
+            Box::new(GenericConstraint::Not(Box::new(GenericConstraint::Eq(
+                ConstraintOperand::Expr(flag.clone()),
+                ConstraintOperand::Value(CtValue::Bool(true)),
+            )))),
+            Box::new(GenericConstraint::Gt(
+                ConstraintOperand::Expr(n.clone()),
+                ConstraintOperand::Value(CtValue::Int(2)),
+            )),
+        ),
+    ];
+    let not_flag = context.not(&flag).expect("not");
+    let greater = context.infix(InfixOp::Gt, &n, &two).expect("gt");
+    assert_eq!(
+        comptime_if_values(&legacy_comptime_if(&conds)),
+        [
+            Const::Bool(false),
+            Const::Param(flag),
+            Const::Param(
+                context
+                    .short_circuit(true, &not_flag, &greater)
+                    .expect("and")
+            ),
+        ]
+        .iter()
+        .map(|value| format!("{value:?}"))
+        .collect::<Vec<_>>()
+    );
+}
+
 /// Schema 1.102 records the operand a conformance test asks of, an inlined
 /// one's bound type or list included; an older artifact records the binder,
-/// which reads as a parameter operand.
+/// which reads as a parameter operand. Either derives the test's value.
 #[test]
 fn conforms_reads_pre_1_102_param_field() {
-    let block = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
     let conforms = |operand| GenericConstraint::Conforms {
         operand,
         trait_name: "Copyable".into(),
@@ -3983,31 +4074,9 @@ fn conforms_reads_pre_1_102_param_field() {
             CtValue::Type(Ty::bool()),
         ]))),
     ];
-    let program = program_with(vec![(
-        "main".into(),
-        function_with(
-            Vec::new(),
-            vec![MirInstr::ComptimeIf {
-                results: Vec::new(),
-                conds: conds.clone(),
-                values: vec![None; conds.len()],
-                arms: (0..conds.len())
-                    .map(|_| block(Vec::new(), MirTerm::ComptimeYield(Vec::new())))
-                    .collect(),
-                orelse: block(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
-            }],
-        ),
-    )]);
-    assert_reprints(&program);
-    let read = |text: &str| {
-        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
-            MirInstr::ComptimeIf { conds, .. } => conds.clone(),
-            other => panic!("expected a compile-time branch, read {other:?}"),
-        }
-    };
-    let written = write::program(&program);
-    assert_eq!(read(&written), conds);
+    let written = legacy_comptime_if(&conds);
+    let values = comptime_if_values(&written);
+    assert_eq!(values.len(), conds.len());
     let older = written
         .replace(
             "operand: operand_param(binder { owner: \"$test:T\", slot: 0, name: T })",
@@ -4019,15 +4088,14 @@ fn conforms_reads_pre_1_102_param_field() {
         );
     assert!(older.contains("param: binder {"));
     assert!(!older.contains("operand: operand_param("));
-    assert_eq!(read(&older), conds);
+    assert_eq!(comptime_if_values(&older), values);
 }
 
 /// Schema 1.111 records the list a `TypeList` pack query asks of, an inlined
 /// one's bound list included; an older artifact records the pack binder,
-/// which reads as a parameter operand.
+/// which reads as a parameter operand. Either derives the test's value.
 #[test]
 fn pack_queries_read_pre_1_111_binder() {
-    let block = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
     let predicate = |operand| GenericConstraint::PackPredicate {
         operand,
         predicate: PackPredicateRef::Trivial(TrivialLifecycle::Copyable),
@@ -4058,31 +4126,9 @@ fn pack_queries_read_pre_1_111_binder() {
         contains(list()),
         length(list()),
     ];
-    let program = program_with(vec![(
-        "main".into(),
-        function_with(
-            Vec::new(),
-            vec![MirInstr::ComptimeIf {
-                results: Vec::new(),
-                conds: conds.clone(),
-                values: vec![None; conds.len()],
-                arms: (0..conds.len())
-                    .map(|_| block(Vec::new(), MirTerm::ComptimeYield(Vec::new())))
-                    .collect(),
-                orelse: block(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
-            }],
-        ),
-    )]);
-    assert_reprints(&program);
-    let read = |text: &str| {
-        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
-            MirInstr::ComptimeIf { conds, .. } => conds.clone(),
-            other => panic!("expected a compile-time branch, read {other:?}"),
-        }
-    };
-    let written = write::program(&program);
-    assert_eq!(read(&written), conds);
+    let written = legacy_comptime_if(&conds);
+    let values = comptime_if_values(&written);
+    assert_eq!(values.len(), conds.len());
     let binder = "binder { owner: \"$test:Ts\", slot: 0, name: Ts }";
     let older = written
         .replace(
@@ -4094,5 +4140,5 @@ fn pack_queries_read_pre_1_111_binder() {
             &format!("operand_pack_length({binder})"),
         );
     assert!(!older.contains("operand_param("));
-    assert_eq!(read(&older), conds);
+    assert_eq!(comptime_if_values(&older), values);
 }

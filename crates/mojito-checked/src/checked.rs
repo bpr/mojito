@@ -545,20 +545,6 @@ impl ComptimeSequence {
         self.initial.meta().clone()
     }
 
-    /// The loop's stop test, `has_next` over the binder equal to `True`:
-    /// the condition of the `comptime if` its body opens with, as a
-    /// parameter-valued `Bool` condition is spelled.
-    pub fn stop_test(&self) -> mojito_types::types::GenericConstraint {
-        use mojito_types::{
-            ct::CtValue,
-            types::{ConstraintOperand, GenericConstraint},
-        };
-        GenericConstraint::Eq(
-            ConstraintOperand::Expr(self.has_next.clone()),
-            ConstraintOperand::Value(CtValue::Bool(true)),
-        )
-    }
-
     /// Every parameter expression the sequence holds.
     pub fn expressions(&self) -> Vec<&mojito_types::param_expr::ParamExpr> {
         vec![
@@ -963,18 +949,15 @@ pub enum SemanticAdjustment {
     ConversionReadsSource,
     /// A conditional expression whose condition is a parameter value:
     /// lowering builds upstream's `hlcf.comptime.if`, its condition the
-    /// recorded `ComptimeCondition` or a thunk, so the elaborator keeps the
+    /// recorded `ComptimeCondition`'s value, so the elaborator keeps the
     /// live arm alone.
     ComptimeConditional,
-    /// A `comptime if` condition the checker compiled as a constraint over
-    /// the binders in scope, beside its `Bool` parameter value (the `i1`
-    /// attribute upstream's `hlcf.comptime.if` takes) when the one builder
-    /// reads every leaf: MIR carries both on the branch, and the elaborator
-    /// decides the value where present. A condition with no such record is
-    /// lowered as a thunk.
+    /// A compile-time test's `Bool` parameter value over the binders in
+    /// scope, the `i1` attribute upstream's `hlcf.comptime.if` and
+    /// `kgen.param.assert` take: MIR carries it on the branch or the
+    /// assertion, and the elaborator decides it per instance.
     ComptimeCondition {
-        constraint: mojito_types::types::GenericConstraint,
-        value: Option<mojito_types::param_expr::ParamExpr>,
+        value: mojito_types::param_expr::ParamExpr,
     },
     /// A `comptime for` iterable the checker compiled as a range over the
     /// binders in scope, recorded on the iterable: MIR carries it on the
@@ -1181,10 +1164,10 @@ pub enum SemanticAdjustment {
     /// instance. A compile-time position folds the application and drops
     /// it, so the check records none there. `value` is the assertion's
     /// `Bool` parameter value, the `i1` attribute upstream's
-    /// `kgen.param.assert` takes, when the check built one.
+    /// `kgen.param.assert` takes, and `message` the string it fails with.
     InstanceAssertion {
-        constraint: Box<mojito_types::types::GenericConstraint>,
-        value: Option<mojito_types::param_expr::ParamExpr>,
+        value: mojito_types::param_expr::ParamExpr,
+        message: String,
     },
     /// ``__mlir_op.`pop.call_llvm_intrinsic`[intrin=…, _type=…,
     /// hasSideEffects=…](operands)``: a call of the LLVM intrinsic
@@ -6893,16 +6876,15 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             dest: assertion.dest.clone(),
         });
     }
-    if let Some(constraint) = &facts.comptime_condition {
+    if let Some(value) = &facts.comptime_condition {
         adjustments.push(SemanticAdjustment::ComptimeCondition {
-            constraint: constraint.clone(),
-            value: facts.comptime_condition_value.clone(),
+            value: value.clone(),
         });
     }
-    for (constraint, value) in facts.instance_assertions.iter().flatten() {
+    for (value, message) in facts.instance_assertions.iter().flatten() {
         adjustments.push(SemanticAdjustment::InstanceAssertion {
-            constraint: Box::new(constraint.clone()),
             value: value.clone(),
+            message: message.clone(),
         });
     }
     if let Some((dtype, width)) = &facts.simd_construction {
@@ -7181,21 +7163,16 @@ node_facts! {
         /// A reference read as a value: whether it is writable.
         reference_value_use: bool,
         rebind_assertion: RebindAssertion,
-        /// The constraint a compile-time test or one of its leaves decides
-        /// ([`SemanticAdjustment::ComptimeCondition`]), beside the leaf's
-        /// own operation record: a bare name keeps its parameter value.
-        comptime_condition: mojito_types::types::GenericConstraint,
-        /// The `Bool` parameter value of the test `comptime_condition`
-        /// decides, when the one builder reads each of its leaves.
-        comptime_condition_value: mojito_types::param_expr::ParamExpr,
+        /// The `Bool` parameter value of a compile-time test or one of its
+        /// leaves ([`SemanticAdjustment::ComptimeCondition`]), beside the
+        /// leaf's own operation record: a bare name keeps its parameter
+        /// value.
+        comptime_condition: mojito_types::param_expr::ParamExpr,
         /// The `comptime assert`s of the builtin dunders and constructors
-        /// the occurrence applies, in application order, each with its
-        /// `Bool` parameter value when the check built one
+        /// the occurrence applies, in application order, each its `Bool`
+        /// parameter value and message
         /// ([`SemanticAdjustment::InstanceAssertion`]).
-        instance_assertions: Vec<(
-            mojito_types::types::GenericConstraint,
-            Option<mojito_types::param_expr::ParamExpr>,
-        )>,
+        instance_assertions: Vec<(mojito_types::param_expr::ParamExpr, String)>,
         /// What each bracket argument of a call or type application
         /// resolved to, in source order: `Some` for a type-shaped one or a
         /// value-shaped one the check bound to a type, an origin, or a raw

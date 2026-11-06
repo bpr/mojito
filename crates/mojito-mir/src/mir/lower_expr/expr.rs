@@ -57,23 +57,16 @@ impl<'a> Flatten<'a> {
         // `node` applies, for each reached instance to judge.
         for adjustment in node.adjustments() {
             if let mojito_checked::checked::SemanticAdjustment::InstanceAssertion {
-                constraint,
                 value,
+                message,
             } = adjustment
             {
-                let (cond, message) = match &**constraint {
-                    GenericConstraint::WithMessage(cond, message) => {
-                        (cond.clone(), Some(Const::Str(message.clone())))
-                    }
-                    _ => (constraint.clone(), None),
-                };
-                let value = value
-                    .as_ref()
-                    .and_then(|value| self.comptime_test_value(value));
+                let value = self
+                    .comptime_test_value(value)
+                    .unwrap_or_else(|| self.unrecorded_comptime_condition());
                 self.emit(MirInstr::ComptimeAssert {
-                    cond,
                     value,
-                    message,
+                    message: Some(Const::Str(message.clone())),
                 });
             }
         }

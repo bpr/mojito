@@ -528,14 +528,7 @@ impl RewriteTypes for SemanticAdjustment {
             Self::CompareLinks(f0) => {
                 f0.rewrite_types(rewrite);
             }
-            Self::ComptimeCondition {
-                constraint: _,
-                value,
-            }
-            | Self::InstanceAssertion {
-                constraint: _,
-                value,
-            } => {
+            Self::ComptimeCondition { value } | Self::InstanceAssertion { value, message: _ } => {
                 value.rewrite_types(rewrite);
             }
             Self::ComptimeIteration(f0) => {

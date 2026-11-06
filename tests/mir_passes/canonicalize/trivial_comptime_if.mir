@@ -1,4 +1,4 @@
-mojito-mir 1.81
+mojito-mir 1.167
 artifact {
   features: [],
   files: [
@@ -30,7 +30,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              comptime.if { results: [], conditions: [gt { left: operand_value(ct_int_literal(1)), right: operand_value(ct_int_literal(0)) }], arms: [[bb0 { instructions: [], terminator: comptime.yield { values: [] } }]], else: [bb0 { instructions: [], terminator: comptime.yield { values: [] } }] },
+              comptime.if { results: [], values: [bool(true)], arms: [[bb0 { instructions: [], terminator: comptime.yield { values: [] } }]], else: [bb0 { instructions: [], terminator: comptime.yield { values: [] } }] },
               var.use { dest: %r0, var: $v0, mode: copy }
             ],
             terminator: return { value: present(%r0) }

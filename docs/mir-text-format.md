@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.166
+mojito-mir 1.167
 ```
 
-The writer emits 1.166. The reader accepts 1.0 through 1.166; *Schema 1.0*
+The writer emits 1.167. The reader accepts 1.0 through 1.167; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1138,6 +1138,20 @@ and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
 
+Schema 1.167 withdraws the constraint a compile-time test carried beside
+its `Bool` value (R1905): `comptime.if` holds `values: [<constant>...]`,
+one per arm, and `comptime.assert` `value: <constant>`, each a `bool`
+constant or the `param` constant of a `Bool` parameter expression, the one
+`i1` attribute upstream's `hlcf.comptime.if` and `kgen.param.assert` take.
+Both fields are required, and `conditions`/`condition` are unknown fields.
+An artifact below 1.167 still reads: each test's written value where
+present, else the value its constraint spells (a connective's
+`not`/`Cond`, a comparison's `infix`, a conformance or pack proposition's
+node, `x == True` the value `x`), and an artifact error for a condition no
+parameter expression spells. The checked `ComptimeCondition` adjustment
+carries the value alone and `InstanceAssertion` its value and message, so
+the package format moves to `mojito-package 193`.
+
 Schema 1.166 makes a pack query's `pack` an operand, as upstream's
 `pop.variadic.size` and `TypeList` queries take their pack: a `param-expr`
 that is the pack binder's `param_decl_ref` in a template, or the list a
@@ -2019,9 +2033,9 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `If` | `if { results: [reg...], condition: %rN, then: [block...], elifs: [elif { condition_arguments: [reg...], condition: [block...], then_arguments: [reg...], then: [block...] }...], else_arguments: [reg...], else: [block...] }` — `hlcf.if` (schema 1.54); the region arguments (schema 1.84) are defined by the `if.elifcond.yield` entering each region, and the op enters `then`, the first elif's condition, and an `else` without elifs with none |
 | `Loop` | `loop { results: [reg...], label: option<loopN>, operands: [reg...], arguments: [reg...], body: [block...] }` — `hlcf.loop` (schema 1.54), its `results` (schema 1.82) defined by the values of the `break` that leaves it, its body's `arguments` (schema 1.83) defined by its `operands` on entry and by the values of each `continue` that resumes it, one operand per argument; `loop4294967295` is upstream's `inlined_cf_scope`, the label `inline-parametric` wraps an inlined body in, which no source loop carries, its one result the call's |
 | `Match` | `match { results: [reg...], cases: [case { arguments: [reg...], body: [block...] }...], else_arguments: [reg...], else: [block...] }` — `hlcf.match`: the cases in order, each a region that tests its pattern and runs its body, leaving by `match.next` (the next case, or `else` after the last) or `match.complete` (the op's end); `else` runs when no case completed and ends in `yield` (schema 1.74); a case's `arguments` and the `else_arguments` (schema 1.84) are defined by the `match.next`s leaving the region before, and the first case takes none; the `results` (schema 1.85) are defined by each `match.complete` leaving a case and by the else region's `yield` |
-| `ComptimeIf` | `comptime.if { results: [reg...], conditions: [<constraint>...], values: [absent \| present(<constant>)...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per condition (schema 1.54); `values` holds each condition's `Bool` parameter value, decided where present, and is omitted while every one is absent (schema 1.158) |
-| `ComptimeFor` | `comptime.for { results: [reg...], binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, operands: [reg...], arguments: [reg...], body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `eq { left: operand_expr(<has_next>), right: operand_value(ct_bool(true)) }`, whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58); the `operands` define the body's `arguments` on entry and each `comptime.for.continue` for the next iteration, each `comptime.for.break` defines the `results`, and operands and results agree in number and type, as `ComptimeForOp::verify` requires (schema 1.85) |
-| `ComptimeAssert` | `comptime.assert { condition: <constraint>, value: <constant>, message: absent \| present(<constant>) }` — upstream's `kgen.param.assert`, a `comptime assert` over the function's binders (schema 1.81), `value` its condition's `Bool` parameter value, omitted while it has none (schema 1.158), its message (schema 1.139) a `string` constant or the `param` constant of a compile-time `String` or `StaticString` expression, as upstream's `data_to_str` attribute; the elaborator judges it per reached instance, evaluating the message only for an instance it fails, which fails `constraint failed: MESSAGE`, and concrete MIR carries none |
+| `ComptimeIf` | `comptime.if { results: [reg...], values: [<constant>...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per value (schema 1.54), each value the `Bool` parameter value upstream's op takes as its `i1` attribute, a `bool` constant or a `param` of `Bool` meta (schema 1.158; required, and the constraint beside it withdrawn, schema 1.167) |
+| `ComptimeFor` | `comptime.for { results: [reg...], binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, operands: [reg...], arguments: [reg...], body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `values: [param(<has_next>)]` (schema 1.167), whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58); the `operands` define the body's `arguments` on entry and each `comptime.for.continue` for the next iteration, each `comptime.for.break` defines the `results`, and operands and results agree in number and type, as `ComptimeForOp::verify` requires (schema 1.85) |
+| `ComptimeAssert` | `comptime.assert { value: <constant>, message: absent \| present(<constant>) }` — upstream's `kgen.param.assert`, a `comptime assert` over the function's binders (schema 1.81), `value` its condition's `Bool` parameter value (schema 1.158; required, and the constraint beside it withdrawn, schema 1.167), its message (schema 1.139) a `string` constant or the `param` constant of a compile-time `String` or `StaticString` expression, as upstream's `data_to_str` attribute; the elaborator judges it per reached instance, evaluating the message only for an instance it fails, which fails `constraint failed: MESSAGE`, and concrete MIR carries none |
 | `GetIter` / `HasNext` / `Next` | `iter.init { source: $vN, dest: $vN }` / `iter.has_next` / `iter.next` over compiler-private iterator storage (schema 1.94 withdraws `iter.try_next`, and schema 1.109 `iter.init`'s `mode` and `prepare`; see *Compatibility*) |
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic

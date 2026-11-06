@@ -30,11 +30,10 @@ impl Specializer<'_> {
         decided: &mut Decided,
     ) -> Result<Option<usize>, MonoError> {
         match &mut block.instrs[index] {
-            MirInstr::ComptimeIf { conds, values, .. } => {
+            MirInstr::ComptimeIf { values, .. } => {
                 let mut taken = None;
-                for (arm, cond) in conds.iter().enumerate() {
-                    let value = values.get(arm).and_then(Option::as_ref);
-                    if self.decide_comptime_test(template, cond, value, bindings)? {
+                for (arm, value) in values.clone().iter().enumerate() {
+                    if self.decide_comptime_test(template, value, bindings)? {
                         taken = Some(arm);
                         break;
                     }
@@ -43,17 +42,12 @@ impl Specializer<'_> {
                     .map_err(|construct| self.error(Some(template), construct))?;
                 Ok(Some(0))
             }
-            MirInstr::ComptimeAssert {
-                cond,
-                value,
-                message,
-            } => {
-                if self.decide_comptime_test(template, cond, value.as_ref(), bindings)? {
+            MirInstr::ComptimeAssert { value, message } => {
+                if self.decide_comptime_test(template, value, bindings)? {
                     block.instrs.remove(index);
                     return Ok(Some(0));
                 }
-                **cond = GenericConstraint::Bool(false);
-                *value = Some(Const::Bool(false));
+                *value = Const::Bool(false);
                 if let Some(Const::Param(expression)) = message {
                     *message = Some(Const::Str(
                         self.assertion_message(template, expression, bindings)?,

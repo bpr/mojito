@@ -163,8 +163,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     body's arguments defined by its operands and each `Continue`'s values,
     its results by each `Break`'s. `mem-2-reg` produces them for a slot
     stored in the body (R927).
-  - `ComptimeIf { results, conds, arms, orelse }` — `hlcf.comptime.if`:
-    one arm per condition, then the else region.
+  - `ComptimeIf { results, values, arms, orelse }` — `hlcf.comptime.if`:
+    one arm per `Bool` value, then the else region.
   - `ComptimeFor { binder, source, body, orelse }` —
     `hlcf.comptime.for`. `orelse` is the shape `LowerSemanticCF` leaves
     and the elaborator asserts: one block holding `Unreachable`. MIR is

@@ -21,23 +21,29 @@ impl<'a> Flatten<'a> {
         self.with_statement_loans(|this| this.condition_value(this.handle(expression)))
     }
 
-    /// A `comptime if` condition as the constraint its branch carries: the
-    /// one the checker compiled and recorded on the expression, else its
-    /// connectives over the leaves, each a recorded constraint. A leaf with
-    /// no record is the explicit boundary: the check records every leaf.
-    /// Beside it is the condition's `Bool` parameter value, when the check
-    /// recorded one ([`Self::comptime_condition_value_of`]).
+    /// A compile-time test's `Bool` parameter value, the `i1` attribute
+    /// its `hlcf.comptime.if` or `kgen.param.assert` takes, as the checker
+    /// recorded it on the condition
+    /// ([`Self::comptime_condition_value_of`]). A condition with no record
+    /// is the explicit boundary: the check records every one.
     pub(in crate::mir) fn comptime_condition(
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
-    ) -> (mojito_types::types::GenericConstraint, Option<Const>) {
+    ) -> Const {
         self.with_statement_loans(|this| {
             let node = this.handle(expression);
-            (
-                this.comptime_condition_of(node),
-                this.comptime_condition_value_of(node),
-            )
+            this.comptime_condition_value_of(node)
+                .unwrap_or_else(|| this.unrecorded_comptime_condition())
         })
+    }
+
+    /// The boundary a compile-time test the check recorded no value for
+    /// meets: an explicit `Unsupported`, the test itself `False`.
+    pub(in crate::mir) fn unrecorded_comptime_condition(&mut self) -> Const {
+        self.emit(MirInstr::Unsupported(
+            "a comptime condition the check recorded no value for".to_string(),
+        ));
+        Const::Bool(false)
     }
 
     /// The handle of HIR expression `expression`.
@@ -65,70 +71,12 @@ impl<'a> Flatten<'a> {
         name_spelling(&self.slots, &self.vars, node).unwrap_or_else(|| name.to_owned())
     }
 
-    pub(in crate::mir) fn comptime_condition_of(
-        &mut self,
-        expression: Node<'a>,
-    ) -> mojito_types::types::GenericConstraint {
-        use mojito_checked::checked::CheckedOp;
-        use mojito_types::types::GenericConstraint;
-        let recorded = expression
-            .adjustments()
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ComptimeCondition {
-                    constraint,
-                    ..
-                } => Some(constraint),
-                _ => None,
-            })
-            .cloned();
-        if let Some(constraint) = recorded {
-            // A binder the condition names is the enclosing declaration's
-            // of that spelling: a fact carried from an earlier discovery
-            // round may spell the declaration under its overload-qualified
-            // symbol, and the body is lowered under the symbol it has now.
-            return constraint.map(
-                &|reference| {
-                    self.enclosing_binders
-                        .declarations
-                        .iter()
-                        .rev()
-                        .find(|declaration| declaration.name() == reference.name.as_ref())
-                        .map_or_else(|| reference.clone(), ParamDecl::binder)
-                },
-                &Clone::clone,
-            );
-        }
-        let operands: Vec<_> = expression.operands().collect();
-        match (expression.op(), operands.as_slice()) {
-            (CheckedOp::Bool(value), _) => GenericConstraint::Bool(*value),
-            (CheckedOp::Prefix(PrefixOp::Not, _), [inner]) => {
-                GenericConstraint::Not(Box::new(self.comptime_condition_of(*inner)))
-            }
-            (CheckedOp::Infix(InfixOp::And, ..), [left, right]) => GenericConstraint::And(
-                Box::new(self.comptime_condition_of(*left)),
-                Box::new(self.comptime_condition_of(*right)),
-            ),
-            (CheckedOp::Infix(InfixOp::Or, ..), [left, right]) => GenericConstraint::Or(
-                Box::new(self.comptime_condition_of(*left)),
-                Box::new(self.comptime_condition_of(*right)),
-            ),
-            _ => {
-                self.emit(MirInstr::Unsupported(
-                    "a comptime condition the check recorded no constraint for".to_string(),
-                ));
-                GenericConstraint::Bool(false)
-            }
-        }
-    }
-
     /// The `Bool` parameter value the checker recorded for the compile-time
     /// test `expression`, the `i1` attribute its `hlcf.comptime.if` takes: a
     /// [`Const::Bool`] once closed, else a [`Const::Param`]. A binder it
     /// names that no enclosing declaration is, a fact carried from an
     /// earlier discovery round under an overload-qualified symbol, is
-    /// respelled as [`Self::comptime_condition_of`] respells the
-    /// constraint's: the enclosing declaration's of that spelling.
+    /// respelled as the enclosing declaration's of that spelling.
     pub(in crate::mir) fn comptime_condition_value_of(
         &self,
         expression: Node<'a>,
@@ -137,9 +85,9 @@ impl<'a> Flatten<'a> {
             .adjustments()
             .iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ComptimeCondition {
-                    value, ..
-                } => value.as_ref(),
+                mojito_checked::checked::SemanticAdjustment::ComptimeCondition { value } => {
+                    Some(value)
+                }
                 _ => None,
             })?;
         self.comptime_test_value(value)

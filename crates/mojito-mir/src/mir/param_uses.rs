@@ -1585,10 +1585,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 self.visit(instantiated_args);
             }
             MirInstr::Const { k, .. } => self.visit(k),
-            MirInstr::ComptimeIf { conds, values, .. } => {
-                self.visit(conds);
-                self.visit(values);
-            }
+            MirInstr::ComptimeIf { values, .. } => self.visit(values),
             MirInstr::ComptimeFor { binder, source, .. } => {
                 self.visit(binder);
                 self.visit(source);

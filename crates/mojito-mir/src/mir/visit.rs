@@ -16,9 +16,7 @@ use super::{
 use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_types::param_expr::ParamRef;
-use mojito_types::types::{
-    GenericConstraint, LaneMask, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, VariantIndex,
-};
+use mojito_types::types::{LaneMask, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, VariantIndex};
 
 /// Where a visited type sits. A client that treats sites differently
 /// matches on it.
@@ -112,7 +110,6 @@ pub trait MutTypeVisitor {
     /// A parameter an instruction names: a constructed type
     /// parameter, a `comptime for` binder.
     fn visit_param_ref(&mut self, param: &mut ParamRef) -> Result<(), Self::Error>;
-    fn visit_constraint(&mut self, cond: &mut GenericConstraint) -> Result<(), Self::Error>;
     fn visit_sequence(&mut self, source: &mut ComptimeSequence) -> Result<(), Self::Error>;
 
     /// One instruction, its regions not included: [`walk_blocks_mut`] walks
@@ -370,28 +367,15 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visitor.visit_constant(has_side_effect)
         }
         I::ArrayGet { index, .. } | I::ArrayReplace { index, .. } => visitor.visit_constant(index),
-        I::ComptimeIf { conds, values, .. } => {
-            conds
-                .iter_mut()
-                .try_for_each(|cond| visitor.visit_constraint(cond))?;
-            values
-                .iter_mut()
-                .flatten()
-                .try_for_each(|value| visitor.visit_constant(value))
-        }
+        I::ComptimeIf { values, .. } => values
+            .iter_mut()
+            .try_for_each(|value| visitor.visit_constant(value)),
         I::ComptimeFor { binder, source, .. } => {
             visitor.visit_param_ref(binder)?;
             visitor.visit_sequence(source)
         }
-        I::ComptimeAssert {
-            cond,
-            value,
-            message,
-        } => {
-            visitor.visit_constraint(cond)?;
-            value
-                .iter_mut()
-                .try_for_each(|value| visitor.visit_constant(value))?;
+        I::ComptimeAssert { value, message } => {
+            visitor.visit_constant(value)?;
             message
                 .iter_mut()
                 .try_for_each(|message| visitor.visit_constant(message))
@@ -565,7 +549,6 @@ mod tests {
         variant_indices: usize,
         lane_masks: usize,
         constants: usize,
-        constraints: usize,
     }
 
     impl MutTypeVisitor for Counter {
@@ -604,10 +587,6 @@ mod tests {
             Ok(())
         }
         fn visit_param_ref(&mut self, _: &mut ParamRef) -> Result<(), ()> {
-            Ok(())
-        }
-        fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), ()> {
-            self.constraints += 1;
             Ok(())
         }
         fn visit_sequence(&mut self, _: &mut ComptimeSequence) -> Result<(), ()> {
@@ -673,8 +652,7 @@ mod tests {
                     },
                     MirInstr::ComptimeIf {
                         results: Vec::new(),
-                        conds: vec![GenericConstraint::Bool(true)],
-                        values: vec![None],
+                        values: vec![Const::Bool(true)],
                         arms: vec![vec![MirBlock {
                             instrs: Vec::new(),
                             term: MirTerm::ComptimeYield(Vec::new()),
@@ -704,10 +682,9 @@ mod tests {
                 TySite::Instruction,
             ]
         );
-        assert_eq!(counter.constants, 1);
+        assert_eq!(counter.constants, 2);
         assert_eq!(counter.variant_lists, 1);
         assert_eq!(counter.variant_indices, 2);
         assert_eq!(counter.lane_masks, 1);
-        assert_eq!(counter.constraints, 1);
     }
 }

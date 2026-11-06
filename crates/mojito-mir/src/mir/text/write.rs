@@ -81,6 +81,76 @@ pub(super) fn functions_section(program: &MirProgram) -> String {
     output
 }
 
+/// The text of a generic constraint, as a declaration's conditions
+/// spell it.
+pub(super) fn constraint(value: &GenericConstraint) -> String {
+    match value {
+        GenericConstraint::WithMessage(condition, message) => record(
+            "with_message",
+            &[
+                ("condition", constraint(condition)),
+                ("message", quote(message)),
+            ],
+        ),
+        GenericConstraint::Conforms {
+            operand,
+            trait_name,
+        } => record(
+            "conforms",
+            &[
+                ("operand", constraint_operand(operand)),
+                ("trait", symbol(trait_name)),
+            ],
+        ),
+        GenericConstraint::ConformsPack {
+            operand,
+            trait_name,
+        } => record(
+            "conforms_pack",
+            &[
+                ("operand", constraint_operand(operand)),
+                ("trait", symbol(trait_name)),
+            ],
+        ),
+        GenericConstraint::PackPredicate {
+            operand,
+            predicate,
+            all,
+        } => record(
+            "pack_predicate",
+            &[
+                ("operand", constraint_operand(operand)),
+                ("predicate", pack_predicate(predicate)),
+                ("all", all.to_string()),
+            ],
+        ),
+        GenericConstraint::PackContains { operand, element } => record(
+            "pack_contains",
+            &[
+                ("operand", constraint_operand(operand)),
+                ("element", constraint_operand(element)),
+            ],
+        ),
+        GenericConstraint::Trivial(kind, operand) => record(
+            "trivial",
+            &[
+                ("lifecycle", lifecycle(*kind).into()),
+                ("operand", constraint_operand(operand)),
+            ],
+        ),
+        GenericConstraint::Eq(left, right) => comparison("eq", left, right),
+        GenericConstraint::Ne(left, right) => comparison("ne", left, right),
+        GenericConstraint::Lt(left, right) => comparison("lt", left, right),
+        GenericConstraint::Le(left, right) => comparison("le", left, right),
+        GenericConstraint::Gt(left, right) => comparison("gt", left, right),
+        GenericConstraint::Ge(left, right) => comparison("ge", left, right),
+        GenericConstraint::And(left, right) => logical("and", left, right),
+        GenericConstraint::Or(left, right) => logical("or", left, right),
+        GenericConstraint::Not(value) => positional("not", &constraint(value)),
+        GenericConstraint::Bool(value) => positional("constraint_bool", &value.to_string()),
+    }
+}
+
 /// The version header and an artifact's leading fields, through its
 /// function declarations.
 fn write_artifact_head(
@@ -1678,32 +1748,18 @@ fn instruction_value(instruction: &MirInstr) -> String {
         ),
         MirInstr::ComptimeIf {
             results,
-            conds,
             values,
             arms,
             orelse,
-        } => {
-            let mut fields = vec![
+        } => record(
+            tag,
+            &[
                 ("results", list(results.iter().map(|v| reg_value(*v)))),
-                ("conditions", list(conds.iter().map(constraint))),
-            ];
-            // Omitted while no condition has a value.
-            if values.iter().any(Option::is_some) {
-                fields.push((
-                    "values",
-                    list(
-                        values
-                            .iter()
-                            .map(|value| option(value.as_ref().map(const_value))),
-                    ),
-                ));
-            }
-            fields.extend([
+                ("values", list(values.iter().map(const_value))),
                 ("arms", list(arms.iter().map(|arm| blocks_value(arm)))),
                 ("else", blocks_value(orelse)),
-            ]);
-            record(tag, &fields)
-        }
+            ],
+        ),
         MirInstr::ComptimeFor {
             binder,
             source,
@@ -1723,19 +1779,13 @@ fn instruction_value(instruction: &MirInstr) -> String {
             ]);
             record(tag, &fields)
         }
-        MirInstr::ComptimeAssert {
-            cond,
-            value,
-            message,
-        } => {
-            let mut fields = vec![("condition", constraint(cond))];
-            // Omitted while the condition has no value.
-            if let Some(value) = value {
-                fields.push(("value", const_value(value)));
-            }
-            fields.push(("message", option(message.as_ref().map(const_value))));
-            record(tag, &fields)
-        }
+        MirInstr::ComptimeAssert { value, message } => record(
+            tag,
+            &[
+                ("value", const_value(value)),
+                ("message", option(message.as_ref().map(const_value))),
+            ],
+        ),
         MirInstr::Match {
             results,
             cases,
@@ -2472,74 +2522,6 @@ fn param_decl(value: &ParamDecl) -> String {
                 ("constraints", list(constraints.iter().map(constraint))),
             ],
         ),
-    }
-}
-
-fn constraint(value: &GenericConstraint) -> String {
-    match value {
-        GenericConstraint::WithMessage(condition, message) => record(
-            "with_message",
-            &[
-                ("condition", constraint(condition)),
-                ("message", quote(message)),
-            ],
-        ),
-        GenericConstraint::Conforms {
-            operand,
-            trait_name,
-        } => record(
-            "conforms",
-            &[
-                ("operand", constraint_operand(operand)),
-                ("trait", symbol(trait_name)),
-            ],
-        ),
-        GenericConstraint::ConformsPack {
-            operand,
-            trait_name,
-        } => record(
-            "conforms_pack",
-            &[
-                ("operand", constraint_operand(operand)),
-                ("trait", symbol(trait_name)),
-            ],
-        ),
-        GenericConstraint::PackPredicate {
-            operand,
-            predicate,
-            all,
-        } => record(
-            "pack_predicate",
-            &[
-                ("operand", constraint_operand(operand)),
-                ("predicate", pack_predicate(predicate)),
-                ("all", all.to_string()),
-            ],
-        ),
-        GenericConstraint::PackContains { operand, element } => record(
-            "pack_contains",
-            &[
-                ("operand", constraint_operand(operand)),
-                ("element", constraint_operand(element)),
-            ],
-        ),
-        GenericConstraint::Trivial(kind, operand) => record(
-            "trivial",
-            &[
-                ("lifecycle", lifecycle(*kind).into()),
-                ("operand", constraint_operand(operand)),
-            ],
-        ),
-        GenericConstraint::Eq(left, right) => comparison("eq", left, right),
-        GenericConstraint::Ne(left, right) => comparison("ne", left, right),
-        GenericConstraint::Lt(left, right) => comparison("lt", left, right),
-        GenericConstraint::Le(left, right) => comparison("le", left, right),
-        GenericConstraint::Gt(left, right) => comparison("gt", left, right),
-        GenericConstraint::Ge(left, right) => comparison("ge", left, right),
-        GenericConstraint::And(left, right) => logical("and", left, right),
-        GenericConstraint::Or(left, right) => logical("or", left, right),
-        GenericConstraint::Not(value) => positional("not", &constraint(value)),
-        GenericConstraint::Bool(value) => positional("constraint_bool", &value.to_string()),
     }
 }
 

@@ -1556,7 +1556,7 @@ impl Checker {
                 let tt = if self.parameter_valued_condition(cond) {
                     let constraint = self.check_comptime_condition(cond, ComptimeTest::If)?;
                     self.record_at(expr.source_span()).comptime_conditional = true;
-                    self.assume_condition(cond, constraint.as_ref())?;
+                    self.assume_condition(cond, Some(&constraint))?;
                     let tt = self.infer(then_branch);
                     self.pop_assumptions();
                     tt?

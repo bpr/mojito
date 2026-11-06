@@ -19,7 +19,7 @@ use mojito_mir::mir::{
     fresh_register, instruction_regions, instruction_regions_mut, loop_breaks_mut,
     loop_continues_mut, replace_register_reads, resolve_replacements,
 };
-use mojito_types::types::{GenericConstraint, Ty};
+use mojito_types::types::Ty;
 use std::collections::{HashMap, HashSet};
 
 /// Apply the `hlcf` patterns to `function` until none applies; returns how
@@ -910,20 +910,17 @@ impl Walk<'_> {
         }
         let MirInstr::ComptimeIf {
             results,
-            conds,
+            values,
             arms,
             orelse,
-            ..
         } = &mut block.instrs[index]
         else {
             return false;
         };
-        let [cond] = conds.as_slice() else {
+        let [Const::Bool(value)] = values.as_slice() else {
             return false;
         };
-        let Some(value) = constant_condition(cond) else {
-            return false;
-        };
+        let value = *value;
         let (live, dead) = if value {
             (&mut arms[0], orelse)
         } else {
@@ -1185,15 +1182,6 @@ fn take_if(block: &mut MirBlock, index: usize) -> Option<IfParts> {
             block.instrs.insert(index, other);
             None
         }
-    }
-}
-
-/// The value of a `comptime if` condition that is a constant `Bool`.
-fn constant_condition(cond: &GenericConstraint) -> Option<bool> {
-    match cond {
-        GenericConstraint::Bool(value) => Some(*value),
-        GenericConstraint::WithMessage(inner, _) => constant_condition(inner),
-        _ => None,
     }
 }
 

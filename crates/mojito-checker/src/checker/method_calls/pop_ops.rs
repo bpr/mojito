@@ -129,7 +129,7 @@ impl Checker {
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::MlirOp(op),
         ));
-        self.record_symbolic_lane_rule(span, name, op, &operands);
+        self.record_symbolic_lane_rule(span, name, op, &operands)?;
         Ok(result)
     }
 
@@ -257,7 +257,7 @@ impl Checker {
         name: &str,
         op: MlirOp,
         operands: &[Ty],
-    ) {
+    ) -> Result<(), TypeError> {
         if self.comptime_positions.get() != 0
             || op == MlirOp::PopSelect
             || op.is_builtin_cast()
@@ -265,31 +265,22 @@ impl Checker {
             || op.is_index()
             || op.is_lane()
         {
-            return;
+            return Ok(());
         }
         let (Some(lanes), Some((SimdDtype::Expr(dtype), _))) =
             (op.lanes(), operands.first().and_then(storage_slots))
         else {
-            return;
+            return Ok(());
         };
         if !SimdDtype::Expr(dtype.clone()).is_symbolic() {
-            return;
+            return Ok(());
         }
         let excluded: Vec<_> = Dtype::ALL
             .into_iter()
             .filter(|excluded| !lanes.admits(*excluded))
             .collect();
-        let holds = excluded
-            .iter()
-            .map(|excluded| {
-                GenericConstraint::Ne(
-                    ConstraintOperand::Expr(dtype.clone()),
-                    ConstraintOperand::Value(CtValue::Dtype(*excluded)),
-                )
-            })
-            .reduce(|left, right| GenericConstraint::And(Box::new(left), Box::new(right)));
-        // The same conjunction as a `Bool` parameter value, each conjunct
-        // the dtype's `!=` with an excluded one.
+        // The conjunction of the dtype's `!=` with each excluded one, as a
+        // `Bool` parameter value.
         let context = &self.param_context;
         let value = excluded
             .iter()
@@ -299,11 +290,11 @@ impl Checker {
                     .and_then(|excluded| context.infix(InfixOp::Ne, &dtype, &excluded))
             })
             .reduce(|left, right| context.infix(InfixOp::And, &left?, &right?))
-            .and_then(Result::ok);
-        if let Some(holds) = holds {
+            .transpose()
+            .map_err(param_error)?;
+        if let Some(value) = value {
             self.record_instance_constraint(
                 span,
-                holds,
                 value,
                 &format!(
                     "'{name}' op operand #0 must be SIMD type whose element type is {} dtype",
@@ -311,6 +302,7 @@ impl Checker {
                 ),
             );
         }
+        Ok(())
     }
 
     /// The type a `_type` attribute names: a type annotation, or an

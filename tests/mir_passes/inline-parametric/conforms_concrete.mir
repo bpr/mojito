@@ -1,4 +1,4 @@
-mojito-mir 1.102
+mojito-mir 1.167
 artifact {
   features: [],
   files: [
@@ -32,7 +32,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              comptime.if { results: [%r2], conditions: [conforms { operand: operand_param(binder { owner: "tag", slot: 0, name: T }), trait: Copyable }], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int_literal(2) }], terminator: comptime.yield { values: [%r1] } }] },
+              comptime.if { results: [%r2], values: [param(param_conforms { subject: param_decl_ref { owner: "tag", slot: 0, name: T, type: meta_type }, trait: Copyable })], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int_literal(2) }], terminator: comptime.yield { values: [%r1] } }] },
               literal.materialize { dest: %r3, value: %r2, target: Int }
             ],
             terminator: return { value: present(%r3) }

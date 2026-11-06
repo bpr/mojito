@@ -260,8 +260,8 @@ fn concrete_blocks(
             let regions = crate::mir::instruction_regions(instruction);
             if !regions.is_empty() {
                 match instruction {
-                    MirInstr::ComptimeIf { conds, .. } => errors.push(format!(
-                        "{head} keeps a compile-time branch on `{conds:?}` in elaborated MIR"
+                    MirInstr::ComptimeIf { values, .. } => errors.push(format!(
+                        "{head} keeps a compile-time branch on `{values:?}` in elaborated MIR"
                     )),
                     MirInstr::ComptimeFor { binder, .. } => errors.push(format!(
                         "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
@@ -332,9 +332,9 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         MirInstr::Rebind { .. } => {
             errors.push(format!("{head} keeps a value rebind in elaborated MIR"));
         }
-        MirInstr::ComptimeAssert { cond, .. } => {
+        MirInstr::ComptimeAssert { value, .. } => {
             errors.push(format!(
-                "{head} keeps a compile-time assertion of `{cond:?}` in elaborated MIR"
+                "{head} keeps a compile-time assertion of `{value:?}` in elaborated MIR"
             ));
         }
         MirInstr::KeepAlive { .. }

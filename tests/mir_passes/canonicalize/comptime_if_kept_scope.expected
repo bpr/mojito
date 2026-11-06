@@ -22,7 +22,7 @@
               const { dest: %r0, value: int(1) },
               call { dest: %r1, func: print, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.use { dest: %r4, var: $v0, mode: copy },
-              comptime.if { results: [], conditions: [constraint_bool(true)], arms: [[bb0 { instructions: [], terminator: return { value: present(%r4) } }]], else: [bb0 { instructions: [], terminator: unreachable {} }] }
+              comptime.if { results: [], values: [bool(true)], arms: [[bb0 { instructions: [], terminator: return { value: present(%r4) } }]], else: [bb0 { instructions: [], terminator: unreachable {} }] }
             ],
             terminator: unreachable {}
           }

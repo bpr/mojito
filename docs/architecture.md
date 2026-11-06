@@ -1030,11 +1030,12 @@ HIR, MIR, and VM do not need to carry special semantics for most of them. A
 `comptime if` and a `comptime for` in a generic `def`'s body are the
 exceptions, the constructs that cross the waist as themselves. The template
 keeps a `comptime if`, the checker types every arm with the binders symbolic
-and records each condition it compiles as a constraint
+and records each condition's `Bool` parameter value
 (`SemanticAdjustment::ComptimeCondition`), HIR and MIR lower it as the
-`ComptimeIf` region op (`hlcf.comptime.if`), every condition first, then one
-region per arm, each condition a `GenericConstraint` over the function's
-binders (or, once inlined, the caller's types), not a register, and `native::mono` decides it under the
+`ComptimeIf` region op (`hlcf.comptime.if`), every value first, then one
+region per arm, each value the `i1` attribute upstream's op takes — a
+`Bool` constant or a parameter expression over the function's binders
+(or, once inlined, the caller's types), not a register — and `native::mono` decides it under the
 instance's bindings after drop elaboration, before substituting the
 instance (`elaborate_comptime_ops`), keeping the taken arm and erasing the
 others before any call in them is enqueued or any compile-time op in them
@@ -1046,19 +1047,18 @@ the check lifts for that call, else the application of a function lifted
 for the whole leaf — and a leaf that converts through `Bool(x)` is `x != 0`
 for an integer, else the application of the function lifted for its
 conversion, which returns the leaf's truthiness
-(`Checker::evaluated_condition`). Beside each constraint the checker
-records the condition's `Bool` parameter value, the one `i1` attribute
-upstream's `hlcf.comptime.if` and `kgen.param.assert` take, composed leaf
-by leaf in `Checker::check_ct_bool`: `not` is the exclusive-or with
-`True`, and `and`/`or` are `POC::Cond` on the left operand, which keeps
-their order, so a leaf the constraint compiler closes is the one
-builder's reading of it, and an evaluated leaf is the expression its
-constraint compares with `True`. A condition with a leaf the one builder
-does not yet read has no value. MIR mints no function for a condition
-(`Flatten::comptime_condition_of` reads the recorded constraint, and
-`Flatten::comptime_condition_value_of` its value, the `values` of
-`ComptimeIf` and the `value` of `ComptimeAssert`; a `comptime for` stop
-test's value is its sequence's `has_next`); the
+(`Checker::evaluated_condition`). The value is composed leaf by leaf in
+`Checker::check_ct_bool`: `not` is the exclusive-or with `True`, and
+`and`/`or` are `POC::Cond` on the left operand
+(`ParamContext::short_circuit`), which keeps their order, so a leaf the
+constraint compiler closes is the one builder's reading of it, and an
+evaluated leaf is the expression its truthiness test reads. A leaf the one
+builder does not read is an explicit checker error. The constraint the
+check also compiles never crosses the waist: it is the knowledge the arm
+assumes. MIR mints no function for a condition
+(`Flatten::comptime_condition_value_of` reads the recorded value, the
+`values` of `ComptimeIf` and the `value` of `ComptimeAssert`; a `comptime
+for` stop test's value is its sequence's `has_next`); the
 elaborator evaluates an application on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). A
 `comptime assert cond[, message]` (`StmtKind::ComptimeAssert`, parsed in a
@@ -1083,11 +1083,11 @@ knows a `comptime if` arm's (`Checker::assume_condition`: the `conforms_to`
 atoms below, and each conjunct of the residual proposition the condition
 states, which proves a callee's `where` clause). The elaborator decides a
 condition lazily, as upstream folds a `ParamOperatorAttr`, from its value
-where present (`Specializer::decide_comptime_test`, then
-`decide_comptime_value`: a `Cond` decides its condition, then only the arm
-it selects) and from its constraint otherwise
-(`decide_comptime_condition`): `and` and `or` stop once their left side
-decides them, and each `comptime if` is decided in order on its region op,
+(`Specializer::decide_comptime_test`, then `decide_comptime_value`: a
+`Cond` decides its condition, then only the arm it selects, so `and` and
+`or` stop once their left side decides them; a proposition leaf — a
+conformance, a pack query, an `IsTrivially*` — is answered by the oracle
+that decides a `where` clause, `decide_proposition`), and each `comptime if` is decided in order on its region op,
 its taken arm spliced where the op stood before the walk goes on
 (`Specializer::decide_comptime_op`, as `processComptimeIfOp` elaborates
 only that arm), so an `elif` past a taken arm, or an enum payload read

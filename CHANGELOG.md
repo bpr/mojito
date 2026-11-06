@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time test (`comptime if`, `comptime assert`, a conditional
+  expression on a parameter value, a builtin operation's per-instance
+  assertion, a `comptime for`'s `has_next`) now reaches MIR as its one
+  `Bool` parameter value, as upstream's `hlcf.comptime.if` and
+  `kgen.param.assert` take one `i1` attribute: the constraint MIR carried
+  beside it, and the elaborator's constraint-only decision, are gone, and
+  a condition leaf the checker cannot build a value for is a checker
+  error (R1905). MIR text moves to schema 1.167, whose reader derives an
+  older artifact's values from its conditions, and the package format to
+  `mojito-package 193`.
 - A pack query (`TypeList[Ts.values]().contains[T]()`, `all`/`any`,
   `length`, `conforms_to(Ts.values, Trait)`, `_get_type_index[T, *Ts]()`)
   now takes its pack as an operand, as upstream's queries do: the pack

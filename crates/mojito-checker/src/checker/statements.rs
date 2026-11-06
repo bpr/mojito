@@ -953,7 +953,7 @@ impl Checker {
         let result = stmts.iter().try_for_each(|stmt| {
             if let StmtKind::ComptimeAssert { cond, message } = &stmt.kind {
                 let constraint = self.check_comptime_assert(cond, message.as_ref())?;
-                self.assume_condition(cond, constraint.as_ref())?;
+                self.assume_condition(cond, Some(&constraint))?;
                 asserted += 1;
                 return Ok(());
             }
@@ -1020,7 +1020,7 @@ impl Checker {
             if comptime {
                 let constraint = self.check_comptime_condition(cond, ComptimeTest::If)?;
                 // What the condition proves holds in this arm alone.
-                self.assume_condition(cond, constraint.as_ref())?;
+                self.assume_condition(cond, Some(&constraint))?;
                 let checked = self.check_scoped_block(body, ret, in_loop);
                 self.pop_assumptions();
                 checked?;

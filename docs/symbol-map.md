@@ -1479,7 +1479,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SemanticAdjustment::ComptimeConditional` (`Node::comptime_conditional`;
   `Checker::parameter_valued_condition`, `checker/comptime_validation.rs`,
   decides it as upstream's `getIfPValue`) builds a `ComptimeIf` on its
-  condition's `Flatten::comptime_condition_of` reading instead, its arms
+  condition's recorded value (`Flatten::comptime_condition_value_of`) instead, its arms
   ended by `ComptimeYield`. `Flatten::region` builds an expression
   region op's one-block region, and `Flatten::chain_link` nests a
   comparison chain's links as upstream's `emitNextCmp` does.
@@ -2407,8 +2407,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`comptime_iterator_binder`). `verify/scope.rs` (`Scope::declare_loop_binders`)
   brings the binders into scope and checks the sequence; `verify/concrete.rs`
   rejects a survivor; the text form is `comptime_for.iterator` (schema
-  1.57). The op's body opens with a `ComptimeIf` on
-  `ComptimeSequence::stop_test` (`checked.rs`), the arm the suite and the
+  1.57). The op's body opens with a `ComptimeIf` on the sequence's
+  `has_next` value (`ComptimeSequence::has_next`, `checked.rs`), the arm the suite and the
   else arm HIR's stop region (`HirInstr::ComptimeFor::orelse`), which
   `verify/structure.rs` requires (schema 1.58). A
   `Bool` loop binder is a `comptime if` condition of its own
@@ -2455,9 +2455,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Tuple` (`is_nominal_tuple`) freezes to its elements — and `clone_body`
   finishes one clone per iterator: `Specializer::decide_comptime_test`
   (`mono/specializer.rs`, from the test's value, the sequence's
-  `has_next`, through `decide_comptime_value`, else its constraint through
-  `decide_comptime_condition`, each deciding `and`/`or` left to right and
-  stopping once the left side decides) decides its `has_next` test under the
+  `has_next`, through `decide_comptime_value`, which decides `and`/`or`
+  left to right and stops once the left side decides) decides its `has_next` test under the
   clone's binding and `select::splice_comptime_arm` keeps the taken arm;
   the registers it defines, and the operands a call keeps for a removed
   argument that nothing defines (`FrameTables::dangling`), are fresh
@@ -3199,53 +3198,62 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 ## The compile-time branch and the request path (2026-10-03)
 
-- `MirInstr::ComptimeIf { conds: Vec<GenericConstraint>, values:
-  Vec<Option<Const>>, .. }` (`mir/ir.rs`) is a `comptime if` (HIR's
-  `HirInstr::ComptimeIf`, built by `Flatten::lower_instr`); each condition
-  is lowered by `Flatten::comptime_condition` (`mir/lower_expr/entry.rs`)
-  from the checker's `SemanticAdjustment::ComptimeCondition { constraint,
-  value }`, its value through `Flatten::comptime_condition_value_of`, which
-  respells a binder no enclosing declaration is by name (recorded in the
-  leaf's own `NodeFacts::comptime_condition` and
-  `comptime_condition_value`, beside its operation record, the value
+- `MirInstr::ComptimeIf { values: Vec<Const>, .. }` (`mir/ir.rs`) is a
+  `comptime if` (HIR's `HirInstr::ComptimeIf`, built by
+  `Flatten::lower_instr`), each value upstream's `i1` attribute, a `Bool`
+  constant or a `Bool` parameter expression; each condition is lowered by
+  `Flatten::comptime_condition` (`mir/lower_expr/entry.rs`) from the
+  checker's `SemanticAdjustment::ComptimeCondition { value }` through
+  `Flatten::comptime_condition_value_of`, which respells a binder no
+  enclosing declaration is by name (recorded in the leaf's own
+  `NodeFacts::comptime_condition`, beside its operation record, the value
   composed leaf by leaf in `Checker::check_ct_bool` with `and`/`or` as
-  `POC::Cond` (`and_or_value`), by
+  `POC::Cond` (`ParamContext::short_circuit`), by
   `Checker::check_comptime_condition`, `checker/comptime_validation.rs`, per
   leaf under `not`/`and`/`or`; every leaf is recorded, one the constraint
   compiler does not close through `Checker::evaluated_condition`, a
   converting one's function returning its truthiness through
-  `Flatten::lower_return_value`'s `condition_hir`), and a leaf with none is
-  the explicit `MirInstr::Unsupported`. A lifted function is lowered by
+  `Flatten::lower_return_value`'s `condition_hir`); a leaf the one builder
+  does not read is a checker error, and a condition with no record the
+  explicit `MirInstr::Unsupported` (`Flatten::unrecorded_comptime_condition`). A lifted function is lowered by
   `lower_expression_thunk` over its binders (`mir.rs`,
   shared with `lower_default`, which reads a default's node off its
   declaration's op through the unit's `root` (`CheckedFnParam::default`); a nested
   `def`'s through `NestedNode::defaults`); the thunk reads an enclosing loop's index
   as a parameter reference (`Flatten::parameter_reads`, filled from
   `EnclosingBinders::loop_bindings`, read in `Flatten::identifier_read`). `verify/scope.rs`
-  (`ScopeCx::constraint`) checks its binders; `verify/concrete.rs` rejects a
+  checks each value's binders and `verify/structure.rs`
+  (`comptime_test_value`) that it is a `Bool`; `verify/concrete.rs` rejects a
   survivor; the text form is `comptime.if` (schema 1.54; its `values`
-  field, schema 1.158). `native::mono`'s `decide_comptime_op` decides each
-  condition from its value where present (`Specializer::decide_comptime_test`,
-  then `decide_comptime_value`, which folds a `Cond` lazily and answers a
-  proposition leaf through `proposition_constraint` and `constraint_holds`),
-  else from its constraint (`decide_comptime_condition`).
-- `MirInstr::ComptimeAssert { cond, value, message }` (`mir/ir.rs`) is a `comptime assert`,
+  field, schema 1.158, required alone since 1.167, the reader deriving a
+  legacy artifact's from its `conditions` in
+  `Decoder::legacy_condition_value`). `native::mono`'s `decide_comptime_op`
+  decides each value (`Specializer::decide_comptime_test`, then
+  `decide_comptime_value`, which folds a `Cond` lazily and answers a
+  proposition leaf through `proposition_constraint` and
+  `Specializer::decide_proposition`, the `where`-clause oracle
+  `constraint_holds`).
+- `MirInstr::ComptimeAssert { value, message }` (`mir/ir.rs`) is a `comptime assert`,
   upstream's `kgen.param.assert`: `StmtKind::ComptimeAssert` (parsed by
   `Parser::parse_comptime`; `driver.rs:reject_comptime_statement_outside_function`
   and the struct/trait member parsers reject it outside a function),
   `CheckedStmtOp::ComptimeAssert`, `HirInstr::ComptimeAssert`, then
-  `Flatten::lower_instr`, its condition and value from
+  `Flatten::lower_instr`, its value from
   `Flatten::comptime_condition` and its message the `Const` of the parameter expression
   `Checker::check_assert_message` recorded (`CheckedStmtOp::ComptimeAssert`'s
   `denotes`). `native::mono`'s `decide_comptime_op` decides it with the
-  branches, from the value where present (`Specializer::decide_comptime_test`)
+  branches, from its value (`Specializer::decide_comptime_test`)
   (dropping a holding one, folding a failing one to `False` and
   evaluating its message, `Specializer::assertion_message`), and
   `mono/failure.rs:discharge_comptime_asserts` fails a reached instance at
   a survivor and erases the rest; `verify/scope.rs` checks its binders,
   `verify/concrete.rs` rejects a survivor; the text form is
   `comptime.assert` (schema 1.81; its `message` field, schema 1.139; its
-  `value` field, schema 1.158).
+  `value` field, schema 1.158, required alone since 1.167). A builtin
+  `SIMD` dunder's or `pop` op's per-instance assertion is the checker's
+  `SemanticAdjustment::InstanceAssertion { value, message }`
+  (`Checker::record_instance_constraint`, `checker/operators.rs`), which
+  `Flatten::expr_unconverted` emits as a `ComptimeAssert`.
 - `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` (an untyped attribute
   crossing as the opaque `Value::Attribute`) and `CTFE_FUEL`;
   `VmBackend::{call_concrete, freeze}` run a verified fragment for the

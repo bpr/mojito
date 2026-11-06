@@ -984,12 +984,13 @@ fn mir_named_functions(mir: &MirProgram, owner: &str) -> Vec<String> {
         .collect()
 }
 
-/// The conditions of every `comptime if` in `function`, in program order.
-fn comptime_conditions(function: &MirFunction) -> Vec<mojito::types::GenericConstraint> {
+/// The `Bool` values of every `comptime if` in `function`, in program
+/// order.
+fn comptime_values(function: &MirFunction) -> Vec<mojito::mir::Const> {
     nested_instructions(&function.blocks)
         .into_iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::ComptimeIf { conds, .. } => Some(conds.clone()),
+            MirInstr::ComptimeIf { values, .. } => Some(values.clone()),
             _ => None,
         })
         .flatten()
@@ -1012,13 +1013,9 @@ def main():
 "#;
     let mir = checked_program_mir(source);
     let f = mir_function(&mir, "f");
-    let [condition] = comptime_conditions(f).try_into().expect("one condition");
-    let mojito::types::GenericConstraint::Eq(
-        mojito::types::ConstraintOperand::Expr(condition),
-        mojito::types::ConstraintOperand::Value(mojito::ct::CtValue::Bool(true)),
-    ) = condition
-    else {
-        panic!("the condition is its expression compared with `True`: {condition:?}");
+    let [condition] = comptime_values(f).try_into().expect("one condition");
+    let mojito::mir::Const::Param(condition) = condition else {
+        panic!("the condition's value is its expression: {condition:?}");
     };
     let argument = nested_instructions(&f.blocks)
         .into_iter()
@@ -1065,21 +1062,13 @@ def main():
             .any(|(name, _)| name.starts_with("$comptime$f$")),
         "no function is lifted for a condition over binders"
     );
-    let conditions = comptime_conditions(f);
+    let conditions = comptime_values(f);
     assert_eq!(conditions.len(), 3, "{conditions:?}");
     assert!(
         matches!(
             &conditions[0],
-            mojito::types::GenericConstraint::Eq(
-                operand,
-                mojito::types::ConstraintOperand::Value(mojito::ct::CtValue::Bool(true)),
-            ) if match operand {
-                mojito::types::ConstraintOperand::Param(binder) => &*binder.name == "b",
-                mojito::types::ConstraintOperand::Expr(read) => {
-                    read.as_decl_ref().is_some_and(|reference| &*reference.name == "b")
-                }
-                _ => false,
-            }
+            mojito::mir::Const::Param(read)
+                if read.as_decl_ref().is_some_and(|reference| &*reference.name == "b")
         ),
         "{conditions:?}"
     );
@@ -1186,12 +1175,12 @@ fn region_ops(blocks: &[MirBlock], ops: &mut Vec<String>) {
                 vec![body]
             }
             MirInstr::ComptimeIf {
-                conds,
+                values,
                 arms,
                 orelse,
                 ..
             } => {
-                ops.push(format!("comptime.if {}", conds.len()));
+                ops.push(format!("comptime.if {}", values.len()));
                 arms.iter().chain([orelse]).collect()
             }
             _ => continue,

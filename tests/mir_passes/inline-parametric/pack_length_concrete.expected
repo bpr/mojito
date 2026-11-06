@@ -19,7 +19,7 @@
         blocks: [
           bb0 {
             instructions: [
-              comptime.if { results: [], conditions: [eq { left: operand_pack_length(operand_param(binder { owner: "two", slot: 0, name: Ts })), right: operand_value(ct_int_literal(2)) }], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }, literal.materialize { dest: %r1, value: %r0, target: Int }], terminator: return { value: present(%r1) } }]], else: [bb0 { instructions: [const { dest: %r2, value: int_literal(2) }, literal.materialize { dest: %r3, value: %r2, target: Int }], terminator: return { value: present(%r3) } }] }
+              comptime.if { results: [], values: [param(param_expr { op: eq, type: meta_value(Bool), operands: [param_constant(ct_int(2)), param_pack_query { pack: param_decl_ref { owner: "two", slot: 0, name: Ts, type: meta_param_list(meta_type) }, query: pack_length }] })], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }, literal.materialize { dest: %r1, value: %r0, target: Int }], terminator: return { value: present(%r1) } }]], else: [bb0 { instructions: [const { dest: %r2, value: int_literal(2) }, literal.materialize { dest: %r3, value: %r2, target: Int }], terminator: return { value: present(%r3) } }] }
             ],
             terminator: return { value: absent }
           }
@@ -45,7 +45,7 @@
         blocks: [
           bb0 {
             instructions: [
-              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [], conditions: [eq { left: operand_pack_length(operand_value(ct_tuple([ct_type(Int), ct_type(Bool)]))), right: operand_value(ct_int_literal(2)) }], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }, literal.materialize { dest: %r2, value: %r1, target: Int }], terminator: break { label: present(loop4294967295), values: [%r2] } }]], else: [bb0 { instructions: [const { dest: %r3, value: int_literal(2) }, literal.materialize { dest: %r4, value: %r3, target: Int }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }], terminator: unreachable {} }] }
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [], values: [param(param_constant(ct_bool(true)))], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }, literal.materialize { dest: %r2, value: %r1, target: Int }], terminator: break { label: present(loop4294967295), values: [%r2] } }]], else: [bb0 { instructions: [const { dest: %r3, value: int_literal(2) }, literal.materialize { dest: %r4, value: %r3, target: Int }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }], terminator: unreachable {} }] }
             ],
             terminator: return { value: present(%r0) }
           }

@@ -19,10 +19,7 @@ use crate::mir::Const;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{MetaTy, ParamExpr, ParamId, ParamKind};
 use mojito_types::types::TyKind;
-use mojito_types::types::{
-    ConstraintOperand, DependentType, FuncTy, GenericConstraint, GenericFuncTy, SimdDtype,
-    SimdWidth,
-};
+use mojito_types::types::{DependentType, FuncTy, GenericFuncTy, SimdDtype, SimdWidth};
 
 /// The scope and kind findings of one function body.
 pub(super) fn verify_scope(
@@ -375,13 +372,10 @@ impl ScopeCx<'_> {
                 let regions = crate::mir::instruction_regions(instruction);
                 if !regions.is_empty() {
                     match instruction {
-                        MirInstr::ComptimeIf { conds, values, .. } => {
+                        MirInstr::ComptimeIf { values, .. } => {
                             let role = format!("block {index} compile-time if");
-                            for cond in conds {
-                                self.constraint(&role, cond);
-                            }
                             for value in values {
-                                if let Some(Const::Param(value)) = value {
+                                if let Const::Param(value) = value {
                                     let mut nested = Vec::new();
                                     self.expr_nodes(&role, "condition value", value, &mut nested);
                                 }
@@ -448,15 +442,9 @@ impl ScopeCx<'_> {
                         self.expr_nodes(&role, "lane mask", value, &mut nested);
                     }
                 }
-                if let MirInstr::ComptimeAssert {
-                    cond,
-                    value,
-                    message,
-                } = instruction
-                {
+                if let MirInstr::ComptimeAssert { value, message } = instruction {
                     let role = format!("block {index} compile-time assertion");
-                    self.constraint(&role, cond);
-                    if let Some(Const::Param(value)) = value {
+                    if let Const::Param(value) = value {
                         let mut nested = Vec::new();
                         self.expr_nodes(&role, "condition value", value, &mut nested);
                     }
@@ -513,57 +501,6 @@ impl ScopeCx<'_> {
                 let mut nested = Vec::new();
                 self.expr_nodes(role, "compile-time loop sequence", operand, &mut nested);
             }
-        }
-    }
-
-    /// A compile-time branch condition: every binder it names is in scope,
-    /// and every expression it holds is well-kinded.
-    fn constraint(&mut self, role: &str, constraint: &GenericConstraint) {
-        use GenericConstraint::{
-            And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
-            PackPredicate, Trivial, WithMessage,
-        };
-        match constraint {
-            Bool(_) => {}
-            WithMessage(inner, _) | Not(inner) => self.constraint(role, inner),
-            And(left, right) | Or(left, right) => {
-                self.constraint(role, left);
-                self.constraint(role, right);
-            }
-            PackContains { operand, element } => {
-                self.operand(role, operand);
-                self.operand(role, element);
-            }
-            Trivial(_, operand)
-            | Conforms { operand, .. }
-            | ConformsPack { operand, .. }
-            | PackPredicate { operand, .. } => {
-                self.operand(role, operand);
-            }
-            Eq(left, right)
-            | Ne(left, right)
-            | Lt(left, right)
-            | Le(left, right)
-            | Gt(left, right)
-            | Ge(left, right) => {
-                self.operand(role, left);
-                self.operand(role, right);
-            }
-        }
-    }
-
-    fn operand(&mut self, role: &str, operand: &ConstraintOperand) {
-        let mut nested = Vec::new();
-        match operand {
-            ConstraintOperand::Param(param) => {
-                self.reference(role, &param.id, &param.name, None, &nested);
-            }
-            ConstraintOperand::PackLength(list) => self.operand(role, list),
-            ConstraintOperand::Value(CtValue::Expr(expr)) | ConstraintOperand::Expr(expr) => {
-                self.expr_nodes(role, "compile-time condition", expr, &mut nested);
-            }
-            ConstraintOperand::Value(_) => {}
-            ConstraintOperand::Type(ty) => self.walk_in(role, ty, &mut nested),
         }
     }
 

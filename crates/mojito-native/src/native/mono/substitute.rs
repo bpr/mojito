@@ -13,9 +13,9 @@ use mojito_mir::mir::visit::{
 };
 use mojito_mir::mir::{MirParamArg, Proj};
 use mojito_types::param_expr::ParamRef;
+use mojito_types::types::LaneMask;
 use mojito_types::types::TyKind;
 use mojito_types::types::{ArraySize, FuncTy, VariantIndex};
-use mojito_types::types::{GenericConstraint, LaneMask};
 
 /// The declarations a reflected field-name list's construction names: the
 /// list-literal initializer ([`array_display_construction`]).
@@ -937,11 +937,6 @@ impl MutTypeVisitor for Substitution<'_> {
     /// A constructed type parameter is rewritten by [`Self::visit_instruction`]
     /// first; a `comptime for` binder is bound by the unroller.
     fn visit_param_ref(&mut self, _: &mut ParamRef) -> Result<(), MonoError> {
-        Ok(())
-    }
-
-    /// A `comptime if` condition is decided by the specializer.
-    fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), MonoError> {
         Ok(())
     }
 

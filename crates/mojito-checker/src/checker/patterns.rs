@@ -515,8 +515,7 @@ impl Checker {
         let constraint = condition
             .as_ref()
             .map(|condition| self.check_comptime_condition(condition, ComptimeTest::If))
-            .transpose()?
-            .flatten();
+            .transpose()?;
         let checked = match &condition {
             Some(condition) => {
                 // What the condition proves holds in this arm alone.

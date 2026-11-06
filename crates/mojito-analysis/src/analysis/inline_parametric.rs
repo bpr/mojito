@@ -198,10 +198,10 @@ use mojito_types::param_expr::{
     MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind, ParamRef,
 };
 use mojito_types::types::{
-    GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
-    default_literal, erase_origins, is_scalar_simd, names_binder, nominal_parts, pack_spread,
-    replace_argument_parameters, replace_constraint_parameters, replace_parameters,
-    replace_value_parameters, rewrite_ty, scalar_simd_dtype, simd_storage,
+    LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex, default_literal,
+    erase_origins, is_scalar_simd, names_binder, nominal_parts, pack_spread,
+    replace_argument_parameters, replace_parameters, replace_value_parameters, rewrite_ty,
+    scalar_simd_dtype, simd_storage,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -2972,10 +2972,6 @@ impl MutTypeVisitor for BoundMutabilities {
         Ok(())
     }
 
-    fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn visit_sequence(&mut self, _: &mut ComptimeSequence) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -4379,11 +4375,6 @@ impl MutTypeVisitor for Instantiation<'_> {
         Ok(())
     }
 
-    fn visit_constraint(&mut self, cond: &mut GenericConstraint) -> Result<(), ParamError> {
-        *cond = replace_constraint_parameters(&self.context, cond, &self.bindings)?;
-        Ok(())
-    }
-
     /// A `comptime for` sequence closes over the bindings as a lane mask
     /// does; its loop binder stays the body's own, which the elaborator
     /// unrolls by identity in the caller as it would in the callee.
@@ -4555,10 +4546,6 @@ impl MutTypeVisitor for NamesBinder<'_> {
 
     fn visit_param_ref(&mut self, param: &mut ParamRef) -> Result<(), Self::Error> {
         self.named |= param.id == self.binder.id;
-        Ok(())
-    }
-
-    fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), Self::Error> {
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-mojito-mir 1.81
+mojito-mir 1.167
 artifact {
   features: [],
   files: [
@@ -30,7 +30,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              comptime.if { results: [%r3], conditions: [constraint_bool(false)], arms: [[bb0 { instructions: [const { dest: %r0, value: int(1) }, call { dest: %r2, func: print, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int(2) }], terminator: comptime.yield { values: [%r1] } }] },
+              comptime.if { results: [%r3], values: [bool(false)], arms: [[bb0 { instructions: [const { dest: %r0, value: int(1) }, call { dest: %r2, func: print, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int(2) }], terminator: comptime.yield { values: [%r1] } }] },
               binary { op: add, dest: %r4, a: %r3, b: %r3, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r4) }

@@ -19,7 +19,7 @@
         blocks: [
           bb0 {
             instructions: [
-              comptime.if { results: [%r2], conditions: [pack_predicate { operand: operand_param(binder { owner: "all_trivial", slot: 0, name: Ts }), predicate: predicate_trivial(copyable), all: true }], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int_literal(2) }], terminator: comptime.yield { values: [%r1] } }] },
+              comptime.if { results: [%r2], values: [param(param_pack_query { pack: param_decl_ref { owner: "all_trivial", slot: 0, name: Ts, type: meta_param_list(meta_type) }, query: pack_predicate { predicate: predicate_trivial(copyable), all: true } })], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int_literal(2) }], terminator: comptime.yield { values: [%r1] } }] },
               literal.materialize { dest: %r3, value: %r2, target: Int }
             ],
             terminator: return { value: present(%r3) }
@@ -46,7 +46,7 @@
         blocks: [
           bb0 {
             instructions: [
-              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [%r3], conditions: [pack_predicate { operand: operand_value(ct_tuple([ct_type(Int), ct_type(Bool)])), predicate: predicate_trivial(copyable), all: true }], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }], terminator: comptime.yield { values: [%r1] } }]], else: [bb0 { instructions: [const { dest: %r2, value: int_literal(2) }], terminator: comptime.yield { values: [%r2] } }] }, literal.materialize { dest: %r4, value: %r3, target: Int }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [%r3], values: [param(param_pack_query { pack: param_constant(ct_tuple([ct_type(Int), ct_type(Bool)])), query: pack_predicate { predicate: predicate_trivial(copyable), all: true } })], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }], terminator: comptime.yield { values: [%r1] } }]], else: [bb0 { instructions: [const { dest: %r2, value: int_literal(2) }], terminator: comptime.yield { values: [%r2] } }] }, literal.materialize { dest: %r4, value: %r3, target: Int }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }
             ],
             terminator: return { value: present(%r0) }
           }

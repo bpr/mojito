@@ -936,22 +936,17 @@ impl Decoder {
                 body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
             }),
             "comptime.if" => {
-                let conds = self.req(value, fields, "conditions", |d, v| Some(d.constraints(v)))?;
-                // Absent while no condition has a value, and before schema
-                // 1.158.
-                let values = match self.field(fields, "values") {
-                    Ok(values) => {
-                        let values = self.list(values).ok()?;
-                        values
-                            .iter()
-                            .map(|v| self.option_value(Some(v)).and_then(|v| self.constant(v)))
-                            .collect()
-                    }
-                    Err(()) => vec![None; conds.len()],
+                let values = if self.minor <= 166 {
+                    self.legacy_comptime_if_values(value, fields)?
+                } else {
+                    self.unknown(fields, &["results", "values", "arms", "else"]);
+                    self.req(value, fields, "values", |d, v| {
+                        let values = d.list(v).ok()?;
+                        values.iter().map(|v| d.constant(v)).collect()
+                    })?
                 };
                 Some(MirInstr::ComptimeIf {
                     results: self.req(value, fields, "results", |d, v| Some(d.regs(v)))?,
-                    conds,
                     values,
                     arms: self.req(value, fields, "arms", |d, v| {
                         let arms = d.list(v).ok()?;
@@ -970,35 +965,15 @@ impl Decoder {
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
             }),
             "comptime.assert" => {
-                let cond = self.req(value, fields, "condition", Self::constraint)?;
-                // Absent while the condition has no value, and before schema
-                // 1.158.
-                let condition_value = self
-                    .field(fields, "value")
-                    .ok()
-                    .and_then(|v| self.constant(v));
-                // Before schema 1.139 a message rode as `with_message`
-                // around the condition.
-                Some(match self.field(fields, "message") {
-                    Ok(message) => MirInstr::ComptimeAssert {
-                        cond: Box::new(cond),
-                        value: condition_value,
-                        message: self
-                            .option_value(Some(message))
-                            .and_then(|v| self.constant(v)),
-                    },
-                    Err(()) => match cond {
-                        GenericConstraint::WithMessage(cond, message) => MirInstr::ComptimeAssert {
-                            cond,
-                            value: condition_value,
-                            message: Some(Const::Str(message)),
-                        },
-                        cond => MirInstr::ComptimeAssert {
-                            cond: Box::new(cond),
-                            value: condition_value,
-                            message: None,
-                        },
-                    },
+                if self.minor <= 166 {
+                    return self.legacy_comptime_assert(value, fields);
+                }
+                self.unknown(fields, &["value", "message"]);
+                Some(MirInstr::ComptimeAssert {
+                    value: self.req(value, fields, "value", Self::constant)?,
+                    message: self.req(value, fields, "message", |d, v| {
+                        Some(d.option_value(Some(v)).and_then(|v| d.constant(v)))
+                    })?,
                 })
             }
             "match" => Some(MirInstr::Match {
@@ -1529,6 +1504,173 @@ fn legacy_stores(
             && *var == LEGACY_ERROR_SLOT
         {
             visit(var, binding_ty, *src);
+        }
+    }
+}
+
+/// Reading compile-time tests written before MIR 1.167, which carried a
+/// constraint beside (or, before 1.158, in place of) each `Bool` value.
+impl Decoder {
+    /// A `comptime.if`'s values before MIR 1.167: each written `values`
+    /// entry, else its condition's value ([`Self::legacy_condition_value`]).
+    fn legacy_comptime_if_values(&mut self, value: &Value, fields: &[Field]) -> Option<Vec<Const>> {
+        let conds = self.req(value, fields, "conditions", |d, v| Some(d.constraints(v)))?;
+        let written: Vec<Option<Const>> = match self.field(fields, "values") {
+            Ok(values) => {
+                let values = self.list(values).ok()?;
+                values
+                    .iter()
+                    .map(|v| self.option_value(Some(v)).and_then(|v| self.constant(v)))
+                    .collect()
+            }
+            Err(()) => vec![None; conds.len()],
+        };
+        conds
+            .iter()
+            .zip(written)
+            .map(|(cond, written)| {
+                written.or_else(|| self.legacy_condition_const(value.span, cond))
+            })
+            .collect()
+    }
+
+    /// A `comptime.assert` before MIR 1.167: its `value`, else its
+    /// `condition`'s; before 1.139 a message rode as `with_message` around
+    /// the condition.
+    fn legacy_comptime_assert(&mut self, value: &Value, fields: &[Field]) -> Option<MirInstr> {
+        let cond = self.req(value, fields, "condition", Self::constraint)?;
+        let (cond, message) = match self.field(fields, "message") {
+            Ok(message) => (
+                cond,
+                self.option_value(Some(message))
+                    .and_then(|v| self.constant(v)),
+            ),
+            Err(()) => match cond {
+                GenericConstraint::WithMessage(cond, message) => (*cond, Some(Const::Str(message))),
+                cond => (cond, None),
+            },
+        };
+        let written = self
+            .field(fields, "value")
+            .ok()
+            .and_then(|v| self.constant(v));
+        let value = written.or_else(|| self.legacy_condition_const(value.span, &cond))?;
+        Some(MirInstr::ComptimeAssert { value, message })
+    }
+
+    /// The `Bool` value constant of the legacy condition `cond`, or an
+    /// error at `span` when no parameter expression spells it.
+    fn legacy_condition_const(
+        &mut self,
+        span: (usize, usize),
+        cond: &GenericConstraint,
+    ) -> Option<Const> {
+        let Some(value) = self.legacy_condition_value(cond) else {
+            self.error(span, "a compile-time test condition with no `Bool` value");
+            return None;
+        };
+        Some(match value.as_constant() {
+            Some(CtValue::Bool(value)) => Const::Bool(*value),
+            _ => Const::Param(value),
+        })
+    }
+
+    /// The `Bool` parameter value a legacy compile-time test condition
+    /// spells: each connective and proposition its parameter-expression
+    /// node, as the checker builds the value today.
+    fn legacy_condition_value(&self, cond: &GenericConstraint) -> Option<ParamExpr> {
+        use GenericConstraint::{
+            And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
+            PackPredicate, Trivial, WithMessage,
+        };
+        let context = &self.context;
+        match cond {
+            WithMessage(inner, _) => self.legacy_condition_value(inner),
+            Bool(value) => Some(context.boolean(*value)),
+            Not(inner) => context.not(&self.legacy_condition_value(inner)?).ok(),
+            And(left, right) | Or(left, right) => context
+                .short_circuit(
+                    matches!(cond, And(..)),
+                    &self.legacy_condition_value(left)?,
+                    &self.legacy_condition_value(right)?,
+                )
+                .ok(),
+            Eq(left, right)
+            | Ne(left, right)
+            | Lt(left, right)
+            | Le(left, right)
+            | Gt(left, right)
+            | Ge(left, right) => {
+                let op = match cond {
+                    Eq(..) => InfixOp::Eq,
+                    Ne(..) => InfixOp::Ne,
+                    Lt(..) => InfixOp::Lt,
+                    Le(..) => InfixOp::Le,
+                    Gt(..) => InfixOp::Gt,
+                    _ => InfixOp::Ge,
+                };
+                let left = self.legacy_operand(left, MetaTy::int())?;
+                let right = self.legacy_operand(right, MetaTy::int())?;
+                // `x == True` is the `Bool` value `x`.
+                match (op, right.as_constant()) {
+                    (InfixOp::Eq, Some(CtValue::Bool(true))) if *left.meta() == MetaTy::bool() => {
+                        Some(left)
+                    }
+                    _ => context.infix(op, &left, &right).ok(),
+                }
+            }
+            Conforms {
+                operand,
+                trait_name,
+            } => context
+                .conforms(&self.legacy_operand(operand, MetaTy::Type)?, trait_name)
+                .ok(),
+            Trivial(lifecycle, operand) => context
+                .trivial(*lifecycle, &self.legacy_operand(operand, MetaTy::Type)?)
+                .ok(),
+            ConformsPack {
+                operand,
+                trait_name,
+            } => Some(context.pack_query(
+                &self.legacy_operand(operand, MetaTy::type_list())?,
+                PackQuery::Conforms(trait_name.clone()),
+            )),
+            PackPredicate {
+                operand,
+                predicate,
+                all,
+            } => Some(context.pack_query(
+                &self.legacy_operand(operand, MetaTy::type_list())?,
+                PackQuery::Predicate {
+                    predicate: predicate.clone(),
+                    all: *all,
+                },
+            )),
+            PackContains { operand, element } => Some(context.pack_query(
+                &self.legacy_operand(operand, MetaTy::type_list())?,
+                PackQuery::Contains(self.legacy_operand(element, MetaTy::Type)?),
+            )),
+        }
+    }
+
+    /// A legacy constraint operand as a parameter expression: a binder its
+    /// reference, of the meta it was declared with (`meta` when the
+    /// artifact declares it later).
+    fn legacy_operand(&self, operand: &ConstraintOperand, meta: MetaTy) -> Option<ParamExpr> {
+        let context = &self.context;
+        match operand {
+            ConstraintOperand::Param(binder) => Some(context.decl_ref(
+                binder.id.clone(),
+                &binder.name,
+                self.binder_metas.get(&binder.id).cloned().unwrap_or(meta),
+            )),
+            ConstraintOperand::Value(value) => context.constant(value.clone()).ok(),
+            ConstraintOperand::Type(ty) => Some(context.type_shape(ty.clone())),
+            ConstraintOperand::Expr(expression) => Some(context.intern(expression)),
+            ConstraintOperand::PackLength(pack) => Some(context.pack_query(
+                &self.legacy_operand(pack, MetaTy::type_list())?,
+                PackQuery::Length,
+            )),
         }
     }
 }

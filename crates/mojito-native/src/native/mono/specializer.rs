@@ -1913,21 +1913,21 @@ impl<'a> Specializer<'a> {
         self.enclosing = frame.enclosing;
     }
 
-    /// Whether a compile-time test holds under the bindings: decided from
-    /// `value`, its `Bool` parameter value, where the checker recorded one
-    /// ([`Self::decide_comptime_value`]), else from its constraint `cond`
-    /// ([`Self::decide_comptime_condition`]).
+    /// Whether a compile-time test holds under the bindings, decided from
+    /// `value`, its `Bool` parameter value ([`Self::decide_comptime_value`]).
     pub(super) fn decide_comptime_test(
         &mut self,
         template: &str,
-        cond: &GenericConstraint,
-        value: Option<&Const>,
+        value: &Const,
         bindings: &Bindings,
     ) -> Result<bool, MonoError> {
         match value {
-            Some(Const::Bool(value)) => Ok(*value),
-            Some(Const::Param(value)) => self.decide_comptime_value(template, value, bindings),
-            _ => self.decide_comptime_condition(template, cond, bindings),
+            Const::Bool(value) => Ok(*value),
+            Const::Param(value) => self.decide_comptime_value(template, value, bindings),
+            other => Err(self.error(
+                Some(template),
+                format!("a compile-time test whose value `{other:?}` is not a `Bool`"),
+            )),
         }
     }
 
@@ -1983,38 +1983,19 @@ impl<'a> Specializer<'a> {
                 ConstraintOperand::Value(CtValue::Bool(true)),
             )
         });
-        self.decide_comptime_condition(template, &leaf, bindings)
+        self.decide_proposition(template, &leaf, bindings)
     }
 
-    /// Whether the `comptime if` condition `cond` holds under the bindings.
-    /// `and` and `or` decide left to right and stop once the left side
-    /// decides them, as upstream's `ParamOperatorAttr` folds them, so a
-    /// right side's compile-time applications run only when it is reached:
-    /// a payload read guarded by its tag test never runs over the other
-    /// variant. Each other leaf runs its applications first.
-    pub(super) fn decide_comptime_condition(
+    /// Whether the proposition `leaf` of a compile-time test's value holds
+    /// under the bindings, answered by the oracle that decides a `where`
+    /// clause once the leaf's applications have run.
+    fn decide_proposition(
         &mut self,
         template: &str,
-        cond: &GenericConstraint,
+        leaf: &GenericConstraint,
         bindings: &Bindings,
     ) -> Result<bool, MonoError> {
-        match cond {
-            GenericConstraint::WithMessage(inner, _) => {
-                return self.decide_comptime_condition(template, inner, bindings);
-            }
-            GenericConstraint::Not(inner) => {
-                return Ok(!self.decide_comptime_condition(template, inner, bindings)?);
-            }
-            GenericConstraint::And(left, right) | GenericConstraint::Or(left, right) => {
-                let conjunction = matches!(cond, GenericConstraint::And(..));
-                if self.decide_comptime_condition(template, left, bindings)? != conjunction {
-                    return Ok(!conjunction);
-                }
-                return self.decide_comptime_condition(template, right, bindings);
-            }
-            _ => {}
-        }
-        let cond = self.resolve_applications(template, cond, bindings)?;
+        let cond = self.resolve_applications(template, leaf, bindings)?;
         self.constraint_holds(&cond, bindings, &mut HashSet::new())
             .ok_or_else(|| {
                 self.error(

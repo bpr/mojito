@@ -310,27 +310,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1905 MIR's compile-time tests carry a constraint beside their
-  `Bool` value**
-
-  `comptime.if` and `comptime.assert` hold both `conditions`/`condition`
-  and `values`/`value`, where upstream's `hlcf.comptime.if` and
-  `kgen.param.assert` take one `i1` parameter value.
-  - What goes: `ComptimeIf.conds`, `ComptimeAssert.cond`, the `constraint`
-    of `SemanticAdjustment::ComptimeCondition` and of
-    `SemanticAdjustment::InstanceAssertion`, `comptime_condition_of`'s
-    connective fallback, `decide_comptime_condition`, and the `comptime
-    for` stop test's constraint (`ComptimeSequence::stop_test`).
-  - `canonicalize/hlcf.rs`, `verify/structure.rs`, and mono's unroll then
-    read the value. A schema bump makes `values`/`value` required.
-  - The checker keeps its constraints for assumptions and `where` clauses.
-  - `decide_comptime_condition`'s leaf decision stays as the elaborator's
-    proposition oracle; `InstanceAssertion` gains a `message` field, and
-    `PACKAGE_FORMAT` moves with the schema.
-  - Found while landing R1475 (2026-11-03).
-  - Depends on R1903, R1904, R1950, R1951.
-  - Model: Fable, Planned.
-
 - [ ] **R1339 A `ref self` body types a reference reached through `self`
   as `immutable`, so `automatic-inline` keeps a mutable caller's call**
 

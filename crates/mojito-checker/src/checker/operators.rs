@@ -885,29 +885,20 @@ impl Checker {
             .constant(CtValue::Int(1))
             .and_then(|one| context.infix(InfixOp::Eq, &lanes, &one))
             .map_err(param_error)?;
-        let lanes = match width {
-            SimdWidth::Known(lanes) => ConstraintOperand::Value(CtValue::Int(*lanes)),
-            SimdWidth::Expr(_) => ConstraintOperand::Expr(lanes),
-        };
-        let holds = GenericConstraint::Eq(lanes, ConstraintOperand::Value(CtValue::Int(1)));
-        self.record_instance_constraint(span, holds, Some(value), message);
+        self.record_instance_constraint(span, value, message);
         Ok(())
     }
 
-    /// Record at `span` the assertion that `holds`, its `Bool` parameter
-    /// value `value`, failing with `message`, for each reached instance to
-    /// judge, once.
+    /// Record at `span` the assertion whose `Bool` parameter value is
+    /// `value`, failing with `message`, for each reached instance to judge,
+    /// once.
     pub(super) fn record_instance_constraint(
         &self,
         span: &SourceSpan,
-        holds: GenericConstraint,
-        value: Option<ParamExpr>,
+        value: ParamExpr,
         message: &str,
     ) {
-        let assertion = (
-            GenericConstraint::WithMessage(Box::new(holds), message.to_string()),
-            value,
-        );
+        let assertion = (value, message.to_string());
         let mut record = self.record_at(span.clone());
         let assertions = record.instance_assertions.get_or_insert_with(Vec::new);
         if !assertions.contains(&assertion) {

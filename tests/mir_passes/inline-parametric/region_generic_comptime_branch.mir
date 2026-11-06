@@ -1,4 +1,4 @@
-mojito-mir 1.81
+mojito-mir 1.167
 artifact {
   features: [],
   files: [
@@ -60,7 +60,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              comptime.if { results: [], conditions: [eq { left: operand_expr(param_apply { function: "$comptime$pick$0", type: meta_value(Bool), args: [param_decl_ref { owner: "pick", slot: 0, name: flag, type: meta_value(Bool) }] }), right: operand_value(ct_bool(true)) }], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }, literal.materialize { dest: %r2, value: %r1, target: Int }, var.use { dest: %r0, var: $v0, mode: copy }, binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }], terminator: return { value: present(%r3) } }]], else: [bb0 { instructions: [], terminator: comptime.yield { values: [] } }] },
+              comptime.if { results: [], values: [param(param_apply { function: "$comptime$pick$0", type: meta_value(Bool), args: [param_decl_ref { owner: "pick", slot: 0, name: flag, type: meta_value(Bool) }] })], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }, literal.materialize { dest: %r2, value: %r1, target: Int }, var.use { dest: %r0, var: $v0, mode: copy }, binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }], terminator: return { value: present(%r3) } }]], else: [bb0 { instructions: [], terminator: comptime.yield { values: [] } }] },
               const { dest: %r5, value: int_literal(1) },
               literal.materialize { dest: %r6, value: %r5, target: Int },
               var.use { dest: %r4, var: $v0, mode: copy },
