@@ -22,29 +22,6 @@ impl VmBackend {
         match (&l, &r, op) {
             (
                 Value::Pointer { allocation, offset },
-                Value::IntLiteral(delta),
-                InfixOp::Add | InfixOp::Sub,
-            ) => {
-                let delta = delta.wrapping_signed(64).ok_or_else(|| {
-                    RuntimeError::TypeError(
-                        "vm: Pointer offset cannot materialize as Int".to_string(),
-                    )
-                })?;
-                let offset = if op == InfixOp::Sub {
-                    offset.checked_sub(delta)
-                } else {
-                    offset.checked_add(delta)
-                }
-                .ok_or_else(|| {
-                    RuntimeError::TypeError("vm: Pointer offset overflow".to_string())
-                })?;
-                return Ok(Value::Pointer {
-                    allocation: *allocation,
-                    offset,
-                });
-            }
-            (
-                Value::Pointer { allocation, offset },
                 Value::Int(delta),
                 InfixOp::Add | InfixOp::Sub,
             ) => {
@@ -120,7 +97,7 @@ impl VmBackend {
             let fname = prog.runtime_method_name(&sname, dunder, resolved, 1);
             return self.call_resolved_dunder(prog, &sname, dunder, vec![l, r], fname.as_deref());
         }
-        apply_infix(op, l, r)
+        apply_infix(op, &l, &r)
     }
 
     /// Prefix operator dispatch. A user struct routes through its dunder

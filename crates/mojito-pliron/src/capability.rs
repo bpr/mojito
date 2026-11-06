@@ -127,7 +127,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "const",
         CapabilityStatus::Partial,
-        "Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values",
+        "Int/Float/Bool/Str/DType/None (a numeric literal is zero-sized) and function references as two-word callable values",
     ),
     (
         "param_list.address",
@@ -446,13 +446,13 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "IntLiteral",
-        CapabilityStatus::Partial,
-        "pending-literal registers and exact i64 typed storage; a constant exceeding i64 rejects (the VM keeps arbitrary precision)",
+        CapabilityStatus::Supported,
+        "zero-sized; its readers convert the number its type carries",
     ),
     (
         "FloatLiteral",
-        CapabilityStatus::Partial,
-        "pending-literal registers and f64 typed storage; displaying a runtime value rejects (the VM prints the exact rational)",
+        CapabilityStatus::Supported,
+        "zero-sized; its readers convert the number its type carries",
     ),
     (
         "Infer",

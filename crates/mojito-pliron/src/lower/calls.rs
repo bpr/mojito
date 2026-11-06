@@ -178,8 +178,15 @@ impl FnLowering<'_> {
             if kwargs.is_empty() && args.len() == params.len() && !self.variadic_callee(name) {
                 let mut lowered = Vec::with_capacity(args.len());
                 for (i, (arg, expected)) in args.iter().zip(&params).enumerate() {
+                    let by_ref = by_reference.get(i).copied().unwrap_or(false);
+                    // A zero-sized argument (a numeric literal, a
+                    // `NoneType`) has no physical operand: the compiled
+                    // signature erased its slot.
+                    if matches!(expected, LowerTy::ZeroSized) && !by_ref {
+                        continue;
+                    }
                     let owned = owned.get(i).copied().unwrap_or(false);
-                    let value = if by_reference.get(i).copied().unwrap_or(false) {
+                    let value = if by_ref {
                         // A `mut`/`ref` argument passes the address of the
                         // caller's designated storage (write-through).
                         let Some(place) = arg_places.get(i).and_then(Option::as_ref) else {

@@ -360,8 +360,16 @@ impl<'a> Flatten<'a> {
         // operand read at the operator call's setup.
         self.open_call_setup();
         let ra = self.lower_operator_operand(node, a);
-        let rb = self.lower_operator_operand(node, b);
+        let mut rb = self.lower_operator_operand(node, b);
         self.close_call_setup(None);
+        // A pointer's offset converts at `Int`, as upstream's
+        // `UnsafePointer.__add__` reads `index(offset)`.
+        if matches!(
+            self.f.reg_types.get(&ra.0).map(Ty::kind),
+            Some(TyKind::Pointer { .. })
+        ) {
+            rb = self.materialize_register(rb, &Ty::int(), b.location());
+        }
         let dispatch = OperatorDispatch {
             resolved: node.resolved_callable(),
             raises: node.raises(),

@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
+use mojito_types::types::{SimdDtype, SimdWidth};
 
 impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
@@ -393,17 +393,7 @@ impl FnLowering<'_> {
             self.reg_span(src),
         )? {
             LowerTy::Scalar(scalar) => {
-                // A pending literal entering literal-typed storage converts
-                // exactly (reject-never-wrap) rather than at the slot kind.
-                let value = if matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-                    && let Some(literal) = self.pending_literals.get(&src.0).cloned()
-                {
-                    let constant = self.exact_literal_storage(ctx, &literal, ty, src)?;
-                    self.cache_lazy(src, constant);
-                    constant
-                } else {
-                    self.reg_value(ctx, src, scalar)?
-                };
+                let value = self.reg_value(ctx, src, scalar)?;
                 let store = StoreOp::new(ctx, value, address);
                 self.append(ctx, store.get_operation(), Some(src));
                 Ok(())

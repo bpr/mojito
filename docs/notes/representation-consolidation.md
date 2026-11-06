@@ -122,7 +122,8 @@ command cannot use both.
    - Numeric literals: R1845 landed (a contextual conditional converts
      each arm), then R1848 → R1849 → R1850 → R1851 deletes the
      value-less literal type, its run-time register, and its compiler
-     kind. R1855 (`IntLiteral.__pow__`'s constraint) is beside them.
+     kind. R1850 landed: a literal register is zero-sized, and its
+     readers take the number from its type. R1855 (`IntLiteral.__pow__`'s constraint) is beside them.
    - `StringLiteral`: R1858, R1859, R1860 → R1861 → R1862 delete the
      value-less type and its descriptor. R1863, R1864, and R1865 are
      independent.

@@ -87,24 +87,6 @@ impl FnLowering<'_> {
         ) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
         }
-        // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a numeric
-        // literal: its conversion, as the VM dispatches it; a `SIMD`'s and a
-        // `Bool`'s are their declared members.
-        if resolved.is_none()
-            && args.is_empty()
-            && kwargs.is_empty()
-            && self.func.reg_types.get(&recv.0).is_some_and(|ty| {
-                matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-            })
-            && let Some(target) = match method {
-                "__bool__" => Some(mojito_types::ct::ScalarConversion::Bool),
-                "__float__" => Some(mojito_types::ct::ScalarConversion::Float64),
-                "__int__" | "__mlir_index__" => Some(mojito_types::ct::ScalarConversion::Int),
-                _ => None,
-            }
-        {
-            return self.lower_convert(ctx, dest, target, recv);
-        }
         if matches!(
             self.func.reg_types.get(&recv.0).map(Ty::kind),
             Some(TyKind::Dtype)
@@ -161,10 +143,7 @@ impl FnLowering<'_> {
             && matches!(method, "__floor__" | "__ceil__" | "__trunc__")
             && args.is_empty()
             && let Some(recv_ty) = self.func.reg_types.get(&recv.0).cloned()
-            && (recv_ty.is_int()
-                || recv_ty.is_uint()
-                || recv_ty.is_float64()
-                || matches!(recv_ty.kind(), TyKind::IntLiteral(_)))
+            && (recv_ty.is_int() || recv_ty.is_uint() || recv_ty.is_float64())
         {
             return self.lower_round_dir(ctx, dest, recv, &recv_ty, method);
         }
@@ -203,11 +182,15 @@ impl FnLowering<'_> {
         let receiver_alias = recv_place.is_some()
             && (matches!(params[0], LowerTy::Aggregate { .. })
                 || by_reference.first().copied().unwrap_or(false));
+        // A zero-sized receiver (a numeric literal) has no physical
+        // operand: the compiled signature erased its slot.
         let recv_value = if receiver_alias {
             let place = recv_place.expect("aliased receivers have a place").clone();
-            self.aliased_receiver_address(ctx, &place, dest)?
+            Some(self.aliased_receiver_address(ctx, &place, dest)?)
+        } else if matches!(params[0], LowerTy::ZeroSized) {
+            None
         } else {
-            self.arg_value(ctx, recv, &params[0], recv_owned || deinit_receiver, dest)?
+            Some(self.arg_value(ctx, recv, &params[0], recv_owned || deinit_receiver, dest)?)
         };
         let rest = &params[1..];
         let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
@@ -216,7 +199,7 @@ impl FnLowering<'_> {
         } else {
             &[]
         };
-        let mut lowered = vec![recv_value];
+        let mut lowered: Vec<Value> = recv_value.into_iter().collect();
         if kwargs.is_empty() && args.len() == rest.len() && !self.variadic_callee(resolved) {
             for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
                 // A zero-sized argument (the `NoneType` operand of

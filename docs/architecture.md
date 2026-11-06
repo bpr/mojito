@@ -2190,6 +2190,19 @@ nullary `UInt()`, binds the other declared `__init__` overloads (the
 `Intable`, `Floatable`, `SIMDLength`, and default initializers), as any
 `SIMD` construction does.
 
+A literal register carries no value below the MIR waist, as upstream's
+field-less `IntLiteral[v]` carries none: the VM holds the empty literal
+struct (`runtime::literal_value`), Pliron lowers the type zero-sized, and
+the native layout is empty. Each reader takes the number from the
+register's closed type through one reader, `mojito_vm::runtime::literal_of`,
+which Pliron shares: `literal.materialize`, an operator or `scalar.cast`
+over literals, a default argument, and a compile-time result's freeze
+(`crossing::literal_vm_to_ct`). A literal register is therefore used only
+at its own literal type: the verifier rejects one at any closed non-literal
+slot and at an operator beside a non-literal operand, so a pointer offset
+(`p + 1`, `p.unsafe_offset(1)`) converts first. A compile-time argument
+thawed at a scalar parameter converts at it (`VmBackend::thaw`).
+
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`
 meets a vector through the declared `@implicit

@@ -118,7 +118,7 @@ impl FnLowering<'_> {
             .as_ref()
             .map(Ty::kind)
         {
-            Some(kind) if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => {
+            Some(kind) if kind.is_int() => {
                 let value = self.reg_value(ctx, arg, ScalarTy::Int)?;
                 let zero = self.int_constant(ctx, 0);
                 let negated = SubOp::new_with_overflow_flag(ctx, zero, value, no_overflow_flags());
@@ -138,7 +138,7 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, value);
                 Ok(())
             }
-            Some(kind) if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
+            Some(kind) if kind.is_float64() => {
                 let value = self.reg_value(ctx, arg, ScalarTy::Float64)?;
                 let result = self.float_unary(ctx, "llvm.fabs.f64", value, dest);
                 self.reg_values.insert(dest.0, result);
@@ -175,9 +175,9 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("`min`/`max` call contract".into(), dest));
         }
         let rank = |ty: &Ty| match ty.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => Some(0),
+            kind if kind.is_int() => Some(0),
             kind if kind.is_uint() => Some(1),
-            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => Some(2),
+            kind if kind.is_float64() => Some(2),
             _ => None,
         };
         let ty_of = |this: &Self, reg: Reg| this.func.reg_types.get(&reg.0).cloned();
@@ -332,8 +332,8 @@ impl FnLowering<'_> {
         }
     }
 
-    /// `__floor__`/`__ceil__`/`__trunc__` on an integer literal receiver —
-    /// the VM's `builtin_round_dir`: the value is already whole (identity).
+    /// `__floor__`/`__ceil__`/`__trunc__` on an integer receiver — the
+    /// VM's `builtin_round_dir`: the value is already whole (identity).
     /// A `SIMD`'s are its declared members.
     pub(super) fn lower_round_dir(
         &mut self,
@@ -344,7 +344,7 @@ impl FnLowering<'_> {
         method: &str,
     ) -> Result<(), PlironError> {
         let scalar = match recv_ty.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => ScalarTy::Int,
+            kind if kind.is_int() => ScalarTy::Int,
             kind if kind.is_uint() => ScalarTy::UInt,
             _ => {
                 return Err(

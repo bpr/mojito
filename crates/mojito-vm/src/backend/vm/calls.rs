@@ -4,13 +4,25 @@
 use super::*;
 use mojito_types::types::TyKind;
 
-/// Const-fold a default-argument expression to a value. Handles the literal forms
-/// (and a unary minus over one) that defaults use in practice; a non-constant
-/// default folds to `None` and errors only if that slot is actually taken.
-pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
-    match value {
-        CheckedConst::Int(value) => Value::IntLiteral(value.clone()),
-        CheckedConst::Float(value) => Value::FloatLiteral(value.clone()),
+/// Const-fold a default-argument expression to a value of the slot type
+/// `ty`. Handles the literal forms (and a unary minus over one) that
+/// defaults use in practice: a numeric literal is the empty literal of a
+/// literal-typed slot, and is converted at any other, as its parameter's
+/// declared conversion converts it. A non-constant default folds to `None`
+/// and errors only if that slot is actually taken.
+pub(super) fn checked_const_value(
+    value: &CheckedConst,
+    ty: Option<&Ty>,
+) -> Result<Value, RuntimeError> {
+    let literal = |number: crate::runtime::ExactNum| match ty {
+        Some(ty) if ty.is_numeric_literal() => crate::runtime::literal_value(ty)
+            .ok_or_else(|| crate::runtime::literal_type_error(Some(ty))),
+        Some(ty) => crate::runtime::materialize_literal(&number, peel_references(ty)),
+        None => Err(crate::runtime::literal_type_error(None)),
+    };
+    Ok(match value {
+        CheckedConst::Int(value) => literal(crate::runtime::ExactNum::Int(value.clone()))?,
+        CheckedConst::Float(value) => literal(crate::runtime::ExactNum::Float(value.clone()))?,
         CheckedConst::Bool(value) => Value::Bool(*value),
         CheckedConst::String(value) => Value::Str(value.clone()),
         CheckedConst::None => Value::None,
@@ -19,7 +31,7 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
         // context (`bind_for_call`), so it never reaches this pure
         // value-folder.
         CheckedConst::Construct { .. } | CheckedConst::Evaluate { .. } => Value::None,
-    }
+    })
 }
 
 /// Match positional + keyword arguments to a function's parameter slots, producing

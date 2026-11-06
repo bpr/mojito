@@ -6811,32 +6811,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1850 A numeric literal register holds its value at run time,
-  where upstream's literal struct is empty**
-
-  Problem: a literal-typed register is the VM's exact
-  `Value::IntLiteral`/`FloatLiteral`, Pliron's `i64`/`f64`
-  (`lower/types.rs`), and an 8-byte layout
-  (`mojito-native-core/src/layout.rs`), where the pin's `IntLiteral[v]`
-  carries no data and its conversion reads `v` from the type.
-  - It cannot land while MIR lets a literal register flow unconverted into
-    scalar slots (R1964, R1965, R1966, R1967): the VM and Pliron convert
-    those from the payload this entry deletes.
-  - Lever: one typed reader of a register's closed literal type in the VM
-    and its twin in Pliron. `MaterializeLiteral` and literal comparisons
-    and casts read through it.
-  - `Const::IntLiteral` writes an empty value, and `crossing.rs`'s
-    `vm_to_ct` gains a typed variant that reads a literal type's value.
-  - `lower_ty` maps literals to zero-sized, `layout_of` gives them an
-    empty layout, and `PendingLiteral` goes.
-  - Plan: `R1850-a-numeric-literal-register-holds-its-plan.md` (slices
-    5–7).
-  - Done when `rg "Value::(IntLiteral|FloatLiteral)" crates/mojito-vm` is
-    empty.
-  - Depends on R1849, R1967, R1935 (the `SIMD(0)` checker rule's literal
-    `simd.make` element).
-  - Model: Fable, Planned.
-
 - [ ] **R1851 An `IntLiteral[v]` application is bridged onto a compiler
   kind, where upstream's is the declared struct**
 

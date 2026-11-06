@@ -1,5 +1,5 @@
 //! SSA emission plumbing: constants, op append/define, register
-//! values, pending-literal materialization, and diagnostics.
+//! values, numeric-literal materialization, and diagnostics.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -145,9 +145,8 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// The SSA value of `reg`, materializing a pending literal at `expected`
-    /// on demand (instructions may consume literal-typed operands directly,
-    /// e.g. shift amounts; the VM materializes them at their consumer's kind).
+    /// The SSA value of `reg`, a numeric literal's materialized at
+    /// `expected` from the number its type carries.
     pub(super) fn reg_value(
         &mut self,
         ctx: &mut Context,
@@ -157,8 +156,8 @@ impl FnLowering<'_> {
         if let Some(value) = self.reg_values.get(&reg.0) {
             return Ok(*value);
         }
-        if let Some(literal) = self.pending_literals.get(&reg.0).cloned() {
-            let value = self.materialize_pending(ctx, &literal, expected, reg)?;
+        if let Some(literal) = self.register_literal(reg) {
+            let value = self.materialize_exact(ctx, &literal, expected, reg)?;
             self.cache_lazy(reg, value);
             return Ok(value);
         }
@@ -193,18 +192,18 @@ impl FnLowering<'_> {
         Ok(load.get_result(ctx))
     }
 
-    /// Fold a pending literal into one constant of the target scalar type
+    /// Fold an exact number into one constant of the target scalar type
     /// with the VM's exact semantics (`runtime::materialize_literal`):
     /// integers wrap modulo 2^64, floats convert exactly.
-    pub(super) fn materialize_pending(
+    pub(super) fn materialize_exact(
         &mut self,
         ctx: &mut Context,
-        literal: &PendingLiteral,
+        literal: &ExactNum,
         expected: ScalarTy,
         span_reg: Reg,
     ) -> Result<Value, PlironError> {
         match (literal, expected) {
-            (PendingLiteral::Int(literal), ScalarTy::Int) => {
+            (ExactNum::Int(literal), ScalarTy::Int) => {
                 let value = literal.wrapping_signed(64).ok_or_else(|| {
                     self.literal_out_of_range(
                         literal.as_bigint().to_string(),
@@ -214,7 +213,7 @@ impl FnLowering<'_> {
                 })?;
                 Ok(self.int_constant(ctx, value))
             }
-            (PendingLiteral::Int(literal), ScalarTy::UInt) => {
+            (ExactNum::Int(literal), ScalarTy::UInt) => {
                 let value = literal.wrapping_unsigned(64).ok_or_else(|| {
                     self.literal_out_of_range(
                         literal.as_bigint().to_string(),
@@ -224,7 +223,7 @@ impl FnLowering<'_> {
                 })?;
                 Ok(self.uint_constant(ctx, value))
             }
-            (PendingLiteral::Int(literal), ScalarTy::Float64) => {
+            (ExactNum::Int(literal), ScalarTy::Float64) => {
                 let value = literal.to_f64().ok_or_else(|| {
                     self.literal_out_of_range(
                         literal.as_bigint().to_string(),
@@ -234,7 +233,7 @@ impl FnLowering<'_> {
                 })?;
                 Ok(self.float_constant(ctx, value))
             }
-            (PendingLiteral::Float(literal), ScalarTy::Float64) => {
+            (ExactNum::Float(literal), ScalarTy::Float64) => {
                 let value = literal.to_f64().ok_or_else(|| {
                     self.literal_out_of_range(literal.to_string(), "Float64 (f64)", span_reg)
                 })?;
@@ -243,7 +242,7 @@ impl FnLowering<'_> {
             // Sized lanes materialize with the VM's exact conversions:
             // integers wrap at the lane width, narrow floats round correctly
             // from the exact literal (never through an f64 intermediate).
-            (PendingLiteral::Int(literal), ScalarTy::Sized(dtype)) if dtype.is_narrow_float() => {
+            (ExactNum::Int(literal), ScalarTy::Sized(dtype)) if dtype.is_narrow_float() => {
                 let value = dtype
                     .float_literal_lane(&FloatLiteral::from_int(literal))
                     .ok_or_else(|| {
@@ -255,7 +254,7 @@ impl FnLowering<'_> {
                     })?;
                 Ok(self.narrow_float_constant(ctx, dtype, value))
             }
-            (PendingLiteral::Float(literal), ScalarTy::Sized(dtype)) if dtype.is_narrow_float() => {
+            (ExactNum::Float(literal), ScalarTy::Sized(dtype)) if dtype.is_narrow_float() => {
                 let value = dtype.float_literal_lane(literal).ok_or_else(|| {
                     self.literal_out_of_range(
                         literal.to_string(),
@@ -265,7 +264,7 @@ impl FnLowering<'_> {
                 })?;
                 Ok(self.narrow_float_constant(ctx, dtype, value))
             }
-            (PendingLiteral::Int(literal), ScalarTy::Sized(dtype)) => {
+            (ExactNum::Int(literal), ScalarTy::Sized(dtype)) => {
                 let (bits, signed) =
                     mojito_vm::runtime::integer_dtype_bits(dtype).ok_or_else(|| {
                         self.unsupported(
@@ -287,23 +286,22 @@ impl FnLowering<'_> {
                 })?;
                 Ok(self.sized_int_constant(ctx, dtype, value))
             }
-            (PendingLiteral::Float(literal), other) => Err(self.unsupported(
+            (ExactNum::Float(literal), other) => Err(self.unsupported(
                 format!(
                     "float literal `{literal}` materialization to `{}`",
                     other.name()
                 ),
                 self.reg_span(span_reg),
             )),
-            (PendingLiteral::Int(literal), ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Dtype) => {
-                Err(self.unsupported(
+            (ExactNum::Int(literal), ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Dtype) => Err(self
+                .unsupported(
                     format!(
                         "integer literal `{}` used as {}",
                         literal.as_bigint(),
                         expected.name()
                     ),
                     self.reg_span(span_reg),
-                ))
-            }
+                )),
         }
     }
 
@@ -321,8 +319,9 @@ impl FnLowering<'_> {
     }
 
     /// Both operands' shared scalar kind: the first concrete operand type
-    /// wins (the checker rejects mixing concrete kinds); two literal operands
-    /// promote to Float64 when either is a float literal, else Int.
+    /// wins (the checker rejects mixing concrete kinds). An operator over
+    /// numeric literals never reaches here ([`Self::lower_literal_binop`]),
+    /// and the verifier rejects a literal beside any other operand.
     pub(super) fn binop_operand_ty(&self, a: Reg, b: Reg) -> Result<ScalarTy, PlironError> {
         for operand in [a, b] {
             if let Some(ty) = self.referent_scalar_ty(operand)? {
@@ -332,22 +331,17 @@ impl FnLowering<'_> {
                 return Ok(ty);
             }
         }
-        let float = matches!(
-            self.func.reg_types.get(&a.0).map(Ty::kind),
-            Some(TyKind::FloatLiteral(_))
-        ) || matches!(
-            self.func.reg_types.get(&b.0).map(Ty::kind),
-            Some(TyKind::FloatLiteral(_))
-        );
-        Ok(if float {
-            ScalarTy::Float64
-        } else {
-            ScalarTy::Int
-        })
+        Err(self.unsupported(
+            format!(
+                "operator over the literal registers %r{} and %r{}",
+                a.0, b.0
+            ),
+            self.reg_span(a),
+        ))
     }
 
-    /// `reg`'s scalar type, or `None` when it holds an unmaterialized literal
-    /// (whose kind the consumer decides).
+    /// `reg`'s scalar type, or `None` when it is a numeric literal, whose
+    /// consumer decides the scalar it converts at.
     pub(super) fn concrete_scalar_ty(&self, reg: Reg) -> Result<Option<ScalarTy>, PlironError> {
         let Some(ty) = self.func.reg_types.get(&reg.0) else {
             return Err(self.unsupported(format!("untyped register %r{}", reg.0), None));

@@ -95,7 +95,7 @@ impl FnLowering<'_> {
         }
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(expected) => {
-                let value = self.literal_slot_value(ctx, var, src, expected)?;
+                let value = self.reg_value(ctx, src, expected)?;
                 let store = StoreOp::new(ctx, value, self.var_slots[var as usize]);
                 self.append(ctx, store.get_operation(), None);
                 Ok(())
@@ -109,28 +109,6 @@ impl FnLowering<'_> {
             }
             LowerTy::ZeroSized => Ok(()),
         }
-    }
-
-    /// The SSA value of `src` for a store into variable `var`'s scalar slot:
-    /// a pending literal entering `IntLiteral`/`FloatLiteral`-typed storage
-    /// converts exactly (rejecting what the storage cannot hold) instead of
-    /// wrapping at the consumer's kind.
-    pub(super) fn literal_slot_value(
-        &mut self,
-        ctx: &mut Context,
-        var: u32,
-        src: Reg,
-        expected: ScalarTy,
-    ) -> Result<Value, PlironError> {
-        if let Some(ty) = self.func.var_tys.get(&var).cloned()
-            && matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-            && let Some(literal) = self.pending_literals.get(&src.0).cloned()
-        {
-            let constant = self.exact_literal_storage(ctx, &literal, &ty, src)?;
-            self.cache_lazy(src, constant);
-            return Ok(constant);
-        }
-        self.reg_value(ctx, src, expected)
     }
 
     /// `CopyValue` — materialize an owned copy of a register: scalars and
@@ -147,8 +125,8 @@ impl FnLowering<'_> {
         if self.pointer_slot_refs.contains(&value.0) {
             self.pointer_slot_refs.insert(dest.0);
         }
-        if let Some(literal) = self.pending_literals.get(&value.0).cloned() {
-            self.pending_literals.insert(dest.0, literal);
+        // A numeric literal is zero-sized: its copy is the same type.
+        if self.register_literal(value).is_some() {
             return Ok(());
         }
         if let Some(bytes) = self.str_consts.get(&value.0).cloned() {

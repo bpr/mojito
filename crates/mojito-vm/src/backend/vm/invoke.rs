@@ -184,13 +184,7 @@ impl VmBackend {
                 }) => self.call_named(
                     prog,
                     target,
-                    vec![match parameter {
-                        Some(parameter) => crate::runtime::materialize_literal(
-                            checked_const_value(arg),
-                            parameter,
-                        )?,
-                        None => checked_const_value(arg),
-                    }],
+                    vec![checked_const_value(arg, parameter.as_ref())?],
                     &[],
                     &CallTypes {
                         constructed: prog.declared_struct(sig.param_types.get(i)),
@@ -204,7 +198,7 @@ impl VmBackend {
                         sig.param_names[i]
                     )))
                 }
-                Some(other) => Ok(checked_const_value(other)),
+                Some(other) => checked_const_value(other, sig.param_types.get(i)),
                 None => Err(RuntimeError::Unsupported(format!(
                     "vm: non-constant default for parameter '{}' of '{name}'",
                     sig.param_names[i]
@@ -336,29 +330,17 @@ impl VmBackend {
                     self.store_at_call_place(frame_id, place, updated, regs, vars)?;
                     return Ok(Value::None);
                 }
-                // `Floorable`/`Ceilable`/`Truncable` on an integer
-                // literal (`(5).__floor__()`).
+                // `Floorable`/`Ceilable`/`Truncable` on a whole number.
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {
                     return crate::runtime::builtin_round_dir(method, &recv);
                 }
-                // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a
-                // numeric literal: its conversion; a `SIMD`'s and a `Bool`'s
-                // are their declared members. A string literal is true when
-                // non-empty.
+                // A string literal is true when non-empty; a numeric
+                // literal's, a `SIMD`'s, and a `Bool`'s `__bool__` are
+                // their declared members.
                 ("__bool__", 0) if matches!(&recv, Value::Str(_)) => {
                     return Ok(Value::Bool(
                         matches!(&recv, Value::Str(text) if !text.is_empty()),
                     ));
-                }
-                ("__bool__" | "__int__" | "__float__" | "__mlir_index__", 0)
-                    if matches!(&recv, Value::IntLiteral(_) | Value::FloatLiteral(_)) =>
-                {
-                    let target = match method {
-                        "__bool__" => ScalarConversion::Bool,
-                        "__float__" => ScalarConversion::Float64,
-                        _ => ScalarConversion::Int,
-                    };
-                    return crate::runtime::builtin_convert(target, recv);
                 }
                 _ => {}
             }

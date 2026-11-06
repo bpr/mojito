@@ -120,7 +120,8 @@ pub(super) fn verify_instruction(
         | MirInstr::DefVar { .. }
         | MirInstr::MakeStruct { .. }
         | MirInstr::MakeVariant { .. }
-        | MirInstr::MakeClosure { .. } => verify_value_instruction(&cx, instruction, errors),
+        | MirInstr::MakeClosure { .. }
+        | MirInstr::BinOp { .. } => verify_value_instruction(&cx, instruction, errors),
         MirInstr::GetIter { .. } | MirInstr::Next { .. } => {
             verify_iteration_instruction(&cx, instruction, errors);
         }
@@ -640,6 +641,26 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 if !valid_source && !cx.context.judged_per_instance() {
                     errors.push(format!("{prefix}: cannot materialize {found} as {target}"));
                 }
+            }
+        }
+        // Upstream's literal operators are `IntLiteral`/`FloatLiteral`
+        // dunders over two literals; a literal beside any other operand
+        // converts first (`literal.materialize`).
+        MirInstr::BinOp { op, a, b, .. } => {
+            if let (Some(left), Some(right)) = (cx.reg_ty(*a), cx.reg_ty(*b))
+                && left.is_numeric_literal() != right.is_numeric_literal()
+                && !contains_type_param(left)
+                && !contains_type_param(right)
+            {
+                errors.push(format!(
+                    "{prefix}: operator {op:?} takes a numeric literal beside {}; the literal \
+                     converts first",
+                    if left.is_numeric_literal() {
+                        right
+                    } else {
+                        left
+                    }
+                ));
             }
         }
         MirInstr::ConstructTypeParam {

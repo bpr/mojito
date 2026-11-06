@@ -557,7 +557,8 @@ impl<'a> Flatten<'a> {
             return Some(self.pointer_convert(call, object));
         }
         // `pointer.unsafe_offset(i)` is provenance-preserving element
-        // arithmetic: the ordinary pointer `+` operation.
+        // arithmetic: the ordinary pointer `+` operation, its literal
+        // offset converted at `Int` as upstream's `index(idx)` does.
         if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
@@ -565,7 +566,7 @@ impl<'a> Flatten<'a> {
             )
         }) {
             let pointer = self.expr(object);
-            let offset = self.expr(
+            let offset = self.index_operand(
                 *args
                     .first()
                     .expect("checked unsafe_offset has one argument"),

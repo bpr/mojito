@@ -545,6 +545,12 @@ impl VmBackend {
         active: &mut HashSet<u64>,
     ) -> Result<CtValue, RuntimeError> {
         use mojito_types::types::TyKind;
+        // A numeric literal is the empty struct whose number its type
+        // carries.
+        if let Some(ty) = ty.filter(|ty| ty.is_numeric_literal()) {
+            return crate::crossing::literal_vm_to_ct(ty)
+                .ok_or_else(|| crate::runtime::literal_type_error(Some(ty)));
+        }
         // A `Bool` freezes as the compile-time `Bool` its held
         // `!kgen.scalar<bool>` field is, a one-lane vector or not.
         if ty.is_some_and(|ty| ty.is_bool()) {
@@ -1343,8 +1349,9 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
             Value::Simd { dtype, lanes }
         }
         CtValue::Float(bits) => Value::Float64(f64::from_bits(bits)),
-        CtValue::IntLiteral(value) => Value::IntLiteral(value),
-        CtValue::FloatLiteral(value) => Value::FloatLiteral(value),
+        CtValue::IntLiteral(_) | CtValue::FloatLiteral(_) => {
+            crate::crossing::literal_ct_to_vm(&value)?
+        }
         CtValue::Bool(value) => Value::Bool(value),
         CtValue::None => Value::None,
         CtValue::Str(value) => Value::Str(value),
@@ -1796,8 +1803,10 @@ fn const_value(k: &Const) -> Result<Value, RuntimeError> {
     Ok(match k {
         Const::Int(n) => Value::Int(*n),
         Const::Float(x) => Value::Float64(*x),
-        Const::IntLiteral(value) => Value::IntLiteral(value.clone()),
-        Const::FloatLiteral(value) => Value::FloatLiteral(value.clone()),
+        Const::IntLiteral(value) => crate::crossing::ct_to_vm(&CtValue::IntLiteral(value.clone()))?,
+        Const::FloatLiteral(value) => {
+            crate::crossing::ct_to_vm(&CtValue::FloatLiteral(value.clone()))?
+        }
         Const::Bool(b) => Value::Bool(*b),
         Const::Str(s) => Value::Str(s.clone()),
         Const::Function(name) => Value::Function(name.clone()),

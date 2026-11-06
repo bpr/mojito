@@ -15,7 +15,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::{LoopLabel, MirCase, MirElif, region_exit};
-use mojito_types::types::TyKind;
 
 /// How the block being lowered ends when its own terminator ends it.
 #[derive(Clone, Copy)]
@@ -337,12 +336,12 @@ impl FnLowering<'_> {
             ));
         }
         let mut operands = Vec::new();
-        for (position, (src, dest)) in values.iter().zip(&regs).enumerate() {
+        for (position, src) in values.iter().enumerate() {
             let facts = EdgeFacts {
                 shared: self.storage_reads.contains(&src.0)
                     || self.aliased_load_regs.contains(&src.0),
                 pointer_ref: self.pointer_slot_refs.contains(&src.0),
-                constant: if self.pending_literals.contains_key(&src.0)
+                constant: if self.register_literal(*src).is_some()
                     || self.str_consts.contains_key(&src.0)
                     || self.int_consts.contains_key(&src.0)
                 {
@@ -354,7 +353,7 @@ impl FnLowering<'_> {
             self.carriers[carrier].edges[position].join(&facts);
             match self.carriers[carrier].slots[position].clone() {
                 CarrySlot::Scalar(expected) => {
-                    operands.push(self.carried_scalar(ctx, *src, *dest, expected)?);
+                    operands.push(self.reg_value(ctx, *src, expected)?);
                 }
                 CarrySlot::Aggregate {
                     ty,
@@ -457,15 +456,12 @@ impl FnLowering<'_> {
                 if let Some(value) = self.int_consts.get(&src.0).copied() {
                     self.int_consts.insert(reg.0, value);
                 }
-                if let Some(literal) = self.pending_literals.get(&src.0).cloned() {
-                    self.pending_literals.insert(reg.0, literal);
-                }
                 if let Some(bytes) = self.str_consts.get(&src.0).cloned() {
                     self.str_consts.insert(reg.0, bytes);
                 }
             }
             let folded = constant.is_some_and(|src| {
-                self.pending_literals.contains_key(&src.0) || self.str_consts.contains_key(&src.0)
+                self.register_literal(src).is_some() || self.str_consts.contains_key(&src.0)
             });
             match self.carriers[carrier].slots[position].clone() {
                 CarrySlot::Scalar(_) => {
@@ -514,24 +510,6 @@ impl FnLowering<'_> {
             self.lower_instr(ctx, instr)?;
         }
         self.lower_term(ctx, &block.term, end)
-    }
-
-    /// `src`'s value entering the scalar register `dest`: a pending literal
-    /// converts exactly into literal-typed storage, as a store does.
-    fn carried_scalar(
-        &mut self,
-        ctx: &mut Context,
-        src: Reg,
-        dest: Reg,
-        expected: ScalarTy,
-    ) -> Result<Value, PlironError> {
-        if let Some(ty) = self.func.reg_types.get(&dest.0).cloned()
-            && matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-            && let Some(literal) = self.pending_literals.get(&src.0).cloned()
-        {
-            return self.exact_literal_storage(ctx, &literal, &ty, src);
-        }
-        self.reg_value(ctx, src, expected)
     }
 }
 

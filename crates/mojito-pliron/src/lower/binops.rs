@@ -18,6 +18,9 @@ impl FnLowering<'_> {
         if let Some(target) = resolved {
             return Err(self.unsupported_reg(format!("nominal operator overload `{target}`"), dest));
         }
+        if self.is_literal_register(a) && self.is_literal_register(b) {
+            return self.lower_literal_binop(ctx, op, dest, a, b);
+        }
         // A multi-lane SIMD operand on either side selects the elementwise
         // lowering; the other side is a vector of the same shape or a
         // splatting scalar/literal (`runtime::to_int_lanes`).

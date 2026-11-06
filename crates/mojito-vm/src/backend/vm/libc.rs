@@ -778,12 +778,6 @@ fn c_integer(callee: &str, index: usize, value: &Value) -> Result<i64, RuntimeEr
         Value::Int(n) => Ok(*n),
         Value::UInt(n) => Ok(*n as i64),
         Value::Bool(b) => Ok(i64::from(*b)),
-        Value::IntLiteral(literal) => literal.wrapping_signed(64).ok_or_else(|| {
-            RuntimeError::TypeError(format!(
-                "vm: external_call[\"{callee}\"] argument {} is out of range",
-                index + 1
-            ))
-        }),
         Value::Simd {
             lanes: SimdLanes::Int(lanes),
             ..

@@ -66,8 +66,11 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::Int(n) | CtValue::Index(n) => Ok(Value::Int(*n)),
         CtValue::UInt(n) => Ok(Value::UInt(*n)),
         CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(*bits))),
-        CtValue::IntLiteral(value) => Ok(Value::IntLiteral(value.clone())),
-        CtValue::FloatLiteral(value) => Ok(Value::FloatLiteral(value.clone())),
+        CtValue::IntLiteral(_) | CtValue::FloatLiteral(_) => {
+            literal_ct_to_vm(value).ok_or_else(|| {
+                RuntimeError::TypeError(format!("the literal `{value}` has no literal type"))
+            })
+        }
         CtValue::Bool(b) => Ok(Value::Bool(*b)),
         CtValue::None => Ok(Value::None),
         CtValue::Str(s) => Ok(Value::Str(s.clone())),
@@ -127,14 +130,25 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
     }
 }
 
-/// A runtime value the VM produced as a compile-time value.
+/// The compile-time value of a numeric literal register of the type `ty`.
+///
+/// The register holds the empty literal struct, so its number is the
+/// type's `value` parameter. `None` when `ty` is no closed literal type.
+pub fn literal_vm_to_ct(ty: &mojito_types::types::Ty) -> Option<CtValue> {
+    Some(match crate::runtime::literal_of(ty)? {
+        crate::runtime::ExactNum::Int(value) => CtValue::IntLiteral(value),
+        crate::runtime::ExactNum::Float(value) => CtValue::FloatLiteral(value),
+    })
+}
+
+/// A runtime value the VM produced as a compile-time value. A numeric
+/// literal is the empty struct its type carries the number of, so it
+/// crosses through [`literal_vm_to_ct`] at its type instead.
 pub fn vm_to_ct(value: Value) -> Result<CtValue, RuntimeError> {
     match value {
         Value::Int(n) => Ok(CtValue::Int(n)),
         Value::UInt(n) => Ok(CtValue::UInt(n)),
         Value::Float64(value) => Ok(CtValue::Float(value.to_bits())),
-        Value::IntLiteral(value) => Ok(CtValue::IntLiteral(value)),
-        Value::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value)),
         Value::Bool(b) => Ok(CtValue::Bool(b)),
         Value::Str(s) => Ok(CtValue::Str(s)),
         Value::Tuple(items) => Ok(CtValue::Tuple(
@@ -167,6 +181,15 @@ pub fn vm_to_ct(value: Value) -> Result<CtValue, RuntimeError> {
             "VM CTFE returned unsupported runtime value {other}"
         ))),
     }
+}
+
+/// The empty literal struct a compile-time numeric literal `value` is at
+/// run time, its number moved to the register's `IntLiteral[v]` or
+/// `FloatLiteral[v]` type. `None` when `value` is no numeric literal.
+pub(crate) fn literal_ct_to_vm(value: &CtValue) -> Option<Value> {
+    mojito_types::types::Ty::of_literal_value(value)
+        .as_ref()
+        .and_then(crate::runtime::literal_value)
 }
 
 /// A thawed variant payload at its alternative's type: a nominal `Tuple`

@@ -55,7 +55,7 @@ use pliron_llvm::types::{ArrayType, FuncType, PointerType, VectorType, VectorTyp
 use mojito_ast::ast::{ArgConvention, Dtype, InfixOp, PrefixOp};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
-use mojito_common::literal::{FloatLiteral, IntLiteral};
+use mojito_common::literal::FloatLiteral;
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
     Const as MirConst, MirBlock, MirClosureCapture, MirDeclarations, MirFunction,
@@ -63,6 +63,7 @@ use mojito_mir::mir::{
     RegionFrame, TryLabel, UseMode,
 };
 use mojito_types::types::{Ty, TyArg, canonical_simd_ty, scalar_simd_dtype};
+use mojito_vm::runtime::ExactNum;
 
 use mojito_native::native::layout::{Layout, LayoutCx, LayoutError};
 use mojito_native::native::mangle;
@@ -254,7 +255,6 @@ pub fn lower_body(
         shared,
         trace_lifecycle: env.trace_lifecycle,
         reg_values: HashMap::new(),
-        pending_literals: HashMap::new(),
         int_consts: HashMap::new(),
         pack_positions: HashMap::new(),
         str_consts: HashMap::new(),
@@ -329,14 +329,6 @@ pub enum LowerTy {
     ZeroSized,
 }
 
-/// A register holding a not-yet-materialized literal. Kept exact until a
-/// consumer fixes the target type, mirroring the VM's literal values.
-#[derive(Clone)]
-enum PendingLiteral {
-    Int(IntLiteral),
-    Float(FloatLiteral),
-}
-
 // Registers holding a compile-time string literal carry their exact bytes
 // (`str_consts`); consumers intern into the constant pool only on actual use,
 // so fold-only literals never emit a global.
@@ -375,8 +367,6 @@ struct FnLowering<'a> {
     trace_lifecycle: bool,
     /// Materialized SSA value of each register.
     reg_values: HashMap<u32, Value>,
-    /// Registers holding a not-yet-materialized literal.
-    pending_literals: HashMap<u32, PendingLiteral>,
     /// Registers holding an `Int` constant: an index the elaborator folded
     /// (an unrolled `comptime for`'s), which projects pack storage
     /// statically as a literal does.

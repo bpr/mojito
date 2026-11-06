@@ -1073,8 +1073,8 @@ impl FnLowering<'_> {
             return self.simd_load_vector(ctx, reg, dtype, width, dest);
         }
         let lane_ty = ScalarTy::of_dtype(dtype);
-        let lane = if let Some(literal) = self.pending_literals.get(&reg.0).cloned() {
-            self.materialize_pending(ctx, &literal, lane_ty, dest)?
+        let lane = if let Some(literal) = self.register_literal(reg) {
+            self.materialize_exact(ctx, &literal, lane_ty, dest)?
         } else {
             let source = self.concrete_scalar_ty(reg)?.ok_or_else(|| {
                 self.unsupported_reg("unmaterialized SIMD splat operand".into(), dest)

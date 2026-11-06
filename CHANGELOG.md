@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A numeric literal register holds no value at run time, as upstream's
+  field-less `IntLiteral[v]` holds none: the VM keeps the empty literal
+  struct, Pliron lowers literal types zero-sized, and their native layout
+  is empty. `literal.materialize`, literal comparisons and casts, defaults,
+  and compile-time results read the number from the register's type
+  through one reader the two backends share. A pointer offset (`p + 1`,
+  `p.unsafe_offset(1)`) now converts its literal at `Int`, and the MIR
+  verifier rejects an operator with a literal beside a non-literal operand
+  (R1850).
 - Every `SIMD` construction now calls an initializer `std.simd` declares,
   as upstream does: the checker's own `SIMD` construction rule, its
   `ConstructSimd` fact, and MIR's direct `simd.make` lowering of it are

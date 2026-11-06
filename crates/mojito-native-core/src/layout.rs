@@ -157,9 +157,9 @@ impl LayoutCx<'_> {
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.
             TyKind::Func(_) => Ok(compose(&[self.pointer(), self.pointer()]).layout),
-            // Literal-typed storage holds the value at its default
-            // materialized width; a value that exceeds it rejects at lowering.
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => Ok(Layout::new(8, 8)),
+            // Upstream's `IntLiteral[v]` and `FloatLiteral[v]` are structs
+            // with no fields: the number is the type's `value` parameter.
+            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => Ok(Layout::ZERO),
             unsupported => Err(LayoutError::Unsupported(format!(
                 "type has no native layout yet: {unsupported}"
             ))),
@@ -360,16 +360,13 @@ mod tests {
     }
 
     #[test]
-    fn literal_storage_uses_materialized_widths() {
-        assert_eq!(
-            layout_of(&Ty::int_literal_of(&0.into())),
-            Ok(Layout::new(8, 8))
-        );
+    fn numeric_literals_are_zero_sized() {
+        assert_eq!(layout_of(&Ty::int_literal_of(&0.into())), Ok(Layout::ZERO));
         assert_eq!(
             layout_of(&Ty::float_literal_of(
                 &mojito_common::literal::FloatLiteral::from_int(&0.into())
             )),
-            Ok(Layout::new(8, 8))
+            Ok(Layout::ZERO)
         );
     }
 

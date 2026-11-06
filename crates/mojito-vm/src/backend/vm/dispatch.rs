@@ -432,13 +432,7 @@ impl VmBackend {
                 }
                 Some(Value::Tuple(items)) => Ok(Value::Int(items.len() as i64)),
                 Some(Value::Simd { lanes, .. }) => Ok(Value::Int(lanes.width() as i64)),
-                Some(
-                    Value::Int(_)
-                    | Value::UInt(_)
-                    | Value::Float64(_)
-                    | Value::IntLiteral(_)
-                    | Value::FloatLiteral(_),
-                ) => Ok(Value::Int(1)),
+                Some(Value::Int(_) | Value::UInt(_) | Value::Float64(_)) => Ok(Value::Int(1)),
                 _ => Err(RuntimeError::Unsupported(
                     "vm: len supports String, internal Tuple storage, and SIMD and its scalars"
                         .into(),
@@ -456,11 +450,11 @@ impl VmBackend {
             }
             "min" => {
                 let (a, b) = arg2(name, args)?;
-                builtin_min_max(true, a, b)
+                builtin_min_max(true, &a, &b)
             }
             "max" => {
                 let (a, b) = arg2(name, args)?;
-                builtin_min_max(false, a, b)
+                builtin_min_max(false, &a, &b)
             }
             "input" => {
                 let mut prompt = arg1(name, args)?;
@@ -674,11 +668,6 @@ fn with_names_of(original: &Value, value: Value) -> Value {
 /// text.
 fn scalar_repr(value: &Value) -> String {
     match value {
-        Value::FloatLiteral(literal) => format!(
-            "Float64({})",
-            Value::Float64(literal.to_f64().unwrap_or(f64::NAN))
-        ),
-        Value::IntLiteral(_) => format!("Int({value})"),
         Value::Dtype(dtype) => format!("DType.{}", dtype.name()),
         Value::Str(text) => {
             let mut out = String::from("'");

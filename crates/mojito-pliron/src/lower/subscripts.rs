@@ -275,8 +275,8 @@ impl FnLowering<'_> {
 
     /// The element a constant pack index selects, when it is in `0..len`.
     pub(super) fn constant_pack_index(&self, index: Reg, len: usize) -> Option<usize> {
-        let value = match self.pending_literals.get(&index.0) {
-            Some(PendingLiteral::Int(literal)) => literal.to_i64(),
+        let value = match self.register_literal(index) {
+            Some(ExactNum::Int(literal)) => literal.to_i64(),
             _ => self.int_consts.get(&index.0).copied(),
         }?;
         usize::try_from(value).ok().filter(|value| *value < len)

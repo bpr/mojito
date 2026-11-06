@@ -40,35 +40,28 @@ impl FnLowering<'_> {
 
         // Literal arguments fold at compile time (the VM's literal branches
         // of `builtin_convert`).
-        if let Some(literal) = self.pending_literals.get(&arg.0).cloned() {
+        if let Some(literal) = self.register_literal(arg) {
             let value = match (&literal, target) {
-                (PendingLiteral::Int(_) | PendingLiteral::Float(_), ScalarTy::Bool) => {
+                (ExactNum::Int(_) | ExactNum::Float(_), ScalarTy::Bool) => {
                     let non_zero = match &literal {
-                        PendingLiteral::Int(literal) => !literal.is_zero(),
-                        PendingLiteral::Float(literal) => !literal.is_zero(),
+                        ExactNum::Int(literal) => !literal.is_zero(),
+                        ExactNum::Float(literal) => !literal.is_zero(),
                     };
                     self.bool_constant(ctx, non_zero)
                 }
-                (PendingLiteral::Float(literal), ScalarTy::Int | ScalarTy::UInt) => {
-                    let truncated = PendingLiteral::Int(literal.trunc_to_int());
-                    self.materialize_pending(ctx, &truncated, target, dest)?
+                (ExactNum::Float(literal), ScalarTy::Int | ScalarTy::UInt) => {
+                    let truncated = ExactNum::Int(literal.trunc_to_int());
+                    self.materialize_exact(ctx, &truncated, target, dest)?
                 }
-                _ => self.materialize_pending(ctx, &literal, target, dest)?,
+                _ => self.materialize_exact(ctx, &literal, target, dest)?,
             };
             self.reg_values.insert(dest.0, value);
             return Ok(());
         }
 
-        let source = match self.concrete_scalar_ty(arg)? {
-            Some(ty) => ty,
-            // A runtime literal-typed value converts at its storage kind
-            // (its constant was range-checked when it entered storage).
-            None => match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-                Some(TyKind::FloatLiteral(_)) => ScalarTy::Float64,
-                Some(TyKind::IntLiteral(_)) => ScalarTy::Int,
-                _ => return Err(self.unsupported_reg("untyped conversion operand".into(), dest)),
-            },
-        };
+        let source = self
+            .concrete_scalar_ty(arg)?
+            .ok_or_else(|| self.unsupported_reg("untyped conversion operand".into(), dest))?;
         let value = self.reg_value(ctx, arg, source)?;
         // A sized operand converts through its mathematical lane value (the
         // VM's `builtin_convert` width-1 arm): integers sign/zero-extend to
@@ -221,8 +214,8 @@ impl FnLowering<'_> {
             self.reg_span(anchor),
         )? {
             LowerTy::Scalar(scalar) => {
-                let value = if let Some(literal) = self.pending_literals.get(&src.0).cloned() {
-                    self.materialize_pending(ctx, &literal, scalar, anchor)?
+                let value = if let Some(literal) = self.register_literal(src) {
+                    self.materialize_exact(ctx, &literal, scalar, anchor)?
                 } else if !self.func.reg_types.contains_key(&src.0) {
                     self.reg_values.get(&src.0).copied().ok_or_else(|| {
                         self.unsupported_reg(

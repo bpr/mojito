@@ -240,9 +240,13 @@ Rules:
   each call through one into a direct call to its instance, passing a
   by-reference environment's places as the lifted body's leading reference
   arguments. A by-value environment has nowhere to live and rejects.
+- A numeric literal (`IntLiteral[v]`, `FloatLiteral[v]`) is zero-sized,
+  as upstream's field-less literal structs are: it occupies no storage and
+  no argument slot, and each reader converts the number its closed type
+  carries.
 - Types with no defined native representation (type packs still
-  parametric and unmaterialized literal types) reject with a contextual diagnostic —
-  backends never guess.
+  parametric) reject with a contextual diagnostic — backends never
+  guess.
 
 ### Strings and the constant pool
 

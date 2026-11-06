@@ -318,6 +318,15 @@ impl VmBackend {
             {
                 self.nominal_string_value(prog, text)?
             }
+            // A numeric literal is the empty literal struct at a literal
+            // type, and converts at the scalar type it is applied at, as
+            // upstream's implicit `SIMD(IntLiteral)` initializer does.
+            CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)
+                if let Some(ty) = target.filter(|ty| !ty.is_numeric_literal())
+                    && let Some(number) = crate::runtime::ExactNum::of_ct(value) =>
+            {
+                return crate::runtime::materialize_literal(&number, peel_references(ty));
+            }
             // A function-typed value is the symbol of the function it binds,
             // as `Const::of_parameter_value` reads one.
             CtValue::Str(function)

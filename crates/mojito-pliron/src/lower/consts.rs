@@ -34,14 +34,10 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, constant);
                 Ok(())
             }
-            MirConst::IntLiteral(literal) => {
-                self.pending_literals
-                    .insert(dest.0, PendingLiteral::Int(literal.clone()));
-                Ok(())
-            }
-            MirConst::FloatLiteral(literal) => {
-                self.pending_literals
-                    .insert(dest.0, PendingLiteral::Float(literal.clone()));
+            // A numeric literal is zero-sized: its readers take the number
+            // from the register's type ([`Self::register_literal`]).
+            MirConst::IntLiteral(_) | MirConst::FloatLiteral(_) => {
+                self.erased.insert(dest.0);
                 Ok(())
             }
             MirConst::Str(text) => {
@@ -574,22 +570,22 @@ impl FnLowering<'_> {
         use mojito_types::ct::CtValue;
         match value {
             CtValue::Int(value) | CtValue::Index(value) => {
-                self.materialize_pending(ctx, &PendingLiteral::Int((*value).into()), scalar, dest)
+                self.materialize_exact(ctx, &ExactNum::Int((*value).into()), scalar, dest)
             }
             CtValue::UInt(value) => {
-                self.materialize_pending(ctx, &PendingLiteral::Int((*value).into()), scalar, dest)
+                self.materialize_exact(ctx, &ExactNum::Int((*value).into()), scalar, dest)
             }
             CtValue::IntLiteral(value) => {
-                self.materialize_pending(ctx, &PendingLiteral::Int(value.clone()), scalar, dest)
+                self.materialize_exact(ctx, &ExactNum::Int(value.clone()), scalar, dest)
             }
-            CtValue::Float(bits) => self.materialize_pending(
+            CtValue::Float(bits) => self.materialize_exact(
                 ctx,
-                &PendingLiteral::Float(f64::from_bits(*bits).into()),
+                &ExactNum::Float(f64::from_bits(*bits).into()),
                 scalar,
                 dest,
             ),
             CtValue::FloatLiteral(value) => {
-                self.materialize_pending(ctx, &PendingLiteral::Float(value.clone()), scalar, dest)
+                self.materialize_exact(ctx, &ExactNum::Float(value.clone()), scalar, dest)
             }
             CtValue::Bool(value) => Ok(self.bool_constant(ctx, *value)),
             CtValue::Dtype(dtype) => Ok(self.dtype_constant(ctx, *dtype)),
@@ -613,12 +609,9 @@ impl FnLowering<'_> {
         lanes
             .iter()
             .map(|lane| match lane {
-                CtLane::Int(lane) => self.materialize_pending(
-                    ctx,
-                    &PendingLiteral::Int((*lane).into()),
-                    target,
-                    dest,
-                ),
+                CtLane::Int(lane) => {
+                    self.materialize_exact(ctx, &ExactNum::Int((*lane).into()), target, dest)
+                }
                 // A float lane is already rounded to its dtype, and may be
                 // an infinity or a NaN a folded operator produced.
                 CtLane::Float(bits) if dtype.is_narrow_float() => {
@@ -655,62 +648,61 @@ impl FnLowering<'_> {
                 );
             }
         };
-        let constant = match self.pending_literals.get(&value.0).cloned() {
-            Some(literal) => self.materialize_pending(ctx, &literal, target, dest)?,
-            None => self.runtime_literal_value(ctx, value, target, dest)?,
-        };
+        let literal = self.register_literal(value).ok_or_else(|| {
+            self.unsupported_reg(
+                "literal materialization of a non-literal register".into(),
+                dest,
+            )
+        })?;
+        let constant = self.materialize_exact(ctx, &literal, target, dest)?;
         self.reg_values.insert(dest.0, constant);
         Ok(())
     }
 
-    /// A pending literal as its typed-storage constant: `IntLiteral` storage
-    /// is an exact i64 and `FloatLiteral` storage the literal's f64 value.
-    /// A constant the storage cannot hold rejects — the VM keeps arbitrary
-    /// precision in literal-typed slots, so wrapping here would silently
-    /// diverge from the oracle (the recorded reject-never-wrap policy).
-    pub(super) fn exact_literal_storage(
+    /// The number the numeric literal register `reg` holds, which its
+    /// closed `IntLiteral[v]` or `FloatLiteral[v]` type carries: the
+    /// register itself is zero-sized, as upstream's literal struct is.
+    /// `None` for a register of any other type.
+    pub(super) fn register_literal(&self, reg: Reg) -> Option<ExactNum> {
+        self.func
+            .reg_types
+            .get(&reg.0)
+            .and_then(mojito_vm::runtime::literal_of)
+    }
+
+    /// Whether `reg` is a numeric literal register, closed or not.
+    pub(super) fn is_literal_register(&self, reg: Reg) -> bool {
+        self.func
+            .reg_types
+            .get(&reg.0)
+            .is_some_and(Ty::is_numeric_literal)
+    }
+
+    /// An operator over two numeric literals: the zero-sized literal its
+    /// result type carries, or the `Bool` its operands' types decide, as
+    /// upstream's literal dunders read their `value` parameters.
+    pub(super) fn lower_literal_binop(
         &mut self,
         ctx: &mut Context,
-        literal: &PendingLiteral,
-        target: &Ty,
-        span_reg: Reg,
-    ) -> Result<Value, PlironError> {
-        match (literal, target.kind()) {
-            (PendingLiteral::Int(literal), TyKind::IntLiteral(_)) => {
-                let value = literal.to_i64().ok_or_else(|| {
-                    self.literal_out_of_range(
-                        literal.as_bigint().to_string(),
-                        "IntLiteral storage (i64)",
-                        span_reg,
-                    )
-                })?;
-                Ok(self.int_constant(ctx, value))
-            }
-            (PendingLiteral::Int(literal), _) => {
-                let value = literal.to_f64().ok_or_else(|| {
-                    self.literal_out_of_range(
-                        literal.as_bigint().to_string(),
-                        "FloatLiteral storage (f64)",
-                        span_reg,
-                    )
-                })?;
-                Ok(self.float_constant(ctx, value))
-            }
-            (PendingLiteral::Float(literal), TyKind::FloatLiteral(_)) => {
-                let value = literal.to_f64().ok_or_else(|| {
-                    self.literal_out_of_range(
-                        literal.to_string(),
-                        "FloatLiteral storage (f64)",
-                        span_reg,
-                    )
-                })?;
-                Ok(self.float_constant(ctx, value))
-            }
-            (PendingLiteral::Float(literal), _) => Err(self.unsupported(
-                format!("float literal `{literal}` as IntLiteral storage"),
-                self.reg_span(span_reg),
-            )),
+        op: InfixOp,
+        dest: Reg,
+        a: Reg,
+        b: Reg,
+    ) -> Result<(), PlironError> {
+        if self.is_literal_register(dest) {
+            self.erased.insert(dest.0);
+            return Ok(());
         }
+        let decided = self
+            .register_literal(a)
+            .zip(self.register_literal(b))
+            .and_then(|(left, right)| left.compare_by(op, &right))
+            .ok_or_else(|| {
+                self.unsupported_reg(format!("operator `{op:?}` over literals"), dest)
+            })?;
+        let value = self.bool_constant(ctx, decided);
+        self.reg_values.insert(dest.0, value);
+        Ok(())
     }
 
     pub(super) fn lower_unop(
@@ -725,30 +717,20 @@ impl FnLowering<'_> {
         {
             return self.lower_simd_unop(ctx, op, dest, a, dtype, width as usize);
         }
-        // Negation of a pending literal stays a pending literal (the
-        // materialization folds the sign into one constant).
-        if let Some(literal) = self.pending_literals.get(&a.0).cloned() {
-            let negated = match (op, literal) {
-                (PrefixOp::Neg, PendingLiteral::Int(literal)) => PendingLiteral::Int(literal.neg()),
-                (PrefixOp::Neg, PendingLiteral::Float(literal)) => {
-                    PendingLiteral::Float(literal.neg())
-                }
-                (PrefixOp::Invert, PendingLiteral::Int(literal)) => PendingLiteral::Int(
-                    literal
-                        .neg()
-                        .sub(&mojito_common::literal::IntLiteral::from(1i64)),
-                ),
-                _ => {
-                    return Err(
-                        self.unsupported_reg(format!("operator `{op:?}` on a literal"), dest)
-                    );
-                }
-            };
-            self.pending_literals.insert(dest.0, negated);
-            return Ok(());
+        // An operator over a numeric literal yields the literal its result
+        // type carries, or the `Bool` of its `not`.
+        if let Some(literal) = self.register_literal(a) {
+            if self.is_literal_register(dest) {
+                self.erased.insert(dest.0);
+                return Ok(());
+            }
+            if op == PrefixOp::Not {
+                let value = self.bool_constant(ctx, !literal.is_nonzero());
+                self.reg_values.insert(dest.0, value);
+                return Ok(());
+            }
+            return Err(self.unsupported_reg(format!("operator `{op:?}` on a literal"), dest));
         }
-        // A literal an operator already computed (`~(2 * 3)`) holds the
-        // value at the width `binop_operand_ty` gave it.
         let operand_ty = self.binop_operand_ty(a, a)?;
         let value = self.operand_value(ctx, a, operand_ty)?;
         match (op, operand_ty) {
@@ -785,31 +767,6 @@ impl FnLowering<'_> {
                 dest,
             )),
         }
-    }
-
-    /// A literal-typed register computed at run time (a join of literal
-    /// arms) holds its value in storage — i64 for `IntLiteral`, f64 for
-    /// `FloatLiteral` — and materializes through the VM's lane conversion:
-    /// an integer wraps to the target width, a float target converts.
-    fn runtime_literal_value(
-        &mut self,
-        ctx: &mut Context,
-        value: Reg,
-        target: ScalarTy,
-        dest: Reg,
-    ) -> Result<Value, PlironError> {
-        let source = match self.func.reg_types.get(&value.0).map(Ty::kind) {
-            Some(TyKind::IntLiteral(_)) => ScalarTy::Int,
-            Some(TyKind::FloatLiteral(_)) => ScalarTy::Float64,
-            _ => {
-                return Err(self.unsupported_reg(
-                    "literal materialization of a non-literal register".into(),
-                    dest,
-                ));
-            }
-        };
-        let stored = self.reg_value(ctx, value, source)?;
-        self.convert_lane(ctx, source, target, stored, dest)
     }
 }
 

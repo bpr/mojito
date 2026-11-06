@@ -224,12 +224,12 @@ impl FnLowering<'_> {
     ) -> Result<Value, PlironError> {
         match (value, expected) {
             (CheckedConst::Int(literal), _) => {
-                let literal = PendingLiteral::Int(literal.clone());
-                self.materialize_pending(ctx, &literal, expected, dest)
+                let literal = ExactNum::Int(literal.clone());
+                self.materialize_exact(ctx, &literal, expected, dest)
             }
             (CheckedConst::Float(literal), _) => {
-                let literal = PendingLiteral::Float(literal.clone());
-                self.materialize_pending(ctx, &literal, expected, dest)
+                let literal = ExactNum::Float(literal.clone());
+                self.materialize_exact(ctx, &literal, expected, dest)
             }
             (CheckedConst::Bool(value), ScalarTy::Bool) => Ok(self.bool_constant(ctx, *value)),
             (CheckedConst::Bool(_), other) => Err(self.unsupported_reg(

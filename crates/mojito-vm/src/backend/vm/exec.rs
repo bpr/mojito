@@ -396,8 +396,30 @@ impl VmBackend {
                         "literal.materialize targets {target}, not a `!kgen.simd` storage"
                     ))
                 })?;
-                regs[dest.0 as usize] =
-                    crate::runtime::materialize_literal(regs[value.0 as usize].clone(), &vector)?;
+                let literal = register_literal(prog, function, *value)?;
+                regs[dest.0 as usize] = crate::runtime::materialize_literal(&literal, &vector)?;
+            }
+            // A literal operand's conversion reads the number its type
+            // carries, as upstream's literal `__int__`/`__bool__` do.
+            MirInstr::ScalarCast {
+                dest,
+                value,
+                target,
+            } if is_literal_register(prog, function, *value) => {
+                let literal = register_literal(prog, function, *value)?;
+                regs[dest.0 as usize] = match target {
+                    ScalarConversion::Bool => Value::Bool(literal.is_nonzero()),
+                    ScalarConversion::Int => {
+                        crate::runtime::materialize_literal(&literal.truncated(), &Ty::int())?
+                    }
+                    ScalarConversion::UInt => crate::runtime::materialize_literal(
+                        &literal.truncated(),
+                        &mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::UInt, 1),
+                    )?,
+                    ScalarConversion::Float64 => {
+                        crate::runtime::materialize_literal(&literal, &Ty::float64())?
+                    }
+                };
             }
             MirInstr::ScalarCast {
                 dest,
@@ -635,8 +657,41 @@ impl VmBackend {
                     }
                 }
             }
+            // An operator over numeric literals yields the literal its
+            // result type carries, or the `Bool` its operands' types decide,
+            // as upstream's literal dunders read their `value` parameters.
+            MirInstr::UnOp { op, dest, a, .. } if is_literal_register(prog, function, *a) => {
+                regs[dest.0 as usize] = match literal_register_value(prog, function, *dest) {
+                    Some(result) => result?,
+                    None if *op == mojito_ast::ast::PrefixOp::Not => {
+                        Value::Bool(!register_literal(prog, function, *a)?.is_nonzero())
+                    }
+                    None => {
+                        return Err(RuntimeError::TypeError(format!(
+                            "a numeric literal's '{op:?}' yields no literal"
+                        )));
+                    }
+                };
+            }
             MirInstr::UnOp { op, dest, a, .. } => {
                 regs[dest.0 as usize] = self.apply_prefix(prog, *op, regs[a.0 as usize].clone())?;
+            }
+            MirInstr::BinOp { op, dest, a, b, .. }
+                if is_literal_register(prog, function, *a)
+                    && is_literal_register(prog, function, *b) =>
+            {
+                regs[dest.0 as usize] =
+                    if let Some(result) = literal_register_value(prog, function, *dest) {
+                        result?
+                    } else {
+                        let left = register_literal(prog, function, *a)?;
+                        let right = register_literal(prog, function, *b)?;
+                        Value::Bool(left.compare_by(*op, &right).ok_or_else(|| {
+                            RuntimeError::TypeError(format!(
+                                "a numeric literal's '{op:?}' yields no literal"
+                            ))
+                        })?)
+                    };
             }
             MirInstr::BinOp {
                 op,
@@ -2087,6 +2142,44 @@ impl VmBackend {
         }
         load_place(vars, regs, place)
     }
+}
+
+/// Whether the register `register` of `function` is a numeric literal.
+fn is_literal_register(prog: &Prog, function: usize, register: Reg) -> bool {
+    prog.mir.functions[function]
+        .1
+        .reg_types
+        .get(&register.0)
+        .is_some_and(Ty::is_numeric_literal)
+}
+
+/// The number the numeric literal register `register` of `function` holds,
+/// which its closed type carries: the register itself is the empty literal
+/// struct.
+fn register_literal(
+    prog: &Prog,
+    function: usize,
+    register: Reg,
+) -> Result<crate::runtime::ExactNum, RuntimeError> {
+    let ty = prog.mir.functions[function].1.reg_types.get(&register.0);
+    ty.and_then(crate::runtime::literal_of)
+        .ok_or_else(|| crate::runtime::literal_type_error(ty))
+}
+
+/// The empty literal value of the register `register` of `function` when
+/// it is a numeric literal, whose number its type carries; `None` for a
+/// register of any other type.
+fn literal_register_value(
+    prog: &Prog,
+    function: usize,
+    register: Reg,
+) -> Option<Result<Value, RuntimeError>> {
+    let ty = prog.mir.functions[function].1.reg_types.get(&register.0)?;
+    ty.is_numeric_literal().then(|| {
+        crate::runtime::literal_of(ty)
+            .and_then(|_| crate::runtime::literal_value(ty))
+            .ok_or_else(|| crate::runtime::literal_type_error(Some(ty)))
+    })
 }
 
 /// Upstream's stack allocation: a slot's storage exists from its allocation.
