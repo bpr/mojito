@@ -103,10 +103,9 @@ command cannot use both.
      from the visible binder instead of being spelled again. Planned.
    - R1911: the MIR text reader upgrades an older artifact that declares a
      value pack.
-   - R1914: the VM reads a `Bool` value pack's elements as `False`.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1912 --task R1911 --task R1914 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1912 --task R1911 -n 0
    ```
 
 6. **The scalar, literal, and string structs' residues** (conformance;

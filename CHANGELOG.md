@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `Bool` value pack's elements now read back as the values bound, on the
+  VM as natively: `for f in fs: print(f)` in `def flags[*fs: Bool]()` at
+  `flags[True, False, True]()` prints `True`, `False`, `True` instead of
+  `False` three times. A reference through a `ref` binding holding a heap
+  element's address now forwards that address whatever the referent's
+  representation (R1914).
 - A `type_of` construction over a literal (`var n = type_of(y)()` over
   `comptime y = 2 + 3`, `var f = type_of(1.5)()`) is now the literal
   materialized as the `var`'s scalar, as at the pin, instead of failing

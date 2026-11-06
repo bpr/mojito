@@ -9281,23 +9281,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1914 The VM reads a `Bool` value pack's elements as `False`**
-
-  `for f in fs: print(f)` in `def flags[*fs: Bool]()` at `flags[True,
-  False, True]()` prints `False` three times on the VM, where the native
-  backend and the pin print `True`, `False`, `True`.
-  - The elements live in the static array `MirInstr::ParamListAddress`
-    lays out (`static_param_list`, `mojito-vm` `vm/values.rs`), each
-    thawed at the element type (`thaw`, `vm/adapters.rs`); an `Int` or a
-    `DType` element reads back right, so the gap is the `Bool` thaw or
-    its load.
-  - Probe: `assets/ok/value_pack_runtime_read.mojo`'s fourth line is `0`
-    on the VM and `2` natively.
-  - Found while landing R1492 (2026-11-03); the binary before R1492 does
-    the same.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1913 A type binder bound to a value-annotated `comptime` name
   is accepted**
 

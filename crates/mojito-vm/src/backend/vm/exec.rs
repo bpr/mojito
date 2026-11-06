@@ -138,11 +138,11 @@ impl VmBackend {
                 // `xs.unsafe_ptr()`) is its own handle: forward the pointer,
                 // applying an element projection as pointer arithmetic (a
                 // single-pointee deref designates the pointee the pointer
-                // already addresses).
+                // already addresses). A `ref`-typed root holds its handle
+                // whatever the referent's representation, so only a root
+                // that is itself a held struct is a value here.
                 if let Value::Pointer { allocation, offset } = root
-                    && prog
-                        .held_field(place.root_ty.as_ref().map(peel_references))
-                        .is_none()
+                    && prog.held_field(place.root_ty.as_ref()).is_none()
                 {
                     // A reference within the pointee (`q[i]._data[k]`, a
                     // `Span` member's element reference inlined at the
