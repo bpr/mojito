@@ -840,28 +840,6 @@ impl<'a> Node<'a> {
             .cloned()
     }
 
-    pub(super) fn scalar_splat(self) -> Option<Ty> {
-        self.adjustments()
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::SplatScalar(target) => Some(target),
-                _ => None,
-            })
-            .cloned()
-    }
-
-    /// The vector a `SIMDLength` converts to here, upstream's `@implicit
-    /// SIMD.__init__(SIMDLength)`.
-    pub(super) fn simd_from_length(self) -> Option<Ty> {
-        self.adjustments()
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::SimdFromLength(target) => Some(target),
-                _ => None,
-            })
-            .cloned()
-    }
-
     pub(super) fn intrinsic_index_dispatch(self) -> Option<MirIntrinsicSubscript> {
         let ty = self.ty()?;
         match ty.kind() {

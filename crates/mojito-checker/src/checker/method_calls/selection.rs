@@ -538,19 +538,7 @@ pub(in crate::checker) fn call_value_adjustments(
             target: target.clone(),
         }]
     } else if let Some(target) = &facts.implicit_conversion {
-        if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
-            facts
-                .implicit_conversion_type
-                .as_ref()
-                .map(|ty| vec![CheckedCallValueAdjustment::SplatScalar { target: ty.clone() }])
-                .unwrap_or_default()
-        } else if target == mojito_symbol::symbol::SIMD_LENGTH_CONVERSION {
-            facts
-                .implicit_conversion_type
-                .as_ref()
-                .map(|ty| vec![CheckedCallValueAdjustment::SimdFromLength { target: ty.clone() }])
-                .unwrap_or_default()
-        } else if mojito_symbol::symbol::is_index_normalization_symbol(target) {
+        if mojito_symbol::symbol::is_index_normalization_symbol(target) {
             vec![CheckedCallValueAdjustment::IndexNormalization {
                 target: target.clone(),
             }]

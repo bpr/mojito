@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A scalar converted to a vector of its dtype and a `SIMDLength`
+  converted to a vector now call `std.simd`'s declared `@implicit
+  __init__(Scalar[Self.dtype])` and `__init__(SIMDLength)`, as the pin
+  does, instead of reserved conversion targets lowered as MIR's own copy
+  of each body. A compile-time call that no run-time typing ranks
+  (`comptime MAX = Self(_max_or_inf[Self.dtype]())`) ranks tied overloads
+  by conversion count, then variadics, then own parameters, as the pin
+  does. The checked `SplatScalar` and `SimdFromLength` adjustments are
+  withdrawn, and the package format moves to `mojito-package 195`
+  (R1843).
 - The parameter domain now reads an `Int`'s, `UInt`'s, or `Float64`'s
   `_mlir_value` as its `!kgen.scalar` storage, as upstream does, instead
   of as the scalar itself. Between an `Int` or a `UInt` and its storage,

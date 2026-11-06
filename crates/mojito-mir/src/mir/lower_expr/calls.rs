@@ -1020,67 +1020,6 @@ impl<'a> Flatten<'a> {
         dest
     }
 
-    /// Convert a `SIMDLength` register to the checked vector `target` as
-    /// upstream's `@implicit SIMD.__init__(SIMDLength)` body does, all at
-    /// the storage: its `index` cast to `Int`'s storage
-    /// (`pop.cast_from_builtin`), that cast to the vector's dtype
-    /// (`pop.cast`), the scalar splat across the vector's lanes
-    /// (`pop.simd.splat`), and the `SIMD` created from the result. A
-    /// target that is no vector takes the `Int`.
-    pub(in crate::mir) fn simd_from_length(
-        &mut self,
-        value: Reg,
-        target: &Ty,
-        source: SourceSpan,
-    ) -> Reg {
-        let index = self.fresh_typed(source.clone(), None, Ty::index());
-        self.emit(MirInstr::GetField {
-            dest: index,
-            base: value,
-            field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
-        });
-        let Some((dtype, width)) = mojito_types::types::simd_slots(target) else {
-            return self.int_from_index(index, source);
-        };
-        let int = self.builtin_cast(
-            source.clone(),
-            index,
-            mojito_types::types::storage_ty(&Ty::int()),
-        );
-        let one = mojito_types::types::SimdWidth::Known(1);
-        let scalar = if dtype.known() == Some(Dtype::Int) {
-            int
-        } else {
-            let scalar_ty = TyKind::KgenSimd {
-                dtype: dtype.clone(),
-                width: one.clone(),
-            }
-            .into();
-            let dest = self.fresh_typed(source.clone(), None, scalar_ty);
-            self.emit(MirInstr::SimdCast {
-                dest,
-                value: int,
-                dtype: dtype.clone(),
-                width: one.clone(),
-            });
-            dest
-        };
-        if width == one {
-            let dest = self.fresh_typed(source, None, target.clone());
-            self.emit(MirInstr::MakeStruct {
-                dest,
-                fields: vec![scalar],
-            });
-            return dest;
-        }
-        self.simd_through_storage(target, source, |dest| MirInstr::MakeSimd {
-            dest,
-            dtype,
-            width,
-            elems: vec![scalar],
-        })
-    }
-
     /// The `Int` an `index` register builds, as upstream's `Int(mlir_value=
     /// idx)` does: the `index` cast to `Int`'s storage
     /// (`pop.cast_from_builtin`), and the struct created from it.

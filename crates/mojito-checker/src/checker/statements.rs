@@ -243,6 +243,10 @@ impl Checker {
         // trait whose member's parameter is typed by one (`name:
         // StaticString`), and so do the `where` clauses of a callable
         // naming one (`where IsN[n]`).
+        // A shell's default naming an alias that registered here (`H:
+        // Hasher = default_hasher`) completes before the struct types read
+        // it.
+        self.complete_shell_defaults(stmts, false)?;
         self.classify_applicable_signatures(stmts);
         self.settle_deferred_traits(stmts, &mut deferred_traits);
         self.compile_application_constraints(stmts);

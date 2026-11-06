@@ -1158,6 +1158,12 @@ Schema 1.169 types a parameter expression's `cast_from_builtin` at
 artifact below 1.169 whose `cast_from_builtin` records `meta_value(Int)`
 reads as that struct value.
 
+With schema 1.169 the checked adjustments `SplatScalar` and
+`SimdFromLength` are withdrawn (R1843): a scalar splatted into a vector and
+a `SIMDLength` converted to one are calls of `std.simd`'s declared
+`@implicit` initializers, recorded as any other `ImplicitConversion`. The
+MIR schema is unchanged; the package format moves to `mojito-package 195`.
+
 Schema 1.168 adds a struct record's `origin_params: [origin_param(N)...]`
 (R1875): the id of each explicit origin parameter, in the order an
 instance's origin arguments follow its `param_decls`-aligned prefix, so a

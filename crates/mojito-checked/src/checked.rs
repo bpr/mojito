@@ -115,12 +115,6 @@ pub enum CheckedCallValueAdjustment {
     MaterializeLiteral {
         target: Ty,
     },
-    SplatScalar {
-        target: Ty,
-    },
-    SimdFromLength {
-        target: Ty,
-    },
 }
 
 /// Call-boundary facts for one supplied argument.
@@ -664,7 +658,8 @@ pub enum SemanticAdjustment {
     /// which the argument carries: `UInt(7)`, `Float64(2.5)` from a literal,
     /// upstream's builtin-inline `SIMD.__init__(IntLiteral)` (its
     /// `MaterializeLiteral`), or `Int(w)`, `SIMD[dt, n](w)` from a
-    /// `SIMDLength`, its `SIMD.__init__(SIMDLength)` (its `SimdFromLength`).
+    /// `SIMDLength`, its declared `SIMD.__init__(SIMDLength)` (its
+    /// `ImplicitConversion`).
     /// MIR lowers the call as its one argument.
     ConvertedArgument,
     /// `Int(x)`, `UInt(x)`, `Float64(x)`, `Bool(x)` over a scalar operand:
@@ -753,12 +748,6 @@ pub enum SemanticAdjustment {
     /// arithmetic is unbounded, while the resulting scalar has fixed-width
     /// runtime semantics.
     MaterializeLiteral(Ty),
-    /// Splat a runtime one-lane value across the checked multi-lane vector
-    /// type, upstream's `@implicit SIMD.__init__(Scalar[dtype])`.
-    SplatScalar(Ty),
-    /// Convert a `SIMDLength` to the checked vector type, upstream's
-    /// `@implicit SIMD.__init__(SIMDLength)`.
-    SimdFromLength(Ty),
     BorrowShared,
     BorrowMutable,
     /// Constructor arguments bound to origin-solving `ref` parameters: the
@@ -5096,20 +5085,6 @@ impl CheckedProgram {
                     | SemanticAdjustment::IndexNormalization { target } => {
                         implicit_conversions.insert(location.clone(), target.clone());
                     }
-                    SemanticAdjustment::SplatScalar(ty) => {
-                        implicit_conversions.insert(
-                            location.clone(),
-                            mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION.to_string(),
-                        );
-                        implicit_conversion_types.insert(location.clone(), ty.clone());
-                    }
-                    SemanticAdjustment::SimdFromLength(ty) => {
-                        implicit_conversions.insert(
-                            location.clone(),
-                            mojito_symbol::symbol::SIMD_LENGTH_CONVERSION.to_string(),
-                        );
-                        implicit_conversion_types.insert(location.clone(), ty.clone());
-                    }
                     SemanticAdjustment::ConversionResultType(ty) => {
                         implicit_conversion_types.insert(location.clone(), ty.clone());
                     }
@@ -6741,8 +6716,8 @@ fn map_params(map: &mut dyn NodeMap, params: &[CheckedFnParam]) -> Vec<CheckedFn
 }
 
 /// The adjustments the implicit conversion `facts` record at a node
-/// compose to: a reserved conversion's own adjustment, or a converting
-/// constructor's call with its result type, effects, and source borrow.
+/// compose to: an index normalization, or a converting constructor's call
+/// with its result type, effects, and source borrow.
 fn conversion_adjustments(facts: &NodeFacts) -> Vec<SemanticAdjustment> {
     let mut adjustments = Vec::new();
     let Some(target) = &facts.implicit_conversion else {
@@ -6752,20 +6727,6 @@ fn conversion_adjustments(facts: &NodeFacts) -> Vec<SemanticAdjustment> {
         adjustments.push(SemanticAdjustment::IndexNormalization {
             target: target.clone(),
         });
-    } else if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
-        adjustments.extend(
-            facts
-                .implicit_conversion_type
-                .clone()
-                .map(SemanticAdjustment::SplatScalar),
-        );
-    } else if target == mojito_symbol::symbol::SIMD_LENGTH_CONVERSION {
-        adjustments.extend(
-            facts
-                .implicit_conversion_type
-                .clone()
-                .map(SemanticAdjustment::SimdFromLength),
-        );
     } else {
         adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
         if let Some(ty) = &facts.implicit_conversion_type {

@@ -215,12 +215,6 @@ impl RewriteTypes for CheckedCallValueAdjustment {
             Self::MaterializeLiteral { target } => {
                 target.rewrite_types(rewrite);
             }
-            Self::SplatScalar { target } => {
-                target.rewrite_types(rewrite);
-            }
-            Self::SimdFromLength { target } => {
-                target.rewrite_types(rewrite);
-            }
             Self::ResolveCallable { target: _ } | Self::IndexNormalization { target: _ } => {}
         }
     }
@@ -506,12 +500,6 @@ impl RewriteTypes for SemanticAdjustment {
                 f0.rewrite_types(rewrite);
             }
             Self::MaterializeLiteral(f0) => {
-                f0.rewrite_types(rewrite);
-            }
-            Self::SplatScalar(f0) => {
-                f0.rewrite_types(rewrite);
-            }
-            Self::SimdFromLength(f0) => {
                 f0.rewrite_types(rewrite);
             }
             Self::ReferenceResult { reference } => {

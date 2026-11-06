@@ -4647,24 +4647,6 @@ pub fn splats_to(ty: &TyKind, dtype: &SimdDtype) -> bool {
     }
 }
 
-/// Whether the runtime scalar `from` splats across the multi-lane vector `to`.
-///
-/// Upstream's `@implicit SIMD.__init__(Scalar[dtype])`: an `Int32` into
-/// `SIMD[DType.int32, 4]`, or a `Scalar[dt]` into `SIMD[dt, width]` while
-/// the width is a parameter expression, since the instance's may be above
-/// one. A `Bool` is no `Scalar`, and an exact literal materializes through
-/// its own initializer instead.
-pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
-    matches!(
-        to.kind().as_simd(),
-        Some((dtype, width))
-            if width.known().is_none_or(|width| width > 1)
-                && !from.is_bool()
-                && !matches!(from.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-                && splats_to(from, &dtype)
-    )
-}
-
 /// The value-coercion policy for callable environments.
 ///
 /// A capturing callable does not bind to an unqualified `def(...)` value
@@ -7733,40 +7715,6 @@ mod simd_slot_tests {
         assert!(coerces(&Ty::bool(), &canonical_simd_ty(Dtype::Bool, 4)));
         assert!(!coerces(&canonical_simd_ty(Dtype::Int32, 1), &int32x4));
         assert!(!coerces(&Ty::int(), &canonical_simd_ty(Dtype::Int, 4)));
-    }
-
-    #[test]
-    fn a_runtime_scalar_splats_only_into_a_vector_of_its_dtype() {
-        let int32x4 = canonical_simd_ty(Dtype::Int32, 4);
-        assert!(scalar_splats_into(
-            &canonical_simd_ty(Dtype::Int32, 1),
-            &int32x4
-        ));
-        assert!(scalar_splats_into(
-            &Ty::int(),
-            &canonical_simd_ty(Dtype::Int, 4)
-        ));
-        assert!(scalar_splats_into(
-            &Ty::float64(),
-            &canonical_simd_ty(Dtype::Float64, 2)
-        ));
-        assert!(!scalar_splats_into(
-            &canonical_simd_ty(Dtype::Int32, 1),
-            &canonical_simd_ty(Dtype::Int64, 4)
-        ));
-        assert!(!scalar_splats_into(
-            &Ty::int(),
-            &canonical_simd_ty(Dtype::Int64, 4)
-        ));
-        assert!(!scalar_splats_into(
-            &Ty::bool(),
-            &canonical_simd_ty(Dtype::Bool, 4)
-        ));
-        assert!(!scalar_splats_into(&Ty::int_literal(), &int32x4));
-        assert!(!scalar_splats_into(
-            &canonical_simd_ty(Dtype::Int32, 1),
-            &canonical_simd_ty(Dtype::Int32, 1)
-        ));
     }
 
     #[test]

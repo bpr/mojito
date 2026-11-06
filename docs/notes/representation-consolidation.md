@@ -112,9 +112,8 @@ command cannot use both.
    conversions are their declarations (R1753, R1785's first part, R1788,
    R1789, R1738), and a `StringLiteral[value]` is the declared struct
    (R1655, R1657–R1660). What is left:
-   - `SIMD` storage: R1843 (splat and `SIMDLength` as the `@implicit`
-     initializers, now that R1835 reads an `Int`'s `_mlir_value` as its
-     storage), R1955 (a `Float64`'s or `Bool`'s read), R1837 (a
+   - `SIMD` storage: R1843 landed (splat and `SIMDLength` are the
+     declared `@implicit` initializers' calls), R1955 (a `Float64`'s or `Bool`'s read), R1837 (a
      struct `literal.materialize` target), and R1836 (a multi-lane literal
      splats the unconverted literal).
    - `Bool`: R1840 (MIR's `i1` is a `Bool` register) and R1841 (`Bool` is

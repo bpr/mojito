@@ -6659,28 +6659,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1843 `SIMD`'s scalar splat and `SIMDLength` conversions are
-  reserved targets, not the declared `@implicit` initializers**
-
-  Problem: a scalar splatted into a vector and a `SIMDLength` converted to
-  one are selected by reserved symbols and lowered as MIR's own copy of
-  each initializer's body, where the pin calls `SIMD`'s declared
-  `@implicit __init__(Scalar[Self.dtype])` and `__init__(SIMDLength)`.
-  - Cause: `Checker::implicit_conversion_constructor` (`checker.rs`)
-    answers both with `symbol::SCALAR_SPLAT_CONVERSION` and
-    `SIMD_LENGTH_CONVERSION` ahead of the declared overloads; MIR lowers
-    each as that initializer's storage body (`Flatten::splat_scalar`,
-    `simd_from_length`).
-  - Probe: pointing them at the declared overloads fails to package std
-    ("not a compile-time Int constant: not an associated comptime
-    expression"): the parameter domain folds only the reserved splat
-    (R1835).
-  - On landing, delete `SemanticAdjustment::{SplatScalar,
-    SimdFromLength}`, their `CheckedCallValueAdjustment` twins, and both
-    symbols.
-  - Depends on R1835.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1956 A `SIMDLength` binder read as `Int(n)` in a result type is
   never bound by the elaborator**
 

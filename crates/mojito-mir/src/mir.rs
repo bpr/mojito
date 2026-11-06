@@ -1938,12 +1938,6 @@ fn mir_default(checked: &CheckedProgram, default: CheckedNodeId) -> Option<Check
             | mojito_checked::checked::SemanticAdjustment::IndexNormalization { target } => {
                 Some(target.clone())
             }
-            mojito_checked::checked::SemanticAdjustment::SplatScalar(_) => {
-                Some(mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION.to_string())
-            }
-            mojito_checked::checked::SemanticAdjustment::SimdFromLength(_) => {
-                Some(mojito_symbol::symbol::SIMD_LENGTH_CONVERSION.to_string())
-            }
             _ => None,
         });
     match conversion {
@@ -4492,22 +4486,23 @@ impl<'a> Flatten<'a> {
     }
 
     /// [`Self::value_binder_node`] of an operator's operand, after the
-    /// conversion the checker recorded on it: a `SIMDLength` beside a
-    /// scalar is its lane count (`2 * w`).
+    /// conversion the checker recorded on it: a `SIMDLength` converted to
+    /// a vector beside a scalar is its lane count (`2 * w`).
     fn value_binder_operand(
         &self,
         id: mojito_checked::checked::CheckedNodeId,
     ) -> Option<ParamExpr> {
         let value = self.value_binder_node(id)?;
-        let converts = self
-            .checked
-            .expression(id)?
-            .adjustments
-            .iter()
-            .any(|adjustment| {
+        let expression = self.checked.expression(id)?;
+        let converts = expression
+            .ty
+            .as_ref()
+            .is_some_and(mojito_types::types::is_simd_length)
+            && expression.adjustments.iter().any(|adjustment| {
                 matches!(
                     adjustment,
-                    mojito_checked::checked::SemanticAdjustment::SimdFromLength(_)
+                    mojito_checked::checked::SemanticAdjustment::ConversionResultType(ty)
+                        if ty.is_simd()
                 )
             });
         if !converts {

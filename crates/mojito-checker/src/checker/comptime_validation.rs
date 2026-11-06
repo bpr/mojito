@@ -1888,6 +1888,7 @@ impl Checker {
             instance: function.on_instance.then(|| ty.clone()),
             arguments,
             result: None,
+            conversions: 0,
         };
         if let Some(error) = self.application_constraint_failure(&selected) {
             return Err(error);
@@ -2561,7 +2562,7 @@ impl Checker {
                         })
                         .flatten()
                 });
-                let (mut arguments, result) = self.applied_arguments(
+                let (mut arguments, result, conversions) = self.applied_arguments(
                     &name,
                     function,
                     owner.as_ref(),
@@ -2584,6 +2585,7 @@ impl Checker {
                     instance,
                     arguments,
                     result,
+                    conversions,
                 })
             });
         let application = selected.next()?;
@@ -2595,18 +2597,33 @@ impl Checker {
         // `__init__(IntLiteral)` and `__init__(Int)`): the call applies the
         // one its run-time call selects, as the pin ranks them. Where that
         // call is not typed (a struct's own `comptime MAX = Self(x)`), the
-        // pin's ranking prefers the one candidate without variadic
-        // arguments (`SIMD`'s splat over its element list).
+        // pin's ranking applies to the candidates directly: fewest
+        // conversions, then no variadic arguments, then fewest own
+        // parameters, so `SIMD`'s `Scalar[Self.dtype]` splat ranks above its
+        // element list and above its dtype cast, whose argument converts.
         tied.push(application);
-        let mut ranked: Vec<_> = match self.run_time_overload(expr) {
-            Some(target) => tied
-                .into_iter()
+        let mut ranked: Vec<_> = if let Some(target) = self.run_time_overload(expr) {
+            tied.into_iter()
                 .filter(|selected| selected.function.symbol() == target)
-                .collect(),
-            None => tied
-                .into_iter()
-                .filter(|selected| selected.function.collector.is_none())
-                .collect(),
+                .collect()
+        } else {
+            let rank = |selected: &Selected<'_>| {
+                let own = selected
+                    .function
+                    .signature
+                    .as_ref()
+                    .map_or(0, |signature| signature.decls.len());
+                overload_support::overload_rank(
+                    selected.conversions,
+                    selected.function.collector.is_some(),
+                    own,
+                    own > 0,
+                )
+            };
+            let best = tied.iter().map(rank).min()?;
+            tied.into_iter()
+                .filter(|selected| rank(selected) == best)
+                .collect()
         };
         (ranked.len() == 1).then(|| ranked.remove(0))
     }
@@ -2757,6 +2774,7 @@ impl Checker {
                 instance: function.on_instance.then(|| ty.clone()),
                 arguments,
                 result: None,
+                conversions: 0,
             };
             if let Some(error) = self.application_constraint_failure(&selected) {
                 return Err(error);
@@ -3035,8 +3053,9 @@ impl Checker {
     }
 
     /// The parameter expressions a call's arguments give `function`, its
-    /// compile-time parameters first, a `Self` parameter typed `owner`, and
-    /// its result under them. Its compile-time parameters bind as a runtime
+    /// compile-time parameters first, a `Self` parameter typed `owner`, its
+    /// result under them, and the conversion cost of the arguments
+    /// ([`Self::applied_conversions`]). Its compile-time parameters bind as a runtime
     /// call's do ([`Self::resolve_use_params`]): from the bracket arguments
     /// the call spells, from the runtime arguments their declared types
     /// read, or from their defaults. A type parameter is its type's shape.
@@ -3050,7 +3069,7 @@ impl Checker {
         param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<(Vec<ParamExpr>, Option<Ty>)> {
+    ) -> Option<(Vec<ParamExpr>, Option<Ty>, usize)> {
         use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
         let signature = function.signature.as_ref()?;
         let names: Vec<String> = function
@@ -3182,11 +3201,16 @@ impl Checker {
             }
             slot => slot.resolved(owner).cloned(),
         };
+        let mut conversions = 0;
         let mut applied_params = Vec::with_capacity(function.params.len());
         for (argument, param) in supplied.into_iter().zip(&function.params) {
             let ty = declared_ty(&param.ty)?;
             let value = match argument {
-                Some(argument) => self.applied_value(argument.into_value(), &ty)?,
+                Some(argument) => {
+                    let value = argument.into_value();
+                    conversions += self.applied_conversions(&value, &ty);
+                    self.applied_value(value, &ty)?
+                }
                 None => self.applied_default(param.default.as_ref()?, &ty)?,
             };
             applied_params.push(if param.by_reference {
@@ -3237,7 +3261,9 @@ impl Checker {
                     Some(elements) => elements.get(index)?.clone(),
                     None => declared_ty(&collector.element)?,
                 };
-                applied_run.push(self.applied_value(argument.into_value(), &ty)?);
+                let value = argument.into_value();
+                conversions += self.applied_conversions(&value, &ty);
+                applied_run.push(self.applied_value(value, &ty)?);
             }
         }
         let run_at = function
@@ -3252,7 +3278,16 @@ impl Checker {
             Some(result) => Some(resolve(&at_owner(result))?),
             None => None,
         };
-        Some((arguments, result))
+        Some((arguments, result, conversions))
+    }
+
+    /// The conversion cost of applying the compile-time `value` at a slot of
+    /// type `ty`, as [`Self::applied_value`] applies it: none for a value
+    /// of the slot's type or of the literal type naming it.
+    fn applied_conversions(&self, value: &CtValue, ty: &Ty) -> usize {
+        self.ct_value_ty(value, ty)
+            .filter(|source| *source != mojito_types::types::value_less_literal(ty))
+            .map_or(0, |source| overload_support::conversion_count(&source, ty))
     }
 
     /// The parameter expressions of a callable's own compile-time arguments
@@ -5940,6 +5975,9 @@ struct Selected<'a> {
     /// Its declared result under the parameters the call binds; `None` for
     /// one the call resolves where it stands.
     result: Option<Ty>,
+    /// The conversion cost of its arguments at their slots
+    /// ([`overload_support::conversion_count`]).
+    conversions: usize,
 }
 
 /// An [`ApplicableFunction`]'s own compile-time parameters as its check

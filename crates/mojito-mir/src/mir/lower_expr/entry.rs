@@ -392,20 +392,6 @@ impl<'a> Flatten<'a> {
             }
             return self.materialize_literal(value, &target, e.location());
         }
-        if let Some(target) = e.scalar_splat() {
-            let value = self.expr_unconverted(e);
-            if let Some(source) = e.ty() {
-                self.f.reg_types.entry(value.0).or_insert(source);
-            }
-            return self.splat_scalar(value, &target, e.location());
-        }
-        if let Some(target) = e.simd_from_length() {
-            let value = self.expr_unconverted(e);
-            if let Some(source) = e.ty() {
-                self.f.reg_types.entry(value.0).or_insert(source);
-            }
-            return self.simd_from_length(value, &target, e.location());
-        }
         self.expr_unconverted(e)
     }
 

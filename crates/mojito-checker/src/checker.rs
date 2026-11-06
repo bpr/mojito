@@ -1772,27 +1772,6 @@ impl Checker {
         from: &Ty,
         to: &Ty,
     ) -> Result<Option<SelectedConversion>, TypeError> {
-        // The builtin `SIMD` declares upstream's `@implicit
-        // SIMD.__init__(Scalar[dtype])` splat by this reserved target.
-        if mojito_types::types::scalar_splats_into(from, to) {
-            return Ok(Some(SelectedConversion {
-                target: mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION.to_string(),
-                source_borrow: None,
-                consumes_source: false,
-                error: None,
-                own_arguments: Vec::new(),
-            }));
-        }
-        // And upstream's `@implicit SIMD.__init__(SIMDLength)` by this one.
-        if mojito_types::types::is_simd_length(from) && to.is_simd() {
-            return Ok(Some(SelectedConversion {
-                target: mojito_symbol::symbol::SIMD_LENGTH_CONVERSION.to_string(),
-                source_borrow: None,
-                consumes_source: false,
-                error: None,
-                own_arguments: Vec::new(),
-            }));
-        }
         // `SIMD`'s declared `@implicit` initializers take every dtype; an
         // instance their body rejects fails its own assert.
         let Some((name, args)) = mojito_types::types::nominal_parts(to)

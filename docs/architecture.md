@@ -2191,18 +2191,18 @@ nullary `UInt()`, binds the other declared `__init__` overloads (the
 `SIMD` construction does.
 
 A runtime scalar meets a multi-lane vector of its dtype through the
-declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, which the checker
-does not yet select by name (R1843). `types::scalar_splats_into` owns the rule, and the checker's
-`implicit_conversion_constructor` selects it as an ordinary implicit
-conversion under the reserved target `symbol::SCALAR_SPLAT_CONVERSION`, so
-overload filtering, template realization, and argument contracts see one
-conversion. The checked arena turns that target into
-`SemanticAdjustment::SplatScalar(vector)` (a call argument's
-`CheckedCallValueAdjustment::SplatScalar`), which MIR lowers as that
-initializer's body: a `MakeSimd` (`pop.simd.splat`) of the scalar's
-`_mlir_value` at the `!kgen.simd` storage and a `MakeStruct`
-(`struct.create`) of the `SIMD` over it. Every `SIMD` MIR lowering builds
-itself — a splat, a `SIMDLength` or `index` conversion, a `SIMD[dt, _](x)`
+declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`
+meets a vector through the declared `@implicit
+SIMD.__init__(SIMDLength)`: the checker's
+`implicit_conversion_constructor` selects each by ordinary overload
+resolution, so the conversion is that initializer's call, as any
+`@implicit` conversion is. A compile-time call that no run-time typing
+ranks (`comptime MAX = Self(_max_or_inf[Self.dtype]())`) ranks its tied
+candidates as the pin does, by conversion count, then variadics, then own
+parameters (`selected_application`), so the exact `Scalar[Self.dtype]`
+splat ranks above the dtype cast its argument would convert into. Every
+`SIMD` MIR lowering builds
+itself — an explicit splat, an `index` conversion, a `SIMD[dt, _](x)`
 construction, a literal default — takes that storage shape
 (`type_construction::storage_construction`); a `SIMD`'s default
 construction calls its declared `Defaultable` `__init__`, and the
