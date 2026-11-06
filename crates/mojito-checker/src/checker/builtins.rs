@@ -592,28 +592,6 @@ impl Checker {
         Ok(Some(ty))
     }
 
-    /// Whether a `SIMDLength` argument constructs the vector `target`
-    /// (`Int(w)`, `Scalar[dt](w)`, `SIMD[dt, n](w)`): that is upstream's
-    /// `@implicit SIMD.__init__(SIMDLength)` called by name, so the call is
-    /// its argument's conversion.
-    pub(super) fn simd_length_construction(
-        &self,
-        span: &SourceSpan,
-        target: &Ty,
-        arg: &Expr,
-        arg_ty: &Ty,
-    ) -> Result<bool, TypeError> {
-        if !mojito_types::types::is_simd_length(arg_ty)
-            || !self.record_implicit_conversion(arg, arg_ty, target)?
-        {
-            return Ok(false);
-        }
-        self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ConvertedArgument,
-        ));
-        Ok(true)
-    }
-
     /// The result of the `std.math` operation `method` on a concrete struct
     /// `ty`, which upstream's library function reaches only through its
     /// `trait_name` bound. `None` for a type that is no struct.

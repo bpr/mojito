@@ -1066,68 +1066,6 @@ impl Checker {
         }
     }
 
-    /// Type `SIMD[DType.<dt>, width](args)` the rule serves: no argument, or
-    /// a single one that splats across all lanes or converts
-    /// ([`Self::check_simd_args`]).
-    pub(super) fn infer_simd_construction(
-        &self,
-        span: &SourceSpan,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-    ) -> Result<Ty, TypeError> {
-        let (dtype, mut width, attributes) = self.simd_dims(param_args)?;
-        self.record_bracket_attributes(span.clone(), attributes);
-        if width.is_inferred() {
-            width = self.argument_simd_width(args)?;
-        }
-        self.construct_simd(span, &dtype, &width, args)
-    }
-
-    /// Check the construction of `SIMD[dtype, width]` from `args`.
-    pub(super) fn construct_simd(
-        &self,
-        span: &SourceSpan,
-        dtype: &SimdDtype,
-        width: &SimdWidth,
-        args: &[Expr],
-    ) -> Result<Ty, TypeError> {
-        let ty = simd_of(dtype.clone(), width.clone())?;
-        if let [arg] = args
-            && self.simd_length_construction(span, &ty, arg, &self.infer(arg)?)?
-        {
-            return Ok(ty);
-        }
-        self.check_simd_args(dtype, width, args)?;
-        Ok(ty)
-    }
-
-    /// Check the arguments of a SIMD construction against upstream's
-    /// one-value `SIMD.__init__` overloads `std.simd` does not serve yet:
-    /// none (all lanes zero) or exactly one. A symbolic width and a symbolic
-    /// dtype gate nothing: both are the instantiation's to check.
-    ///
-    /// One argument binds the cast from a `SIMD[other_dtype, Self.length]`
-    /// (a scalar reaching every lane through the implicit splat), the
-    /// `IntLiteral` and `FloatLiteral` splats, and, for a scalar only,
-    /// `__init__[T: Intable]`, whose result is `Scalar[target_dtype]`.
-    /// Several arguments bind the declared element list, so meeting them
-    /// here is the declared selection's miss.
-    pub(super) fn check_simd_args(
-        &self,
-        dtype: &SimdDtype,
-        width: &SimdWidth,
-        args: &[Expr],
-    ) -> Result<(), TypeError> {
-        match args {
-            [] => Ok(()),
-            [arg] => self.check_simd_value(dtype, width, arg),
-            _ => Err(TypeError::BadCall {
-                func: "SIMD".to_string(),
-                reason: "no constructor overload matches the supplied arguments".to_string(),
-            }),
-        }
-    }
-
     /// Type the built-in `Error(msg)` constructor: one `String` argument.
     pub(super) fn infer_error_construction(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         if args.len() != 1 {
@@ -1404,47 +1342,6 @@ impl Checker {
         ))
     }
 
-    /// The width an unbound `SIMD[dtype, _]` construction the rule serves
-    /// binds from its one argument: a `SIMD[other_dtype, Self.length]`
-    /// argument gives its own width, and a literal materializes to a
-    /// scalar. Every other `_` binds the declared initializers.
-    fn argument_simd_width(&self, args: &[Expr]) -> Result<SimdWidth, TypeError> {
-        let no_match = || TypeError::BadCall {
-            func: "SIMD".to_string(),
-            reason: "no matching function in initialization: an unbound '_' width binds \
-                     only from a single argument's own width"
-                .to_string(),
-        };
-        let [arg] = args else {
-            return Err(no_match());
-        };
-        let aty = self.infer(arg)?;
-        match aty.kind() {
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => Ok(SimdWidth::Known(1)),
-            kind if let Some((_, width)) = kind.as_simd()
-                && !width.is_inferred() =>
-            {
-                Ok(width)
-            }
-            _ => Err(no_match()),
-        }
-    }
-
-    /// Check the one argument of a SIMD construction: the cast from another
-    /// dtype ([`converts_to_lane`], a scalar splatting across the width).
-    fn check_simd_value(
-        &self,
-        dtype: &SimdDtype,
-        width: &SimdWidth,
-        arg: &Expr,
-    ) -> Result<(), TypeError> {
-        let aty = self.infer(arg)?;
-        if converts_to_lane(&aty, dtype) {
-            return Ok(());
-        }
-        Err(simd_argument_error(dtype, width, &aty))
-    }
-
     /// A read dunder binds its operand as a method call binds a read
     /// argument: a named struct place, or a struct element an accessor
     /// returns by reference (`xs[0]` through `List.__getitem__`), is read
@@ -1520,21 +1417,6 @@ fn numeric_literals(lt: &Ty, rt: &Ty) -> bool {
 /// declare: a type parameter or an associated projection of one.
 fn is_bound_archetype(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Param { .. } | TyKind::Assoc { .. })
-}
-
-/// The error a SIMD construction argument of type `aty` no overload takes
-/// reports: a float literal binds `@implicit __init__(FloatLiteral)` and
-/// fails its float-dtype assert, anything else matches no overload.
-fn simd_argument_error(dtype: &SimdDtype, width: &SimdWidth, aty: &Ty) -> TypeError {
-    if aty.is_float_literal() && dtype.known().is_some_and(|dtype| !dtype.is_float()) {
-        let target = Ty::simd(dtype.clone(), width.clone());
-        return super::builtins::float_literal_conversion_error(&target);
-    }
-    TypeError::TypeMismatch {
-        expected: format!("a {dtype} element"),
-        found: aty.to_string(),
-        context: "SIMD element".to_string(),
-    }
 }
 
 /// The error an infix operator its operands do not define reports. A KGEN

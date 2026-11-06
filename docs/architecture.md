@@ -6530,7 +6530,7 @@ point where a slot declared in a loop is uninitialized again.
   The shape of an inlined `SIMD` comparison dunder folds the same way:
   `pop.simd.reduce` of one lane is that lane, `pop.cmp ne m, False` (or
   `eq m, True`) over `bool` lanes is `m`, as `arith.cmpi` folds over `i1`,
-  a `simd.make` of an `IntLiteral` into one `bool` lane is a `const`, and a
+  a constant `bool` lane is a `const`, and a
   host scalar's comparison that only a `scalar.cast` to `Bool` reads is
   retyped `Bool` and replaces the cast, so `i < n` over `Int` is one
   `binary` again (`tests/mir_passes/canonicalize/simd_comparison_mask.mir`).
@@ -6849,7 +6849,8 @@ point where a slot declared in a loop is uninitialized again.
   non-literal slot only through `literal.materialize`, as upstream's IR
   has no implicit conversion; the verifier rejects a literal register at a
   closed non-literal call argument, `place.store`, `DefVar` binding,
-  `return`, `WriteRef`, or `tuple.make` element, or at an index operand
+  `return`, `WriteRef`, `tuple.make` element, or `simd.make` element (a
+  lane scalar, as upstream's `pop.simd.splat` takes), or at an index operand
   (a place's `Index` projection, an intrinsic subscript, a pointer-storage
   slot, a SIMD lane), which lowering converts at `Int`. The slot is dropped after the body
   when the parameter only borrows a type with a destructor. A default

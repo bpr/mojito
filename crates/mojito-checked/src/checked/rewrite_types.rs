@@ -713,7 +713,6 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::ComptimeConditional
             | Self::Transfer(_)
             | Self::ExplicitDestroy
-            | Self::ConstructSimd { dtype: _, width: _ }
             | Self::DtypeConstant { dtype: _ }
             | Self::SimdShuffle { mask: _ }
             | Self::MarkInitialized

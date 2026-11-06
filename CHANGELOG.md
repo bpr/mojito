@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every `SIMD` construction now calls an initializer `std.simd` declares,
+  as upstream does: the checker's own `SIMD` construction rule, its
+  `ConstructSimd` fact, and MIR's direct `simd.make` lowering of it are
+  gone, and a module alias constructing `SIMD` before its initializers
+  register waits for them. The MIR verifier now rejects a numeric literal
+  at a `simd.make` element, which takes a lane scalar as upstream's
+  `pop.simd.splat` does (R1935).
 - The MIR verifier no longer treats a numeric literal's conversion as
   representational: a literal register is compatible only with its own
   literal type, as upstream's IR uses an `IntLiteral[v]` value only at its

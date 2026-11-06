@@ -1029,14 +1029,20 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
                 MirInstr::SimdCast { value, .. } | MirInstr::SimdBitcast { value, .. } => {
                     storage_slots(cx, *value, mnemonic, "operand", errors);
                 }
-                // A literal element converts at the lane until the checker's
-                // `SIMD` construction rule goes (R1935).
+                // An element is a lane scalar, as upstream's `pop.simd.splat`
+                // takes one: a literal reaches it through `literal.materialize`.
                 MirInstr::MakeSimd { elems, .. } => {
                     for element in elems {
-                        if let Some(ty) = cx.reg_ty(*element)
-                            && ty.kind().as_simd().is_some()
-                        {
-                            errors.push(non_storage_finding(prefix, mnemonic, "element", ty));
+                        match cx.reg_ty(*element) {
+                            Some(ty) if ty.kind().as_simd().is_some() => {
+                                errors.push(non_storage_finding(prefix, mnemonic, "element", ty));
+                            }
+                            Some(ty) if ty.is_numeric_literal() => errors.push(format!(
+                                "{prefix}: {mnemonic} element r{} is the literal {ty}, \
+                                 which no conversion materialized",
+                                element.0
+                            )),
+                            _ => {}
                         }
                     }
                 }

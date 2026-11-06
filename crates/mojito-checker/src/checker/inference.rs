@@ -519,47 +519,6 @@ impl Checker {
                     .borrow_mut()
                     .insert(expr.source_span());
             }
-            // The `SIMD` rule takes no keyword, so a keyword call (the
-            // synthesized `copy=`) is never its construction.
-            if let ExprKind::Call {
-                name,
-                param_args,
-                kwargs,
-                ..
-            } = &expr.kind
-                && kwargs.is_empty()
-                && self
-                    .node_facts
-                    .borrow()
-                    .get(&expr.source_span())
-                    .is_none_or(|facts| facts.overload_target.is_none())
-            {
-                // A rule construction's dimensions are its slots: known, or the
-                // parameter expressions a generator names, which the
-                // elaborator closes per instance.
-                let dimensions = if let Some((dtype, width)) = ty.as_simd()
-                    && self
-                        .spelled_instances
-                        .borrow()
-                        .contains_key(&expr.source_span())
-                {
-                    Some((dtype, width))
-                } else if name == "SIMD" {
-                    self.simd_dims(param_args).ok().map(|(dtype, width, _)| {
-                        // An unbound `_` is the width the construction bound.
-                        let width = match ty.as_simd() {
-                            Some((_, bound)) if width.is_inferred() => bound,
-                            _ => width,
-                        };
-                        (dtype, width)
-                    })
-                } else {
-                    None
-                };
-                if let Some(dimensions) = dimensions {
-                    self.record_at(expr.source_span()).simd_construction = Some(dimensions);
-                }
-            }
             let place_ty = match &expr.kind {
                 ExprKind::Identifier(_) | ExprKind::Member { .. } => self.place_storage_ty(expr),
                 ExprKind::Index { object, index } => self

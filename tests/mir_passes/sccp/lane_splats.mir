@@ -71,7 +71,7 @@ artifact {
       },
       fn {
         name: splat_sum,
-        registers: 4,
+        registers: 5,
         vars: 0,
         var_names: [],
         params: 0,
@@ -84,13 +84,14 @@ artifact {
         return_type: present(kgen_simd { dtype: int32, width: 4 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int32, width: 4 } }, reg_type { reg: %r2, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r3, type: kgen_simd { dtype: int32, width: 4 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 237, end: 238, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 216, end: 239, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 242, end: 243, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 216, end: 243, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int32, width: 4 } }, reg_type { reg: %r2, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r3, type: kgen_simd { dtype: int32, width: 4 } }, reg_type { reg: %r4, type: kgen_simd { dtype: int32, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 237, end: 238, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 216, end: 239, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 242, end: 243, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 216, end: 243, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 237, end: 238, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(1) },
-              simd.make { dest: %r1, dtype: int32, width: 4, elems: [%r0] },
+              literal.materialize { dest: %r4, value: %r0, target: kgen_simd { dtype: int32, width: 1 } },
+              simd.make { dest: %r1, dtype: int32, width: 4, elems: [%r4] },
               const { dest: %r2, value: int_literal(2) },
               binary { op: add, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent }
             ],
@@ -119,7 +120,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(7) },
-              simd.make { dest: %r1, dtype: int32, width: 1, elems: [%r0] },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: int32, width: 1 } },
               simd.make { dest: %r2, dtype: int32, width: 4, elems: [%r1] }
             ],
             terminator: return { value: present(%r2) }

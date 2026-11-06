@@ -251,59 +251,6 @@ impl<'a> Flatten<'a> {
         )
     }
 
-    /// If `name(...)` is a SIMD construction the checker's rule serves — a
-    /// nullary construction, a literal splat, or a `_`-width or instance
-    /// conversion (`SIMD[DType.<dt>, _](x)`) — resolve its
-    /// dtype/width and splat or build its storage with a
-    /// [`MirInstr::MakeSimd`] over the operands' storage, creating the
-    /// `SIMD` from it, returning its result register. Otherwise `None`, and
-    /// the caller lowers it as an ordinary call.
-    pub(in crate::mir) fn try_simd_call(
-        &mut self,
-        call: Node<'a>,
-        args: &[Node<'a>],
-    ) -> Option<Reg> {
-        let (dtype, width) = call
-            .adjustments()
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ConstructSimd { dtype, width } => {
-                    Some((dtype.clone(), width.clone()))
-                }
-                _ => None,
-            })?;
-        // A nullary construction splats a zero lane.
-        let elems = match args {
-            [] if dtype.known() == Some(Dtype::Bool) => {
-                vec![self.constant(call, Const::Bool(false))]
-            }
-            [] => vec![self.constant(call, Const::IntLiteral(0.into()))],
-            _ => args.iter().map(|arg| self.read_operand(*arg)).collect(),
-        };
-        let Some(target) = call.ty().filter(|ty| ty.is_simd()) else {
-            let d = self.fresh(call.location(), None);
-            self.emit(MirInstr::MakeSimd {
-                dest: d,
-                dtype,
-                width,
-                elems,
-            });
-            return Some(d);
-        };
-        let elems = elems
-            .into_iter()
-            .map(|elem| self.simd_storage_operand(elem, call.location()))
-            .collect();
-        Some(
-            self.simd_through_storage(&target, call.location(), |dest| MirInstr::MakeSimd {
-                dest,
-                dtype,
-                width,
-                elems,
-            }),
-        )
-    }
-
     /// Lower a call of a nested `def` by name. A body whose storage this
     /// frame holds, or whose captures are all places this frame holds, is
     /// called directly, as the pin calls the lifted closure method: a

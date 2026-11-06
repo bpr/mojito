@@ -25,7 +25,7 @@ artifact {
         return_type: present(Bool),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r3, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r4, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r5, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r6, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r7, type: Bool }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r4, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r5, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r6, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r7, type: Bool }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
         blocks: [
           bb0 {
@@ -33,8 +33,7 @@ artifact {
               var.use { dest: %r0, var: $v0, mode: copy },
               var.use { dest: %r1, var: $v1, mode: copy },
               binary { op: lt, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent },
-              const { dest: %r3, value: int_literal(0) },
-              simd.make { dest: %r4, dtype: bool, width: 1, elems: [%r3] },
+              const { dest: %r4, value: value(ct_simd { dtype: bool, lanes: [lane_bool(false)] }) },
               binary { op: ne, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent },
               simd.reduce { dest: %r6, value: %r5, op: or },
               scalar.cast { dest: %r7, value: %r6, target: Bool }

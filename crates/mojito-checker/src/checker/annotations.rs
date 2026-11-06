@@ -183,34 +183,6 @@ impl Checker {
     }
 }
 
-/// Whether `ty` may be an **explicit construction** argument for a `dtype`
-/// lane — `SIMD[...](...)`, a scalar alias like `Byte(...)`, or
-/// `Scalar[DType.x](...)`. Explicit construction converts where the implicit
-/// contexts `splats_to` governs (operator splats, coercions) stay
-/// literal-exact: runtime integers wrap to any integer width and convert to
-/// float lanes, and runtime floats adjust precision across float widths. A
-/// float source never converts to an integer lane — spell the truncation
-/// (`Int(x)`) first. `Intable` params/structs are the caller's separate,
-/// `conforms_to`-backed clause (`check_simd_value`). A symbolic lane takes
-/// any integer or float source: which conversions the instantiation admits
-/// is its own check.
-pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {
-    if splats_to(ty, dtype) {
-        return true;
-    }
-    let integer_source = (ty.is_int() || ty.is_uint())
-        || matches!(scalar_simd_dtype(ty), Some(d) if !d.is_float() && d != Dtype::Bool);
-    let float_source = ty.is_float64() || matches!(scalar_simd_dtype(ty), Some(d) if d.is_float());
-    match dtype.known() {
-        // Upstream's `IntLiteral` initializer converts a literal into a
-        // mask lane by `value != 0`.
-        Some(Dtype::Bool) => ty.is_int_literal(),
-        Some(dtype) if dtype.is_float() => float_source || integer_source,
-        Some(_) => integer_source,
-        None => float_source || integer_source,
-    }
-}
-
 pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
     match dtype {
         Dtype::Int

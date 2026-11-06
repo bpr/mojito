@@ -3997,43 +3997,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1935 A `SIMD` construction checked before `SIMD`'s initializers
-  register is the checker's rule, where upstream calls a declared one**
-
-  Problem: the builtin folds and the module aliases are checked before
-  `check_struct_method_signatures` registers `SIMD.__init__`, so
-  `declared_simd_construction` (`checker/call_inference.rs`) finds no
-  initializer and `infer_simd_construction` (`checker/operators.rs`)
-  types the call by the checker's rule.
-  - Two bundled sites reach it: `SIMD.__init__()`'s own `comptime res =
-    SIMD[Self.dtype, Self.length](0)`, folded by `fold_builtin_bodies`,
-    and `std.hash.hasher`'s `comptime default_hasher =
-    AHasher[SIMD[DType.uint64, 4](0)]`, registered beside the shells.
-  - The rule records `simd_construction`, whose
-    `SemanticAdjustment::ConstructSimd` MIR's `Flatten::try_simd_call`
-    lowers as a `simd.make` and `struct.create` in place of the
-    initializer's call.
-  - Upstream resolves the declaration on demand, so both sites call the
-    `@implicit` `IntLiteral` initializer.
-  - Lever: let a fold or an alias whose `SIMD` construction finds no
-    initializer wait for `SIMD`'s signatures, as
-    `settle_constructing_aliases` already lets an alias over a program's
-    own struct wait (`AwaitsSignatures`).
-  - Then delete the rule: `infer_simd_construction`, `construct_simd`,
-    `check_simd_args`, `check_simd_value`, and `argument_simd_width`,
-    `infer_unbound_call`'s `SIMD` arm, `infer_instance_construction`'s
-    fallback, the `simd_construction` fact, `ConstructSimd`, and
-    `try_simd_call`.
-  - With `try_simd_call` gone, `simd.make` has no literal element left
-    (R1836 moved the implicit conversion to `literal.materialize`):
-    delete its literal-element arms in `MirInstr::folded_constant`, the
-    verifier's lane check, and Pliron's `simd_constructor_lane`.
-  - Probe: `rg "fn try_simd_call" crates` is empty and every SIMD fixture
-    still runs.
-  - Found while landing R1544 (2026-11-05).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1602 An `and`/`or` left operand that converts to the right
   operand's type is rejected, where upstream tests it before converting it**
 
@@ -6860,8 +6823,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     scalar slots (R1964, R1965, R1966, R1967): the VM and Pliron convert
     those from the payload this entry deletes.
   - Lever: one typed reader of a register's closed literal type in the VM
-    and its twin in Pliron. `MaterializeLiteral`, literal comparisons and
-    casts, and the `MakeSimd` literal element read through it.
+    and its twin in Pliron. `MaterializeLiteral` and literal comparisons
+    and casts read through it.
   - `Const::IntLiteral` writes an empty value, and `crossing.rs`'s
     `vm_to_ct` gains a typed variant that reads a literal type's value.
   - `lower_ty` maps literals to zero-sized, `layout_of` gives them an
@@ -10136,8 +10099,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   binder already did, where upstream binds each argument once.
   - `explicit_type_subst` (`declarations.rs`) resolves the explicit type
     arguments before `resolve_use_params` resolves them again.
-  - `infer` re-runs `simd_dims` for a `SIMD` construction's dimensions
-    after `infer_simd_construction` bound them (`inference.rs`).
   - `record_static_receiver` (`method_calls/statics.rs`) binds a static
     call's receiver application again after
     `infer_struct_static_method` bound it.
@@ -11261,7 +11222,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   found a non-materializable compile-time value", where the pin prints
   `7 4`.
   - `SIMD[dt, _]` is accepted only through the positional reader
-    (`Checker::simd_dims`'s `SimdWidth::inferred`) and `coerces`'
+    (`Checker::positional_simd_dims`'s `SimdWidth::inferred`) and `coerces`'
     `to_width.is_inferred()` arm, which `simd_declared_application` keeps
     for a bracket holding `_`.
   - Lever: resolve an annotation's `_` slot as an inference variable the

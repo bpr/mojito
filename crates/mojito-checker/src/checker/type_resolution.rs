@@ -4477,23 +4477,6 @@ impl Checker {
             && !args.iter().any(is_hole_argument)
     }
 
-    /// The `(dtype, width)` slots `SIMD[args]` names (raw — not
-    /// canonicalized), through [`Self::simd_application`]. An application
-    /// the vector type cannot hold (a width no power of two) reports the
-    /// positional reader's error.
-    pub(super) fn simd_dims(
-        &self,
-        args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(SimdDtype, SimdWidth, BracketAttributes), TypeError> {
-        if self.simd_declared_application(args) {
-            let (ty, attributes) = self.simd_application(args)?;
-            if let Some((dtype, width)) = mojito_types::types::simd_slots(&ty) {
-                return Ok((dtype, width, attributes));
-            }
-        }
-        self.positional_simd_dims(args)
-    }
-
     /// Resolve `SIMD[DType.<dt>, width]` from its two positional arguments
     /// to its `(dtype, width)` slots.
     fn positional_simd_dims(

@@ -8,7 +8,7 @@ use mojito_ast::ast::{
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::origin::OriginParamId;
-use mojito_types::types::{SimdDtype, SimdWidth, Ty};
+use mojito_types::types::{SimdDtype, Ty};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -994,15 +994,6 @@ pub enum SemanticAdjustment {
     Transfer(TransferVerdict),
     ExplicitDestroy,
     Iterate(IterationProtocol),
-    /// A `SIMD` construction the checker's rule serves (a nullary one, a
-    /// literal splat, `SIMD[dt, _](x)`, or an instance's conversion):
-    /// the construction's lane dtype and width, each a known slot or the
-    /// parameter expression a generator names, which the elaborator closes
-    /// per instance.
-    ConstructSimd {
-        dtype: SimdDtype,
-        width: SimdWidth,
-    },
     /// `__param_list_address[*values]()` in the bundled `ParameterList`: the
     /// static address of the parameter list `values`' elements, which MIR
     /// keeps as `MirInstr::ParamListAddress` for the elaborator to close.
@@ -6874,12 +6865,6 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             message: message.clone(),
         });
     }
-    if let Some((dtype, width)) = &facts.simd_construction {
-        adjustments.push(SemanticAdjustment::ConstructSimd {
-            dtype: dtype.clone(),
-            width: width.clone(),
-        });
-    }
     if let Some(plan) = &facts.subscript_write_back {
         adjustments.push(SemanticAdjustment::SubscriptWriteBack(plan.clone()));
     }
@@ -7135,7 +7120,6 @@ node_facts! {
         /// The protocol a `comptime for` steps the construction spelled
         /// for its iterable by (`seq.__iter__()`).
         comptime_iteration: Box<ComptimeIteration>,
-        simd_construction: (SimdDtype, SimdWidth),
         /// See [`SemanticAdjustment::SubscriptWriteBack`].
         subscript_write_back: Box<CheckedSubscriptWriteBack>,
         /// The one operation record of the occurrence.

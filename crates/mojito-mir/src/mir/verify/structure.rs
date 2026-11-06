@@ -1742,4 +1742,26 @@ mod tests {
             "{found:?}"
         );
     }
+
+    #[test]
+    fn a_literal_simd_make_element_is_a_finding() {
+        let mut function = function_with(vec![MirInstr::MakeSimd {
+            dest: Reg(2),
+            dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+            width: mojito_types::types::SimdWidth::Known(1),
+            elems: vec![Reg(1)],
+        }]);
+        function.reg_types.insert(
+            1,
+            Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(0)),
+        );
+        function.reg_types.insert(
+            2,
+            mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Int32, 1),
+        );
+        assert_finding(
+            &findings(&function),
+            "simd.make element r1 is the literal IntLiteral[0], which no conversion materialized",
+        );
+    }
 }

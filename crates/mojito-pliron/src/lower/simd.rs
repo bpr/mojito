@@ -97,23 +97,10 @@ impl FnLowering<'_> {
         target: ScalarTy,
         dest: Reg,
     ) -> Result<Value, PlironError> {
-        // A literal element folds with the exact conversions (integers wrap
-        // at the lane width, narrow floats round from the exact rational).
-        if let Some(literal) = self.pending_literals.get(&elem.0).cloned() {
-            // Upstream's `IntLiteral` initializer: a mask lane is `True`
-            // when the literal is nonzero.
-            if let (PendingLiteral::Int(literal), ScalarTy::Bool) = (&literal, target) {
-                return Ok(self.bool_constant(ctx, !literal.is_zero()));
-            }
-            return self.materialize_pending(ctx, &literal, target, dest);
-        }
-        let source = match self.concrete_scalar_ty(elem)? {
-            Some(ty) => ty,
-            None => match self.func.reg_types.get(&elem.0).map(Ty::kind) {
-                Some(TyKind::FloatLiteral(_)) => ScalarTy::Float64,
-                _ => ScalarTy::Int,
-            },
-        };
+        // Verified MIR materializes a literal before it reaches a lane.
+        let source = self.concrete_scalar_ty(elem)?.ok_or_else(|| {
+            self.unsupported_reg("SIMD element without a scalar type".into(), dest)
+        })?;
         let value = self.reg_value(ctx, elem, source)?;
         self.convert_lane(ctx, source, target, value, dest)
     }

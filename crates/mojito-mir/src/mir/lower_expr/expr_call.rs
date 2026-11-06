@@ -22,11 +22,6 @@ impl<'a> Flatten<'a> {
         if let Some(dest) = self.checked_construction(call, args, kwargs) {
             return dest;
         }
-        // SIMD construction resolves its `[DType.<dt>, width]` parameters
-        // here (the MIR is otherwise untyped about them).
-        if let Some(r) = self.try_simd_call(call, args) {
-            return r;
-        }
         // `objs[0](3)` / `grid[i, j](x)`: the checker re-dispatched
         // these value brackets as subscript-then-indirect-call, so the
         // brackets are runtime indices, never compile-time parameters

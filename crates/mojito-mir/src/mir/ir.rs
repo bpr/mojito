@@ -3292,17 +3292,16 @@ impl MirInstr {
     ///
     /// Only a built-in operator, a literal materialization to `Int`, `UInt`,
     /// `Float64`, or a one-lane SIMD type, a one-lane `simd.make` of a
-    /// literal or of a host integer into an integer lane (`Int64(n)`, which
-    /// wraps), a wider `simd.make` with one element (upstream's splat
-    /// `SIMD.__init__`) or one element per lane (upstream's
-    /// `SIMD.__init__(*elems: Scalar[dtype])`), each a literal, a one-lane
-    /// constant of its dtype, or a `Bool` into a `bool` vector, a built-in scalar conversion
+    /// host integer into an integer lane (`Int64(n)`, which wraps), a wider
+    /// `simd.make` with one element (upstream's splat `SIMD.__init__`) or
+    /// one element per lane (upstream's `SIMD.__init__(*elems:
+    /// Scalar[dtype])`), each a one-lane constant of its dtype or a `Bool`
+    /// into a `bool` vector, a built-in scalar conversion
     /// ([`Self::ScalarCast`], upstream's inlined `pop.cast`), a `SIMD`'s
     /// `struct.create` from its storage and `field.get` of it (upstream's
     /// `kgen.struct` folds), and a forwarded copy fold, and only over values
     /// whose constant kind is the one their register's type names. A
-    /// materialization or a one-lane `simd.make` folds to the lane the VM
-    /// materializes (`CtValue::materialize_as`), a wider one to the lanes
+    /// materialization folds to the lane the VM materializes (`CtValue::materialize_as`), a wider one to the lanes
     /// `ct::simd_construction_lanes` gives (the comptime evaluator's own
     /// construction rule), a `UInt` or SIMD one to a
     /// `Const::Value`.
@@ -3436,22 +3435,11 @@ impl MirInstr {
                     .map(|element| operand(*element))
                     .collect::<Option<Vec<_>>>()?;
                 let folded = match values.as_slice() {
-                    // Upstream's `IntLiteral` initializer of a `bool` lane:
-                    // a nonzero literal is `True` (`Self(0)` in `__bool__`).
-                    [CtValue::IntLiteral(literal)] if width == 1 && *dtype == Dtype::Bool => {
-                        CtValue::Simd {
-                            dtype: Dtype::Bool,
-                            lanes: vec![mojito_types::ct::CtLane::Bool(!literal.is_zero())],
-                        }
-                    }
-                    [literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))]
-                        if width == 1 =>
+                    // A one-lane constant of the dtype is the vector itself.
+                    [value @ CtValue::Simd { dtype: lane, lanes }]
+                        if width == 1 && lane == dtype && lanes.len() == 1 =>
                     {
-                        literal
-                            .clone()
-                            .materialize_as(&mojito_types::types::storage_value_ty(
-                                reg_types.get(&dest.0)?,
-                            ))?
+                        value.clone()
                     }
                     // A host integer into one integer lane wraps, as the
                     // VM builds it (`Int64(n)` over a folded `n`).
@@ -5101,21 +5089,20 @@ mod tests {
         let make = |width: i64| {
             let target = mojito_types::types::canonical_simd_ty(Dtype::UInt8, width);
             let reg_types = HashMap::from([
-                (
-                    0,
-                    ty(TyKind::IntLiteral(Box::new(
-                        mojito_types::ct::CtValue::PopIntLiteral(0.into()),
-                    ))),
-                ),
+                (0, mojito_types::types::kgen_simd_ty(Dtype::UInt8, 1)),
                 (1, target),
             ]);
+            let byte = Const::Value(CtValue::Simd {
+                dtype: Dtype::UInt8,
+                lanes: vec![CtLane::Int(7)],
+            });
             MirInstr::MakeSimd {
                 dest: Reg(1),
                 dtype: mojito_types::types::SimdDtype::Known(Dtype::UInt8),
                 width: mojito_types::types::SimdWidth::Known(width),
                 elems: vec![Reg(0); width as usize],
             }
-            .folded_constant(|_| Some(literal(7)), &reg_types, &none)
+            .folded_constant(|_| Some(byte.clone()), &reg_types, &none)
             .and_then(|folded| match folded {
                 Const::Value(CtValue::Simd { lanes, .. }) => Some(lanes),
                 _ => None,

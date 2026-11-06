@@ -39,7 +39,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(250) },
-              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: uint8, width: 1 } },
               const { dest: %r2, value: int_literal(10) },
               binary { op: add, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent }
             ],
@@ -68,9 +68,9 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(7) },
-              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: uint8, width: 1 } },
               const { dest: %r2, value: int_literal(0) },
-              simd.make { dest: %r3, dtype: uint8, width: 1, elems: [%r2] },
+              literal.materialize { dest: %r3, value: %r2, target: kgen_simd { dtype: uint8, width: 1 } },
               binary { op: floor_div, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r4) }
@@ -98,9 +98,9 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: float_literal(1/10) },
-              simd.make { dest: %r1, dtype: float32, width: 1, elems: [%r0] },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: float32, width: 1 } },
               const { dest: %r2, value: float_literal(1/5) },
-              simd.make { dest: %r3, dtype: float32, width: 1, elems: [%r2] },
+              literal.materialize { dest: %r3, value: %r2, target: kgen_simd { dtype: float32, width: 1 } },
               binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r4) }
@@ -128,9 +128,9 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(3) },
-              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: uint8, width: 1 } },
               const { dest: %r2, value: int_literal(4) },
-              simd.make { dest: %r3, dtype: uint8, width: 1, elems: [%r2] },
+              literal.materialize { dest: %r3, value: %r2, target: kgen_simd { dtype: uint8, width: 1 } },
               binary { op: lt, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
               scalar.cast { dest: %r5, value: %r4, target: Bool }
             ],
@@ -159,9 +159,9 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(1) },
-              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: uint8, width: 1 } },
               const { dest: %r2, value: int_literal(9) },
-              simd.make { dest: %r3, dtype: uint8, width: 1, elems: [%r2] },
+              literal.materialize { dest: %r3, value: %r2, target: kgen_simd { dtype: uint8, width: 1 } },
               binary { op: shl, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r4) }

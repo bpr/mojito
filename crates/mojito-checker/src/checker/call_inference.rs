@@ -106,16 +106,11 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         match name {
             _ if let Some(constructed) =
-                self.declared_simd_spelling(&span, name, param_args, args, kwargs) =>
-            {
-                constructed
-            }
-            _ if let Some(constructed) =
                 self.literal_construction(&span, name, param_args, args, kwargs) =>
             {
                 constructed
             }
-            _ if self.structs.contains_key(name) && name != mojito_types::types::SIMD_TYPE_NAME => {
+            _ if self.structs.contains_key(name) => {
                 let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
                 self.type_runtime_param_args(param_args)?;
                 Ok(constructed)
@@ -285,7 +280,6 @@ impl Checker {
             "input" => self.infer_input(span, args),
             "len" => self.infer_len(args),
             "range" => self.infer_range(args),
-            "SIMD" => self.infer_simd_construction(&span, param_args, args),
             "List" => self.infer_list_construction(&span, param_args, args),
             "Set" => {
                 let (collection, attributes) = self.set_type(param_args)?;
@@ -331,36 +325,6 @@ impl Checker {
             "Error" => self.infer_error_construction(args),
             _ => Err(TypeError::UndefinedVariable(name.to_string())),
         }
-    }
-
-    /// A `SIMD` construction through the `__init__` overloads `std.simd`
-    /// declares, a `_` slot bound from the arguments
-    /// (`SIMD[DType.int32, _](v)`), or `None` while `SIMD`'s initializers
-    /// have not registered, when the checker's rule serves it. `constructed`
-    /// is the instance a construction spelled through an alias is bound to,
-    /// or `None` for `SIMD`'s own bracket.
-    fn declared_simd_construction(
-        &self,
-        span: &SourceSpan,
-        constructed: Option<&Ty>,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<Ty, TypeError>> {
-        let name = mojito_types::types::SIMD_TYPE_NAME;
-        if !self
-            .structs
-            .get(name)
-            .is_some_and(|info| info.methods.contains_key("__init__"))
-        {
-            return None;
-        }
-        let constructed =
-            self.infer_construction_of(span, name, constructed, param_args, args, kwargs);
-        Some(constructed.and_then(|ty| {
-            self.type_runtime_param_args(param_args)?;
-            Ok(ty)
-        }))
     }
 
     /// A construction of a `StringLiteral[value]`, `IntLiteral[value]`, or
@@ -434,8 +398,7 @@ impl Checker {
 
     /// A construction the checker spelled for a type with no source
     /// spelling, bound to `instance`: a struct's `__init__` overloads solve
-    /// its parameters against the instance, and a `SIMD` takes its declared
-    /// initializers before the checker's rule, as an alias's does.
+    /// its parameters against the instance, a `SIMD`'s as an alias's do.
     fn infer_instance_construction(
         &self,
         span: &SourceSpan,
@@ -466,12 +429,14 @@ impl Checker {
                 }
                 Ok(instance.clone())
             }
-            kind if let Some((dtype, width)) = kind.as_simd() => self
-                .declared_simd_construction(span, Some(instance), &[], args, kwargs)
-                .unwrap_or_else(|| {
-                    super::calls::reject_kwargs(kwargs)?;
-                    self.construct_simd(span, &dtype, &width, args)
-                }),
+            kind if kind.as_simd().is_some() => self.infer_construction_of(
+                span,
+                mojito_types::types::SIMD_TYPE_NAME,
+                Some(instance),
+                &[],
+                args,
+                kwargs,
+            ),
             // An origin slot the arguments leave open is the instance's.
             struct_ty if let Some((name, expected)) = struct_ty.as_non_simd_struct() => self
                 .infer_construction_of(span, name, Some(instance), &[], args, kwargs)
@@ -504,23 +469,6 @@ impl Checker {
                  to spell"
             ))),
         }
-    }
-
-    /// `SIMD`'s own bracket construction (`SIMD[dt, n](x)`) through its
-    /// declared initializers, or `None` for any other call or one the
-    /// checker's rule serves ([`Self::declared_simd_construction`]). A call
-    /// through an alias arrives as the construction of the instance it
-    /// names ([`Self::infer_instance_construction`]).
-    fn declared_simd_spelling(
-        &self,
-        span: &SourceSpan,
-        name: &str,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<Ty, TypeError>> {
-        (name == mojito_types::types::SIMD_TYPE_NAME)
-            .then(|| self.declared_simd_construction(span, None, param_args, args, kwargs))?
     }
 
     /// Check every member of a free-function overload set against the

@@ -126,7 +126,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(200) },
-              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: uint8, width: 1 } },
               scalar.cast { dest: %r2, value: %r1, target: Int }
             ],
             terminator: return { value: present(%r2) }
