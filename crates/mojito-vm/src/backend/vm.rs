@@ -1860,6 +1860,7 @@ mod held_struct_tests {
                 conditions: vec![mojito_types::types::GenericConstraint::Bool(true)],
             }],
             associated_types: Vec::new(),
+            origin_params: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),

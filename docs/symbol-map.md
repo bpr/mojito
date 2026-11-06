@@ -1889,7 +1889,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `AssociatedParameter` in `mojito-checked/src/declaration.rs`, built by
   `ParameterizedMember::checked_fact`) (`declared_associated_type` over
   `struct_instance`, `native/mono/substitute.rs`; the template's origins
-  bind through `mojito_types::types::substitute_origin_params`). `checker/origins/transfer.rs` owns the
+  bind through `mojito_types::types::substitute_origin_params`).
+  `StructDeclaration::origin_params` (MIR text 1.168) keys a struct's own
+  origin binders to an instance's origin arguments, so
+  `StructDeclaration::associated_type` binds a member template's
+  `Self.o` with the member's own origins; the checker hands it over as
+  `CheckedProgram::struct_origin_params`, filled in
+  `checker/body_carry.rs` from `StructInfo::origin_slots`, and MIR
+  lowering copies it onto the struct row. `checker/origins/transfer.rs` owns the
   carried source (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
   receiver's arguments and the call's own bindings, `call_closed`).

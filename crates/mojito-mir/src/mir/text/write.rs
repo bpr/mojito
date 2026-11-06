@@ -380,6 +380,19 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
         if !declaration.module.is_empty() {
             entries.push(("module", quote(&declaration.module)));
         }
+        // Schema 1.168 carries the struct's origin parameter ids, written
+        // only when it has one.
+        if !declaration.origin_params.is_empty() {
+            entries.push((
+                "origin_params",
+                list(
+                    declaration
+                        .origin_params
+                        .iter()
+                        .map(|id| positional("origin_param", &id.0.to_string())),
+                ),
+            ));
+        }
         // Schema 1.65 carries the member table, written only when the
         // struct owns a lifecycle member.
         if !declaration.members.is_empty() {

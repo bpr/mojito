@@ -1705,6 +1705,7 @@ fn declaration_metadata_reprints_byte_identically() {
             variadic: false,
             constraints: Vec::new(),
         }],
+        origin_params: vec![mojito_types::origin::OriginParamId(1)],
         explicit_destructors: HashMap::from([("_finish".into(), true), ("__del__".into(), false)]),
         explicit_destroy: Some(mojito_checked::declaration::ExplicitDestroyObligation {
             message: "explicit destroy required".into(),
@@ -1829,6 +1830,7 @@ fn declaration_metadata_reprints_byte_identically() {
         conformances: Vec::new(),
         declared: Vec::new(),
         associated_types: Vec::new(),
+        origin_params: Vec::new(),
         parameterized_associated_types: Vec::new(),
         associated_values: Vec::new(),
         parameterized_associated_values: Vec::new(),

@@ -168,6 +168,7 @@ pub struct HandoffStores {
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     struct_destructors: HashMap<String, HashMap<String, bool>>,
     struct_modules: HashMap<String, String>,
+    struct_origin_params: HashMap<String, Vec<mojito_types::origin::OriginParamId>>,
     conformances: ConformanceFacts,
     overloads: Arc<mojito_checked::package::ProgramOverloads>,
     constants: Arc<mojito_checked::package::ProgramConstants>,
@@ -192,6 +193,7 @@ impl HandoffStores {
             explicit_destroy_types: self.explicit_destroy_types,
             struct_destructors: self.struct_destructors,
             struct_modules: self.struct_modules,
+            struct_origin_params: self.struct_origin_params,
             conformances: self.conformances,
             overloads: self.overloads,
             constants: self.constants,
@@ -568,6 +570,16 @@ fn carried_result(checker: &Checker) -> HandoffStores {
             .own()
             .iter()
             .map(|(name, info)| (name.clone(), info.module.clone()))
+            .collect(),
+        struct_origin_params: checker
+            .structs
+            .own()
+            .iter()
+            .map(|(name, info)| {
+                let ids: Vec<_> = info.origin_slots().into_iter().map(|(id, _)| id).collect();
+                (name.clone(), ids)
+            })
+            .filter(|(_, ids)| !ids.is_empty())
             .collect(),
         conformances: mojito_checked::checked::ConformanceFacts::default(),
         overloads: std::sync::Arc::clone(&checker.overload_sets),

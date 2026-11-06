@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's MIR row now records its own origin parameters' ids
+  (`origin_params`), so `inline-parametric` closes an associated
+  projection whose template names the struct's origin (`Span`'s
+  `IteratorType` is `_SpanIter[T, Self.origin]`) and an inlined `for`
+  over a `Span`, or over an iterator whose `IteratorType` is `Self`, calls
+  the iterator's own `__next__` instead of the bound's dispatch (R1875).
+  MIR text moves to schema 1.168 and the package format to
+  `mojito-package 194`.
 - A compile-time test (`comptime if`, `comptime assert`, a conditional
   expression on a parameter value, a builtin operation's per-instance
   assertion, a `comptime for`'s `has_next`) now reaches MIR as its one

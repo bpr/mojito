@@ -6691,10 +6691,17 @@ point where a slot declared in a loop is uninitialized again.
   List[Int]` becomes the type `List`'s associated-type rows declare
   (`MirDeclarations::associated_type`, from
   `StructDeclaration::associated_type`), as upstream's substitution
-  resolves the alias from the conformance's witness. A projection over a
-  struct-level origin parameter (`Span`'s `IteratorType`), an argument
-  only the elaborator binds, or a type or value member parameter stays
-  open for the elaborator. The substitution then folds each witness
+  resolves the alias from the conformance's witness. A template naming
+  the struct's own origin (`Span`'s `IteratorType` is `_SpanIter[T,
+  Self.origin]`) binds it from the instance's origin arguments, which
+  `StructDeclaration::origin_params` keys by id (MIR text 1.168; the
+  checker fills `CheckedProgram::struct_origin_params` from each struct's
+  origin slots), beside the member's own origins, through
+  `types::substitute_origin_params`, as upstream's substitution binds a
+  struct's origin parameters like any other. A projection over an origin
+  the arguments leave unbound (an erased spelling), an argument only the
+  elaborator binds, or a type or value member parameter stays open for
+  the elaborator. The substitution then folds each witness
   lookup it closed (the private `fold_witnesses`): a method call, a resolved operator, or a subscript
   through a bound (`symbol::is_trait_dispatch_symbol`) whose receiver
   (`mir::member_receiver_ty`) is now a struct names the member that

@@ -1861,6 +1861,11 @@ fn struct_declaration(
             })
             .unwrap_or(&[])
             .to_vec(),
+        origin_params: checked
+            .struct_origin_params()
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
         explicit_destructors: checked
             .struct_destructors()
             .get(name)

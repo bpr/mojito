@@ -917,6 +917,7 @@ fn lower_closure_storage(
         mut_self_methods: writes_self.then(|| method.clone()).into_iter().collect(),
         fieldwise_init: true,
         param_decls: storage.param_decls.clone(),
+        origin_params: Vec::new(),
         explicit_destructors: HashMap::new(),
         explicit_destroy: None,
         conformances: [

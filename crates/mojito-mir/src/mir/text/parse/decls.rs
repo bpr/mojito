@@ -331,6 +331,26 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.168 carries the struct's origin parameter ids; an older
+        // artifact has none.
+        let origin_params = self
+            .field(fields, "origin_params")
+            .ok()
+            .and_then(|ids| self.list(ids).ok())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| match &id.kind {
+                        ValueKind::Positional(tag, inner) if tag == "origin_param" => {
+                            self.uint32(inner).map(OriginParamId)
+                        }
+                        _ => {
+                            self.error(id.span, "expected `origin_param(N)`");
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // Schema 1.138's declaring module path; a struct without one has
         // none.
         let module = self
@@ -347,6 +367,7 @@ impl Decoder {
                 "mut_self_methods",
                 "fieldwise_init",
                 "param_decls",
+                "origin_params",
                 "explicit_destroy_message",
                 "explicit_destructors",
                 "explicit_destroy_declared",
@@ -368,6 +389,7 @@ impl Decoder {
             mut_self_methods,
             fieldwise_init,
             param_decls,
+            origin_params,
             explicit_destructors,
             explicit_destroy,
             conformances,

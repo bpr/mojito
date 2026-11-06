@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.167
+mojito-mir 1.168
 ```
 
-The writer emits 1.167. The reader accepts 1.0 through 1.167; *Schema 1.0*
+The writer emits 1.168. The reader accepts 1.0 through 1.168; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1138,6 +1138,15 @@ and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
 
+Schema 1.168 adds a struct record's `origin_params: [origin_param(N)...]`
+(R1875): the id of each explicit origin parameter, in the order an
+instance's origin arguments follow its `param_decls`-aligned prefix, so a
+member template naming the struct's own origin (`Span`'s `IteratorType` is
+`_SpanIter[T, origin_arg(origin_param(2))]`) binds it from an instance's
+arguments, as upstream's substitution binds a struct's origin parameters.
+It is written only when the struct has one; an older artifact reads as
+having none. The package format moves to `mojito-package 194`.
+
 Schema 1.167 withdraws the constraint a compile-time test carried beside
 its `Bool` value (R1905): `comptime.if` holds `values: [<constant>...]`,
 one per arm, and `comptime.assert` `value: <constant>`, each a `bool`
@@ -1317,7 +1326,10 @@ undeclared with no obligated field. `associated_types` contains
 `associated_type { name: symbol, type: type }` records sorted by name,
 `parameterized_associated_types` the minor-46 records sorted by name, and
 `associated_values` contains `associated_value { name: symbol, value:
-param-expr }` records sorted by name.
+param-expr }` records sorted by name. `origin_params` (schema 1.168, written only
+when non-empty) lists the id of each explicit origin parameter as
+`origin_param(N)`, in the order of an instance's origin arguments after
+its `param_decls`-aligned prefix.
 
 A struct that declares a parameterized compile-time value member (`comptime
 get[idx: Int]: Int = Self.values[idx]`) carries

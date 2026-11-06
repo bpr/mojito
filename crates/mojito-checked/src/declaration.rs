@@ -34,6 +34,13 @@ pub struct StructDeclaration {
     pub mut_self_methods: HashSet<String>,
     pub fieldwise_init: bool,
     pub param_decls: Vec<ParamDecl>,
+    /// The id of each of the struct's explicit origin parameters, in the
+    /// order an instance's origin arguments follow its
+    /// `param_decls`-aligned prefix, so a template naming `Self.o` binds it
+    /// from an instance; empty for a concrete instance. Upstream's struct
+    /// parameters hold their origins in place, which origin `ParamDecl`s
+    /// will carry instead.
+    pub origin_params: Vec<OriginParamId>,
     /// The struct's named destructors (`deinit self` methods), beside
     /// whether each raises.
     #[serde(serialize_with = "sorted_map")]
@@ -246,14 +253,25 @@ impl StructDeclaration {
     /// `None` when the struct does not declare the member closed at these
     /// arguments: an argument only the elaborator binds (a pack, a deferred
     /// value, an omitted default), a type or value member parameter, or a
-    /// member over one of the struct's own origin parameters, which its
-    /// argument list does not key by id.
+    /// member over one of the struct's own origin parameters that the
+    /// arguments leave unbound (an erased spelling with no origin tail).
+    /// The struct's own origins bind from the instance's origin arguments
+    /// by [`Self::origin_params`], beside the member's own, before the
+    /// declared parameters are replaced.
     pub fn associated_type(&self, arguments: &[TyArg], name: &str, args: &[TyArg]) -> Option<Ty> {
         let context = ParamContext::detached();
         let mut bindings = ParamBindings::new();
-        let arguments: Vec<_> = arguments
+        let (origin_arguments, arguments): (Vec<_>, Vec<_>) = arguments
             .iter()
-            .filter(|argument| !matches!(argument, TyArg::Origin(_)))
+            .partition(|argument| matches!(argument, TyArg::Origin(_)));
+        let mut origins: HashMap<u32, Origin> = self
+            .origin_params
+            .iter()
+            .zip(origin_arguments)
+            .filter_map(|(id, argument)| match argument {
+                TyArg::Origin(origin) => Some((id.0, origin.clone())),
+                _ => None,
+            })
             .collect();
         if arguments.len() != self.param_decls.len() {
             return None;
@@ -293,26 +311,22 @@ impl StructDeclaration {
                 .iter()
                 .find(|(member, _)| member == name)
         {
-            member.clone()
+            member
         } else {
             let member = self
                 .parameterized_associated_types
                 .iter()
                 .find(|member| member.name == name)
                 .filter(|member| member.params.len() == args.len())?;
-            let origins = member
-                .params
-                .iter()
-                .zip(args)
-                .map(|(param, arg)| match (param, arg) {
-                    (AssociatedParameter::Origin(id), TyArg::Origin(origin)) => {
-                        Some((id.0, origin.clone()))
-                    }
-                    _ => None,
-                })
-                .collect::<Option<HashMap<_, _>>>()?;
-            substitute_origin_params(&member.template, &origins)
+            for (param, arg) in member.params.iter().zip(args) {
+                let (AssociatedParameter::Origin(id), TyArg::Origin(origin)) = (param, arg) else {
+                    return None;
+                };
+                origins.insert(id.0, origin.clone());
+            }
+            &member.template
         };
+        let template = substitute_origin_params(template, &origins);
         let ty = replace_parameters(&context, &template, &bindings, 0).ok()?;
         (!mentions(&ty, &names_origin_param)).then_some(ty)
     }
@@ -843,5 +857,102 @@ fn names_origin_param(ty: &Ty) -> bool {
             .any(|argument| matches!(argument, TyArg::Origin(origin) if names(origin))),
         TyKind::Ref(reference) => names(&reference.origin),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn over(name: &str, origin: Origin) -> Ty {
+        TyKind::Struct(name.into(), vec![TyArg::Origin(origin)]).into()
+    }
+
+    fn declaration(
+        origin_params: Vec<OriginParamId>,
+        associated_types: Vec<(String, Ty)>,
+        parameterized_associated_types: Vec<ParameterizedAssociatedType>,
+    ) -> StructDeclaration {
+        StructDeclaration {
+            name: "Bag".into(),
+            module: String::new(),
+            fields: Vec::new(),
+            mut_self_methods: HashSet::new(),
+            fieldwise_init: false,
+            param_decls: Vec::new(),
+            origin_params,
+            explicit_destructors: HashMap::new(),
+            explicit_destroy: None,
+            conformances: Vec::new(),
+            declared: Vec::new(),
+            associated_types,
+            parameterized_associated_types,
+            associated_values: Vec::new(),
+            parameterized_associated_values: Vec::new(),
+            members: Vec::new(),
+            witness_tables: Vec::new(),
+        }
+    }
+
+    /// `Bag[mut: Bool, //, o: Origin[mut=mut]]` whose
+    /// `IteratorType[iterable_origin]` is `template`, `o` and the member's
+    /// origin numbered as the check numbers them.
+    fn bag(origin_params: Vec<OriginParamId>, template: Ty) -> StructDeclaration {
+        declaration(
+            origin_params,
+            Vec::new(),
+            vec![ParameterizedAssociatedType {
+                name: "IteratorType".into(),
+                params: vec![AssociatedParameter::Origin(OriginParamId(2))],
+                template,
+            }],
+        )
+    }
+
+    #[test]
+    fn associated_type_binds_the_structs_own_origin() {
+        let bag = bag(
+            vec![OriginParamId(1)],
+            over("BagIter", Origin::Param(OriginParamId(1))),
+        );
+        let instance = [TyArg::Origin(Origin::Static)];
+        let member = [TyArg::Origin(Origin::Unbound)];
+        assert_eq!(
+            bag.associated_type(&instance, "IteratorType", &member),
+            Some(over("BagIter", Origin::Static)),
+        );
+    }
+
+    #[test]
+    fn associated_type_binds_a_self_iterator_over_its_own_origin() {
+        let walk = bag(
+            vec![OriginParamId(1)],
+            over("Bag", Origin::Param(OriginParamId(1))),
+        );
+        let instance = [TyArg::Origin(Origin::Static)];
+        let member = [TyArg::Origin(Origin::Static)];
+        assert_eq!(
+            walk.associated_type(&instance, "IteratorType", &member),
+            Some(over("Bag", Origin::Static)),
+        );
+        let unparameterized = declaration(
+            vec![OriginParamId(1)],
+            vec![("Walk".into(), over("Bag", Origin::Param(OriginParamId(1))))],
+            Vec::new(),
+        );
+        assert_eq!(
+            unparameterized.associated_type(&instance, "Walk", &[]),
+            Some(over("Bag", Origin::Static)),
+        );
+    }
+
+    #[test]
+    fn associated_type_leaves_an_unbound_struct_origin_open() {
+        let bag = bag(
+            vec![OriginParamId(1)],
+            over("BagIter", Origin::Param(OriginParamId(1))),
+        );
+        let member = [TyArg::Origin(Origin::Static)];
+        assert_eq!(bag.associated_type(&[], "IteratorType", &member), None);
     }
 }

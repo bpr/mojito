@@ -774,32 +774,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1875 A struct declaration does not key its own origin parameters
-  to its arguments**
-
-  `inline-parametric` cannot close an associated projection whose member
-  names the struct's own origin parameter, so an inlined `for` over such
-  a struct keeps `__trait_dispatch.__next__`.
-  - `Span`'s `IteratorType[o]` is `_SpanIter[Self.T, Self.origin]`, which
-    names `Span`'s origin as `origin_param(2)`.
-  - `StructDeclaration::param_decls` holds no origin parameter, and an
-    instance's argument list omits inferred ones (`Span[Int, o]` has no
-    `mut`), so no origin argument can be matched to that id.
-  - `StructDeclaration::associated_type` answers `None` for such a
-    member; upstream's struct parameters include its origins, which
-    substitution binds like any other.
-  - Lever: record each origin parameter's id beside its argument position
-    in the declaration, then bind it in `associated_type` through
-    `substitute_origin_params`.
-  - Probe: `count(sp)` for `sp = Span(xs)` over `xs: List[Int]`, with the
-    `count[T: Iterable]` of `tests/mir_passes/inline-parametric/bound_iteration.mir`;
-    done when the caller's inlined step names `_SpanIter.__next__`.
-  - Probe: an iterator struct whose `IteratorType` is `Self` over its own
-    origin (`_ListIter`), iterated through a bound.
-  - Found while landing R1280 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R1876 The elaborator solves an associated projection from its own
   copy of the struct's associated-type rows**
 
@@ -818,6 +792,12 @@ which names the upstream pass each one follows. Each is measured by the
     `StructShape` fields.
   - Probe: `tests/mir_passes/inline-parametric/bound_iteration.mir` and
     every `for` over a bound still elaborate with no output change.
+  - `declared_associated_type` leaves the struct's own origin unbound
+    (`Span[Int, o]`'s `IteratorType` is `_SpanIter[Int, origin_param(2)]`),
+    where `associated_type` binds it by `StructDeclaration::origin_params`;
+    routing it there gives the elaborator that binding too. Probe: the
+    `bound_iteration_own_origin` pass case's `Bag` and `Walk` through
+    `count`, elaborated.
   - Found while landing R1280 (2026-11-03).
   - Depends on R1875.
   - Model: Opus, Planned.
@@ -10461,6 +10441,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     synthesized default (`Span[SIMD[DType.int, 1], origin#2](_data=...,
     _size=Int(2))`) where the pin prints `Span[mut=True, SIMD[DType.int,
     1]]([Int(1), Int(2)])`.
+  - The struct row's `origin_params` (MIR text 1.168) stands in for the
+    origin kinds a struct's `param_decls` lacks; R762 retires it.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -10487,6 +10469,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     no origins (`verify/subscripts.rs`), so the bundled
     `VariadicList.__iter__` names the iterator's origin arguments by
     keyword.
+  - `StructDeclaration::origin_params` (MIR text 1.168) is the tail's
+    handoff, keying each origin argument to the id a member template
+    names; it goes away once origins are `ParamDecl`s in place.
+  - Probe: an erased spelling (a method's `self` typed `BagIter` with no
+    arguments) carries no tail, so `StructDeclaration::associated_type`
+    leaves a template naming `Self.o` open there, where upstream's
+    `Self` carries every parameter.
   - Found while landing R631 (2026-10-13).
   - Depends on R761.
   - Model: Fable, Not Planned.

@@ -1,0 +1,423 @@
+  functions: [
+      fn {
+        name: "BagIter.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, left],
+        params: 2,
+        param_types: [struct_type { name: BagIter, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 357, end: 361, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "BagIter.__iter__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: BagIter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [] } }],
+        return_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: BagIter, arguments: [] } }, reg_type { reg: %r1, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 444, end: 448, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 444, end: 455, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [], type: present(struct_type { name: BagIter, arguments: [] }), through: absent } },
+              call.method { dest: %r1, recv: %r0, method: copy, resolved: present("BagIter.copy"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [], type: present(struct_type { name: BagIter, arguments: [] }), through: absent }), recv_writes: false, receiver_convention: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: "BagIter.__next__",
+        registers: 14,
+        vars: 2,
+        var_names: [self, "$error"],
+        params: 1,
+        param_types: [struct_type { name: BagIter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [] } }, var_type { var: $v1, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
+        return_type: present(Int),
+        raises: true,
+        error_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }),
+        error_slot: $v1,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Bool }, reg_type { reg: %r5, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r8, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r11, type: None }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 524, end: 533, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 537, end: 538, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 537, end: 538, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 537, end: 538, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 524, end: 538, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 558, end: 573, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 582, end: 591, origin: present($v0) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 595, end: 596, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 595, end: 596, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 595, end: 596, origin: absent }) }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 582, end: 591, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 612, end: 621, origin: present($v0) }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 612, end: 621, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              const { dest: %r1, value: int_literal(0) },
+              literal.materialize { dest: %r2, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r3, fields: [%r2] },
+              call.method { dest: %r4, recv: %r0, method: __le__, resolved: present("SIMD.__le__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r3], kwargs: [], recv_place: absent, recv_writes: false, receiver_convention: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              if { results: [], condition: %r4, then: [bb0 { instructions: [call { dest: %r5, func: "__module$std$iter$StopIteration.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r5, binding_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }), in_place: false }], terminator: error_return {} }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              const { dest: %r7, value: int_literal(1) },
+              literal.materialize { dest: %r8, value: %r7, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r9, fields: [%r8] },
+              call.method { dest: %r11, recv: %r6, method: __isub__, resolved: present("SIMD.__isub__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r9], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent }), recv_writes: true, receiver_convention: present(mut), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              place.load { dest: %r12, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r13, value: %r12 }
+            ],
+            terminator: return { value: present(%r13) }
+          }
+        ]
+      },
+      fn {
+        name: "BagIter.copy",
+        registers: 1,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: BagIter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [] } }],
+        return_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 57, end: 621, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: "Bag.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, n],
+        params: 2,
+        param_types: [struct_type { name: Bag, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 912, end: 913, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Bag, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Bag.__iter__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Bag, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [] } }],
+        return_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1012, end: 1018, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 996, end: 1019, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Bag, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
+              call { dest: %r1, func: "BagIter.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: "Bag.copy",
+        registers: 1,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Bag, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [] } }],
+        return_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 624, end: 1019, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: "Walk.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, left],
+        params: 2,
+        param_types: [struct_type { name: Walk, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1319, end: 1323, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Walk.__iter__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Walk, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [] } }],
+        return_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Walk, arguments: [] } }, reg_type { reg: %r1, type: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1406, end: 1410, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1406, end: 1417, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [], type: present(struct_type { name: Walk, arguments: [] }), through: absent } },
+              call.method { dest: %r1, recv: %r0, method: copy, resolved: present("Walk.copy"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [], type: present(struct_type { name: Walk, arguments: [] }), through: absent }), recv_writes: false, receiver_convention: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: "Walk.__next__",
+        registers: 14,
+        vars: 2,
+        var_names: [self, "$error"],
+        params: 1,
+        param_types: [struct_type { name: Walk, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [] } }, var_type { var: $v1, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
+        return_type: present(Int),
+        raises: true,
+        error_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }),
+        error_slot: $v1,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Bool }, reg_type { reg: %r5, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r8, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r11, type: None }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1486, end: 1495, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1499, end: 1500, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1499, end: 1500, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1499, end: 1500, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 1486, end: 1500, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 1520, end: 1535, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 1544, end: 1553, origin: present($v0) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 1557, end: 1558, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 1557, end: 1558, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 1557, end: 1558, origin: absent }) }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 1544, end: 1553, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 1574, end: 1583, origin: present($v0) }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 1574, end: 1583, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              const { dest: %r1, value: int_literal(0) },
+              literal.materialize { dest: %r2, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r3, fields: [%r2] },
+              call.method { dest: %r4, recv: %r0, method: __le__, resolved: present("SIMD.__le__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r3], kwargs: [], recv_place: absent, recv_writes: false, receiver_convention: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              if { results: [], condition: %r4, then: [bb0 { instructions: [call { dest: %r5, func: "__module$std$iter$StopIteration.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r5, binding_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }), in_place: false }], terminator: error_return {} }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              const { dest: %r7, value: int_literal(1) },
+              literal.materialize { dest: %r8, value: %r7, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r9, fields: [%r8] },
+              call.method { dest: %r11, recv: %r6, method: __isub__, resolved: present("SIMD.__isub__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r9], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent }), recv_writes: true, receiver_convention: present(mut), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              place.load { dest: %r12, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r13, value: %r12 }
+            ],
+            terminator: return { value: present(%r13) }
+          }
+        ]
+      },
+      fn {
+        name: "Walk.copy",
+        registers: 1,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Walk, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [] } }],
+        return_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1022, end: 1583, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: count,
+        registers: 20,
+        vars: 7,
+        var_names: [a, n, "$iter2", "$iterobj3", "$for9223372036854775894", "$yield5", "$try_error0"],
+        params: 1,
+        param_types: [param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: ref { referent: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, origin: origin_place { root: $v301, path: [] }, mutability: immutable } }, var_type { var: $v3, type: assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: IteratorType, arguments: [origin_arg(origin_place { root: $v301, path: [] })] } }, var_type { var: $v4, type: assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: Element, arguments: [] } }, var_type { var: $v5, type: assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: Element, arguments: [] } }, var_type { var: $v6, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: ref { referent: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, origin: origin_place { root: $v301, path: [] }, mutability: immutable } }, reg_type { reg: %r5, type: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent } }, reg_type { reg: %r6, type: assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: IteratorType, arguments: [origin_arg(origin_place { root: $v301, path: [] })] } }, reg_type { reg: %r8, type: assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: IteratorType, arguments: [origin_arg(origin_place { root: $v301, path: [] })] } }, reg_type { reg: %r9, type: assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: Element, arguments: [] } }, reg_type { reg: %r10, type: Bool }, reg_type { reg: %r11, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }, reg_type { reg: %r12, type: assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: Element, arguments: [] } }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r15, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r18, type: None }, reg_type { reg: %r19, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1665, end: 1666, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1665, end: 1666, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1665, end: 1666, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1680, end: 1681, origin: present($v0) }) }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 0, end: 0, origin: present($v2) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 0, end: 0, origin: present($v3) }) }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 0, end: 0, origin: present($v3) }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 0, end: 0, origin: present($v3) }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 0, end: 0, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 0, end: 0, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 0, end: 0, origin: present($v5) }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 1691, end: 1692, origin: present($v1) }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 1696, end: 1697, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 1696, end: 1697, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 1696, end: 1697, origin: absent }) }, reg_loc { reg: %r17, location: absent }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 1691, end: 1692, origin: absent }) }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 1709, end: 1710, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(0) },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r1] },
+              var.store { var: $v1, src: %r2, binding_type: present(Int), in_place: false },
+              ref.make { dest: %r3, place: place { root: $v0, root_type: present(param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }), projections: [], type: present(param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }), through: absent } },
+              var.store { var: $v2, src: %r3, binding_type: present(ref { referent: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, origin: origin_place { root: $v301, path: [] }, mutability: immutable }), in_place: false },
+              place.load { dest: %r5, place: place { root: $v0, root_type: present(param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }), projections: [], type: present(param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }), through: present($v2) } },
+              call.method { dest: %r6, recv: %r5, method: __iter__, resolved: present("__trait_dispatch.__iter__$ov$SelfRef"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }), projections: [], type: present(param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }), through: present($v2) }), recv_writes: false, receiver_convention: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              drop.var { var: $v2 },
+              var.store { var: $v3, src: %r6, binding_type: present(assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: IteratorType, arguments: [origin_arg(origin_place { root: $v301, path: [] })] }), in_place: false },
+              loop { results: [], label: present(loop0), operands: [], arguments: [], body: [bb0 { instructions: [var.declare { var: $v6 }, try { label: try0, error: present($v6), results: [], body: [bb0 { instructions: [place.load { dest: %r8, place: place { root: $v3, root_type: present(assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: IteratorType, arguments: [origin_arg(origin_place { root: $v301, path: [] })] }), projections: [], type: present(assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: IteratorType, arguments: [origin_arg(origin_place { root: $v301, path: [] })] }), through: absent } }, call.method { dest: %r9, recv: %r8, method: __next__, resolved: present("__trait_dispatch.__next__$ov$"), raises: present(raises { type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] }, flag: %r10, error: %r11 }), reference_result: absent, result_adapter: present(copy_iterator_reference), args: [], kwargs: [], recv_place: present(place { root: $v3, root_type: present(assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: IteratorType, arguments: [origin_arg(origin_place { root: $v301, path: [] })] }), projections: [], type: present(assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: IteratorType, arguments: [origin_arg(origin_place { root: $v301, path: [] })] }), through: absent }), recv_writes: true, receiver_convention: present(mut), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, if { results: [], condition: %r10, then: [bb0 { instructions: [drop.var { var: $v3 }, var.store { var: $v6, src: %r11, binding_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }), in_place: false }, drop.var { var: $v6 }], terminator: try.raise { label: try0, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.store { var: $v5, src: %r9, binding_type: present(assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: Element, arguments: [] }), in_place: false }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [], terminator: break { label: present(loop0), values: [] } }]), else_arguments: [], orelse: absent }, var.use { dest: %r12, var: $v5, mode: move }, var.store { var: $v4, src: %r12, binding_type: present(assoc { base: param { owner: "count", slot: 0, name: T, bounds: ["__module$std$iter$Iterable"], callable_bound: absent }, member: Element, arguments: [] }), in_place: false }, drop.var { var: $v4 }, place.load { dest: %r13, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } }, const { dest: %r14, value: int_literal(1) }, literal.materialize { dest: %r15, value: %r14, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r16, fields: [%r15] }, call.method { dest: %r18, recv: %r13, method: __iadd__, resolved: present("SIMD.__iadd__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r16], kwargs: [], recv_place: present(place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent }), recv_writes: true, receiver_convention: present(mut), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }], terminator: continue { label: present(loop0), values: [] } }] },
+              var.use { dest: %r19, var: $v1, mode: move }
+            ],
+            terminator: return { value: present(%r19) }
+          }
+        ]
+      },
+      fn {
+        name: bag_count,
+        registers: 27,
+        vars: 9,
+        var_names: [x, b, "a$inline2", "n$inline2", "$iter2$inline2", "$iterobj3$inline2", "$for9223372036854775894$inline2", "$yield5$inline2", "$try_error0$inline2"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] } }, var_type { var: $v2, type: struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: ref { referent: struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }, origin: origin_place { root: $v301, path: [] }, mutability: immutable } }, var_type { var: $v5, type: struct_type { name: BagIter, arguments: [origin_arg(origin_place { root: $v304, path: [] })] } }, var_type { var: $v6, type: Int }, var_type { var: $v7, type: Int }, var_type { var: $v8, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(3))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] } }, reg_type { reg: %r4, type: ref { referent: struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r7, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r8, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: ref { referent: struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }, origin: origin_place { root: $v301, path: [] }, mutability: immutable } }, reg_type { reg: %r12, type: struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] } }, reg_type { reg: %r13, type: struct_type { name: BagIter, arguments: [origin_arg(origin_place { root: $v304, path: [] })] } }, reg_type { reg: %r15, type: struct_type { name: BagIter, arguments: [origin_arg(origin_place { root: $v304, path: [] })] } }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r17, type: Bool }, reg_type { reg: %r18, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }, reg_type { reg: %r19, type: Int }, reg_type { reg: %r20, type: Int }, reg_type { reg: %r21, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r22, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r23, type: Int }, reg_type { reg: %r25, type: None }, reg_type { reg: %r26, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1773, end: 1774, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1773, end: 1774, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1773, end: 1774, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1755, end: 1775, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 1793, end: 1794, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r20, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r21, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r22, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r23, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r24, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r25, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }, reg_loc { reg: %r26, location: present(loc { file: file0, start: 1787, end: 1795, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(3) },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r1] },
+              call { dest: %r3, func: "Bag.__init__", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v1, src: %r3, binding_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), in_place: true },
+              ref.make { dest: %r4, place: place { root: $v1, root_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), projections: [], type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), through: absent } },
+              loop { results: [%r5], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r7, value: int_literal(0) }, literal.materialize { dest: %r8, value: %r7, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r9, fields: [%r8] }, var.store { var: $v3, src: %r9, binding_type: present(Int), in_place: false }, ref.make { dest: %r10, place: place { root: $v1, root_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), projections: [], type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), through: absent } }, var.store { var: $v4, src: %r10, binding_type: present(ref { referent: struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }, origin: origin_place { root: $v301, path: [] }, mutability: immutable }), in_place: false }, place.load { dest: %r12, place: place { root: $v1, root_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), projections: [], type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), through: absent } }, call.method { dest: %r13, recv: %r12, method: __iter__, resolved: present("Bag.__iter__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), projections: [], type: present(struct_type { name: Bag, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), through: absent }), recv_writes: false, receiver_convention: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, drop.var { var: $v4 }, var.store { var: $v5, src: %r13, binding_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), in_place: false }, loop { results: [], label: present(loop0), operands: [], arguments: [], body: [bb0 { instructions: [var.declare { var: $v8 }, try { label: try0, error: present($v8), results: [], body: [bb0 { instructions: [place.load { dest: %r15, place: place { root: $v5, root_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), projections: [], type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), through: absent } }, call.method { dest: %r16, recv: %r15, method: __next__, resolved: present("BagIter.__next__"), raises: present(raises { type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] }, flag: %r17, error: %r18 }), reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v5, root_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), projections: [], type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_place { root: $v304, path: [] })] }), through: absent }), recv_writes: true, receiver_convention: present(mut), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, if { results: [], condition: %r17, then: [bb0 { instructions: [drop.var { var: $v5 }, var.store { var: $v8, src: %r18, binding_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }), in_place: false }, drop.var { var: $v8 }], terminator: try.raise { label: try0, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.store { var: $v7, src: %r16, binding_type: present(Int), in_place: false }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [], terminator: break { label: present(loop0), values: [] } }]), else_arguments: [], orelse: absent }, var.use { dest: %r19, var: $v7, mode: move }, var.store { var: $v6, src: %r19, binding_type: present(Int), in_place: false }, drop.var { var: $v6 }, place.load { dest: %r20, place: place { root: $v3, root_type: present(Int), projections: [], type: present(Int), through: absent } }, const { dest: %r21, value: int_literal(1) }, literal.materialize { dest: %r22, value: %r21, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r23, fields: [%r22] }, call.method { dest: %r25, recv: %r20, method: __iadd__, resolved: present("SIMD.__iadd__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r23], kwargs: [], recv_place: present(place { root: $v3, root_type: present(Int), projections: [], type: present(Int), through: absent }), recv_writes: true, receiver_convention: present(mut), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }], terminator: continue { label: present(loop0), values: [] } }] }, var.use { dest: %r26, var: $v3, mode: move }], terminator: break { label: present(loop4294967295), values: [%r26] } }] },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      },
+      fn {
+        name: walk_count,
+        registers: 27,
+        vars: 9,
+        var_names: [x, w, "a$inline2", "n$inline2", "$iter2$inline2", "$iterobj3$inline2", "$for9223372036854775894$inline2", "$yield5$inline2", "$try_error0$inline2"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] } }, var_type { var: $v2, type: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: ref { referent: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }, origin: origin_place { root: $v301, path: [] }, mutability: immutable } }, var_type { var: $v5, type: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] } }, var_type { var: $v6, type: Int }, var_type { var: $v7, type: Int }, var_type { var: $v8, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(4))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] } }, reg_type { reg: %r4, type: ref { referent: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r7, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r8, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: ref { referent: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }, origin: origin_place { root: $v301, path: [] }, mutability: immutable } }, reg_type { reg: %r12, type: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] } }, reg_type { reg: %r13, type: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] } }, reg_type { reg: %r15, type: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] } }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r17, type: Bool }, reg_type { reg: %r18, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }, reg_type { reg: %r19, type: Int }, reg_type { reg: %r20, type: Int }, reg_type { reg: %r21, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r22, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r23, type: Int }, reg_type { reg: %r25, type: None }, reg_type { reg: %r26, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1860, end: 1861, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1860, end: 1861, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1860, end: 1861, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1841, end: 1862, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 1880, end: 1881, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r20, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r21, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r22, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r23, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r24, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r25, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }, reg_loc { reg: %r26, location: present(loc { file: file0, start: 1874, end: 1882, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(4) },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r1] },
+              call { dest: %r3, func: "Walk.__init__", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v1, src: %r3, binding_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), in_place: true },
+              ref.make { dest: %r4, place: place { root: $v1, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), projections: [], type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), through: absent } },
+              loop { results: [%r5], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r7, value: int_literal(0) }, literal.materialize { dest: %r8, value: %r7, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r9, fields: [%r8] }, var.store { var: $v3, src: %r9, binding_type: present(Int), in_place: false }, ref.make { dest: %r10, place: place { root: $v1, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), projections: [], type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), through: absent } }, var.store { var: $v4, src: %r10, binding_type: present(ref { referent: struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }, origin: origin_place { root: $v301, path: [] }, mutability: immutable }), in_place: false }, place.load { dest: %r12, place: place { root: $v1, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), projections: [], type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), through: absent } }, call.method { dest: %r13, recv: %r12, method: __iter__, resolved: present("Walk.__iter__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), projections: [], type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), through: absent }), recv_writes: false, receiver_convention: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, drop.var { var: $v4 }, var.store { var: $v5, src: %r13, binding_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), in_place: false }, loop { results: [], label: present(loop0), operands: [], arguments: [], body: [bb0 { instructions: [var.declare { var: $v8 }, try { label: try0, error: present($v8), results: [], body: [bb0 { instructions: [place.load { dest: %r15, place: place { root: $v5, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), projections: [], type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), through: absent } }, call.method { dest: %r16, recv: %r15, method: __next__, resolved: present("Walk.__next__"), raises: present(raises { type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] }, flag: %r17, error: %r18 }), reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v5, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), projections: [], type: present(struct_type { name: Walk, arguments: [origin_arg(origin_place { root: $v306, path: [] })] }), through: absent }), recv_writes: true, receiver_convention: present(mut), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, if { results: [], condition: %r17, then: [bb0 { instructions: [drop.var { var: $v5 }, var.store { var: $v8, src: %r18, binding_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }), in_place: false }, drop.var { var: $v8 }], terminator: try.raise { label: try0, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.store { var: $v7, src: %r16, binding_type: present(Int), in_place: false }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [], terminator: break { label: present(loop0), values: [] } }]), else_arguments: [], orelse: absent }, var.use { dest: %r19, var: $v7, mode: move }, var.store { var: $v6, src: %r19, binding_type: present(Int), in_place: false }, drop.var { var: $v6 }, place.load { dest: %r20, place: place { root: $v3, root_type: present(Int), projections: [], type: present(Int), through: absent } }, const { dest: %r21, value: int_literal(1) }, literal.materialize { dest: %r22, value: %r21, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r23, fields: [%r22] }, call.method { dest: %r25, recv: %r20, method: __iadd__, resolved: present("SIMD.__iadd__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r23], kwargs: [], recv_place: present(place { root: $v3, root_type: present(Int), projections: [], type: present(Int), through: absent }), recv_writes: true, receiver_convention: present(mut), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }], terminator: continue { label: present(loop0), values: [] } }] }, var.use { dest: %r26, var: $v3, mode: move }], terminator: break { label: present(loop4294967295), values: [%r26] } }] },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]

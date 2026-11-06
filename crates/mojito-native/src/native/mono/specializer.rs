@@ -3682,6 +3682,7 @@ impl<'a> Specializer<'a> {
         declaration.fields = fields;
         declaration.name = name.to_string();
         declaration.param_decls.clear();
+        declaration.origin_params.clear();
         declaration.associated_types.clear();
         declaration.parameterized_associated_types.clear();
         declaration.associated_values.clear();

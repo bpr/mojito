@@ -7,6 +7,7 @@ use mojito_ast::ast::{
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
+use mojito_types::origin::OriginParamId;
 use mojito_types::types::{SimdDtype, SimdWidth, Ty};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -3857,7 +3858,7 @@ pub struct StorageReference {
     /// position among the reference fields, in capture order, which is its
     /// position in [`CheckedClosureStorage::origin_arguments`]. The lifted
     /// struct declares it after the enclosing binders it is applied to.
-    pub origin: mojito_types::origin::OriginParamId,
+    pub origin: OriginParamId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -4515,6 +4516,10 @@ pub struct DiscoveryResult {
     pub struct_destructors: HashMap<String, HashMap<String, bool>>,
     /// Each of the program's own structs' declaring module path, by struct.
     pub struct_modules: HashMap<String, String>,
+    /// Each of the program's own structs' explicit origin parameter ids, in
+    /// the order an instance's origin arguments follow its declared
+    /// parameters; a struct with none has no entry.
+    pub struct_origin_params: HashMap<String, Vec<OriginParamId>>,
     pub conformances: ConformanceFacts,
     /// The overload sets of every declaration the check knew: its own,
     /// and an imported package's, answered from the package's declarations.
@@ -4558,6 +4563,7 @@ pub struct CheckedProgram {
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     struct_destructors: HashMap<String, HashMap<String, bool>>,
     struct_modules: HashMap<String, String>,
+    struct_origin_params: HashMap<String, Vec<OriginParamId>>,
     conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     overloads: Arc<crate::package::ProgramOverloads>,
@@ -4960,6 +4966,7 @@ impl CheckedProgram {
             explicit_destroy_types,
             struct_destructors,
             struct_modules,
+            struct_origin_params,
             conformances,
             overloads,
             constants,
@@ -5044,6 +5051,7 @@ impl CheckedProgram {
             explicit_destroy_types,
             struct_destructors,
             struct_modules,
+            struct_origin_params,
             conformances,
             declaration_effects,
             overloads,
@@ -5128,6 +5136,7 @@ impl CheckedProgram {
             explicit_destroy_types: HashMap::new(),
             struct_destructors: HashMap::new(),
             struct_modules: HashMap::new(),
+            struct_origin_params: HashMap::new(),
             conformances: ConformanceFacts::default(),
             declaration_effects,
             overloads,
@@ -5280,6 +5289,12 @@ impl CheckedProgram {
     /// (`std.collections.list`), by struct.
     pub const fn struct_modules(&self) -> &HashMap<String, String> {
         &self.struct_modules
+    }
+
+    /// Each of the program's own structs' explicit origin parameter ids,
+    /// in the order of an instance's origin arguments, by struct.
+    pub const fn struct_origin_params(&self) -> &HashMap<String, Vec<OriginParamId>> {
+        &self.struct_origin_params
     }
 
     pub const fn conformances(&self) -> &ConformanceFacts {
