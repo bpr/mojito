@@ -943,10 +943,12 @@ pub struct Checker {
     /// as the struct's, an alias's) takes the entry over; the shared flag
     /// records that a construction bound it.
     spelled_initializer_args: RefCell<HashMap<SourceSpan, SpelledInitializerArgs>>,
-    /// Compile-time bindings read as the object of a field chain the checker
-    /// compiled to a parameter expression (`q` of `q.a`): the chain is read,
-    /// never the binding, which therefore materializes no temporary.
-    parameter_field_objects: RefCell<FactSet<SourceSpan>>,
+    /// Compile-time reads whose consumer takes the materialized value whole:
+    /// the object of a field chain the checker compiled to a parameter
+    /// expression (`q` of `q.a`), or an owned consumer's operand (`MP.s`
+    /// passed to a `var` parameter). Each materializes no temporary, however
+    /// often its span is re-inferred.
+    consumed_parameter_reads: RefCell<FactSet<SourceSpan>>,
     /// Expressions whose value nothing takes ownership of: a temporary bound
     /// to a read parameter, an argument of `print`, a discarded statement
     /// expression. A linear one is abandoned there.
@@ -1156,7 +1158,7 @@ impl Checker {
             slice_literals: RefCell::new(HashMap::new()),
             spelled_instances: RefCell::new(HashMap::new()),
             spelled_initializer_args: RefCell::new(HashMap::new()),
-            parameter_field_objects: RefCell::new(FactSet::default()),
+            consumed_parameter_reads: RefCell::new(FactSet::default()),
             unconsumed_temporaries: RefCell::new(FactSet::default()),
             linear_temporaries: RefCell::new(FactMap::default()),
             raising_iterations: RefCell::new(FactSet::default()),

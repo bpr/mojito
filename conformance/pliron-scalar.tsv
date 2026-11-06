@@ -246,6 +246,7 @@ assets/ok/comptime_sized_scalar_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_slice_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_struct_string_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_struct_value_field_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_struct_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_template_body_bindings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape

@@ -9228,6 +9228,49 @@ fn value_parameter_field_transfer_is_rejected() {
     assert!(matches!(err_std(source), TypeError::ParameterTransfer));
 }
 
+const STRUCT_VALUE_FIELDS: &str = "@fieldwise_init\nstruct G[T: Copyable & Writable & Deinitable](Copyable, Movable):\n    var v: Self.T\n    var s: String\n\n@fieldwise_init\nstruct Outer(Copyable, Movable):\n    var g: G[Int]\n    var name: String\n\ncomptime MO = Outer(G[Int](12, \"inner\"), \"outer\")\n\ndef owns(var s: String):\n    print(s)\n\ndef r(x: G[Int]):\n    print(x.s)\n\n";
+
+/// The `ParamValue` adjustments on member reads of `field`, by whether each
+/// carries a materialized owner.
+fn folded_field_reads(checked: &mojito::checked::CheckedProgram, field: &str) -> Vec<bool> {
+    own_expressions(checked)
+        .filter(|expression| {
+            matches!(&expression.op, mojito::checked::CheckedOp::Member { field: f, .. } if f == field)
+        })
+        .flat_map(|expression| {
+            expression.adjustments.iter().filter_map(|adjustment| match adjustment {
+                SemanticAdjustment::ParamValue { materialized, .. } => Some(materialized.is_some()),
+                _ => None,
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn owned_consumer_of_a_folded_field_takes_it_whole() {
+    let checked = checked_with_std(&format!(
+        "{STRUCT_VALUE_FIELDS}def main():\n    owns(MO.name)\n"
+    ))
+    .expect("check");
+    assert_eq!(folded_field_reads(&checked, "name"), vec![false]);
+}
+
+#[test]
+fn field_chain_folds_through_a_generic_struct_value() {
+    let checked = checked_with_std(&format!(
+        "{STRUCT_VALUE_FIELDS}def main():\n    print(MO.g.s)\n"
+    ))
+    .expect("check");
+    assert_eq!(folded_field_reads(&checked, "s").len(), 1);
+}
+
+#[test]
+fn folded_field_that_is_not_implicitly_copyable_does_not_cross() {
+    let error = check_with_std(&format!("{STRUCT_VALUE_FIELDS}def main():\n    r(MO.g)\n"))
+        .expect_err("a G[Int] field does not cross to run time");
+    assert!(matches!(error, TypeError::ComptimeCrossing(_)), "{error}");
+}
+
 #[test]
 fn value_parameter_field_read_requires_an_implicitly_copyable_field() {
     let source = "@fieldwise_init\nstruct In(Copyable):\n    var v: Int\n\n@fieldwise_init\nstruct Q(Copyable):\n    var a: Int\n    var i: In\n\ndef f[q: Q]():\n    var j = q.i\n    print(j.v)\n\ndef main():\n    f[Q(8, In(5))]()\n";

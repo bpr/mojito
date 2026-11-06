@@ -402,7 +402,10 @@ impl<'a> Flatten<'a> {
 
     /// Whether `expression` is a temporary the checker materialized into a
     /// hidden slot, or reads through a compile-time constant so
-    /// materialized (a struct value read as `g.s`). Such a chain is read
+    /// materialized: a struct value the check could not fold a field out
+    /// of, since an initializer of its own built it (`FLAG.n` over
+    /// `comptime FLAG: W = True`, through `W`'s `@implicit` `__init__`).
+    /// Such a chain is read
     /// where written, and its place is never probed: probing a materialized
     /// constant root stores it in its slot, so a probe whose instructions
     /// the setup then moves would leave later reads of the slot ahead of

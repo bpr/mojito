@@ -1352,7 +1352,9 @@ impl Checker {
                 let projected = self.projected_object.replace(Some(object.source_span()));
                 let member = self.infer_member(expr.source_span(), object, field);
                 *self.projected_object.borrow_mut() = projected;
-                member
+                let ty = member?;
+                self.reject_field_crossing(expr, &ty)?;
+                Ok(ty)
             }
             ExprKind::MethodCall {
                 object,

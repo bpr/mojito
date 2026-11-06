@@ -294,7 +294,7 @@ impl Checker {
             && ty.kind().is_non_simd_struct()
             && self.is_materialized_parameter_read(expr)
             && !self
-                .parameter_field_objects
+                .consumed_parameter_reads
                 .borrow()
                 .contains(&expr.source_span())
             && !self.is_trivial_register_passable(ty)
@@ -306,11 +306,15 @@ impl Checker {
 
     /// A consumed read of a compile-time binding is the materialized value
     /// itself, handed to its consumer, and so has no temporary of its own
-    /// ([`Self::materialize_parameter_read`]).
+    /// ([`Self::materialize_parameter_read`]), however often its span is
+    /// re-inferred.
     pub(in crate::checker) fn consume_parameter_read(&self, expr: &Expr) {
         if !self.is_parameter_read(expr) && !self.is_parameter_value_read(expr) {
             return;
         }
+        self.consumed_parameter_reads
+            .borrow_mut()
+            .insert(expr.source_span());
         let mut records = self.node_facts.borrow_mut();
         let Some(facts) = records.get_mut(&expr.source_span()) else {
             return;

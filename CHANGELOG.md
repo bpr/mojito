@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A field chain off a compile-time struct value now folds through generic
+  structs (`MO.g.s`), and an owned consumer of a folded field takes it whole,
+  so such a field passed as a call argument no longer double-frees or reads a
+  destroyed struct; a folded field that is not `ImplicitlyCopyable`
+  (`r(MO.g)`) is now rejected as at the pin (R1886).
 - An elaborated instance's symbol now spells every value argument by
   escaping its display's bytes, inside a type argument too, so distinct
   values of one compile-time parameter (`String("(")` beside

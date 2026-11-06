@@ -1865,20 +1865,16 @@ impl Checker {
         // A field of a compile-time binding (`q.a` in `def f[q: Q]()`) is
         // upstream's struct extract on the parameter attribute: a parameter
         // expression read as a runtime value, never a read of the whole
-        // binding.
+        // binding. The extract binds a generic instance's arguments into the
+        // field's type (`struct_value_field`), so a chain folds through
+        // `G[Int]` as through any struct.
         if self.comptime_positions.get() == 0
             && self.is_parameter_read(object)
-            && (self.infer(object)?)
-                .kind()
-                .as_non_simd_struct()
-                .is_some_and(|(_, arguments)| arguments.is_empty())
+            && (self.infer(object)?).kind().is_non_simd_struct()
             && let Some(value) = self.struct_value_field(object, field)
         {
             let value = value?;
             if let Some(ty) = value.meta().as_value().cloned() {
-                self.parameter_field_objects
-                    .borrow_mut()
-                    .insert(object.source_span());
                 self.consume_parameter_read(object);
                 self.record_at(span).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::ParamValue {

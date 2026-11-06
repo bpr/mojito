@@ -4461,29 +4461,6 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R1886 A compile-time value's field read as a generic argument
-  fails, where the pin passes it**
-
-  A field of a compile-time struct value (a module `comptime`, a local
-  `comptime` of a generic struct, a `comptime for` binder) passed to a
-  callee taking it as a generic `T` or a pack element is rejected here,
-  where the pin runs it.
-  - Probe: with `comptime FLAG: W = True`, `one(FLAG.n)` over `def one[T:
-    Writable](x: T)` fails MIR verification ("drop.var of slot $v0
-    ('$mat_r0') that some path reaching it does not hold"): the
-    materialized slot's `drop.var` lands before its definition.
-  - Probe: `comptime g = G[Int](5, "gen"); one(g.s)` fails the same way
-    with a `drop.place`.
-  - Probe: `comptime for e in d.items(): one(e.key)` over a compile-time
-    `Dict` fails on the VM ("field access on non-struct None").
-  - Since `print` is a library pack function (R1287), these shapes reach it:
-    `assets/ok/comptime_struct_values.mojo`,
-    `assets/ok/comptime_annotated_implicit_conversion.mojo`, and
-    `assets/ok/comptime_for_borrowing_iterator.mojo` fail until this lands.
-  - Found while landing R1287 (2026-11-03).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1942 A lifted compile-time expression calling a local
   `comptime` closure fails in CTFE, where the pin runs it**
 

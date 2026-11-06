@@ -246,6 +246,7 @@ assets/ok/comptime_sized_scalar_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_slice_application.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_string_field.mojo	main	exe-differential	sanitized
+assets/ok/comptime_struct_value_field_arguments.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_values.mojo	main	exe-differential	sanitized
 assets/ok/comptime_template_body_bindings.mojo	main	exe-differential	sanitized
 assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized

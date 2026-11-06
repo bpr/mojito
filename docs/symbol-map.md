@@ -2616,7 +2616,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`consume_parameter_read`). A field chain off a compile-time binding
   (`Checker::is_parameter_read`, `checker/places.rs`) is a `ParamValue`
   that `Checker::infer_member` records, its root kept from materializing
-  (`parameter_field_objects`); a borrowed one materializes through
+  (`consumed_parameter_reads`, which an owned consumer's operand joins); a borrowed one materializes through
   `ParamValue.materialized`, as `ConstructCollection.materialized` does,
   and an alias substitution folds one off a substituted binder
   (`substituted_field`, `comptime/rewrite.rs`). Only a pack's or a raw

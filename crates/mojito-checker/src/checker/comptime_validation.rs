@@ -4492,6 +4492,28 @@ impl Checker {
         }
     }
 
+    /// Reject a run-time read of a field the check folded off a
+    /// compile-time value (`MO.g`) whose type is not `ImplicitlyCopyable`,
+    /// as the pin rejects materializing it. The object of an enclosing
+    /// field read (`MO.g` of `MO.g.s`) is a projection and never crosses;
+    /// a method's receiver does.
+    pub(super) fn reject_field_crossing(&self, expr: &Expr, ty: &Ty) -> Result<(), TypeError> {
+        if !self.crosses_to_runtime()
+            || self.projected_object.borrow().as_ref() == Some(&expr.source_span())
+            || !self.is_parameter_read(expr)
+            || !self.is_parameter_value_read(expr)
+        {
+            return Ok(());
+        }
+        let resolved = mojito_types::types::default_literal(ty);
+        if mojito_types::types::is_symbolic(&resolved) || self.is_implicitly_copyable(&resolved) {
+            return Ok(());
+        }
+        Err(TypeError::ComptimeCrossing(
+            materialized_collection_spelling(&resolved),
+        ))
+    }
+
     /// The type an expression denotes in a compile-time position, as the
     /// one builder reads it ([`Self::type_operand_expression`]); `None` for
     /// a value, or for an expression that denotes nothing at compile time.
