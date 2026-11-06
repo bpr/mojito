@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time `String` application carrying a literal
+  (`label[pick(n) + "!"]()`) beside a `StringSlice = " "` default, as
+  `print`'s `sep`, no longer mints a colliding `StringSpan` constructor
+  instance: R1867's byte escaping spells the two literals apart, and the
+  symbol test now pins that pair (R1887).
 - A field chain off a compile-time struct value now folds through generic
   structs (`MO.g.s`), and an owned consumer of a folded field takes it whole,
   so such a field passed as a call argument no longer double-frees or reads a

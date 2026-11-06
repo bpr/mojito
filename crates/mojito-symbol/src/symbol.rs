@@ -3580,6 +3580,7 @@ mod tests {
             |text: &str| CtValue::Tuple(vec![CtValue::Str(text.to_string()), CtValue::Int(1)]);
         for (left, right) in [
             (text("("), text(")")),
+            (text(" "), text("!")),
             (pair("("), pair(")")),
             (CtValue::Int(-1), CtValue::Int(1)),
         ] {

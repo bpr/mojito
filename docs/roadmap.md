@@ -4481,23 +4481,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1887 A compile-time application building a `StringSpan` from a
-  literal mints a colliding constructor instance**
-
-  `label[pick(3) + "!"]()`, where `label[s: String]` calls a function
-  with a `sep: StringSlice = " "` default, fails to elaborate: "concrete
-  instance symbol `StringSpan.__init__$ov$StringLiteral$V$value$lit$mono$V$$$`
-  collides with an existing declaration".
-  - The owner-less literal constructor is instantiated under an origin
-    argument both by the compile-time fragment and by the default's call,
-    and the two keys mangle to one symbol.
-  - Since `print`'s `sep` and `end` are such defaults (R1287),
-    `assets/ok/comptime_application_string_float_argument.mojo` fails
-    until this lands.
-  - Found while landing R1287 (2026-11-03).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1805 A module binding of a parameter's name captures
   `origin_of(param)` at a call, so `reversed(xs)` fails beside a user
   `def value()`**

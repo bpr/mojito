@@ -85,7 +85,7 @@ command cannot use both.
      signature, after R1898) and R1899 (a bare pack receiver bound by
      spelling) sit beside them.
    - The elaborator: R1875 → R1876 (a struct's origin parameters and its
-     associated-type rows), R1887, and R1872.
+     associated-type rows) and R1872.
    - The check: R1842, R1871, R1856, R1881, and the generator follow-ups
      of R1486: R1907, R1908, R1909.
    - The members under *H* below were filed against `Elab`'s arms or the
@@ -94,7 +94,7 @@ command cannot use both.
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1905 --task R1948 --task R1899 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1876 --task R1867 \
-     --task R1887 --task R1872 -n 0
+     --task R1872 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1842 --only R1871 --only R1856 \
      --only R1881 --only R1907 --only R1908 --only R1909 -n 0
    ```
