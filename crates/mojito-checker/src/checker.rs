@@ -917,6 +917,10 @@ pub struct Checker {
     /// constraint environment. Final validation runs after those method scopes
     /// have been popped, so it must retain rather than recompute this fact.
     copyable_reference_result_reads: RefCell<FactSet<SourceSpan>>,
+    /// Conditional expressions emitted under a contextual type, as
+    /// upstream's storage sites emit them: each arm converts to it when
+    /// every arm does ([`Self::infer_in_context`]).
+    conditional_contexts: RefCell<FactMap<SourceSpan, Ty>>,
     /// Reference results a statement discards (`f.params(1)` as a
     /// statement, `_ = f.params(1)`): no value is read, so no copy is
     /// required (upstream only warns that the value is unused).
@@ -1153,6 +1157,7 @@ impl Checker {
                 crate::explicit_destroy::CheckedDeletability::default(),
             ),
             copyable_reference_result_reads: RefCell::new(FactSet::default()),
+            conditional_contexts: RefCell::new(FactMap::default()),
             discarded_reference_results: RefCell::new(FactSet::default()),
             borrowed_reference_receivers: RefCell::new(FactSet::default()),
             slice_literals: RefCell::new(HashMap::new()),
@@ -2083,10 +2088,10 @@ impl Checker {
             }
             // Upstream's `@implicit SIMD.__init__(FloatLiteral)` is no
             // builtin body: the conversion is its call, whose instance
-            // asserts a float dtype. A value-less literal (`a if c else
-            // 0.5`) is still the `Float64` it materializes as, and a
-            // scalar-typed expression that folds to a literal is no
-            // conversion (R1845).
+            // asserts a float dtype. A value-less literal (the merge of
+            // `a if c else 0.5` under no contextual type) is still the
+            // `Float64` it materializes as (R1848), and a scalar-typed
+            // expression that folds to a literal is no conversion.
             let literal_typed = matches!(
                 record.ty.as_ref().map(Ty::kind),
                 Some(TyKind::FloatLiteral(Some(_)))

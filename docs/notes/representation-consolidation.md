@@ -119,7 +119,8 @@ command cannot use both.
    - `Bool`: R1840 landed (MIR's `i1` is a register type of its own),
      R1957 (the parameter domain's `i1` casts, after R1955), and R1841
      (`Bool` is an AST keyword).
-   - Numeric literals: R1845 → R1848 → R1849 → R1850 → R1851 deletes the
+   - Numeric literals: R1845 landed (a contextual conditional converts
+     each arm), then R1848 → R1849 → R1850 → R1851 deletes the
      value-less literal type, its run-time register, and its compiler
      kind. R1855 (`IntLiteral.__pow__`'s constraint) is beside them.
    - `StringLiteral`: R1858, R1859, R1860 → R1861 → R1862 delete the

@@ -675,7 +675,7 @@ impl Checker {
                 .check_subscript_reference_assignment(target, value)
                 .map(Some);
         };
-        let found = self.infer_with_expected(value, &element, true)?;
+        let found = self.infer_in_context(value, &element, true)?;
         // A value already of the element type is the setter's argument
         // itself, read in place by a `read` parameter.
         if found == element {
@@ -1020,7 +1020,7 @@ impl Checker {
                 "immutable reference returned by '__getitem__'".to_string(),
             ));
         }
-        let found = self.infer_with_expected(value, &element, true)?;
+        let found = self.infer_in_context(value, &element, true)?;
         if !self.record_implicit_conversion(value, &found, &element)? {
             return Err(TypeError::TypeMismatch {
                 expected: element.to_string(),

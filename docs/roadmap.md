@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1959**.
+Next free ID: **R1962**.
 
 ## Ordered Work
 
@@ -1318,6 +1318,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `R(1) if c else R(2)`, fails the same way after `sroa`.
   - Probe: `o or Optional[Int](4)` over `o: Optional[Int]` (R97's
     `and`/`or` yield the same `if` result).
+  - Probe: `var o: Optional[Int] = 1 if c else None` and `= None if c
+    else 1`, whose arms convert to the annotation, fail the same way;
+    the pin prints `False` and `1`.
   - Found while landing R97 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4486,6 +4489,30 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R1960 An integer literal does not convert to a `bool` lane, so
+  `~` over a mask fails, where the pin's `#pop.int_literal_convert`
+  takes any lane**
+
+  `~m` over a `Scalar[DType.bool]` or `SIMD[DType.bool, 2]` mask fails
+  ("literal value -1 cannot be represented as Bool", or for a vector "cannot
+  materialize IntLiteral[-1] as SIMD[DType.bool, 2]"), where the pin prints
+  `False` and `[False, False]`.
+  - `SIMD.__invert__` is upstream's `self ^ -1`, whose `-1` converts to
+    `Self` at a `bool` lane.
+  - `CtLane::of_int_literal` (`mojito-types/src/ct.rs`) refuses a `bool`
+    lane, and the MIR verifier's vector arm of `literal.materialize`
+    (`verify/instr.rs`) tests `types::splats_to`, the checker's literal
+    coercion rule, which refuses one too.
+  - Lever: convert an integer literal to an `i1` lane as the pin does
+    (its low bit or nonzero, per the pin), in `CtLane`, the VM, and
+    Pliron, and accept any lane in the verifier's vector arm as its
+    scalar arm does.
+  - Probe: `assets/ok/math_log.mojo` fails in `std.math.frexp`'s mask
+    `~`.
+  - Found while landing R1845 (2026-11-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1942 A lifted compile-time expression calling a local
   `comptime` closure fails in CTFE, where the pin runs it**
 
@@ -6690,32 +6717,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1845 A conditional expression joins two float literals to a
-  value-less literal, where upstream converts each arm to the expected
-  type**
-
-  Problem: `var x: Int32 = A if c else 0.25` over `comptime A = 0.5` is a
-  type mismatch ("expected Int32, found Float64"), where the pin converts
-  each arm through `SIMD`'s `@implicit __init__(FloatLiteral)` and fails
-  its "the SIMD type must be floating point" assert.
-  - Cause: `ExprKind::IfExpr` inference (`checker/inference.rs`) types the
-    arms without the expected type and `coerce_to_each_other` joins two
-    distinct literals to the value-less `FloatLiteral`
-    (`builtins::common_literal`), which is `Float64` below the checker,
-    so the declared conversion never sees a literal.
-  - `Checker::record_literal_materializations` therefore keeps
-    `MaterializeLiteral` for a value-less literal and for a scalar-typed
-    expression that folds to a literal (`Checker::infer`), and MIR's
-    `literal_materializes_to` (`mir/calls.rs`) still reads `FloatLiteral`
-    arms for them. std's `Scalar[dtype](_LN2_HI_F64 if is_f64 else
-    6.93e-01)` in `_log_combine` takes that path.
-  - Lever: check each arm against the expected type when one flows, as
-    upstream does, and drop the value-less join's materialization.
-  - Probe: `conformance/probes/ternary_float_literal_arms_int_lane.mojo`.
-  - Found while landing R1789 (2026-11-02).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1847 A compile-time construction whose initializer overload
   fails reports a generic error, not the pin's overload failure**
 
@@ -6810,7 +6811,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `var x = 1 if c else 2; print(_unqualified_type_name[type_of(x)]())`
     prints `SIMD[DType.int, 1]` at the pin, and `emit-mir` of it holds no
     `IntLiteral` register.
-  - Depends on R1845.
+  - Probe: `f(0.5 if c else 0.25)` over `def f(x: Float32)` runs, where
+    the pin reports "cannot be converted from 'Float64' to 'Float32'": a
+    call argument is no contextual site, so the arms merge first.
+  - Probe: `var y: Float32 = 0.5 if c else (0.25 if d else 0.125)` runs,
+    where the pin cannot convert the nested arm's `Float64`.
+  - Probe: `comptime B = 0.5 if True else 0.25` then `var x: Float32 = B`
+    runs, where the pin's `B` is a `Float64`.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1849 A value-less `IntLiteral`/`FloatLiteral` type still exists,
@@ -11062,6 +11070,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `g(Lit(4))` over `def g(x: Optional[Big])`, with `Lit` a
     register-passable `@__nonmaterializable(Big)` struct and `Big` an
     `@implicit` constructor from it, is rejected; the pin accepts it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1959 A literal reaches an implicit constructor's parameter
+  through a second conversion, where upstream converts once**
+
+  `var o: Optional[Float32] = 0.5` runs, where the pin reports "cannot
+  implicitly convert 'FloatLiteral[0.5]' value to 'Optional[Float32]'".
+  - `Checker::implicit_conversion_constructor` (`checker.rs`) admits a
+    constructor whose parameter the source `coerces` to, and `coerces`
+    takes a literal into any `SIMD` lane, which upstream does through
+    `SIMD`'s own `@implicit` initializer.
+  - Upstream converts once: a literal reaches `Optional[T]`'s `@implicit
+    __init__(T)` only as the type it materializes to (`Int`, `Float64`).
+  - Lever: test the parameter against the source and its materialization
+    target only, not the literal's lane coercion.
+  - Probe: `var o: Optional[Float32] = 0.5 if c else None` is accepted at
+    the checker, where the pin's merge reports "FloatLiteral[0.5] is not
+    compatible with None".
+  - Found while landing R1845 (2026-11-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

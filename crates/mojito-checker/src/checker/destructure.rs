@@ -77,7 +77,7 @@ impl Checker {
         // A tuple display is typed against the target's tuple type, so each
         // element converts to its place's type where it is built.
         let vt = match self.display_target_ty(items, value) {
-            Some(expected) => self.infer_with_expected(value, &expected, true)?,
+            Some(expected) => self.infer_in_context(value, &expected, true)?,
             None => self.infer(value)?,
         };
         // A place is read element by element through the reference it

@@ -496,7 +496,12 @@ impl Checker {
             .and_then(|ty| self.reject_runtime_deferred_call(expr, ty))
             .map(|ty| self.carry_literal_value(expr, ty));
         if let Ok(ty) = &result {
+            // A contextual conditional's arms carry their own conversions.
             if is_scalar_simd(ty)
+                && !self
+                    .conditional_contexts
+                    .borrow()
+                    .contains_key(&expr.source_span())
                 && let Some(literal_ty) = self
                     .exact_literal_value(expr)
                     .as_ref()
@@ -1540,57 +1545,14 @@ impl Checker {
             ExprKind::Named { value, .. } => self
                 .fact(&expr.source_span(), |facts| facts.ty.as_ref())
                 .map_or_else(|| self.infer(value), Ok),
-            // Ternary `a if cond else b`: `cond` must be `Bool`; the branches must
-            // have a common type (the result type). A parameter-valued
-            // condition is checked as a `comptime if` condition is, and its
-            // then arm under the conformances it proves.
+            // Ternary `a if cond else b`: `cond` must be `Bool`; under a
+            // contextual type each arm converts to it when every arm does,
+            // else the branches must have a common type (the result type).
             ExprKind::IfExpr {
                 cond,
                 then_branch,
                 else_branch,
-            } => {
-                let tt = if self.parameter_valued_condition(cond) {
-                    let constraint = self.check_comptime_condition(cond, ComptimeTest::If)?;
-                    self.record_at(expr.source_span()).comptime_conditional = true;
-                    self.assume_condition(cond, Some(&constraint))?;
-                    let tt = self.infer(then_branch);
-                    self.pop_assumptions();
-                    tt?
-                } else {
-                    self.expect_bool(cond, "conditional-expression condition")?;
-                    self.infer(then_branch)?
-                };
-                let et = self.infer(else_branch)?;
-                // A place arm is copied into the conditional's owned result,
-                // which only an implicitly copyable value allows.
-                for (arm, ty) in [(then_branch, &tt), (else_branch, &et)] {
-                    if self.designates_place(arm) && self.is_copyable(ty) {
-                        if !self.is_implicitly_copyable(ty) {
-                            return Err(TypeError::ImplicitCopy {
-                                ty: ty.to_string(),
-                                context: "conditional-expression arm".to_string(),
-                                transferable: true,
-                                copyable: true,
-                            });
-                        }
-                        self.record_at(arm.source_span()).copy_place_value_use = true;
-                    }
-                }
-                let ty = self
-                    .coerce_to_each_other(then_branch, &tt, else_branch, &et)?
-                    .ok_or_else(|| TypeError::TypeMismatch {
-                        expected: tt.to_string(),
-                        found: et.to_string(),
-                        context: "conditional-expression branches".to_string(),
-                    })?;
-                // A result only possibly register-passable (a parameter, a
-                // conditional conformance) is stored, as upstream's
-                // parse-time `isRegisterPassable` does in a generator.
-                if self.register_passability(&ty) == RegisterPassability::Proven {
-                    self.record_at(expr.source_span()).register_passable_result = true;
-                }
-                Ok(ty)
-            }
+            } => self.infer_conditional(expr, cond, then_branch, else_branch),
             // Chained comparison `a < b < c`: each link is a comparison; the
             // result is `Bool`.
             ExprKind::Compare { first, rest } => {
@@ -2529,6 +2491,23 @@ impl Checker {
         Ok(expected.clone())
     }
 
+    /// Infer a value emitted under a contextual type, as upstream emits a
+    /// storage site's value (a binding annotation, an assignment, a
+    /// `return`, a store, a default): a conditional expression converts
+    /// each arm to `expected` when every arm converts
+    /// ([`Self::infer_conditional`]), and so does one a tuple display
+    /// holds under a tuple type. A call argument is emitted without one,
+    /// so argument sites keep [`Self::infer_with_expected`].
+    pub(super) fn infer_in_context(
+        &self,
+        expression: &Expr,
+        expected: &Ty,
+        record: bool,
+    ) -> Result<Ty, TypeError> {
+        self.mark_conditional_contexts(expression, expected);
+        self.infer_with_expected(expression, expected, record)
+    }
+
     /// Infer the common element type of a non-empty list of expressions: numeric
     /// elements unify (widening literals), non-numeric elements must match; the
     /// result is materialized (a literal → its concrete default).
@@ -3440,6 +3419,116 @@ impl Checker {
             ));
         }
         Ok(found)
+    }
+
+    /// Mark each conditional expression `expression` emits under
+    /// `expected`: itself, or a tuple display's elements under a tuple
+    /// type's.
+    fn mark_conditional_contexts(&self, expression: &Expr, expected: &Ty) {
+        match &expression.kind {
+            ExprKind::IfExpr { .. } => {
+                self.conditional_contexts
+                    .borrow_mut()
+                    .insert(expression.source_span(), expected.clone());
+            }
+            ExprKind::TupleLit(values) => {
+                if let Some(elements) = tuple_elements(expected)
+                    && elements.len() == values.len()
+                {
+                    for (value, element) in values.iter().zip(elements) {
+                        self.mark_conditional_contexts(value, element);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Type `then_branch if cond else else_branch` as upstream emits it.
+    /// Each arm is inferred without context. Under a contextual type
+    /// ([`Self::infer_in_context`]) every arm converting to it converts and
+    /// the result is that type; otherwise the arms merge
+    /// ([`Self::coerce_to_each_other`]). A parameter-valued condition is
+    /// checked as a `comptime if` condition is, and its then arm under the
+    /// conformances it proves.
+    fn infer_conditional(
+        &self,
+        expr: &Expr,
+        cond: &Expr,
+        then_branch: &Expr,
+        else_branch: &Expr,
+    ) -> Result<Ty, TypeError> {
+        let tt = if self.parameter_valued_condition(cond) {
+            let constraint = self.check_comptime_condition(cond, ComptimeTest::If)?;
+            self.record_at(expr.source_span()).comptime_conditional = true;
+            self.assume_condition(cond, Some(&constraint))?;
+            let tt = self.infer(then_branch);
+            self.pop_assumptions();
+            tt?
+        } else {
+            self.expect_bool(cond, "conditional-expression condition")?;
+            self.infer(then_branch)?
+        };
+        let et = self.infer(else_branch)?;
+        // A place arm is copied into the conditional's owned result,
+        // which only an implicitly copyable value allows.
+        for (arm, ty) in [(then_branch, &tt), (else_branch, &et)] {
+            if self.designates_place(arm) && self.is_copyable(ty) {
+                if !self.is_implicitly_copyable(ty) {
+                    return Err(TypeError::ImplicitCopy {
+                        ty: ty.to_string(),
+                        context: "conditional-expression arm".to_string(),
+                        transferable: true,
+                        copyable: true,
+                    });
+                }
+                self.record_at(arm.source_span()).copy_place_value_use = true;
+            }
+        }
+        let contextual = self
+            .conditional_contexts
+            .borrow()
+            .get(&expr.source_span())
+            .cloned();
+        let ty = match contextual {
+            Some(expected) if self.every_arm_converts(&[&tt, &et], &expected)? => {
+                for (arm, ty) in [(then_branch, &tt), (else_branch, &et)] {
+                    self.record_implicit_conversion(arm, ty, &expected)?;
+                }
+                expected
+            }
+            _ => self
+                .coerce_to_each_other(then_branch, &tt, else_branch, &et)?
+                .ok_or_else(|| TypeError::TypeMismatch {
+                    expected: tt.to_string(),
+                    found: et.to_string(),
+                    context: "conditional-expression branches".to_string(),
+                })?,
+        };
+        // A result only possibly register-passable (a parameter, a
+        // conditional conformance) is stored, as upstream's
+        // parse-time `isRegisterPassable` does in a generator.
+        if self.register_passability(&ty) == RegisterPassability::Proven {
+            self.record_at(expr.source_span()).register_passable_result = true;
+        }
+        Ok(ty)
+    }
+
+    /// Whether every arm type converts implicitly to `expected`; nothing
+    /// converts to a type parameter it is not.
+    fn every_arm_converts(&self, arms: &[&Ty], expected: &Ty) -> Result<bool, TypeError> {
+        for arm in arms {
+            let converts = if matches!(expected.kind(), TyKind::Param { .. }) {
+                *arm == expected
+            } else {
+                self.value_coerces(arm, expected)
+                    || self.implicit_conversion_target(arm, expected)?.is_some()
+            };
+            if !converts {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 

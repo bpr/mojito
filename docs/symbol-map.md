@@ -1478,7 +1478,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   that is a call (`hold_tested_operand`), and a memory-only result goes
   through a result slot (`short_circuit_into_slot`). Both conditionals take
   their arms' common type from `Checker::coerce_to_each_other`, upstream's
-  `coerceTypesToEachOther`, and a compile-time `and`/`or` folds through
+  `coerceTypesToEachOther`, except that a conditional expression a
+  storage site emits through `Checker::infer_in_context`
+  (`checker/inference.rs`, recorded in `Checker::conditional_contexts`)
+  converts each arm to its contextual type when every arm converts
+  (`Checker::infer_conditional`), and a compile-time `and`/`or` folds through
   `Checker::short_circuit_value` (`checker/constraints.rs`). A conditional the checker marked
   `SemanticAdjustment::ComptimeConditional` (`Node::comptime_conditional`;
   `Checker::parameter_valued_condition`, `checker/comptime_validation.rs`,

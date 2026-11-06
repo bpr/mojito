@@ -1517,7 +1517,7 @@ impl Checker {
                     None => (None, Vec::new()),
                 };
                 let found = match contextual.as_ref() {
-                    Some(expected) => self.infer_with_expected(value, expected, true)?,
+                    Some(expected) => self.infer_in_context(value, expected, true)?,
                     None => self.infer(value)?,
                 };
                 // A borrowing view conversion (`var s: Span[Int, _] = xs`)
@@ -1725,7 +1725,7 @@ impl Checker {
                             TyKind::Ref(reference) => reference.referent.clone(),
                             _ => target.clone(),
                         };
-                        self.infer_with_expected(value, &expected, true)?
+                        self.infer_in_context(value, &expected, true)?
                     }
                     None => self.infer(value)?,
                 };
@@ -2279,7 +2279,7 @@ impl Checker {
                     {
                         self.comptimes.insert(name.clone(), v);
                     }
-                    let found = self.infer_with_expected(value, &expected, true)?;
+                    let found = self.infer_in_context(value, &expected, true)?;
                     if !self.record_implicit_conversion(value, &found, &expected)? {
                         return Err(TypeError::TypeMismatch {
                             expected: expected.to_string(),
@@ -2607,7 +2607,7 @@ impl Checker {
                         .then(|| self.body_return_type())
                         .flatten();
                         self.reconcile_return_origin_tails(
-                            &self.infer_with_expected(
+                            &self.infer_in_context(
                                 e,
                                 contextual.as_ref().unwrap_or(expected),
                                 true,
@@ -2803,7 +2803,7 @@ impl Checker {
         // The place's type is the assignment's expected context, so a
         // collection display materializes against it (`self.items =
         // [7, 8, 9]` stays `List[Int]` for a List-typed field).
-        let found = self.infer_with_expected(value, &target, true)?;
+        let found = self.infer_in_context(value, &target, true)?;
         if let Ok(destination) = self.origin_place(place) {
             self.check_result_aliases_destination(&destination, value)?;
         }
@@ -4036,7 +4036,7 @@ impl Checker {
             if let Some(name) = self.dynamic_default_reference(d) {
                 return Err(TypeError::DynamicDefault(name));
             }
-            let dty = self.infer_with_expected(d, pty, true)?;
+            let dty = self.infer_in_context(d, pty, true)?;
             // Fall back to an `@implicit` converting constructor, like the
             // binding and argument positions do (records the ctor target so
             // the omitted-arg default materializes it). A `None` default for

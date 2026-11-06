@@ -3573,6 +3573,31 @@ fn parameter_valued_conditions_mark_their_conditionals_comptime() {
 }
 
 #[test]
+fn conditional_under_contextual_type_converts_each_arm() {
+    // Every arm converts to the annotation, so each converts and the
+    // conditional is of the annotated type, as at the pin.
+    ok_std(
+        "def main():\n    var c = False\n    var o: Optional[String] = String(\"a\") if c else None\n    print(o.__bool__())\n",
+    );
+    // An arm that does not convert leaves the ordinary merge, which fails.
+    let error = err_std(
+        "def main():\n    var c = False\n    var o: Optional[Float32] = Float32(0.5) if c else String(\"x\")\n    print(o.__bool__())\n",
+    );
+    assert!(
+        format!("{error:?}").contains("conditional-expression branches"),
+        "got {error:?}"
+    );
+    // A call argument is no contextual site: the arms merge first.
+    let error = err_std(
+        "def f(o: Optional[String]):\n    pass\n\ndef main():\n    var c = False\n    f(String(\"a\") if c else None)\n",
+    );
+    assert!(
+        format!("{error:?}").contains("conditional-expression branches"),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn display_argument_to_generic_constructor_constructs_its_parameter() {
     // The display is checked against the solved `List[String]` last, so its
     // span records the collection construction, not the bare `Array`

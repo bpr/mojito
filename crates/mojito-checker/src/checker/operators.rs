@@ -390,7 +390,8 @@ impl Checker {
     /// else the right's when the left does; nothing converts to a type
     /// parameter it is not. Each value's conversion to it is
     /// recorded at the value, a literal's materialization included. `None`
-    /// when neither converts.
+    /// when neither converts. A conditional expression under a contextual
+    /// type converts each arm to it first ([`Self::infer_in_context`]).
     pub(super) fn coerce_to_each_other(
         &self,
         left: &Expr,

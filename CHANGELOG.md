@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A conditional expression under a contextual type (a binding or
+  `comptime` annotation, an assignment, a `return`, a field or subscript
+  store, a parameter default, or a tuple display element under one) now
+  converts each arm to that type when every arm converts, as the pin
+  emits it, and merges the arms otherwise. `var o: Optional[String] =
+  String("a") if c else None` runs, and `var x: Int32 = A if c else 0.25`
+  fails the `FloatLiteral` initializer's assert as at the pin; a call
+  argument still merges first (R1845).
 - An implicit literal conversion at a multi-lane or symbolic-width `SIMD`
   (`return 1` at a vector, a literal default at a vector parameter) is
   now one `literal.materialize` at the whole `!kgen.simd` storage plus

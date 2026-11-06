@@ -2447,7 +2447,7 @@ impl Checker {
         if let Some(name) = self.dynamic_default_reference(default) {
             return Err(TypeError::DynamicDefault(name));
         }
-        let found = self.infer_with_expected(default, expected, true)?;
+        let found = self.infer_in_context(default, expected, true)?;
         // Fall back to an `@implicit` converting constructor (records the
         // ctor target for omitted-arg materialization), matching the
         // free-function default path and the binding/argument positions.
