@@ -205,10 +205,10 @@ pub(in crate::checker) struct ApplicableFunction {
     /// ([`mojito_ast::ast::MethodProvenance::SynthesizedDefault`]), whose
     /// compiled header condition joins its constraints.
     gate: Option<String>,
-    /// Those clauses compiled over the same argument slots and its struct's
-    /// binders ([`Checker::compile_application_constraints`]); `None` until
-    /// they compile, and a callable whose clauses do not is applied by no
-    /// call.
+    /// Those clauses as its signature emits them, over its own declared
+    /// binders and its struct's ([`Checker::compile_application_constraints`]);
+    /// `None` until they compile, and a callable whose clauses do not is
+    /// applied by no call.
     pub(in crate::checker) constraints: Option<Vec<GenericConstraint>>,
 }
 
@@ -350,6 +350,51 @@ impl ApplicableFunction {
                 })
                 .collect(),
         )
+    }
+
+    /// Its own compile-time parameters as its signature declares them,
+    /// which its `where` clauses read; `None` until they classify.
+    pub(in crate::checker) fn declared_binders(&self) -> Option<&[ParamDecl]> {
+        self.signature
+            .as_ref()
+            .map(|signature| signature.decls.as_slice())
+    }
+
+    /// Take `clauses`, emitted by its registered signature over its binders
+    /// `decls`, as its constraints, each binder re-owned to the one its
+    /// own declared binder at that position is: an overloaded callable's
+    /// signature owns them by its typed symbol, not its key. Clauses that
+    /// do not re-own leave it applied by no call.
+    fn publish_constraints(
+        &mut self,
+        context: &mojito_types::param_expr::ParamContext,
+        decls: &[ParamDecl],
+        clauses: Option<Vec<GenericConstraint>>,
+    ) {
+        let Some(own) = self.declared_binders() else {
+            return;
+        };
+        let reowned = if decls
+            .iter()
+            .map(ParamDecl::id)
+            .eq(own.iter().map(ParamDecl::id))
+        {
+            clauses
+        } else {
+            let bindings = mojito_types::types::own_parameter_bindings(decls, own);
+            clauses.and_then(|clauses| {
+                clauses
+                    .iter()
+                    .map(|clause| {
+                        mojito_types::types::replace_constraint_parameters(
+                            context, clause, &bindings,
+                        )
+                        .ok()
+                    })
+                    .collect()
+            })
+        };
+        self.constraints = reowned;
     }
 
     /// The [`Self::argument_slots`] position of its collector, which takes
@@ -1986,16 +2031,20 @@ impl Checker {
         function.raises.then_some(function.symbol())
     }
 
-    /// Compile the `where` clauses of each callable `stmts` declare that a
-    /// compile-time call applies, over its argument slots and its struct's
-    /// binders, as [`Self::fold_builtin_bodies`] folds a builtin body, and
-    /// join a synthesized member's gating conformance condition, already
-    /// compiled over its struct's binders. A callable whose clauses do not
-    /// compile is applied by no call.
+    /// Emit the `where` clauses of each callable `stmts` declare that a
+    /// compile-time call applies, as its signature emits them: in its
+    /// signature's scope, over its own declared binders and its struct's
+    /// ([`Self::in_signature_clause_scope`]), joined by a synthesized
+    /// member's gating conformance condition, already compiled over its
+    /// struct's binders. A callable whose clauses do not compile yet keeps
+    /// none, and a later run, once the aliases and traits a clause names
+    /// have registered, emits them again; one already emitted is kept.
     pub(super) fn compile_application_constraints(&mut self, stmts: &[Stmt]) {
         let declarations = self.listed_declarations(stmts);
         for declaration in declarations {
-            let clauses = declaration.function.where_clauses();
+            if declaration.function.constraints.is_some() {
+                continue;
+            }
             // `None` when the gate's condition does not compile.
             let gate = match declaration.function.gate() {
                 None => Some(None),
@@ -2007,22 +2056,20 @@ impl Checker {
                     })
                     .and_then(|owner| self.conformance_availability(&owner, gate).ok()),
             };
-            if clauses.is_empty() && matches!(gate, Some(None)) {
-                continue;
-            }
             let compiled = self
-                .in_argument_scope(&declaration, |checker, _| {
-                    clauses
+                .in_signature_clause_scope(&declaration, |checker, decls| {
+                    declaration
+                        .function
+                        .where_clauses()
                         .iter()
                         .map(|clause| {
                             checker
                                 .compile_where_clause(clause)
-                                .map(|constraint| checker.bind_constraint(&constraint, &[]))
+                                .map(|constraint| checker.bind_constraint(&constraint, decls))
                         })
                         .collect::<Result<Vec<_>, _>>()
                         .ok()
                 })
-                .flatten()
                 .zip(gate)
                 .map(|(mut compiled, gate)| {
                     compiled.extend(gate);
@@ -2116,27 +2163,7 @@ impl Checker {
     /// module `def` `statement` by `symbol`, the one the check spelled from
     /// its typed signature.
     pub(super) fn name_applicable_def(&mut self, statement: &Stmt, symbol: &str) {
-        let StmtKind::Def {
-            name,
-            type_params,
-            params,
-            ..
-        } = &statement.kind
-        else {
-            return;
-        };
-        let key = mojito_symbol::symbol::lowered_def_name(
-            name,
-            type_params,
-            params,
-            &*self.overload_sets,
-            &*self.program_constants,
-        );
-        if let Some(entry) = self
-            .applicable_functions
-            .get_mut(name)
-            .and_then(|overloads| overloads.iter_mut().find(|function| function.key == key))
-        {
+        if let Some(entry) = self.listed_def_entry(statement) {
             entry.lowered = Some(symbol.to_string());
         }
     }
@@ -2151,6 +2178,89 @@ impl Checker {
         m: &mojito_ast::ast::Method,
         symbol: &str,
     ) {
+        if let Some(entry) = self.listed_method_entry(structure, type_params, m) {
+            entry.lowered = Some(symbol.to_string());
+        }
+    }
+
+    /// Publish the `where` clauses the registered signature of module `def`
+    /// `statement` emitted over its binders `decls` as the clauses a
+    /// compile-time call of it reads, as upstream's application reads the
+    /// one emitted signature's. `None` for clauses no call can bind (an
+    /// erased origin-mutability binder's).
+    pub(super) fn publish_def_constraints(
+        &mut self,
+        statement: &Stmt,
+        decls: &[ParamDecl],
+        clauses: Option<Vec<GenericConstraint>>,
+    ) {
+        let context = self.param_context.clone();
+        if let Some(entry) = self.listed_def_entry(statement) {
+            entry.publish_constraints(&context, decls, clauses);
+        }
+    }
+
+    /// [`Self::publish_def_constraints`] for method `m` of struct
+    /// `structure`: its availability, its gate included.
+    pub(super) fn publish_method_constraints(
+        &mut self,
+        structure: &str,
+        type_params: &[mojito_ast::ast::TypeParam],
+        m: &mojito_ast::ast::Method,
+        decls: &[ParamDecl],
+        availability: &[GenericConstraint],
+    ) {
+        let context = self.param_context.clone();
+        if let Some(entry) = self.listed_method_entry(structure, type_params, m) {
+            entry.publish_constraints(&context, decls, Some(availability.to_vec()));
+        }
+    }
+
+    /// The entry [`applicable_functions`] lists for `declaration`.
+    pub(super) fn applicable_entry(
+        &mut self,
+        declaration: &ApplicableDeclaration<'_>,
+    ) -> Option<&mut ApplicableFunction> {
+        self.applicable_functions
+            .get_mut(&declaration.name)?
+            .iter_mut()
+            .find(|function| function.key == declaration.function.key)
+    }
+
+    /// The entry [`applicable_functions`] lists for module `def`
+    /// `statement`, by the key its syntax spells.
+    fn listed_def_entry(&mut self, statement: &Stmt) -> Option<&mut ApplicableFunction> {
+        let StmtKind::Def {
+            name,
+            type_params,
+            params,
+            ..
+        } = &statement.kind
+        else {
+            return None;
+        };
+        let key = mojito_symbol::symbol::lowered_def_name(
+            name,
+            type_params,
+            params,
+            &*self.overload_sets,
+            &*self.program_constants,
+        );
+        self.applicable_functions
+            .get_mut(name)?
+            .iter_mut()
+            .find(|function| function.key == key)
+    }
+
+    /// The entry [`applicable_functions`] lists for method `m` of struct
+    /// `structure`, by the key its syntax spells: an `out self`
+    /// initializer's under the struct's name.
+    fn listed_method_entry(
+        &mut self,
+        structure: &str,
+        type_params: &[mojito_ast::ast::TypeParam],
+        m: &mojito_ast::ast::Method,
+    ) -> Option<&mut ApplicableFunction> {
         let (listed, source) =
             if m.name == "__init__" && m.self_convention == Some(ArgConvention::Out) {
                 (structure.to_string(), format!("{structure}.__init__"))
@@ -2165,24 +2275,10 @@ impl Checker {
             &*self.overload_sets,
             &*self.program_constants,
         );
-        if let Some(entry) = self
-            .applicable_functions
-            .get_mut(&listed)
-            .and_then(|overloads| overloads.iter_mut().find(|function| function.key == key))
-        {
-            entry.lowered = Some(symbol.to_string());
-        }
-    }
-
-    /// The entry [`applicable_functions`] lists for `declaration`.
-    pub(super) fn applicable_entry(
-        &mut self,
-        declaration: &ApplicableDeclaration<'_>,
-    ) -> Option<&mut ApplicableFunction> {
         self.applicable_functions
-            .get_mut(&declaration.name)?
+            .get_mut(&listed)?
             .iter_mut()
-            .find(|function| function.key == declaration.function.key)
+            .find(|function| function.key == key)
     }
 
     /// `declaration`'s own compile-time parameters classified, its result
@@ -2234,6 +2330,57 @@ impl Checker {
             },
             params?,
         ))
+    }
+
+    /// `f` run in `declaration`'s signature scope, as its own signature is
+    /// emitted ([`Self::in_signature_scope`]): within its struct's member
+    /// scope, its declared binders open, its `self` and runtime parameters
+    /// typed names, its collector the list of its element. `f` receives the
+    /// declared binders; `None` until its parameters classify.
+    fn in_signature_clause_scope<T>(
+        &mut self,
+        declaration: &ApplicableDeclaration<'_>,
+        f: impl FnOnce(&mut Self, &[ParamDecl]) -> Option<T>,
+    ) -> Option<T> {
+        let function = &declaration.function;
+        let decls = function.declared_binders()?;
+        self.in_owner_scope(declaration, |checker| {
+            let receiver = checker.self_ty.clone().filter(|_| function.takes_self());
+            checker.push_param_scope(decls);
+            let result = checker
+                .in_signature_scope(receiver.as_ref(), |checker| {
+                    let owner = checker.self_ty.clone();
+                    let params = function
+                        .params
+                        .iter()
+                        .map(|param| {
+                            Some((
+                                param.name.as_str(),
+                                param.ty.resolved(owner.as_ref())?.clone(),
+                            ))
+                        })
+                        .chain(function.collector.as_ref().map(|collector| {
+                            let element = collector.element.resolved(owner.as_ref())?.clone();
+                            Some((
+                                collector.name.as_str(),
+                                mojito_types::types::variadic_collector_type(element, None),
+                            ))
+                        }))
+                        .collect::<Option<Vec<_>>>();
+                    let Some(params) = params else {
+                        return Ok(None);
+                    };
+                    for (name, ty) in params {
+                        checker.declare_signature_parameter(name, ty)?;
+                    }
+                    Ok(f(checker, decls))
+                })
+                .ok()
+                .flatten();
+            checker.tparams.pop();
+            result
+        })
+        .flatten()
     }
 
     /// The rejection of a compile-time call whose callee's `where` clause
@@ -2817,7 +2964,11 @@ impl Checker {
             }
             _ => None,
         };
-        let mut environment = ConstraintEnvironment::declared(&slots, &arguments);
+        let declared_binders = selected.function.declared_binders()?;
+        let mut environment = ConstraintEnvironment::declared(
+            declared_binders,
+            arguments.get(..declared_binders.len())?,
+        );
         if let Some((decls, declared)) = &instance {
             environment.bind_declared(decls, declared);
         }

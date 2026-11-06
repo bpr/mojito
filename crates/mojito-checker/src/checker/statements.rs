@@ -241,9 +241,11 @@ impl Checker {
         // A callable bounded by a trait or typed by an alias this module
         // declares classifies once they have registered, and so does a
         // trait whose member's parameter is typed by one (`name:
-        // StaticString`).
+        // StaticString`), and so do the `where` clauses of a callable
+        // naming one (`where IsN[n]`).
         self.classify_applicable_signatures(stmts);
         self.settle_deferred_traits(stmts, &mut deferred_traits);
+        self.compile_application_constraints(stmts);
         self.compile_pending_header_conditions(stmts);
         self.resolve_materialization_targets(stmts, true)?;
         drop(phase);
@@ -2927,7 +2929,11 @@ impl Checker {
             }
             let declared = self
                 .in_def_context(stmt, |this| this.def_signature(stmt, false))
-                .and_then(|signature| self.bind_def(stmt, false, &signature));
+                .and_then(|signature| {
+                    self.bind_def(stmt, false, &signature)?;
+                    self.publish_def_constraints(stmt, &signature.decls, signature.clauses);
+                    Ok(())
+                });
             if declared.is_ok() {
                 self.predeclared_functions.insert(stmt.source_span());
             } else {
@@ -3823,6 +3829,7 @@ impl Checker {
         })?;
         let mut function_assumptions = Vec::new();
         let mut erased_origin_constraints = Vec::new();
+        let clauses = compiled.clone();
         for constraint in compiled {
             self.guaranteed_facts(&constraint, &mut function_assumptions);
             if let Some(last) = decls.last_mut() {
@@ -3947,6 +3954,9 @@ impl Checker {
             },
             fn_ty.clone(),
         );
+        // A call binds no erased origin-mutability binder, so a clause
+        // reading one is no application's.
+        let clauses = erased_origin_constraints.is_empty().then_some(clauses);
         let mut origin_signature =
             callable_origin_signature(type_params, caller_regular, erased_origin_constraints);
         origin_signature.view_return =
@@ -3954,6 +3964,7 @@ impl Checker {
         origin_signature.unavailable.clone_from(&unavailable);
         Ok(DefSignature {
             owner,
+            clauses,
             decls,
             param_tys,
             ret_ty,
@@ -4556,6 +4567,10 @@ fn capture_referent(ty: &Ty) -> &Ty {
 /// checking its body read.
 struct DefSignature {
     owner: String,
+    /// Its `where` clauses as emitted over `decls`, which a compile-time
+    /// call of it reads; `None` when one reads an erased origin-mutability
+    /// binder, which no call binds.
+    clauses: Option<Vec<GenericConstraint>>,
     decls: Vec<ParamDecl>,
     param_tys: Vec<Ty>,
     ret_ty: Ty,

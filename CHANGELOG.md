@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time application now reads its callee's `where` clauses as
+  the callee's signature emits them, over the callable's own declared
+  binders, instead of recompiling them over its argument slots (R1898).
+  The clauses emit again once generic aliases and traits register, so a
+  clause naming a later-registered alias (`where IsN[n]`) is checked at
+  an application (`take[g[3]()]()` reports the violated constraint, as
+  the pin does) instead of being dropped, and a registered signature's
+  clauses (a method's availability) are the ones a later application
+  reads.
 - The compile-time capturing-callable environment is gone (R1889): a
   capture set is now always the concrete `OriginSet` of a materialized
   closure (`CaptureOriginSet` is that set; its `Infer`/`Param` forms,

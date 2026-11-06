@@ -80,9 +80,10 @@ command cannot use both.
    and R1482 landed too. What is left:
    - One condition builder: R1901–R1904 move the constraint compiler's
      remaining operands onto the one builder, then R1905 drops the
-     constraint beside MIR's `Bool` value. R1898 (a compile-time
-     application recompiles its callable's `where` clauses) and R1899 (a
-     bare pack receiver bound by spelling) sit beside them.
+     constraint beside MIR's `Bool` value. R1948 (a callable's `where`
+     clauses compile twice, early for applications and again at its
+     signature, after R1898) and R1899 (a bare pack receiver bound by
+     spelling) sit beside them.
    - The elaborator: R1875 → R1876 (a struct's origin parameters and its
      associated-type rows), R1867, R1886, R1887, and R1872.
    - The check: R1842, R1871, R1856, R1881, and the generator follow-ups
@@ -91,7 +92,7 @@ command cannot use both.
      checker's folds. Re-probe each before planning it.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1905 --task R1898 --task R1899 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1905 --task R1948 --task R1899 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1876 --task R1867 \
      --task R1886 --task R1887 --task R1872 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1842 --only R1871 --only R1856 \
@@ -207,7 +208,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none (R1874 landed 11-05) | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1933, R1868, R1882, R1462, R1936, R1937, R1544 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1892 → R1893 → R1894 | R1349, R1870, R1888 | yes |
-| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1901–R1904 → R1905, R1898 | about 25 (below) | partial |
+| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1901–R1904 → R1905, R1948 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1910 → R1912 | about 20 (below) | slight |
 
 ### D′. Memory-only values live in registers

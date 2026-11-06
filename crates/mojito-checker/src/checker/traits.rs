@@ -1039,6 +1039,13 @@ impl Checker {
             let method_name = lifecycle_method_name(m);
             let (all_types, mut sig) =
                 self.declared_method_signature(declaration, method_index, m)?;
+            self.publish_method_constraints(
+                name,
+                declaration.type_params,
+                m,
+                &sig.decls,
+                &sig.availability,
+            );
             self.generic_parameters.borrow_mut().insert(
                 mojito_checked::checked::GenericSite::Method {
                     module: declaration.module.clone(),

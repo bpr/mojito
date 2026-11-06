@@ -2289,10 +2289,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value-held receiver as its unwritten storage, `Prog::constructed`), and
   `Checker::closed_module_constant` folds a module constant's builtin call. A
   callable's `where` clauses (`ApplicableFunction::constraints`) are
-  compiled once over the same slots by
-  `Checker::compile_application_constraints`, right after the folds, in
-  `Checker::in_argument_scope` (`checker/builtin_fold.rs`); a call binds
-  them to its arguments and instance in `application_constraint_failure`,
+  the clauses its signature emits, over its own declared binders
+  (`ApplicableFunction::declared_binders`) and its struct's:
+  `Checker::compile_application_constraints` emits them right after the
+  folds, and again once aliases and traits register, in the signature's
+  scope (`Checker::in_signature_clause_scope`), for applications made
+  before the callee's signature registers; the registered signature then
+  publishes its own (`Checker::publish_def_constraints` from
+  `declare_module_functions`, `Checker::publish_method_constraints` from
+  `register_struct_method_signatures`, its `MethodSig::availability`),
+  re-owned to the entry's binders when an overloaded callable's typed
+  symbol owns them. A call binds them to its arguments and instance in
+  `application_constraint_failure`,
   judged by `validate_constraint_in_environment`, and
   `violated_application_constraint` reports the failure in
   `eval_associated_ct`. No call selects an application before then, so a
@@ -2301,7 +2309,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Checker::deferred_defaults` in `checker/traits.rs`,
   `Checker::shells_awaiting_defaults`), and
   `Checker::complete_shell_defaults` reclassifies its parameters right
-  after the constraints compile. A module alias whose construction fails
+  after the constraints first compile. A module alias whose construction fails
   while the constructed struct of the program has no `__init__` yet
   (`comptime default_hasher = AHasher[SIMD[DType.uint64, 4](0)]`,
   `Checker::constructs_unsigned_struct`) waits for the method signatures

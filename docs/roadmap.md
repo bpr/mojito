@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1948**.
+Next free ID: **R1949**.
 
 ## Ordered Work
 
@@ -274,22 +274,23 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1898 A compile-time application recompiles its callable's
-  `where` clauses over slot binders**
+- [ ] **R1948 A callable's signature is emitted in passes, so its
+  `where` clauses compile twice**
 
-  `compile_application_constraints` (`comptime_validation.rs`) compiles
-  each applicable callable's clauses again from syntax, over its
-  argument slots (`builtin_body_binder`), and a clause that fails there
-  is swallowed (`.ok()`), leaving the callable applied by no call, where
-  upstream reads the one emitted signature's clauses.
-  - The lever: key the application's slots by the callable's own
-    declared binders, so it reads `MethodSig::availability` (or a
-    function's compiled clauses) instead of recompiling.
-  - Shape: a synthesized member's gate already reads its compiled header
-    condition, over the struct's binders.
-  - Probe: `@always_inline("builtin")` fixtures with a `where` clause
-    fold as before.
-  - Found while landing R1895 (2026-11-03).
+  An application made before its callee's signature registers reads the
+  clauses `compile_application_constraints` (`comptime_validation.rs`)
+  emits early, and the registered signature compiles them again and
+  publishes them over the early ones, where upstream emits one signature
+  on first demand.
+  - The lever: emit a callable's signature, its clauses included, on
+    first demand, so the early emission and the compile in
+    `def_signature_in_scope` / `method_signature_owned_by` are one.
+  - The obstacle: an application is selected through `&self`
+    (`selected_application`), and a signature registers through
+    `&mut self`.
+  - Probe: `assets/ok/where_applied_alias_clause.mojo` and its
+    `type_error` twin keep their output with the early emission gone.
+  - Found while landing R1898 (2026-11-05).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
