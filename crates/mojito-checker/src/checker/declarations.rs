@@ -2448,6 +2448,7 @@ impl Checker {
             return Err(TypeError::DynamicDefault(name));
         }
         let found = self.infer_in_context(default, expected, true)?;
+        self.record_default_literal_materialization(default, &found, expected)?;
         // Fall back to an `@implicit` converting constructor (records the
         // ctor target for omitted-arg materialization), matching the
         // free-function default path and the binding/argument positions.
@@ -2459,6 +2460,36 @@ impl Checker {
                 found: found.to_string(),
                 context: format!("default value of method parameter '{name}'"),
             });
+        }
+        Ok(())
+    }
+
+    /// Record the conversion of a numeric-literal default (`= TWO`, `= K + 1`)
+    /// to its parameter's type, as upstream converts the default
+    /// expression at the parameter (`#pop.int_literal_convert`) before the
+    /// call binds it. A spelled literal (`= 3`, `= -0.5`) is the default's
+    /// constant, which the call materializes at the parameter itself.
+    pub(super) fn record_default_literal_materialization(
+        &self,
+        default: &Expr,
+        found: &Ty,
+        expected: &Ty,
+    ) -> Result<(), TypeError> {
+        fn spelled_literal(expression: &Expr) -> bool {
+            match &expression.kind {
+                ExprKind::Int(_) | ExprKind::Float(_) => true,
+                ExprKind::Prefix(
+                    mojito_ast::ast::PrefixOp::Neg | mojito_ast::ast::PrefixOp::Pos,
+                    operand,
+                ) => spelled_literal(operand),
+                _ => false,
+            }
+        }
+        if found.kind().is_numeric_literal()
+            && !expected.kind().is_numeric_literal()
+            && !spelled_literal(default)
+        {
+            self.record_literal_materializations(default, found, expected)?;
         }
         Ok(())
     }

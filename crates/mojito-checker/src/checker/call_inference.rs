@@ -446,17 +446,24 @@ impl Checker {
         match instance.kind() {
             // A literal's default construction is the literal of its value,
             // symbolic until the instance is elaborated
-            // (`StringLiteral.__add__`'s `{}`).
+            // (`StringLiteral.__add__`'s `{}`). A use's materialization
+            // supersedes it, as at a spelled literal construction.
             kind if (kind.string_literal_value().is_some()
                 || matches!(kind, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
                 && args.is_empty()
                 && kwargs.is_empty() =>
             {
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::ConstructType {
-                        ty: instance.clone(),
-                    },
-                ));
+                let mut record = self.record_at(span.clone());
+                if !matches!(
+                    record.adjustment.as_deref(),
+                    Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
+                ) {
+                    record.adjustment = Some(Box::new(
+                        mojito_checked::checked::SemanticAdjustment::ConstructType {
+                            ty: instance.clone(),
+                        },
+                    ));
+                }
                 Ok(instance.clone())
             }
             kind if let Some((dtype, width)) = kind.as_simd() => self

@@ -1682,4 +1682,51 @@ mod tests {
             "{found:?}"
         );
     }
+
+    /// A `DefVar` binding register 1, of type `source`, to an `Int` slot.
+    fn literal_binding(source: Ty) -> MirFunction {
+        let mut function = function_with(vec![MirInstr::DefVar {
+            var: 0,
+            src: Reg(1),
+            binding_ty: Some(Ty::int()),
+            in_place: false,
+        }]);
+        function.reg_types.insert(1, source);
+        function
+    }
+
+    #[test]
+    fn a_literal_bound_unconverted_to_a_scalar_slot_is_a_finding() {
+        let literal = Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(1));
+        assert_finding(
+            &findings(&literal_binding(literal)),
+            "binding of the literal IntLiteral[1], which no conversion materialized",
+        );
+    }
+
+    #[test]
+    fn a_literal_returned_unconverted_from_a_scalar_function_is_a_finding() {
+        let mut function = function_with(Vec::new());
+        function.blocks = one(Vec::new(), MirTerm::Return(Some(Reg(1))));
+        function.ret_ty = Some(Ty::float64());
+        function.reg_types.insert(
+            1,
+            Ty::int_literal_of(&mojito_common::literal::IntLiteral::from(2)),
+        );
+        assert_finding(
+            &findings(&function),
+            "return of the literal IntLiteral[2], which no conversion materialized",
+        );
+    }
+
+    #[test]
+    fn a_materialized_binding_is_no_literal_finding() {
+        let found = findings(&literal_binding(Ty::int()));
+        assert!(
+            !found
+                .iter()
+                .any(|finding| finding.contains("no conversion materialized")),
+            "{found:?}"
+        );
+    }
 }

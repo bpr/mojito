@@ -6848,7 +6848,8 @@ point where a slot declared in a loop is uninitialized again.
   literal call argument, pointer write, or converted default reaches a
   non-literal slot only through `literal.materialize`, as upstream's IR
   has no implicit conversion; the verifier rejects a literal register at a
-  closed non-literal call argument or `place.store`. The slot is dropped after the body
+  closed non-literal call argument, `place.store`, `DefVar` binding,
+  `return`, `WriteRef`, or `tuple.make` element. The slot is dropped after the body
   when the parameter only borrows a type with a destructor. A default
   computed by a lowered default function (`CheckedConst::Evaluate`), or a
   literal the parameter's type does not hold, keeps the call. A raising

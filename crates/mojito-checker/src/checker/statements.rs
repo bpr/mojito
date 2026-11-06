@@ -4037,6 +4037,7 @@ impl Checker {
                 return Err(TypeError::DynamicDefault(name));
             }
             let dty = self.infer_in_context(d, pty, true)?;
+            self.record_default_literal_materialization(d, &dty, pty)?;
             // Fall back to an `@implicit` converting constructor, like the
             // binding and argument positions do (records the ctor target so
             // the omitted-arg default materializes it). A `None` default for

@@ -169,7 +169,7 @@ impl Checker {
                 self.register_named_bindings(key)?;
             }
             self.register_named_bindings(value)?;
-            let value_ty = self.comprehension_element_ty(value)?;
+            let value_ty = self.recorded_element_ty(value)?;
             self.check_consuming(value, &value_ty, "collection comprehension element")?;
             let result_ty = match kind {
                 mojito_ast::ast::CollectionKind::List => list_type(value_ty),
@@ -186,7 +186,7 @@ impl Checker {
                 }
                 mojito_ast::ast::CollectionKind::Dict => {
                     let key = key.as_ref().expect("dictionary comprehension has a key");
-                    let key_ty = self.comprehension_element_ty(key)?;
+                    let key_ty = self.recorded_element_ty(key)?;
                     self.check_consuming(key, &key_ty, "dictionary comprehension key")?;
                     if !self.conforms_to(&key_ty, "Hashable") {
                         return Err(TypeError::TraitNotSatisfied {
@@ -1520,7 +1520,7 @@ impl Checker {
             ExprKind::TupleLit(elems) => {
                 let tys = elems
                     .iter()
-                    .map(|e| self.materialized_element_ty(e))
+                    .map(|e| self.recorded_element_ty(e))
                     .collect::<Result<Vec<_>, _>>()?;
                 for (value, ty) in elems.iter().zip(&tys) {
                     // A generic `def` is no runtime value until specialized,
@@ -2502,11 +2502,12 @@ impl Checker {
         }
     }
 
-    /// A comprehension element's type, as [`Self::materialized_element_ty`]
-    /// deduces it, with a numeric literal's materialization recorded: the
-    /// element is the argument of upstream's `result.append(element)` at
-    /// the deduced type, which converts it.
-    fn comprehension_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
+    /// A display or comprehension element's type, as
+    /// [`Self::materialized_element_ty`] deduces it, with a numeric
+    /// literal's materialization recorded: the element is the argument of
+    /// upstream's `Tuple.__init__(var *args: *Ts)` or
+    /// `result.append(element)` at the deduced type, which converts it.
+    fn recorded_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
         let found = self.infer(element)?;
         let ty = self.materialized_element_ty(element)?;
         if found.kind().is_numeric_literal() && ty != found {

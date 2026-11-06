@@ -23,11 +23,17 @@ pub(super) fn verify_terminator(
                     function.reg_types.get(&register.0),
                     function.ret_ty.as_ref(),
                 )
-                && !types_compatible(found, expected)
             {
-                errors.push(format!(
-                    "{prefix}: return of {found} from a function returning {expected}"
-                ));
+                if unconverted_literal(found, expected) {
+                    errors.push(format!(
+                        "{prefix}: return of the literal {found}, which no conversion \
+                         materialized, from a function returning {expected}"
+                    ));
+                } else if !types_compatible(found, expected) {
+                    errors.push(format!(
+                        "{prefix}: return of {found} from a function returning {expected}"
+                    ));
+                }
             }
         }
         MirTerm::ErrorReturn if !function.raises => {

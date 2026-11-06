@@ -220,6 +220,11 @@ pub(super) fn verify_instruction(
             constructor.as_deref(),
             errors,
         ),
+        MirInstr::MakeTuple {
+            elems,
+            element_types: Some(element_types),
+            ..
+        } => verify_tuple_elements(&cx, elems, element_types, errors),
         // A parameter value constant is a closed vector, a struct or tuple
         // of such values, scalars, and strings, a string read at the
         // nominal `String`, a `UInt` read at `UInt` or its storage, or an
@@ -522,6 +527,14 @@ fn verify_reference_instruction(
                     ));
                 }
                 if let Some(value) = cx.reg_ty(*value)
+                    && unconverted_literal(value, capability.target)
+                {
+                    errors.push(format!(
+                        "{prefix}: WriteRef of the literal {value}, which no conversion \
+                         materialized, into a referent of type {}",
+                        capability.target
+                    ));
+                } else if let Some(value) = cx.reg_ty(*value)
                     && !types_compatible(value, capability.target)
                 {
                     errors.push(format!(
@@ -763,6 +776,13 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             ..
         } => {
             if let Some(found) = cx.reg_ty(*src)
+                && unconverted_literal(found, expected)
+            {
+                errors.push(format!(
+                    "{prefix}: binding of the literal {found}, which no conversion \
+                     materialized, to a slot of type {expected}"
+                ));
+            } else if let Some(found) = cx.reg_ty(*src)
                 && !types_compatible(found, expected)
             {
                 errors.push(format!(
@@ -1637,5 +1657,27 @@ fn verify_builtin_cast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec
              `i1` and `Scalar[DType.bool]`, or `ui8` and `Scalar[DType.uint8]`",
             cx.prefix
         ));
+    }
+}
+
+/// Each element of a `tuple.make` reaches its element type converted: a
+/// literal register at a closed non-literal element is the conversion
+/// upstream's `Tuple.__init__(var *args: *Ts)` writes, left implicit.
+fn verify_tuple_elements(
+    cx: &InstrCx<'_>,
+    elems: &[Reg],
+    element_types: &[Ty],
+    errors: &mut Vec<String>,
+) {
+    for (element, expected) in elems.iter().zip(element_types) {
+        if let Some(found) = cx.reg_ty(*element)
+            && unconverted_literal(found, expected)
+        {
+            errors.push(format!(
+                "{}: tuple element %r{} is the literal {found}, which no conversion \
+                 materialized at {expected}",
+                cx.prefix, element.0
+            ));
+        }
     }
 }

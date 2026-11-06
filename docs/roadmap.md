@@ -6843,28 +6843,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1965 A tuple display or return of a literal leaves its
-  conversion implicit in MIR**
-
-  Problem: `var p = (1, 2.5)` lowers to `MakeTuple` with `Int`/`Float64`
-  element types over literal registers, and SROA turns it into `DefVar`s
-  that bind a literal register at `Int`/`Float64`.
-  - `def f() -> Float64: return 2` returns a literal register.
-  - Every `WriteRef` and subscript store of a literal was the builtin
-    pointer write R1964 converted; none is left (`ref r = f; r = 3`,
-    `l[0] = 7`, `q[] = 9` over `Float64`).
-  - The VM converts silently (`coerce_checked` at `DefVar` and
-    `MakeTuple`), where upstream's IR calls the `@implicit` initializer.
-  - Lever: MIR's tuple-display lowering emits `literal.materialize` plus
-    `struct.create` per literal element whose element type is not a
-    literal, and return lowering consumes the checker's adjustment. If
-    the checker records none, add it at R1845's storage-site conversion.
-  - Done when the verifier's `DefVar`, `Return`, and `WriteRef` sites
-    reject a literal register at a non-literal slot.
-  - Probe: `var p = (1, 2.5); print(p[0], p[1])` and the `f` above.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1966 A literal index operand reaches a subscript or pointer
   offset unconverted**
 
@@ -6898,9 +6876,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: a found literal type is compatible only with an identical
     literal type or a type mentioning a parameter. Delete the
     literal-to-literal arm and the module doc's "representational" claim.
-  - Call arguments and `place.store` already reject a literal at a closed
-    non-literal slot (`unconverted_literal`, R1964), with a negative test
-    in `verify/structure.rs`; fold that rule into `types_compatible`.
+  - Call arguments, `place.store`, `DefVar`, `return`, `WriteRef`, and
+    `tuple.make` elements already reject a literal at a closed
+    non-literal slot (`unconverted_literal`, R1964, R1965), with negative
+    tests in `verify/structure.rs`; fold that rule into
+    `types_compatible`.
   - Probe: `assets/ok/int_literal_value_type.mojo`'s `Holder.__init__`
     stores a `FloatLiteral[2.5]` into a field typed `FloatLiteral[5/2]`,
     which the literal-to-literal arm admits.

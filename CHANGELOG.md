@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A tuple display's numeric literal element now converts explicitly at its
+  deduced element type (`(1, 2.5)`), as upstream's
+  `Tuple.__init__(var *args: *Ts)` converts each argument, and a parameter
+  default naming a compile-time literal (`factor: Int = TWO`) converts at
+  its parameter. A `type_of(5)()` construction no longer loses its
+  recorded conversion when it is inferred again (`print(type_of(5)())`).
+  The MIR verifier now also rejects a literal register at a closed
+  non-literal `DefVar` binding, `return`, `WriteRef`, or `tuple.make`
+  element (R1965).
 - A numeric literal now reaches every call argument and pointer write as
   an explicit `literal.materialize`, as upstream's IR converts it through
   `#pop.int_literal_convert` rather than implicitly: an `@implicit`
