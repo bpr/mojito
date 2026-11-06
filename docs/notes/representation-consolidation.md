@@ -85,7 +85,7 @@ command cannot use both.
      signature, after R1898) and R1899 (a bare pack receiver bound by
      spelling) sit beside them.
    - The elaborator: R1875 → R1876 (a struct's origin parameters and its
-     associated-type rows), R1867, R1886, R1887, and R1872.
+     associated-type rows), R1886, R1887, and R1872.
    - The check: R1842, R1871, R1856, R1881, and the generator follow-ups
      of R1486: R1907, R1908, R1909.
    - The members under *H* below were filed against `Elab`'s arms or the

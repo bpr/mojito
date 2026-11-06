@@ -287,20 +287,24 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
     let mut spelling = String::new();
     for argument in arguments {
         spelling.push('$');
-        let raw = match argument {
+        match argument {
             // Overload keys intentionally collapse StringLiteral and nominal
             // String, but generic instances cannot: their native layouts are
             // a 16-byte borrowed descriptor versus a 24-byte owning value.
-            InstanceArg::Ty(ty) if ty.is_string_literal() => "TStringLiteral".to_string(),
-            InstanceArg::Ty(ty) => format!("T{}", ty_raw_in(ty, None, KeyMode::Instance)),
-            // A string spells each byte `sanitize` would collapse, so two
-            // strings (`"["`, `" "`) never name one instance.
-            InstanceArg::Value(CtValue::Str(text) | CtValue::KgenString(text)) => {
-                format!("Vs{}", escape_bytes(text))
+            InstanceArg::Ty(ty) if ty.is_string_literal() => spelling.push_str("TStringLiteral"),
+            InstanceArg::Ty(ty) => spelling.push_str(&sanitize(&format!(
+                "T{}",
+                ty_raw_in(ty, None, KeyMode::Instance)
+            ))),
+            // A value spells each byte of its display that `sanitize` would
+            // collapse, so two values of one parameter (`"("` and `")"`,
+            // `(String("["), 1)` and `(String("]"), 1)`) never name one
+            // instance.
+            InstanceArg::Value(value) => {
+                spelling.push('V');
+                spelling.push_str(&escape_bytes(&value.to_string()));
             }
-            InstanceArg::Value(value) => format!("V{value}"),
-        };
-        spelling.push_str(&sanitize(&raw));
+        }
     }
     if spelling.len() > INSTANCE_SPELLING_LIMIT {
         // Every spelled argument opens with `$T` or `$V`, so the `$H` marker
@@ -1645,20 +1649,25 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
 /// A value argument of a struct or associated type: an overload key spells
 /// a bare reference to a value binder (`Array[Int, n]`, the auto-parameterized
 /// `Array[T, _]`) as the declaration's annotation does, the binder followed by
-/// its value type (`n$Int`), and any other value as `V` and its display.
+/// its value type (`n$Int`), and any other value as `V` and its display. An
+/// instance key escapes that display's bytes, as [`instance_symbol`] spells a
+/// value argument, so two values of one type argument never name one instance.
 fn value_argument_raw(value: &CtValue, mode: KeyMode) -> String {
-    if mode == KeyMode::Overload
-        && let CtValue::Expr(expression) = value
-        && let Some(binder) = expression.as_decl_ref()
-        && let MetaTy::Value(ty) = expression.meta()
-    {
-        return format!(
-            "{}${}",
-            encode_identifier(&binder.name),
-            ty_raw_in(ty, None, mode)
-        );
+    match mode {
+        KeyMode::Overload
+            if let CtValue::Expr(expression) = value
+                && let Some(binder) = expression.as_decl_ref()
+                && let MetaTy::Value(ty) = expression.meta() =>
+        {
+            format!(
+                "{}${}",
+                encode_identifier(&binder.name),
+                ty_raw_in(ty, None, mode)
+            )
+        }
+        KeyMode::Overload => format!("V{value}"),
+        KeyMode::Instance => format!("V{}", escape_bytes(&value.to_string())),
     }
-    format!("V{value}")
 }
 
 /// The longest argument spelling [`instance_symbol`] keeps verbatim.
@@ -3563,6 +3572,27 @@ fn declared_struct_name(linked: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distinct_values_of_one_parameter_name_distinct_instances() {
+        let text = |text: &str| CtValue::Str(text.to_string());
+        let pair =
+            |text: &str| CtValue::Tuple(vec![CtValue::Str(text.to_string()), CtValue::Int(1)]);
+        for (left, right) in [
+            (text("("), text(")")),
+            (pair("("), pair(")")),
+            (CtValue::Int(-1), CtValue::Int(1)),
+        ] {
+            assert_ne!(
+                instance_symbol("f", &[InstanceArg::Value(left)]),
+                instance_symbol("f", &[InstanceArg::Value(right)])
+            );
+        }
+        assert_eq!(
+            instance_symbol("f", &[InstanceArg::Value(CtValue::Int(3))]),
+            "f$mono$V3"
+        );
+    }
 
     #[test]
     fn a_method_symbol_splits_back_into_its_method_and_qualifier() {

@@ -2634,7 +2634,7 @@ fn a_hash_member_that_hashes_a_field_is_one_instance() {
         source,
         "HBox",
         "__hash__",
-        "HBox.__hash__$mono$T$$module$std$hash$$ahash$AHasher$mono$V$0$$0$$0$$0$$$$SIMD$DType$uint64$$4$",
+        "HBox.__hash__$mono$H8375ce2a1d878cae418f69604fdf800d",
     );
 }
 

@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An elaborated instance's symbol now spells every value argument by
+  escaping its display's bytes, inside a type argument too, so distinct
+  values of one compile-time parameter (`String("(")` beside
+  `String(")")`, a tuple holding either) no longer collide as one
+  instance when the pre-elaboration pipeline is off (R1867).
 - The elaborator and `inline-parametric` now find an associated alias
   through one lookup on the struct's declaration,
   `StructDeclaration::associated_member`, as upstream's substitution reads

@@ -938,24 +938,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1867 Two string values of one compile-time parameter can name the
-  same elaborated instance**
-
-  With the pre-elaboration pipeline off (`MOJITO_PRE_ELABORATION=0`),
-  `String("(")` beside `String(")")` stops with "unsupported concrete
-  instance symbol `String.__init__$ov$StringLiteral$V$value$data$mono$V$$$`
-  collides with an existing declaration", where the pin runs it.
-  - Each `StringLiteral[value]` instance of the constructor gets one
-    `$mono$` symbol, and both spell `V$$$`: the instance spelling does
-    not tell the two values apart. Find where the suffix is built and
-    encode the value injectively.
-  - Probe: `print(())` (the empty tuple writes `(` and `)`), as in
-    `assets/ok/tuple_template_served.mojo`.
-  - The default pipeline runs both.
-  - Found while landing R1443 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Measure Instantiation And Test The Passes That Shrink It
 
 Track: `measure`.
