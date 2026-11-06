@@ -1227,7 +1227,7 @@ type:
     | type '.' NAME param_args '(' [call_args] ')'  # a construction through a type's parameterized member
     | type type_projection        # a member or a subscript of a type, or of a construction
 type_projection: '.' NAME | '.' NAME param_args | '[' expression ']'
-generator_type: '__generator_type' [params_decl] type
+generator_type: '__generator_type' [params_decl] '&'.type+
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
 function_type_param:
     | 'var' '**' NAME ':' type
@@ -1287,7 +1287,12 @@ upstream's `__getitem_param__`; the value alone is "expected a type".
 application yields. `__generator_type` is a keyword. It parses into
 `Type::Generator` wherever a type does, and as an expression too (an alias
 body, `comptime Gen = __generator_type[Idx: Int] Int`), as `def` function
-types do. A missing result type is a parse error.
+types do. A missing result type is a parse error. The result is a type
+expression, so a `&` composition after it is the whole result
+(`[G: __generator_type[T: Copyable] Copyable & Defaultable]`), never
+further bounds of the parameter it types; it parses into the
+`$trait_composition` node an associated member's composed bound uses, and
+the checker requires each member to be a trait.
 A **member application** `type '.' NAME param_args` reads a type's
 parameterized `comptime` member (`S[Int].Of[Bool]`, `M.Pair[A, B]`,
 `_MLIR.KGENParamListType[Int]`) and parses into `Type::Assoc` with the

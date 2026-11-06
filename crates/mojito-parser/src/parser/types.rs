@@ -192,16 +192,34 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Parses a generator type after its leading `__generator_type` has been
     /// consumed, as upstream's `parseGeneratorType` does: an optional
-    /// parameter list, then the result type.
+    /// parameter list, then the result type expression. A `&` composition
+    /// of traits is that expression whole (`__generator_type[T: Copyable]
+    /// Copyable & Defaultable`), recorded as a `$trait_composition`.
     pub(super) fn parse_generator_type_tail(&mut self) -> Result<Type, ParseError> {
         let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
             self.parse_type_params()?
         } else {
             Vec::new()
         };
+        let mut members = vec![self.parse_type()?];
+        while matches!(self.peek_token()?, Some(Token::Amp)) {
+            self.next_token()?;
+            members.push(self.parse_type()?);
+        }
+        let result = if members.len() == 1 {
+            members.pop().expect("one generator result")
+        } else {
+            Type::Named(
+                "$trait_composition".to_string(),
+                members
+                    .into_iter()
+                    .map(mojito_ast::ast::ParamArg::Type)
+                    .collect(),
+            )
+        };
         Ok(Type::Generator {
             params,
-            result: Box::new(self.parse_type()?),
+            result: Box::new(result),
         })
     }
 

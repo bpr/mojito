@@ -5671,6 +5671,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `__generator_type[T: Copyable] AnyStruct[List[T]]`. Mojito types it
     with an `AnyType` result and rejects the binding. The body's
     `G[Int]()` already checks as the construction.
+  - Probe: `width[MkList]()` over `def width[G: __generator_type[T:
+    Copyable] Copyable & Defaultable]() -> Int` returning
+    `size_of[G[Int]]()` binds at the pin, where Mojito rejects the
+    `AnyType`-result generator the same way.
     Mojito says "'type_of' of a type is not supported yet"
     (`Checker::type_of_operand`, `checker/constraints.rs`).
   - Upstream's stdlib relies on it in `TypeList.of[...]` without `Trait=`
@@ -5846,23 +5850,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Upstream binds the open slots on the type itself, never in the alias
     body's scope: a struct type with open slots that an application fills.
   - Found while landing R296 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1909 A trait composition after a generator-typed parameter's
-  result is read as further bounds and dropped**
-
-  `[G: __generator_type[T: Copyable] Copyable & Defaultable]` checks as
-  `__generator_type[T: Copyable] Copyable`, so `G[Int]()` reports that
-  `G[Int]` does not conform to `Defaultable`.
-  - The parameter-bound parser (`parser/types.rs`) parses the generator
-    type, then reads `& Defaultable` as another bound of `G`, which the
-    checker ignores for a value parameter.
-  - Upstream's `parseGeneratorType` parses its result as a type
-    expression, so the composition is the result.
-  - Fix: parse the composition into the generator type's result, or
-    reject the extra bound explicitly.
-  - Found while landing R1486 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

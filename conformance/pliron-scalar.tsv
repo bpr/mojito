@@ -415,6 +415,7 @@ assets/ok/function_value_array_element_binding.mojo	-	ineligible	no-scalar-entry
 assets/ok/generator_runtime_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_type_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_type_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generator_type_result_composition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_type_valued.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_unbound_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_value_unapplied.mojo	-	ineligible	no-scalar-entry-shape

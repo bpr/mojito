@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `&` composition after a generator type's result is now that whole
+  result, as at the pin: `[G: __generator_type[T: Copyable] Copyable &
+  Defaultable]` lets `G[Int]` satisfy a `Defaultable` bound instead of
+  dropping `Defaultable` as an ignored parameter bound (R1909).
 - A call through a type generator now constructs the type its application
   names: `P[Int]()` over `comptime P = MkList` and `comptime MkList[T:
   Copyable] = List[T]`, local or module, and `Q()` over `comptime Q =

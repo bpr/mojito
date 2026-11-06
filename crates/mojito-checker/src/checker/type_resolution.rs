@@ -384,6 +384,9 @@ impl Checker {
                     _ => self.resolve_ty_from_anno(result)?,
                 }
             }
+            SourceType::Named(name, members) if name == "$trait_composition" => {
+                TyKind::Trait(self.generator_result_composition(members)?).into()
+            }
             _ => self.resolve_ty_from_anno(result)?,
         };
         Ok(Ty::generator(decls, result))
@@ -4795,6 +4798,43 @@ impl Checker {
         }
         let _position = self.comptime_position();
         self.infer(expr).unwrap_or_else(|_| actual.clone())
+    }
+
+    /// The trait set a generator type's `&`-composed result denotes. Each
+    /// member is a trait name; a member that is not is the left operand's
+    /// missing `__and__`, as upstream evaluates the composition.
+    fn generator_result_composition(
+        &self,
+        members: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Vec<String>, TypeError> {
+        let mut traits: Vec<String> = Vec::with_capacity(members.len());
+        for member in members {
+            let trait_name = match member {
+                mojito_ast::ast::ParamArg::Type(SourceType::Named(name, args))
+                    if args.is_empty() && self.check_trait_name(name).is_ok() =>
+                {
+                    Some(name.clone())
+                }
+                _ => None,
+            };
+            let Some(trait_name) = trait_name else {
+                let left = if traits.is_empty() {
+                    let mojito_ast::ast::ParamArg::Type(ty) = member else {
+                        return Err(TypeError::Unsupported(
+                            "a generator type's result must be a type expression".to_string(),
+                        ));
+                    };
+                    format!("AnyStruct[{}]", self.resolve_ty_from_anno(ty)?)
+                } else {
+                    format!("AnyTrait[{}]", traits.join(" & "))
+                };
+                return Err(TypeError::MatchPattern(format!(
+                    "'{left}' does not implement the '__and__' method"
+                )));
+            };
+            traits.push(trait_name);
+        }
+        Ok(self.canonical_trait_set(&traits))
     }
 }
 

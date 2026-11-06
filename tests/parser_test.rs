@@ -1258,6 +1258,31 @@ fn parses_generator_types_as_parameter_types_and_alias_bodies() {
 }
 
 #[test]
+fn parses_a_trait_composition_as_a_generator_types_result() {
+    let statements = parse(
+        "def make[G: __generator_type[T: Copyable] Copyable & Defaultable, n: Int]():\n    pass\n",
+    );
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected def");
+    };
+    assert_eq!(type_params.len(), 2);
+    assert_eq!(type_params[0].bounds, ["__generator_type"]);
+    let Some(Type::Generator { result, .. }) = &type_params[0].value_type else {
+        panic!("expected a generator-typed parameter");
+    };
+    assert_eq!(
+        **result,
+        Type::Named(
+            "$trait_composition".into(),
+            vec![
+                ParamArg::Type(Type::Named("Copyable".into(), vec![])),
+                ParamArg::Type(Type::Named("Defaultable".into(), vec![])),
+            ],
+        )
+    );
+}
+
+#[test]
 fn rejects_a_generator_type_without_a_result() {
     let mut parser = Parser::new(Lexer::new(
         "def apply[G: __generator_type[Idx: Int]]():\n    pass\n",

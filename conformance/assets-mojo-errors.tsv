@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1074
+# swept-count	1075
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -458,6 +458,7 @@ assets/type_error/generator_parameter_non_generator.mojo	compile-reject	agree	er
 assets/type_error/generator_parameter_signature_mismatch.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type '__generator_type[a: Int, b: Int] Int'
 assets/type_error/generator_parameter_type_mismatch.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type '__generator_type[a: Bool] IntLiteral[1]'
 assets/type_error/generator_runtime_value_binder_names.mojo	compile-reject	agree	error: cannot implicitly convert '__generator_type[b: Int] Int' value to '__generator_type[c: Int] Int' in 'var' initializer
+assets/type_error/generator_type_result_composition_non_trait.mojo	compile-reject	agree	error: 'AnyTrait[Copyable]' does not implement the '__and__' method
 assets/type_error/generator_type_valued_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[5]' value to 'G[Int]' in 'var' initializer
 assets/type_error/generator_unbound_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__generator_type[b: Int] Int' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/generator_value_runtime_read.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__generator_type[Idx: Int] Int' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
