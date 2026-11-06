@@ -678,13 +678,8 @@ fn verifier_checks_a_literal_materialized_at_its_storage() {
     // storage, a vector's as a scalar's.
     let float =
         || Const::FloatLiteral(mojito::FloatLiteral::parse_decimal("0.5").expect("decimal"));
-    let float_ty = || {
-        Ty::new(TyKind::FloatLiteral(Box::new(
-            mojito_types::ct::CtValue::PopFloatLiteral(
-                mojito_common::literal::FloatLiteral::from_int(&0.into()),
-            ),
-        )))
-    };
+    let float_ty =
+        || Ty::float_literal_of(&mojito_common::literal::FloatLiteral::from_int(&0.into()));
     let lanes = |width| mojito::types::canonical_simd_ty(mojito::ast::Dtype::Float32, width);
     for width in [1, 4] {
         assert_eq!(

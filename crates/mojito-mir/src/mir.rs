@@ -433,11 +433,16 @@ impl MirDeclarations {
     /// body holds ([`mojito_symbol::symbol::member_table_name`]), read at no
     /// arguments; any other application, and a `SIMD` with no declared
     /// instance (the source program's, or one no body holds), reads the
-    /// template it names at its own arguments.
+    /// template it names at its own arguments. A numeric literal answers
+    /// `None`: its run-time value is still the compiler's field-less literal
+    /// rather than an instance of the declared struct (R1968).
     pub fn struct_instance<'t>(&self, ty: &'t Ty) -> Option<(&MirStructDeclaration, &'t [TyArg])> {
         let TyKind::Struct(name, arguments) = ty.kind() else {
             return None;
         };
+        if ty.is_numeric_literal() {
+            return None;
+        }
         mojito_symbol::symbol::member_table_name(ty)
             .filter(|instance| instance != name)
             .and_then(|instance| self.structure(&instance))
@@ -2150,9 +2155,7 @@ fn lower_function(
 /// name and each instance replaces. `SIMD` and the literal structs are the
 /// exceptions: the checker types their `Self` as the application at the
 /// binders, as upstream's is, since `SIMD`'s lane rules read its slots off
-/// it, a string literal's members read its text off it, and the `Ty::new`
-/// bridges hold a numeric literal's application as the compiler's
-/// `TyKind::IntLiteral` and `TyKind::FloatLiteral` (R1851). The receiver
+/// it, and a literal's members read its text or value off it. The receiver
 /// is that type at the binders, which an instance substitutes as any other
 /// type.
 fn self_receiver_ty(name: &str, parameters: &[ParamDecl]) -> Ty {
@@ -4363,9 +4366,10 @@ impl<'a> Flatten<'a> {
         if displays.is_empty() {
             return None;
         }
-        if !expression.ty().is_some_and(|ty| {
-            ty.is_int() || ty.is_bool() || matches!(ty.kind(), TyKind::IntLiteral(_))
-        }) {
+        if !expression
+            .ty()
+            .is_some_and(|ty| ty.is_int() || ty.is_bool() || ty.kind().is_int_literal())
+        {
             for display in &displays {
                 self.build_display(display);
             }

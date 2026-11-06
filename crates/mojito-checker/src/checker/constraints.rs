@@ -1500,7 +1500,7 @@ impl Checker {
         let declared = |value: CtValue| {
             let context = &self.param_context;
             match self.lookup(name) {
-                Some(ty) if !matches!(ty.kind(), TyKind::IntLiteral(_)) => context
+                Some(ty) if !ty.kind().is_int_literal() => context
                     .constant_as(value.clone(), ty)
                     .or_else(|_| context.constant(value)),
                 _ => context.constant(value),
@@ -2337,7 +2337,7 @@ impl Checker {
             built
                 .meta()
                 .as_value()
-                .is_some_and(|ty| ty.is_simd() || matches!(ty.kind(), TyKind::IntLiteral(_)))
+                .is_some_and(|ty| ty.is_simd() || ty.kind().is_int_literal())
         };
         let right_built = if is_simd_length_value(&right_built) && numeric(&left_built) {
             mojito_types::types::simd_length_image(&self.param_context, &right_built)

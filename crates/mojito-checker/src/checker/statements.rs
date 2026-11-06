@@ -2249,9 +2249,8 @@ impl Checker {
                 // `comptime M: Int = 4` is an `Int`, a bare literal binding
                 // the `IntLiteral[4]` its value types.
                 let int_annotated = annotated.as_ref().is_some_and(|ty| ty.is_int());
-                let annotated = annotated.filter(|expected| {
-                    !(expected.is_int() || matches!(expected.kind(), TyKind::IntLiteral(_)))
-                });
+                let annotated = annotated
+                    .filter(|expected| !(expected.is_int() || expected.kind().is_int_literal()));
                 // A module constant was folded before any declaration; only a
                 // body's own constant folds here.
                 let at_module = self.function_bases.is_empty() && self.scopes.len() == 1;
@@ -2311,9 +2310,7 @@ impl Checker {
                     // A float literal stays a `FloatLiteral` that each read
                     // materializes; an unfolded integer literal is read as
                     // its `Int` storage type, so it crosses here.
-                    if declared != ty
-                        && matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-                    {
+                    if declared != ty && ty.kind().is_numeric_literal() {
                         self.record_literal_materializations(value, &ty, &declared)?;
                     }
                     self.declare_immutable(name, declared)?;

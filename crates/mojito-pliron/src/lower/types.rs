@@ -122,9 +122,8 @@ impl ScalarTy {
 /// sees ([`MirDeclarations::translated_type`]): a vector classifies as its
 /// `!kgen.simd` storage, and a one-field `TrivialRegisterPassable` struct as
 /// its field, as upstream's `LowerKGENToLLVM` type converter unwraps both;
-/// scalars (a one-lane storage, and the i64/f64 storage of
-/// `IntLiteral`/`FloatLiteral`-typed registers) stay SSA; `None` is
-/// zero-sized; struct, tuple, and `StringLiteral`-descriptor aggregates take
+/// scalars (a one-lane storage) stay SSA; `None` and the field-less
+/// numeric literals are zero-sized; struct, tuple, and `StringLiteral`-descriptor aggregates take
 /// their shared-engine layout, as does the two-word `{ invoke, env }`
 /// retained-callable value. A multi-lane storage keeps the lane-aligned
 /// aggregate as its storage and ABI form; `lower/simd.rs` computes on it as
@@ -136,6 +135,11 @@ pub fn lower_ty(
     declarations: &MirDeclarations,
     location: Option<SourceSpan>,
 ) -> Result<LowerTy, PlironError> {
+    // A numeric literal is upstream's field-less `IntLiteral[v]` or
+    // `FloatLiteral[v]`: its readers take the number from the type.
+    if ty.is_numeric_literal() {
+        return Ok(LowerTy::ZeroSized);
+    }
     if matches!(ty.kind(), TyKind::Struct(..)) {
         let translated = declarations.translated_type(ty);
         if translated != *ty {
@@ -156,9 +160,6 @@ pub fn lower_ty(
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(1),
         } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
-        // A numeric literal is upstream's field-less `IntLiteral[v]` or
-        // `FloatLiteral[v]`: its readers take the number from the type.
-        TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => Ok(LowerTy::ZeroSized),
         // Origins and ownership facts erase after validation; a pointer is
         // one opaque target pointer regardless of its element type.
         TyKind::Pointer { .. }

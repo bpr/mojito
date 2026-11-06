@@ -227,13 +227,9 @@ fn default_construction(
         kind if let Some(value) = kind.float_literal_value() => {
             Some(Const::FloatLiteral(value.clone()))
         }
-        kind if kind.is_int() || kind.is_uint() || matches!(kind, TyKind::IntLiteral(_)) => {
-            Some(Const::Int(0))
-        }
+        kind if kind.is_int() || kind.is_uint() || kind.is_int_literal() => Some(Const::Int(0)),
         kind if kind.is_bool() => Some(Const::Bool(false)),
-        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
-            Some(Const::Float(0.0))
-        }
+        kind if kind.is_float64() || kind.is_float_literal() => Some(Const::Float(0.0)),
         kind if kind.is_string_literal() => Some(Const::Str(
             kind.string_literal_text().unwrap_or_default().to_string(),
         )),

@@ -554,10 +554,10 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         // A literal's symbolic value closes as the literal it names; one
         // the bindings do not close stays as spelled, for the concreteness
         // check to name.
-        kind if let Some(value) = kind.string_literal_value() => {
-            closed_literal(ty, value, bindings)
-        }
-        TyKind::IntLiteral(value) | TyKind::FloatLiteral(value) => {
+        kind if let Some(value) = kind
+            .string_literal_value()
+            .or_else(|| kind.numeric_literal_slot()) =>
+        {
             closed_literal(ty, value, bindings)
         }
         // A vector's storage closes as the vector it stores.

@@ -624,14 +624,14 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 .is_some_and(|(dtype, _)| dtype.is_symbolic());
             if let Some(found) = cx.reg_ty(*value) {
                 let valid_source = match found.kind() {
-                    TyKind::IntLiteral(_) if scalar_target => true,
-                    TyKind::FloatLiteral(_) if scalar_target => {
+                    kind if kind.is_int_literal() && scalar_target => true,
+                    kind if kind.is_float_literal() && scalar_target => {
                         target.is_float64()
                             || symbolic_lane
                             || mojito_types::types::scalar_simd_dtype(target)
                                 .is_some_and(mojito_ast::ast::Dtype::is_float)
                     }
-                    kind @ (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) => vector_lane
+                    kind if kind.is_numeric_literal() => vector_lane
                         .as_ref()
                         .is_some_and(|lane| mojito_types::types::splats_to(kind, lane)),
                     _ => false,

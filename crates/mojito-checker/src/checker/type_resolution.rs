@@ -2171,13 +2171,8 @@ impl Checker {
             // `Float64`.
             kind if (kind.is_simd()
                 || kind.string_literal_value().is_some()
-                || matches!(
-                    kind,
-                    TyKind::KgenSimd { .. }
-                        | TyKind::IntLiteral(_)
-                        | TyKind::FloatLiteral(_)
-                        | TyKind::PopArray { .. }
-                ))
+                || kind.is_numeric_literal()
+                || matches!(kind, TyKind::KgenSimd { .. } | TyKind::PopArray { .. }))
                 && !parameters.is_empty()
                 && mojito_types::types::is_symbolic(ty) =>
             {
@@ -2433,7 +2428,7 @@ impl Checker {
             // or one a literal's struct declares (`StringLiteral._from`).
             kind if (kind.is_simd()
                 || kind.string_literal_value().is_some()
-                || matches!(kind, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
+                || kind.is_numeric_literal())
                 && let Some((sname, targs)) = self.nominal_struct(base)
                 && self.structs.get(sname).is_some_and(|info| {
                     info.associated.contains_key(name)
@@ -4288,13 +4283,7 @@ impl Checker {
     pub(super) fn struct_origin_mismatch(&self, found: &Ty, expected: &Ty) -> Option<TypeError> {
         if found.kind().string_literal_value().is_some()
             && expected.kind().string_literal_value().is_some()
-            || matches!(
-                (found.kind(), expected.kind()),
-                (
-                    TyKind::IntLiteral(_) | TyKind::FloatLiteral(_),
-                    TyKind::IntLiteral(_) | TyKind::FloatLiteral(_),
-                )
-            )
+            || found.is_numeric_literal() && expected.is_numeric_literal()
         {
             return (found != expected).then(|| TypeError::OriginIdentityMismatch {
                 found: found.to_string(),
@@ -4839,14 +4828,12 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         kind if let Some((dtype, width)) = kind.as_simd() => {
             dtype.is_symbolic() || width.is_symbolic()
         }
-        kind if kind.is_string_literal() => false,
+        kind if kind.is_string_literal() || kind.is_numeric_literal() => false,
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::StringLiteral
         | TyKind::None
         | TyKind::Never
-        | TyKind::IntLiteral(_)
-        | TyKind::FloatLiteral(_)
         | TyKind::Dtype
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)

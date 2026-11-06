@@ -342,7 +342,7 @@ pub fn is_c_string_slice_struct(name: &str) -> bool {
 }
 
 fn is_integer_scalar(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::IntLiteral(_))
+    ty.is_int_literal()
         || ty.is_bool()
         || ty.kind().is_int()
         || ty.kind().is_uint()

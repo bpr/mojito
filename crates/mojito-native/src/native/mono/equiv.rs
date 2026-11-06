@@ -243,8 +243,8 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
 pub(super) fn materialize_nested_literals(ty: &Ty) -> Ty {
     fn leaf(ty: &Ty) -> Ty {
         match ty.kind() {
-            TyKind::IntLiteral(_) => Ty::int(),
-            TyKind::FloatLiteral(_) => Ty::float64(),
+            kind if kind.is_int_literal() => Ty::int(),
+            kind if kind.is_float_literal() => Ty::float64(),
             _ => materialize_nested_literals(ty),
         }
     }

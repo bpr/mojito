@@ -4562,7 +4562,8 @@ fn names_instance_of(arg: &ParamExpr, owner: &str) -> bool {
 
 /// Whether an operator on a receiver of `ty` calls its declared dunder: a
 /// struct's, a `SIMD` application's included. A string literal's operator
-/// stays the compiler's, as its run-time value is the descriptor (R1862).
+/// stays the compiler's, as its run-time value is the descriptor (R1862),
+/// and so does a numeric literal's (R1969).
 fn declared_operator_receiver(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_string_literal()
+    matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_string_literal() && !ty.is_numeric_literal()
 }

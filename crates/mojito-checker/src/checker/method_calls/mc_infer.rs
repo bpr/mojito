@@ -126,10 +126,7 @@ impl Checker {
         } && args.is_empty()
             && kwargs.is_empty()
             && param_args.is_empty()
-            && matches!(
-                obj_ty.kind(),
-                TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-            )
+            && obj_ty.kind().is_numeric_literal()
             && mojito_types::conformance::modelled_declares(&obj_ty, trait_name, &mut |_, _| true)
         {
             return Ok(result);

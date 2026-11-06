@@ -434,9 +434,7 @@ impl ScalarConversion {
     /// Whether a value of type `ty` converts by this conversion as a cast:
     /// a numeric scalar or literal, a `Bool`, or a width-one SIMD value.
     pub fn casts_from(self, ty: &Ty) -> bool {
-        matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-            || ty.is_bool()
-            || crate::types::is_scalar_simd(ty.kind())
+        ty.is_numeric_literal() || ty.is_bool() || crate::types::is_scalar_simd(ty.kind())
     }
 }
 
@@ -1298,9 +1296,9 @@ impl CtValue {
             (value @ Self::Bool(_), kind) if kind.is_bool() => Some(value),
             (value @ Self::UInt(_), kind) if kind.is_uint() => Some(value),
             (value @ Self::Float(_), kind) if kind.is_float64() => Some(value),
+            (value @ Self::IntLiteral(_), kind) if kind.is_int_literal() => Some(value),
+            (value @ Self::FloatLiteral(_), kind) if kind.is_float_literal() => Some(value),
             (value @ Self::Index(_), TyKind::Index)
-            | (value @ Self::IntLiteral(_), TyKind::IntLiteral(_))
-            | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral(_))
             | (value @ Self::Bool(_), TyKind::I1)
             | (value @ Self::None, TyKind::None) => Some(value),
             (value @ Self::Str(_), kind) if kind.is_string_literal() => Some(value),

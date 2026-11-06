@@ -346,7 +346,7 @@ impl FnLowering<'_> {
         let Some(ty) = self.func.reg_types.get(&reg.0) else {
             return Err(self.unsupported(format!("untyped register %r{}", reg.0), None));
         };
-        if matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) {
+        if ty.kind().is_numeric_literal() {
             return Ok(None);
         }
         scalar_type(self.name, ty, self.reg_span(reg)).map(Some)

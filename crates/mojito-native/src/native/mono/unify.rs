@@ -433,18 +433,15 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         {
             bind_value(binder, text, bindings)
         }
-        TyKind::IntLiteral(slot) | TyKind::FloatLiteral(slot)
-            if let CtValue::Expr(expr) = slot.as_ref()
-                && let Some(binder) = expr.as_decl_ref()
-                && let TyKind::IntLiteral(value) | TyKind::FloatLiteral(value) =
-                    actual.kind()
-                && pattern.is_int_literal() == actual.is_int_literal() =>
+        kind if let Some(CtValue::Expr(expr)) = kind.numeric_literal_slot()
+            && let Some(binder) = expr.as_decl_ref()
+            && let Some(value) = actual.kind().numeric_literal_slot()
+            && pattern.is_int_literal() == actual.is_int_literal() =>
         {
             bind_value(binder, value, bindings)
         }
-        TyKind::FloatLiteral(slot)
-            if let CtValue::Expr(expr) = slot.as_ref()
-                && let Some(binder) = expr.as_decl_ref()
+        kind if let Some(CtValue::Expr(expr)) = kind.float_literal_slot()
+            && let Some(binder) = expr.as_decl_ref()
                 && let Some(value) = mojito_types::types::int_literal_as_float(actual) =>
         {
             bind_value(binder, &value, bindings)
@@ -453,10 +450,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         // storage the checker admitted (`MaterializeLiteral` converts the
         // value at the boundary); the pattern constrains nothing here.
         _ if (actual.is_string_literal()
-            || matches!(
-                actual.kind(),
-                TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-            ))
+            || actual.kind().is_numeric_literal())
             && pattern != actual =>
         {
             Ok(())
@@ -861,10 +855,7 @@ pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> 
     // Solutions join instance identity: erase capture-set spellings so the
     // `capturing[origin@N]` variants of one contract are one instance.
     let ty = &materialize_nested_literals(&canonicalize_callable(ty));
-    let literal = |ty: &Ty| {
-        ty.is_string_literal()
-            || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-    };
+    let literal = |ty: &Ty| ty.is_string_literal() || ty.is_numeric_literal();
     match bindings.types.get(binder) {
         // A literal-typed actual materializes into whatever concrete storage
         // is already bound, and a concrete solution upgrades an earlier

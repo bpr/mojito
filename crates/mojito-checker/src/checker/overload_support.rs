@@ -852,7 +852,7 @@ impl ArgumentBinding {
 pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
     match actual.kind() {
         kind if kind.is_string_literal() => CONVERSION_UNIT,
-        TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => 1,
+        kind if kind.is_numeric_literal() => 1,
         _ => 0,
     }
 }
@@ -872,8 +872,8 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
             && matches!(expected.kind(), TyKind::StringLiteral)
     {
         0
-    } else if matches!(actual.kind(), TyKind::IntLiteral(_)) && expected.is_int()
-        || matches!(actual.kind(), TyKind::FloatLiteral(_)) && expected.is_float64()
+    } else if actual.kind().is_int_literal() && expected.is_int()
+        || actual.kind().is_float_literal() && expected.is_float64()
     {
         1
     } else if actual.is_string_literal()

@@ -1989,10 +1989,7 @@ impl ParamContext {
             _ => operand
                 .meta()
                 .as_value()
-                .and_then(|ty| match ty.kind() {
-                    TyKind::IntLiteral(slot) => Some(slot.as_ref().clone()),
-                    _ => None,
-                })
+                .and_then(|ty| ty.kind().int_literal_slot().cloned())
                 .and_then(|slot| self.constant(slot).ok()),
         };
         let image = operands
@@ -2007,7 +2004,7 @@ impl ParamContext {
                 })
             });
         image.map_or_else(MetaTy::int, |image| {
-            MetaTy::value(Ty::new(TyKind::IntLiteral(Box::new(image.into_value()))))
+            MetaTy::value(Ty::int_literal_at(image.into_value()))
         })
     }
 
@@ -4101,7 +4098,7 @@ impl MetaTy {
     }
 
     pub fn is_integer(&self) -> bool {
-        matches!(self.as_value().map(Ty::kind), Some(TyKind::IntLiteral(_)))
+        self.as_value().is_some_and(Ty::is_int_literal)
             || self
                 .as_value()
                 .is_some_and(|ty| ty.kind().is_int() || ty.kind().is_uint())
@@ -4120,10 +4117,7 @@ impl MetaTy {
     }
 
     fn is_literal(&self) -> bool {
-        matches!(
-            self.as_value().map(Ty::kind),
-            Some(TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-        )
+        self.as_value().is_some_and(Ty::is_numeric_literal)
     }
 
     /// This meta-type with the type binders `subst` solves replaced.
@@ -4882,7 +4876,7 @@ impl IntDomain {
                 Self::UInt
             }),
             TyKind::Index if !storage => Some(Self::Index),
-            TyKind::IntLiteral(_) if !storage => Some(Self::Literal),
+            kind if kind.is_int_literal() && !storage => Some(Self::Literal),
             _ => None,
         }
     }
@@ -5200,14 +5194,9 @@ fn is_pop_literal_operation(op: ParamOp, operands: &[ParamExpr]) -> bool {
 fn is_scalar_domain(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::Index
-            | TyKind::IntLiteral(_)
-            | TyKind::FloatLiteral(_)
-            | TyKind::I1
-            | TyKind::Ui8
-            | TyKind::Dtype
-            | TyKind::KgenDtype
+        TyKind::Index | TyKind::I1 | TyKind::Ui8 | TyKind::Dtype | TyKind::KgenDtype
     ) || ty.kind().is_simd()
+        || ty.is_numeric_literal()
         || ty.is_string_literal()
         || ty.is_bool()
 }

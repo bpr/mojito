@@ -471,13 +471,13 @@ fn source_type_from_ty_with_origins(
     origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
 ) -> Option<Type> {
     Some(match ty.kind() {
-        kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => {
+        kind if kind.is_int() || kind.is_int_literal() => {
             Type::Named("Int".to_string(), Vec::new())
         }
         kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
         kind if kind.is_bool() => Type::Named("Bool".to_string(), Vec::new()),
         kind if kind.is_string_literal() => Type::ClosedStringLiteral,
-        kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
+        kind if kind.is_float64() || kind.is_float_literal() => {
             Type::Named("Float64".to_string(), Vec::new())
         }
         TyKind::None => Type::None,

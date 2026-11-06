@@ -42,9 +42,7 @@ pub(in crate::mir) fn struct_operator_method(
 ) -> Option<&'static str> {
     crate::mir::operator_method(op).filter(|_| {
         receiver.ty().is_some_and(|ty| {
-            ty.is_simd()
-                || ty.kind().is_non_simd_struct()
-                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+            ty.is_simd() || ty.kind().is_non_simd_struct() || ty.kind().is_numeric_literal()
         })
     })
 }

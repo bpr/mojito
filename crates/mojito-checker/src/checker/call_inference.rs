@@ -333,9 +333,9 @@ impl Checker {
     /// their default initializer and their copy each build the one value
     /// the type names: the elaborator writes the closed type's default
     /// construction, the literal of its value, while a string literal's
-    /// run-time value is still the compiler's descriptor and the
-    /// [`Ty::new`] bridge holds a numeric instance as the compiler's
-    /// literal type (R1851).
+    /// run-time value is still the compiler's descriptor (R1862) and a
+    /// numeric one's the compiler's field-less literal rather than an
+    /// instance of the declared struct (R1968).
     fn literal_construction(
         &self,
         span: &SourceSpan,
@@ -363,10 +363,7 @@ impl Checker {
                 .ok(),
             _ => None,
         }
-        .filter(|ty| {
-            ty.kind().string_literal_value().is_some()
-                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-        })?;
+        .filter(|ty| ty.kind().string_literal_value().is_some() || ty.is_numeric_literal())?;
         let construct = || {
             // The application's arguments are typed as the instance's.
             if spelled {
@@ -411,8 +408,7 @@ impl Checker {
             // symbolic until the instance is elaborated
             // (`StringLiteral.__add__`'s `{}`). A use's materialization
             // supersedes it, as at a spelled literal construction.
-            kind if (kind.string_literal_value().is_some()
-                || matches!(kind, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
+            kind if (kind.string_literal_value().is_some() || kind.is_numeric_literal())
                 && args.is_empty()
                 && kwargs.is_empty() =>
             {
@@ -653,8 +649,6 @@ impl Checker {
         let name = match ty.kind() {
             TyKind::Struct(name, _) => name.as_str(),
             TyKind::StringLiteral => mojito_types::types::STRING_LITERAL_TYPE_NAME,
-            TyKind::IntLiteral(_) => mojito_types::types::INT_LITERAL_TYPE_NAME,
-            TyKind::FloatLiteral(_) => mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
             _ => return None,
         };
         let target = self.structs.get(name)?.materializes_to.clone()?;
@@ -675,8 +669,7 @@ impl Checker {
     /// constructor (a `StringLiteral`, a user struct), rather than by the
     /// compiler's literal folding (`IntLiteral`, `FloatLiteral`).
     pub(super) fn materializes_by_construction(&self, ty: &Ty) -> bool {
-        !matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-            && self.materialization_target(ty).is_some()
+        !ty.is_numeric_literal() && self.materialization_target(ty).is_some()
     }
 
     /// Materialize the value of type `ty` at `span` as a run-time value (an

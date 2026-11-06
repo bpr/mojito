@@ -9,9 +9,9 @@
 //! they never derive layout from Rust's unspecified `repr(Rust)` or from LLVM
 //! defaults.
 //!
-//! Width-1 SIMD scalars store at their lane width ([`lane_layout`]); literal
-//! value types store at their materialized width (`IntLiteral` as i64,
-//! `FloatLiteral` as f64, `StringLiteral` as the borrowed descriptor). Types
+//! Width-1 SIMD scalars store at their lane width ([`lane_layout`]); the
+//! numeric literal types are field-less (zero-sized) and `StringLiteral`
+//! stores as the borrowed descriptor. Types
 //! with no (single) native representation — multi-lane SIMD until its lowering
 //! stage, compile-time lists, callables — reject with [`LayoutError::Unsupported`] so
 //! backends surface a contextual diagnostic instead of guessing.
@@ -115,6 +115,9 @@ impl LayoutCx<'_> {
             // A `DType` is its one-byte upstream code.
             TyKind::I1 | TyKind::Ui8 | TyKind::Dtype | TyKind::KgenDtype => Ok(Layout::new(1, 1)),
             TyKind::None | TyKind::Generator(_) => Ok(Layout::ZERO),
+            // Upstream's `IntLiteral[v]` and `FloatLiteral[v]` are structs
+            // with no fields: the number is the type's `value` parameter.
+            kind if kind.is_numeric_literal() => Ok(Layout::ZERO),
             // The borrowed string-literal descriptor: `{ data: ptr, len: u64 }`
             // (`MjStrDesc` in the runtime contract), which a `!kgen.string`
             // is too, as KGEN lowers one to its address and size.
@@ -157,9 +160,6 @@ impl LayoutCx<'_> {
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.
             TyKind::Func(_) => Ok(compose(&[self.pointer(), self.pointer()]).layout),
-            // Upstream's `IntLiteral[v]` and `FloatLiteral[v]` are structs
-            // with no fields: the number is the type's `value` parameter.
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => Ok(Layout::ZERO),
             unsupported => Err(LayoutError::Unsupported(format!(
                 "type has no native layout yet: {unsupported}"
             ))),

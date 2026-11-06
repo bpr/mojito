@@ -45,8 +45,6 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         kind if kind.is_simd() => true,
         TyKind::StringLiteral
         | TyKind::None
-        | TyKind::IntLiteral(_)
-        | TyKind::FloatLiteral(_)
         | TyKind::Struct(_, _)
         | TyKind::Dtype
         | TyKind::Error
@@ -490,7 +488,7 @@ impl Checker {
                 }
                 kind if kind.is_int() => Some(Dtype::Int),
                 kind if kind.is_uint() => Some(Dtype::UInt),
-                TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) => None,
+                kind if kind.is_numeric_literal() => None,
                 // Not a scalar-range shape at all (a symbolic lane included);
                 // the ordinary no-matching-overload diagnostic stands.
                 _ => match scalar_simd_dtype(ty) {

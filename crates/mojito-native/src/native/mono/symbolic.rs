@@ -248,14 +248,15 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         // A literal type whose value is a parameter (`StringLiteral[v]`
         // under its binder) unifies against the argument's text.
-        kind if let Some(value) = kind.string_literal_value() => matches!(
-            value,
-            CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
-        ),
-        TyKind::IntLiteral(value) | TyKind::FloatLiteral(value) => matches!(
-            value.as_ref(),
-            CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
-        ),
+        kind if let Some(value) = kind
+            .string_literal_value()
+            .or_else(|| kind.numeric_literal_slot()) =>
+        {
+            matches!(
+                value,
+                CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+            )
+        }
         TyKind::Ref(v) => is_symbolic(&v.referent),
         kind if let Some((dtype, width)) = kind
             .as_simd()

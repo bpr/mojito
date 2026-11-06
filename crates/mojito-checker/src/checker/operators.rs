@@ -60,17 +60,17 @@ impl Checker {
             // `__invert__` `type_of(self ^ -1)`, `FloatLiteral.__neg__`
             // `type_of(self * -1)`, `__pos__` `Self`), so `-2.5` is
             // `FloatLiteral[-2.5]`.
-            (PrefixOp::Pos, TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) => return Ok(t),
-            (PrefixOp::Neg, TyKind::IntLiteral(_)) => {
+            (PrefixOp::Pos, kind) if kind.is_numeric_literal() => return Ok(t),
+            (PrefixOp::Neg, kind) if kind.is_int_literal() => {
                 return self.literal_rule_type(InfixOp::Sub, &Ty::int_literal_of(&0.into()), &t);
             }
-            (PrefixOp::Neg, TyKind::FloatLiteral(_)) => {
+            (PrefixOp::Neg, kind) if kind.is_float_literal() => {
                 let minus_one = Ty::float_literal_of(
                     &mojito_common::literal::FloatLiteral::from_int(&(-1).into()),
                 );
                 return self.literal_rule_type(InfixOp::Mul, &t, &minus_one);
             }
-            (PrefixOp::Invert, TyKind::IntLiteral(_)) => {
+            (PrefixOp::Invert, kind) if kind.is_int_literal() => {
                 return self.literal_rule_type(
                     InfixOp::BitXor,
                     &t,
@@ -276,7 +276,7 @@ impl Checker {
         }
         if let TyKind::Pointer { element, .. } = lt.kind() {
             match (op, rt.kind()) {
-                (Add | Sub, kind) if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => {
+                (Add | Sub, kind) if kind.is_int() || kind.is_int_literal() => {
                     return Ok(lt.clone());
                 }
                 (Sub, TyKind::Pointer { element: other, .. }) if element == other => {
@@ -318,10 +318,7 @@ impl Checker {
                 if let Some((dtype, width)) = lane.as_simd()
                     && width == SimdWidth::Known(1)
                     && dtype.is_symbolic()
-                    && matches!(
-                        literal_ty.kind(),
-                        TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-                    )
+                    && literal_ty.kind().is_numeric_literal()
                     && splats_to(literal_ty, &dtype)
                 {
                     self.record_literal_materializations(literal, literal_ty, lane)?;
@@ -333,7 +330,7 @@ impl Checker {
         // none; only an `IntLiteral` pair stays a literal power.
         if let Some(span) = &span
             && matches!(op, Pow)
-            && matches!(common.as_ref().map(Ty::kind), Some(TyKind::FloatLiteral(_)))
+            && common.as_ref().is_some_and(Ty::is_float_literal)
             && self.structs.contains_key("SIMD")
         {
             let receiver = mojito_types::types::default_literal(&lt);
@@ -504,7 +501,8 @@ impl Checker {
     /// a seam that links no literal struct.
     pub(super) fn merge_target(&self, ty: &Ty) -> Option<Ty> {
         self.materialization_target(ty).or_else(|| {
-            matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+            ty.kind()
+                .is_numeric_literal()
                 .then(|| mojito_types::types::default_literal(ty))
         })
     }
@@ -542,7 +540,7 @@ impl Checker {
             self.expect_bool(right, &context)?;
             return Ok(Ty::bool());
         };
-        if ty != lt && !matches!(lt.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) {
+        if ty != lt && !lt.kind().is_numeric_literal() {
             return Err(TypeError::Unsupported(format!(
                 "a left operand of '{}' converted to the right operand's type '{ty}' is \
                  not supported yet (roadmap R1602)",
@@ -582,7 +580,7 @@ impl Checker {
         }
         let target = match lt.kind() {
             kind if kind.is_simd() => lt.clone(),
-            TyKind::IntLiteral(_) => Ty::int(),
+            kind if kind.is_int_literal() => Ty::int(),
             _ => return Ok(rt),
         };
         Ok(if self.record_implicit_conversion(right, &rt, &target)? {
@@ -759,7 +757,7 @@ impl Checker {
         }
         let materialized = mojito_types::types::default_literal(lt);
         if let Some(dunder) = op.dunder()
-            && matches!(lt.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+            && lt.kind().is_numeric_literal()
         {
             let before = self.record_at(left.source_span()).adjustment.clone();
             self.record_literal_materializations(left, lt, &materialized)?;
@@ -831,12 +829,12 @@ impl Checker {
     fn literal_rule_type(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
         let float = op == InfixOp::Div || lt.is_float_literal() || rt.is_float_literal();
         let slot = |ty: &Ty| -> Result<ParamExpr, TypeError> {
-            let (TyKind::IntLiteral(slot) | TyKind::FloatLiteral(slot)) = ty.kind() else {
+            let Some(slot) = ty.kind().numeric_literal_slot() else {
                 return Err(bad_infix_operator(op, lt, rt));
             };
             let slot = self
                 .param_context
-                .constant(slot.as_ref().clone())
+                .constant(slot.clone())
                 .map_err(param_error)?;
             if float && ty.is_int_literal() {
                 self.param_context
@@ -866,11 +864,11 @@ impl Checker {
             .op(param_op, &[slot(lt)?, slot(rt)?])
             .map_err(param_error)?
             .into_value();
-        Ok(Ty::new(if float {
-            TyKind::FloatLiteral(Box::new(value))
+        Ok(if float {
+            Ty::float_literal_at(value)
         } else {
-            TyKind::IntLiteral(Box::new(value))
-        }))
+            Ty::int_literal_at(value)
+        })
     }
 
     /// `left op right` over two value-carrying literals as the declared
@@ -886,8 +884,7 @@ impl Checker {
         lt: &Ty,
         rt: &Ty,
     ) -> Result<Option<Ty>, TypeError> {
-        let carries_value =
-            |ty: &Ty| matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_));
+        let carries_value = |ty: &Ty| ty.kind().is_numeric_literal();
         if !carries_value(lt) || !carries_value(rt) {
             return Ok(None);
         }

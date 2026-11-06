@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1968**.
+Next free ID: **R1970**.
 
 ## Ordered Work
 
@@ -6811,22 +6811,54 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1851 An `IntLiteral[v]` application is bridged onto a compiler
-  kind, where upstream's is the declared struct**
+- [ ] **R1968 A numeric literal's value is not an instance of the declared
+  `IntLiteral` struct, so its construction and copy are checker rules**
 
-  Problem: `Ty::new` maps the declared `IntLiteral`/`FloatLiteral`
-  application onto `TyKind::IntLiteral`/`FloatLiteral`
-  (`bridged_numeric_literal`, `types.rs`), so the literal types are not
-  the structs `std.builtin.int_literal` declares.
-  - The bridge's stand-ins go with it: `nominal_parts`' and
-    `rewrite_ty`'s literal arms, `literal_construction`'s numeric arms,
-    and MIR's `materialized_literal_construction`.
-  - This is the numeric half of R1657, R1659, and R1660, and has the
-    shape of R1557 (`SIMD`).
-  - If the site walk overruns a session, split it along the crate DAG.
-  - Done when `rg "TyKind::(IntLiteral|FloatLiteral)|bridged_numeric_literal" crates`
-    is empty.
-  - Depends on R1850.
+  `IntLiteral[v]()`, `Self()` in a literal's member, and
+  `IntLiteral[v](copy=x)` are built by the checker's
+  `literal_construction` and `infer_instance_construction`
+  (`call_inference.rs`), where upstream runs the declared
+  `__init__(out self)` and the synthesized copy.
+  - Cause: the elaborator declares no struct instance for a literal type,
+    so `MirDeclarations::struct_instance` answers `None` for one, and a
+    `struct.create` of it would not verify.
+  - Stand-ins to delete: those two checker arms, MIR's
+    `materialized_literal_construction` (`mir/lower_expr/calls.rs`), and
+    the numeric-literal guard in `struct_instance` (`mir.rs`).
+  - `builtin_copy_is_value_read` (`types.rs`) admits a numeric literal
+    for the same reason.
+  - Lever: declare `IntLiteral[v]` and `FloatLiteral[v]` as zero-field
+    instances, so `struct.create` of one is the VM's empty literal struct.
+  - A use's `MaterializeLiteral` then converts the call's result register,
+    since it reads the number off the register's type (R1850).
+  - Probe: `assets/ok/int_literal_struct.mojo`,
+    `int_literal_value_type.mojo`, and `simd_literal_convert_attribute.mojo`
+    print unchanged on both backends.
+  - Found while landing R1851 (2026-11-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1969 A numeric literal's operators and conformances are compiler
+  rules, where upstream's are `IntLiteral`'s declared dunders and
+  conformance list**
+
+  `TyKind::as_non_simd_struct` and the elaborator's
+  `declared_operator_receiver` (`mono/specializer.rs`) exclude a numeric
+  literal application, so no declared-struct rule reaches it.
+  - The checker's literal rule (`Checker::literal_rule_type`,
+    `operators.rs`) types `/`, `**`, unary `-`/`~`, and a mixed
+    `IntLiteral`/`FloatLiteral` pair instead of the declared dunders.
+  - `conformance::modelled_conformance` answers a literal's traits by
+    name: it calls a literal `Comparable` and `Equatable`, which the
+    declared structs do not list.
+  - `scalar_declares_math_trait` (`method_calls/resolution.rs`) answers
+    `Ceilable`/`Floorable`/`Truncable` by name too.
+  - Done when those exclusions and arms are gone and a literal's
+    operators resolve through `infer_literal_operator` alone.
+  - Probe: `print(2 ** 10, -(3), ~5, 1 / 2)` keeps printing
+    `1024 -3 -6 0.5`, through the declared dunders.
+  - Found while landing R1851 (2026-11-06).
+  - Depends on R1968, and R1855 for the declared `__pow__`.
   - Model: Fable, Not Planned.
 
 - [ ] **R137 Checking a deeply nested generic struct type takes time

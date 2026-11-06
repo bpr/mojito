@@ -278,21 +278,12 @@ pub fn modelled_conformance(
         .strip_prefix("__module$std$math$math$")
         .unwrap_or(trait_name)
     {
-        "Boolable" => {
-            ty.is_string_literal()
-                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-        }
-        "Intable" => matches!(
-            ty.kind(),
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_) | TyKind::Pointer { .. }
-        ),
-        "Floatable" => matches!(ty.kind(), TyKind::FloatLiteral(_)),
+        "Boolable" => ty.is_string_literal() || ty.is_numeric_literal(),
+        "Intable" => ty.is_numeric_literal() || matches!(ty.kind(), TyKind::Pointer { .. }),
+        "Floatable" => ty.is_float_literal(),
         "Indexer" => ty.is_int_literal(),
-        "Equatable" => matches!(
-            ty.kind(),
-            TyKind::Dtype | TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-        ),
-        "Comparable" => matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)),
+        "Equatable" => ty.is_numeric_literal() || matches!(ty.kind(), TyKind::Dtype),
+        "Comparable" => ty.is_numeric_literal(),
         "Ceilable" | "Floorable" | "Truncable" => ty.is_int_literal(),
         "Absable" | "Roundable" => false,
         "Hashable" => builtin_hashable_ty(ty),
@@ -360,8 +351,7 @@ pub fn is_scalar(ty: &Ty) -> bool {
 
 /// Whether `ty` is a numeric type (concrete or literal).
 pub fn is_numeric(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-        || crate::types::has_host_scalar_value(ty.kind())
+    ty.is_numeric_literal() || crate::types::has_host_scalar_value(ty.kind())
 }
 
 pub fn is_numeric_like(ty: &Ty) -> bool {

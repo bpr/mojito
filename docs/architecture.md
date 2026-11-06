@@ -2203,6 +2203,16 @@ slot and at an operator beside a non-literal operand, so a pointer offset
 (`p + 1`, `p.unsafe_offset(1)`) converts first. A compile-time argument
 thawed at a scalar parameter converts at it (`VmBackend::thaw`).
 
+Above the waist a literal's type is the declared struct's application, as
+upstream's is: `IntLiteral[v]` and `FloatLiteral[v]` are `TyKind::Struct`
+over a `#pop.int_literal`/`#pop.float_literal` slot or a symbolic
+expression of that type, which `TyKind::{int,float,numeric}_literal_slot`
+read and `Ty::new` folds when closed
+(`canonical_numeric_literal_application`). Its construction, copy,
+operators, and conformances are still the compiler's rules, so
+`as_non_simd_struct`, `MirDeclarations::struct_instance`, and the
+elaborator's `declared_operator_receiver` leave it out (R1968, R1969).
+
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`
 meets a vector through the declared `@implicit

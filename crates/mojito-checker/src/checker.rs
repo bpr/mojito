@@ -1947,7 +1947,7 @@ impl Checker {
         let span = expression.source_span();
         // Upstream converts a literal source to the constructor's parameter
         // (`#pop.int_literal_convert`) before the `@implicit` call.
-        if matches!(from.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
+        if from.kind().is_numeric_literal()
             && (parameter.is_int()
                 || parameter.is_uint()
                 || parameter.is_float64()
@@ -2082,12 +2082,11 @@ impl Checker {
                 mojito_types::types::BOOL_MASK_CONVERSION_MESSAGE,
             );
         }
-        let scalar_boundary =
-            matches!(from.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_))
-                && (to.is_int()
-                    || to.is_uint()
-                    || to.is_float64()
-                    || to.as_simd().is_some_and(|(_, width)| !width.is_inferred()));
+        let scalar_boundary = from.kind().is_numeric_literal()
+            && (to.is_int()
+                || to.is_uint()
+                || to.is_float64()
+                || to.as_simd().is_some_and(|(_, width)| !width.is_inferred()));
 
         if scalar_boundary {
             if let Some(value) = self.exact_literal_value(expression)
@@ -2115,13 +2114,10 @@ impl Checker {
             // asserts a float dtype. A value-less literal (`1 / 2`) is
             // still the `Float64` it materializes as (R1849), and a scalar-typed
             // expression that folds to a literal is no conversion.
-            let literal_typed = matches!(
-                record.ty.as_ref().map(Ty::kind),
-                Some(TyKind::FloatLiteral(_))
-            );
+            let literal_typed = record.ty.as_ref().is_some_and(Ty::is_float_literal);
             drop(record);
             if literal_typed
-                && matches!(from.kind(), TyKind::FloatLiteral(_))
+                && from.kind().is_float_literal()
                 && self
                     .structs
                     .get(mojito_types::types::SIMD_TYPE_NAME)

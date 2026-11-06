@@ -692,14 +692,14 @@ impl Literal {
     fn of(default: &CheckedConst, ty: &Ty) -> Option<Self> {
         let scalar = is_scalar_simd(ty);
         let (k, own) = match (default, ty.kind()) {
-            (CheckedConst::Int(value), TyKind::IntLiteral(_)) => {
+            (CheckedConst::Int(value), kind) if kind.is_int_literal() => {
                 (Const::IntLiteral(value.clone()), None)
             }
             (CheckedConst::Int(value), _) if scalar => (
                 Const::IntLiteral(value.clone()),
                 Some(Ty::int_literal_of(value)),
             ),
-            (CheckedConst::Float(value), TyKind::FloatLiteral(_)) => {
+            (CheckedConst::Float(value), kind) if kind.is_float_literal() => {
                 (Const::FloatLiteral(value.clone()), None)
             }
             (CheckedConst::Float(value), _)

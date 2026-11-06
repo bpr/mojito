@@ -4413,10 +4413,7 @@ impl Checker {
     }
 
     fn binds_unmaterialized_literal(&self, literal: &Ty, bounds: &[String]) -> bool {
-        matches!(
-            literal.kind(),
-            TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-        ) && {
+        literal.kind().is_numeric_literal() && {
             let materialized = default_literal(literal);
             !bounds
                 .iter()
@@ -4707,7 +4704,10 @@ impl Checker {
                 self.record_read_temporary_argument(&kwargs[0].value);
                 // A source already of the instance keeps its origin tail.
                 return Ok(
-                    if coerces(&found, &instance) && matches!(found.kind(), TyKind::Struct(..)) {
+                    if coerces(&found, &instance)
+                        && matches!(found.kind(), TyKind::Struct(..))
+                        && !found.is_numeric_literal()
+                    {
                         found
                     } else {
                         instance

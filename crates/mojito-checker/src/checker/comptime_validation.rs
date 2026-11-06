@@ -1057,7 +1057,7 @@ impl Checker {
             ExprKind::Identifier(_) | ExprKind::Member { .. } => {
                 self.parameter_value_ty(operand).is_some_and(|ty| {
                     ty.is_bool()
-                        || matches!(ty.kind(), TyKind::IntLiteral(_))
+                        || ty.kind().is_int_literal()
                         || ty
                             .kind()
                             .known_simd()
@@ -1286,7 +1286,7 @@ impl Checker {
                 |binder| ConstraintOperand::Param(binder.clone()),
             ),
         };
-        let integer = ty.is_int() || ty.is_uint() || matches!(ty.kind(), TyKind::IntLiteral(_));
+        let integer = ty.is_int() || ty.is_uint() || ty.kind().is_int_literal();
         let truth = |expression: ParamExpr| CompiledCondition {
             constraint: GenericConstraint::Eq(
                 operand(expression.clone()),
@@ -1603,10 +1603,10 @@ impl Checker {
         }
         let ty = ty.ok()?;
         let ty = match ty.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => Ty::int(),
+            kind if kind.is_int() || kind.is_int_literal() => Ty::int(),
             kind if kind.is_uint() => Ty::uint(),
             kind if kind.is_bool() => Ty::bool(),
-            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => Ty::float64(),
+            kind if kind.is_float64() || kind.is_float_literal() => Ty::float64(),
             // A struct-, sized-scalar-, or attribute-valued call is an
             // application the elaborator below MIR runs and materializes
             // (an attribute only where an op's attribute takes it), and so
@@ -3624,7 +3624,7 @@ impl Checker {
                 || ty.is_float64()
                 || ty.is_bool()
                 || ty.is_string_literal()
-                || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
+                || ty.kind().is_numeric_literal())
                 || ty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
                     args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
                 })
@@ -6075,8 +6075,6 @@ fn parameter_value_type(ty: &Ty) -> bool {
                 | TyKind::Index
                 | TyKind::I1
                 | TyKind::Ui8
-                | TyKind::IntLiteral(_)
-                | TyKind::FloatLiteral(_)
                 | TyKind::StringLiteral
                 | TyKind::Dtype
                 | TyKind::KgenDtype
@@ -6273,10 +6271,8 @@ fn template_name(name: &str) -> &str {
 fn materialized_collection_spelling(ty: &Ty) -> String {
     fn scalar(element: &Ty) -> String {
         match element.kind() {
-            kind if kind.is_int() || matches!(kind, TyKind::IntLiteral(_)) => "Int".to_string(),
-            kind if kind.is_float64() || matches!(kind, TyKind::FloatLiteral(_)) => {
-                "Float64".to_string()
-            }
+            kind if kind.is_int() || kind.is_int_literal() => "Int".to_string(),
+            kind if kind.is_float64() || kind.is_float_literal() => "Float64".to_string(),
             kind if kind.is_string_literal() => "String".to_string(),
             _ => match mojito_types::types::tuple_elements(element) {
                 Some(elements) => format!(

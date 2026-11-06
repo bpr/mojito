@@ -28,10 +28,7 @@ pub(super) fn unify(
                 // (`Pair[Float64](0.5, 1)`) materializes to the binding, as
                 // it does against a concrete parameter type.
                 Some(existing)
-                    if matches!(
-                        actual.kind(),
-                        TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)
-                    ) && coerces(actual, existing) => {}
+                    if actual.kind().is_numeric_literal() && coerces(actual, existing) => {}
                 Some(existing) => {
                     return Err(TypeError::TypeMismatch {
                         expected: existing.to_string(),
@@ -410,19 +407,30 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
         // A literal's value binds an `IntLiteral[v]` or `FloatLiteral[v]`
         // pattern's binder, as a literal's text binds a `StringLiteral[v]`
         // one's through the struct arm below.
-        (TyKind::IntLiteral(pattern), TyKind::IntLiteral(actual))
-        | (TyKind::FloatLiteral(pattern), TyKind::FloatLiteral(actual)) => {
-            if let CtValue::Expr(expr) = pattern.as_ref() {
+        (pattern_kind, actual_kind)
+            if let Some((pattern, actual)) = pattern_kind
+                .int_literal_slot()
+                .zip(actual_kind.int_literal_slot())
+                .or_else(|| {
+                    pattern_kind
+                        .float_literal_slot()
+                        .zip(actual_kind.float_literal_slot())
+                }) =>
+        {
+            if let CtValue::Expr(expr) = pattern {
                 if let Some(reference) = expr.as_decl_ref() {
                     out.entry(reference.name.to_string())
-                        .or_insert_with(|| actual.as_ref().clone());
-                } else if let CtValue::Expr(actual) = actual.as_ref() {
+                        .or_insert_with(|| actual.clone());
+                } else if let CtValue::Expr(actual) = actual {
                     solve_applied_args(expr, actual, out);
                 }
             }
         }
-        (TyKind::FloatLiteral(pattern), TyKind::IntLiteral(_)) => {
-            if let CtValue::Expr(expr) = pattern.as_ref()
+        (pattern_kind, actual_kind)
+            if let Some(pattern) = pattern_kind.float_literal_slot()
+                && actual_kind.is_int_literal() =>
+        {
+            if let CtValue::Expr(expr) = pattern
                 && let Some(reference) = expr.as_decl_ref()
                 && let Some(value) = mojito_types::types::int_literal_as_float(actual)
             {
@@ -754,13 +762,8 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         // A symbolic literal value closes the same way.
         kind if (kind.is_simd()
             || kind.string_literal_value().is_some()
-            || matches!(
-                kind,
-                TyKind::KgenSimd { .. }
-                    | TyKind::IntLiteral(_)
-                    | TyKind::FloatLiteral(_)
-                    | TyKind::PopArray { .. }
-            ))
+            || kind.is_numeric_literal()
+            || matches!(kind, TyKind::KgenSimd { .. } | TyKind::PopArray { .. }))
             && mojito_types::types::is_symbolic(ty) =>
         {
             mojito_types::types::replace_parameters(&context, ty, bindings, 0)

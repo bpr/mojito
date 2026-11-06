@@ -58,7 +58,7 @@ impl Checker {
     ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
         if !(ty.is_simd()
             || ty.kind().string_literal_value().is_some()
-            || matches!(ty.kind(), TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)))
+            || ty.kind().is_numeric_literal())
         {
             return None;
         }
@@ -726,8 +726,10 @@ fn math_operation_requirement(method: &str, argc: usize) -> Option<&'static str>
 /// `Floorable`, and `Truncable`, and `FloatLiteral` none.
 fn scalar_declares_math_trait(ty: &Ty, trait_name: &str) -> bool {
     match ty.kind() {
-        TyKind::IntLiteral(_) => matches!(trait_name, "Ceilable" | "Floorable" | "Truncable"),
-        TyKind::FloatLiteral(_) => false,
+        kind if kind.is_int_literal() => {
+            matches!(trait_name, "Ceilable" | "Floorable" | "Truncable")
+        }
+        kind if kind.is_float_literal() => false,
         _ => mojito_types::conformance::modelled_declares(ty, trait_name, &mut |_, _| true),
     }
 }

@@ -156,7 +156,19 @@ impl<'d, 'a> StructReads<'d, 'a> {
         if let Some(reads) = self.layouts.borrow().get(name) {
             return reads.clone();
         }
-        let Some(structure) = self.declarations.structure(name) else {
+        // A numeric literal's register holds no value: every reader takes
+        // the number from its type's `value` argument, so that argument is
+        // read wherever the type is.
+        let numeric_literal = [
+            mojito_types::types::INT_LITERAL_TYPE_NAME,
+            mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
+        ]
+        .contains(&name);
+        let Some(structure) = self
+            .declarations
+            .structure(name)
+            .filter(|_| !numeric_literal)
+        else {
             return LayoutReads::All;
         };
         if structure.param_decls.iter().any(is_variadic) || visiting.iter().any(|seen| seen == name)

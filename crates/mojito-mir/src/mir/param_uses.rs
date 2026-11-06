@@ -313,12 +313,11 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
     ty.is_simd()
         || ty.is_bool()
         || ty.is_string_literal()
+        || ty.is_numeric_literal()
         || matches!(
             ty.kind(),
             TyKind::StringLiteral
                 | TyKind::None
-                | TyKind::IntLiteral(_)
-                | TyKind::FloatLiteral(_)
                 | TyKind::Dtype
                 | TyKind::Index
                 | TyKind::I1

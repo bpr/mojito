@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `IntLiteral[v]` and `FloatLiteral[v]` are now the applications of the
+  structs `std.builtin.int_literal` and `std.builtin.float_literal`
+  declare, as upstream's are: the compiler's own literal type kinds and
+  the `Ty::new` bridge onto them are gone, and every reader asks the
+  application's `value` slot. A literal's construction, copy, operators,
+  and conformances remain compiler rules for now (R1851).
 - A numeric literal register holds no value at run time, as upstream's
   field-less `IntLiteral[v]` holds none: the VM keeps the empty literal
   struct, Pliron lowers literal types zero-sized, and their native layout
