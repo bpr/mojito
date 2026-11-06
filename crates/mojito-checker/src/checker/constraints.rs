@@ -328,7 +328,7 @@ impl Checker {
             )?;
             let mut facts = Vec::new();
             for constraint in &compiled {
-                self.guaranteed_facts(&self.bind_constraint(constraint, &[]), &mut facts);
+                self.guaranteed_facts(constraint, &mut facts);
             }
             for (trait_name, condition) in conformance_conditions {
                 if self.trait_requires_comptime_member(trait_name, &member.name) {
@@ -3940,43 +3940,9 @@ impl Checker {
         pack.as_decl_ref().cloned()
     }
 
-    /// `constraint` with each pack receiver [`Self::compile_where_clause`]
-    /// left unbound bound to its binder: one of `own`, the declaration the
-    /// clause belongs to, else the innermost open scope's. One neither binds
-    /// stays unbound, identified by its spelling.
-    pub(super) fn bind_constraint(
-        &self,
-        constraint: &GenericConstraint,
-        own: &[ParamDecl],
-    ) -> GenericConstraint {
-        constraint.map(
-            &|reference| self.bind_binder(reference, own),
-            &ConstraintOperand::clone,
-        )
-    }
-
-    /// [`Self::bind_constraint`] over the clauses of every declaration of
-    /// `decls`, and their callable defaults bound within `decls`.
-    pub(super) fn bind_declared_constraints(&self, decls: &[ParamDecl]) -> Vec<ParamDecl> {
-        decls
-            .iter()
-            .map(|decl| {
-                let mut decl = decl.bind_references(&[decls]);
-                match &mut decl {
-                    ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                        for constraint in constraints {
-                            *constraint = self.bind_constraint(constraint, &[]);
-                        }
-                    }
-                }
-                decl
-            })
-            .collect()
-    }
-
     /// A condition of the declaration owning `decls` (a struct header's
     /// conditional conformance or `where` clause), compiled with `decls`'
-    /// binders open ([`Self::in_param_scope`]) and bound to them: a bare
+    /// binders open ([`Self::in_param_scope`]): a bare
     /// `Ts.all_conforms_to[Trait]()` is read against `decls`' packs.
     pub(super) fn compile_condition(
         &self,
@@ -3999,12 +3965,12 @@ impl Checker {
             },
             _ => self.compile_declaration_proposition(decls, condition)?,
         };
-        Ok(compiled.bind(&[decls]))
+        Ok(compiled)
     }
 
     /// The `where` clauses of a parameterized member, compiled with its
     /// own binders `decls` open (`types` spelling its type binders, as its
-    /// body's scope does) and bound to them; an unparameterized member's
+    /// body's scope does); an unparameterized member's
     /// compile in the enclosing scope.
     pub(super) fn member_clauses(
         &mut self,
@@ -4021,10 +3987,7 @@ impl Checker {
         self.push_param_scope_as(decls, types);
         let compiled = clauses
             .iter()
-            .map(|condition| {
-                self.compile_where_clause(condition)
-                    .map(|constraint| constraint.bind(&[decls]))
-            })
+            .map(|condition| self.compile_where_clause(condition))
             .collect();
         self.tparams.pop();
         compiled
@@ -4037,8 +4000,7 @@ impl Checker {
     /// is what the one builder reads it as: a binder of an open scope its
     /// reference, `Self.<name>` the enclosing struct's, and a name that is
     /// no parameter (a runtime local, an unknown name) the builder's error.
-    /// Only a bare pack receiver is left unbound ([`ParamRef::unbound`]) for
-    /// [`Self::bind_constraint`].
+    /// A pack receiver is its binder in an open scope.
     pub(super) fn compile_where_clause(&self, expr: &Expr) -> Result<GenericConstraint, TypeError> {
         let ExprKind::TupleLit(elements) = &expr.kind else {
             return self.compile_generic_constraint(expr);
@@ -4514,7 +4476,12 @@ impl Checker {
             }
             // A value pack's list is a `ParameterList`, never a `TypeList`.
             ExprKind::Identifier(name) if self.value_pack_in_scope(name).is_some() => Ok(None),
-            ExprKind::Identifier(name) => Ok(Some(TypeListReceiver::Pack(ParamRef::unbound(name)))),
+            ExprKind::Identifier(name) => Ok(Some(TypeListReceiver::Pack(ParamRef {
+                id: self
+                    .binder_in_scope(name)
+                    .ok_or_else(|| self.unresolved_head(name))?,
+                name: name.as_str().into(),
+            }))),
             // The element types a specialization wrote in a bound pack's
             // place.
             ExprKind::TupleLit(elements) => Ok(elements
@@ -4678,7 +4645,6 @@ impl Checker {
                 }
                 _ => error,
             })?;
-        let constraint = constraint.bind(&[decls]);
         let declared: HashSet<&ParamId> = decls
             .iter()
             .map(mojito_types::types::ParamDecl::id)
@@ -5586,23 +5552,6 @@ impl Checker {
         mojito_types::types::bind_reference(&ParamRef::unbound(name), &[&self.self_decls])
     }
 
-    fn bind_binder(&self, reference: &ParamRef, own: &[ParamDecl]) -> ParamRef {
-        if !reference.is_unbound() {
-            return reference.clone();
-        }
-        let bound = mojito_types::types::bind_reference(reference, &[own]);
-        if !bound.is_unbound() {
-            return bound;
-        }
-        self.binder_in_scope(&reference.name).map_or_else(
-            || reference.clone(),
-            |id| ParamRef {
-                id,
-                name: reference.name.clone(),
-            },
-        )
-    }
-
     /// The binder a bare name denotes in the open parameter scopes,
     /// innermost first: a type parameter, a value parameter, or a pack.
     fn binder_in_scope(&self, name: &str) -> Option<ParamId> {
@@ -5632,13 +5581,12 @@ impl Checker {
 
     /// One proposition of [`Self::compile_condition`]: its connectives
     /// recursed into, and a pack conformance over a pack `decls` declares
-    /// compiled against that pack.
+    /// compiled against that pack's list binder.
     fn compile_declaration_proposition(
         &self,
         decls: &[ParamDecl],
         expr: &Expr,
     ) -> Result<GenericConstraint, TypeError> {
-        let declares_pack = |pack: &str| ParamDecl::type_pack_list(decls, pack).is_some();
         Ok(match &expr.kind {
             ExprKind::Prefix(PrefixOp::Not, value) => GenericConstraint::Not(Box::new(
                 self.compile_declaration_proposition(decls, value)?,
@@ -5652,10 +5600,15 @@ impl Checker {
                 Box::new(self.compile_declaration_proposition(decls, right)?),
             ),
             _ => match pack_conformance_atom(expr) {
-                Some((pack, trait_name)) if declares_pack(pack) => {
+                Some((pack, trait_name))
+                    if let Some(list) = ParamDecl::type_pack_list(decls, pack) =>
+                {
                     self.check_trait_name(trait_name)?;
                     GenericConstraint::ConformsPack {
-                        operand: ConstraintOperand::Param(ParamRef::unbound(pack)),
+                        operand: ConstraintOperand::Param(ParamRef {
+                            id: list.id().clone(),
+                            name: pack.into(),
+                        }),
                         trait_name: trait_name.to_string(),
                     }
                 }

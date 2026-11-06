@@ -844,7 +844,12 @@ impl Checker {
         self.push_param_scope(&[]);
         let classified = self.classify_params_in_scope(owner, tps);
         self.tparams.pop();
-        classified.map(|decls| self.bind_declared_constraints(&decls))
+        classified.map(|decls| {
+            decls
+                .iter()
+                .map(|decl| decl.bind_references(&[&decls]))
+                .collect()
+        })
     }
 
     fn classify_params_in_scope(
@@ -1338,10 +1343,7 @@ impl Checker {
         // binders resolve, exactly like a named def's trailing clauses.
         let compiled: Result<Vec<_>, TypeError> = clauses
             .iter()
-            .map(|condition| {
-                self.compile_where_clause(condition)
-                    .map(|constraint| self.bind_constraint(&constraint, &decls))
-            })
+            .map(|condition| self.compile_where_clause(condition))
             .collect();
         self.tparams.pop();
         let checked = checked?;
@@ -1492,14 +1494,13 @@ impl Checker {
 
     /// Method `m`'s `where` clauses that read none of its arguments, or
     /// those that do (`where self.dtype.is_integral()`) when
-    /// `reading_arguments` holds, each compiled once with its own binders
-    /// `decls` open and bound to them, beside its source position. A clause
+    /// `reading_arguments` holds, each compiled once in the caller's scope
+    /// (its own binders open), beside its source position. A clause
     /// reading an argument compiles with the arguments in scope
     /// (`in_signature_scope`).
     pub(super) fn method_clauses(
         &self,
         m: &Method,
-        decls: &[ParamDecl],
         reading_arguments: bool,
     ) -> Result<Vec<(usize, GenericConstraint)>, TypeError> {
         let arguments = method_arguments(m);
@@ -1514,7 +1515,7 @@ impl Checker {
             })
             .map(|(index, condition)| {
                 self.compile_where_clause(condition)
-                    .map(|constraint| (index, self.bind_constraint(&constraint, decls)))
+                    .map(|constraint| (index, constraint))
             })
             .collect()
     }

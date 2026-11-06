@@ -851,8 +851,8 @@ impl Checker {
     /// ([`Self::evaluated_condition`]). Beside each constraint is the
     /// condition's `Bool` parameter value, the one `i1` attribute upstream's
     /// `hlcf.comptime.if` takes, composed leaf by leaf
-    /// ([`Self::check_ct_bool`]). The recorded constraint, its operands
-    /// bound, when the whole condition closes.
+    /// ([`Self::check_ct_bool`]). The recorded constraint when the whole
+    /// condition closes.
     pub(super) fn check_comptime_condition(
         &self,
         cond: &Expr,
@@ -862,7 +862,7 @@ impl Checker {
         let inlined = self.inline_local_comptime_values(cond);
         Ok(self.check_ct_bool(&inlined, test)?.map(|condition| {
             self.record_comptime_condition(cond, &condition);
-            self.bind_constraint(&condition.constraint, &[])
+            condition.constraint
         }))
     }
 
@@ -1029,12 +1029,13 @@ impl Checker {
         }
     }
 
-    /// Record `condition` as the compile-time reading of `cond`, each
-    /// constraint operand naming its binder by identity: the innermost open
-    /// scope's, else the enclosing struct's.
+    /// Record `condition` as the compile-time reading of `cond`.
     fn record_comptime_condition(&self, cond: &Expr, condition: &CompiledCondition) {
-        let bound = self.bind_constraint(&condition.constraint, &[]);
-        self.record_condition_through_spellings(cond, &bound, condition.value.as_ref());
+        self.record_condition_through_spellings(
+            cond,
+            &condition.constraint,
+            condition.value.as_ref(),
+        );
     }
 
     /// Whether `operand` of a comparison is a parameter value whose builtin
@@ -2057,16 +2058,12 @@ impl Checker {
                     .and_then(|owner| self.conformance_availability(&owner, gate).ok()),
             };
             let compiled = self
-                .in_signature_clause_scope(&declaration, |checker, decls| {
+                .in_signature_clause_scope(&declaration, |checker, _| {
                     declaration
                         .function
                         .where_clauses()
                         .iter()
-                        .map(|clause| {
-                            checker
-                                .compile_where_clause(clause)
-                                .map(|constraint| checker.bind_constraint(&constraint, decls))
-                        })
+                        .map(|clause| checker.compile_where_clause(clause))
                         .collect::<Result<Vec<_>, _>>()
                         .ok()
                 })

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1949**.
+Next free ID: **R1950**.
 
 ## Ordered Work
 
@@ -294,24 +294,19 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1899 A bare pack receiver in a condition is left unbound and
-  bound late by spelling**
+- [ ] **R1949 A `contains` element naming a binder is re-read as a type
+  by its spelling**
 
-  `typelist_receiver`'s bare-pack arm and
-  `compile_declaration_proposition`'s `ConformsPack` (`constraints.rs`)
-  compile a pack name to `ParamRef::unbound`, which `bind_constraint`
-  (`bind_binder`) binds afterwards by spelling, where upstream's parameter
-  emitter reads the pack's binder when it emits the condition.
-  - The lever: bind at production, through `binder_in_scope` and the
-    declaration's own decls (`compile_condition`'s `decls`).
-  - Then delete `bind_binder`, `bind_constraint`, and its `own` path,
-    which no fixture takes.
-  - Every other operand of a clause or a `comptime if` condition is
-    already the one builder's reading (R1896).
-  - Probe: `assets/ok/abstract_dispatch_effect_free_conformers.mojo`, and
-    std's `Tuple.concat` / `Variant` conditions with
-    `MOJITO_STD_PACKAGE=0`.
-  - Found while landing R1896 (2026-11-03).
+  `typelist_proposition_query`'s `PackContains` arm
+  (`comptime_validation.rs`) turns a `ConstraintOperand::Param` element
+  back into a type through `ty_from_anno(Type::Named(param.name))`, where
+  upstream's parameter emitter reads the element's binder once, when it
+  emits the condition.
+  - The lever: build the element's type from the `ParamRef` it already
+    holds (its binder's `TyKind::Param`), not from its spelling.
+  - Probe: `assets/ok/pack_length_runtime_position.mojo`
+    (`Us.contains[T]()` over a type binder `T`).
+  - Found while landing R1899 (2026-11-05).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 - [ ] **R1901 The one builder reads no proposition the constraint compiler

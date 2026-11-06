@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pack receiver in a condition (`Ts.all_conforms_to[Trait]()` in a
+  struct header, a `where` clause, or a `comptime if`/`comptime assert`) is
+  now its binder, read where the condition is emitted, instead of a name
+  bound afterwards by spelling (R1899). The checker's late condition
+  binders (`bind_constraint`, `bind_declared_constraints`) are gone, and a
+  pack receiver no open scope binds is the builder's unresolved-name error.
 - A compile-time application now reads its callee's `where` clauses as
   the callee's signature emits them, over the callable's own declared
   binders, instead of recompiling them over its argument slots (R1898).

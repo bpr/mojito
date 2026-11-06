@@ -1815,9 +1815,9 @@ second expression tree.
   builder, so a binder of an open scope is its reference and a name that
   is no parameter (a runtime local, an unknown name) is the builder's
   error at the declaration, as upstream's parameter emitter rejects it;
-  only a bare pack receiver is left unbound (`ParamRef::unbound`) for
-  `Checker::bind_constraint` to bind at the declaration — its own
-  binders, then the open scopes — and a clause is judged under a
+  a pack receiver is likewise its binder, read as the condition is
+  emitted, so no operand is bound later by spelling; and a clause is
+  judged under a
   `ConstraintEnvironment` keyed by `ParamId`. A member's
   clause reaches its struct's parameters only as `Self.X`: a bare one is
   upstream's `UnqualifiedStructParam`, never a late bind by spelling. A

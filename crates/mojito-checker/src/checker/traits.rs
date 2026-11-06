@@ -772,7 +772,6 @@ impl Checker {
                     .structs
                     .get_mut(name)
                     .expect("struct existence checked above");
-                let constraint = constraint.bind(&[&info.decls]);
                 if let Some(last) = info.decls.last_mut() {
                     match last {
                         ParamDecl::Type { constraints, .. }
@@ -1213,10 +1212,7 @@ impl Checker {
         // types its receiver's bare bounds do not admit.
         let signature = self
             .method_gate(name, m)
-            .and_then(|gate| {
-                self.method_clauses(m, &method_decls, false)
-                    .map(|free| (free, gate))
-            })
+            .and_then(|gate| self.method_clauses(m, false).map(|free| (free, gate)))
             .and_then(|(free, gate)| {
                 let mut facts = Vec::new();
                 for clause in free.iter().map(|(_, clause)| clause).chain(&gate) {
@@ -1227,7 +1223,7 @@ impl Checker {
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
                     let all_types = this.param_tys(&m.params)?;
                     let mut clauses = free;
-                    clauses.extend(this.method_clauses(m, &method_decls, true)?);
+                    clauses.extend(this.method_clauses(m, true)?);
                     clauses.sort_by_key(|(index, _)| *index);
                     let availability = clauses
                         .into_iter()

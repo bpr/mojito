@@ -1111,9 +1111,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `member_clauses` compiles a parameterized `comptime` member's clauses
   with its own binders open (`rebind_slots`, `checker/traits_support.rs`,
   restating a trait requirement's over a witness's);
-  `bind_constraint`/`bind_declared_constraints` bind a bare pack receiver
-  left unbound to its binder (`GenericConstraint::bind`), and a bare
-  enclosing-struct parameter is the builder's `UnqualifiedStructParam`;
+  a pack receiver is its binder, read where the condition is emitted
+  (`typelist_receiver` through `binder_in_scope`,
+  `compile_declaration_proposition` through the declaration's pack list),
+  and a bare enclosing-struct parameter is the builder's `UnqualifiedStructParam`;
   `Checker::conformance_availability` (`checker/traits.rs`) reads a stored
   header condition as the availability of a default wrapper
   (`DefaultWrapper::gate`) or a synthesized member

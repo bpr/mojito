@@ -3820,10 +3820,7 @@ impl Checker {
             }
             let compiled = where_clauses
                 .iter()
-                .map(|condition| {
-                    this.compile_where_clause(condition)
-                        .map(|constraint| this.bind_constraint(&constraint, &decls))
-                })
+                .map(|condition| this.compile_where_clause(condition))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok((param_tys, ret_ty, compiled))
         })?;
@@ -4318,7 +4315,6 @@ impl Checker {
                 .collect::<Result<Vec<_>, _>>()
         })?;
         for constraint in compiled {
-            let constraint = constraint.bind(&[&decls]);
             let Some(last) = decls.last_mut() else {
                 return Err(TypeError::Unsupported(
                     "a where clause requires compile-time parameters".to_string(),
