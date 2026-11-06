@@ -108,10 +108,10 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         | CtValue::KgenString(_)
         | CtValue::PopIntLiteral(_)
         | CtValue::PopFloatLiteral(_)
-        | CtValue::KgenTarget(_) => Ok(Value::Attribute(value.clone())),
+        | CtValue::KgenTarget(_)
+        | CtValue::Generator(_) => Ok(Value::Attribute(value.clone())),
         CtValue::Type(_)
         | CtValue::Trait(_)
-        | CtValue::Generator(_)
         | CtValue::Expr(_)
         | CtValue::Deferred(_)
         | CtValue::Marker(_)

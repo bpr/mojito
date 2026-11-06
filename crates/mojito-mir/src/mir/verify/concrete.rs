@@ -212,13 +212,15 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
             "{head} {role} holds the compile-time-only raw parameter list type `{ty}`"
         ));
     }
-    // A trait, a type, or a generator is a compile-time value: no run-time
-    // value holds one. An attribute or a KGEN string is not in that list:
-    // elaborated MIR may hold one, and LLVM translation decides.
+    // A trait or a type is a compile-time value: no run-time value holds
+    // one. A generator is not in that list: upstream's `!kgen.generator` is
+    // a trivial register type whose value holds nothing. Nor is an
+    // attribute or a KGEN string: elaborated MIR may hold one, and LLVM
+    // translation decides.
     if mojito_types::types::mentions(ty, &|ty| {
         matches!(
             ty.kind(),
-            TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType | TyKind::Generator(_)
+            TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType
         )
     }) {
         errors.push(format!(

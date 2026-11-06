@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generator read as a run-time value (`var x = S.k`, `var x = Add[1,
+  _]`, `var x = G` over a generator parameter) is now upstream's trivial,
+  zero-sized register value on both backends instead of stopping in the
+  elaborator, and converts to a declared generator type only when its
+  binders' names agree, as at the pin (R1907).
 - A `String`-annotated `comptime` over a string literal (`comptime G:
   String = "glob"`, at module scope, as a struct member, or local) is now
   the `String` its annotation converts the literal to, so `var u = G`,

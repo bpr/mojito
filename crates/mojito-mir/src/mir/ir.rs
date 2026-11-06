@@ -1649,6 +1649,13 @@ impl Const {
             {
                 Some(Self::Value(value.clone()))
             }
+            // A generator read as a run-time value is upstream's trivial
+            // register value of `!kgen.generator` type, which holds nothing.
+            CtValue::Generator(_)
+                if slot_ty.is_some_and(|ty| matches!(ty.kind(), TyKind::Generator(_))) =>
+            {
+                Some(Self::Value(value.clone()))
+            }
             CtValue::Pointer { .. }
                 if slot_ty.is_some_and(|ty| matches!(ty.kind(), TyKind::Pointer { .. })) =>
             {

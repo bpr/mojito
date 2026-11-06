@@ -336,6 +336,9 @@ pub fn type_name(value: &Value) -> String {
         Value::Attribute(mojito_types::ct::CtValue::PopFloatLiteral(_)) => {
             mojito_types::types::POP_FLOAT_LITERAL_TYPE_SPELLING.to_string()
         }
+        Value::Attribute(mojito_types::ct::CtValue::Generator(generator)) => {
+            generator.ty().to_string()
+        }
         Value::Attribute(_) => mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING.to_string(),
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),

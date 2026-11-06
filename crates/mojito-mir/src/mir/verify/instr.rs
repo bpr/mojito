@@ -290,6 +290,19 @@ pub(super) fn verify_instruction(
             }
         }
         MirInstr::Const {
+            k: crate::mir::Const::Value(value @ CtValue::Generator(_)),
+            dest,
+        } => {
+            if let Some(ty) = cx.reg_ty(*dest)
+                && !matches!(ty.kind(), TyKind::Generator(_))
+            {
+                errors.push(format!(
+                    "{}: generator constant `{value}` is read at `{ty}`, not a generator type",
+                    cx.prefix
+                ));
+            }
+        }
+        MirInstr::Const {
             k: crate::mir::Const::Value(value),
             ..
         } if !value.is_materialized_constant() => errors.push(format!(

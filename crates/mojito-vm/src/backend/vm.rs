@@ -1367,7 +1367,8 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::KgenString(_)
         | CtValue::PopIntLiteral(_)
         | CtValue::PopFloatLiteral(_)
-        | CtValue::KgenTarget(_)) => Value::Attribute(value),
+        | CtValue::KgenTarget(_)
+        | CtValue::Generator(_)) => Value::Attribute(value),
         CtValue::Struct { name, fields } => Value::Struct {
             name,
             fields: fields
@@ -1398,7 +1399,6 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::Set { .. }
         | CtValue::Type(_)
         | CtValue::Trait(_)
-        | CtValue::Generator(_)
         // No unresolved expression or deferred slot becomes a runtime value.
         | CtValue::Expr(_)
         | CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::RemovedArg => return None,

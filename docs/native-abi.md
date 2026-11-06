@@ -188,6 +188,8 @@ Rules:
   alignment (at least 1); total size pads to that alignment. No reordering.
 - A zero-sized type has size 0, alignment 1, and forces no padding.
 - Scalars: `Int`/`UInt`/`Float64` are 8/8, `Bool` and `DType` are 1/1, `None` is a ZST.
+- A generator value (`__generator_type[...]`, upstream's `!kgen.generator`)
+  is a ZST: its trivial register value holds nothing at run time.
 - `Pointer`/`Ref` are one target pointer (8/8); origins and ownership facts
   erase after validation. A reference adds runtime metadata only when its
   checked type requires it — no checked type does today. Dangling ZST-style

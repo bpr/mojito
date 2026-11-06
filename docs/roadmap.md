@@ -5826,26 +5826,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1907 A generator value read as a run-time value is rejected only
-  by the elaborator**
-
-  Problem: `var x = S.k` over `comptime k[i: Int]: Int` in `struct S`,
-  `var x = Add[1, _]`, and `var x = G` in `def show[G: __generator_type[b:
-  Int] Int]()` pass the checker and stop in `native::mono` with "holds the
-  compile-time-only metatype `__generator_type[...]`", an internal message.
-  - Upstream's `!kgen.generator` is a parameter-domain type: a read of one
-    where a run-time value is needed has no lowering.
-  - The checker types the read as a value of `TyKind::Generator`
-    (`Checker::read_parametric_value`, `checker/indexing.rs`, and the
-    generator parameter's own read), and only a trait bound refutes it
-    (`print` over `Writable`), so a binding or a non-generic argument
-    reaches MIR.
-  - Probe: each of the three `var` bindings above; confirm the pin's own
-    wording before choosing the checker's.
-  - Found while landing R1485 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1649 A partially bound alias whose open parameter's name its bound
   arguments read is rejected**
 

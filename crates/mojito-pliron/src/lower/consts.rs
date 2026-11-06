@@ -245,8 +245,9 @@ impl FnLowering<'_> {
             return Ok(());
         }
         match value {
-            // The `NoneType` value is zero-sized, as `MirConst::None` is.
-            CtValue::None => {
+            // The `NoneType` value is zero-sized, as `MirConst::None` is,
+            // and so is a generator's.
+            CtValue::None | CtValue::Generator(_) => {
                 self.erased.insert(dest.0);
                 Ok(())
             }

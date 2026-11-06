@@ -4457,6 +4457,15 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
             }
         }
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
+        // A generator value converts as a generator argument does, but its
+        // type spells its binders, so their names must agree too.
+        (TyKind::Generator(a), TyKind::Generator(b)) => {
+            a.params
+                .iter()
+                .zip(&b.params)
+                .all(|(a, b)| a.name() == b.name())
+                && generator_converts(from, to)
+        }
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
         (TyKind::Trait(a), TyKind::Trait(b)) => a == b,

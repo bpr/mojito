@@ -254,7 +254,7 @@ impl Checker {
             });
         }
         let argument = TyArg::Val(self.converted_generator(generator, expected)?.into_value());
-        // A generator is an attribute, never a runtime value.
+        // A generator argument is an attribute, never a runtime value.
         if let ParamArg::Value(expr) = arg {
             self.record_at(expr.source_span()).argument_attribute = Some(argument.clone());
         }

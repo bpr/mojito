@@ -167,7 +167,8 @@ pub fn lower_ty(
         | TyKind::KgenPointer(_)
         | TyKind::LitRef { .. }
         | TyKind::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
-        TyKind::None => Ok(LowerTy::ZeroSized),
+        // A `!kgen.generator` is a trivial register type that holds nothing.
+        TyKind::None | TyKind::Generator(_) => Ok(LowerTy::ZeroSized),
         // The built-in error value is `MjError { message: MjString }` storage;
         // its message buffer frees invisibly on drop (no user destructor).
         // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor,
