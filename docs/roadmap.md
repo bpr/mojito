@@ -3984,6 +3984,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `infer_unbound_call`'s `SIMD` arm, `infer_instance_construction`'s
     fallback, the `simd_construction` fact, `ConstructSimd`, and
     `try_simd_call`.
+  - With `try_simd_call` gone, `simd.make` has no literal element left
+    (R1836 moved the implicit conversion to `literal.materialize`):
+    delete its literal-element arms in `MirInstr::folded_constant`, the
+    verifier's lane check, and Pliron's `simd_constructor_lane`.
   - Probe: `rg "fn try_simd_call" crates` is empty and every SIMD fixture
     still runs.
   - Found while landing R1544 (2026-11-05).
@@ -11340,30 +11344,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1840 (2026-11-06).
   - Depends on R1955.
   - Model: Opus, Not Planned.
-
-- [ ] **R1836 A multi-lane literal conversion splats the unconverted
-  literal, where upstream's attribute converts at the full `!kgen.simd`
-  storage**
-
-  `SIMD[DType.int32, 4](7)` writes `#pop.int_literal_convert<7> :
-  Self._mlir_type`, one value at the four-lane storage. MIR emits
-  `simd.make { elems: [%literal] }` at the storage over the `IntLiteral`
-  or `FloatLiteral` register itself, an op upstream does not have.
-  - Emitters: the splat arms of `Flatten::materialize_literal`
-    (`lower_expr/calls.rs`) and `call_defaults::materialize`.
-  - Lever: `MaterializeLiteral` at the multi-lane storage, then
-    `struct.create`. The VM's `runtime::materialize_literal` already
-    splats; the verifier's "non-scalar target" check,
-    `MirInstr::folded_constant`'s `MaterializeLiteral` arm, and Pliron's
-    `lower_materialize` are scalar-only and need a lane-count arm.
-  - Then `MakeSimd`'s literal-element arms (`folded_constant`, Pliron's
-    multi-lane lowering) lose their last emitter.
-  - Probe: `ones` in `assets/ok/simd_literal_splat.mojo` (`return 1` at
-    `SIMD[DType.int32, 4]`) lowers to `simd.make` over the `int_literal`
-    register in `mir::lower_checked_program`'s MIR. SCCP folds it before
-    `emit-mir` prints, so the probe is a phase test, not the CLI.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1958 The MIR verifier does not type `literal.materialize`'s
   result at its target, where upstream's converted attribute is the

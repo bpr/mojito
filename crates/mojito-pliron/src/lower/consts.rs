@@ -637,6 +637,13 @@ impl FnLowering<'_> {
         value: Reg,
         target_ty: &Ty,
     ) -> Result<(), PlironError> {
+        // A vector storage converts the literal at its lane and splats it,
+        // as `#pop.int_literal_convert` at a `!kgen.simd<w, dt>` folds.
+        if let Some((dtype, width)) = simd_dims(target_ty)
+            && let Some(width) = usize::try_from(width).ok().filter(|width| *width > 1)
+        {
+            return self.lower_make_simd(ctx, dest, dtype, width, &[value]);
+        }
         let target = match storage_simd(target_ty).as_ref().map(Ty::kind) {
             Some(kind) if kind.is_int() => ScalarTy::Int,
             Some(kind) if kind.is_uint() => ScalarTy::UInt,

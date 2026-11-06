@@ -3323,7 +3323,10 @@ impl MirInstr {
         reg_types: &HashMap<u32, Ty>,
         declarations: &MirDeclarations,
     ) -> Option<Const> {
-        use mojito_types::param_expr::fold::{fold_infix, fold_invert, fold_neg};
+        use mojito_types::param_expr::ParamOp;
+        use mojito_types::param_expr::fold::{
+            fold_infix, fold_invert, fold_literal_convert, fold_neg,
+        };
         let operand = |reg: Reg| const_ct_value(&constant(reg)?, reg_types.get(&reg.0)?);
         let (dest, value) = match self {
             Self::BinOp {
@@ -3387,8 +3390,28 @@ impl MirInstr {
                 value,
                 target,
             } => {
-                let target = &mojito_types::types::storage_simd(target)?;
                 let literal = operand(*value)?;
+                if let Some((dtype, width)) = mojito_types::types::simd_shape(
+                    mojito_types::types::storage_simd(target)?.kind(),
+                ) && width > 1
+                {
+                    // Upstream's `#pop.int_literal_convert` at a vector
+                    // storage: the converted lane at every lane. A `bool`
+                    // vector is no literal's conversion target.
+                    let (op, literal) = match literal {
+                        CtValue::IntLiteral(value) if dtype != Dtype::Bool => {
+                            (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value))
+                        }
+                        CtValue::FloatLiteral(value) => (
+                            ParamOp::FloatLiteralConvert,
+                            CtValue::PopFloatLiteral(value),
+                        ),
+                        _ => return None,
+                    };
+                    let folded = fold_literal_convert(op, target, &literal).ok()?;
+                    return ct_const(folded, reg_types.get(&dest.0)?);
+                }
+                let target = &mojito_types::types::storage_simd(target)?;
                 let materializes = target.is_int()
                     || target.is_uint()
                     || target.is_float64()
@@ -5218,6 +5241,44 @@ mod tests {
         );
         assert_eq!(lanes_of(sum), Some(vec![CtLane::Int(3); 4]));
         assert!(const_ct_value(&ones, &canonical_simd_ty(Dtype::Int32, 2)).is_none());
+    }
+
+    #[test]
+    fn folded_constant_converts_a_literal_at_a_vector_storage() {
+        use mojito_common::literal::{FloatLiteral, IntLiteral};
+        use mojito_types::ct::CtLane;
+        use mojito_types::types::{canonical_simd_ty, storage_ty};
+        let none = MirDeclarations::default();
+        let convert = |literal: Const, source: Ty, dtype, width: i64| {
+            let target = storage_ty(&canonical_simd_ty(dtype, width));
+            let reg_types = HashMap::from([(0, source), (1, target.clone())]);
+            MirInstr::MaterializeLiteral {
+                dest: Reg(1),
+                value: Reg(0),
+                target,
+            }
+            .folded_constant(|_| Some(literal.clone()), &reg_types, &none)
+        };
+        let lanes_of = |folded: Option<Const>| match folded {
+            Some(Const::Value(CtValue::Simd { lanes, .. })) => Some(lanes),
+            _ => None,
+        };
+        let int = |value: i64| Const::IntLiteral(IntLiteral::from(value));
+        assert_eq!(
+            lanes_of(convert(int(300), Ty::int_literal(), Dtype::UInt8, 4)),
+            Some(vec![CtLane::Int(44); 4])
+        );
+        let tenth = FloatLiteral::parse_decimal("0.1").expect("decimal literal");
+        assert_eq!(
+            lanes_of(convert(
+                Const::FloatLiteral(tenth),
+                Ty::float_literal(),
+                Dtype::Float32,
+                8
+            )),
+            Some(vec![CtLane::Float(f64::from(0.1f32).to_bits()); 8])
+        );
+        assert!(convert(int(1), Ty::int_literal(), Dtype::Bool, 4).is_none());
     }
 
     #[test]

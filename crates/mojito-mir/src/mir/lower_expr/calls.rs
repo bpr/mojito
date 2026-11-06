@@ -953,24 +953,17 @@ impl<'a> Flatten<'a> {
     }
 
     /// Materialize an exact-literal register as the checked `target`: a
-    /// scalar converted at its `!kgen.simd` storage and the struct created
-    /// over it, as `SIMD.__init__(IntLiteral)` writes
-    /// `#pop.int_literal_convert`, a multi-lane vector as the one-element
-    /// splat explicit `SIMD[dt, w](literal)` construction emits.
-    /// A vector whose width is still a parameter expression splats too: the
-    /// instance's width may be above one. A `!kgen.simd` target is the
-    /// conversion alone; any other target is an explicit boundary.
+    /// `SIMD` of any width, symbolic or not, converted at its whole
+    /// `!kgen.simd` storage and the struct created over it, as
+    /// `SIMD.__init__(IntLiteral)` writes `#pop.int_literal_convert` at
+    /// `Self._mlir_type`. A `!kgen.simd` target is the conversion alone;
+    /// any other target is an explicit boundary.
     pub(in crate::mir) fn materialize_literal(
         &mut self,
         value: Reg,
         target: &Ty,
         source: SourceSpan,
     ) -> Reg {
-        if mojito_types::types::simd_slots(target)
-            .is_some_and(|(_, width)| width.known().is_none_or(|width| width > 1))
-        {
-            return self.splat_scalar(value, target, source);
-        }
         if let Some(storage) = mojito_types::types::simd_storage(target) {
             return self.simd_through_storage(target, source, |dest| {
                 MirInstr::MaterializeLiteral {
@@ -988,38 +981,6 @@ impl<'a> Flatten<'a> {
             dest,
             value,
             target: target.clone(),
-        });
-        dest
-    }
-
-    /// Splat a one-lane register across the checked multi-lane `target`, or
-    /// its `!kgen.simd` storage, as the one-element explicit `SIMD[dt,
-    /// w](x)` construction does: a `SIMD` target splats the operand's
-    /// storage (`pop.simd.splat`) and creates the struct from it.
-    pub(in crate::mir) fn splat_scalar(
-        &mut self,
-        value: Reg,
-        target: &Ty,
-        source: SourceSpan,
-    ) -> Reg {
-        if let Some((dtype, width)) = target.kind().as_simd() {
-            let elem = self.simd_storage_operand(value, source.clone());
-            return self.simd_through_storage(target, source, |dest| MirInstr::MakeSimd {
-                dest,
-                dtype,
-                width,
-                elems: vec![elem],
-            });
-        }
-        let Some((dtype, width)) = mojito_types::types::kgen_simd_slots(target.kind()) else {
-            return value;
-        };
-        let dest = self.fresh_typed(source, None, target.clone());
-        self.emit(MirInstr::MakeSimd {
-            dest,
-            dtype,
-            width,
-            elems: vec![value],
         });
         dest
     }

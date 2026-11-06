@@ -1,4 +1,4 @@
-mojito-mir 1.154
+mojito-mir 1.171
 artifact {
   features: [],
   files: [
@@ -36,7 +36,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(300) },
-              simd.make { dest: %r1, dtype: uint8, width: 4, elems: [%r0] }
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: uint8, width: 4 } }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -63,7 +63,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: float_literal(1/10) },
-              simd.make { dest: %r1, dtype: float32, width: 4, elems: [%r0] }
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: float32, width: 4 } }
             ],
             terminator: return { value: present(%r1) }
           }

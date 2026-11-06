@@ -596,13 +596,19 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 ));
                 return;
             };
-            let valid_target = target.is_int()
+            let scalar_target = target.is_int()
                 || target.is_uint()
                 || target.is_float64()
                 || mojito_types::types::is_scalar_simd(target);
-            if !valid_target {
+            // A vector of any other width, known or symbolic, splats the
+            // converted lane across the storage.
+            let vector_lane = target
+                .as_simd()
+                .filter(|(_, width)| width.known() != Some(1))
+                .map(|(dtype, _)| dtype);
+            if !scalar_target && vector_lane.is_none() {
                 errors.push(format!(
-                    "{prefix}: literal materialization has non-scalar target {target}"
+                    "{prefix}: literal materialization has non-SIMD target {target}"
                 ));
             }
             // A target whose lane dtype is still a parameter expression takes
@@ -612,13 +618,16 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 .is_some_and(|(dtype, _)| dtype.is_symbolic());
             if let Some(found) = cx.reg_ty(*value) {
                 let valid_source = match found.kind() {
-                    TyKind::IntLiteral(_) => valid_target,
-                    TyKind::FloatLiteral(_) => {
+                    TyKind::IntLiteral(_) if scalar_target => true,
+                    TyKind::FloatLiteral(_) if scalar_target => {
                         target.is_float64()
                             || symbolic_lane
                             || mojito_types::types::scalar_simd_dtype(target)
                                 .is_some_and(mojito_ast::ast::Dtype::is_float)
                     }
+                    kind @ (TyKind::IntLiteral(_) | TyKind::FloatLiteral(_)) => vector_lane
+                        .as_ref()
+                        .is_some_and(|lane| mojito_types::types::splats_to(kind, lane)),
                     _ => false,
                 };
                 // The pin's literal conversion is a constrained `__init__`
@@ -1015,7 +1024,8 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
                 MirInstr::SimdCast { value, .. } | MirInstr::SimdBitcast { value, .. } => {
                     storage_slots(cx, *value, mnemonic, "operand", errors);
                 }
-                // A literal element converts at the lane until R1836.
+                // A literal element converts at the lane until the checker's
+                // `SIMD` construction rule goes (R1935).
                 MirInstr::MakeSimd { elems, .. } => {
                     for element in elems {
                         if let Some(ty) = cx.reg_ty(*element)

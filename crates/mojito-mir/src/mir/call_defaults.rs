@@ -2183,9 +2183,9 @@ fn literal_constant(literal: &CheckedConst) -> Const {
 }
 
 /// `value`, a literal of type `found`, materialized at the parameter type
-/// `target` as a written literal argument is: a scalar converted at its
-/// storage and the struct created over it, a multi-lane vector as the
-/// one-element splat of its storage.
+/// `target` as a written literal argument is: a `SIMD` of any width
+/// converted at its whole `!kgen.simd` storage, as `#pop.int_literal_convert`
+/// is typed, and the struct created over it.
 fn materialize(
     function: &mut MirFunction,
     value: Reg,
@@ -2202,18 +2202,10 @@ fn materialize(
     };
     let dest = fresh_register(function, target.clone(), location);
     let storage = fresh_register(function, storage_ty.clone(), location);
-    let conversion = match mojito_types::types::simd_slots(target) {
-        Some((dtype, width)) if width.known().is_none_or(|width| width > 1) => MirInstr::MakeSimd {
-            dest: storage,
-            dtype,
-            width,
-            elems: vec![value],
-        },
-        _ => MirInstr::MaterializeLiteral {
-            dest: storage,
-            value,
-            target: storage_ty,
-        },
+    let conversion = MirInstr::MaterializeLiteral {
+        dest: storage,
+        value,
+        target: storage_ty,
     };
     prelude.extend(storage_construction(dest, storage, conversion));
     dest

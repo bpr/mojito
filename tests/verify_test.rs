@@ -674,19 +674,36 @@ fn storage_materialization_findings(literal: Const, found: Ty, target: &Ty) -> V
 
 #[test]
 fn verifier_checks_a_literal_materialized_at_its_storage() {
-    // `#pop<float_literal_convert>` is typed at `Float32`'s storage.
+    // `#pop<float_literal_convert>` is typed at the whole `!kgen.simd`
+    // storage, a vector's as a scalar's.
     let float =
         || Const::FloatLiteral(mojito::FloatLiteral::parse_decimal("0.5").expect("decimal"));
     let float_ty = || Ty::new(TyKind::FloatLiteral(None));
     let lanes = |width| mojito::types::canonical_simd_ty(mojito::ast::Dtype::Float32, width);
-    assert_eq!(
-        storage_materialization_findings(float(), float_ty(), &lanes(1)),
-        Vec::<String>::new()
-    );
-    let wide = storage_materialization_findings(float(), float_ty(), &lanes(4));
+    for width in [1, 4] {
+        assert_eq!(
+            storage_materialization_findings(float(), float_ty(), &lanes(width)),
+            Vec::<String>::new()
+        );
+    }
+    let int_lanes = mojito::types::canonical_simd_ty(mojito::ast::Dtype::Int32, 4);
+    let truncating = storage_materialization_findings(float(), float_ty(), &int_lanes);
     assert!(
-        wide.iter().any(|error| error.contains("non-scalar target")),
-        "{wide:?}"
+        truncating
+            .iter()
+            .any(|error| error.contains("cannot materialize")),
+        "{truncating:?}"
+    );
+    // No literal converts into a `bool` vector.
+    let mask = mojito::types::canonical_simd_ty(mojito::ast::Dtype::Bool, 4);
+    let one = storage_materialization_findings(
+        Const::IntLiteral(mojito::IntLiteral::from(1)),
+        Ty::int_literal(),
+        &mask,
+    );
+    assert!(
+        one.iter().any(|error| error.contains("cannot materialize")),
+        "{one:?}"
     );
     let int = storage_materialization_findings(float(), float_ty(), &Ty::int());
     assert!(

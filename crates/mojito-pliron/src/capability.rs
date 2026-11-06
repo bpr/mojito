@@ -152,7 +152,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "literal.materialize",
         CapabilityStatus::Partial,
-        "width-1 `!kgen.simd` storage targets (wrapping, VM-exact); a run-time literal value converts from its i64/f64 storage; a constant exceeding that storage rejects",
+        "`!kgen.simd` storage targets of any width (wrapping, VM-exact; a vector splats the converted lane); a run-time literal value converts from its i64/f64 storage; a constant exceeding that storage rejects",
     ),
     (
         "scalar.cast",

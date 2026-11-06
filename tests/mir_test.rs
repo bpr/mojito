@@ -2766,6 +2766,65 @@ fn literal_materialization_is_explicit_in_typed_mir() {
 }
 
 #[test]
+fn multi_lane_literal_materializes_at_the_vector_storage() {
+    // `return 1` at a vector and a literal default at a vector parameter
+    // convert at the whole `!kgen.simd` storage, as upstream's
+    // `#pop.int_literal_convert` is typed at `Self._mlir_type`, and create
+    // the `SIMD` over it; no `simd.make` splats the unconverted literal.
+    let program = linked(concat!(
+        "def ones() -> SIMD[DType.int32, 4]:\n    return 1\n\n",
+        "def doubled(x: SIMD[DType.float64, 2] = 0.5) -> SIMD[DType.float64, 2]:\n",
+        "    return x * 2\n\n",
+        "def main():\n    print(ones(), doubled())\n",
+    ));
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    let function = |name: &str| {
+        &mir.functions
+            .iter()
+            .find(|(found, _)| found == name)
+            .unwrap_or_else(|| panic!("{name} lowered"))
+            .1
+    };
+    let converts_at = |function: &mojito::mir::MirFunction, simd: &Ty| {
+        let storage_ty = mojito::types::storage_ty(simd);
+        let instructions = function.blocks.iter().flat_map(|block| &block.instrs);
+        let storage = instructions
+            .clone()
+            .find_map(|instruction| match instruction {
+                MirInstr::MaterializeLiteral { dest, target, .. } if *target == storage_ty => {
+                    Some(*dest)
+                }
+                _ => None,
+            })
+            .expect("materialization at the vector storage");
+        assert!(instructions.clone().any(|instruction| matches!(
+            instruction,
+            MirInstr::MakeStruct { dest, fields }
+                if fields.as_slice() == [storage] && function.reg_types.get(&dest.0) == Some(simd)
+        )));
+        assert!(
+            !instructions
+                .clone()
+                .any(|instruction| matches!(instruction, MirInstr::MakeSimd { .. }))
+        );
+    };
+    converts_at(
+        function("ones"),
+        &mojito::types::canonical_simd_ty(mojito::ast::Dtype::Int32, 4),
+    );
+    converts_at(
+        function("main"),
+        &mojito::types::canonical_simd_ty(mojito::ast::Dtype::Float64, 2),
+    );
+}
+
+#[test]
 fn scalar_literal_construction_calls_the_declared_initializer() {
     // `UInt(7)`, `Float64(2.5)`, and `UInt()` bind `SIMD`'s declared
     // literal and default initializers, as at the pin.

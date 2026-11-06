@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An implicit literal conversion at a multi-lane or symbolic-width `SIMD`
+  (`return 1` at a vector, a literal default at a vector parameter) is
+  now one `literal.materialize` at the whole `!kgen.simd` storage plus
+  `struct.create`, as upstream's `#pop.int_literal_convert` is typed at
+  `Self._mlir_type`, instead of a `simd.make` splat of the unconverted
+  literal. The verifier, the constant folder, and Pliron take any width,
+  and MIR text moves to 1.171 (R1836).
 - `literal.materialize` now targets a `!kgen.simd` storage only, as
   upstream's `#pop.int_literal_convert` and `float_literal_convert` are
   typed at `!pop.simd`: the MIR verifier rejects a `SIMD` struct target,
