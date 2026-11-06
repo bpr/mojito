@@ -5496,27 +5496,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1871 A `String`-annotated `comptime` name over a string literal
-  keeps the literal's type**
-
-  `comptime G: String = "glob"` at module scope, then `var u = G` or
-  `take(G)` over `def take(var s: String)`, fails the MIR verifier
-  ("binding of StringLiteral["glob"] to a slot of type String"), and
-  `G.byte_length()` fails with "field access on non-struct String", where
-  the pin prints `glob` and `4`.
-  - The read is the literal's parameter value, typed `StringLiteral`,
-    while the checker types the name `String`.
-  - Upstream converts the initializer to the annotation at the
-    declaration, so every read is a `String` value.
-  - Probe: a struct member, `comptime S: String = "own"` in `struct A`,
-    read as `take(A.S)`, fails with "expected String, found
-    StringLiteral", where the pin prints `take own`.
-  - R1195 checks a member's body against its annotation, and R602 is the
-    sized-scalar local sibling of this conversion.
-  - Found while landing R1095 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1197 The elaborator cannot decide a pack's `all` or `any` through
   a predicate alias**
 

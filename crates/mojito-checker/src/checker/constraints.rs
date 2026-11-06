@@ -148,7 +148,11 @@ impl Checker {
                     std::sync::Arc::make_mut(&mut self.program_constants)
                         .declare(name.clone(), constant);
                 }
-                _ if super::traits::literal_default(value) => {
+                // A `String` annotation converts a string literal at the
+                // declaration: the constant is the `String`, not the literal.
+                _ if super::traits::literal_default(value)
+                    && !self.annotates_string(ty.as_ref()) =>
+                {
                     self.comptime_literals.insert(name.clone(), value.clone());
                 }
                 Some(folded) => {
@@ -173,6 +177,13 @@ impl Checker {
         annotation
             .and_then(|annotation| self.ty_from_anno(annotation).ok())
             .is_some_and(|declared| declared.is_int())
+    }
+
+    /// Whether `annotation` declares a constant `String`.
+    pub(super) fn annotates_string(&self, annotation: Option<&SourceType>) -> bool {
+        annotation
+            .and_then(|annotation| self.ty_from_anno(annotation).ok())
+            .is_some_and(|declared| mojito_types::types::is_nominal_string(&declared))
     }
 
     /// The dtype and width of `annotation` when it names a vector of more

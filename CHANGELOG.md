@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `String`-annotated `comptime` over a string literal (`comptime G:
+  String = "glob"`, at module scope, as a struct member, or local) is now
+  the `String` its annotation converts the literal to, so `var u = G`,
+  `take(G)` over a `var s: String`, `G.byte_length()`, and `take(A.S)` run
+  as at the pin instead of failing MIR verification or the check (R1871).
 - A tuple index over an `Int`-typed compile-time expression now selects
   its element: `t[N + 1]` over a module `comptime N: Int = 3`, and `t[n]`
   or `t[n + 1]` over a local `comptime n: Int = 2`, read and store as at

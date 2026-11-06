@@ -78,7 +78,14 @@ impl<'a> Flatten<'a> {
             mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Bool(b)) => {
                 Const::Bool(*b)
             }
-            mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Str(s)) => {
+            // A string at the nominal `String` is a `String` value, which
+            // the elaborator materializes as it does a `String` parameter.
+            mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Str(s))
+                if !value
+                    .meta()
+                    .as_value()
+                    .is_some_and(mojito_types::types::is_nominal_string) =>
+            {
                 Const::Str(s.clone())
             }
             mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Float(

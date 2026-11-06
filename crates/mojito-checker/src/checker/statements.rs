@@ -489,6 +489,12 @@ impl Checker {
             let ty = applied.meta().as_value().cloned();
             self.comptime_applied.insert(name.clone(), applied);
             ty
+        } else if super::traits::literal_default(value) && self.annotates_string(ty.as_ref()) {
+            // A `String` annotation converts the literal at the
+            // declaration: every read is the `String`.
+            self.comptime_literals.remove(name);
+            ty.as_ref()
+                .and_then(|annotation| self.ty_from_anno(annotation).ok())
         } else if super::traits::literal_default(value) {
             self.comptime_literals.insert(name.clone(), value.clone());
             self.infer(value).ok()
