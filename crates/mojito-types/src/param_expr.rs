@@ -828,21 +828,25 @@ impl ParamContext {
 
     /// A field of a struct-typed parameter value (`Self.e.rows`): upstream's
     /// struct extract on a parameter attribute. A constant base folds to its
-    /// field; `meta` is the field's declared type. A string literal's
-    /// `value` is its `!kgen.string` parameter (`s.value` over `s:
-    /// StringLiteral`).
+    /// field; `meta` is the field's declared type. A literal's `value` is
+    /// its type's `value` parameter (`"ab".value` is `StringLiteral["ab"]`'s
+    /// `!kgen.string`), and a value-less `StringLiteral`'s (`s.value` over
+    /// `s: StringLiteral`) the field node each instance closes.
     pub fn field(
         &self,
         base: &ParamExpr,
         name: &str,
         meta: MetaTy,
     ) -> Result<ParamExpr, ParamError> {
+        if name == crate::ct::LITERAL_VALUE_MEMBER
+            && let Some(slot) = base
+                .meta()
+                .as_value()
+                .and_then(|ty| ty.kind().literal_value_slot())
+        {
+            return self.constant(slot.clone());
+        }
         if let Some(value) = base.as_constant() {
-            if name == crate::ct::LITERAL_VALUE_MEMBER
-                && let Some(parameter) = value.literal_value()
-            {
-                return self.constant(parameter);
-            }
             // A constant `SIMD`'s storage, an `Int`'s or a `UInt`'s among
             // them, is that constant at the storage type (upstream's
             // `StructExtractOp::fold`).

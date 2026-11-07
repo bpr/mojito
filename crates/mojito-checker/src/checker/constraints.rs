@@ -2713,11 +2713,9 @@ impl Checker {
     /// parameter.
     fn literal_operand(&self, object: &Expr, recording: Recording) -> Option<ParamExpr> {
         let literal = self.build_ct(object, recording).ok()?;
-        let closed = literal
-            .as_constant()
-            .is_some_and(|value| value.literal_value().is_some());
-        let parameter = matches!(literal.meta(), MetaTy::Value(ty) if ty.is_string_literal());
-        (closed || parameter).then_some(literal)
+        matches!(literal.meta(), MetaTy::Value(ty)
+            if ty.is_string_literal() || ty.is_numeric_literal())
+        .then_some(literal)
     }
 
     /// The parameter expression a bare name denotes in a compile-time

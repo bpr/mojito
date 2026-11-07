@@ -959,9 +959,16 @@ impl Ty {
 
     /// The type of the string literal `text`, `StringLiteral[text]`.
     pub fn string_literal_of(text: &str) -> Self {
+        Self::string_literal_at(CtValue::KgenString(text.to_string()))
+    }
+
+    /// `StringLiteral[slot]`, the application of the struct
+    /// `std.builtin.string_literal` declares at `slot`: a known
+    /// [`CtValue::KgenString`] or a `!kgen.string` expression.
+    pub fn string_literal_at(slot: CtValue) -> Self {
         Self::new(TyKind::Struct(
             STRING_LITERAL_TYPE_NAME.to_string(),
-            vec![TyArg::Val(CtValue::KgenString(text.to_string()))],
+            vec![TyArg::Val(slot)],
         ))
     }
 
@@ -1247,6 +1254,14 @@ impl TyKind {
     pub fn numeric_literal_slot(&self) -> Option<&CtValue> {
         self.int_literal_slot()
             .or_else(|| self.float_literal_slot())
+    }
+
+    /// The `value` parameter of a literal type's application, string or
+    /// numeric: the slot upstream's `StringLiteral.value`,
+    /// `IntLiteral.value`, and `FloatLiteral.value` read.
+    pub fn literal_value_slot(&self) -> Option<&CtValue> {
+        self.string_literal_value()
+            .or_else(|| self.numeric_literal_slot())
     }
 
     /// Whether this is an integer literal's type.

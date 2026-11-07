@@ -624,20 +624,18 @@ impl Checker {
     }
 
     /// The result of a builtin that builds the nominal `String` itself
-    /// (`input`), as upstream's function returns one: the stdlib
-    /// struct, or the compile-time string on an unlinked seam without it.
-    pub(super) fn builtin_string_result(&self) -> Ty {
-        if self
-            .structs
-            .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
-        {
-            Ty::new(TyKind::Struct(
-                mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                Vec::new(),
-            ))
-        } else {
-            Ty::string_literal()
-        }
+    /// (`input`), as upstream's function returns one: the stdlib struct.
+    /// An unlinked seam without it has no type for a run-time string.
+    pub(super) fn builtin_string_result(&self, builtin: &str) -> Result<Ty, TypeError> {
+        let name = mojito_symbol::symbol::STDLIB_STRING_STRUCT;
+        self.structs
+            .contains_key(name)
+            .then(|| Ty::new(TyKind::Struct(name.to_string(), Vec::new())))
+            .ok_or_else(|| {
+                TypeError::Unsupported(format!(
+                    "'{builtin}' without the bundled 'String' to return"
+                ))
+            })
     }
 
     /// The type a value of `ty` materializes to where it becomes a run-time

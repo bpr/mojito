@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker no longer types an untyped compile-time string by the
+  value-less `StringLiteral`: a literal's compile-time `.value` reads its
+  type's `value` parameter, an unlinked program's literal `+` is
+  `StringLiteral[#pop.string_concat<l, r>]` over open texts, and `input`
+  without the bundled `String` is an unsupported-feature error (R1860).
 - A `[s: StringLiteral]` compile-time parameter is no longer typed by the
   value-less `StringLiteral` in the elaborator's parameter metadata: it is
   upstream's auto-parameterized `StringLiteral[_]`, and a specialized

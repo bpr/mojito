@@ -172,7 +172,7 @@ impl Checker {
         if tys[0].is_string_literal() || nominal_prompt {
             self.record_call_effect(span, Ty::error());
             self.require_error("call to raising function 'input'", Ty::error())?;
-            Ok(self.builtin_string_result())
+            self.builtin_string_result("input")
         } else {
             Err(TypeError::TypeMismatch {
                 expected: "String".to_string(),

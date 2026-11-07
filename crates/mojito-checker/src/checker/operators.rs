@@ -365,24 +365,15 @@ impl Checker {
         let result = match op {
             // Two literals concatenate through `StringLiteral.__add__`, except
             // in an unlinked program (a phase test's), whose two texts
-            // concatenate here, and beside the value-less `StringLiteral`,
-            // which declares no members.
+            // concatenate here as the declared dunder's `#pop.string_concat`,
+            // and beside the value-less `StringLiteral`, which declares no
+            // members.
             Add if lt.is_string_literal()
                 && rt.is_string_literal()
                 && !(rt.kind().string_literal_value().is_some()
                     && self.declared_receiver_member(&lt, "__add__").is_some()) =>
             {
-                Some(
-                    match (
-                        lt.kind().string_literal_text(),
-                        rt.kind().string_literal_text(),
-                    ) {
-                        (Some(left), Some(right)) => {
-                            Ty::string_literal_of(&format!("{left}{right}"))
-                        }
-                        _ => Ty::string_literal(),
-                    },
-                )
+                Some(self.concatenated_literal(&lt, &rt)?)
             }
             // `%` and `/` over concrete operands keep their common type.
             Mod | Div => common,
@@ -889,6 +880,25 @@ impl Checker {
         } else {
             Ty::int_literal_at(value)
         })
+    }
+
+    /// `StringLiteral[#pop.string_concat<l, r>]` over the two literals'
+    /// `value` slots, as upstream's `StringLiteral.__add__` types its
+    /// result; closed slots fold to the concatenated text. Beside the
+    /// value-less `StringLiteral`, which has no slot, the value-less type.
+    fn concatenated_literal(&self, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
+        let (Some(left), Some(right)) = (
+            lt.kind().string_literal_value(),
+            rt.kind().string_literal_value(),
+        ) else {
+            return Ok(Ty::string_literal());
+        };
+        let context = &self.param_context;
+        let slot = |value: &CtValue| context.constant(value.clone());
+        slot(left)
+            .and_then(|left| context.op(ParamOp::StringConcat, &[left, slot(right)?]))
+            .map(|value| Ty::string_literal_at(value.into_value()))
+            .map_err(param_error)
     }
 
     /// `left op right` over two value-carrying literals as the declared

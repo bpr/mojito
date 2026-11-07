@@ -3564,7 +3564,7 @@ mod dependent_callable_signature_tests {
                 environment: mojito_types::origin::CallableEnvironment::Thin,
                 params: vec![DependentType::resolve(
                     context
-                        .select(vec![Ty::int(), Ty::string_literal()], &index)
+                        .select(vec![Ty::int(), Ty::bool()], &index)
                         .expect("an Int index selects"),
                 )],
                 names: vec!["element".to_string()],

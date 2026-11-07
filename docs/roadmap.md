@@ -10909,25 +10909,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1936.
   - Model: Opus, Not Planned.
 
-- [ ] **R1860 An untyped compile-time string is typed by the value-less
-  `StringLiteral`**
-
-  The checker still types some untyped compile-time strings as the
-  value-less literal, where upstream's is `StringLiteral[text]`
-  (`MetaTy::of_value` in `param_expr.rs` already types a `CtValue::Str` by
-  its text).
-  - Probe: its producers are `+` over
-    literals whose text is not closed (`checker/operators.rs`), the
-    nominal-`String` fallback in `call_inference.rs`, and the element
-    `select` in `checker.rs`.
-  - Probe: `comptime k = "ab".value` folds through `CtValue::literal_value`
-    (`ParamContext::field`, `literal_operand` in `constraints.rs`), not
-    through the type's `value` argument (`Checker::struct_value_member`)
-    as a run-time `"ab".value` now reads, because the operand's meta is
-    the value-less literal.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1861 The value-less `TyKind::StringLiteral` still exists**
 
   Upstream's `StringLiteral` type always carries its text, but Mojito
@@ -10941,6 +10922,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `ct_param_source_type` and `source_type_from_ty_with_origins`
     (`comptime.rs`), and `ast::Type::ClosedStringLiteral`.
   - This is the string half of R1849.
+  - Probe: the checker's last producer is a bare `StringLiteral`
+    annotation (`SourceType::ClosedStringLiteral` in
+    `type_resolution.rs`); a `+` beside it (`concatenated_literal`,
+    `checker/operators.rs`) and its compile-time `.value` (a field node,
+    `ParamContext::field`) follow from it.
   - Done when `TyKind::StringLiteral` is deleted.
   - Depends on R1858, R1859, R1860.
   - Model: Opus, Not Planned.

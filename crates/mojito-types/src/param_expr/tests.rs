@@ -1532,3 +1532,35 @@ fn type_name_queries_round_trip_their_spelling() {
         assert_eq!(ReflectQuery::from_spelling(&query.to_string()), Some(query));
     }
 }
+
+/// A literal's `value` reads its type's `value` parameter, as upstream's
+/// `StringLiteral[v].value` is `v`: a closed literal's folds to its text,
+/// and a value of a symbolic `StringLiteral[v]` reads `v` itself.
+#[test]
+fn literal_value_reads_the_type_slot() {
+    let context = ParamContext::new();
+    let kgen_string = MetaTy::value(TyKind::KgenString.into());
+    let ab = context
+        .constant(CtValue::Str("ab".to_string()))
+        .expect("a string is a constant");
+    assert_eq!(
+        context
+            .field(&ab, crate::ct::LITERAL_VALUE_MEMBER, kgen_string.clone())
+            .expect("a literal's value"),
+        context
+            .constant(CtValue::KgenString("ab".to_string()))
+            .expect("a KGEN string is a constant")
+    );
+    let v = context.register(ParamId::new("F", 0), "v", kgen_string.clone());
+    let s = context.register(
+        ParamId::new("F", 1),
+        "s",
+        MetaTy::value(Ty::string_literal_at(v.clone().into_value())),
+    );
+    assert_eq!(
+        context
+            .field(&s, crate::ct::LITERAL_VALUE_MEMBER, kgen_string)
+            .expect("a literal's value"),
+        v
+    );
+}
