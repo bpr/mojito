@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1996**.
+Next free ID: **R2000**.
 
 ## Ordered Work
 
@@ -13247,6 +13247,80 @@ residue found inside a task moves to the task that owns its fix.
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
+
+- [ ] **R1996 The corpus `verify` and `roundtrip` groups re-check the whole
+  standard library from source for every fixture**
+
+  Each test averages about 45 s in a debug build, against 1.6 s for
+  `vm_ok`, and the two groups together took about 152,000 CPU seconds of
+  the 2026-11-04 gate's nine-hour `check-default` step.
+  - `verify_trials` and `roundtrip_text` (`tests/corpus_test.rs`) run
+    `link` → `elaborate` → `check_program` → `lower_checked_program` on
+    the fixture and all of std.
+  - `vm_ok` compiles through `Compiler`, which reuses the cached std
+    package. `Compiler`'s `elaborated_mir()` (`src/compiler.rs`) gives
+    these groups the MIR they check without lowering std again.
+  - The raw path is documented as keeping "independent lowering
+    coverage". After the change, std's lowering runs once, when the
+    package is built, and each fixture's own code still goes through
+    every phase.
+  - Measure: time about 20 fixtures of each group before and after,
+    without running the whole binary.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1997 The corpus `artifact` group takes about 25 s per fixture
+  where compiling and running it takes 1.6 s**
+
+  `artifact_runs_as_source` (`tests/corpus_test.rs`) compiles through the
+  cached `Compiler`, so std checking is not the cost. Together the 1,680
+  tests took about 41,000 CPU seconds on the 2026-11-04 gate.
+  - The extra time is in emitting the MIR text, reparsing it
+    (`run_artifact`), or elaborating the reparsed program. Which one is not
+    yet measured.
+  - Profile one fixture, fix the slow step, and time about 20 fixtures
+    before and after.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1998 Each std-linked checker test checks the whole standard
+  library from source**
+
+  `checker_test`'s 636 tests averaged 50 s in a debug build, about 32,000
+  CPU seconds on the 2026-11-04 gate.
+  - The tests link a snippet with `mojito::link_source` and check the
+    snippet and all of std together.
+  - The fix checks a snippet against a std checked once per test process,
+    or against the cached package.
+  - If the checker cannot check a module against an already checked std,
+    adding that is a contract change. Plan it before building it.
+  - Depends on R1996, whose measurement shows how much the corpus change
+    alone saves.
+  - Model: Fable, Planned.
+
+- [ ] **R1999 There is no test tier between `scripts/smoke` and the full
+  gate**
+
+  `scripts/smoke` runs in under a minute and the full gate takes about
+  nine hours, so a loop session's regression in a fragile area waits for a
+  gate the owner rarely runs.
+  - Add a script, for example `scripts/focused`, that runs a checked-in
+    list of fixtures and named tests in about ten minutes. Its output
+    style matches `scripts/smoke`'s.
+  - The list covers the areas recent gates broke:
+    - compile-time strings and parameters
+    - origins and aliasing (`StringSpan`, `Span`, subscripts)
+    - variadic packs
+    - symbol naming
+    - library `print`, `Bool`, and `StringLiteral`
+    - `rebind`
+    - closures
+  - Each fixture runs through every corpus path (`vm_ok`, `artifact`,
+    `verify`, `roundtrip`, `pre_elaboration`), on the VM and natively.
+  - A fixture a gate finds broken joins the list.
+  - Depends on R1996 and R1997, so the per-fixture paths are fast enough
+    for the tier's time budget.
+  - Model: Opus, Planned.
 
 - [ ] **R1954 An older artifact's parameterized associated type keeps
   its one-binder pack arguments**
