@@ -976,18 +976,6 @@ impl Checker {
                 {
                     return construction;
                 }
-                if let Some(query) = self.dtype_float_query(callee, param_args, args, kwargs) {
-                    let (value, attributes) = query?;
-                    self.record_bracket_attributes(expr.source_span(), attributes);
-                    self.record_at(expr.source_span()).adjustment = Some(Box::new(
-                        mojito_checked::checked::SemanticAdjustment::ParamValue {
-                            value,
-                            materialized: None,
-                            literal_target: None,
-                        },
-                    ));
-                    return Ok(Ty::int());
-                }
                 // Parameterized method syntax is parsed as `Invoke(Member)` so
                 // that ordinary indexing remains unambiguous. Keep it a direct
                 // method call semantically: bound methods do not become

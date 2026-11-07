@@ -7,9 +7,9 @@
 # `int256`, `float4_e2m1fn`, `float6_*`, `float8_*`, and `bfloat16` are
 # omitted until R65 admits those dtypes, with their `write_to` and
 # `_from_str` arms; `is_float8` is `False`, `is_half_float` tests `float16`
-# alone, and `is_numeric` drops the comparisons with omitted members. The
+# alone, `is_numeric` drops the comparisons with omitted members, and the
 # float queries `mantissa_width`, `max_exponent`, `exponent_width`, and
-# `exponent_bias` stay compiler builtins (R1937), and `__mlir_type`, whose
+# `exponent_bias` drop their arms over omitted members. `__mlir_type`, whose
 # `!kgen.deferred` result is outside the subset, is omitted. The `int128`,
 # `int256`, `_uint1`, `_uint2`, `_uint4`, `uint128`, and `uint256` arms of
 # the free functions are omitted too; a second assert rejects their widths
@@ -457,6 +457,90 @@ struct DType(
               floating-point.
         """
         return self.is_integral() or self.is_floating_point()
+
+    # ===-------------------------------------------------------------------===#
+    # Floating point generics
+    # ===-------------------------------------------------------------------===#
+
+    @staticmethod
+    @inline(.nodebug)
+    def mantissa_width[dtype: DType]() -> Int:
+        """Returns the mantissa width of a floating point type.
+
+        Parameters:
+            dtype: The DType.
+
+        Returns:
+            The mantissa width.
+        """
+        comptime assert (
+            dtype.is_floating_point()
+        ), "dtype must be floating point"
+        return bit_width_of[dtype]() - DType.exponent_width[dtype]() - 1
+
+    @staticmethod
+    @inline(.nodebug)
+    def max_exponent[dtype: DType]() -> Int:
+        """Returns the max exponent of a floating point dtype without accounting
+        for inf representations. This is not the maximum representable exponent,
+        which is generally equal to the exponent_bias.
+
+        Parameters:
+            dtype: The DType.
+
+        Returns:
+            The max exponent.
+        """
+        comptime assert (
+            dtype.is_floating_point()
+        ), "dtype must be floating point"
+
+        comptime if dtype == DType.float16:
+            return 16
+        elif dtype == DType.float32:
+            return 128
+        elif dtype == DType.float64:
+            return 1024
+        else:
+            comptime assert False, "unsupported float type"
+
+    @staticmethod
+    @inline(.nodebug)
+    def exponent_width[dtype: DType]() -> Int:
+        """Returns the exponent width of a floating point type.
+
+        Parameters:
+            dtype: The DType.
+
+        Returns:
+            The exponent width.
+        """
+        comptime assert (
+            dtype.is_floating_point()
+        ), "dtype must be floating point"
+
+        comptime if dtype == DType.float16:
+            return 5
+        elif dtype == DType.float32:
+            return 8
+        elif dtype == DType.float64:
+            return 11
+        else:
+            comptime assert False, "unsupported float type"
+
+    @staticmethod
+    @inline(.always)
+    def exponent_bias[dtype: DType]() -> Int:
+        """Returns the exponent bias of a floating point type.
+
+        Parameters:
+            dtype: The DType.
+
+        Returns:
+            The exponent bias.
+        """
+
+        return DType.max_exponent[dtype]() - 1
 
 
 # ===-------------------------------------------------------------------===#

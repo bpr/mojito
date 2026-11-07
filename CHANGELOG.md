@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `DType.mantissa_width`, `max_exponent`, `exponent_width`, and
+  `exponent_bias` are now upstream's declared static methods in
+  `std/builtin/dtype.mojo` instead of a checker builtin (R1937), so a
+  non-float dtype fails the method's own `comptime assert` as the pin's
+  "function instantiation failed", and a query as a `SIMD` width argument
+  runs (`SIMD[DType.int32, DType.exponent_width[dt]()]`, R332). The VM's
+  `DType` predicate and `repr` arms, `Dtype::predicate`, and the builtin
+  query tables are gone.
+
 - `DType` is now upstream's library struct, bundled in
   `std/builtin/dtype.mojo` over one `!kgen.dtype` field, instead of a
   compiler type (R1936). Its members are `#kgen.dtype.constant`

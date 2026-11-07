@@ -1043,8 +1043,7 @@ pub enum SemanticAdjustment {
         dtype: SimdDtype,
     },
     /// A compile-time query read as a runtime value — `Ts.length`,
-    /// `len(Ts)`, `Ts.contains[X]()` of a `def`'s own pack, or a `DType`
-    /// float-format query (`DType.mantissa_width[dt]()`) — lowered as a
+    /// `len(Ts)`, or `Ts.contains[X]()` of a `def`'s own pack — lowered as a
     /// constant of the parameter expression, which the elaborator folds per
     /// instance. A field chain of a compile-time binding (`q.a` in
     /// `def f[q: Q]()`) is one too: upstream's struct extract on the

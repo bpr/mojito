@@ -1235,18 +1235,6 @@ impl ParamContext {
         )
     }
 
-    /// The float-format query `DType.<query>[dtype]()` (one of
-    /// [`mojito_ast::ast::DTYPE_FLOAT_QUERIES`]): the application of `DType`'s
-    /// static method, answered by [`builtin_application_value`] once `dtype`
-    /// is constant.
-    pub fn dtype_float_query(&self, query: &str, dtype: &ParamExpr) -> ParamExpr {
-        self.apply(
-            &format!("DType.{query}"),
-            std::slice::from_ref(dtype),
-            MetaTy::int(),
-        )
-    }
-
     /// The reference a compile-time call passes at a `ref` parameter:
     /// `operand` stored in compile-time memory ([`ParamOp::StoreToMem`]),
     /// the frozen reference once it is constant.
@@ -3248,34 +3236,22 @@ pub const LIST_LENGTH_FUNCTION: &str = "param_list.length";
 /// The answer to an application of a builtin compile-time function.
 ///
 /// `None` for an application this policy does not own or whose arguments are
-/// not yet constant. A `DType` float-format query
-/// ([`ParamContext::dtype_float_query`]) at a non-float dtype fails as the
-/// pin's `comptime assert dtype.is_floating_point()` does.
+/// not yet constant.
 pub fn builtin_application_value(
     function: &str,
     args: &[ParamExpr],
 ) -> Option<Result<CtValue, ParamError>> {
-    if function == LIST_LENGTH_FUNCTION {
-        let [list] = args else {
-            return None;
-        };
-        let values = list.as_constant()?.comptime_iteration_elements()?;
-        return Some(i64::try_from(values.len()).map(CtValue::Int).map_err(|_| {
-            ParamError::Arithmetic("parameter list is too long to count".to_string())
-        }));
+    if function != LIST_LENGTH_FUNCTION {
+        return None;
     }
-    let query = function
-        .strip_prefix("DType.")
-        .filter(|query| mojito_ast::ast::DTYPE_FLOAT_QUERIES.contains(query))?;
-    let [argument] = args else {
+    let [list] = args else {
         return None;
     };
-    let dtype = crate::types::dtype_of_value(argument.as_constant()?)?;
+    let values = list.as_constant()?.comptime_iteration_elements()?;
     Some(
-        dtype
-            .float_query(query)
+        i64::try_from(values.len())
             .map(CtValue::Int)
-            .ok_or_else(|| ParamError::Constraint("dtype must be floating point".to_string())),
+            .map_err(|_| ParamError::Arithmetic("parameter list is too long to count".to_string())),
     )
 }
 

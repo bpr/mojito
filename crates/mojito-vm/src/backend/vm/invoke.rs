@@ -310,13 +310,6 @@ impl VmBackend {
             Value::Tuple(_) => Err(RuntimeError::Unsupported(format!(
                 "vm: internal tuple-pack storage has no runtime method '{method}'; public Tuple methods require nominal lowering"
             ))),
-            Value::Dtype(dtype) => dtype
-                .predicate(method)
-                .filter(|_| args.is_empty())
-                .map(Value::Bool)
-                .ok_or_else(|| {
-                    RuntimeError::Unsupported(format!("vm: DType has no method '{method}'"))
-                }),
             // `Pointer` methods: `free()` releases the allocation (a no-op in
             // the arena model — the arena never reclaims), and `__int__()` is
             // the synthetic address.

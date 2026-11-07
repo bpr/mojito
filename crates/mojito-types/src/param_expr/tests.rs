@@ -1090,56 +1090,6 @@ fn literal_slot_cast_folds_like_an_int_cast() {
     );
 }
 
-/// A `DType` float query over a binder is an application `replace` keeps
-/// and a required value answers: the format's width at a float dtype, and
-/// the pin's failed constraint at any other.
-#[test]
-fn dtype_float_query_answers_only_a_required_value() {
-    let context = ParamContext::new();
-    let dt = context.register(ParamId::new("f", 0), "dt", MetaTy::value(Ty::dtype()));
-    let query = context.dtype_float_query("mantissa_width", &dt);
-    assert_eq!(query.to_string(), "DType.mantissa_width(dt)");
-    let bound = |dtype| {
-        let mut bindings = ParamBindings::new();
-        bindings.bind_name(
-            "dt",
-            context
-                .constant(crate::types::dtype_value(dtype))
-                .expect("a dtype is a constant"),
-        );
-        bindings
-    };
-    let float32 = bound(mojito_ast::ast::Dtype::Float32);
-    assert!(
-        context
-            .replace(&query, &float32)
-            .expect("replacement")
-            .as_constant()
-            .is_none()
-    );
-    assert_eq!(
-        context
-            .evaluate(&query, &float32)
-            .and_then(ParamEval::require_constant),
-        Ok(CtValue::Int(23))
-    );
-    let doubled = infix(&context, InfixOp::Mul, &query, &literal(&context, 2));
-    assert_eq!(
-        context
-            .evaluate(&doubled, &float32)
-            .and_then(ParamEval::require_constant),
-        Ok(CtValue::Int(46))
-    );
-    assert_eq!(
-        context
-            .evaluate(&query, &bound(mojito_ast::ast::Dtype::Int32))
-            .map(|_| ()),
-        Err(ParamError::Constraint(
-            "dtype must be floating point".to_string()
-        ))
-    );
-}
-
 /// A `DType` predicate over a binder is upstream's builtin body, which
 /// `replace` folds at every dtype to the predicate's own answer.
 #[test]
@@ -1165,7 +1115,15 @@ fn dtype_predicate_folds_on_replacement() {
                     .replace(&predicate, &bindings)
                     .expect("replacement")
                     .as_bool(),
-                dtype.predicate(method),
+                Some(match method {
+                    "is_integral" => dtype.is_integral(),
+                    "is_floating_point" => dtype.is_floating_point(),
+                    "is_signed" => dtype.is_signed(),
+                    "is_unsigned" => dtype.is_unsigned(),
+                    "is_numeric" => dtype.is_numeric(),
+                    "is_float8" => dtype.is_float8(),
+                    _ => dtype.is_half_float(),
+                }),
                 "{method} at {dtype:?}"
             );
         }

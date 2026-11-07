@@ -712,11 +712,11 @@ pub fn float_lane(intrinsic: LlvmIntrinsic, dtype: Dtype, lanes: &[f64]) -> Opti
 /// payload here, is quiet.
 pub fn fpclass_lane(dtype: Dtype, lane: f64, test: u32) -> bool {
     let negative = lane.is_sign_negative();
-    let smallest_normal = dtype
-        .float_query("max_exponent")
-        .map_or(f64::MIN_POSITIVE, |max_exponent| {
-            2f64.powi(i32::try_from(2 - max_exponent).unwrap_or(i32::MIN))
-        });
+    let smallest_normal = match dtype {
+        Dtype::Float16 => 2f64.powi(-14),
+        Dtype::Float32 => f64::from(f32::MIN_POSITIVE),
+        _ => f64::MIN_POSITIVE,
+    };
     let class = if lane.is_nan() {
         0x2
     } else if lane.is_infinite() {

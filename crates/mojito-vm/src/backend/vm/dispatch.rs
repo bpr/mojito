@@ -768,12 +768,10 @@ fn with_names_of(original: &Value, value: Value) -> Value {
 }
 
 /// Upstream's `repr` text for a value no member table displays: a
-/// literal as the `Int` or `Float64` it materializes to, `DType.int32`, a
-/// single-quoted string with backslash escapes; everything else prints its
-/// text.
+/// literal as the `Int` or `Float64` it materializes to, a single-quoted
+/// string with backslash escapes; everything else prints its text.
 fn scalar_repr(value: &Value) -> String {
     match value {
-        Value::Dtype(dtype) => format!("DType.{}", dtype.name()),
         Value::Str(text) => {
             let mut out = String::from("'");
             for ch in text.chars() {

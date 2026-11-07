@@ -360,7 +360,7 @@ pub fn type_name(value: &Value) -> String {
         Value::UInt(_) => "UInt".to_string(),
         Value::Float64(_) => "Float64".to_string(),
         Value::Bool(_) => "Bool".to_string(),
-        Value::Dtype(_) => "DType".to_string(),
+        Value::Dtype(_) => mojito_types::types::KGEN_DTYPE_TYPE_SPELLING.to_string(),
         Value::Attribute(mojito_types::ct::CtValue::KgenString(_)) => {
             mojito_types::types::KGEN_STRING_TYPE_SPELLING.to_string()
         }

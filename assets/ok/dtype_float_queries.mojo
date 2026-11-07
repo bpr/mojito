@@ -1,7 +1,12 @@
 # `DType`'s static floating-point format queries answer for each float dtype,
-# in a runtime position, a compile-time binding, and a `DType`-keyed function.
+# in a runtime position, a compile-time binding, a `DType`-keyed function, and
+# a type argument.
 def mantissa_of[dt: DType]() -> Int:
     return DType.mantissa_width[dt]()
+
+
+def exponent_lanes[dt: DType]():
+    print(SIMD[DType.int32, DType.exponent_width[dt]()](3))
 
 
 def main():
@@ -29,3 +34,5 @@ def main():
     print(bias)
     print(mantissa_of[DType.float32]())
     print(DType.exponent_bias[Float32.dtype]())
+    print(SIMD[DType.int32, DType.exponent_width[DType.float32]()](2))
+    exponent_lanes[DType.float32]()

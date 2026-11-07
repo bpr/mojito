@@ -28,9 +28,9 @@ pub const BUILTIN_CALLEES: &[&str] = &[
 /// The methods of compiler-private values a method call may name without
 /// a checker-selected symbol.
 ///
-/// They are the methods of strings, packs, SIMD vectors, `DType`, and
-/// pointers: the arms of `backend::vm::invoke::method_call` that run
-/// before struct dispatch, and the `DType` predicates.
+/// They are the methods of strings, packs, SIMD vectors, and pointers: the
+/// arms of `backend::vm::invoke::method_call` that run before struct
+/// dispatch.
 pub const INTRINSIC_METHODS: &[&str] = &[
     "__floor__",
     "__ceil__",
@@ -42,13 +42,6 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "copy",
     "free",
     "unsafe_free",
-    "is_integral",
-    "is_floating_point",
-    "is_signed",
-    "is_unsigned",
-    "is_numeric",
-    "is_float8",
-    "is_half_float",
 ];
 
 #[cfg(test)]
@@ -78,8 +71,7 @@ mod tests {
                 || quoted(EXEC, name)
                 || quoted(RUNTIME, name)
                 || (mojito_symbol::symbol::is_formatted_write(name)
-                    && INVOKE.contains("mojito_symbol::symbol::is_formatted_write"))
-                || mojito_ast::ast::Dtype::Int.predicate(name).is_some();
+                    && INVOKE.contains("mojito_symbol::symbol::is_formatted_write"));
             assert!(
                 implemented,
                 "`{name}` is implemented nowhere the VM dispatches"

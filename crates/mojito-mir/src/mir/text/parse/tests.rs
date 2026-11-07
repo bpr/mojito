@@ -3610,7 +3610,11 @@ fn param_apply_list_get_and_reflect_round_trip() {
         "dt",
         MetaTy::value(Ty::dtype()),
     );
-    let static_method = context.dtype_float_query("mantissa_width", &dt);
+    let static_method = context.apply(
+        "DType.mantissa_width",
+        std::slice::from_ref(&dt),
+        MetaTy::int(),
+    );
     let types = vec![
         Ty::new(TyKind::Dependent(DependentType::Parameter(element))),
         Ty::new(TyKind::Dependent(DependentType::Parameter(reflected))),

@@ -132,9 +132,9 @@ point, as upstream's toolchain does.
 - `std/builtin/dtype.mojo` — upstream's `struct DType` over
   `!kgen.dtype`, its mask aliases, `_int_type_of_width`,
   `_uint_type_of_width`, `_integral_type_of`, and
-  `_unsigned_integral_type_of`. The members R65 has not admitted, the four
-  float queries (builtin until R1937), `__mlir_type`, and `KeyElement`
-  (R237) are omitted, and the keyword `__init__` spells `!kgen.dtype`
+  `_unsigned_integral_type_of`. The members R65 has not admitted (with the
+  float queries' arms over them), `__mlir_type`, and `KeyElement` (R237)
+  are omitted, and the keyword `__init__` spells `!kgen.dtype`
   where upstream writes `Self._mlir_type` (R2007); the file header lists
   each departure. The prelude exports `DType`.
 - `std/builtin/value.mojo` — upstream's `Defaultable`, `RegisterPassable`,

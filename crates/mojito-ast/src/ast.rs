@@ -652,39 +652,6 @@ impl Dtype {
         self.is_integral() || self.is_floating_point()
     }
 
-    /// The zero-argument `Bool` predicate `DType.<method>()` names, if any.
-    pub fn predicate(self, method: &str) -> Option<bool> {
-        Some(match method {
-            "is_integral" => self.is_integral(),
-            "is_floating_point" => self.is_floating_point(),
-            "is_signed" => self.is_signed(),
-            "is_unsigned" => self.is_unsigned(),
-            "is_numeric" => self.is_numeric(),
-            "is_float8" => self.is_float8(),
-            "is_half_float" => self.is_half_float(),
-            _ => return None,
-        })
-    }
-
-    /// The static `Int` query `DType.<method>[self]()` (one of
-    /// [`DTYPE_FLOAT_QUERIES`]), or `None` when `self` is not a floating-point
-    /// dtype, where upstream's `comptime assert` fails.
-    pub fn float_query(self, method: &str) -> Option<i64> {
-        let (bit_width, exponent_width, max_exponent) = match self {
-            Self::Float16 => (16, 5, 16),
-            Self::Float32 => (32, 8, 128),
-            Self::Float64 => (64, 11, 1024),
-            _ => return None,
-        };
-        match method {
-            "mantissa_width" => Some(bit_width - exponent_width - 1),
-            "max_exponent" => Some(max_exponent),
-            "exponent_width" => Some(exponent_width),
-            "exponent_bias" => Some(max_exponent - 1),
-            _ => None,
-        }
-    }
-
     const fn matches_mask(self, mask: u8) -> bool {
         self.code() & mask != 0
     }
@@ -699,15 +666,6 @@ pub const DTYPE_PREDICATES: [&str; 7] = [
     "is_numeric",
     "is_float8",
     "is_half_float",
-];
-
-/// The static `Int` queries `DType.<method>[dtype]()` answers for a
-/// floating-point dtype.
-pub const DTYPE_FLOAT_QUERIES: [&str; 4] = [
-    "mantissa_width",
-    "max_exponent",
-    "exponent_width",
-    "exponent_bias",
 ];
 
 /// Upstream's `_mIsSigned` bit of a dtype code.

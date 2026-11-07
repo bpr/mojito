@@ -2291,67 +2291,6 @@ impl Checker {
         let source = super::constraints::assoc_body_source_type(object).ok()?;
         Some(self.ty_from_anno(&source))
     }
-
-    /// The `DType.<method>[dtype]()` floating-point format query `callee`
-    /// names with `param_args`, as the parameter value a runtime read
-    /// records: its answer at a known dtype, and the application of the
-    /// static method over a symbolic one, whose constraint and answer are the
-    /// instantiation's. `None` for any other callee.
-    pub(super) fn dtype_float_query(
-        &self,
-        callee: &Expr,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<(ParamExpr, BracketAttributes), TypeError>> {
-        let ExprKind::Member { object, field } = &callee.kind else {
-            return None;
-        };
-        if !mojito_ast::ast::DTYPE_FLOAT_QUERIES.contains(&field.as_str())
-            || !matches!(&object.kind, ExprKind::Identifier(name)
-                if name == mojito_types::types::DTYPE_TYPE_NAME
-                    && self.lookup(name).is_none()
-                    && self
-                        .structs
-                        .get(name)
-                        .is_none_or(|info| !info.methods.contains_key(field.as_str())))
-        {
-            return None;
-        }
-        let func = format!("DType.{field}");
-        let [argument] = param_args else {
-            return Some(Err(TypeError::BadCall {
-                func,
-                reason: format!(
-                    "expects one compile-time dtype argument, got {}",
-                    param_args.len()
-                ),
-            }));
-        };
-        if !args.is_empty() || !kwargs.is_empty() {
-            return Some(Err(TypeError::BadCall {
-                func,
-                reason: "takes no arguments".to_string(),
-            }));
-        }
-        Some(self.dtype_from_arg(argument).and_then(|dtype| {
-            let attributes = vec![dtype_attribute(argument, &dtype)];
-            let dtype = match dtype {
-                SimdDtype::Known(dtype) => self
-                    .param_context
-                    .constant(mojito_types::types::dtype_value(dtype))
-                    .map_err(|error| TypeError::Unsupported(error.to_string()))?,
-                SimdDtype::Expr(dtype) => dtype,
-            };
-            self.param_context
-                .answer_builtin_applications(&self.param_context.dtype_float_query(field, &dtype))
-                .map(|value| (value, attributes))
-                .map_err(|error| TypeError::BadCall {
-                    func,
-                    reason: error.to_string(),
-                })
-        }))
-    }
 }
 
 /// The lane dtype a `SIMD` type exposes as `dtype`, `Int`, `UInt`, and

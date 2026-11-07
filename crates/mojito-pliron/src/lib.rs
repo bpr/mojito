@@ -1063,8 +1063,8 @@ impl<'p> CallEdges<'p, '_> {
                     self.push_members(name, "write_string");
                 }
             }
-            // A `DType` Hashable leaf lowers to the hasher's compiled
-            // `_update_with_simd`.
+            // A `Variant` receiver's lowered `__hash__` reaches its
+            // hasher's compiled `_update_with_simd`.
             MirInstr::MethodCall {
                 recv,
                 method,

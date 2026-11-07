@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2008**.
+Next free ID: **R2011**.
 
 ## Ordered Work
 
@@ -6446,10 +6446,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The names are `bfloat16`, `int128`, `uint128`, `int256`, `uint256`, the
     `float4`/`float6`/`float8` families, and `_uint1`/`_uint2`/`_uint4`
     (`UPSTREAM_ONLY_DTYPE_NAMES` in `mojito-ast`).
-  - `Dtype::UInt` (R1389) is the latest dtype added, with every table row,
-    the VM's and Pliron's predicate arms included.
-  - `Dtype::float_query` answers only `float16`/`float32`/`float64`; a new
-    float format adds its row there.
+  - `Dtype::UInt` (R1389) is the latest dtype added, with every table row
+    and Pliron's predicate arms included.
+  - The declared float queries `max_exponent` and `exponent_width` in
+    `stdlib/std/builtin/dtype.mojo` answer only `float16`/`float32`/
+    `float64`; a new float format restores its upstream arms there.
+  - `llvm_intrinsic::fpclass_lane`'s smallest-normal match has a wildcard
+    arm, so a new float format adds its row there by hand.
   - Each needs a `Dtype` variant with upstream's code in `Dtype::code`, even
     where no `SIMD` lane of it exists yet, so the value can print and compare.
   - `Float16` set the pattern for a new lane: extend the table methods in
@@ -6479,22 +6482,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     and 256 (found while landing R1586).
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R332 A `DType` float query as a type argument is rejected**
-
-  Problem: `SIMD[DType.int32, DType.exponent_width[DType.float32]()](2)`
-  prints its vector at the pin, while Mojito reports "not a compile-time Int
-  constant: not an associated comptime expression".
-  - The same query over a `DType` binder (`SIMD[DType.int32,
-    DType.exponent_width[dt]()]` in `def lanes[dt: DType]()`) rejects the
-    same way.
-  - `eval_associated_ct` and `compile_dependent_ct_expr`
-    (`checker/constraints.rs`) have no arm for the query. A closed one is
-    its answer, and one over a binder is the application
-    `ParamContext::dtype_float_query` builds, which the elaborator answers
-    per instance.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R459 A reached struct instance instantiates every constructor
   overload, called or not**
@@ -10986,31 +10973,86 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R65.
   - Model: Opus, Planned.
 
-- [ ] **R1937 `DType`'s parameter-level predicates and float queries
-  outlive the library struct**
+- [ ] **R2008 No builtin body of the bundled `struct DType` folds in the
+  checker**
 
-  `DType` is the bundled struct and its declared `__hash__`, `is_*`,
-  `write_to`, and `__eq__` answer every run-time use, but the compiler's
-  own compile-time forms of them remain.
-  - Parameter predicates: `ParamContext::dtype_predicate` (reached from
-    `build_ct`'s `dtype_predicate_value`, `constraints.rs`),
-    `DTYPE_PREDICATES`, and the VM's `Value::Dtype` predicate, display,
-    and `scalar_repr` arms. The declared `@always_inline("builtin")`
-    bodies should fold instead: a user copy of the struct's bodies already
-    folds in `comptime if`, but a `where dtype.is_floating_point()` clause over a struct binder is
-    still "unsupported generic where proposition".
-  - Float queries: `DTYPE_FLOAT_QUERIES`, `Dtype::float_query`,
-    `ParamContext::dtype_float_query`, and `Checker::dtype_float_query`;
-    declare upstream's `mantissa_width`, `max_exponent`, `exponent_width`,
-    and `exponent_bias` in `stdlib/std/builtin/dtype.mojo` instead.
-  - `__hash__` and `_update_with_simd` may then leave
-    `mir::TYPE_REACHED_MEMBERS`, and Pliron's type-reached `__hash__` push
-    (`lib.rs`) with them, once a `Variant`'s lowered hash
-    (`enqueue_hash_leaf_instances`) no longer needs them.
-  - Probe: `rg "dtype_predicate|DTYPE_PREDICATES|float_query"` is empty,
-    and `comptime if DType.float32.is_floating_point()` still folds.
+  Every `@always_inline("builtin")` body of `stdlib/std/builtin/dtype.mojo`
+  stays unfolded in `fold_builtin_bodies` (`checker/builtin_fold.rs`), so a
+  compile-time `DType` predicate leans on the hand-written
+  `ParamContext::dtype_predicate` where upstream's
+  `foldInlineBuiltinFunction` folds the declared body.
+  - The unfolded bodies: `__init__`, `_from_ui8`, `_as_ui8`, `__eq__`,
+    `__ne__`, both `_match` overloads, every `is_*`, and
+    `_is_non_index_integral`.
+  - Cause: `declared_fields` reads `var _mlir_value: Self._mlir_type`
+    before the struct's own `comptime _mlir_type` registers, so
+    `bind_struct_slots` and `constructed_fields` return `None` for every
+    member. Register the parameterless type-valued `comptime` members a
+    struct's field types read before bodies fold, as
+    `register_builtin_result_members` does for `Self.X` results.
+  - Check whether that registration also closes R2007 (the same
+    `Self._mlir_type` read, at the initializer's parameter). If it does,
+    restore upstream's spelling of the keyword `__init__` and delete R2007.
+  - Cause: `ApplicableShape::applicable` (`comptime_validation.rs`) admits
+    no `` __mlir_type.`!kgen.scalar<dt>` `` slot or result, so `_as_ui8`
+    and `_match(self, mask: !kgen.scalar<ui8>)` are not applicable.
+  - Cause: the fold reads none of the ops those bodies spell. `build_ct`
+    has no `pop.dtype.to_ui8` or `pop.dtype.from_ui8` arm.
+    `ParamOp::DtypeToUi8` is typed `SIMD[uint8, 1]` where upstream's op
+    yields the builtin `ui8`. `mlir_op_operator` refuses the `ui8` ↔
+    `!kgen.scalar<ui8>` builtin casts. `pop.simd.and` over
+    `!kgen.scalar` storage is untested.
+  - Check that `self == DType.uint` (in `is_integral`, `is_unsigned`)
+    folds through the folded `__eq__` while bodies fold.
+  - Probe: every `DType` builtin has a `folded_body`, and
+    `is_floating_point` over a binder builds to the `_match` mask
+    expression.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2009 A `where` clause over a struct's builtin predicate is
+  "unsupported generic where proposition"**
+
+  A user struct over `!kgen.dtype` whose `@always_inline("builtin")` `is_fp`
+  gates `def f[d: DT where d.is_fp()]()` is rejected, where the pin folds
+  the call. Only the bundled `DType`'s predicates pass, through the
+  hand-written `ParamContext::dtype_predicate`.
+  - Cause: `build_ct` never folds a builtin method call. Only
+    `constraint_operand` and `struct_operator_value` reach
+    `called_application`, so `compile_generic_constraint`'s catch-all
+    sees no expression for the call.
+  - Lever: `build_ct` folds a call of a builtin with a folded body through
+    `called_application`, as upstream's parser folds an inline-builtin call
+    where it builds it.
+  - Then delete `dtype_predicate_value` (`constraints.rs`),
+    `ParamContext::dtype_predicate`, `DTYPE_PREDICATES`, and
+    `dtype_predicate_folds_on_replacement`, and fix `ParamOp::DtypeToUi8`'s
+    doc.
+  - The folded display of a failed clause may change: re-check
+    `assets/type_error/where_dtype_predicate_lacks_evidence.mojo`.
+  - Probe: `rg "dtype_predicate|DTYPE_PREDICATES"` is empty, the std
+    package builds, `assets/ok/where_dtype_predicate.mojo` runs, and
+    `comptime if DType.float32.is_floating_point()` still folds.
+  - Depends on R2008.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2010 A `Variant`'s lowered `__hash__` keeps the hash leaves
+  type-reached**
+
+  `__hash__` and `_update_with_simd` stay in `mir::TYPE_REACHED_MEMBERS`
+  only for a `resolved: None` `__hash__` call on a `TyKind::Variant`
+  receiver, where upstream's `Variant.__hash__` is a library body that
+  calls each alternative's requirement.
+  - The places that handle it: `enqueue_hash_leaf_instances`
+    (`mono/instances.rs`) and Pliron's `push_members` arm (`lib.rs`).
+  - The VM implements no such call, so the MIR shape may be dead. Find
+    whether lowering still emits it.
+  - If not, delete both places and drop the two names from
+    `TYPE_REACHED_MEMBERS`. If so, lower it as the requirement call
+    upstream's body spells.
+  - Probe: `TYPE_REACHED_MEMBERS` lists `write_string` alone.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1938 `Error` is a compiler builtin in Mojito where upstream's is a
   library struct**
